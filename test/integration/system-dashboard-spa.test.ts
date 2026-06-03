@@ -4,10 +4,10 @@
  *
  * Covers:
  *
- *   SPA-01: Root redirect (GET / -> /app/)
- *   SPA-02: Dashboard HTML (GET /app/ serves index.html)
- *   SPA-03: SPA fallback (GET /app/chat/session-123 serves index.html)
- *   SPA-04: Security headers present on /app/* routes
+ *   Root redirect (GET / -> /app/)
+ *   Dashboard HTML (GET /app/ serves index.html)
+ *   SPA fallback (GET /app/chat/session-123 serves index.html)
+ *   Security headers present on /app/* routes
  *
  * Requires the @comis/web package to be built (dist/index.html must exist).
  *
@@ -56,10 +56,10 @@ describe.skipIf(!webDistAvailable)(
     }, 30_000);
 
     // -----------------------------------------------------------------------
-    // SPA-01: Root Redirect
+    // Root Redirect
     // -----------------------------------------------------------------------
 
-    it("SPA-01: GET / redirects to /app/", async () => {
+    it("GET / redirects to /app/", async () => {
       const response = await fetch(`${gatewayUrl}/`, {
         redirect: "manual",
       });
@@ -72,10 +72,10 @@ describe.skipIf(!webDistAvailable)(
     });
 
     // -----------------------------------------------------------------------
-    // SPA-02: Dashboard HTML
+    // Dashboard HTML
     // -----------------------------------------------------------------------
 
-    it("SPA-02: GET /app/ serves HTML content", async () => {
+    it("GET /app/ serves HTML content", async () => {
       const response = await fetch(`${gatewayUrl}/app/`);
 
       expect(response.status).toBe(200);
@@ -85,16 +85,16 @@ describe.skipIf(!webDistAvailable)(
       expect(text.toLowerCase()).toContain("<!doctype html");
     });
 
-    it("SPA-02b: GET /app/index.html returns 200", async () => {
+    it("GET /app/index.html returns 200", async () => {
       const response = await fetch(`${gatewayUrl}/app/index.html`);
       expect(response.status).toBe(200);
     });
 
     // -----------------------------------------------------------------------
-    // SPA-03: SPA Fallback
+    // SPA Fallback
     // -----------------------------------------------------------------------
 
-    it("SPA-03: deep SPA route /app/chat/session-123 serves index.html (SPA fallback)", async () => {
+    it("deep SPA route /app/chat/session-123 serves index.html (SPA fallback)", async () => {
       const response = await fetch(`${gatewayUrl}/app/chat/session-123`);
 
       // SPA fallback should serve index.html with 200
@@ -104,7 +104,7 @@ describe.skipIf(!webDistAvailable)(
       expect(text.toLowerCase()).toContain("<!doctype html");
     });
 
-    it("SPA-03b: deep SPA route /app/settings/profile serves index.html", async () => {
+    it("deep SPA route /app/settings/profile serves index.html", async () => {
       const response = await fetch(`${gatewayUrl}/app/settings/profile`);
 
       expect(response.status).toBe(200);
@@ -114,10 +114,10 @@ describe.skipIf(!webDistAvailable)(
     });
 
     // -----------------------------------------------------------------------
-    // SPA-04: Security Headers
+    // Security Headers
     // -----------------------------------------------------------------------
 
-    it("SPA-04: /app/ responses include security headers", async () => {
+    it("/app/ responses include security headers", async () => {
       const response = await fetch(`${gatewayUrl}/app/`);
       expect(response.status).toBe(200);
 

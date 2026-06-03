@@ -4,8 +4,8 @@ import { MemoryReasoningConfigSchema } from "./schema-memory-reasoning.js";
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("MemoryReasoningConfigSchema", () => {
-  it("parses an empty object to the ON-by-default (v1 opt-out) bounded configuration", () => {
-    // v2.9 increment 2 — v1 OPT-OUT posture: reasoning defaults ON (a COST feature, still
+  it("parses an empty object to the ON-by-default (opt-out) bounded configuration", () => {
+    // OPT-OUT posture: reasoning defaults ON (a COST feature, still
     // force-disabled by the master kill switch). All bounded tuning constants stay frozen.
     const result = MemoryReasoningConfigSchema.parse({});
     expect(result).toEqual({
@@ -21,7 +21,7 @@ describe("MemoryReasoningConfigSchema", () => {
     });
   });
 
-  it("defaults enabled to true (v1 opt-out posture; gated by the master cost-feature kill switch)", () => {
+  it("defaults enabled to true (opt-out posture; gated by the master cost-feature kill switch)", () => {
     expect(MemoryReasoningConfigSchema.parse({}).enabled).toBe(true);
   });
 
@@ -78,8 +78,8 @@ describe("PerAgentConfigSchema memoryReasoning field", () => {
     expect(result.memoryReasoning!.enabled).toBe(true);
   });
 
-  it("defaults memoryReasoning ON for a bare config (v1 opt-out posture; kill-switch-gated)", () => {
-    // v2.9 increment 2 — the subtree is no longer `.optional()`; a bare config gets it populated
+  it("defaults memoryReasoning ON for a bare config (opt-out posture; kill-switch-gated)", () => {
+    // The subtree is no longer `.optional()`; a bare config gets it populated
     // + enabled. The master cost-feature kill switch still force-disables it at the cron site.
     const result = PerAgentConfigSchema.parse({});
     expect(result.memoryReasoning).toBeDefined();

@@ -6,7 +6,7 @@
  * `resolveGraphCacheRetention` (depth-aware leaf-node retention), and
  * `MIN_SUB_AGENT_STEPS` (the step budget floor that protects boot-sequence
  * consumption). `SUB_AGENT_TOOL_DENYLIST` is imported from `@comis/core`
- * (moved in SUBA-03 so @comis/agent can import it without a cycle).
+ * (moved there so @comis/agent can import it without a cycle).
  *
  * The runtime leaf wires the resulting executeSubAgent into createSubAgentRunner.
  *
@@ -474,7 +474,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       skipRag: !!graphSharedDir,
       graphId: graphOverrides?.graphId,
       nodeId: graphOverrides?.nodeId,
-      // SUBA-02: thread effective tool groups so pi-event-bridge can enrich
+      // Thread effective tool groups so pi-event-bridge can enrich
       // "Tool X not found" errors with delegation routing hints.
       activeToolGroups: effectiveToolGroups,
     };

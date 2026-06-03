@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * label-compressor — pure, one-pass, idempotent display-shortener for activity
- * labels (UX-02, spec §8.4). Consumes strings that redactValue has already
+ * labels (spec §8.4). Consumes strings that redactValue has already
  * sanitized and path-compacted: it does NOT mask secrets (redactValue owns that
  * upstream) and does NOT re-compact paths (a `~`-rooted or ≤2-segment path is a
  * fixed point — Pitfall 2). It handles ONLY three display categories:
@@ -30,12 +30,12 @@
  * replacement. Non-global: one URL per label in the activity domain; a second
  * pass finds no scheme to match, so the result is a fixed point.
  *
- * ReDoS-safe (T-75-02-03): every quantifier is a single-character-class star
+ * ReDoS-safe: every quantifier is a single-character-class star
  * with no overlapping alternation and no nested quantifier — the host, path and
  * query segments are mutually exclusive on their boundary chars (`/`, `?`, `#`),
  * so matching is linear. The never-grows test drives a 12 KB pathological URL.
  */
-// eslint-disable-next-line security/detect-unsafe-regex -- linear: disjoint char-class stars, no nested quantifier (T-75-02-03; proven by the long-input never-grows test)
+// eslint-disable-next-line security/detect-unsafe-regex -- linear: disjoint char-class stars, no nested quantifier (proven by the long-input never-grows test)
 const URL_RE = /https?:\/\/([^\s/?#]+)(\/[^\s?#]*)?(?:[?#]\S*)?/;
 
 /** A leading `api.` / `www.` host label to drop (display noise). */
@@ -49,11 +49,11 @@ const VERSION_SEGMENT_RE = /^v\d+$/;
  * `\d{4}-\d{2}-\d{2}T` date prefix means a bare `18:42:00` is NOT a match, so
  * the replacement is a fixed point. Non-global: one timestamp per label.
  *
- * ReDoS-safe (T-75-02-03): all but one quantifier are fixed-width (`\d{N}`); the
+ * ReDoS-safe: all but one quantifier are fixed-width (`\d{N}`); the
  * single unbounded `\d+` sits inside an optional fractional-seconds group with no
  * adjacent overlapping match, so there is no backtracking ambiguity.
  */
-// eslint-disable-next-line security/detect-unsafe-regex -- linear: fixed-width \d{N} runs + one bounded \d+ in an optional group, no overlap (T-75-02-03)
+// eslint-disable-next-line security/detect-unsafe-regex -- linear: fixed-width \d{N} runs + one bounded \d+ in an optional group, no overlap
 const ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2})(?:\.\d+)?Z?/;
 
 /**

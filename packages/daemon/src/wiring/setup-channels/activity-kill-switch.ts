@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WIRE-07 fail-closed kill-switch slice resolver (CR-01).
+ * Fail-closed kill-switch slice resolver.
  *
  * The daemon's inbound `coordinatorFactory` (setup-channels-runtime.ts) needs a
  * live kill-switch getter that RE-READS the per-agent activity config fresh on

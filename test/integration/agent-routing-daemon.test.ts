@@ -3,9 +3,9 @@
  * Agent Routing Daemon Integration Tests
  *
  * Validates daemon-level routing behavior:
- *   ROUTE-11: Per-agent model configuration via config.get RPC
- *   ROUTE-12: Multi-agent workspace isolation via resolveWorkspaceDir
- *   ROUTE-13: Daemon-level routing integration (explicit agentId dispatch, fallback)
+ *   Per-agent model configuration via config.get RPC
+ *   Multi-agent workspace isolation via resolveWorkspaceDir
+ *   Daemon-level routing integration (explicit agentId dispatch, fallback)
  *
  * Uses port 8512 and unique database path to avoid conflicts with other test suites.
  */
@@ -31,7 +31,7 @@ const __dirname = dirname(__filename);
 const configPath = resolve(__dirname, "../config/config.test-agent-routing.yaml");
 
 // ---------------------------------------------------------------------------
-// ROUTE-11, ROUTE-12, ROUTE-13: Main daemon tests (shared instance)
+// Main daemon tests (shared instance)
 // ---------------------------------------------------------------------------
 
 describe("Agent Routing: Config, Workspace, Dispatch", () => {
@@ -53,14 +53,14 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // ROUTE-11: Per-agent model configuration
+  // Per-agent model configuration
   // -------------------------------------------------------------------------
 
-  describe("Per-Agent Model Configuration (ROUTE-11)", () => {
+  describe("Per-Agent Model Configuration", () => {
     it(
-      "ROUTE-11a: agents.list/agents.get return all 3 agents with distinct names",
+      "agents.list/agents.get return all 3 agents with distinct names",
       async () => {
-        // WR-03: agent config is read via agents.list / agents.get rather than
+        // Agent config is read via agents.list / agents.get rather than
         // config.get({section:"agents"}), which no longer egresses agent configs.
         let ws: WebSocket | undefined;
         try {
@@ -110,9 +110,9 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
     );
 
     it(
-      "ROUTE-11b: each agent has anthropic provider and model configured",
+      "each agent has anthropic provider and model configured",
       async () => {
-        // WR-03: per-agent provider/model is read via agents.get rather than
+        // Per-agent provider/model is read via agents.get rather than
         // config.get({section:"agents"}).
         let ws: WebSocket | undefined;
         try {
@@ -142,12 +142,12 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
     );
 
     it(
-      "ROUTE-11c: config.get does not egress the routing section (WR-03)",
+      "config.get does not egress the routing section",
       async () => {
-        // WR-03: config.get({section:"routing"}) no longer egresses routing config;
+        // config.get({section:"routing"}) no longer egresses routing config;
         // it returns only the safe default { tenantId, logLevel, gateway }. The
         // defaultAgentId/bindings values were previously asserted here but are no
-        // longer RPC-observable via config.get post-WR-03.
+        // longer RPC-observable via config.get.
         let ws: WebSocket | undefined;
         try {
           ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
@@ -181,11 +181,11 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
   });
 
   // -------------------------------------------------------------------------
-  // ROUTE-12: Multi-agent workspace isolation
+  // Multi-agent workspace isolation
   // -------------------------------------------------------------------------
 
-  describe("Multi-Agent Workspace Isolation (ROUTE-12)", () => {
-    it("ROUTE-12a: each named agent resolves to workspace-{agentId}", () => {
+  describe("Multi-Agent Workspace Isolation", () => {
+    it("each named agent resolves to workspace-{agentId}", () => {
       // resolveWorkspaceDir is a pure function -- no daemon needed
       const baseDir = join(homedir(), ".comis");
 
@@ -207,7 +207,7 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
       expect(gammaPath).toBe(join(baseDir, "workspace-router-gamma"));
     });
 
-    it("ROUTE-12b: all 3 workspace paths are distinct", () => {
+    it("all 3 workspace paths are distinct", () => {
       const alphaPath = resolveWorkspaceDir(
         { workspacePath: undefined } as any,
         "router-alpha",
@@ -225,7 +225,7 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
       expect(paths.size).toBe(3);
     });
 
-    it("ROUTE-12c: default agentId resolves to workspace (no suffix)", () => {
+    it("default agentId resolves to workspace (no suffix)", () => {
       const baseDir = join(homedir(), ".comis");
 
       const defaultPath = resolveWorkspaceDir(
@@ -242,7 +242,7 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
       expect(undefinedPath).toBe(join(baseDir, "workspace"));
     });
 
-    it("ROUTE-12d: named agent workspace differs from default workspace", () => {
+    it("named agent workspace differs from default workspace", () => {
       const defaultPath = resolveWorkspaceDir(
         { workspacePath: undefined } as any,
         "default",
@@ -256,14 +256,14 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
   });
 
   // -------------------------------------------------------------------------
-  // ROUTE-13: Daemon-level routing integration (LLM-gated)
+  // Daemon-level routing integration (LLM-gated)
   // -------------------------------------------------------------------------
 
-  describe("Daemon-Level Routing Dispatch (ROUTE-13) - Structural", () => {
+  describe("Daemon-Level Routing Dispatch - Structural", () => {
     it(
-      "ROUTE-13a: config.get does not egress the routing section (WR-03)",
+      "config.get does not egress the routing section",
       async () => {
-        // WR-03: the routing defaultAgentId is no longer RPC-observable via
+        // The routing defaultAgentId is no longer RPC-observable via
         // config.get; it returns only the safe default and omits the routing section.
         let ws: WebSocket | undefined;
         try {
@@ -289,9 +289,9 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
     );
 
     it(
-      "ROUTE-13b: agents.list confirms all 3 agent executors are configured",
+      "agents.list confirms all 3 agent executors are configured",
       async () => {
-        // WR-03: the configured agent set is read via agents.list rather than
+        // The configured agent set is read via agents.list rather than
         // config.get({section:"agents"}).
         let ws: WebSocket | undefined;
         try {

@@ -3,12 +3,12 @@
  * Tests for schema-broker.ts — HostRuleSchema, StaticHeaderSchema,
  * RequestFinalizerSchema, and supporting schemas.
  *
- * CR-02: HostRuleSchema must accept staticHeaders and finalizer fields so
+ * HostRuleSchema must accept staticHeaders and finalizer fields so
  * z.strictObject does not reject valid operator YAML that includes them.
  *
- * WR-02: pathPrefix must reject empty string — min(1) required.
+ * pathPrefix must reject empty string — min(1) required.
  *
- * IN-03: suffix HostPatternSchema must require a leading '.' or '-' separator.
+ * suffix HostPatternSchema must require a leading '.' or '-' separator.
  *
  * @module
  */
@@ -18,9 +18,9 @@ import {
   HostRuleSchema,
 } from "./schema-broker.js";
 
-// ── CR-02: HostRuleSchema accepts staticHeaders and finalizer ─────────────────
+// ── HostRuleSchema accepts staticHeaders and finalizer ───────────────────────
 
-describe("HostRuleSchema — staticHeaders field (CR-02)", () => {
+describe("HostRuleSchema — staticHeaders field", () => {
   it("accepts a HostRule with a staticHeaders array", () => {
     const raw = {
       pattern: { kind: "exact", host: "vertex.googleapis.com" },
@@ -44,7 +44,7 @@ describe("HostRuleSchema — staticHeaders field (CR-02)", () => {
   });
 });
 
-describe("HostRuleSchema — finalizer field (CR-02)", () => {
+describe("HostRuleSchema — finalizer field", () => {
   it("accepts a HostRule with finalizer kind=awsSigV4", () => {
     const raw = {
       pattern: { kind: "exact", host: "s3.amazonaws.com" },
@@ -66,9 +66,9 @@ describe("HostRuleSchema — finalizer field (CR-02)", () => {
   });
 });
 
-// ── WR-02: pathPrefix rejects empty string ────────────────────────────────────
+// ── pathPrefix rejects empty string ──────────────────────────────────────────
 
-describe("HostRuleSchema — pathPrefix min(1) enforcement (WR-02)", () => {
+describe("HostRuleSchema — pathPrefix min(1) enforcement", () => {
   it("rejects a HostRule with an empty string pathPrefix", () => {
     const raw = {
       pattern: { kind: "exact", host: "example.com" },
@@ -90,9 +90,9 @@ describe("HostRuleSchema — pathPrefix min(1) enforcement (WR-02)", () => {
   });
 });
 
-// ── IN-03: suffix HostPattern must start with '.' or '-' ─────────────────────
+// ── suffix HostPattern must start with '.' or '-' ────────────────────────────
 
-describe("HostPatternSchema — suffix domain-separator validation (IN-03)", () => {
+describe("HostPatternSchema — suffix domain-separator validation", () => {
   it("accepts a suffix starting with '.' (e.g. .amazonaws.com)", () => {
     const result = HostPatternSchema.safeParse({ kind: "suffix", suffix: ".amazonaws.com" });
     expect(result.success).toBe(true);
@@ -104,7 +104,7 @@ describe("HostPatternSchema — suffix domain-separator validation (IN-03)", () 
   });
 
   it("rejects a suffix that does not start with '.' or '-' (e.g. amazonaws.com without leading dot)", () => {
-    // IN-03: 'amazonaws.com' would match 'notamazonaws.com' — must require separator
+    // 'amazonaws.com' would match 'notamazonaws.com' — must require separator
     const result = HostPatternSchema.safeParse({ kind: "suffix", suffix: "amazonaws.com" });
     expect(result.success, "suffix without leading separator must be rejected").toBe(false);
   });

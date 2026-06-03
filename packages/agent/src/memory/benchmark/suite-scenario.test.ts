@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * RED->GREEN unit suite for the deterministic constructed-scenario builders
- * (Phase 99, Plan 99-01) -- the adversarial / contradiction / redaction /
- * learning fixtures the 4 Comis-unique Tier-3 harnesses (99-02..99-05) consume
+ * -- the adversarial / contradiction / redaction /
+ * learning fixtures the 4 Comis-unique Tier-3 harnesses consume
  * WITHOUT any external corpus.
  *
  * UNGATED, default-CI: pure deterministic literal construction (no clock, no
  * randomness, no I/O); imports `suite-scenario.ts` so it is never a 0%-coverage
- * file under the agent all:true floor (99-RESEARCH.md Pitfall 3).
+ * file under the agent all:true floor.
  *
- * SECURITY (T-99-01-02): the redaction fixtures' planted "secrets" are SYNTHETIC,
+ * SECURITY: the redaction fixtures' planted "secrets" are SYNTHETIC,
  * obviously-fake literals (`sk-FAKE…`, `*.example.test`, an all-zero phone) -- a
  * leaked fixture discloses NOTHING. The tests assert that convention so a real
  * credential can never sneak into the committed fixtures.
@@ -75,7 +75,7 @@ describe("buildContradictionPairs -- trust-first (older-high-trust vs newer-low-
       // trust bands: older is system|learned, newer is external
       expect(["system", "learned"]).toContain(p.olderHighTrustDoc.trustLevel);
       expect(p.newerLowTrustDoc.trustLevel).toBe("external");
-      // THE SUITE-04 CONTRACT (the load-bearing assertion the Phase-100 KG gate consumes):
+      // THE TRUST-FIRST CONTRACT (the load-bearing assertion the KG gate consumes):
       // the older doc is EARLIER in time ...
       expect(p.olderHighTrustDoc.createdAt).toBeLessThan(p.newerLowTrustDoc.createdAt);
       // ... yet the CORRECT answer is the OLDER high-trust fact (trust-first, NOT

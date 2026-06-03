@@ -72,7 +72,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
             maxContextChars: 4000,
             minScore: 0.1,
             includeTrustLevels: ["system", "learned"],
-            // v2.9 increment 2: rag.rerank.enabled now defaults ON, but setupSingleAgent
+            // rag.rerank.enabled now defaults ON, but setupSingleAgent
             // resolves the EFFECTIVE rerank from the raw signal + model-presence — with no
             // reranker model present in this mock it resolves to false. Set it explicitly
             // false here so the mock config matches the post-setupAgents effective config
@@ -260,7 +260,7 @@ function createMockMediaResult(): MediaResult {
 function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>, storageMode: "encrypted" | "file" | "env" = "file") {
   const callOrder: string[] = [];
   const container = createMockContainer(gatewayOverrides);
-  // WR-03: container.config.security.storage must match the preReadStorageMode
+  // container.config.security.storage must match the preReadStorageMode
   // for the boot invariant assertion to pass. Tests that override preReadStorageMode
   // must also pass the matching storageMode here.
   (container.config as Record<string, unknown>)["security"] = {
@@ -548,7 +548,7 @@ describe("daemon main()", () => {
     await expect(main(overrides)).rejects.toThrow("Bootstrap failed: Config file not found");
   });
 
-  it("releases the singleton lock when a post-foundation boot stage throws (CR-01)", async () => {
+  it("releases the singleton lock when a post-foundation boot stage throws", async () => {
     // Use an isolated temp dataDir so the lock file doesn't collide with other tests.
     const freshDataDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "daemon-cr01-lock-test-"));
     try {
@@ -691,7 +691,7 @@ describe("hardenDataDirPermissions", () => {
     }
   });
 
-  it("hardens secrets.json to 0o600 when present with loose permissions (CR-02)", () => {
+  it("hardens secrets.json to 0o600 when present with loose permissions", () => {
     fs.chmodSync(testDir, 0o700);
     const secretsJsonPath = nodePath.join(testDir, "secrets.json");
     fs.writeFileSync(secretsJsonPath, '{"schemaVersion":1,"secrets":{}}');
@@ -910,14 +910,13 @@ describe("opt-out and same-boot init", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 02-04: selectSecretStore dispatch + store-wins + two-stage scrub (TDD RED)
+// selectSecretStore dispatch + store-wins + two-stage scrub
 // ---------------------------------------------------------------------------
-// RED: these tests verify behaviors introduced by Plan 02-04.
-// Before GREEN (before selectSecretStore is wired into bootFoundation),
-// the file/env paths leave process.env unscrubbed and never call
-// buildMergedEnv, so the scrub + shadow-WARN assertions fail.
+// These tests verify the selectSecretStore behaviors. Without selectSecretStore
+// wired into bootFoundation, the file/env paths leave process.env unscrubbed
+// and never call buildMergedEnv, so the scrub + shadow-WARN assertions fail.
 
-describe("02-04 — selectSecretStore dispatch + scrub + store-wins", () => {
+describe("selectSecretStore dispatch + scrub + store-wins", () => {
   const originalEnv = process.env;
   const instances: DaemonInstance[] = [];
 
@@ -935,7 +934,7 @@ describe("02-04 — selectSecretStore dispatch + scrub + store-wins", () => {
   });
 
   // -------------------------------------------------------------------------
-  // REQ-15 / stage-1: file mode must call scrubProcessEnv
+  // stage-1: file mode must call scrubProcessEnv
   // -------------------------------------------------------------------------
 
   it("file mode: ANTHROPIC_API_KEY is removed from process.env after boot (stage-1 scrub)", async () => {
@@ -981,10 +980,10 @@ describe("02-04 — selectSecretStore dispatch + scrub + store-wins", () => {
   });
 
   // -------------------------------------------------------------------------
-  // REQ-16 / store-wins: WARN emitted when store value shadows process.env
+  // store-wins: WARN emitted when store value shadows process.env
   // -------------------------------------------------------------------------
 
-  it("file mode: WARN logged with secretName when store value shadows process.env (REQ-16 store-wins)", async () => {
+  it("file mode: WARN logged with secretName when store value shadows process.env (store-wins)", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-04-shadow-warn-"));
     try {
       // Pre-create secrets.json so the file store finds DISCORD_TOKEN on boot.
@@ -1062,14 +1061,14 @@ describe("02-04 — selectSecretStore dispatch + scrub + store-wins", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 02-05: Per-mode daemon harness — REQ-04/REQ-10/REQ-14/REQ-15/REQ-16
+// Per-mode daemon harness
 // ---------------------------------------------------------------------------
-// Integration/regression assertions over already-assembled behavior (Plans 01-04).
-// These tests verify that the assembled system satisfies the ROADMAP success
-// criteria end-to-end. RED-first does not apply to cross-cutting integration
-// verification of already-tested units (see 02-05-PLAN.md objective note).
+// Integration/regression assertions over already-assembled behavior.
+// These tests verify that the assembled system satisfies the success
+// criteria end-to-end. They are cross-cutting integration verification of
+// already-tested units.
 
-describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)", () => {
+describe("per-mode daemon harness", () => {
   const originalEnv = process.env;
   const instances: DaemonInstance[] = [];
 
@@ -1087,10 +1086,10 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
   });
 
   // -------------------------------------------------------------------------
-  // REQ-04: file mode — env.set persists to secrets.json + read back
+  // file mode — env.set persists to secrets.json + read back
   // -------------------------------------------------------------------------
 
-  it("file mode: env.set persists to secrets.json and reads back via secrets.get (REQ-04)", async () => {
+  it("file mode: env.set persists to secrets.json and reads back via secrets.get", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-file-envset-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1136,7 +1135,7 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
     }
   });
 
-  it("file mode: secrets.set persists and secrets.get reads back (REQ-04)", async () => {
+  it("file mode: secrets.set persists and secrets.get reads back", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-file-secsset-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1169,10 +1168,10 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
   });
 
   // -------------------------------------------------------------------------
-  // REQ-04 / REQ-14: env mode — both env.set and secrets.set rejected
+  // env mode — both env.set and secrets.set rejected
   // -------------------------------------------------------------------------
 
-  it("env mode: env.set returns error containing 'read-only' (REQ-04)", async () => {
+  it("env mode: env.set returns error containing 'read-only'", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-env-envset-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1195,7 +1194,7 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
     }
   });
 
-  it("env mode: secrets.set returns error containing 'read-only' (REQ-04)", async () => {
+  it("env mode: secrets.set returns error containing 'read-only'", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-env-secset-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1218,7 +1217,7 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
     }
   });
 
-  it("env mode: env_set error message mentions security.storage and not SECRETS_MASTER_KEY (REQ-14)", async () => {
+  it("env mode: env_set error message mentions security.storage and not SECRETS_MASTER_KEY", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-env-hint-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1230,8 +1229,8 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
       instances.push(instance);
 
       // The error must mention "security.storage" so the operator knows
-      // how to switch to a writable store (REQ-14 actionable hint).
-      // It must NOT mention SECRETS_MASTER_KEY (stale guidance removed in Plan 02-02).
+      // how to switch to a writable store (actionable hint).
+      // It must NOT mention SECRETS_MASTER_KEY (stale guidance removed).
       let thrownMessage = "";
       try {
         await instance.rpcCall(
@@ -1251,10 +1250,10 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
   });
 
   // -------------------------------------------------------------------------
-  // REQ-10: file mode residency canary — secrets.list returns no value field
+  // file mode residency canary — secrets.list returns no value field
   // -------------------------------------------------------------------------
 
-  it("file mode: secrets.list returns names+metadata only, no value field (REQ-10)", async () => {
+  it("file mode: secrets.list returns names+metadata only, no value field", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-file-list-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1272,7 +1271,7 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
         { name: "MY_KEY", value: "MY_VALUE", _trustLevel: "admin" },
       );
 
-      // secrets.list must return entries with name but NO value field (REQ-10)
+      // secrets.list must return entries with name but NO value field
       const listResult = await instance.rpcCall(
         "secrets.list",
         { _trustLevel: "admin" },
@@ -1288,10 +1287,10 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
   });
 
   // -------------------------------------------------------------------------
-  // REQ-15: stage-2 scrub — config-referenced custom secret absent post-boot
+  // stage-2 scrub — config-referenced custom secret absent post-boot
   // -------------------------------------------------------------------------
 
-  it("stage-2 scrub: platformSecretNames secret absent from process.env after boot (REQ-15)", async () => {
+  it("stage-2 scrub: platformSecretNames secret absent from process.env after boot", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-stage2-scrub-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1313,7 +1312,7 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
       const instance = await main(overrides);
       instances.push(instance);
 
-      // MY_CUSTOM_TOKEN must have been removed by stage-2 scrub (REQ-15)
+      // MY_CUSTOM_TOKEN must have been removed by stage-2 scrub
       expect(process.env["MY_CUSTOM_TOKEN"]).toBeUndefined();
     } finally {
       rmSync(freshDataDir, { recursive: true, force: true });
@@ -1322,10 +1321,10 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
 });
 
 // ---------------------------------------------------------------------------
-// 03-04: Additive no-restart integration — REQ-07/REQ-13/REQ-18
+// Additive no-restart integration
 // ---------------------------------------------------------------------------
-// End-to-end integration tests for the Phase 3 additive-no-restart behavior.
-// Verifies that the daemon satisfies Phase 3 ROADMAP success criteria:
+// End-to-end integration tests for the additive-no-restart behavior.
+// Verifies that the daemon satisfies the additive-no-restart success criteria:
 //   1. env.set BRAND_NEW_KEY → restarting:false, NO SIGUSR2, value live in store
 //   2. secrets.set OTHER_NEW_KEY → restarting:false, stored:true, NO SIGUSR2
 //   3. Value readable via secrets.get after additive env.set (live-applied)
@@ -1333,7 +1332,7 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
 //   5. secrets.delete EXISTING → restarting:true, deleted:true, SIGUSR2 scheduled
 //   6. secrets.delete ABSENT → restarting:false, deleted:false, NO SIGUSR2
 
-describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () => {
+describe("additive no-restart integration", () => {
   const originalEnv = process.env;
   const instances: DaemonInstance[] = [];
   let killSpy: ReturnType<typeof vi.spyOn> | null = null;
@@ -1358,9 +1357,9 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
   });
 
   // -------------------------------------------------------------------------
-  // 03-04-1: env.set NEW_KEY → restarting:false, SIGUSR2 NOT sent
+  // env.set NEW_KEY → restarting:false, SIGUSR2 NOT sent
   // -------------------------------------------------------------------------
-  it("03-04-1: env.set on a brand-new key returns restarting:false (additive live-applied, no SIGUSR2)", async () => {
+  it("env.set on a brand-new key returns restarting:false (additive live-applied, no SIGUSR2)", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-env-new-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1400,9 +1399,9 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
   });
 
   // -------------------------------------------------------------------------
-  // 03-04-2: secrets.set OTHER_NEW_KEY → restarting:false, stored:true, no SIGUSR2
+  // secrets.set OTHER_NEW_KEY → restarting:false, stored:true, no SIGUSR2
   // -------------------------------------------------------------------------
-  it("03-04-2: secrets.set on a brand-new key returns restarting:false and stored:true (additive, no SIGUSR2)", async () => {
+  it("secrets.set on a brand-new key returns restarting:false and stored:true (additive, no SIGUSR2)", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-sec-new-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1438,9 +1437,9 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
   });
 
   // -------------------------------------------------------------------------
-  // 03-04-3: daemon still responsive after additive env.set; value readable
+  // daemon still responsive after additive env.set; value readable
   // -------------------------------------------------------------------------
-  it("03-04-3: after additive env.set, daemon is responsive and value is readable via secrets.get", async () => {
+  it("after additive env.set, daemon is responsive and value is readable via secrets.get", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-env-read-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1481,9 +1480,9 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
   });
 
   // -------------------------------------------------------------------------
-  // 03-04-4: env.set EXISTING_KEY → restarting:false, NO SIGUSR2 (Plans 06-02+06-03)
+  // env.set EXISTING_KEY → restarting:false, NO SIGUSR2
   // -------------------------------------------------------------------------
-  it("03-04-4: env.set on an existing key returns restarting:false with no SIGUSR2 (live-rotation, no restart)", async () => {
+  it("env.set on an existing key returns restarting:false with no SIGUSR2 (live-rotation, no restart)", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-env-exist-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1513,11 +1512,11 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
         { key: "EXISTING_KEY_03_04", value: "v2", _trustLevel: "admin" },
       ) as { set: boolean; key: string; restarting: boolean };
 
-      // Wait past any potential timer (Plans 06-02 removed the SIGUSR2 timer)
+      // Wait past any potential timer (the SIGUSR2 timer was removed)
       await new Promise((r) => setTimeout(r, 250));
 
       expect(setResult.set).toBe(true);
-      // Plans 06-02+06-03: rotation now live-applies without restart
+      // Rotation now live-applies without restart
       expect(setResult.restarting).toBe(false);
 
       // SIGUSR2 must NOT have been called (no restart on rotation)
@@ -1531,9 +1530,9 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
   });
 
   // -------------------------------------------------------------------------
-  // 03-04-5: secrets.delete EXISTING → restarting:false, deleted:true, NO SIGUSR2 (Plans 06-02)
+  // secrets.delete EXISTING → restarting:false, deleted:true, NO SIGUSR2
   // -------------------------------------------------------------------------
-  it("03-04-5: secrets.delete on an existing key returns restarting:false and deleted:true (live-delete, no restart)", async () => {
+  it("secrets.delete on an existing key returns restarting:false and deleted:true (live-delete, no restart)", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-sec-del-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1570,7 +1569,7 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
       await new Promise((r) => setTimeout(r, 250));
 
       expect(delResult.deleted).toBe(true);
-      // Plans 06-02: deletion now live-applies without restart
+      // Deletion now live-applies without restart
       expect(delResult.restarting).toBe(false);
 
       // SIGUSR2 must NOT have been called (no restart on delete)
@@ -1584,9 +1583,9 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
   });
 
   // -------------------------------------------------------------------------
-  // 03-04-6: secrets.delete ABSENT → restarting:false, deleted:false, NO SIGUSR2
+  // secrets.delete ABSENT → restarting:false, deleted:false, NO SIGUSR2
   // -------------------------------------------------------------------------
-  it("03-04-6: secrets.delete on a non-existent key returns restarting:false and deleted:false (no-op, no SIGUSR2)", async () => {
+  it("secrets.delete on a non-existent key returns restarting:false and deleted:false (no-op, no SIGUSR2)", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-sec-noexist-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;

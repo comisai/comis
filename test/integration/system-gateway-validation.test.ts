@@ -58,7 +58,7 @@ describe("System Gateway Validation", () => {
   // ===========================================================================
 
   describe("Auth Edge Cases", () => {
-    it("AUTH-EDGE-01: malformed auth header (no Bearer prefix) returns 401", async () => {
+    it("malformed auth header (no Bearer prefix) returns 401", async () => {
       const response = await fetch(`${gatewayUrl}/api/agents`, {
         headers: { Authorization: authToken },
       });
@@ -68,14 +68,14 @@ describe("System Gateway Validation", () => {
       expect(body).toHaveProperty("error", "Unauthorized");
     });
 
-    it("AUTH-EDGE-02: empty authorization header returns 401", async () => {
+    it("empty authorization header returns 401", async () => {
       const response = await fetch(`${gatewayUrl}/api/agents`, {
         headers: { Authorization: "" },
       });
       expect(response.status).toBe(401);
     });
 
-    it("AUTH-EDGE-03: invalid token returns 401 (not a stack trace)", async () => {
+    it("invalid token returns 401 (not a stack trace)", async () => {
       const response = await fetch(`${gatewayUrl}/api/agents`, {
         headers: { Authorization: "Bearer INVALID_TOKEN_123" },
       });
@@ -88,7 +88,7 @@ describe("System Gateway Validation", () => {
       expect(JSON.stringify(body)).not.toContain("Error:");
     });
 
-    it("AUTH-EDGE-04: authentication required for POST /api/chat", async () => {
+    it("authentication required for POST /api/chat", async () => {
       const response = await fetch(`${gatewayUrl}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -103,7 +103,7 @@ describe("System Gateway Validation", () => {
   // ===========================================================================
 
   describe("CORS Headers", () => {
-    it("CORS-01: OPTIONS preflight returns CORS headers", async () => {
+    it("OPTIONS preflight returns CORS headers", async () => {
       const response = await fetch(`${gatewayUrl}/api/agents`, {
         method: "OPTIONS",
         headers: {
@@ -125,7 +125,7 @@ describe("System Gateway Validation", () => {
       expect(allowMethods).toContain("POST");
     });
 
-    it("CORS-02: GET response includes Access-Control-Allow-Origin", async () => {
+    it("GET response includes Access-Control-Allow-Origin", async () => {
       const response = await fetch(`${gatewayUrl}/api/agents`, {
         headers: {
           ...makeAuthHeaders(authToken),
@@ -144,7 +144,7 @@ describe("System Gateway Validation", () => {
   // ===========================================================================
 
   describe("REST API Data Endpoints", () => {
-    it("REST-DATA-01: GET /api/channels returns channels array", async () => {
+    it("GET /api/channels returns channels array", async () => {
       const response = await fetch(`${gatewayUrl}/api/channels`, {
         headers: makeAuthHeaders(authToken),
       });
@@ -155,7 +155,7 @@ describe("System Gateway Validation", () => {
       expect(Array.isArray(body.channels)).toBe(true);
     });
 
-    it("REST-DATA-02: GET /api/activity with limit=0 clamps to 1", async () => {
+    it("GET /api/activity with limit=0 clamps to 1", async () => {
       const response = await fetch(`${gatewayUrl}/api/activity?limit=0`, {
         headers: makeAuthHeaders(authToken),
       });
@@ -167,7 +167,7 @@ describe("System Gateway Validation", () => {
       expect(body.count).toBeLessThanOrEqual(1);
     });
 
-    it("REST-DATA-03: GET /api/activity with limit=999 clamps to 100", async () => {
+    it("GET /api/activity with limit=999 clamps to 100", async () => {
       const response = await fetch(`${gatewayUrl}/api/activity?limit=999`, {
         headers: makeAuthHeaders(authToken),
       });
@@ -178,7 +178,7 @@ describe("System Gateway Validation", () => {
       expect(body.count).toBeLessThanOrEqual(100);
     });
 
-    it("REST-DATA-04: GET /api/activity with non-numeric limit defaults to 50", async () => {
+    it("GET /api/activity with non-numeric limit defaults to 50", async () => {
       const response = await fetch(`${gatewayUrl}/api/activity?limit=abc`, {
         headers: makeAuthHeaders(authToken),
       });
@@ -189,7 +189,7 @@ describe("System Gateway Validation", () => {
       expect(body.count).toBeLessThanOrEqual(50);
     });
 
-    it("REST-DATA-05: GET /api/activity returns entries with correct shape", async () => {
+    it("GET /api/activity returns entries with correct shape", async () => {
       const response = await fetch(`${gatewayUrl}/api/activity`, {
         headers: makeAuthHeaders(authToken),
       });
@@ -211,7 +211,7 @@ describe("System Gateway Validation", () => {
       }
     });
 
-    it("REST-DATA-06: GET /api/chat/history returns history", async () => {
+    it("GET /api/chat/history returns history", async () => {
       const response = await fetch(`${gatewayUrl}/api/chat/history`, {
         headers: makeAuthHeaders(authToken),
       });
@@ -221,7 +221,7 @@ describe("System Gateway Validation", () => {
       expect(body).toBeDefined();
     });
 
-    it("REST-DATA-07: GET /api/chat/history with channelId param", async () => {
+    it("GET /api/chat/history with channelId param", async () => {
       const response = await fetch(
         `${gatewayUrl}/api/chat/history?channelId=web-dashboard`,
         { headers: makeAuthHeaders(authToken) },
@@ -232,7 +232,7 @@ describe("System Gateway Validation", () => {
       expect(body).toBeDefined();
     });
 
-    it("REST-DATA-08: GET /api/agents returns agents with required fields", async () => {
+    it("GET /api/agents returns agents with required fields", async () => {
       const response = await fetch(`${gatewayUrl}/api/agents`, {
         headers: makeAuthHeaders(authToken),
       });
@@ -439,19 +439,19 @@ describe("System Gateway Validation", () => {
   // ===========================================================================
 
   describe("Error Handling & Edge Cases", () => {
-    it("ERR-01: GET /nonexistent returns 404", async () => {
+    it("GET /nonexistent returns 404", async () => {
       const response = await fetch(`${gatewayUrl}/nonexistent/route`);
       expect(response.status).toBe(404);
     });
 
-    it("ERR-02: GET /api/nonexistent with auth returns 404", async () => {
+    it("GET /api/nonexistent with auth returns 404", async () => {
       const response = await fetch(`${gatewayUrl}/api/nonexistent`, {
         headers: makeAuthHeaders(authToken),
       });
       expect(response.status).toBe(404);
     });
 
-    it("ERR-03: large request body (64KB) does not crash daemon", async () => {
+    it("large request body (64KB) does not crash daemon", async () => {
       // Send a large but not absurdly large JSON body
       const largeMessage = "A".repeat(65536);
       const response = await fetch(`${gatewayUrl}/api/chat`, {
@@ -470,7 +470,7 @@ describe("System Gateway Validation", () => {
       expect(healthResponse.status).toBe(200);
     });
 
-    it("ERR-04: concurrent requests all succeed without misrouting", async () => {
+    it("concurrent requests all succeed without misrouting", async () => {
       const N = 10;
       const requests = Array.from({ length: N }, () =>
         fetch(`${gatewayUrl}/api/agents`, {
@@ -488,7 +488,7 @@ describe("System Gateway Validation", () => {
       }
     });
 
-    it("ERR-05: health endpoint available after all tests", async () => {
+    it("health endpoint available after all tests", async () => {
       const response = await fetch(`${gatewayUrl}/health`);
       expect(response.status).toBe(200);
 
@@ -504,7 +504,7 @@ describe("System Gateway Validation", () => {
   // ===========================================================================
 
   describe("WebSocket Edge Cases", () => {
-    it("WS-EDGE-01: unauthenticated WebSocket connection is rejected with 4001", async () => {
+    it("unauthenticated WebSocket connection is rejected with 4001", async () => {
       const port = handle.daemon.container.config.gateway.port;
       const wsUrl = `ws://127.0.0.1:${port}/ws`;
 
@@ -529,7 +529,7 @@ describe("System Gateway Validation", () => {
       expect(result.reason).toContain("Unauthorized");
     });
 
-    it("WS-EDGE-02: WebSocket with invalid token is rejected with 4001", async () => {
+    it("WebSocket with invalid token is rejected with 4001", async () => {
       const port = handle.daemon.container.config.gateway.port;
       const wsUrl = `ws://127.0.0.1:${port}/ws?token=INVALID_TOKEN_123`;
 

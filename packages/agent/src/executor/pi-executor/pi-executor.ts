@@ -1089,7 +1089,7 @@ async function runSessionLocked(
     model: config.model,
     operationType: executionOverrides?.operationType ?? "interactive",
     logger: deps.logger,
-    // WR-05: thread the operator $HOME so the bridge's tool:started/tool:executed
+    // Thread the operator $HOME so the bridge's tool:started/tool:executed
     // params compact $HOME→~ for ALL bus consumers (delivery-tracer, trajectory
     // writers, plan-stream), not only the activity renderer. Matches the
     // os.homedir() sanctioned-root pattern already used in this file for the
@@ -1232,7 +1232,7 @@ async function runSessionLocked(
     ttlSplit,
     graphId: executionOverrides?.graphId,
     nodeId: executionOverrides?.nodeId,
-    // SUBA-02: pass sub-agent's active tool groups for "Tool X not found" enrichment
+    // Pass sub-agent's active tool groups for "Tool X not found" enrichment
     activeToolGroups: executionOverrides?.activeToolGroups,
     onCacheBreakDetected: capturedBridgeRetention
       ? (event) => {

@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Discord approval-UI tests (APV-02 rich-channel half; §7.7 / §17.3).
+ * Discord approval-UI tests (rich-channel half; §7.7 / §17.3).
  *
- * Phase 73 turns the Discord renderer's deferred "approval affordance" into real
+ * The Discord renderer turns its deferred "approval affordance" into real
  * native components: a `kind:"approval"` event in a frame's `visibleEvents` is
  * painted as a Discord component row whose `callback_data` is the signed §6.4.2
  * wire string `v1.<choice>.<shortId>.<hmac>` (from `buildApprovalButtons` over
  * the renderer-injected `SignCallbackData`). The frame stays redacted — the
- * button labels/styles come from the choice hints, never raw params (T-73-17).
+ * button labels/styles come from the choice hints, never raw params.
  *
- * The signing seam (73-06) is consumed here, not re-derived: the renderer takes
- * a `signCallbackData` dep (wired at the composition root in 73-10) and reaches
+ * The signing seam is consumed here, not re-derived: the renderer takes
+ * a `signCallbackData` dep (wired at the composition root) and reaches
  * the core HMAC primitive through it — never importing `@comis/orchestrator`.
  *
  * Time discipline: the FakeTimers/FakeClock drive every wait (no raw
@@ -69,7 +69,7 @@ function approvalFrame(corr: ApprovalCorrelation = approval()): ActivityRenderFr
   };
 }
 
-describe("Discord approval components (signed native callback_data — APV-02)", () => {
+describe("Discord approval components (signed native callback_data)", () => {
   it("paints a kind:'approval' frame as a component row whose callback_data is the signed wire string", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
@@ -100,7 +100,7 @@ describe("Discord approval components (signed native callback_data — APV-02)",
   it("renders the approval prompt text alongside the buttons", async () => {
     const timer = createFakeTimers();
     const fake = createFakeDiscordAdapter();
-    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
+    // Drop clock so the §8.5 elapsed fallback
     // is skipped — the test asserts the approval-prompt text byte-stably.
     const r = createDiscordActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 

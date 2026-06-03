@@ -1706,10 +1706,10 @@ Plugin system configuration.
 
 ## tooling
 
-The tool-first capability layer (v1.1+). Operator-only — agents cannot self-configure capability routing or detour policy. The entire `tooling` tree is added to `IMMUTABLE_CONFIG_PREFIXES` and rejected by `config.patch` from agent-callable surfaces.
+The tool-first capability layer. Operator-only — agents cannot self-configure capability routing or detour policy. The entire `tooling` tree is added to `IMMUTABLE_CONFIG_PREFIXES` and rejected by `config.patch` from agent-callable surfaces.
 
 <Warning>
-  **Restart required.** Changes to `tooling.capabilityIndex.enabled` and `tooling.installDetours.mode` apply only after the daemon restarts. The `capabilityIndex.enabled` toggle selects between two cached system-prompt shapes (one-line residual vs flat tool dump); in-process reload is not supported in v1.1. Operator config edits go through the standard `config.patch` / `config.apply` path which validates → writes → 200 ms delayed `SIGUSR1` → process restart.
+  **Restart required.** Changes to `tooling.capabilityIndex.enabled` and `tooling.installDetours.mode` apply only after the daemon restarts. The `capabilityIndex.enabled` toggle selects between two cached system-prompt shapes (one-line residual vs flat tool dump); in-process reload is not supported. Operator config edits go through the standard `config.patch` / `config.apply` path which validates → writes → 200 ms delayed `SIGUSR1` → process restart.
 </Warning>
 
 Top-level fields:

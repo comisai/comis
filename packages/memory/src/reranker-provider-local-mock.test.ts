@@ -170,7 +170,7 @@ describe("createLocalRerankerProvider (mocked node-llama-cpp)", () => {
     expect(mockCtxDispose).toHaveBeenCalledTimes(1);
   });
 
-  it("returns err() when loadModel rejects (graceful degrade, RANK-03)", async () => {
+  it("returns err() when loadModel rejects (graceful degrade)", async () => {
     mockLoadModel.mockRejectedValue(new Error("model load failed"));
     const result = await createLocalRerankerProvider({
       modelUri: "/local/model.gguf",
@@ -184,7 +184,7 @@ describe("createLocalRerankerProvider (mocked node-llama-cpp)", () => {
     }
   });
 
-  // ME-03: the rerankerGpu enum must reach getLlama, not be a silent no-op.
+  // The rerankerGpu enum must reach getLlama, not be a silent no-op.
   it("maps gpu=\"false\" to getLlama({ gpu: false }) (force CPU)", async () => {
     const result = await createLocalRerankerProvider({
       modelUri: "/local/model.gguf",

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * label-compressor unit tests (UX-02, spec §8.4). Proves the pure, one-pass,
+ * label-compressor unit tests (spec §8.4). Proves the pure, one-pass,
  * idempotent display-shortener for URLs / ISO timestamps / long mcp_ tool
  * names, and — critically (Pitfall 2) — that it treats an already-redacted,
  * already-path-compacted string as a fixed point: it does NOT re-compact paths
@@ -42,7 +42,7 @@ const CATEGORIES: ReadonlyArray<readonly [string, string, string]> = [
   ["plain word", "done", "done"],
 ];
 
-describe("compressLabel — per-category one-pass display shortening (UX-02 §8.4)", () => {
+describe("compressLabel — per-category one-pass display shortening (§8.4)", () => {
   it.each(CATEGORIES)("compresses category: %s", (_name, input, expected) => {
     expect(compressLabel(input)).toBe(expected);
   });

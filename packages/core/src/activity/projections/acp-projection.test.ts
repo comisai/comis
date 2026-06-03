@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * acp-projection tests (ACT-10).
+ * acp-projection tests.
  *
  * Pure pass-through: every event visible, NO coalescing, no verbosity policy,
  * and groupedActivityIds is ALWAYS empty (IDEs want full fidelity — §9).

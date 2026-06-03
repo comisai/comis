@@ -3,7 +3,7 @@
 # Identical to config.test.yaml but with:
 # - Unique port (8454) to avoid conflicts with 4766-8453
 # - Unique dbPath to avoid cross-test data leaks
-# - Debug logging for LOG-01 verification
+# - Debug logging for log verification
 
 tenantId: "test"
 logLevel: "debug"

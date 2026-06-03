@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteMemoryCausalStore: the SOLE adapter for the segregated
- * `MemoryCausalStore` port (@comis/core, Phase 96, EXTRACT-03). It owns ALL the
+ * `MemoryCausalStore` port (@comis/core). It owns ALL the
  * causal-edge SQL — the write-path edge link (resolve `effectText` → a stored
  * memory id via the scoped FTS, then `INSERT OR IGNORE` a directed cause→effect
  * edge) and the read-path causal lane (the scoped one-hop UNION over
@@ -12,10 +12,10 @@
  * via `getDb()`), so it runs against the same schema (`memories`,
  * `memory_causal_edges`, `memory_fts`) with `PRAGMA foreign_keys = ON` already
  * set — that pragma is what makes the `ON DELETE CASCADE` on BOTH
- * `memory_causal_edges.source_memory_id` and `.target_memory_id` fire (T-96-04 —
- * the entire edge-maintenance story; no orphan-sweep job).
+ * `memory_causal_edges.source_memory_id` and `.target_memory_id` fire (the
+ * entire edge-maintenance story; no orphan-sweep job).
  *
- * ## Isolation is the load-bearing security boundary (T-96-01, the ENT-03 pattern)
+ * ## Isolation is the load-bearing security boundary (the entity-link pattern)
  *
  * Comis runs many agents in one DB. BOTH the write (the effectText id-resolution
  * AND the edge INSERT) and the read lane filter on `(tenant_id, agent_id)` —
@@ -88,18 +88,18 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
   // --- Prepared statements (parameterized; reused across calls) ---
   // Scope-check a single candidate id (the FTS resolver re-asserts the FULL
   // (tenant, agent) scope on the matched memory — effectText must NOT resolve
-  // cross-scope, T-96-01). Bound params only.
+  // cross-scope). Bound params only.
   const memoryInScope = db.prepare(
     "SELECT id FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?",
   );
-  // Idempotent edge write (T-96-01 PK is the conflict target). Bound params only.
+  // Idempotent edge write (the PK is the conflict target). Bound params only.
   const insertEdge = db.prepare(
     "INSERT OR IGNORE INTO memory_causal_edges " +
       "(tenant_id, agent_id, source_memory_id, target_memory_id, confidence, created_at) " +
       "VALUES (?, ?, ?, ?, ?, ?)",
   );
   // Hydrate a linked memory, re-asserting the FULL (tenant, agent) scope so the
-  // hydrate is self-sufficient (LO-01 — no fail-open if the lane query is ever
+  // hydrate is self-sufficient (no fail-open if the lane query is ever
   // refactored). Bound params only.
   const hydrateMemory = db.prepare(
     "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?",
@@ -126,7 +126,7 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
           if (cand.id === sourceMemoryId) continue; // never self-link
           // Re-assert the FULL (tenant, agent) scope on the matched memory — parsed
           // via the id-only mapper (no `as { id: string }`). effectText must NOT
-          // resolve cross-scope (T-96-01).
+          // resolve cross-scope.
           const probe = memoryInScopeRowMapper.parseOptionalRow(
             memoryInScope.get(cand.id, tenantId, agentId),
           );
@@ -180,7 +180,7 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
       const startMs = systemNowMs();
       const { tenantId, agentId } = scope;
       try {
-        // ENT-04 (reused): no seeds -> empty lane (no query). RRF ranking is unchanged.
+        // No seeds -> empty lane (no query). RRF ranking is unchanged.
         if (seedMemoryIds.length === 0) {
           logger?.debug(
             { step: "causal-lane", seedCount: 0, resultCount: 0, durationMs: 0 },
@@ -191,7 +191,7 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
 
         // The scoped one-hop UNION (RESEARCH Pattern 3 — verified). The
         // `tenant_id = ? AND agent_id = ?` on BOTH arms is the load-bearing
-        // ISOLATION boundary (T-96-01) — a cross-scope edge sharing a memory id is
+        // ISOLATION boundary — a cross-scope edge sharing a memory id is
         // excluded. The first arm walks source→effect (PK prefix); the second walks
         // effect→cause (idx_causal_target) so causal influence reads bidirectionally.
         // Placeholders only — no string-built SQL.

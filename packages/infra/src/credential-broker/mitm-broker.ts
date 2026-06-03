@@ -4,7 +4,7 @@
  *
  * Accepts HTTP CONNECT tunnels from driven CLIs, validates single-use proxy
  * tokens via SessionManager, resolves secrets per-request from SecretManager,
- * injects credentials via the Phase 1 engine (applyInjections), and fails
+ * injects credentials via the injection engine (applyInjections), and fails
  * closed in all error scenarios (407/403/502, zero upstream bytes on failure).
  *
  * CONNECT handler pipeline (strict ordering — no upstream socket until all gates pass):
@@ -16,11 +16,11 @@
  *   6. Inject credentials (applyInjections) → forward to upstream
  *   6.5 Finalizer stage (body-aware) → buffer body + dispatch → forward OR 413 fail-closed
  *
- * TLS seam (Phase 3): accepts optional CaManagerPort; when undefined, passes
- * TCP stream opaque. When wired, Phase 3 terminates TLS and injects on the
+ * TLS seam: accepts optional CaManagerPort; when undefined, passes
+ * TCP stream opaque. When wired, it terminates TLS and injects on the
  * decrypted HTTP/1.1 layer.
  *
- * Security invariants (BROKER-01..03):
+ * Security invariants:
  *   - Every fail-closed exit (407/403/502) calls clientSocket.destroy() BEFORE
  *     any upstream net.connect — zero upstream bytes are sent on any gate failure.
  *   - secret variable is NEVER passed to logger or event payloads.
@@ -55,8 +55,8 @@ import { emitSessionOpened, emitSessionClosed, emitRequest, emitInjected, emitDe
 const MAX_HEADER_BYTES = 8192;
 
 // ── Module-level no-op error handler ─────────────────────────────────────────
-// Absorbs "error" events on clientSocket before + during the 200 write
-// (CR-02/WR-01). Named constant so V8 function coverage tracks it correctly.
+// Absorbs "error" events on clientSocket before + during the 200 write.
+// Named constant so V8 function coverage tracks it correctly.
 function noopErrorHandler(): void { /* absorbs EPIPE / ECONNRESET on the raw socket */ }
 
 // ── Exported types ────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ export interface MitmBrokerDeps {
   logger: ComisLogger;
   clock: ClockPort;
   timers: TimerPort;
-  caManager?: CaManagerPort; // undefined in Phase 2; wired in Phase 3
+  caManager?: CaManagerPort; // undefined when TLS termination is not wired
 }
 
 export interface MitmBrokerPort {
@@ -151,7 +151,7 @@ function parseInnerRequest(rawHeaders: string): {
     if (colonIdx === -1) continue;
     const name = line.slice(0, colonIdx).trim().toLowerCase();
     const value = line.slice(colonIdx + 1).trim();
-    // CR-03: RFC 7230 §3.2.2 comma-join duplicates — prevents Upgrade header
+    // RFC 7230 §3.2.2 comma-join duplicates — prevents Upgrade header
     // bypass where a second value would overwrite "websocket" via Map.set().
     const existing = headers.get(name);
     headers.set(name, existing !== undefined ? `${existing}, ${value}` : value);
@@ -169,7 +169,7 @@ function parseInnerRequest(rawHeaders: string): {
  * Resolves immediately if enough data is buffered from the initial dataChunk.
  *
  * The `tail` must be written to the upstream socket BEFORE piping, so that
- * body bytes that co-arrived with headers are not silently discarded (CR-01).
+ * body bytes that co-arrived with headers are not silently discarded.
  */
 function readTunnelHeaders(
   socket: net.Socket,
@@ -194,7 +194,7 @@ function readTunnelHeaders(
       if (finished) return;
       finished = true;
       // Pause before removing "data" listener so body bytes arriving after
-      // \r\n\r\n are buffered until pipe() resumes the stream (CR-01).
+      // \r\n\r\n are buffered until pipe() resumes the stream.
       socket.pause();
       socket.off("data", onData);
       socket.off("error", onTerminate);
@@ -291,13 +291,13 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
     // response. On Node.js, socket.write() to a closed socket does NOT throw
     // synchronously — it emits an "error" event on the socket instead. Without
     // a listener attached, an unhandled "error" event on a socket throws
-    // uncaughtException (CR-02 / WR-01). The no-op here absorbs those errors;
+    // uncaughtException. The no-op here absorbs those errors;
     // the async IIFE's outer try/catch handles cleanup for all other errors.
     // The handler is a module-level constant to ensure V8 function coverage
     // tracks it correctly (avoids anonymous-function coverage gaps).
     clientSocket.on("error", noopErrorHandler);
 
-    // ── Session-closed guard (CR-01 fix) ──────────────────────────────────────
+    // ── Session-closed guard ──────────────────────────────────────────────────
     // Declared outside the try/catch so both the success path and the catch block
     // can call it. Ensures broker:session_closed is emitted EXACTLY ONCE for every
     // connection where broker:session_opened fired — across ALL exit paths.
@@ -334,8 +334,8 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         sessionStartedAt = deps.clock.now();
         emitSessionOpened(deps.eventBus, { sessionId, agentId, host, timestamp: sessionStartedAt });
 
-        // ── Step 2.5: TLS upgrade (Phase 3 — when caManager is wired) ───────
-        // Pre-flight host check (CR-02 fix): when caManager is wired, verify
+        // ── Step 2.5: TLS upgrade (when caManager is wired) ─────────────────
+        // Pre-flight host check: when caManager is wired, verify
         // the CONNECT host appears in at least one binding BEFORE minting any
         // leaf cert. A client with a valid (but single-use) token must not be
         // able to cause the CA to sign and cache certs for arbitrary hostnames.
@@ -370,8 +370,8 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
         // When deps.caManager is wired and returns a SecureContext for this host,
         // we upgrade the raw TCP socket to a TLS server socket BEFORE reading
-        // inner headers. When caManager is undefined (Phase 2), innerSocket
-        // remains clientSocket and the code path is identical to Phase 2.
+        // inner headers. When caManager is undefined, innerSocket
+        // remains clientSocket and the code path is identical to the opaque-TCP case.
         let innerSocket: net.Socket | tls.TLSSocket = clientSocket;
         if (deps.caManager) {
           const secureCtx = await deps.caManager.serverContextForHost(host);
@@ -401,7 +401,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
         if (tunnelResult === null) {
           log.debug({ step: "header-parse", sessionId, agentId, hint: "Header overflow or parse error; fail closed", errorKind: "validation" as const }, "Inner request header overflow");
-          // CR-03: malformed_request (not path_policy — avoid misclassification).
+          // malformed_request (not path_policy — avoid misclassification).
           emitDenied(deps.eventBus, { sessionId, host, reason: "malformed_request", statusCode: 400, timestamp: deps.clock.now() });
           emitSessionClosedOnce("error");
           destroyWithStatus(innerSocket, "HTTP/1.1 400 Bad Request");
@@ -409,13 +409,13 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         }
 
         // `tail` = bytes after \r\n\r\n (body prefix); must be forwarded before
-        // piping to avoid silent discard (CR-01).
+        // piping to avoid silent discard.
         const { headers: rawHeaders, tail: bodyPrefix } = tunnelResult;
 
         const parsed = parseInnerRequest(rawHeaders);
         if (parsed === null) {
           log.debug({ step: "header-parse", sessionId, agentId, hint: "Malformed inner HTTP request; fail closed", errorKind: "validation" as const }, "Malformed inner request");
-          // WR-04: emit audit event on every consumed-token exit path.
+          // Emit audit event on every consumed-token exit path.
           emitDenied(deps.eventBus, { sessionId, host, reason: "malformed_request", statusCode: 400, timestamp: deps.clock.now() });
           emitSessionClosedOnce("error");
           destroyWithStatus(innerSocket, "HTTP/1.1 400 Bad Request");
@@ -430,9 +430,10 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         );
         emitRequest(deps.eventBus, { sessionId, host, path, method, timestamp: deps.clock.now() });
 
-        // ── Step 3.5: WebSocket upgrade guard (EGRESS-04) ────────────────
-        // Fail closed on WS upgrade (WS-01 future). CR-03: split the comma-joined
-        // multi-value Upgrade header so duplicate headers cannot shadow "websocket".
+        // ── Step 3.5: WebSocket upgrade guard ───────────────────────────
+        // Fail closed on WS upgrade (support is not yet implemented). Split the
+        // comma-joined multi-value Upgrade header so duplicate headers cannot
+        // shadow "websocket".
         const upgradeHeader = parsed.headers.get("upgrade");
         const upgradeValues = (upgradeHeader ?? "").split(",").map((v) => v.trim().toLowerCase());
         if (upgradeValues.some((v) => v === "websocket")) {
@@ -573,7 +574,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             destroyWithStatus(innerSocket, "HTTP/1.1 413 Content Too Large");
           }
 
-          // CR-01: parse CL with explicit isNaN+non-negative guard — 0 is valid.
+          // Parse CL with explicit isNaN+non-negative guard — 0 is valid.
           const rawContentLength = whatwgHeaders.get("content-length");
           const declaredContentLength = (() => {
             if (rawContentLength === null) return undefined;
@@ -581,7 +582,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             return !isNaN(parsed) && parsed >= 0 ? parsed : undefined;
           })();
 
-          // IN-01: reject chunked TE without CL — bufferBody cannot decode frames
+          // Reject chunked TE without CL — bufferBody cannot decode frames
           // and keep-alive never sends EOF. 411 Length Required.
           const transferEncoding = whatwgHeaders.get("transfer-encoding");
           if (transferEncoding?.toLowerCase().includes("chunked") && declaredContentLength === undefined) {
@@ -590,13 +591,13 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             return;
           }
 
-          // WR-01: early 413 when declared CL already exceeds cap — no buffering.
+          // Early 413 when declared CL already exceeds cap — no buffering.
           if (declaredContentLength !== undefined && declaredContentLength > MAX_BODY_BYTES) {
             deny413("Declared Content-Length exceeds cap; returning 413 before buffering");
             return;
           }
 
-          // CR-02: inject timer from deps.timers so bufferBody has a read-deadline.
+          // Inject timer from deps.timers so bufferBody has a read-deadline.
           const scheduleTimeout = (cb: () => void, ms: number): (() => void) => {
             const h = deps.timers.setTimeout(cb, ms);
             return () => h.cancel();
@@ -618,7 +619,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             requestPath += targetUrl.search;
           }
 
-          // Reconstruct request headers from the finalizer result (alphabetical — acceptable for Phase 2/4).
+          // Reconstruct request headers from the finalizer result (alphabetical — acceptable here).
           let requestStr = `${method} ${requestPath} HTTP/1.1\r\n`;
           result.headers.forEach((value, name) => {
             requestStr += `${name}: ${value}\r\n`;
@@ -655,13 +656,13 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           innerSocket.on("close", teardownUpstream);
 
         } else {
-          // No finalizer — existing streaming path (byte-identical pass-through, CR-01).
+          // No finalizer — existing streaming path (byte-identical pass-through).
           const upstreamSocket = net.connect(targetPort, "127.0.0.1", () => {
             let requestPath = targetUrl.pathname;
             if (targetUrl.search) {
               requestPath += targetUrl.search;
             }
-            // WHATWG Headers.forEach is alphabetical — acceptable for Phase 2/4.
+            // WHATWG Headers.forEach is alphabetical — acceptable here.
             let requestStr = `${method} ${requestPath} HTTP/1.1\r\n`;
             whatwgHeaders.forEach((value, name) => {
               requestStr += `${name}: ${value}\r\n`;
@@ -749,7 +750,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         // Unlink stale socket file before binding (prevents EADDRINUSE).
         try { unlinkSync(socketPath); } catch { /* not present — ok */ }
         unixServer.listen({ path: socketPath }, () => {
-          // WR-01: restrict socket to owner-only (rw-------). The daemon umask
+          // Restrict socket to owner-only (rw-------). The daemon umask
           // (0o022) would yield 0o755 (world-accessible). Best-effort catch
           // prevents chmod failure from blocking startup on non-POSIX FS.
           try { chmodSync(socketPath, 0o600); } catch { /* non-POSIX FS — ok */ }
@@ -762,7 +763,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
     stop(): Promise<void> {
       return new Promise((resolve) => {
-        // WR-02: destroy ALL tracked sockets FIRST — before the !server
+        // Destroy ALL tracked sockets FIRST — before the !server
         // early-return — so Unix client sockets are always cleaned up.
         for (const socket of openSockets) { socket.destroy(); }
         openSockets.clear();

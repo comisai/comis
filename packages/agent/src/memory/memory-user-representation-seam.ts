@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The daemon-injected OFFLINE per-user representation build seam builder
- * (Phase 107 — USER-04, Track E1).
+ * The daemon-injected OFFLINE per-user representation build seam builder.
  *
  * {@link runUserRepresentationBuild} takes an INJECTED `build` seam (a HIGH-TRUST
  * source-memory text → typed {@link UserRepresentationBuildOutput} candidates). This

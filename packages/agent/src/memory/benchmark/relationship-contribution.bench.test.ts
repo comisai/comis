@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated KEYLESS relationship mechanical-claims harness (Phase 108-05, SOCIAL ·
- * Track E2) -- the FREE, deterministic, no-API-cost measurement of the MECHANICAL
- * claims the directional relationship feature makes, over the REAL SOLE adapter +
- * the REAL offline builder + the REAL LLM-free injection formatter.
+ * Env-gated KEYLESS relationship mechanical-claims harness -- the FREE,
+ * deterministic, no-API-cost measurement of the MECHANICAL claims the directional
+ * relationship feature makes, over the REAL SOLE adapter + the REAL offline
+ * builder + the REAL LLM-free injection formatter.
  *
- * WHY KEYLESS, AND WHAT IS DEFERRED (binding-constraint-#8 honest protocol):
+ * WHY KEYLESS, AND WHAT IS DEFERRED (the honest-measurement protocol):
  * the costed QA lift (does the <channel_relationships> block raise grounded multi-party
  * Q&A accuracy under a real answer model + a real judge?) is NOT measured here -- that is
  * the operator-costed re-run (keys + judge spend), AND the human privacy-review SIGN-OFF +
- * enabling the feature is the OPERATOR gate (SOCIAL-03), both DEFERRED with a reproduction
+ * enabling the feature is the OPERATOR gate, both DEFERRED with a reproduction
  * note in the committed PARTIAL manifest (benchmarks/results/2026-06-01-phase108-social/).
  * This harness measures only the $0 MECHANICAL claims: no answer model, no judge, no API
  * key, no provider call, no cost. The deterministic claims supply their own synthetic
@@ -19,14 +19,14 @@
  * THE MEASURED MECHANICAL CLAIMS (each over the REAL adapter / job / formatter):
  *   1. DIRECTIONAL round-trip: a build returning A->B AND B->A upserts TWO DISTINCT edges
  *      (never symmetrized); the scoped read returns both, directionally intact.
- *   2. per-channel + per-tenant + per-agent ISOLATION (the SOCIAL-02 headline): an edge
+ *   2. per-channel + per-tenant + per-agent ISOLATION (the isolation headline): an edge
  *      written under scope A is structurally ABSENT across all foreign axes (cross-channel /
  *      cross-tenant / cross-agent) and PRESENT in-scope.
  *   3. EXTERNAL REJECTED + REDACTION-CLEAN (anti-poisoning): a forged external-trust upsert
  *      is rejected at the write boundary; a builder run over an external-only source set
  *      writes 0 rows; a secret-bearing candidate is blocked by validateMemoryWrite (SKIPPED,
- *      never down-stored -- the Pitfall-2 hardening).
- *   4. The SOCIAL-03 SIGN-OFF GATE enforcement (the read side): with the knob on but NO
+ *      never down-stored -- the redaction hardening).
+ *   4. The SIGN-OFF GATE enforcement (the read side): with the knob on but NO
  *      recorded sign-off the read+format injection produces NOTHING (the dual gate
  *      enabled && privacyReviewSignedOffBy is required; a spy proves the gate short-circuits
  *      before any read).
@@ -45,7 +45,7 @@
  * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import @comis/memory
  * (a devDependency) -- the agent->memory cut excludes the `.test.ts` suffix
  * (source-rules.test.ts `excludeFileSuffixes: [".test.ts"]`). Mirrors the blessed precedent
- * user-representation-contribution.bench.test.ts (USER-04).
+ * user-representation-contribution.bench.test.ts.
  *
  * SECURITY: fresh `mkdtempSync` tmp DB (NEVER ~/.comis); `tenantId:"default"`/`agentId:"bench"`/
  * `channelId:"chan_x"` -- isolated from any live agent. All fixture strings are synthetic (no
@@ -167,7 +167,7 @@ async function runBuilderWith(args: {
 // CLAIM 1 -- directional round-trip (A->B != B->A)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("relationship: directional round-trip (SOCIAL-01 claim 1, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("relationship: directional round-trip (claim 1, keyless gated)", () => {
   it("a build returning A->B AND B->A upserts TWO distinct edges; the scoped read returns both directionally", async () => {
     const { store, dir } = makeStore("directional");
     const reportDir = resolveReportDir(dir);
@@ -206,10 +206,10 @@ describe.skipIf(!COMIS_BENCH)("relationship: directional round-trip (SOCIAL-01 c
 });
 
 // ---------------------------------------------------------------------------
-// CLAIM 2 -- per-channel + per-tenant + per-agent isolation (the SOCIAL-02 headline)
+// CLAIM 2 -- per-channel + per-tenant + per-agent isolation (the isolation headline)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("relationship: (tenant, agent, channel) isolation (SOCIAL-02 claim 2, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("relationship: (tenant, agent, channel) isolation (claim 2, keyless gated)", () => {
   it("an edge written under scope A is ABSENT across cross-channel / cross-tenant / cross-agent and PRESENT in-scope", async () => {
     const { store, dir } = makeStore("isolation");
     const reportDir = resolveReportDir(dir);
@@ -230,7 +230,7 @@ describe.skipIf(!COMIS_BENCH)("relationship: (tenant, agent, channel) isolation 
     const crossAgentRows = crossAgent.ok ? crossAgent.value.length : -1;
 
     expect(inScopeRows, "present in-scope").toBe(1);
-    expect(crossChannelRows, "absent cross-channel (the SOCIAL-02 headline)").toBe(0);
+    expect(crossChannelRows, "absent cross-channel (the isolation headline)").toBe(0);
     expect(crossTenantRows, "absent cross-tenant").toBe(0);
     expect(crossAgentRows, "absent cross-agent").toBe(0);
 
@@ -250,7 +250,7 @@ describe.skipIf(!COMIS_BENCH)("relationship: (tenant, agent, channel) isolation 
 // CLAIM 3 -- external REJECTED + redaction-clean (anti-poisoning)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("relationship: external REJECTED + redaction-clean (SOCIAL-01 claim 3, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("relationship: external REJECTED + redaction-clean (claim 3, keyless gated)", () => {
   it("rejects an external-trust upsert, writes 0 rows from external-only sources, and blocks a secret candidate", async () => {
     const { store, dir } = makeStore("antipoison");
     const reportDir = resolveReportDir(dir);
@@ -277,7 +277,7 @@ describe.skipIf(!COMIS_BENCH)("relationship: external REJECTED + redaction-clean
     expect(externalWritten, "external-only sources write 0 rows").toBe(0);
 
     // (c) REDACTION: a secret-shaped candidate is blocked by validateMemoryWrite (SKIPPED, never
-    // down-stored -- the relationship table has no external tier, the Pitfall-2 hardening).
+    // down-stored -- the relationship table has no external tier, the redaction hardening).
     const SECRET_SHAPED = "my aws key is AKIAIOSFODNN7EXAMPLE and the token sk-abcdefghijklmnop1234";
     const verdict = validateMemoryWrite(SECRET_SHAPED);
     expect(verdict.severity, "the firewall flags the secret-shaped content").not.toBe("clean");
@@ -312,10 +312,10 @@ describe.skipIf(!COMIS_BENCH)("relationship: external REJECTED + redaction-clean
 });
 
 // ---------------------------------------------------------------------------
-// CLAIM 4 -- the SOCIAL-03 sign-off gate enforcement (the read side)
+// CLAIM 4 -- the sign-off gate enforcement (the read side)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("relationship: SOCIAL-03 sign-off gate (claim 4, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("relationship: sign-off gate (claim 4, keyless gated)", () => {
   it("knob on but NO recorded sign-off => the read+format injection produces NOTHING (no read)", async () => {
     const { store, dir } = makeStore("signoff");
     const reportDir = resolveReportDir(dir);
@@ -327,7 +327,7 @@ describe.skipIf(!COMIS_BENCH)("relationship: SOCIAL-03 sign-off gate (claim 4, k
     );
 
     // A read+format SPY mirroring the prompt-assembly injection gate EXACTLY: the dual gate is
-    // `enabled && privacyReviewSignedOffBy && store` (108-04). Knob on, NO sign-off => the gate is
+    // `enabled && privacyReviewSignedOffBy && store`. Knob on, NO sign-off => the gate is
     // false => read() is NEVER called and nothing is pushed.
     let readCalls = 0;
     const spyRead = async (): Promise<RelationshipEntry[]> => {

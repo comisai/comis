@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 111 (LEARN-03 / Track H2) — the PURE, deterministic, CLAMPED
+ * The PURE, deterministic, CLAMPED
  * `computeTunedAlphas` update rule (the "bandit" math, LLM-free).
  *
  * Load-bearing RED-first assertions (the OD2 ship-gate at the math layer):
@@ -11,7 +11,7 @@
  * - DETERMINISTIC: the same (current vector, signal) input yields a
  *   deep-equal output every call; the source has NO Math.random and NO
  *   Date.now/new Date (no wall-clock — reproducibility is the bench
- *   requirement, LEARN-04).
+ *   requirement).
  * - DIRECTIONAL + BOUNDED: a positive usefulnessGradient raises
  *   usefulnessAlpha by at most STEP; a zero-signal aggregate is a no-op
  *   (returns the input unchanged).
@@ -45,7 +45,7 @@ function uniformSignal(grad: number): FeedAggregate {
   };
 }
 
-describe("computeTunedAlphas — pure clamped deterministic update (LEARN-03)", () => {
+describe("computeTunedAlphas — pure clamped deterministic update", () => {
   it("CLAMP holds: a pathological +1e9 gradient keeps EVERY output in [0,1]", () => {
     // RED on an unclamped `cur + STEP*grad`: 0.5 + 0.05*1e9 = 5e7 ≫ 1.
     const out = computeTunedAlphas(midVector(), uniformSignal(1e9));
@@ -154,7 +154,7 @@ describe("computeTunedAlphas — pure clamped deterministic update (LEARN-03)", 
   it("is DETERMINISTIC by construction: source has NO Math.random / Date.now / new Date", () => {
     // The wall-clock/RNG ban: the pure math must read no time and no randomness
     // (globals.test.ts also bans these in src; restated here so the RED is
-    // reproducible from this commit). A clock is injected by the JOB (111-04),
+    // reproducible from this commit). A clock is injected by the JOB,
     // never used in the pure step.
     expect(updateSrc, "no Math.random in the update math").not.toMatch(/Math\.random/);
     expect(updateSrc, "no Date.now in the update math").not.toMatch(/Date\.now/);

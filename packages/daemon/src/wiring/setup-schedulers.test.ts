@@ -496,7 +496,7 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 13.4. Memory consolidation cron — the opt-in gate (Phase 84, CONS-07 / T-84-19)
+  // 13.4. Memory consolidation cron — the opt-in gate
   // OFF by default: a default-config agent registers NO consolidation job; an
   // operator-enabled agent registers __MEMORY_CONSOLIDATION__ (default 30 3 * * *).
   // -------------------------------------------------------------------------
@@ -586,7 +586,7 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 13.4b. Memory reasoning cron — the opt-in gate (Phase 101, REASON-02/03 / 101-06)
+  // 13.4b. Memory reasoning cron — the opt-in gate
   // OFF by default: a default-config agent registers NO reasoning job; an
   // operator-enabled agent registers __MEMORY_REASONING__ (default 0 4 * * *,
   // AFTER consolidation's 30 3 so reasoning runs over freshly-consolidated
@@ -666,10 +666,10 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // __SOCIAL_MODELING__ cron registration (Phase 108, SOCIAL-01/03). The gate
+  // __SOCIAL_MODELING__ cron registration. The gate
   // is STRICTER than the other memory crons: register ONLY when enabled AND a
-  // recorded privacy-review sign-off (privacyReviewSignedOffBy) is present
-  // (SOCIAL-03). A knob-on-but-no-sign-off agent registers NO job (byte-identical).
+  // recorded privacy-review sign-off (privacyReviewSignedOffBy) is present.
+  // A knob-on-but-no-sign-off agent registers NO job (byte-identical).
   // -------------------------------------------------------------------------
 
   it("registers NO __SOCIAL_MODELING__ cron for a default (social-off) agent", async () => {
@@ -693,8 +693,8 @@ describe("setupSchedulers", () => {
     expect(socialAdds.length).toBe(0);
   });
 
-  it("registers NO __SOCIAL_MODELING__ cron when enabled but NO privacy-review sign-off (the SOCIAL-03 gate)", async () => {
-    // The knob alone does NOT register a job — a recorded sign-off is required (SOCIAL-03).
+  it("registers NO __SOCIAL_MODELING__ cron when enabled but NO privacy-review sign-off (the privacy-review gate)", async () => {
+    // The knob alone does NOT register a job — a recorded sign-off is required.
     const { addJob } = withRegistrableScheduler();
     const agents = {
       "agent-1": {
@@ -745,7 +745,7 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // __USEFULNESS_JUDGE__ cron registration (Phase 110, LEARN-02 OPTIONAL). OFF
+  // __USEFULNESS_JUDGE__ cron registration. OFF
   // by default (a cost gate — an OFFLINE cheap-model judge). Registered ONLY
   // when the operator sets memoryUsefulnessJudge.enabled; a default agent
   // registers NO job → byte-identical with the config absent. Default 0 7 * * *
@@ -824,7 +824,7 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // __ONLINE_TUNING__ cron registration (Phase 111, LEARN-03 — Track H2). OFF by
+  // __ONLINE_TUNING__ cron registration. OFF by
   // default. Registered ONLY when the operator sets memoryOnlineTuning.enabled; a
   // default agent registers NO job → byte-identical with the config absent. Default
   // 0 8 * * * runs AFTER the judge's 0 7 so the FEED signal is fully settled. The
@@ -902,7 +902,7 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // __MEMORY_LIFECYCLE__ cron registration (Phase 112, FORGET-02 — Track C). OFF
+  // __MEMORY_LIFECYCLE__ cron registration. OFF
   // by default. Registered ONLY when the operator sets memoryLifecycle.enabled; a
   // default agent registers NO job → byte-identical with the config absent. Default
   // 0 9 * * * runs AFTER online-tuning's 0 8. Like the bandit (NOT the LLM crons)
@@ -981,7 +981,7 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 13.4z. memory.costFeatures master kill switch (v1 opt-out posture — increment 1)
+  // 13.4z. memory.costFeatures master kill switch (opt-out posture)
   //
   // A single top-level gate. When `memory.costFeatures.enabled === false`, EVERY
   // LLM cost-bearing memory CRON is force-disabled at the registration site —
@@ -1040,8 +1040,8 @@ describe("setupSchedulers", () => {
   });
 
   /**
-   * v2.9 increment 2 — KILL SWITCH BEATS DEFAULT-ON. The cost-bearing memory
-   * subtrees now default `{ enabled: true }` at the schema level (the v1 opt-out
+   * KILL SWITCH BEATS DEFAULT-ON. The cost-bearing memory
+   * subtrees now default `{ enabled: true }` at the schema level (the opt-out
    * posture). A real daemon parses the config, so every cost subtree arrives
    * present + enabled WITHOUT the operator opting in. This agent mirrors that
    * PARSED-default shape (the cron subtrees populated + enabled, exactly as
@@ -1090,7 +1090,7 @@ describe("setupSchedulers", () => {
     for (const sentinel of COST_CRON_SENTINELS) {
       expect(
         addedSentinels,
-        `${sentinel} must register by default (v1 opt-out) when the kill switch is on`,
+        `${sentinel} must register by default (opt-out) when the kill switch is on`,
       ).toContain(sentinel);
     }
   });

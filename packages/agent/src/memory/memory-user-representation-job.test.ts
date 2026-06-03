@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Orchestration suite for the per-user representation offline builder (Phase 107 —
-// USER-02). Two units under test:
+// Orchestration suite for the per-user representation offline builder. Two units
+// under test:
 //
 //   1. The agent-internal builder prompt + parser
 //      (`memory-user-representation-prompt.ts`) — the build() seam's payload shape:
@@ -21,12 +21,12 @@
 // the job imports @comis/core TYPES only (the agent↛memory build cut), so this
 // suite never needs @comis/memory.
 //
-// Anti-poisoning headline (USER-02): an `external`/low-trust source candidate is
-// SKIPPED (filtered out BEFORE the build), NEVER downgraded-and-stored — the
-// 107-02 DB CHECK forbids `external`, so an external source RED-proves 0 profile
-// rows. A `warn`/`critical` validateMemoryWrite verdict is likewise SKIPPED
-// (blocked++), not downgraded (Pitfall 2 — the high-trust floor has no landing for
-// a non-clean entry).
+// Anti-poisoning headline: an `external`/low-trust source candidate is SKIPPED
+// (filtered out BEFORE the build), NEVER downgraded-and-stored — the DB CHECK
+// forbids `external`, so an external source proves 0 profile rows. A
+// `warn`/`critical` validateMemoryWrite verdict is likewise SKIPPED (blocked++),
+// not downgraded (Pitfall 2 — the high-trust floor has no landing for a non-clean
+// entry).
 import { describe, it, expect } from "vitest";
 import type { Result } from "@comis/shared";
 import { ok } from "@comis/shared";
@@ -149,7 +149,7 @@ function makeClock(): ClockPort {
  * A FAKE in-memory UserRepresentationStore implementing the @comis/core port.
  * Keeps the suite @comis/memory-free (the agent↛memory cut). `upsert` is
  * idempotent per (entryType, content) so a re-run over identical candidates does
- * NOT grow the row set — mirroring the 107-02 adapter's upsert-replace contract.
+ * NOT grow the row set — mirroring the adapter's upsert-replace contract.
  * `upsertCalls` records every entry the job tried to write (the bound/skip proofs).
  */
 function makeFakeStore(): {
@@ -393,10 +393,10 @@ describe("runUserRepresentationBuild — Task 2: gate / anti-poisoning / validat
     }
   });
 
-  it("MR-02 input bound (count): with more sources than maxSourceMemories, build() sees only the capped HEAD and the event flags truncation", async () => {
-    // RED-first (MR-02): the whole high-trust source set was concatenated into ONE
-    // unbounded build() prompt → an arbitrarily large prompt (over-context → silent
-    // no-build / runaway cost). The input MUST be bounded (mirroring maxEntriesPerRun's
+  it("input bound (count): with more sources than maxSourceMemories, build() sees only the capped HEAD and the event flags truncation", async () => {
+    // The whole high-trust source set was concatenated into ONE unbounded build()
+    // prompt → an arbitrarily large prompt (over-context → silent no-build /
+    // runaway cost). The input MUST be bounded (mirroring maxEntriesPerRun's
     // DoS intent), truncating to the newest-first HEAD, with the truncation surfaced in
     // the counts-only event so an operator can see a thin profile's cause.
     const buildSpy = makeBuildSpy(() => [{ entryType: "identity", content: "distilled" }]);
@@ -439,7 +439,7 @@ describe("runUserRepresentationBuild — Task 2: gate / anti-poisoning / validat
     expect(JSON.stringify(ev?.payload)).not.toContain("SRC_");
   });
 
-  it("MR-02 input bound (chars): a maxSourceChars budget truncates the per-user sourceText and flags truncation", async () => {
+  it("input bound (chars): a maxSourceChars budget truncates the per-user sourceText and flags truncation", async () => {
     const buildSpy = makeBuildSpy(() => [{ entryType: "identity", content: "distilled" }]);
     const fake = makeFakeStore();
     const bus = makeEventBus();
@@ -470,7 +470,7 @@ describe("runUserRepresentationBuild — Task 2: gate / anti-poisoning / validat
     expect(payload.sourcesTruncated).toBe(true);
   });
 
-  it("MR-02 no truncation: a source set within both bounds is passed whole and the event flags NO truncation", async () => {
+  it("no truncation: a source set within both bounds is passed whole and the event flags NO truncation", async () => {
     const buildSpy = makeBuildSpy(() => [{ entryType: "identity", content: "distilled" }]);
     const fake = makeFakeStore();
     const bus = makeEventBus();

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Structured-extraction suite for runMemoryReview (Phase 82 — EXTR-01..05).
+// Structured-extraction suite for runMemoryReview.
 //
-// The flat-string `[{content, session}]` path was DELETED outright (design
-// principle 8 — no dual mode, no fallback). Its assertions are GONE, not
+// The flat-string `[{content, session}]` path was DELETED outright (no dual
+// mode, no fallback). Its assertions are GONE, not
 // skipped. Every test now feeds the structured `{ "memories": [...] }`
-// envelope the job parses via `parseExtractionResult` (Plan 02). A fixed
+// envelope the job parses via `parseExtractionResult`. A fixed
 // injected `clock` makes relative-date resolution + createdAt deterministic
 // (no wall-clock reads).
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
@@ -241,7 +241,7 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EXTR-01 / EXTR-02 — structured store of content + resolved occurredAt
+  // Structured store of content + resolved occurredAt
   // -------------------------------------------------------------------------
 
   it("stores a structured memory's content + resolved occurredAt", async () => {
@@ -279,7 +279,7 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EXTR-04 — trust + provenance inheritance (one consistent system trust)
+  // Trust + provenance inheritance (one consistent system trust)
   // -------------------------------------------------------------------------
 
   it("inherits trust + provenance consistently", async () => {
@@ -316,7 +316,7 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // LANES-03 — persist the LLM-classified memoryType (no longer dropped to 'semantic')
+  // Persist the LLM-classified memoryType (no longer dropped to 'semantic')
   // -------------------------------------------------------------------------
 
   it("threads the classified memoryType onto the stored entry (episodic)", async () => {
@@ -451,7 +451,7 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EXTR-01 / EXTR-05 — no flat-string fallback (principle 8)
+  // No flat-string fallback
   // -------------------------------------------------------------------------
 
   it("rejects the OLD flat array shape as malformed (no fallback)", async () => {
@@ -469,7 +469,7 @@ describe("runMemoryReview", () => {
       expect.objectContaining({ errorKind: expect.anything(), hint: expect.anything() }),
       expect.any(String),
     );
-    // Watermark STILL advances (no stall) — principle-8 no-fallback + EXTR-05.
+    // Watermark STILL advances (no stall) — no-fallback path.
     expect(writeFile).toHaveBeenCalled();
     const writeCall = (writeFile as Mock).mock.calls[0];
     const watermarkData = JSON.parse(writeCall[1] as string);
@@ -491,7 +491,7 @@ describe("runMemoryReview", () => {
       expect.objectContaining({ errorKind: expect.anything(), hint: expect.anything() }),
       expect.any(String),
     );
-    // Watermark advanced to the reviewed session's updatedAt (Pitfall 4 regression).
+    // Watermark advanced to the reviewed session's updatedAt (stall regression).
     expect(writeFile).toHaveBeenCalled();
     const writeCall = (writeFile as Mock).mock.calls[0];
     expect(writeCall[0]).toContain(".tmp");
@@ -525,7 +525,7 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EXTR-04 / Q4b — entities emitted, NOT persisted
+  // Entities emitted, NOT persisted
   // -------------------------------------------------------------------------
 
   it("emits entities on the result without persisting them", async () => {
@@ -537,7 +537,7 @@ describe("runMemoryReview", () => {
 
     await runMemoryReview(deps);
 
-    // The stored entry carries NO entities field — entities are emit-only (Q4b).
+    // The stored entry carries NO entities field — entities are emit-only.
     const storeCall = (deps.memoryPort.store as Mock).mock.calls[0]?.[0];
     expect(storeCall).toBeDefined();
     expect(storeCall.entities).toBeUndefined();
@@ -545,7 +545,7 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Security gating (AGENTS.md §2.2 / ASVS V5 / T-82-07) — validateMemoryWrite
+  // Security gating (AGENTS.md §2.2 / ASVS V5) — validateMemoryWrite
   // The extracted `content` is derived from untrusted conversation text.
   // -------------------------------------------------------------------------
 
@@ -575,7 +575,7 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EXTRACT-02 — the JOB is NOT a post-extraction selectivity filter.
+  // The JOB is NOT a post-extraction selectivity filter.
   //
   // The ✅ durable / ❌ filler rubric is a MODEL instruction; whether the model
   // drops the greeting is asserted at the PROMPT level (memory-extraction.test.ts
@@ -592,7 +592,7 @@ describe("runMemoryReview", () => {
   // thanks!" has no suspicious/dangerous/secret pattern) and search returns no
   // match, so the honest expectation is two stores, not one.
   // -------------------------------------------------------------------------
-  it("stores BOTH a durable fact AND a clean filler item — the job applies no selectivity filter (EXTRACT-02)", async () => {
+  it("stores BOTH a durable fact AND a clean filler item — the job applies no selectivity filter", async () => {
     const deps = makeDeps();
     arrangeOneSession(deps, 9800);
     // Mixed payload: a durable fact + a filler-shaped greeting. Selectivity is the
@@ -659,11 +659,11 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-01 — rejecting (contract-violating) adapter must NOT stall the watermark.
+  // Rejecting (contract-violating) adapter must NOT stall the watermark.
   // MemoryPort returns Promise<Result<…>> (non-throwing), but a real adapter can
   // REJECT (SQLITE_BUSY, disk-full, a better-sqlite3 throw surfaced async). A
   // rejection mid-loop must NOT escape runMemoryReview before the watermark
-  // saves — otherwise the same sessions reprocess every cron tick (EXTR-05 stall
+  // saves — otherwise the same sessions reprocess every cron tick (watermark stall
   // + repeated LLM spend). The run must complete (ok), the watermark must STILL
   // advance, and a WARN with errorKind+hint must be logged.
   // -------------------------------------------------------------------------
@@ -685,7 +685,7 @@ describe("runMemoryReview", () => {
       expect.objectContaining({ errorKind: expect.anything(), hint: expect.anything() }),
       expect.any(String),
     );
-    // The watermark STILL advances (no stall — the whole point of WR-01).
+    // The watermark STILL advances (no stall — the whole point of this guard).
     expect(writeFile).toHaveBeenCalled();
     const writeCall = (writeFile as Mock).mock.calls[0];
     expect(writeCall[0]).toContain(".tmp");
@@ -853,14 +853,14 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // IN-01 — entity resolve+link AFTER a successful store (Phase 83, ENT-01/03).
+  // Entity resolve+link AFTER a successful store.
   //
   // The entities are already emitted (with inherited trust + provenance) at the
-  // store-success branch. Phase 83 persists them via the INJECTED
+  // store-success branch. They are persisted via the INJECTED
   // `MemoryEntityStore` port (`deps.entityStore`). The port is OPTIONAL: when it
-  // is not injected the job behaves EXACTLY as Phase 82 (no entity persistence,
-  // no crash) so the daemon (Plan 05) can light it up independently. A link
-  // failure must be NON-FATAL (mirror the WR-01 store/search guards): a WARN is
+  // is not injected the job behaves EXACTLY as if no entity store were wired (no
+  // entity persistence, no crash) so the daemon can light it up independently. A
+  // link failure must be NON-FATAL (mirror the store/search guards): a WARN is
   // logged (errorKind + hint only — NEVER the entity name), the loop continues,
   // and the watermark STILL advances. The scope is the stored entry's
   // (tenantId, agentId) + the injected clock `now` (NEVER Date.now).
@@ -911,7 +911,7 @@ describe("runMemoryReview", () => {
     }
   });
 
-  it("does NOT call resolveAndLink when entityStore is not injected (Phase-82 behaviour, no crash)", async () => {
+  it("does NOT call resolveAndLink when entityStore is not injected (no crash)", async () => {
     const deps = makeDeps(); // no entityStore
     expect(deps.entityStore).toBeUndefined();
     arrangeOneSession(deps);
@@ -921,7 +921,7 @@ describe("runMemoryReview", () => {
 
     const result = await runMemoryReview(deps);
 
-    // Identical to Phase 82: memory stored, count incremented, no crash.
+    // Identical to the no-entity-store path: memory stored, count incremented, no crash.
     expect(result.ok).toBe(true);
     expect(deps.memoryPort.store).toHaveBeenCalledTimes(1);
     expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({
@@ -1024,7 +1024,7 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // OBS-05 — per-stage step-tagged INFO logs on a `submodule` child logger.
+  // Per-stage step-tagged INFO logs on a `submodule` child logger.
   //
   // The write pipeline must be legible from logs alone (AGENTS.md §2.6): an
   // INFO carrying `step:"extract"` after parsing, `step:"store"` after the
@@ -1109,12 +1109,12 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // OBS-04 — memory:entities_linked emit at the resolveAndLink site.
+  // memory:entities_linked emit at the resolveAndLink site.
   //
   // ONCE per run (guarded by entityStore), counts only — entityCount (total
   // resolved this run) + newEntities (distinct first-seen names) + durationMs.
   // NEVER an entity name in the payload (AGENTS.md §2.7). When entityStore is
-  // absent, no emit (Phase-82 behaviour preserved).
+  // absent, no emit (no-entity-store behaviour preserved).
   // -------------------------------------------------------------------------
 
   /** The single memory:entities_linked payload (or undefined if not emitted). */
@@ -1146,7 +1146,7 @@ describe("runMemoryReview", () => {
     expect(payload.newEntities).toBe(2);
     expect(typeof payload.durationMs).toBe("number");
     expect(payload.timestamp).toBe(NOW);
-    // Counts only — NEVER an entity name body (AGENTS.md §2.7 / T-86-16).
+    // Counts only — NEVER an entity name body (AGENTS.md §2.7).
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain("Berlin");
     expect(serialized).not.toContain("user");
@@ -1182,7 +1182,7 @@ describe("runMemoryReview", () => {
     expect(payload.newEntities).toBe(1);
   });
 
-  it("does NOT emit memory:entities_linked when entityStore is absent (Phase-82 preserved)", async () => {
+  it("does NOT emit memory:entities_linked when entityStore is absent", async () => {
     const deps = makeDeps(); // no entityStore
     arrangeOneSession(deps);
     (completeSimple as Mock).mockResolvedValue(rawResponse(
@@ -1221,16 +1221,16 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EXTRACT-03 (Phase 96) — causal-edge write AFTER a successful store.
+  // Causal-edge write AFTER a successful store.
   //
   // The extractor may emit per-memory `causes: [{ effect }]` (the cause is the
-  // memory's own content, A2). When the INJECTED `MemoryCausalStore` port
+  // memory's own content). When the INJECTED `MemoryCausalStore` port
   // (`deps.causalStore`) is present, the job calls `linkCausal(entry.id, effect,
   // scope, 1)` once per cause AFTER a successful store — mirroring the entity
-  // block. The port is OPTIONAL: absent ⇒ Phase-91 behaviour EXACTLY (zero
-  // linkCausal calls, memoriesExtracted unchanged), so the daemon (96-03) can
+  // block. The port is OPTIONAL: absent ⇒ the no-causal-store behaviour EXACTLY
+  // (zero linkCausal calls, memoriesExtracted unchanged), so the daemon can
   // light it up independently. A link failure (err Result OR a rejecting adapter)
-  // is NON-FATAL (mirrors the WR-01 / entity guards): a WARN is logged (errorKind
+  // is NON-FATAL (mirrors the store / entity guards): a WARN is logged (errorKind
   // + hint only — NEVER the effect-text body, AGENTS.md §2.7) and the watermark
   // STILL advances. The agent reaches the store as a @comis/core port TYPE only
   // (the agent↛memory build cut); the concrete adapter is daemon-injected.
@@ -1298,7 +1298,7 @@ describe("runMemoryReview", () => {
     expect(effects).toEqual(["User earns more", "User relocated offices"]);
   });
 
-  it("does NOT call linkCausal when causalStore is not injected (Phase-91 parity, no crash)", async () => {
+  it("does NOT call linkCausal when causalStore is not injected (no crash)", async () => {
     const deps = makeDeps(); // no causalStore
     expect(deps.causalStore).toBeUndefined();
     arrangeOneSession(deps);
@@ -1310,7 +1310,7 @@ describe("runMemoryReview", () => {
 
     const result = await runMemoryReview(deps);
 
-    // Identical to Phase-91: stored, counted, no crash, no causal write path.
+    // Identical to the no-causal-store path: stored, counted, no crash, no causal write path.
     expect(result.ok).toBe(true);
     expect(deps.memoryPort.store).toHaveBeenCalledTimes(1);
     expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({

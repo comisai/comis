@@ -1,27 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The daemon-injected OFFLINE usefulness-judge seam builder (Phase 110 —
- * LEARN-02 OPTIONAL, Track H3).
+ * The daemon-injected OFFLINE usefulness-judge seam builder.
  *
  * {@link createUsefulnessJudgeSeam} wraps a cheap resolved model into a
  * `judge({ candidateIds, answer })` seam that POST-HOC partitions a turn's
  * recalled-memory ids into USED vs IGNORED — a second, OPTIONAL usefulness signal
- * alongside the keyless citation-marker attribution (Plan 110-04). A future Phase
- * 111 sentinel will inject this seam and feed its verdict into `recordUsage`; this
- * module is the SCAFFOLD (the prompt + lenient parser kept AGENT-INTERNAL, mirroring
- * how {@link createUserRepresentationSeam} keeps `USER_REPRESENTATION_PROMPT`
- * private and how {@link createReasoningSeam} keeps `DEDUCTIVE_PROMPT` private).
+ * alongside the keyless citation-marker attribution. A future sentinel will inject
+ * this seam and feed its verdict into `recordUsage`; this module is the SCAFFOLD
+ * (the prompt + lenient parser kept AGENT-INTERNAL, mirroring how
+ * {@link createUserRepresentationSeam} keeps `USER_REPRESENTATION_PROMPT` private
+ * and how {@link createReasoningSeam} keeps `DEDUCTIVE_PROMPT` private).
  *
  * OFFLINE only — the seam is NEVER imported by the recall read path
- * (`memory-recall.ts`); the recall hot path stays LLM-free (T-110-14). The judge's
- * costed enablement is deferred to Phase 111; the knob ships OFF (no live call).
+ * (`memory-recall.ts`); the recall hot path stays LLM-free. The judge's costed
+ * enablement is deferred; the knob ships OFF (no live call).
  *
  * Security posture (the same anti-laundering discipline as the userrep/reasoning seams):
  * - ONE cheap-model call per turn (a single post-hoc verdict).
  * - The lenient parser KEEPS only `{ usedIds, ignoredIds }` (any smuggled field is
  *   STRIPPED) and DROPS any id the seam was NOT given the candidate set — a hostile
- *   memory BODY can never inject a FOREIGN memory id into the usefulness verdict
- *   (T-110-15). The verdict can only ever reference ids the agent actually recalled.
+ *   memory BODY can never inject a FOREIGN memory id into the usefulness verdict.
+ *   The verdict can only ever reference ids the agent actually recalled.
  * - NON-FATAL: a thrown/aborted/malformed call yields the empty verdict
  *   `{ usedIds: [], ignoredIds: [] }` (the seam never throws out).
  * - Each call is BOUNDED by `maxOutputTokens` and a wall-clock-free abort timer (the
@@ -124,7 +123,7 @@ const EMPTY_VERDICT: UsefulnessJudgeVerdict = { usedIds: [], ignoredIds: [] };
  * the empty verdict. Steps: strip fences → `JSON.parse` inside try/catch (parse
  * error → empty) → lenient `safeParse` (smuggled fields stripped) → keep ONLY ids
  * present in `candidateIds` (an id the judge was not given is DROPPED — the
- * anti-injection boundary, T-110-15) → dedupe within each array.
+ * anti-injection boundary) → dedupe within each array.
  */
 function parseVerdict(raw: string, candidateIds: string[]): UsefulnessJudgeVerdict {
   let json: unknown;
@@ -164,8 +163,8 @@ function stripFences(text: string): string {
 /**
  * Build the OFFLINE usefulness-judge seam from a cheap resolved model.
  *
- * Returns the `judge({ candidateIds, answer })` function a Phase 111 sentinel would
- * inject: it issues ONE cheap-model call asking which candidate ids the answer used,
+ * Returns the `judge({ candidateIds, answer })` function a sentinel would inject:
+ * it issues ONE cheap-model call asking which candidate ids the answer used,
  * parses the response via the lenient/total {@link parseVerdict} (which FILTERS to
  * the allowlist), and returns the typed {@link UsefulnessJudgeVerdict}. An empty
  * candidate set short-circuits (no model call, no cost). A model-resolution failure,

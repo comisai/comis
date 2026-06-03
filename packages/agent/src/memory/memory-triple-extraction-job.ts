@@ -1,35 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Offline triple-extraction job handler (Phase 100 — KG-01, design decision 6).
+ * Offline triple-extraction job handler.
  *
  * Runs OFF the recall hot path (a background cron seam, mirroring
  * {@link runMemoryConsolidation}). Turns conversation text → S/P/O candidates via
  * an INJECTED offline LLM extractor (`deps.extract`), then writes each candidate
  * into the trust-first bi-temporal knowledge graph via `tripleStore.upsertTriple`
- * — where the Plan-02 trust-first single-current-truth invalidation decides
+ * — where the trust-first single-current-truth invalidation decides
  * whether a low-trust extracted claim may supersede an incumbent fact.
  *
- * Security posture (design §9 — the same anti-poisoning discipline as the
+ * Security posture (the same anti-poisoning discipline as the
  * consolidation job):
- * - Trust is CAPPED in CODE at the candidate's own `sourceTrust` (the ceiling —
- *   T-100-05-02). The writer can NEVER RAISE trust: an `external`-sourced
+ * - Trust is CAPPED in CODE at the candidate's own `sourceTrust` (the ceiling).
+ *   The writer can NEVER RAISE trust: an `external`-sourced
  *   extraction can never mint a `learned`/`system` triple. A claim that
  *   `validateMemoryWrite` flags as `warn` is further DOWNGRADED to `external`.
  * - Every stored object string runs through `validateMemoryWrite` (the secret /
  *   prompt-injection firewall, AGENTS.md §2.2): `critical` → skip (never stored);
  *   `warn` → trust downgraded to `external`; `clean` → the source-trust ceiling.
- * - DEFAULT-OFF cost gate (T-100-05-03): with `config.enabled === false` the
+ * - DEFAULT-OFF cost gate: with `config.enabled === false` the
  *   extractor is NEVER called and nothing is written (no LLM spend, no write).
  * - The run is BOUNDED (`maxCandidatesPerRun`) and emits a MINIMAL,
  *   counts-only `memory:triples_extracted` event + counts-only logs — NEVER the
- *   S/P/O bodies (AGENTS.md §2.7 / T-100-05-05).
+ *   S/P/O bodies (AGENTS.md §2.7).
  * - The scope `{ tenantId, agentId, now }` is passed to every upsert so the
- *   adapter filters every statement on it (cross-tenant isolation — T-100-05-04).
+ *   adapter filters every statement on it (cross-tenant isolation).
  *
  * The `extract` LLM call is INJECTED (the offline seam) — it is the caller's
  * responsibility to build it from a cheap model; it is NEVER invoked on the recall
  * path. The agent consumes the store as a port TYPE from `@comis/core` (the
- * agent↛memory build cut); the daemon (Plan 05 wiring) injects the concrete
+ * agent↛memory build cut); the daemon injects the concrete
  * memory-package adapter. NO memory-package import here, NO wall-clock global
  * (the injected `clock`).
  *
@@ -98,7 +98,7 @@ export interface MemoryTripleExtractionConfig {
 export interface MemoryTripleExtractionDeps {
   /**
    * The SEGREGATED triple store (port TYPE from `@comis/core`). The concrete
-   * adapter lives in the memory package; the daemon (Plan 05) injects it. The
+   * adapter lives in the memory package; the daemon injects it. The
    * agent cannot import that package (the agent↛memory build cut).
    */
   tripleStore: TripleStorePort;
@@ -171,7 +171,7 @@ export async function runMemoryTripleExtraction(
     });
   };
 
-  // T-100-05-03: the DEFAULT-OFF cost gate. No extractor call, no write, no spend.
+  // The DEFAULT-OFF cost gate. No extractor call, no write, no spend.
   if (!config.enabled) {
     logger.debug({ agentId, step: "extract" as const }, "Triple extraction disabled (enabled=false) — skipping");
     const stats: MemoryTripleExtractionStats = { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 };
@@ -204,14 +204,14 @@ export async function runMemoryTripleExtraction(
   let skippedOverCap = 0;
 
   for (const candidate of candidates) {
-    // CONS-07 analogue — the bounded run. Count the overflow for observability,
-    // then stop writing once the cap is reached (the DoS cost bound, T-100-05-03).
+    // The bounded run. Count the overflow for observability,
+    // then stop writing once the cap is reached (the DoS cost bound).
     if (written >= config.maxCandidatesPerRun) {
       skippedOverCap = candidates.length - written - blocked - downgraded;
       break;
     }
 
-    // T-100-05-02: trust CEILING — the candidate's own source trust IS the cap.
+    // Trust CEILING — the candidate's own source trust IS the cap.
     // The writer can never RAISE trust (an external source can never mint a
     // learned/system triple); the LLM has no say in the trust field.
     let trust: TripleTrust = candidate.sourceTrust;
@@ -254,7 +254,7 @@ export async function runMemoryTripleExtraction(
       ...(candidate.confidence !== undefined ? { confidence: candidate.confidence } : {}),
     };
 
-    // T-100-05-04: the adapter filters every statement on this scope. Non-fatal:
+    // The adapter filters every statement on this scope. Non-fatal:
     // a rejecting/erroring store → WARN + continue to the next candidate.
     const upserted = await fromPromise(
       tripleStore.upsertTriple(triple, { tenantId, agentId, now }),

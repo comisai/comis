@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteRelationshipStore: the SOLE adapter for the segregated `RelationshipStore`
- * port (@comis/core, Phase 108, Track E2 — SOCIAL-02). It owns ALL the directional
+ * port (@comis/core). It owns ALL the directional
  * relationship SQL over the additive `relationship` table — the only place SQL is
  * written for this capability.
  *
@@ -13,7 +13,7 @@
  *   REJECTS a below-floor `trust` at the write boundary (returns `err` — never
  *   stores it at a reduced weight), BEFORE the INSERT, as defense-in-depth with the
  *   DB `CHECK(trust IN ('system','learned'))` (layer 1) and the port-type floor
- *   (layer 2, 108-01). `content` is untrusted relationship text — it runs through
+ *   (layer 2). `content` is untrusted relationship text — it runs through
  *   `validateMemoryWrite` (redaction firewall) and is bound as a `?` parameter,
  *   never concatenated. The row id is a `randomUUID()` (imported from `node:crypto`,
  *   mirror the user-representation store); `created_at` is the injected clock
@@ -30,8 +30,8 @@
  * already set — that pragma is what makes the `source_memory_id -> memories(id)`
  * `ON DELETE CASCADE` fire.
  *
- * ## Isolation is the load-bearing security boundary (SOCIAL-02, the §5.2 / ENT-03
- *    pattern, EXTENDED with `channel_id` — the NEW privacy axis)
+ * ## Isolation is the load-bearing security boundary (the §5.2 pattern,
+ *    EXTENDED with `channel_id` — the NEW privacy axis)
  *
  * Comis runs many agents, many channels, and many users in one DB. BOTH the write
  * (the INSERT) and the read (the scoped SELECT) filter on
@@ -135,7 +135,7 @@ export function createSqliteRelationshipStore(
       "(id, tenant_id, agent_id, channel_id, subject_user_id, about_user_id, content, trust, source_memory_id, created_at) " +
       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
-  // The scoped read (SOCIAL-02). The `tenant_id = ? AND agent_id = ? AND
+  // The scoped read. The `tenant_id = ? AND agent_id = ? AND
   // channel_id = ?` filter is the load-bearing 4-way ISOLATION boundary: an edge
   // written under one scope can NEVER be read under any differing tenant/agent/
   // channel. The subject/about pair is projected ROW DATA, NOT part of the security

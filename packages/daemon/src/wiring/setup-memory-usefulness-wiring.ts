@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Recall-utility write-back wiring (FEED-01 → FEED-02).
+ * Recall-utility write-back wiring.
  *
  * The composition-root glue between the `memory:recall_used` bus event (emitted
  * by @comis/agent's `postExecution` after a turn) and the
@@ -11,10 +11,10 @@
  * ONLY ever cross the bus (AGENTS.md §2.7) — never memory content.
  *
  * Default-OFF: the `feedbackEnabled` gate makes the subscriber a no-op write
- * when no agent has `rag.feedback.enabled` (Pitfall 6 #4) — byte-identical to
- * v2.6 when off. The write-back is fire-and-forget / non-fatal: a failing or
+ * when no agent has `rag.feedback.enabled` — byte-identical to the prior
+ * feedback-off behaviour. The write-back is fire-and-forget / non-fatal: a failing or
  * slow `recordUsage` warns and continues; it never throws out of the bus handler
- * and never blocks/fails the turn (T-93-10, disposition: accept).
+ * and never blocks/fails the turn.
  *
  * @module
  */
@@ -30,7 +30,7 @@ import type {
 export interface MemoryUsefulnessWiringDeps {
   /** The daemon's typed event bus (source of `memory:recall_used`). */
   eventBus: TypedEventBus;
-  /** The sole @comis/memory adapter for the FEED-02 port (the write target). */
+  /** The sole @comis/memory adapter for the usefulness port (the write target). */
   usefulnessStore: MemoryUsefulnessStore;
   /** Injected clock for `scope.now` — never `Date.now()`. */
   clock: ClockPort;
@@ -38,7 +38,7 @@ export interface MemoryUsefulnessWiringDeps {
   logger: ComisLogger;
   /**
    * Per-process gate: true when ANY agent has `rag.feedback.enabled`. Default-OFF
-   * (no agent on) → the subscriber writes NOTHING (Pitfall 6 #4).
+   * (no agent on) → the subscriber writes NOTHING.
    */
   feedbackEnabled: () => boolean;
 }
@@ -48,7 +48,7 @@ export interface MemoryUsefulnessWiringDeps {
  * emits (`tenant:channel:user`). Best-effort: returns the FIRST segment, or
  * undefined when the sessionKey is absent/empty. The caller falls back to
  * "default" — but it NEVER collapses the agentId (that always rides the event),
- * so cross-agent isolation (T-93-09) is preserved even when the tenant defaults.
+ * so cross-agent isolation is preserved even when the tenant defaults.
  */
 export function deriveTenantFromSessionKey(sessionKey?: string): string | undefined {
   if (sessionKey === undefined || sessionKey.length === 0) return undefined;
@@ -62,32 +62,33 @@ export function deriveTenantFromSessionKey(sessionKey?: string): string | undefi
  */
 export function wireMemoryUsefulness(deps: MemoryUsefulnessWiringDeps): void {
   deps.eventBus.on("memory:recall_used", (p) => {
-    // Default-off: write nothing when no agent has feedback enabled (Pitfall 6 #4).
+    // Default-off: write nothing when no agent has feedback enabled.
     if (!deps.feedbackEnabled()) return;
     // Nothing attributed this turn → no write (avoids an empty transaction).
     if (p.usedIds.length === 0 && p.ignoredIds.length === 0) return;
 
     // Derive the scope from the EVENT. agentId rides the event (never collapsed
-    // to one global scope — T-93-09); tenantId comes from the sessionKey envelope
+    // to one global scope); tenantId comes from the sessionKey envelope
     // (best-effort), defaulting only when absent.
     const tenantId = deriveTenantFromSessionKey(p.sessionKey) ?? "default";
     const scope = {
       tenantId,
       agentId: p.agentId,
       now: deps.clock.now(),
-      // LEARN-01 write side: forward the recall's query-INTENT so the adapter
+      // Per-intent write side: forward the recall's query-INTENT so the adapter
       // records the PER-INTENT usefulness bucket. When the event carries no
       // intent the key is OMITTED entirely (not `intent: undefined`) → the
-      // adapter resolves the GLOBAL bucket, byte-identical to v2.8. intent is a
+      // adapter resolves the GLOBAL bucket, byte-identical to the pre-per-intent
+      // write. intent is a
       // closed-union string (counts/ids/intent ONLY cross the bus, never bodies).
       ...(p.intent !== undefined ? { intent: p.intent } : {}),
     };
 
-    // Fire-and-forget: NEVER throw out of the bus handler (T-93-10). A failing
+    // Fire-and-forget: NEVER throw out of the bus handler. A failing
     // recordUsage warns + continues; the turn already completed. The handler only
     // ever reads ids + counts off the event (the bus carries no bodies).
     // Hoisted for the WARN observability fields (the canonical agentId field).
-    // The scope above is the single per-agent isolation boundary (T-93-09); the
+    // The scope above is the single per-agent isolation boundary; the
     // warns reuse this local rather than re-reading the event field.
     const agentId = p.agentId;
     void deps.usefulnessStore

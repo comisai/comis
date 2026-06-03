@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ActivityCircuitBreaker — auto-managed per-agent×channel breaker (WIRE-08,
- * spec §17.7). A permission storm against a forbidden channel API must
+ * ActivityCircuitBreaker — auto-managed per-agent×channel breaker
+ * (spec §17.7). A permission storm against a forbidden channel API must
  * auto-quiesce without operator intervention while staying visible to ops.
  *
  * Two independent failure modes, classified on the `ActivityRenderError.kind`
@@ -15,7 +15,7 @@
  *     clock-delta half-open probe after 5 minutes (a successful probe closes
  *     it; a failed probe re-opens it).
  *   • `rate_limited` | `not_supported`    → NON-tripping (debounce/backoff and
- *     the renderer's own drop handle these; CHAN-02). They neither advance nor
+ *     the renderer's own drop handle these). They neither advance nor
  *     reset the tripping counters.
  *
  * Timing is clock-delta only (`clock.now() - openedAt >= halfOpenMs`) — there
@@ -122,7 +122,7 @@ interface BreakerState {
    * key string (`${agentId}::${channelKey}`) is lossy when either component
    * contains `::` (agent/channel ids are unvalidated free-form strings —
    * config schema: `z.record(z.string().min(1), …)`), so the snapshot reads
-   * these fields rather than re-splitting the key (WR-04).
+   * these fields rather than re-splitting the key.
    */
   agentId: string;
   channelKey: string;
@@ -290,8 +290,8 @@ export function createActivityCircuitBreaker(
         maybeHalfOpen(s);
         if (s.phase !== "open") continue;
         // Return the ORIGINAL components verbatim — no `::` re-split, so an
-        // agentId/channelKey that itself contains `::` is reported exactly
-        // (WR-04). The lossy string-key parse + `slice(sep + 2)` magic offset
+        // agentId/channelKey that itself contains `::` is reported exactly.
+        // The lossy string-key parse + `slice(sep + 2)` magic offset
         // are gone.
         out.push({
           agentId: s.agentId,

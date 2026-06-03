@@ -117,7 +117,7 @@ export interface ExecutionOverrides {
   nodeId?: string;
   /** Active tool group names for the sub-agent's profile ceiling.
    *  When provided, "Tool X not found" errors in tool_execution_end are
-   *  enriched with delegation routing hints (SUBA-02). Omit for top-level
+   *  enriched with delegation routing hints. Omit for top-level
    *  agents where all tools are reachable. */
   activeToolGroups?: string[];
 }

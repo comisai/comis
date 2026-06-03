@@ -41,9 +41,9 @@ describe("memory + context domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("MEMORY_CONTRACTS has exactly 20 entries (9 memory + 4 OBS-06 diagnostics + 7 context)", () => {
-    // Plan 05 closed the OBS-06 cross-wave seam (the 4 MEMORY_DIAGNOSTIC_CONTRACTS).
-    // Phase 109 Plan 03 closed the memory.ask cross-wave seam: MemoryAskContract is
+  it("MEMORY_CONTRACTS has exactly 20 entries (9 memory + 4 diagnostics + 7 context)", () => {
+    // The diagnostics cross-wave seam was closed (the 4 MEMORY_DIAGNOSTIC_CONTRACTS).
+    // The memory.ask cross-wave seam was closed too: MemoryAskContract is
     // now spread in (9 + 4 + 7 = 20), in the same diff that landed its daemon handler,
     // so the registry ↔ handler set stays 1:1.
     expect(MEMORY_CONTRACTS.length).toBe(20);
@@ -555,21 +555,21 @@ describe("memory + context domain contracts", () => {
 });
 
 // ===========================================================================
-// Phase 86 (OBS-06) — admin-scoped memory diagnostic RPC contracts.
+// Admin-scoped memory diagnostic RPC contracts.
 //
-// Interface-first: these four contracts ship here so Plan 05 (daemon handlers
-// + CLI) has the request/response shapes in hand. They are grouped in their
-// OWN `MEMORY_DIAGNOSTIC_CONTRACTS` array and are deliberately NOT yet folded
+// Interface-first: these four contracts shipped here so the daemon handlers
+// + CLI had the request/response shapes in hand. They are grouped in their
+// OWN `MEMORY_DIAGNOSTIC_CONTRACTS` array and were deliberately NOT yet folded
 // into `MEMORY_CONTRACTS` (the registry that feeds `API_CONTRACTS`): the
 // bidirectional 1:1 + contract-handler-parity architecture tests require every
 // API_CONTRACTS entry to have a MIGRATED daemon handler, so registering them
-// before Plan 05's handlers exist would RED-gate the whole repo between waves.
-// Plan 05 spreads MEMORY_DIAGNOSTIC_CONTRACTS into MEMORY_CONTRACTS in the same
+// before the handlers existed would RED-gate the whole repo between waves.
+// MEMORY_DIAGNOSTIC_CONTRACTS is spread into MEMORY_CONTRACTS in the same
 // diff that lands the handlers — keeping the registry↔handler set 1:1 at all
 // times. See the SUMMARY "Cross-wave seam" note.
 // ===========================================================================
 
-describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
+describe("memory diagnostic contracts — admin-scoped", () => {
   it("MEMORY_DIAGNOSTIC_CONTRACTS has exactly 4 entries, all admin-scoped", () => {
     expect(MEMORY_DIAGNOSTIC_CONTRACTS.length).toBe(4);
     for (const c of MEMORY_DIAGNOSTIC_CONTRACTS) {
@@ -577,8 +577,8 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
     }
   });
 
-  it("the 4 diagnostic contracts are now IN MEMORY_CONTRACTS (cross-wave seam closed in Plan 05)", () => {
-    // Plan 05 spread ...MEMORY_DIAGNOSTIC_CONTRACTS into MEMORY_CONTRACTS in the
+  it("the 4 diagnostic contracts are now IN MEMORY_CONTRACTS (cross-wave seam closed)", () => {
+    // ...MEMORY_DIAGNOSTIC_CONTRACTS was spread into MEMORY_CONTRACTS in the
     // SAME diff that landed the daemon handlers (and removed the
     // @contract-deferred-handler annotations), so each is now registered and
     // the contract-handler-parity + bidirectional gates pass with 1:1 parity.
@@ -591,7 +591,7 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
     ]) {
       expect(
         registered.has(method),
-        `${method} must be IN MEMORY_CONTRACTS now that Plan 05 landed its handler`,
+        `${method} must be IN MEMORY_CONTRACTS now that its handler landed`,
       ).toBe(true);
     }
   });
@@ -621,7 +621,7 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
 
   it("memory.recall_trace: request accepts session_key OR trace_id plus optional scoping (at-least-one enforced in handler)", () => {
     // Both modelled optional (the "at least one" rule is enforced in the
-    // Plan 05 handler, mirroring obs.trace.search's messageId/traceId pattern).
+    // handler, mirroring obs.trace.search's messageId/traceId pattern).
     expect(() =>
       MemoryRecallTraceContract.request.parse({ session_key: "t1:u1:c1" }),
     ).not.toThrow();
@@ -640,8 +640,8 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
     expect(() => MemoryRecallTraceContract.request.parse({})).not.toThrow();
   });
 
-  it("memory.recall_trace: rejects a non-integer, negative, or oversized limit (WR-05 bounded limit)", () => {
-    // WR-05: the diagnostic `limit` must be a positive integer with a sane cap
+  it("memory.recall_trace: rejects a non-integer, negative, or oversized limit (bounded limit)", () => {
+    // The diagnostic `limit` must be a positive integer with a sane cap
     // (defense-in-depth — a malformed bound used to flow straight into the
     // file scan / `LIMIT ?`). A small positive integer still parses.
     expect(() =>
@@ -664,7 +664,7 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
     ).toThrow();
   });
 
-  it("memory.observations / memory.entities: reject a non-integer or oversized limit (WR-05 bounded limit)", () => {
+  it("memory.observations / memory.entities: reject a non-integer or oversized limit (bounded limit)", () => {
     // The two SQL-backed diagnostics thread `limit` straight into `LIMIT ?`,
     // so the same positive-integer-with-cap fence applies to them.
     expect(() =>
@@ -802,17 +802,17 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
 });
 
 // ===========================================================================
-// memory.ask — the dialectic grounded-Q&A contract (Phase 109 — DIAL-01/02).
+// memory.ask — the dialectic grounded-Q&A contract.
 //
-// CROSS-WAVE SEAM CLOSED (Plan 03): the contract SHAPE shipped in Plan 01 with a
-// `@contract-deferred-handler: 109-03` tag, kept OUT of `MEMORY_CONTRACTS` until
-// its daemon handler existed. Plan 03 landed the `[MemoryAskContract.method]:`
-// handler in memory-handlers.ts and, in the SAME diff, spread the contract into
-// MEMORY_CONTRACTS + removed the tag — so the registry ↔ handler set is 1:1 by
-// construction (contract-handler-parity + bidirectional 1:1 both green).
+// CROSS-WAVE SEAM (now closed): the contract SHAPE shipped first with a
+// `@contract-deferred-handler` tag, kept OUT of `MEMORY_CONTRACTS` until
+// its daemon handler existed. The `[MemoryAskContract.method]:`
+// handler later landed in memory-handlers.ts and, in the SAME diff, spread the
+// contract into MEMORY_CONTRACTS + removed the tag — so the registry ↔ handler
+// set is 1:1 by construction (contract-handler-parity + bidirectional 1:1 both green).
 // ===========================================================================
 
-describe("memory.ask dialectic contract (DIAL-01/02)", () => {
+describe("memory.ask dialectic contract", () => {
   it("method is memory.ask, scoped rpc", () => {
     expect(MemoryAskContract.method).toBe("memory.ask");
     expect(MemoryAskContract.scopes).toEqual(["rpc"]);
@@ -844,10 +844,10 @@ describe("memory.ask dialectic contract (DIAL-01/02)", () => {
     ).not.toThrow();
   });
 
-  it("IS in MEMORY_CONTRACTS now that its handler landed (cross-wave seam closed in Plan 03)", () => {
-    // Plan 03 spread MemoryAskContract into MEMORY_CONTRACTS in the SAME diff that
+  it("IS in MEMORY_CONTRACTS now that its handler landed (cross-wave seam closed)", () => {
+    // MemoryAskContract was spread into MEMORY_CONTRACTS in the SAME diff that
     // landed its `[MemoryAskContract.method]:` daemon handler (and removed the
-    // @contract-deferred-handler: 109-03 tag), so it is now registered and the
+    // @contract-deferred-handler tag), so it is now registered and the
     // bidirectional 1:1 + contract-handler-parity gates require the handler present.
     const registered = new Set(MEMORY_CONTRACTS.map((c) => c.method));
     expect(registered.has("memory.ask")).toBe(true);

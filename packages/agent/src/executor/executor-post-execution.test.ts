@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { buildSessionEndMetadata, shouldStorePairedMemory } from "./executor-post-execution.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
-// Phase 110 (LEARN-01 write side): the turn-end emit threads classifyIntent(msg.text).
+// Learned-recall write side: the turn-end emit threads classifyIntent(msg.text).
 // Imported here for the deterministic-bucket behavior probe (the emit's intent source).
 import { classifyIntent } from "../rag/query-understanding.js";
 
@@ -389,7 +389,7 @@ describe("tool-failure endReason and notice", () => {
 // behaviour via the source text (the same pattern used by the tool-failure
 // suite above).
 // ---------------------------------------------------------------------------
-// FEED-01 — recall-usage attribution + memory:recall_used emit (flag-gated).
+// Recall-usage attribution + memory:recall_used emit (flag-gated).
 //
 // postExecution() attributes which recalled memories were used vs ignored from
 // result.response (the pure attributeRecallUsage heuristic) and emits a
@@ -402,7 +402,7 @@ describe("tool-failure endReason and notice", () => {
 // invariant on the emit call site. A paired behavior probe re-confirms the
 // attribution fn drives the ids the emit will carry.
 // ---------------------------------------------------------------------------
-describe("FEED-01 recall-usage attribution + memory:recall_used emit", () => {
+describe("recall-usage attribution + memory:recall_used emit", () => {
   function readPostExec(): { src: string; stripped: string } {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
@@ -470,7 +470,7 @@ describe("FEED-01 recall-usage attribution + memory:recall_used emit", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 110 Plan 03 (LEARN-01 write side) — the turn-end memory:recall_used
+  // Learned-recall write side — the turn-end memory:recall_used
   // emit carries the recall-time intent so the daemon write-back records the
   // per-intent usefulness bucket. The intent is the DETERMINISTIC classifyIntent
   // of the recalled query (msg.text — the SAME string recall classified at
@@ -479,9 +479,9 @@ describe("FEED-01 recall-usage attribution + memory:recall_used emit", () => {
   // subscriber records the global bucket → byte-identical write). classifyIntent
   // is in-package (NOT publicly exported — Pitfall 2) and the emit stays
   // ids/counts/intent-only + LLM-free. Source-grep is the load-bearing mode here,
-  // matching the FEED-01 family above (scaffolding all 30+ deps is impractical).
+  // matching the recall-usage family above (scaffolding all 30+ deps is impractical).
   // -------------------------------------------------------------------------
-  it("threads the recall-time intent onto the emit, gated on queryUnderstanding.intentReweight (LEARN-01 write bucket)", () => {
+  it("threads the recall-time intent onto the emit, gated on queryUnderstanding.intentReweight", () => {
     const { stripped } = readPostExec();
     // The intent is computed from the recalled query via the deterministic classifyIntent …
     expect(stripped).toMatch(/classifyIntent\s*\(/);

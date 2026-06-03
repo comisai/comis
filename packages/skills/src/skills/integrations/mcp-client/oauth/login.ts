@@ -9,8 +9,8 @@
  *
  * Flow: (1) build token store + provider, (2) pre-flight discovery (cold
  * load — surfaces cascade-fail before any browser step), (3) bind loopback
- * with NO-OP `openUrl` to learn port + headless decision, (4) DEVAUTH-02
- * selection branch: dispatch RFC 8628 device-flow when operator forces it
+ * with NO-OP `openUrl` to learn port + headless decision, (4) selection
+ * branch: dispatch RFC 8628 device-flow when operator forces it
  * or headless ∧ device-code-advertised, (5) PKCE: drive SDK `auth()` first
  * pass → capture authorization URL → headless returns `headless_hint` +
  * `authUrl` (background task awaits redirect + exchanges code) OR
@@ -52,7 +52,7 @@ import { createRedirectPolicyFetch } from "../mcp-client-redirect-policy.js";
 
 // Re-export the shared OAuth types from oauth-types.js (split out of this
 // file to break the source-level cycle introduced by login.ts ↔ device-flow.ts
-// when login.ts gained a value import of runDeviceFlow in plan 09-02).
+// when login.ts gained a value import of runDeviceFlow).
 export type {
   OAuthLoginConfig,
   OAuthLoginLogger,
@@ -90,7 +90,7 @@ export interface RunOauthLoginDeps {
   readonly auth?: typeof sdkAuth;
   /** The loopback callback runner. Defaults to the real one; tests inject a fake. */
   readonly runBrowserCallback?: typeof runBrowserCallback;
-  /** DEVAUTH-02: device-flow orchestrator (RFC 8628). Defaults to the real
+  /** Device-flow orchestrator (RFC 8628). Defaults to the real
    *  `runDeviceFlow` from `./device-flow.js`; tests inject a fake. */
   readonly runDeviceFlow?: typeof defaultRunDeviceFlow;
   /** Discovery resolver. Defaults to the real cascade; tests inject a fake. */
@@ -207,8 +207,9 @@ export async function runOauthLogin(
   try {
     // Pre-flight discovery — cold-load only. Surfaces the actionable
     // cascade-fail error before binding the callback server. Capture the
-    // resolved state so DEVAUTH-02 below can inspect it (advertised device-
-    // flow grant types) and runDeviceFlow can receive it as pre-resolved.
+    // resolved state so the selection heuristic below can inspect it
+    // (advertised device-flow grant types) and runDeviceFlow can receive
+    // it as pre-resolved.
     let discoveryState =
       (await tokenStore.discoveryState(serverName)) ?? undefined;
     if (discoveryState === undefined) {
@@ -246,7 +247,7 @@ export async function runOauthLogin(
     });
     redirectUrl = handle.redirectUri;
 
-    // ── DEVAUTH-02: Selection heuristic ─────────────────────────────────
+    // ── Selection heuristic ─────────────────────────────────────────────
     // Operator override beats heuristic in both directions; heuristic
     // prefers RFC 8628 device-flow when headless ∧ device-code advertised.
     // Falls through to PKCE+loopback by default (existing Fix 6 path).

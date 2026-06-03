@@ -62,7 +62,7 @@ describe("fuse — N-lane Reciprocal Rank Fusion", () => {
     expect(fused.map((r) => r.entry.id)).toEqual(["a", "b", "c", "d"]);
   });
 
-  it("ME-01: single-lane fuse passes the incoming adapter score THROUGH unchanged (does NOT recompute from rank)", () => {
+  it("single-lane fuse passes the incoming adapter score THROUGH unchanged (does NOT recompute from rank)", () => {
     // The SqliteMemoryAdapter already returns RRF-normalized relevance scores with a
     // genuine distribution (a strong top hit and a much weaker tail). A single-lane
     // fuse must NOT discard that and rebuild a near-flat rank ramp (1.0/0.984/…),
@@ -82,7 +82,7 @@ describe("fuse — N-lane Reciprocal Rank Fusion", () => {
     expect(fused[1]?.score).toBeCloseTo(0.12, 10);
   });
 
-  it("ME-01: single-lane fuse does NOT force a weak top hit (adapter score < 0.7) up to ≈1.0", () => {
+  it("single-lane fuse does NOT force a weak top hit (adapter score < 0.7) up to ≈1.0", () => {
     // A weak top hit must stay weak so it is NOT force-promoted to inline injection.
     const fused = fuse([{ results: [makeResult("weakTop", {}, 0.42)], weight: 1.0 }]);
     expect(fused[0]?.score).toBeCloseTo(0.42, 10);
@@ -136,7 +136,7 @@ describe("fuse — N-lane Reciprocal Rank Fusion", () => {
   });
 
   it("single-lane: passes the incoming adapter score through onto result.score", () => {
-    // Single-lane is now pass-through (ME-01): the adapter's relevance score is
+    // Single-lane is now pass-through: the adapter's relevance score is
     // preserved verbatim rather than recomputed from rank.
     const fused = fuse([
       { results: [makeResult("a", {}, 0.83), makeResult("b", {}, 0.41)], weight: 1.0 },

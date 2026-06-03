@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the LongMemEval-style recall eval harness (EVAL-01).
+ * Tests for the LongMemEval-style recall eval harness.
  *
- * TIER SPLIT (resolves RESEARCH Open Question 4):
+ * TIER SPLIT:
  * - UNGATED: the deterministic scorer math (recallAtK / meanReciprocalRank /
  *   scoreRanking / compareRankings) is pure and belongs in the default CI tier.
  *   It imports BOTH recall-eval.ts AND the fixtures so neither file is
@@ -43,7 +43,7 @@ import {
   EVAL_NOW,
   type EvalQuery,
 } from "./__fixtures__/recall-eval-fixtures.js";
-// Phase-96 causal fixtures live in a sibling module (split out at the 800-line cap); imported
+// Causal fixtures live in a sibling module (split out at the 800-line cap); imported
 // directly (NOT via a parent re-export) to avoid an intra-package import cycle.
 import { CAUSAL_EVAL_FIXTURES, causalLane } from "./__fixtures__/recall-eval-fixtures-causal.js";
 import { fuse } from "../rag/fuse.js";
@@ -187,19 +187,19 @@ describe("compareRankings (reranked vs fusion lift report)", () => {
   });
 });
 
-// UNGATED temporal-boost lift (EVAL-01, per-phase temporal figure). Deterministic
+// UNGATED temporal-boost lift (the temporal figure). Deterministic
 // pure math (score() over fixed-epoch occurredAt; no model, no LLM judge) — runs in
-// the default `pnpm test`. The temporal boost (score with temporalAlpha>0, plan 02)
-// must score a strictly positive recall@1 gain over the Phase-80 fusion-only baseline
+// the default `pnpm test`. The temporal boost (score with temporalAlpha>0)
+// must score a strictly positive recall@1 gain over the fusion-only baseline
 // on the "temporal" group, and a NEUTRAL guard (temporalAlpha 0 → zero lift) attributes
-// the gain to the temporal signal — not to score()'s other mechanics (T-81-12).
+// the gain to the temporal signal — not to score()'s other mechanics.
 describe("temporal boost lift (recall@1 over fusion baseline)", () => {
-  // Phase-80 baseline: single-lane fuse() is order-preserving → fusion order = the
+  // Fusion baseline: single-lane fuse() is order-preserving → fusion order = the
   // candidates' base/score order (the stale distractor first by design).
   const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
     fuse([{ results: q.candidates, weight: 1 }]);
   // Temporal boost ISOLATED: temporalAlpha>0, every other alpha 0 — so the only signal
-  // moving the ranking is occurredAt proximity (plan-02 temporalProx).
+  // moving the ranking is occurredAt proximity (temporalProx).
   const temporalFn = (q: EvalQuery): MemorySearchResult[] =>
     score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0.5, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 }, EVAL_NOW);
   // NEUTRAL guard ranker: same score() path but temporalAlpha 0 → temporalFactor ≡ 1.0,
@@ -212,12 +212,12 @@ describe("temporal boost lift (recall@1 over fusion baseline)", () => {
     expect(TEMPORAL_EVAL_FIXTURES.every((q) => q.group === "temporal")).toBe(true);
   });
 
-  it("scores a strictly positive recall@1 lift over the Phase-80 fusion baseline", () => {
+  it("scores a strictly positive recall@1 lift over the fusion baseline", () => {
     const report = compareRankings(TEMPORAL_EVAL_FIXTURES, fusionFn, temporalFn);
-    // Headroom: fusion mis-ranks the stale distractor to rank 1 (T-81-12 — a no-op
+    // Headroom: fusion mis-ranks the stale distractor to rank 1 (a no-op
     // fixture that fusion already nailed would leave nothing to measure).
     expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
-    // The EVAL-01 per-phase temporal figure: the boost is a MEASURABLE recall@1 gain.
+    // The temporal figure: the boost is a MEASURABLE recall@1 gain.
     expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
     // No regression: the boost never lowers recall@1 below fusion.
     expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
@@ -226,7 +226,7 @@ describe("temporal boost lift (recall@1 over fusion baseline)", () => {
   });
 
   it("yields ZERO lift at temporalAlpha 0 (the gain is attributable to the temporal signal)", () => {
-    // T-81-12 neutral guard: with the temporal signal off, score()'s remaining
+    // Neutral guard: with the temporal signal off, score()'s remaining
     // mechanics produce the fusion order → no lift. So the positive lift above is the
     // temporal boost's work, not a fixture that trivially favors the relevant id.
     const report = compareRankings(TEMPORAL_EVAL_FIXTURES, fusionFn, neutralFn);
@@ -235,7 +235,7 @@ describe("temporal boost lift (recall@1 over fusion baseline)", () => {
   });
 });
 
-// UNGATED entity-association lift (EVAL-01, the per-phase entity figure / criterion 5).
+// UNGATED entity-association lift (the entity figure).
 // Deterministic pure fusion math — NO live DB, NO associativeLane port, NO model. The
 // entity lane is MODELED here as a 2nd fuse() lane built from the fixtures (the
 // shared-entity neighbour subset surfaced first via `entityLane(q)`), so the lift is
@@ -243,9 +243,9 @@ describe("temporal boost lift (recall@1 over fusion baseline)", () => {
 // must score a strictly positive recall@1 gain over the prior (fusion-only) baseline on
 // the "entity" group, and a NEUTRAL guard (an EMPTY 2nd lane → RRF unchanged → zero
 // lift) attributes the gain to the entity lane — not to fuse()'s rank rebasing alone
-// (mirrors the Phase-81 temporalAlpha=0 guard; T-83-19).
+// (mirrors the temporalAlpha=0 guard).
 describe("entity-association lift (recall@1 over fusion baseline)", () => {
-  // Prior-phase baseline: single-lane fuse() is order-preserving → fusion order = the
+  // Fusion baseline: single-lane fuse() is order-preserving → fusion order = the
   // candidates' base/score order (the lexical distractor first by design).
   const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
     fuse([{ results: q.candidates, weight: 1 }]);
@@ -272,10 +272,10 @@ describe("entity-association lift (recall@1 over fusion baseline)", () => {
 
   it("scores a strictly positive recall@1 lift over the fusion-only baseline", () => {
     const report = compareRankings(ENTITY_EVAL_FIXTURES, fusionFn, withLaneFn);
-    // Headroom: fusion mis-ranks the lexical distractor to rank 1 (T-83-19 — a no-op
+    // Headroom: fusion mis-ranks the lexical distractor to rank 1 (a no-op
     // fixture that fusion already nailed would leave nothing to measure).
     expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
-    // The EVAL-01 per-phase entity figure (criterion 5): the entity lane is a
+    // The entity figure: the entity lane is a
     // MEASURABLE recall@1 gain over the prior fusion-only baseline.
     expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
     // No regression: the entity lane never lowers recall@1 below fusion.
@@ -285,7 +285,7 @@ describe("entity-association lift (recall@1 over fusion baseline)", () => {
   });
 
   it("yields ZERO lift with an EMPTY entity lane (the gain is attributable to the entity lane)", () => {
-    // T-83-19 neutral guard: with the entity lane empty, RRF over the lone candidates
+    // Neutral guard: with the entity lane empty, RRF over the lone candidates
     // lane reproduces the fusion order → no lift. So the positive lift above is the
     // entity lane's work, not fuse()'s rank rebasing on a fixture that already favored
     // the relevant id.
@@ -295,7 +295,7 @@ describe("entity-association lift (recall@1 over fusion baseline)", () => {
   });
 });
 
-// UNGATED temporal-spread lift (LANES-02, the per-phase temporal-spread figure).
+// UNGATED temporal-spread lift (the temporal-spread figure).
 // Deterministic pure fusion math — NO live DB, NO spreadLane port, NO model. The temporal
 // lane is MODELED here as a 2nd fuse() lane built from the fixtures (the near-seed neighbour
 // subset surfaced first via `temporalLane(q)`), so the lift is reproducible from the
@@ -303,7 +303,7 @@ describe("entity-association lift (recall@1 over fusion baseline)", () => {
 // positive recall@1 gain over the prior (fusion-only) baseline on the "temporal-spread"
 // group, and a NEUTRAL guard (an EMPTY 2nd lane → RRF unchanged → zero lift) attributes the
 // gain to the temporal lane — not to fuse()'s rank rebasing alone (mirrors the entity-lane
-// T-83-19 guard).
+// guard).
 describe("temporal-spread lift (recall@1 over fusion baseline)", () => {
   const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
     fuse([{ results: q.candidates, weight: 1 }]);
@@ -333,7 +333,7 @@ describe("temporal-spread lift (recall@1 over fusion baseline)", () => {
     // Headroom: fusion mis-ranks the lexical distractor to rank 1 (a no-op fixture that
     // fusion already nailed would leave nothing to measure).
     expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
-    // The LANES-02 per-phase figure: the temporal lane is a MEASURABLE recall@1 gain.
+    // The temporal-spread figure: the temporal lane is a MEASURABLE recall@1 gain.
     expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
     // No regression: the temporal lane never lowers recall@1 below fusion.
     expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
@@ -348,7 +348,7 @@ describe("temporal-spread lift (recall@1 over fusion baseline)", () => {
   });
 });
 
-// UNGATED causal lift (EXTRACT-03, the multi-hop / causal per-phase figure — the keystone
+// UNGATED causal lift (the multi-hop / causal figure — the keystone
 // proof that the causal edge table is NEVER write-only dead data: a causally-linked memory is
 // CONSUMED by the read lane). Deterministic pure fusion math — NO live DB, NO causalLane port,
 // NO model. The causal lane is MODELED here as a 2nd fuse() lane built from the fixtures (the
@@ -387,7 +387,7 @@ describe("causal lift (recall@1 over fusion baseline)", () => {
     // Headroom: fusion mis-ranks the lexical distractor to rank 1 (a no-op fixture that fusion
     // already nailed would leave nothing to measure — the lift would be vacuous).
     expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
-    // The EXTRACT-03 per-phase figure: the causal lane is a MEASURABLE recall@1 gain.
+    // The causal figure: the causal lane is a MEASURABLE recall@1 gain.
     expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
     // No regression: the causal lane never lowers recall@1 below fusion.
     expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
@@ -402,7 +402,7 @@ describe("causal lift (recall@1 over fusion baseline)", () => {
   });
 });
 
-// UNGATED trust-first contradiction lift (CONTRA-02, the per-phase trust figure). The
+// UNGATED trust-first contradiction lift (the trust figure). The
 // `temporal` group's TRUST case: a NEWER LOW-trust claim carries the HIGHER fusion score
 // (it would win on recency/lexical alone) and an OLDER HIGHER-trust fact carries the LOWER
 // fusion score. Ranked through the EXISTING score() trust lever (trustAlpha>0, every other
@@ -414,7 +414,7 @@ describe("causal lift (recall@1 over fusion baseline)", () => {
 // T1/T2 cases (all `learned` → uniform trust boost → no reorder). Deterministic pure math
 // (fixed-epoch EVAL_NOW; no model, no LLM judge) — runs in the default `pnpm test`.
 describe("trust-first contradiction lift (recall@1 over fusion baseline)", () => {
-  // Phase-80 baseline: single-lane fuse() is order-preserving → fusion order = the
+  // Fusion baseline: single-lane fuse() is order-preserving → fusion order = the
   // candidates' base/score order (the newer LOW-trust claim first by design).
   const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
     fuse([{ results: q.candidates, weight: 1 }]);
@@ -434,10 +434,10 @@ describe("trust-first contradiction lift (recall@1 over fusion baseline)", () =>
 
   it("ranks the older higher-trust fact above the newer lower-trust claim at recall@1", () => {
     const report = compareRankings(TEMPORAL_TRUST_EVAL_FIXTURES, fusionFn, trustFn);
-    // Headroom: fusion ranks the newer LOW-trust claim @1 (Pitfall 2 — a no-op fixture that
+    // Headroom: fusion ranks the newer LOW-trust claim @1 (a no-op fixture that
     // fusion already nailed would leave nothing to measure).
     expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
-    // The CONTRA-02 trust figure: trust rescues the higher-trust fact to rank 1.
+    // The trust figure: trust rescues the higher-trust fact to rank 1.
     expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
     // No regression: the trust boost never lowers recall@1 below fusion.
     expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
@@ -455,21 +455,21 @@ describe("trust-first contradiction lift (recall@1 over fusion baseline)", () =>
 
   it("does NOT disturb the existing recency-only temporal cases (zero regression)", () => {
     // The existing T1/T2 cases are all `learned` → a uniform trust boost factor → no reorder.
-    // Trust-first must leave the pure recency cases byte-stable in ranking (success criterion 2).
+    // Trust-first must leave the pure recency cases byte-stable in ranking.
     const report = compareRankings(TEMPORAL_EVAL_FIXTURES, fusionFn, trustFn);
     expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
-    // Mirror the sibling lift tests' dual guard (WR-01): recallAt1Lift === 0 alone equals full
+    // Mirror the sibling lift tests' dual guard: recallAt1Lift === 0 alone equals full
     // rank-1 invariance only while each T1/T2 fixture has 2 candidates; the MRR guard pins
     // no-reorder BELOW rank 1 too, so a future 3+-candidate sub-rank-1 reorder still trips it.
     expect(report.mrrLift, JSON.stringify(report)).toBe(0);
   });
 });
 
-// UNGATED recall-utility feedback lift (FEED-04, the per-phase feedback figure). The
+// UNGATED recall-utility feedback lift (the feedback figure). The
 // repeat-query scenario: a memory the agent USED at turn 1 (usedCount >= 1, ignoredCount 0)
 // is offered again at a turn-2 repeat query carrying the LOWER fusion score (a distractor with
 // no/negative usefulness carries the HIGHER fusion score). Ranked through the LIVE score()
-// usefulness lever (usefulnessAlpha>0, every other alpha 0; the FEED-03 fifth factor), the
+// usefulness lever (usefulnessAlpha>0, every other alpha 0; the fifth factor), the
 // proven-useful memory must be lifted to rank 1 — the recall layer LEARNS from outcomes (the
 // leapfrog vs Hindsight's dead access_count). Three guards prove the gain is attributable to
 // feedback, not to the fixture or the map's mere presence:
@@ -479,9 +479,9 @@ describe("trust-first contradiction lift (recall@1 over fusion baseline)", () =>
 //     guard, exercised end-to-end through the eval).
 //   - the feedback ranker over an EXISTING group (no usefulness map) → ZERO lift / no regression.
 // Deterministic pure math (fixed-epoch EVAL_NOW; no model, no LLM judge) — runs in default
-// `pnpm test`. Mirrors the CONTRA-02 trust dual-guard (recall-eval.test.ts trustAlpha:0 above).
+// `pnpm test`. Mirrors the trust dual-guard (recall-eval.test.ts trustAlpha:0 above).
 describe("recall-utility feedback lift (recall@1 over fusion baseline)", () => {
-  // Phase-80 baseline: single-lane fuse() is order-preserving → fusion order = the
+  // Fusion baseline: single-lane fuse() is order-preserving → fusion order = the
   // candidates' base/score order (the distractor with the HIGHER base first by design).
   const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
     fuse([{ results: q.candidates, weight: 1 }]);
@@ -524,7 +524,7 @@ describe("recall-utility feedback lift (recall@1 over fusion baseline)", () => {
     // Headroom: fusion ranks the higher-base distractor @1 (a no-op fixture that fusion already
     // nailed would leave nothing to measure).
     expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
-    // The FEED-04 figure: the proven-useful memory is rescued to rank 1 on the repeat query.
+    // The feedback figure: the proven-useful memory is rescued to rank 1 on the repeat query.
     expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
     // No regression: the usefulness boost never lowers recall@1 below fusion.
     expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
@@ -558,14 +558,14 @@ describe("recall-utility feedback lift (recall@1 over fusion baseline)", () => {
   });
 });
 
-// UNGATED proof-accrual lift (FOLD-03, the per-phase proof figure). The cross-run
+// UNGATED proof-accrual lift (the proof figure). The cross-run
 // corroboration scenario: a fact corroborated across MULTIPLE consolidation runs (a high
 // proofCount, freshly re-corroborated → recent occurredAt, confidence 1) is offered against a
 // ONE-OFF mention (a raw with no proofCount → neutral) carrying the HIGHER fusion score. Ranked
-// through the LIVE score() proof lever (proofAlpha>0, every other alpha 0; the CONS-08 proof log
+// through the LIVE score() proof lever (proofAlpha>0, every other alpha 0; the proof log
 // curve × confidence half-life — score.ts UNCHANGED), the corroborated observation must be lifted
-// to rank 1 — accrued proof OUT-RANKS a one-off mention (HINDSIGHT_VS_COMIS.md N2 PARITY: the
-// fold path grows proof_count, and this proves the read side rewards it). Three guards prove the
+// to rank 1 — accrued proof OUT-RANKS a one-off mention (the fold path grows proof_count, and this
+// proves the read side rewards it). Three guards prove the
 // gain is attributable to proofAlpha, not to the fixture:
 //   - proofAlpha:0 (proofCount present, weight 0) → proofFactor ≡ 1.0 → ZERO lift (the dual guard).
 //   - equal-proof — covered by the neutral guard: with the weight off the higher-base one-off stays
@@ -573,9 +573,9 @@ describe("recall-utility feedback lift (recall@1 over fusion baseline)", () => {
 //   - the proof ranker over the EXISTING reranking group (no proofCount → proofNorm 0.5 → factor
 //     1.0) → ZERO lift / no regression.
 // Deterministic pure math (fixed-epoch EVAL_NOW; no model, no LLM judge) — runs in default
-// `pnpm test`. Mirrors the CONTRA-02 trust + FEED-04 feedback dual-guards above.
+// `pnpm test`. Mirrors the trust + feedback dual-guards above.
 describe("proof-accrual lift (recall@1 over fusion baseline)", () => {
-  // Phase-80 baseline: single-lane fuse() is order-preserving → fusion order = the
+  // Fusion baseline: single-lane fuse() is order-preserving → fusion order = the
   // candidates' base/score order (the higher-base one-off mention first by design).
   const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
     fuse([{ results: q.candidates, weight: 1 }]);
@@ -600,7 +600,7 @@ describe("proof-accrual lift (recall@1 over fusion baseline)", () => {
     // Headroom: fusion ranks the higher-base one-off mention @1 (a no-op fixture that fusion already
     // nailed would leave nothing to measure).
     expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
-    // The FOLD-03 figure: the corroborated observation is rescued to rank 1 — accrued proof wins.
+    // The proof figure: the corroborated observation is rescued to rank 1 — accrued proof wins.
     expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
     // No regression: the proof boost never lowers recall@1 below fusion.
     expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
@@ -626,18 +626,18 @@ describe("proof-accrual lift (recall@1 over fusion baseline)", () => {
   });
 });
 
-// CONSOLIDATED default-off byte-identity (FEED-04 seam c, Pitfall 6). The recall-utility
-// feedback loop is opt-in (rag.feedback.enabled default false, Plan 93-04 schema). When OFF the
-// path is byte-behavior-identical to v2.6 via FOUR flag-gated guards, each pinned by a
-// characterization in the plan it shipped in:
+// CONSOLIDATED default-off byte-identity. The recall-utility
+// feedback loop is opt-in (rag.feedback.enabled default false). When OFF the
+// path is byte-behavior-identical to the pre-feedback path via FOUR flag-gated guards, each pinned by a
+// characterization test:
 //   #1 score.ts — usefulnessNorm(undefined) === 0.5 → usefulnessFactor exactly 1.0 at any alpha
-//      (93-03 score.test.ts; re-proven end-to-end by feedbackNoSignalFn above).
+//      (score.test.ts; re-proven end-to-end by feedbackNoSignalFn above).
 //   #2 memory-recall.ts — flag-off OR no store OR empty ranked → the readUsefulness call is
-//      SKIPPED → usefulnessById stays undefined → neutral factor (93-03 memory-recall.test.ts).
+//      SKIPPED → usefulnessById stays undefined → neutral factor (memory-recall.test.ts).
 //   #3 executor-post-execution.ts — flag-off → turn-end attribution + memory:recall_used emit
-//      are SKIPPED → no event (93-02 executor-post-execution.test.ts).
+//      are SKIPPED → no event (executor-post-execution.test.ts).
 //   #4 setup-memory-usefulness-wiring.ts — feedbackEnabled() false → the subscriber no-ops →
-//      no recordUsage write (93-02 setup-memory-usefulness-wiring.test.ts).
+//      no recordUsage write (setup-memory-usefulness-wiring.test.ts).
 // The test below NAMES the byte-identity contract over the feedback fixtures; the four guards
 // above pin each gate at its site.
 describe("default-off feedback recall is byte-identical to the pre-feedback fusion path", () => {
@@ -667,7 +667,7 @@ describe("default-off feedback recall is byte-identical to the pre-feedback fusi
 describe.skipIf(!RERANKER_MODEL)("recall lift (real model)", () => {
   // The cross-encoder is async; scoreRanking's rankFn is sync. Pre-compute the
   // reranked order per query in beforeAll, then read the memoized order in a
-  // sync closure (pattern (a) from the plan).
+  // sync closure.
   const rerankedOrder = new Map<string, MemorySearchResult[]>();
   const rerankingFixtures = RECALL_EVAL_FIXTURES.filter((q) => q.group === "reranking");
 
@@ -706,7 +706,7 @@ describe.skipIf(!RERANKER_MODEL)("recall lift (real model)", () => {
 
     // No regression: reranking must never lower recall@1 vs fusion.
     expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThanOrEqual(0);
-    // Measurable EVAL-01 gain: the labeled fusion mis-ranks are rescued.
+    // Measurable gain: the labeled fusion mis-ranks are rescued.
     expect(
       report.reranked.recallAt1,
       JSON.stringify(report),
@@ -714,7 +714,7 @@ describe.skipIf(!RERANKER_MODEL)("recall lift (real model)", () => {
   });
 });
 
-// LANES-01 lane-split PARITY (the load-bearing regression guard). Today the memory
+// Lane-split PARITY (the load-bearing regression guard). Today the memory
 // adapter pre-fuses fts+vector via computeRRF(fts,vec,1.0,1.5) (k=60). After the unfuse,
 // the agent builds two lanes and routes them through fuse() (k=60, same formula). The
 // guard: with DEFAULT weights {fts:1.0, vector:1.5}, the 2-lane fused order is BYTE-FOR-BYTE

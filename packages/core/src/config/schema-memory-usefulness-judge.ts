@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Offline usefulness-judge configuration schema (Phase 110 — LEARN-02 OPTIONAL,
- * Track H3).
+ * Offline usefulness-judge configuration schema (OPTIONAL).
  *
  * OPTIONAL offline cheap-model judge that POST-HOC scores recalled-memory
  * usefulness, feeding FEED via `recordUsage` (the same per-intent write loop the
- * citation marker drives at 110-04). OFF by default — enabling it is a COST opt-in
+ * citation marker drives). OFF by default — enabling it is a COST opt-in
  * (it runs an LLM cron), a deliberate operator choice, NOT a default behavior (no
  * back-compat fallback). OFFLINE only: the judge runs on a cron and NEVER touches
- * the recall read path (the recall hot path stays LLM-free — T-110-14).
+ * the recall read path (the recall hot path stays LLM-free).
  *
- * The citation-marker attribution (Plan 110-04) is the KEYLESS core of LEARN-02;
+ * The citation-marker attribution is the KEYLESS core of this feature;
  * this judge is the optional extra. Its costed enablement (the sentinel → seam →
- * recordUsage write) is deferred to Phase 111 — this schema only lands the
- * default-OFF knob so Phase 111 can enable it without new config machinery.
+ * recordUsage write) is deferred — this schema only lands the default-OFF knob so
+ * it can later be enabled without new config machinery.
  *
  * Mirrors {@link MemoryUserRepresentationConfigSchema}'s cost-gate cron shape; kept
  * deliberately small — the judge needs no per-run write cap (it writes through the
@@ -26,7 +25,7 @@ import { z } from "zod";
 
 /**
  * MemoryUsefulnessJudgeConfigSchema: Zod schema for the per-agent offline
- * usefulness-judge cron (Phase 110, Track H3 — LEARN-02 OPTIONAL).
+ * usefulness-judge cron (OPTIONAL).
  *
  * Fields:
  * - enabled: opt-in (default false — a cost gate, not back-compat)
@@ -40,7 +39,7 @@ import { z } from "zod";
  */
 export const MemoryUsefulnessJudgeConfigSchema = z.strictObject({
   /** Enable the periodic offline usefulness judge for this agent. Default: true (v1 opt-out
-   *  posture, v2.9 increment 2). A COST feature — force-disabled when
+   *  posture). A COST feature — force-disabled when
    *  `memory.costFeatures.enabled: false`. */
   enabled: z.boolean().default(true),
   /** Cron schedule for judge runs. Default: daily at 07:00 UTC (after social's 06:00). */

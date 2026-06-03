@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for query-understanding.ts — LLM-free, deterministic, never-throw query helpers
- * (IQ-02 intent classifier + IQ-03a synonym expansion + IQ-03b NL temporal-range parser).
+ * (intent classifier + synonym expansion + NL temporal-range parser).
  *
  * Load-bearing RED-first assertions:
  * - classifyIntent: a table of (query → expected Intent) covering all 4 intents + the documented

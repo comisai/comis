@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for {@link createMemoryAskTool} (Phase 109 — DIAL-01/02): the thin
+ * Tests for {@link createMemoryAskTool}: the thin
  * `memory_ask` AgentTool that dispatches a grounded question to the daemon
  * `memory.ask` RPC and wraps the cited answer. RED-first: the factory module
  * does not exist until the GREEN patch.
@@ -14,9 +14,9 @@
  *   - a missing `question` throws (via `readStringParam`) and the RPC is NOT
  *     called with an empty question;
  *   - the tool source holds NO model — it never imports `@earendil-works/pi-ai`
- *     and never resolves a model. The synthesis LLM lives in the daemon seam
- *     (Plan 03), NOT in the skills tool (the `@comis/skills` tier discipline,
- *     T-109-03 — RESEARCH "Tier-misassignment to avoid").
+ *     and never resolves a model. The synthesis LLM lives in the daemon seam,
+ *     NOT in the skills tool (the `@comis/skills` tier discipline, avoiding
+ *     tier-misassignment).
  *
  * @module
  */
@@ -92,9 +92,9 @@ describe("memory_ask tool", () => {
   });
 
   it("the tool source NEVER imports a model (no @earendil-works/pi-ai, no getModel)", () => {
-    // The synthesis LLM lives in the daemon seam (Plan 03), not the skills tool.
-    // T-109-03: the tool holds no model/DB and cannot widen scope — it only
-    // dispatches via rpcCall. Assert by source-grep (the AC's `grep -c pi-ai === 0`).
+    // The synthesis LLM lives in the daemon seam, not the skills tool.
+    // The tool holds no model/DB and cannot widen scope — it only
+    // dispatches via rpcCall. Assert by source-grep (`grep -c pi-ai === 0`).
     const src = readFileSync(fileURLToPath(new URL("./memory-ask-tool.ts", import.meta.url)), "utf8");
     expect(src).not.toMatch(/pi-ai/);
     expect(src).not.toMatch(/getModel|completeSimple/);

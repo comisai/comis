@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED->GREEN unit suite for the uniform competitor-adapter layer (PROVE-01) — the
+ * RED->GREEN unit suite for the uniform competitor-adapter layer — the
  * `CompetitorAdapter` interface, the `AdapterResult` discriminated union, the
  * `skipWithDisclosure` helper, and the mem0/zep/hindsight/mnemosyne skip-with-
  * disclosure skeletons.
@@ -77,7 +77,7 @@ function expectSkipNoScore(result: AdapterResult): Extract<AdapterResult, { ran:
   return result;
 }
 
-describe("competitor-adapter — the uniform interface + skip-with-disclosure (PROVE-01)", () => {
+describe("competitor-adapter — the uniform interface + skip-with-disclosure", () => {
   it("Test 1 (RED): the CompetitorAdapter interface is conformable by a trivial ran:true stub", async () => {
     // A trivial in-test adapter that "ran" — proves the interface shape compiles
     // and the ran:true branch carries a manifestRef (the cell -> manifest link).

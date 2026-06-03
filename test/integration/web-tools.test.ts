@@ -48,10 +48,10 @@ function parseResult(result: ToolResult): Record<string, unknown> {
 }
 
 // ---------------------------------------------------------------------------
-// WEB-01: web_fetch
+// web_fetch
 // ---------------------------------------------------------------------------
 
-describe("WEB-01: web_fetch", () => {
+describe("web_fetch", () => {
   beforeEach(() => {
     __clearFetchCache();
   });
@@ -144,10 +144,10 @@ describe("WEB-01: web_fetch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WEB-02: web_search
+// web_search
 // ---------------------------------------------------------------------------
 
-describe("WEB-02: web_search", () => {
+describe("web_search", () => {
   beforeEach(() => {
     __clearSearchCache();
   });

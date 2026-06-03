@@ -6,7 +6,7 @@
  * The strategy bodies in this directory are pure rendering state machines: they
  * decide WHAT to send and WHEN to delete, but never touch a platform SDK. The
  * real per-channel adapter wiring (Telegram/Discord/Slack/...) implements this
- * port in Phases 71-72; strategy tests pass a tiny in-test recorder.
+ * port; strategy tests pass a tiny in-test recorder.
  *
  * All three operations return `Result<…, ActivityRenderError>` so a strategy can
  * propagate a rate-limit / permission / transient-network failure to the
@@ -14,7 +14,7 @@
  * a strategy can later edit or delete it.
  *
  * `send` accepts an optional `SendOptions.buttons` so a renderer can paint
- * native approval choices alongside the text (APV-02 / §7.7). The buttons are
+ * native approval choices alongside the text (§7.7). The buttons are
  * the signed `RichButton[][]` produced by `buildApprovalButtons` (the
  * `callback_data` is the §6.4.2 wire string). The param is OPTIONAL: a
  * text-only `send(text)` call — and a renderer/adapter that ignores buttons —

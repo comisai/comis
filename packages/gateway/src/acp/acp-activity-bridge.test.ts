@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the ACP activity bridge (ACP-02 + ACP-05, spec §16.8 / §19.6 M6).
+ * RED test for the ACP activity bridge (spec §16.8 / §19.6).
  *
  * Fails on pre-patch code: `./acp-activity-bridge.js` does not exist.
  *
  * Behavior under test:
- *   - §19.6 M6 SECURITY (FIRST test — redaction-first): a `RAW_PARAM_SENTINEL`
+ *   - §19.6 SECURITY (FIRST test — redaction-first): a `RAW_PARAM_SENTINEL`
  *     injected into the SOURCE ActivityEvent's `params` NEVER appears in any
  *     captured ACP SessionUpdate frame, and `update.rawInput` / `update.rawOutput`
- *     are always `undefined`. This is the phase's primary security control.
+ *     are always `undefined`. This is the bridge's primary security control.
  *   - phase:"start" → `sessionUpdate:"tool_call"` with the event's toolCallId, a
  *     non-empty title, and `status:"pending"`.
  *   - phase:"progress" | phase:"end" → `sessionUpdate:"tool_call_update"`; status
@@ -48,7 +48,7 @@ const ACP_SESSION_KEY = formatSessionKey({
 
 /**
  * Hand-built fake AgentSideConnection (AGENTS.md §2.5 — only the members the
- * SUT touches). Captures every SessionNotification frame for the §19.6 M6
+ * SUT touches). Captures every SessionNotification frame for the §19.6
  * assertion.
  */
 function makeFakeConnection(): {
@@ -132,7 +132,7 @@ function makeActivityEvent(overrides: Partial<ActivityEvent> = {}): ActivityEven
     toolName: "read_file",
     defaultLabel: "Reading file",
     // params is already redacted at emit; we inject a sentinel to prove the
-    // bridge never forwards it to any SDK field (§19.6 M6).
+    // bridge never forwards it to any SDK field (§19.6).
     params: { secret: RAW_PARAM_SENTINEL },
     ...overrides,
   };
@@ -145,8 +145,8 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
-describe("createAcpActivityBridge (ACP-02 / ACP-05 — redacted ActivityEvent → SDK session/update)", () => {
-  it("never lets raw params (rawInput/rawOutput/sentinel) cross the wire in any frame (§19.6 M6)", async () => {
+describe("createAcpActivityBridge (redacted ActivityEvent → SDK session/update)", () => {
+  it("never lets raw params (rawInput/rawOutput/sentinel) cross the wire in any frame (§19.6)", async () => {
     const { connection, frames } = makeFakeConnection();
     const stream = makeFakeStreamPort();
     const bridge = createAcpActivityBridge({
@@ -284,7 +284,7 @@ describe("createAcpActivityBridge (ACP-02 / ACP-05 — redacted ActivityEvent �
     expect(stream.unsubscribeCalls()).toBe(1);
   });
 
-  it("logs a rejected sessionUpdate and still delivers a later frame (no chain poisoning, WR-01)", async () => {
+  it("logs a rejected sessionUpdate and still delivers a later frame (no chain poisoning)", async () => {
     // A connection whose FIRST sessionUpdate rejects (IDE disconnects mid-turn)
     // then succeeds. Pre-fix: the rejected promise poisons the `draining` chain
     // so every later pump's `.then` callback never runs — the second frame is

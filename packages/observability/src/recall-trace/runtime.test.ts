@@ -11,7 +11,7 @@
  * includeSystem), so EVERY payload always goes through full
  * `sanitizeForPersistence`.
  *
- * THE MANDATORY OBS-02 REDACTION PROOF (failing-first, binding): seed a
+ * THE MANDATORY REDACTION PROOF (failing-first, binding): seed a
  * recall record carrying a secret token, a password, and an absolute path,
  * write it, and assert the ON-DISK JSONL contains NONE of them. This must
  * FAIL on the raw-write stub (no sanitize) and PASS once the sanitize
@@ -34,7 +34,7 @@ import { runWithContext } from "@comis/core";
 import { createRecallTrace } from "./runtime.js";
 import { RecallTraceEventSchema } from "./types.js";
 
-// --- OBS-02 redaction-proof seed strings (MUST be present in this file) ---
+// --- redaction-proof seed strings (MUST be present in this file) ---
 // A real-shaped OpenAI/Anthropic-style key (matches the `sk-prefix` pattern).
 const SEED_SECRET = "sk-ABCDEF0123456789SECRET";
 // A bare password value — carried under a credential-keyed field so the
@@ -186,7 +186,7 @@ describe("createRecallTrace -- well-formed record", () => {
   });
 });
 
-describe("createRecallTrace -- THE MANDATORY OBS-02 redaction proof", () => {
+describe("createRecallTrace -- THE MANDATORY redaction proof", () => {
   it("recall trace NEVER persists a seeded secret, password, or absolute path on disk", async () => {
     const trace = makeTrace({});
     expect(trace).not.toBeNull();
@@ -228,12 +228,12 @@ describe("createRecallTrace -- THE MANDATORY OBS-02 redaction proof", () => {
   });
 });
 
-describe("createRecallTrace -- scope envelope is authoritative (WR-03)", () => {
+describe("createRecallTrace -- scope envelope is authoritative", () => {
   it("a payload carrying stray agentId/traceId/tenantId NEVER overrides the scope envelope", async () => {
-    // WR-03: buildEvent must apply the scope/envelope identifiers LAST so a
+    // buildEvent must apply the scope/envelope identifiers LAST so a
     // (buggy/future) producer that places an agentId / traceId / tenantId key
     // in the record cannot clobber the authoritative scope id the read-side
-    // scope-filter (WR-01) trusts. Pre-fix, the payload was merged ON TOP of
+    // scope-filter trusts. Pre-fix, the payload was merged ON TOP of
     // the envelope, so these stray keys would win.
     const filePath = join(tmpDir, "scope-authoritative.jsonl");
     const trace = createRecallTrace({

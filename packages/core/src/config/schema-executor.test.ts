@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * T-02-1..T-02-5 — INTEG-02 executor.broker config schema tests.
+ * executor.broker config schema tests.
  *
  * RED phase: schema-executor.ts does not exist yet.
- * - T-02-1, T-02-3, T-02-4 FAIL because AppConfigSchema rejects the `executor` key.
- * - T-02-2 may pass (omitting unknown keys is fine for strict mode).
- * - T-02-5 FAILS because the exports do not exist yet.
+ * - The accept/reject cases FAIL because AppConfigSchema rejects the `executor` key.
+ * - The omitted-key case may pass (omitting unknown keys is fine for strict mode).
+ * - The export check FAILS because the exports do not exist yet.
  *
  * GREEN phase: after schema-executor.ts is created and wired into AppConfigSchema
  * and index.ts, all five pass.
@@ -20,7 +20,7 @@ import type {
   ExecutorBrokerConfig,
 } from "./index.js";
 
-// T-02-5: verify the schemas are exported at type level from the config barrel.
+// Verify the schemas are exported at type level from the config barrel.
 // These `satisfies` declarations force the TypeScript compiler to check the
 // named exports resolve — a pure type-import test with zero runtime cost.
 // They will fail with a TS error if the exports are absent.
@@ -39,15 +39,14 @@ void _checkBrokerBinding;
 void _checkExecutorConfig;
 void _checkExecutorBroker;
 
-// Minimal valid hostRule fixture used in T-02-1 and T-02-3.
+// Minimal valid hostRule fixture used in the accept and reject cases.
 const validHostRule = {
   pattern: { kind: "exact" as const, host: "api.anthropic.com" },
   inject: [{ kind: "setHeader" as const, name: "x-api-key", format: "raw" as const }],
 };
 
-describe("INTEG-02 executor.broker schema", () => {
-  // ── T-02-1 ────────────────────────────────────────────────────────────────
-  it("T-02-1: AppConfigSchema accepts executor.broker.bindings with a valid anthropic binding", () => {
+describe("executor.broker schema", () => {
+  it("AppConfigSchema accepts executor.broker.bindings with a valid anthropic binding", () => {
     const result = AppConfigSchema.safeParse({
       executor: {
         broker: {
@@ -66,16 +65,14 @@ describe("INTEG-02 executor.broker schema", () => {
     expect(result.data.executor?.broker?.bindings?.anthropic?.secretRef).toBe("k");
   });
 
-  // ── T-02-2 ────────────────────────────────────────────────────────────────
-  it("T-02-2: AppConfigSchema parses cleanly when executor key is omitted — zero regression", () => {
+  it("AppConfigSchema parses cleanly when executor key is omitted — zero regression", () => {
     const result = AppConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.data.executor).toBeUndefined();
   });
 
-  // ── T-02-3 ────────────────────────────────────────────────────────────────
-  it("T-02-3: AppConfigSchema rejects unknown key inside executor.broker.bindings entry (z.strictObject)", () => {
+  it("AppConfigSchema rejects unknown key inside executor.broker.bindings entry (z.strictObject)", () => {
     const result = AppConfigSchema.safeParse({
       executor: {
         broker: {
@@ -90,8 +87,7 @@ describe("INTEG-02 executor.broker schema", () => {
     expect(result.success).toBe(false);
   });
 
-  // ── T-02-4 ────────────────────────────────────────────────────────────────
-  it("T-02-4: AppConfigSchema rejects unknown key directly inside executor (z.strictObject on ExecutorConfigSchema)", () => {
+  it("AppConfigSchema rejects unknown key directly inside executor (z.strictObject on ExecutorConfigSchema)", () => {
     const result = AppConfigSchema.safeParse({
       executor: {
         UNKNOWN_KEY: 1,
@@ -100,11 +96,10 @@ describe("INTEG-02 executor.broker schema", () => {
     expect(result.success).toBe(false);
   });
 
-  // ── T-02-5 ────────────────────────────────────────────────────────────────
   // This test is purely structural: if the imports above compiled and the
   // schema values were assigned, the exports exist. We assert they are
   // Zod schemas by checking the `.parse` method is callable.
-  it("T-02-5: BrokerBindingConfigSchema, ExecutorConfigSchema, ExecutorBrokerConfigSchema are exported from config barrel and are callable Zod schemas", () => {
+  it("BrokerBindingConfigSchema, ExecutorConfigSchema, ExecutorBrokerConfigSchema are exported from config barrel and are callable Zod schemas", () => {
     expect(typeof BrokerBindingConfigSchema.safeParse).toBe("function");
     expect(typeof ExecutorConfigSchema.safeParse).toBe("function");
     expect(typeof ExecutorBrokerConfigSchema.safeParse).toBe("function");

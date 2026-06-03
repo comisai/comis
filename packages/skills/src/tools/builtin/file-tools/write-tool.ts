@@ -37,7 +37,7 @@ import { validateConfigContent } from "./shared/edit-diff.js";
 import { getGitDiffStat } from "./shared/git-diff.js";
 import { withFileMutationQueue } from "./shared/file-mutation-queue.js";
 
-// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
+// Activity label spec. Descriptor name ==
 // emitted name for builtins (write-tool.ts:178 → `name: "write"`).
 registerActivityLabelSpec("write", {
   semanticPhase: "tool",

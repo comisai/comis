@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Integration gate for REQ-05 SC-1: auth.set encrypted round-trip.
+ * Integration gate for the auth.set encrypted round-trip.
  *
  * Tests the auth.set → auth.list round-trip using the in-process
  * createAuthHandlers factory (same pattern as context-dag-integration.test.ts
@@ -41,7 +41,7 @@ import { createMockEventBus } from "../support/mock-event-bus.js";
 // ---------------------------------------------------------------------------
 // Sentinel strings: structurally identical to real token shapes but contain
 // no actual credential values. Used to assert residency (absence from
-// serialized responses / logs). T-04-16: these strings are not persisted.
+// serialized responses / logs). These strings are not persisted.
 // ---------------------------------------------------------------------------
 
 const ACCESS_SENTINEL = "tok-access-TEST_SENTINEL_9f3a2b";
@@ -232,7 +232,7 @@ describe("auth.set encrypted mode integration", () => {
     ).rejects.toThrow(/locked|retry/i);
   });
 
-  it("WR-02: auth.set with null email — accountId must NOT appear in log output (identity field uses '<email-unavailable>')", async () => {
+  it("auth.set with null email — accountId must NOT appear in log output (identity field uses '<email-unavailable>')", async () => {
     // When email is absent, the handler previously interpolated accountId
     // into the identity field: `id-${params.accountId}`. This embeds a
     // potentially identifying value in logs and contradicts the
@@ -254,8 +254,8 @@ describe("auth.set encrypted mode integration", () => {
     expect(logSerialized).not.toContain(ACCOUNT_SENTINEL);
   });
 
-  it("auth.set rotation: writing v2 profile over v1 resolves v2 via auth.get without daemon restart (REQ-13/REQ-08)", async () => {
-    // REQ-13 cross-process + REQ-08 OAuth rotation acceptance gate.
+  it("auth.set rotation: writing v2 profile over v1 resolves v2 via auth.get without daemon restart", async () => {
+    // Cross-process + OAuth rotation acceptance gate.
     // auth.set v1 → auth.set v2 (rotation) → auth.get resolves v2, PID unchanged.
     const store = createInMemoryOAuthStore();
     const { handlers } = makeDeps(store);

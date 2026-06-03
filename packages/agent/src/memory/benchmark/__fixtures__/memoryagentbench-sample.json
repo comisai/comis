@@ -1,5 +1,5 @@
 {
-  "_provenance": "Derived from the MemoryAgentBench format (arXiv 2507.05257, github.com/HUST-AI-HYZ/MemoryAgentBench, MIT; UCSD/McAuley); neutral placeholder content, NOT the real dataset. The full corpus is operator-placed under $COMIS_BENCH_DATA (see Plan 08 DATASETS.md) and never committed. This sample is the Conflict-Resolution split — the SUITE-08 headline ability.",
+  "_provenance": "Derived from the MemoryAgentBench format (arXiv 2507.05257, github.com/HUST-AI-HYZ/MemoryAgentBench, MIT; UCSD/McAuley); neutral placeholder content, NOT the real dataset. The full corpus is operator-placed under $COMIS_BENCH_DATA and never committed. This sample is the Conflict-Resolution split — the headline ability.",
   "ability": "conflict-resolution",
   "documents": [
     "Neutral placeholder document one: user_a stated their placeholder color preference is blue.",

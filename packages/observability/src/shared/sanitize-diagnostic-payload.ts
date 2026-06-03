@@ -40,7 +40,7 @@
  *
  * The ENV regex is intentionally case-sensitive uppercase-only
  * (`[A-Z][A-Z0-9_]+`) so lowercase identifiers in diagnostic strings
- * like `Unrecognized key: "llm"` pass through unchanged (research §10).
+ * like `Unrecognized key: "llm"` pass through unchanged.
  *
  * Pure function — no I/O, no clock, no fs. Composes downstream of
  * `limitPayloadValue` in the canonical chain
@@ -77,7 +77,7 @@ import { combinedWalk, sanitizeNodeHook } from "./combined-walker.js";
  *   3. **camelCase** forms (`apiKey`, `botToken`, …) — required to
  *      preserve the legacy hand-table's camelCase coverage. Removing
  *      the hand-table without these would silently regress production
- *      `apiKey`/`botToken`/... redaction (RESEARCH Pitfall 3).
+ *      `apiKey`/`botToken`/... redaction.
  *
  * The duplication is intentional and cheap (~27 entries). The
  * `isCredentialFieldName` predicate (below) lowercases its input
@@ -100,7 +100,7 @@ export const CREDENTIAL_KEYS = new Set<string>([
   "credentials",          // widening
   "credential",           // singular form (preserves prior coverage)
   "authorization",
-  // CR-01: bare OAuth token field names used by the auth.set RPC contract
+  // Bare OAuth token field names used by the auth.set RPC contract
   // ({ access: "<bearer>", refresh: "<token>" }). Absent from the set
   // prior to this fix — meaning any dispatcher error log carrying params
   // for a failed auth.set call would emit both tokens unredacted.
@@ -126,8 +126,7 @@ export const CREDENTIAL_KEYS = new Set<string>([
   // camelCase forms (REQUIRED — Pino redact.paths is case-sensitive,
   // so the lowercased forms above do NOT redact a field named
   // `apiKey`. Removing the legacy hand-table without preserving these
-  // would silently regress production redaction. See RESEARCH
-  // Pitfall 3.)
+  // would silently regress production redaction.)
   //
   // The sanitizer's `isCredentialFieldName` predicate (below) uses
   // lowercase-compare and is unaffected by the duplication.
@@ -162,7 +161,7 @@ export const CREDENTIAL_KEYS = new Set<string>([
  *
  * Adding the bare `key` token to CREDENTIAL_KEYS triggers false-positives
  * on operational fields like `keyName`, `cacheKey`, `sessionKey`,
- * `eventKey`. The 10 entries below mitigate those (RESEARCH Pitfall 4).
+ * `eventKey`. The 10 entries below mitigate those.
  */
 const CREDENTIAL_ALLOWLIST = new Set<string>([
   "passwordfile",

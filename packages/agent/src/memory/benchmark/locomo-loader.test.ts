@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * UNGATED unit tests for the pure LoCoMo loader (BENCH-01).
+ * UNGATED unit tests for the pure LoCoMo loader.
  *
  * TIER: default CI / fast unit tier (no model, no dataset download, no store).
  * Runs over the tiny vendored neutral-placeholder fixture in __fixtures__/.
  *
  * Cross-plan contracts proven here:
- * - Blocker-3: each kept qa carries a stable `questionId = `${sample_id}:${qaIdx}``
+ * - questionId stability: each kept qa carries a stable `questionId = `${sample_id}:${qaIdx}``
  *   over the ORIGINAL (pre-category-5-filter) index, so a skipped item leaves a
- *   GAP rather than shifting later ids. The harness (88-03) reads it verbatim.
- * - Round-2: each qa exposes its question text under `query` (NOT `question`),
+ *   GAP rather than shifting later ids. The harness reads it verbatim.
+ * - query field: each qa exposes its question text under `query` (NOT `question`),
  *   uniform with LongMemEval. The UNGATED guard asserts every kept qa has a
  *   defined, non-empty `query` (catches the undefined-query bug that would
  *   silently zero the LoCoMo recall lane).
@@ -46,8 +46,8 @@ describe("loadLocomoDataset (full-dataset per-sample iteration)", () => {
 });
 
 describe("parseLocomoEvidence (D<sess>:<dia> -> session-qualified ref)", () => {
-  it("returns the FULL session-qualified ref for each evidence string (WR-02)", () => {
-    // WR-02: the session prefix MUST be preserved end-to-end so two sessions
+  it("returns the FULL session-qualified ref for each evidence string", () => {
+    // The session prefix MUST be preserved end-to-end so two sessions
     // sharing a dia index never collide. Keying on the bare 2nd segment
     // ("5","3") silently overwrites the gold side-map; the full ref is unique
     // by construction.
@@ -58,7 +58,7 @@ describe("parseLocomoEvidence (D<sess>:<dia> -> session-qualified ref)", () => {
     expect(parseLocomoEvidence(["malformed", "D1:7"])).toEqual(["D1:7"]);
   });
 
-  it("drops a degenerate entry with an empty dia segment (WR-02: no colliding empty key)", () => {
+  it("drops a degenerate entry with an empty dia segment (no colliding empty key)", () => {
     // "D1:" / "D2:" parse to an empty dia segment; under the old bare-segment
     // logic both became "" and collided on a single side-map key. They must be
     // dropped so they cannot collapse two sessions onto one empty key.
@@ -112,8 +112,8 @@ describe("loadLocomo (LoCoMo date-time parsing: 12-hour -> epoch ms)", () => {
     expect(loadLocomo(diaAt("13:00 pm on 8 May, 2023")).ok).toBe(false);
   });
 
-  it("returns err on an out-of-range day instead of rolling over (WR-01 / IN-01)", () => {
-    // IN-01 / WR-01: parseLocomoDate bounded hour/minute but NOT day, so a day
+  it("returns err on an out-of-range day instead of rolling over", () => {
+    // parseLocomoDate bounded hour/minute but NOT day, so a day
     // like 99 rolled into a later month via Date.UTC. The day must be range-
     // checked (1-31) like the other components and return err when OOR.
     expect(loadLocomo(diaAt("1:00 pm on 99 May, 2023")).ok).toBe(false); // day 99
@@ -121,7 +121,7 @@ describe("loadLocomo (LoCoMo date-time parsing: 12-hour -> epoch ms)", () => {
     expect(loadLocomo(diaAt("1:00 pm on 32 May, 2023")).ok).toBe(false); // day 32
   });
 
-  it("returns err on a day that rolls over within a valid month (WR-01 round-trip)", () => {
+  it("returns err on a day that rolls over within a valid month (round-trip)", () => {
     // Feb 30 is numerically in-range but rolls into March — the round-trip
     // guard must reject it.
     expect(loadLocomo(diaAt("1:00 pm on 30 February, 2023")).ok).toBe(false);
@@ -189,7 +189,7 @@ describe("loadLocomo (each session doc records its dia_id set)", () => {
   });
 });
 
-describe("loadLocomo (WR-02/WR-03: session-qualified gold refs never collide cross-session)", () => {
+describe("loadLocomo (session-qualified gold refs never collide cross-session)", () => {
   // Two sessions whose dia indices COLLIDE on the bare 2nd segment ("1" in both
   // D1:1 and D2:1). Under the old index-only key the side-map would overwrite
   // session_1's uuid with session_2's, silently zeroing a lane. With the full
@@ -220,7 +220,7 @@ describe("loadLocomo (WR-02/WR-03: session-qualified gold refs never collide cro
     expect(byId.get("session_2")).toEqual(["D2:1"]);
   });
 
-  it("resolves two sessions sharing a dia index to DISTINCT gold ids (WR-02)", () => {
+  it("resolves two sessions sharing a dia index to DISTINCT gold ids", () => {
     const parsed = loadLocomo(COLLIDING);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
@@ -254,7 +254,7 @@ describe("loadLocomo (WR-02/WR-03: session-qualified gold refs never collide cro
   });
 });
 
-describe("loadLocomo (Blocker-3: stable questionId = `${sample_id}:${qaIdx}`)", () => {
+describe("loadLocomo (stable questionId = `${sample_id}:${qaIdx}`)", () => {
   it("synthesizes ids over the ORIGINAL pre-filter index (gaps, no collision)", () => {
     const parsed = loadLocomo(RAW);
     expect(parsed.ok).toBe(true);
@@ -264,11 +264,11 @@ describe("loadLocomo (Blocker-3: stable questionId = `${sample_id}:${qaIdx}`)", 
     expect(ids).toEqual(["conv1:0", "conv1:2"]);
   });
 
-  it("maps gold dia_ids onto the kept qa via parseLocomoEvidence (full session-qualified refs, WR-02)", () => {
+  it("maps gold dia_ids onto the kept qa via parseLocomoEvidence (full session-qualified refs)", () => {
     const parsed = loadLocomo(RAW);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    // WR-02: gold refs carry the session prefix so they key the side-map by the
+    // Gold refs carry the session prefix so they key the side-map by the
     // SAME full form as doc.diaIds — `evidence: ["D1:1"]` -> `["D1:1"]`.
     const first = parsed.value.qa.find((q) => q.questionId === "conv1:0");
     expect(first?.goldDiaIds).toEqual(["D1:1"]);
@@ -277,7 +277,7 @@ describe("loadLocomo (Blocker-3: stable questionId = `${sample_id}:${qaIdx}`)", 
   });
 });
 
-describe("loadLocomo (round-2: question text under `query`, never empty)", () => {
+describe("loadLocomo (question text under `query`, never empty)", () => {
   it("exposes question text under query (uniform with LongMemEval)", () => {
     const parsed = loadLocomo(RAW);
     expect(parsed.ok).toBe(true);

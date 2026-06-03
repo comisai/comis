@@ -116,14 +116,14 @@ describe("formatMemorySection", () => {
 
     const result = formatMemorySection(results, 4000);
 
-    // No occurredAt → only the recorded date, no "occurred" segment (Phase-80 format
-    // with the explicit "recorded" label added in Phase-81).
+    // No occurredAt → only the recorded date, no "occurred" segment (the recorded-only
+    // format with the explicit "recorded" label).
     expect(result).toContain("recorded 2023-11-14");
     expect(result).toContain("via telegram");
     expect(result).not.toContain("occurred ");
   });
 
-  it("surfaces BOTH recorded and occurred dates when occurredAt is present (TEMP-05)", () => {
+  it("surfaces BOTH recorded and occurred dates when occurredAt is present", () => {
     const results: MemorySearchResult[] = [
       createMockResult({
         content: "Met the client on the 22nd",

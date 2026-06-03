@@ -50,7 +50,7 @@ import { startKeepaliveTicker } from "./mcp-client-keepalive.js";
 const MAX_ERRORS_BEFORE_RECONNECT = 3;
 
 // ---------------------------------------------------------------------------
-// Self-heal predicate (MCPX-01)
+// Self-heal predicate
 // ---------------------------------------------------------------------------
 
 /**
@@ -90,21 +90,21 @@ export function wireClientLifecycleCallbacks(
   serverName: string,
 ): void {
   const { logger } = deps;
-  // MCPX-03: capture generation at wire time so stale callbacks from superseded
+  // Capture generation at wire time so stale callbacks from superseded
   // connections early-return without corrupting the live connection's state.
   const wiredGeneration = state.generations.get(serverName) ?? 0;
 
   client.onclose = () => {
-    // MCPX-03: generation guard — stale close callbacks are silenced.
+    // Generation guard — stale close callbacks are silenced.
     if ((state.generations.get(serverName) ?? 0) !== wiredGeneration) return;
     state.consecutiveErrors.set(serverName, 0);
     handleDisconnection(state, deps, serverName, "client_closed");
   };
 
   client.onerror = (error: Error) => {
-    // MCPX-03: generation guard — stale error callbacks are silenced.
+    // Generation guard — stale error callbacks are silenced.
     if ((state.generations.get(serverName) ?? 0) !== wiredGeneration) return;
-    // MCPX-01: absorb SDK SSE self-heal churn — do not count, do not reconnect.
+    // Absorb SDK SSE self-heal churn — do not count, do not reconnect.
     if (isSelfHealedTransientError(error)) {
       logger.debug?.({ serverName, err: error.message }, "MCP SSE self-heal churn (suppressed)");
       return;
@@ -255,12 +255,12 @@ async function reconnectionLoop(
     if (signal.aborted) return;
 
     try {
-      // MCPX-03: increment generation FIRST so the prior client's lifecycle callbacks
+      // Increment generation FIRST so the prior client's lifecycle callbacks
       // (wiredGeneration captures the OLD generation) see a mismatch and early-return,
       // preventing a duplicate reconnect loop from being triggered by the close below.
       state.generations.set(serverName, (state.generations.get(serverName) ?? 0) + 1);
 
-      // MCPX-03: stop the old keepalive ticker and close the prior client before
+      // Stop the old keepalive ticker and close the prior client before
       // creating a new transport — prevents orphaned SSE streams and duplicate tickers.
       stopKeepaliveTicker(state, serverName);
       const priorConn = state.connections.get(serverName);
@@ -301,7 +301,7 @@ async function reconnectionLoop(
       // Wire lifecycle callbacks for reconnection
       wireClientLifecycleCallbacks(state, deps, client, serverName);
 
-      // MCPX-02/03: restart the keepalive ticker for the new connection so the
+      // Restart the keepalive ticker for the new connection so the
       // transport-aware interval beats the idle window after auto-reconnect.
       // The static import of startKeepaliveTicker is safe because mcp-client-keepalive.ts
       // no longer imports from mcp-client-reconnect.ts — handleDisconnection is

@@ -96,7 +96,7 @@ describe("SecretManager Daemon E2E Tests (real daemon)", () => {
 
   describe("Provider Config Wiring", () => {
     it("agents.get returns the default agent config with a provider field", async () => {
-      // WR-03: agent provider config is read via agents.get rather than
+      // Agent provider config is read via agents.get rather than
       // config.get({section:"agents"}), which no longer egresses agent configs.
       const response = (await sendJsonRpc(ws, "agents.get", { agentId: "default" }, 20, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -115,7 +115,7 @@ describe("SecretManager Daemon E2E Tests (real daemon)", () => {
     });
 
     it("provider name follows the ${PROVIDER}_API_KEY naming convention", async () => {
-      // WR-03: provider read via agents.get rather than config.get({section:"agents"}).
+      // Provider read via agents.get rather than config.get({section:"agents"}).
       const response = (await sendJsonRpc(ws, "agents.get", { agentId: "default" }, 21, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
       expect(response).toHaveProperty("result");

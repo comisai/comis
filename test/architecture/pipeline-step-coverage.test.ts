@@ -405,7 +405,7 @@ const DESIGN_REF =
 // Test suite 1: Each known pipeline stage has at least one step:-tagged emit
 // ===========================================================================
 
-describe("pipeline-step-coverage -- each known pipeline stage emits at least one step:-tagged log line (HYGIENE-01)", () => {
+describe("pipeline-step-coverage -- each known pipeline stage emits at least one step:-tagged log line", () => {
   it("walker sanity: packages/orchestrator/src/queue/command-queue.ts contains 'Message enqueued'", () => {
     const absPath = resolve(
       REPO_ROOT,
@@ -424,7 +424,7 @@ describe("pipeline-step-coverage -- each known pipeline stage emits at least one
       expect(
         found,
         formatViolations({
-          description: `HYGIENE-01: pipeline stage "${stage}" has no logger call emitting step:"<token>" where token ∈ [${tokens.join(", ")}]. Operators cannot filter daemon.log for this stage.`,
+          description: `pipeline stage "${stage}" has no logger call emitting step:"<token>" where token ∈ [${tokens.join(", ")}]. Operators cannot filter daemon.log for this stage.`,
           violations: found
             ? []
             : [
@@ -448,7 +448,7 @@ describe("pipeline-step-coverage -- each known pipeline stage emits at least one
 // Test suite 2: The 7 forensic INFO events carry step: tags
 // ===========================================================================
 
-describe("pipeline-step-coverage -- 7 forensic INFO events carry step: tags (HYGIENE-01)", () => {
+describe("pipeline-step-coverage -- 7 forensic INFO events carry step: tags", () => {
   for (const site of FORENSIC_STEP_SITES) {
     const legalTokens = STAGE_TOKEN_MAP[site.stage];
 
@@ -472,7 +472,7 @@ describe("pipeline-step-coverage -- 7 forensic INFO events carry step: tags (HYG
       expect(
         allViolations,
         formatViolations({
-          description: `HYGIENE-01: "${site.message}" (${site.eventName}) has logger calls WITHOUT step: ∈ [${legalTokens.join(", ")}] in ${site.files.join(", ")}.`,
+          description: `"${site.message}" (${site.eventName}) has logger calls WITHOUT step: ∈ [${legalTokens.join(", ")}] in ${site.files.join(", ")}.`,
           violations: allViolations.map((v) => ({
             file: v.file,
             line: v.line,
@@ -486,7 +486,7 @@ describe("pipeline-step-coverage -- 7 forensic INFO events carry step: tags (HYG
       expect(
         totalTagged,
         formatViolations({
-          description: `HYGIENE-01: "${site.message}" (${site.eventName}) — no step:-tagged logger call found in ${site.files.join(", ")}.`,
+          description: `"${site.message}" (${site.eventName}) — no step:-tagged logger call found in ${site.files.join(", ")}.`,
           violations: site.files.map((f) => ({
             file: f,
             line: 0,
@@ -504,7 +504,7 @@ describe("pipeline-step-coverage -- 7 forensic INFO events carry step: tags (HYG
 // Test suite 3: 9 channel-inbound sites carry step:"channels-inbound"
 // ===========================================================================
 
-describe('pipeline-step-coverage -- 9 channel-inbound "Inbound message" sites carry step:"channels-inbound" (HYGIENE-01)', () => {
+describe('pipeline-step-coverage -- 9 channel-inbound "Inbound message" sites carry step:"channels-inbound"', () => {
   const inboundTokens = STAGE_TOKEN_MAP.inbound;
 
   for (const site of CHANNEL_INBOUND_SITES) {
@@ -520,7 +520,7 @@ describe('pipeline-step-coverage -- 9 channel-inbound "Inbound message" sites ca
       expect(
         violations,
         formatViolations({
-          description: `HYGIENE-01: ${site.adapterName} adapter "${site.message}" logger call is missing step: ∈ [${inboundTokens.join(", ")}]. Operators cannot filter inbound messages by adapter.`,
+          description: `${site.adapterName} adapter "${site.message}" logger call is missing step: ∈ [${inboundTokens.join(", ")}]. Operators cannot filter inbound messages by adapter.`,
           violations: violations.map((v) => ({
             file: v.file,
             line: v.line,
@@ -534,7 +534,7 @@ describe('pipeline-step-coverage -- 9 channel-inbound "Inbound message" sites ca
       expect(
         taggedCount,
         formatViolations({
-          description: `HYGIENE-01: ${site.adapterName} adapter — no "Inbound message" logger call with step: found in ${site.file}.`,
+          description: `${site.adapterName} adapter — no "Inbound message" logger call with step: found in ${site.file}.`,
           violations: [
             {
               file: site.file,

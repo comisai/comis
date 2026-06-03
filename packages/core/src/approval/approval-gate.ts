@@ -57,14 +57,14 @@ export interface ApprovalGate {
   getRequest(requestId: string): ApprovalRequest | undefined;
 
   /**
-   * Resolve a minted `shortId` to its pending request, or undefined (APV-04).
+   * Resolve a minted `shortId` to its pending request, or undefined.
    * Returns undefined once the request is resolved/disposed — the removal is the
    * router's replay guard. The orchestrator's InteractiveCallbackRouter is the sole
    * consumer; channels never call the gate.
    */
   getRequestByShortId(shortId: string): ApprovalRequest | undefined;
 
-  /** Get all pending requests whose `sessionKey` matches (the plain-text router branch — APV-04). */
+  /** Get all pending requests whose `sessionKey` matches (the plain-text router branch). */
   pendingForSession(sessionKey: string): ApprovalRequest[];
 
   /** Clear denial cache entries. If sessionKey is provided, clears entries for that session only. If omitted, clears all entries. */
@@ -114,8 +114,8 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
 
   /**
    * Secondary index: minted `shortId → requestId`. Lets the InteractiveCallbackRouter
-   * resolve an attacker-supplied shortId to a server-side requestId/sessionKey (APV-04).
-   * INVARIANT (Pitfall 4 / T-73-05): mutated symmetrically with `pendingMap` at EVERY
+   * resolve an attacker-supplied shortId to a server-side requestId/sessionKey.
+   * INVARIANT (Pitfall 4): mutated symmetrically with `pendingMap` at EVERY
    * set/delete/clear site — a stale entry would defeat replay rejection, since the
    * pending-table removal IS the router's replay guard.
    */
@@ -212,7 +212,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       batchFollowers.delete(batchKey);
     }
 
-    // Remove from pending map AND the secondary index atomically (Pitfall 4 / T-73-05).
+    // Remove from pending map AND the secondary index atomically (Pitfall 4).
     // Covers the explicit approve/deny path AND the timeout path (the timer calls
     // resolveApproval), so this single site keeps shortIdIndex free of stale entries.
     pendingMap.delete(requestId);
@@ -305,7 +305,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       timer.unref();
 
       pendingMap.set(requestId, { request, resolve, timer });
-      // Populate the secondary index with the freshly minted shortId (APV-04).
+      // Populate the secondary index with the freshly minted shortId.
       shortIdIndex.set(shortId, requestId);
     });
 
@@ -467,7 +467,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       pendingMap.set(record.requestId, { request, resolve: () => {}, timer });
       // Restore the secondary index too, or restored approvals are unreachable via
       // getRequestByShortId — the persisted shortId is re-used so callback identity
-      // survives the restart (70-12 invariant).
+      // survives the restart.
       shortIdIndex.set(record.shortId, record.requestId);
 
       // Emit approval:requested so channel adapters can re-render the approval prompt.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * activity-circuit-breaker.test — WIRE-08.
+ * activity-circuit-breaker.test.
  *
  * The auto-managed per-agent×channel breaker classifies on the
  * `ActivityRenderError.kind` union (NOT the `ErrorKind` log union):
@@ -43,7 +43,7 @@ const NOT_SUPPORTED: ActivityRenderError = { kind: "not_supported", capability: 
 const FAIL = (e: ActivityRenderError): Result<void, ActivityRenderError> => err(e);
 const OK: Result<void, ActivityRenderError> = ok(undefined);
 
-describe("createActivityCircuitBreaker — WIRE-08 dual-threshold per agent×channel", () => {
+describe("createActivityCircuitBreaker — dual-threshold per agent×channel", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -298,7 +298,7 @@ describe("createActivityCircuitBreaker — WIRE-08 dual-threshold per agent×cha
     // z.record(z.string().min(1), …) — no charset restriction), so an id may
     // contain the `::` composite-key separator. The internal Map key is
     // `${agentId}::${channelKey}`; getTripped() must round-trip the ORIGINAL
-    // fields, not re-split the string on the first/any `::` (WR-04).
+    // fields, not re-split the string on the first/any `::`.
     const cb = createActivityCircuitBreaker(testClock);
     const COLON_KEY = { agentId: "tenant::a1", channelKey: "discord-chan" } as const;
     for (let i = 0; i < 3; i++) cb.record(COLON_KEY, FAIL(PERMISSION));
@@ -313,7 +313,7 @@ describe("createActivityCircuitBreaker — WIRE-08 dual-threshold per agent×cha
 
   it("getTripped reports the exact channelKey when the channelKey itself contains the separator", () => {
     // The channelKey is equally unrestricted; a `::` inside it must not bleed
-    // into the reported agentId either (WR-04).
+    // into the reported agentId either.
     const cb = createActivityCircuitBreaker(testClock);
     const COLON_CHAN = { agentId: "agent-1", channelKey: "discord::guild::42" } as const;
     for (let i = 0; i < 5; i++) cb.record(COLON_CHAN, FAIL(INTERNAL));

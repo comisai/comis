@@ -157,11 +157,11 @@ afterAll(() => {
 // ---------------------------------------------------------------------------
 
 describe("Section 1: Skill Discovery & Registry", () => {
-  it("SKL-INT-01: createSkillRegistry discovers all 4 SKILL.md files from temp dir", () => {
+  it("createSkillRegistry discovers all 4 SKILL.md files from temp dir", () => {
     expect(registry.getMetadataCount()).toBe(4);
   });
 
-  it("SKL-INT-02: getUserInvocableSkillNames returns 3 user-invocable skills, excludes hidden-skill", () => {
+  it("getUserInvocableSkillNames returns 3 user-invocable skills, excludes hidden-skill", () => {
     const names = registry.getUserInvocableSkillNames();
     expect(names.size).toBe(3);
     expect(names.has("deploy")).toBe(true);
@@ -170,7 +170,7 @@ describe("Section 1: Skill Discovery & Registry", () => {
     expect(names.has("hidden-skill")).toBe(false);
   });
 
-  it("SKL-INT-03: getUserInvocableSkillNames result used with matchPromptSkillCommand matches /skill:deploy", () => {
+  it("getUserInvocableSkillNames result used with matchPromptSkillCommand matches /skill:deploy", () => {
     const skillNames = registry.getUserInvocableSkillNames();
     const match = matchPromptSkillCommand("/skill:deploy build api", skillNames);
     expect(match).not.toBeNull();
@@ -184,7 +184,7 @@ describe("Section 1: Skill Discovery & Registry", () => {
 // ---------------------------------------------------------------------------
 
 describe("Section 2: Full Pipeline (match -> load -> expand)", () => {
-  it("SKL-PIPE-01: Full flow produces XML with skill tag, body, and appended user arguments", async () => {
+  it("Full flow produces XML with skill tag, body, and appended user arguments", async () => {
     const skillNames = registry.getUserInvocableSkillNames();
     const match = matchPromptSkillCommand("/skill:deploy build the api", skillNames);
     expect(match).not.toBeNull();
@@ -205,7 +205,7 @@ describe("Section 2: Full Pipeline (match -> load -> expand)", () => {
     expect(xml).toContain("User arguments: build the api");
   });
 
-  it("SKL-PIPE-02: /skill:greeting with no args produces XML without User arguments section", async () => {
+  it("/skill:greeting with no args produces XML without User arguments section", async () => {
     const skillNames = registry.getUserInvocableSkillNames();
     const match = matchPromptSkillCommand("/skill:greeting", skillNames);
     expect(match).not.toBeNull();
@@ -224,7 +224,7 @@ describe("Section 2: Full Pipeline (match -> load -> expand)", () => {
     expect(xml).not.toContain("User arguments:");
   });
 
-  it("SKL-PIPE-03: /skill:greeting Hello World appends arguments after </skill> tag", async () => {
+  it("/skill:greeting Hello World appends arguments after </skill> tag", async () => {
     const skillNames = registry.getUserInvocableSkillNames();
     const match = matchPromptSkillCommand("/skill:greeting Hello World", skillNames);
     expect(match).not.toBeNull();
@@ -244,7 +244,7 @@ describe("Section 2: Full Pipeline (match -> load -> expand)", () => {
     expect(argsIdx).toBeGreaterThan(skillCloseIdx);
   });
 
-  it("SKL-PIPE-04: Expanded XML contains <skill name=... location=...> with body between tags", async () => {
+  it("Expanded XML contains <skill name=... location=...> with body between tags", async () => {
     const loadResult = await registry.loadPromptSkill("deploy");
     expect(loadResult.ok).toBe(true);
     if (!loadResult.ok) return;
@@ -267,7 +267,7 @@ describe("Section 2: Full Pipeline (match -> load -> expand)", () => {
 // ---------------------------------------------------------------------------
 
 describe("Section 3: Arguments Appending (NOT Substitution)", () => {
-  it("SKL-ARG-01: Body text remains unchanged when args are provided", async () => {
+  it("Body text remains unchanged when args are provided", async () => {
     const loadResult = await registry.loadPromptSkill("deploy");
     expect(loadResult.ok).toBe(true);
     if (!loadResult.ok) return;
@@ -287,13 +287,13 @@ describe("Section 3: Arguments Appending (NOT Substitution)", () => {
     expect(body).toBe(originalBody);
   });
 
-  it("SKL-ARG-02: Empty args string produces no User arguments line", () => {
+  it("Empty args string produces no User arguments line", () => {
     const xml = expandSkillForInvocation("test", "Body.", "/loc", "/loc", "");
     expect(xml).not.toContain("User arguments:");
     expect(xml.endsWith("</skill>")).toBe(true);
   });
 
-  it("SKL-ARG-03: Args with XML-special characters are XML-escaped in appended section", () => {
+  it("Args with XML-special characters are XML-escaped in appended section", () => {
     const xml = expandSkillForInvocation(
       "test",
       "Body.",
@@ -315,7 +315,7 @@ describe("Section 3: Arguments Appending (NOT Substitution)", () => {
 // ---------------------------------------------------------------------------
 
 describe("Section 4: allowedTools Restriction", () => {
-  it("SKL-TOOL-01: loadPromptSkill(restricted-tool) returns allowedTools = [exec, read]", async () => {
+  it("loadPromptSkill(restricted-tool) returns allowedTools = [exec, read]", async () => {
     const result = await registry.loadPromptSkill("restricted-tool");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -323,7 +323,7 @@ describe("Section 4: allowedTools Restriction", () => {
     expect(result.value.allowedTools).toEqual(["exec", "read"]);
   });
 
-  it("SKL-TOOL-02: loadPromptSkill(deploy) returns allowedTools = [] (no restriction)", async () => {
+  it("loadPromptSkill(deploy) returns allowedTools = [] (no restriction)", async () => {
     const result = await registry.loadPromptSkill("deploy");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -331,7 +331,7 @@ describe("Section 4: allowedTools Restriction", () => {
     expect(result.value.allowedTools).toEqual([]);
   });
 
-  it("SKL-TOOL-03: allowedTools intersection: only allowed tools pass through", async () => {
+  it("allowedTools intersection: only allowed tools pass through", async () => {
     const result = await registry.loadPromptSkill("restricted-tool");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -344,7 +344,7 @@ describe("Section 4: allowedTools Restriction", () => {
     expect(intersection).not.toContain("web-search");
   });
 
-  it("SKL-TOOL-04: Empty allowedTools means no restriction -- all tools pass through", async () => {
+  it("Empty allowedTools means no restriction -- all tools pass through", async () => {
     const result = await registry.loadPromptSkill("deploy");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -367,7 +367,7 @@ describe("Section 4: allowedTools Restriction", () => {
 // ---------------------------------------------------------------------------
 
 describe("Section 5: Matching Edge Cases", () => {
-  it("SKL-MATCH-01: Case-insensitive match: /skill:DEPLOY build matches canonical deploy", () => {
+  it("Case-insensitive match: /skill:DEPLOY build matches canonical deploy", () => {
     const skillNames = registry.getUserInvocableSkillNames();
     const match = matchPromptSkillCommand("/skill:DEPLOY build", skillNames);
     expect(match).not.toBeNull();
@@ -375,20 +375,20 @@ describe("Section 5: Matching Edge Cases", () => {
     expect(match!.args).toBe("build");
   });
 
-  it("SKL-MATCH-02: /Skill:deploy build (uppercase S) matches", () => {
+  it("/Skill:deploy build (uppercase S) matches", () => {
     const skillNames = registry.getUserInvocableSkillNames();
     const match = matchPromptSkillCommand("/Skill:deploy build", skillNames);
     expect(match).not.toBeNull();
     expect(match!.name).toBe("deploy");
   });
 
-  it("SKL-MATCH-03: /skill:unknown-name with name not in registry returns null", () => {
+  it("/skill:unknown-name with name not in registry returns null", () => {
     const skillNames = registry.getUserInvocableSkillNames();
     const match = matchPromptSkillCommand("/skill:unknown-name", skillNames);
     expect(match).toBeNull();
   });
 
-  it("SKL-MATCH-04: /skill:hidden-skill returns null (not in getUserInvocableSkillNames)", () => {
+  it("/skill:hidden-skill returns null (not in getUserInvocableSkillNames)", () => {
     const skillNames = registry.getUserInvocableSkillNames();
     const match = matchPromptSkillCommand("/skill:hidden-skill", skillNames);
     expect(match).toBeNull();
@@ -400,14 +400,14 @@ describe("Section 5: Matching Edge Cases", () => {
 // ---------------------------------------------------------------------------
 
 describe("Section 6: Priority Composition", () => {
-  it("SKL-PRI-01: /status is a system command -- parseSlashCommand returns found:true", () => {
+  it("/status is a system command -- parseSlashCommand returns found:true", () => {
     const parsed = parseSlashCommand("/status");
     expect(parsed.found).toBe(true);
     // When a system command is found, matchPromptSkillCommand should not be called
     // (system commands take priority)
   });
 
-  it("SKL-PRI-02: /skill:deploy build api -- parseSlashCommand returns found:false, then matchPromptSkillCommand returns match", () => {
+  it("/skill:deploy build api -- parseSlashCommand returns found:false, then matchPromptSkillCommand returns match", () => {
     const parsed = parseSlashCommand("/skill:deploy build api");
     // /skill:deploy is NOT a known system command, so found is false
     expect(parsed.found).toBe(false);
@@ -420,7 +420,7 @@ describe("Section 6: Priority Composition", () => {
     expect(match!.args).toBe("build api");
   });
 
-  it("SKL-PRI-03: Regular text message -- both return no-match", () => {
+  it("Regular text message -- both return no-match", () => {
     const text = "regular text message";
     const parsed = parseSlashCommand(text);
     expect(parsed.found).toBe(false);

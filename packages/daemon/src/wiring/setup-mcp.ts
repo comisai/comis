@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: partial-encrypted-config guard (WR-02 precondition — wiring defect, fail-fast at composition root)
+// @allow-throw: partial-encrypted-config guard (a wiring defect, fail-fast at composition root)
 /**
  * MCP server connection setup: reads integrations.mcp.servers from config,
  * creates an McpClientManager, and connects to each enabled server.
@@ -175,7 +175,7 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
   type OAuthDepsArg = { oauthDeps?: { createTokenStore: () => TokenStore; resolveDiscovery: typeof resolveDiscovery } };
   let oauthDepsArg: OAuthDepsArg = {};
 
-  // WR-02: guard against partial encrypted config — exactly one of secretsDb/secretsCrypto
+  // Guard against partial encrypted config — exactly one of secretsDb/secretsCrypto
   // provided is a wiring defect; it silently disables MCP OAuth with no diagnostic.
   if ((deps.secretsDb !== undefined) !== (deps.secretsCrypto !== undefined)) {
     throw new Error(

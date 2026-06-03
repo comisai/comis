@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PURE read-only fold over the recall-trace JSONL the v2.6 CLI discarded
- * (BENCH-05). Records are ALREADY sanitized on disk at write time
+ * PURE read-only fold over the recall-trace JSONL the CLI discarded.
+ * Records are ALREADY sanitized on disk at write time
  * (runtime.ts:224-233 / memory-handlers.ts:542-543) — this analyzer does NOT
  * re-sanitize and MUST NOT echo the optional sanitized snippet / raw memory
  * bodies; it reads id + numeric breakdown + closed-union reason only.
@@ -9,12 +9,12 @@
  * THE GAP THIS CLOSES: the recall pipeline WRITES a rich per-recall record on
  * every recall (lanes fired, fused order, rerank pre/post scores, the final
  * ranked set with per-memory score breakdowns + include/exclude reasons), but
- * the v2.6 CLI table view reads only `traceId/sessionKey/finalCount/ts`
+ * the CLI table view reads only `traceId/sessionKey/finalCount/ts`
  * (memory.ts:276-285) — everything else is "captured-but-unread"
  * (HINDSIGHT_VS_COMIS.md N4). This analyzer is the missing reducer: it folds the
  * discarded `ranked[].breakdown`, `rerank.pre/postScores`, `ranked[].reason`,
  * `lanes`, and `degradations` into a `TraceQualityView` — the diagnostic
- * dashboard a recall@k regression in a later v2.7 phase (90–96) is read against.
+ * dashboard a recall@k regression in a later phase is read against.
  *
  * ARCHITECTURAL CUT (architecture-graph.test.ts:133 — agent depends on
  * {shared,core,observability,scheduler}, NO memory edge): this file imports ONLY
@@ -69,7 +69,7 @@ export interface TraceQualityView {
     temporal: number[];
     proof: number[];
     trust: number[];
-    /** Usefulness factor (FEED-03) values from every included entry carrying a breakdown. */
+    /** Usefulness factor values from every included entry carrying a breakdown. */
     usefulness: number[];
   };
   /** Summed per-lane candidate counts across all recalls. */
@@ -87,7 +87,7 @@ export interface TraceQualityView {
  * Ties are broken by original index ascending in BOTH argsorts, so equal scores
  * preserve their relative position and never spuriously register as "differs".
  * Unequal lengths return `true` to keep this a sound TOTAL function in isolation.
- * NOTE (WR-04): the analyzer's lift-realized path does NOT rely on that branch —
+ * NOTE: the analyzer's lift-realized path does NOT rely on that branch —
  * it pre-guards equal, non-empty lengths before calling here, so a malformed
  * trace with mismatched lengths is never counted as a realized rerank lift.
  */
@@ -108,8 +108,8 @@ export function argsortDiffers(pre: number[], post: number[]): boolean {
 
 /**
  * Fold recall-trace JSONL text into a {@link TraceQualityView}. Pure: takes
- * the JSONL as a STRING (a file-reading wrapper is Plan 88-03's job, via
- * `resolveRecallTraceFilePath`), so it is trivially unit-testable on a fixture.
+ * the JSONL as a STRING (a file-reading wrapper is a separate concern, handled
+ * via `resolveRecallTraceFilePath`), so it is trivially unit-testable on a fixture.
  *
  * Uses the daemon's exact line-skip loop (memory-handlers.ts:560-567): split on
  * "\n", skip empty lines, `try JSON.parse / catch continue` (malformed), then
@@ -136,7 +136,7 @@ export function analyzeRecallTrace(jsonlContent: string): TraceQualityView {
   let laneCausal = 0;
   let vectorLaneInactiveCount = 0;
   // Null-prototype accumulator: only the Zod-validated closed-enum `kind` is
-  // ever used as a key (no untrusted/prototype-chain write — T-88-02-04).
+  // ever used as a key (no untrusted/prototype-chain write).
   const degradationCounts: Record<string, number> = Object.create(null) as Record<string, number>;
 
   for (const line of jsonlContent.split("\n")) {
@@ -160,14 +160,14 @@ export function analyzeRecallTrace(jsonlContent: string): TraceQualityView {
       case "ran": {
         rerankRan++;
         // Attribute realized lift ONLY when both score arrays are present,
-        // non-empty, AND equal-length (WR-04). The schema makes preScores /
+        // non-empty, AND equal-length. The schema makes preScores /
         // postScores independently optional with no cross-field length
         // invariant, so a malformed external trace could emit mismatched/empty
         // lengths; argsortDiffers reports a length mismatch as "differs" (a
         // sound TOTAL function in isolation — its own test documents that), but
         // a mismatch is malformed input, not an OBSERVED reordering. Counting it
-        // would inflate rerankLiftRealized, a headline quality signal later v2.7
-        // phases (90-96) are scored against — so exclude it from the numerator.
+        // would inflate rerankLiftRealized, a headline quality signal later
+        // phases are scored against — so exclude it from the numerator.
         const { preScores, postScores } = event.rerank;
         if (
           preScores !== undefined &&
@@ -216,7 +216,7 @@ export function analyzeRecallTrace(jsonlContent: string): TraceQualityView {
     laneVector += event.lanes.vector;
     laneEntity += event.lanes.entity;
     laneTemporal += event.lanes.temporal;
-    // EXTRACT-03: causal is an APPEND-ONLY optional lane field on the recall-trace event
+    // causal is an APPEND-ONLY optional lane field on the recall-trace event
     // schema, so a pre-causal-lane trace (or an off-lane recall) omits it -> coalesce to 0.
     laneCausal += event.lanes.causal ?? 0;
     if (!event.vectorLaneActive) vectorLaneInactiveCount++;

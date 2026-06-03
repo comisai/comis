@@ -3,16 +3,16 @@
  * Wiring tests for the two daemon-side terminal-driver review fixes that live in
  * `wireTerminalTools` (`setup-terminal-tools.ts`):
  *
- *   - MR-03: the wiring must reuse the daemon's once-detected cached
+ *   - Provider reuse: the wiring must reuse the daemon's once-detected cached
  *     `sandboxProvider` (threaded into `TerminalWiringDeps`) instead of
  *     re-running the blocking `detectSandboxProvider()` (a `spawnSync("bwrap")`
  *     smoke test) on every create. The create tool's `detectProvider` must
  *     resolve to the cached provider, and `detectSandboxProvider` must NOT be
  *     invoked by the wiring.
- *   - HR-03: the wiring must bind the registry's `onSpawnFailed` hook to emit a
- *     `terminal:spawn_failed` event, so a worker backend-spawn failure surfaces
- *     as OPS-07 telemetry (the registry flips the session to `lost`; the wiring
- *     turns the hook into the bus event).
+ *   - Spawn-failure telemetry: the wiring must bind the registry's
+ *     `onSpawnFailed` hook to emit a `terminal:spawn_failed` event, so a worker
+ *     backend-spawn failure surfaces as telemetry (the registry flips the
+ *     session to `lost`; the wiring turns the hook into the bus event).
  *
  * `@comis/skills/tools` is mocked so the deps passed to the create-tool +
  * registry factories are captured and asserted (the real factories spawn a real
@@ -58,7 +58,7 @@ vi.mock("@comis/skills/tools", () => ({
   createTerminalSessionWaitTool: vi.fn(() => ({ name: "terminal_session_wait", execute: vi.fn() })),
   createTerminalSessionStatusTool: vi.fn(() => ({ name: "terminal_session_status", execute: vi.fn() })),
   createTerminalSessionResizeTool: vi.fn(() => ({ name: "terminal_session_resize", execute: vi.fn() })),
-  // P4 OPS-03/06: the per-session caps factory the terminal wiring constructs ONCE per agent.
+  // The per-session caps factory the terminal wiring constructs ONCE per agent.
   createSessionCaps: vi.fn(() => ({
     startSession: vi.fn(),
     consumeRequest: vi.fn(() => undefined),
@@ -94,7 +94,7 @@ beforeEach(() => {
   detectSandboxProviderSpy.mockClear();
 });
 
-describe("wireTerminalTools — MR-03 reuse the cached sandboxProvider (no per-create bwrap re-detect)", () => {
+describe("wireTerminalTools — reuse the cached sandboxProvider (no per-create bwrap re-detect)", () => {
   it("binds the create tool's detectProvider to the daemon's cached provider and never calls detectSandboxProvider", () => {
     const cachedProvider = { name: "cached-daemon-provider" } as never;
     const tools: ToolLike[] = [];
@@ -131,7 +131,7 @@ describe("wireTerminalTools — MR-03 reuse the cached sandboxProvider (no per-c
   });
 });
 
-describe("wireTerminalTools — HR-03 onSpawnFailed emits terminal:spawn_failed (OPS-07)", () => {
+describe("wireTerminalTools — onSpawnFailed emits terminal:spawn_failed", () => {
   it("binds the registry's onSpawnFailed hook to emit a terminal:spawn_failed event with the agent id", () => {
     const bus = makeBus();
     wireTerminalTools([] as never, new Map(), "agent-x", {

@@ -2,7 +2,7 @@
 // @allow-throw: server-name validator at the wrapper boundary; the throw
 // surfaces to the SDK's OAuthClientProvider.saveTokens callback (which has no
 // Result-typed surface). Disk + port writes are guarded so a malformed server
-// name cannot corrupt either store. See CR-01 in the phase-01 review.
+// name cannot corrupt either store.
 /**
  * Port-backed MCP token store adapter.
  *
@@ -24,7 +24,7 @@
  *   names that do not match the same /^[a-zA-Z0-9_-]+$/ class enforced by
  *   `McpServerEntrySchema`. This guards against profileId corruption (e.g. a
  *   `:` would split "mcp-oauth:<server>" ambiguously) and against the unsaved/
- *   runtime-only paths that skip the config schema (CR-01).
+ *   runtime-only paths that skip the config schema.
  * - Port write failure is NON-FATAL: the disk store is authoritative.
  *   A port.set failure is silently suppressed (non-fatal) to preserve the
  *   existing MCP OAuth flow; callers must not rely on the port for read-back.
@@ -68,7 +68,7 @@ const MCP_SERVER_NAME_RE = /^[a-zA-Z0-9_-]+$/;
 /**
  * Assert that a server name is safe to interpolate into both the disk filename
  * (`<server>.json` under `tokensDir`) and the composed profileId
- * (`mcp-oauth:<server>`). Throws — see CR-01: a `:` would split the profileId
+ * (`mcp-oauth:<server>`). Throws: a `:` would split the profileId
  * ambiguously, and a `/` would risk traversal at the inner store's safePath
  * boundary. Schema-validated config names already pass; this guard exists for
  * the unsaved/runtime callers that skip the schema (e.g. mcp.connect with a
@@ -124,7 +124,7 @@ export function createPortBackedMcpTokenStore(
     },
 
     async saveTokens(server: string, sdkTokens): Promise<void> {
-      // CR-01: reject malformed server names BEFORE any side effect (disk write
+      // Reject malformed server names BEFORE any side effect (disk write
       // OR port write). Schema-validated config names already pass; this guard
       // covers unsaved/runtime callers and future SDK lifecycle callbacks that
       // skip `McpServerEntrySchema`.
@@ -155,7 +155,7 @@ export function createPortBackedMcpTokenStore(
 
       // Non-fatal: a port-set failure must NOT interrupt the disk write or
       // throw to the SDK saveTokens caller. But silence is an observability
-      // regression (WR-02): without a log, a persistent port-side error (disk
+      // regression: without a log, a persistent port-side error (disk
       // corruption on the credential partition, future schema mismatch, etc.)
       // leaves the disk store and the unified credential port silently
       // desynced. Surface both failure shapes (ok:false Result + thrown

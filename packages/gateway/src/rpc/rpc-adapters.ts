@@ -74,7 +74,7 @@ export interface RpcAdapterDeps {
   /**
    * List non-secret agent summaries for the dashboard's `GET /api/agents`.
    *
-   * Distinct from {@link getConfig}: WR-03 (§17.8) removed `agents` from
+   * Distinct from {@link getConfig}: §17.8 removed `agents` from
    * getConfig's non-secret allowlist, so getConfig no longer egresses agent
    * configs. This dedicated projection returns ONLY non-secret identity/model
    * fields (id/name/provider/model) — never auth profiles, secret-allow
@@ -86,8 +86,8 @@ export interface RpcAdapterDeps {
   /**
    * List non-secret channel summaries for the dashboard's `GET /api/channels`.
    *
-   * Companion to {@link listAgentSummaries} — WR-03 removed `channels` from
-   * getConfig's allowlist too. Returns ONLY channel name + enabled state;
+   * Companion to {@link listAgentSummaries} — `channels` was also removed from
+   * getConfig's allowlist. Returns ONLY channel name + enabled state;
    * never bot tokens, webhook secrets, or any credential-bearing field.
    */
   listChannelSummaries?: () => Array<{ name: string; enabled: boolean }>;

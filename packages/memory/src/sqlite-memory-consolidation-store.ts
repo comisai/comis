@@ -2,40 +2,39 @@
 // @allow-throw: foldIntoExisting's `throw new Error(...)` guards (fold target not found / mapper parse failure / grown-row vanished) run INSIDE the better-sqlite3 `db.transaction(fn)()` callback, where a throw is the ONLY way to trigger the atomic ROLLBACK — returning a Result.err from the callback would COMMIT the partial grow. Every throw is caught by the method's own outer try/catch and converted to `err` (the tests prove "never throws"); consumed by the daemon consolidation cron (@allow-throw boundary), which treats the err as a non-fatal skipped fold.
 /**
  * SqliteMemoryConsolidationStore: the SOLE adapter for the segregated
- * `MemoryConsolidationStore` port (@comis/core, Phase 84). It owns ALL
+ * `MemoryConsolidationStore` port (@comis/core). It owns ALL
  * consolidation SQL — the scoped, STATE-predicate candidate selection
- * (`consolidated_at IS NULL`, NOT a time cursor — CONS-04), the embedding
+ * (`consolidated_at IS NULL`, NOT a time cursor), the embedding
  * hydration (a `LEFT JOIN vec_memories` when sqlite-vec is available — RESEARCH
- * Pitfall 7), the observation listing for the deterministic dedup pre-check
- * (CONS-01/04 support), and the ATOMIC `applyConsolidation` transaction
- * (CONS-03).
+ * Pitfall 7), the observation listing for the deterministic dedup pre-check,
+ * and the ATOMIC `applyConsolidation` transaction.
  *
  * It shares the `better-sqlite3` handle of the `SqliteMemoryAdapter` (passed in
  * via `getDb()`), so it runs against the same schema — the `memories` table now
  * carries the 5 observation columns (`proof_count`, `source_ids`,
  * `consolidated_at`, `confidence`, `history`) and the
  * `idx_memories_unconsol` / `idx_memories_observations` partial indexes added by
- * `ensureMemoryColumns` + `initSchema` (Plan 01).
+ * `ensureMemoryColumns` + `initSchema`.
  *
  * ## The two central de-risks live here (the SQL boundary)
  *
- * 1. **Atomic apply (CONS-03).** `applyConsolidation` is ONE
+ * 1. **Atomic apply.** `applyConsolidation` is ONE
  *    `db.transaction(fn)()`: it creates the observation row AND marks every
  *    source `consolidated_at` in a single unit. better-sqlite3's transaction
  *    callable auto-ROLLBACKs on any throw, so a mid-failure leaves NEITHER an
  *    orphan observation NOR partially-marked sources.
- * 2. **State-predicate selection (CONS-04).** Candidates are selected by
+ * 2. **State-predicate selection.** Candidates are selected by
  *    `consolidated_at IS NULL` — a STATE predicate, not a `created_at > cursor`
  *    watermark. Because the mark happens INSIDE the apply transaction, a
  *    processed source leaves the candidate set atomically; a re-run does not
  *    re-select it, so the cycle is naturally idempotent (no double-create — the
  *    singleton/watermark bug the superseded design sketch suffered).
  *
- * ## Non-destructive (CONS-05)
+ * ## Non-destructive
  *
  * `applyConsolidation` NEVER removes a source memory and NEVER touches a
  * supersession column — it only sets `consolidated_at`. The raw rows stay
- * live and recall-able; conflicts are resolved at read time (Phase 81).
+ * live and recall-able; conflicts are resolved at read time.
  *
  * ## Single-writer assumption (mirror sqlite-memory-entity-store.ts:137-144)
  *
@@ -47,7 +46,7 @@
  * apply leans on that assumption (a concurrent design would need additional
  * locking around the create+mark unit).
  *
- * ## Isolation is the load-bearing security boundary (T-84-05)
+ * ## Isolation is the load-bearing security boundary
  *
  * Comis runs many agents/tenants in one DB. The candidate SELECT, the
  * observation SELECT, AND the source-mark UPDATE all filter on
@@ -55,7 +54,7 @@
  * fail-closed no-op) — parameterized — so a cross-scope memory is never
  * returned as a candidate nor marked.
  *
- * ## Untrusted input (T-84-09)
+ * ## Untrusted input
  *
  * Memory content + ids derive from conversation text. Every value reaches SQL
  * as a bound `?` parameter — never concatenated — and every read parses through
@@ -106,7 +105,7 @@ const memoryRowMapper = createRowMapper(MemoryRowSchema);
  * miss, or sqlite-vec unavailable) — embeddings are optional on a candidate
  * (the clusterer then degrades to entity/FTS overlap, non-fatal).
  *
- * Decode is TOTAL and non-throwing (WR-01). A corrupt/misaligned/truncated blob
+ * Decode is TOTAL and non-throwing. A corrupt/misaligned/truncated blob
  * degrades that ONE candidate to "no embedding" — it MUST NOT throw, because the
  * caller's outer try/catch would turn a single bad row into an `err` and the
  * consolidation job treats a candidate-read `err` as FATAL (aborts the whole
@@ -131,7 +130,7 @@ function decodeEmbedding(raw: unknown): number[] | undefined {
     const copy = Uint8Array.prototype.slice.call(raw);
     return Array.from(new Float32Array(copy.buffer, 0, copy.byteLength / 4));
   } catch {
-    // Defensive: never let one bad row abort the candidate read (WR-01).
+    // Defensive: never let one bad row abort the candidate read.
     return undefined;
   }
 }
@@ -153,10 +152,10 @@ export function createSqliteMemoryConsolidationStore(
   // not, the same query minus the JOIN + the `embedding` projection runs (the
   // candidate then has no embedding — the clusterer degrades gracefully). Both
   // variants share the load-bearing predicates:
-  //   - m.tenant_id = ? AND m.agent_id = ?  → scope isolation (T-84-05)
-  //   - m.consolidated_at IS NULL           → STATE predicate, NOT a cursor (CONS-04)
+  //   - m.tenant_id = ? AND m.agent_id = ?  → scope isolation
+  //   - m.consolidated_at IS NULL           → STATE predicate, NOT a cursor
   //   - m.proof_count IS NULL               → only raws, never existing observations
-  //   - ORDER BY m.created_at ASC LIMIT ?   → oldest-first, bounded (CONS-07)
+  //   - ORDER BY m.created_at ASC LIMIT ?   → oldest-first, bounded
   const selectCandidates = isVecAvailable()
     ? db.prepare(
         "SELECT m.*, v.embedding AS embedding FROM memories m " +
@@ -172,7 +171,7 @@ export function createSqliteMemoryConsolidationStore(
           "ORDER BY m.created_at ASC LIMIT ?",
       );
 
-  // Observation listing for the dedup pre-check (CONS-04). proof_count IS NOT
+  // Observation listing for the dedup pre-check. proof_count IS NOT
   // NULL is the column-flag for "this row is an observation" (§4.1).
   const selectObservations = db.prepare(
     "SELECT * FROM memories WHERE tenant_id = ? AND agent_id = ? AND proof_count IS NOT NULL " +
@@ -181,17 +180,17 @@ export function createSqliteMemoryConsolidationStore(
 
   // Source-mark UPDATE — scoped on tenant_id (a cross-tenant id is a no-op,
   // fail-closed). NON-DESTRUCTIVE: sets consolidated_at only; the source row is
-  // never removed (CONS-05).
+  // never removed.
   const markConsolidated = db.prepare(
     "UPDATE memories SET consolidated_at = ? WHERE id = ? AND tenant_id = ?",
   );
 
-  // --- Fold statements (Phase 94, FOLD-01/02) — the dual of the create path ---
+  // --- Fold statements — the dual of the create path ---
 
   // Read the EXISTING observation to grow, INSIDE the fold transaction. Scoped on
   // (tenant_id) + `proof_count IS NOT NULL` so the target MUST be an observation
   // in the caller's tenant — a cross-tenant id OR a raw (proof_count NULL) row
-  // misses → fail-closed err (T-94-04), nothing mutated.
+  // misses → fail-closed err, nothing mutated.
   const selectObservationById = db.prepare(
     "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND proof_count IS NOT NULL",
   );
@@ -201,8 +200,8 @@ export function createSqliteMemoryConsolidationStore(
   // omitted content a true no-op on the column → the `memories_au AFTER UPDATE OF
   // content` FTS trigger does not re-index a proof-only fold (RESEARCH Pitfall 6,
   // schema.ts:284). `trust_level = ?` writes plan.trustLevel VERBATIM — the
-  // adapter never recomputes/raises trust (the min ceiling is computed upstream
-  // in 94-02; the adapter has no path to RAISE, T-94-01). Scoped on (tenant_id) +
+  // adapter never recomputes/raises trust (the min ceiling is computed upstream;
+  // the adapter has no path to RAISE). Scoped on (tenant_id) +
   // `proof_count IS NOT NULL` (defense-in-depth — the same predicate as the read).
   const growObservation = db.prepare(
     "UPDATE memories SET proof_count = ?, source_ids = ?, history = ?, confidence = ?, " +
@@ -303,7 +302,7 @@ export function createSqliteMemoryConsolidationStore(
     ): Promise<Result<MemoryEntry, Error>> {
       const startMs = systemNowMs();
       try {
-        // ONE transaction (CONS-03): create the observation AND mark every source
+        // ONE transaction: create the observation AND mark every source
         // consolidated_at. better-sqlite3's transaction callable BEGINs, runs fn,
         // COMMITs — and auto-ROLLBACKs on ANY throw, so a failure in EITHER the
         // insert OR a source-mark reverts BOTH. The mark uses `plan.now` (the
@@ -350,7 +349,7 @@ export function createSqliteMemoryConsolidationStore(
     ): Promise<Result<MemoryEntry, Error>> {
       const startMs = systemNowMs();
       try {
-        // ONE transaction (FOLD-02): grow the EXISTING observation AND mark every
+        // ONE transaction: grow the EXISTING observation AND mark every
         // new source consolidated_at in a single unit. better-sqlite3's
         // transaction callable auto-ROLLBACKs on ANY throw, so a failure in EITHER
         // the grow OR a source-mark reverts BOTH — no torn observation, no orphan
@@ -361,7 +360,7 @@ export function createSqliteMemoryConsolidationStore(
         const tx = db.transaction(() => {
           // (a) Read the target INSIDE the tx — must be an observation in scope.
           //     A cross-tenant id OR a raw (proof_count NULL) row misses → throw →
-          //     ROLLBACK → err (fail-closed, T-94-04). Parsed via the row mapper
+          //     ROLLBACK → err (fail-closed). Parsed via the row mapper
           //     (the sanctioned typed-read path — untyped-sqlite gate).
           const targetRaw = selectObservationById.get(plan.targetObservationId, plan.tenantId);
           const parsedTarget = memoryRowMapper.parseOptionalRow(targetRaw);
@@ -371,15 +370,15 @@ export function createSqliteMemoryConsolidationStore(
           }
           const target = rowToEntry(parsedTarget.value);
 
-          // (b) IDEMPOTENCY backstop (FOLD-02): proof_count := |UNION(existing, new)|
+          // (b) IDEMPOTENCY backstop: proof_count := |UNION(existing, new)|
           //     — a SET-cardinality recompute via `new Set(...)`, NEVER a blind +=.
           //     Re-folding already-present sources leaves the count unchanged.
           const union = [...new Set([...(target.sourceIds ?? []), ...plan.newSourceIds])];
           const newProofCount = union.length;
 
-          // (c) Non-destructive history (CONS-05): append the prior content ONLY
+          // (c) Non-destructive history: append the prior content ONLY
           //     when the fold actually CHANGES content (a proof-only fold appends
-          //     nothing → no FTS churn, no history noise — Pitfall 6 / T-94-06).
+          //     nothing → no FTS churn, no history noise — Pitfall 6).
           const history = [...(target.history ?? [])];
           if (plan.content !== undefined && plan.content !== target.content) {
             history.push({ previousContent: target.content, changedAt: plan.now });
@@ -387,7 +386,7 @@ export function createSqliteMemoryConsolidationStore(
 
           // (d) Grow the row: UNIONed proof_count + source_ids, appended history,
           //     refreshed confidence + occurred_at (half-life clock reset), trust
-          //     written VERBATIM (never raised — T-94-01), content COALESCE-d
+          //     written VERBATIM (never raised), content COALESCE-d
           //     (omit = unchanged). source_ids/history persist as JSON TEXT.
           growObservation.run(
             newProofCount,
@@ -449,7 +448,7 @@ export function createSqliteMemoryConsolidationStore(
     },
 
     /**
-     * READ (REASON-04 — the surprisal-gate engine). The k nearest-neighbour
+     * READ (the surprisal-gate engine). The k nearest-neighbour
      * cosine DISTANCES for one embedding, returned sorted ascending (closer
      * first), or `ok([])` when sqlite-vec is unavailable (graceful degrade — the
      * caller's missing-embedding policy then applies). The `(agentId, tenantId)`
@@ -460,22 +459,22 @@ export function createSqliteMemoryConsolidationStore(
      * Backed by the shipped sqlite-vec `searchByVector` (hybrid-search.ts:155) —
      * `SELECT memory_id, distance FROM vec_memories WHERE embedding MATCH ? AND
      * k = ?` with the embedding bound as a Float32Array `?` parameter (NEVER
-     * concatenated — T-101-03-02). `searchByVector` returns rows sorted by
+     * concatenated). `searchByVector` returns rows sorted by
      * distance ASCENDING and degrades to `[]` on any row-validation error, so we
      * pass its distances straight through (the agent-side `surprisalSelect`
      * applies its own `(surprisal desc, id asc)` total order).
      *
-     * ## Scope (T-101-03-01)
+     * ## Scope
      * The `vec_memories` virtual table is GLOBAL (no tenant/agent column on the
      * vec0 table), so this read is corpus-wide. That is by design: it returns
      * ONLY DISTANCES (floats), never ids or content — a non-identifying scalar
-     * cannot leak another scope's memory body. The caller (101-04) holds only
+     * cannot leak another scope's memory body. The caller holds only
      * in-scope candidate embeddings and uses the distances for a per-candidate
      * novelty SCORE; no cross-scope content crosses the boundary. A future
      * filtered-vec variant (V4) can use the carried `(agentId, tenantId)` args
      * for hard access control.
      *
-     * ## Result discipline (T-101-03-03)
+     * ## Result discipline
      * A pure read wrapped in try/catch → `err`; `isVecAvailable()` false → `ok([])`.
      * NEVER throws out — a corrupt vec table degrades the surprisal gate for that
      * candidate (the caller's run continues), it never crashes the reasoning job.
@@ -524,9 +523,9 @@ export function createSqliteMemoryConsolidationStore(
 
     /**
      * Mark source memories `consolidated_at` WITHOUT creating an observation
-     * (REASON-02 — the deductive-only drain). Reuses the SAME scoped, fail-closed
+     * (the deductive-only drain). Reuses the SAME scoped, fail-closed
      * `markConsolidated` UPDATE as the apply/fold paths (sets `consolidated_at`
-     * only; never deletes — CONS-05), in ONE `db.transaction` so a partial mark
+     * only; never deletes), in ONE `db.transaction` so a partial mark
      * cannot commit. Scoped on `tenant_id` (a cross-tenant id is a no-op), the
      * value bound as a `?` parameter. Idempotent: re-marking an already-marked
      * source re-writes the same column (the candidate predicate

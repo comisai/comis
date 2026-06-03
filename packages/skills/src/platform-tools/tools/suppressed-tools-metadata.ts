@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Activity-suppression metadata for the platform tools that are NOT in the
- * §17.6 user-meaningful set (LBL-01/LBL-03).
+ * §17.6 user-meaningful set.
  *
  * These tools are internal orchestration, read-only context/session lookups,
  * MCP capability-discovery utilities, or cross-session plumbing — none surface
- * a user-meaningful action worth a per-tool activity label. The LBL-03 coverage
+ * a user-meaningful action worth a per-tool activity label. The coverage
  * gate (`pnpm test:transparency`) requires EVERY emitted tool name to be
  * explicitly classified: either a registered LabelSpec OR `suppressActivity:true`.
  * This module supplies the suppress side of that contract, keyed on the EMITTED

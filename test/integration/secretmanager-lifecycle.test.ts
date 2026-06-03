@@ -13,12 +13,12 @@
  * All imports come from built dist/ packages via vitest aliases --
  * this is integration testing, not unit testing.
  *
- *   SM-01: Cross-Package Lifecycle Chain
- *   SM-02: Defensive Snapshot Isolation
- *   SM-03: API Surface (get/has/require/keys)
- *   SM-04: envSubset
- *   SM-05: Log Sanitizer 8-Pattern Comprehensive
- *   SM-06: Provider-Dynamic Key Convention
+ *   - Cross-Package Lifecycle Chain
+ *   - Defensive Snapshot Isolation
+ *   - API Surface (get/has/require/keys)
+ *   - envSubset
+ *   - Log Sanitizer 8-Pattern Comprehensive
+ *   - Provider-Dynamic Key Convention
  */
 
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
@@ -54,10 +54,10 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// SM-01: Cross-Package Lifecycle Chain
+// Cross-Package Lifecycle Chain
 // ---------------------------------------------------------------------------
 
-describe("SM-01: Cross-Package Lifecycle Chain", () => {
+describe("Cross-Package Lifecycle Chain", () => {
   it("assertEnvLoaded throws before loadEnvFile is called", () => {
     expect(() => assertEnvLoaded()).toThrow("loadEnvFile() must be called");
   });
@@ -104,10 +104,10 @@ describe("SM-01: Cross-Package Lifecycle Chain", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SM-02: Defensive Snapshot Isolation
+// Defensive Snapshot Isolation
 // ---------------------------------------------------------------------------
 
-describe("SM-02: Defensive Snapshot Isolation", () => {
+describe("Defensive Snapshot Isolation", () => {
   it("mutations to source record after creation have no effect", () => {
     const env: Record<string, string | undefined> = { TEST_KEY: "original" };
     const manager = createSecretManager(env);
@@ -151,10 +151,10 @@ describe("SM-02: Defensive Snapshot Isolation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SM-03: API Surface (get/has/require/keys)
+// API Surface (get/has/require/keys)
 // ---------------------------------------------------------------------------
 
-describe("SM-03: API Surface (get/has/require/keys)", () => {
+describe("API Surface (get/has/require/keys)", () => {
   const env = { KEY_A: "value-a", KEY_B: "value-b" };
   let manager: ReturnType<typeof createSecretManager>;
 
@@ -203,10 +203,10 @@ describe("SM-03: API Surface (get/has/require/keys)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SM-04: envSubset
+// envSubset
 // ---------------------------------------------------------------------------
 
-describe("SM-04: envSubset", () => {
+describe("envSubset", () => {
   it("returns only requested keys that exist in manager", () => {
     const manager = createSecretManager({
       KEY_A: "a",
@@ -233,10 +233,10 @@ describe("SM-04: envSubset", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SM-05: Log Sanitizer 8-Pattern Comprehensive
+// Log Sanitizer 8-Pattern Comprehensive
 // ---------------------------------------------------------------------------
 
-describe("SM-05: Log Sanitizer 8-Pattern Comprehensive", () => {
+describe("Log Sanitizer 8-Pattern Comprehensive", () => {
   it("redacts all 8 credential types in a combined string", () => {
     const megaString = [
       "API key: sk-abcdefghijklmnopqrstuvwxyz1234567890abcd",
@@ -285,10 +285,10 @@ describe("SM-05: Log Sanitizer 8-Pattern Comprehensive", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SM-06: Provider-Dynamic Key Convention
+// Provider-Dynamic Key Convention
 // ---------------------------------------------------------------------------
 
-describe("SM-06: Provider-Dynamic Key Convention", () => {
+describe("Provider-Dynamic Key Convention", () => {
   it("resolves all 10 known provider API keys via ${provider.toUpperCase()}_API_KEY convention", () => {
     const providers = [
       "anthropic",

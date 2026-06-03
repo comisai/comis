@@ -31,7 +31,7 @@ describe("Gateway Auth: Health, Rejection & REST API", () => {
   }, 30_000);
 
   // ---------------------------------------------------------------------------
-  // GATE-01 — Health endpoint (no auth required)
+  // Health endpoint (no auth required)
   // ---------------------------------------------------------------------------
 
   it("GET /health returns 200 without authentication", async () => {
@@ -55,7 +55,7 @@ describe("Gateway Auth: Health, Rejection & REST API", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // GATE-02 — Unauthenticated rejection
+  // Unauthenticated rejection
   // ---------------------------------------------------------------------------
 
   it("unauthenticated GET /api/agents returns 401", async () => {
@@ -108,7 +108,7 @@ describe("Gateway Auth: Health, Rejection & REST API", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // GATE-04 — Authenticated REST API
+  // Authenticated REST API
   // ---------------------------------------------------------------------------
 
   it("authenticated GET /api/agents returns agent list", async () => {

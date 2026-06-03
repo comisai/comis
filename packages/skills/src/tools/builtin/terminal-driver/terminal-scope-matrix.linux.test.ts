@@ -1,37 +1,37 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * [VPS-ONLY] The Phase-122 scope-matrix × probes — the REQUIRED security gate
+ * [VPS-ONLY] The scope-matrix × probes — the REQUIRED security gate
  * (§10.2/§10.5). The orchestrator runs this on `comisvps` (Ubuntu 24.04 + bwrap
- * 0.9.0, per the 118 GO); on the macOS author box the ENTIRE describe block is
+ * 0.9.0); on the macOS author box the ENTIRE describe block is
  * silently SKIPPED via `describe.skipIf(!canRealBwrapSandbox())` — it compiles
  * clean (`tsc --noEmit`) and contributes 0 failures on every push.
  *
- * WHY THIS FILE IS THE ENFORCEMENT PROOF. The macOS suites (122-01..06) prove the
+ * WHY THIS FILE IS THE ENFORCEMENT PROOF. The macOS suites prove the
  * scope -> argv MAPPING at the string level (`terminal-scope-args.test.ts` greps
  * the argv). They CANNOT prove the kernel actually isolates. This suite closes
  * that gap: each matrix cell builds its bwrap argv via the PRODUCTION composer
- * {@link buildScopeArgs} (122-03) — the SAME function the worker's
+ * {@link buildScopeArgs} — the SAME function the worker's
  * {@link buildSpawnPlan} calls (`terminal-spawn-plan.ts:191`) — then spawns a real
  * bwrap and probes the live jail. The test cannot drift from production because it
  * runs production's argv-builder, exactly how the egress test's Group C drives
  * `provider.buildArgs()` (`bwrap-egress-integration.test.ts:265`).
  *
  * THE PROBE MATRIX (each row = a cell built via buildScopeArgs + a spawned probe):
- *   - cred ENOENT at credentialHome:exclude (default)            SEC-04/05
- *   - cred READABLE at credentialHome:include (seeded fixture)   SEC-05
- *   - write-outside-workspace fails at filesystem:workspace      SEC-02
- *   - ~/.comis ENOENT EVEN at filesystem:full (the carve-out)    SEC-13  (flagship)
- *   - child runs as uid==65534 (nobody) at uid:dedicated         SEC-02
- *   - env in the jail has NO NODE_OPTIONS / CLAUDE_CODE_*         SEC-07
- *   - direct --noproxy egress fails rc=7 at network:none          SEC-07
- *   - allowlisted host -> 200 via the bound proxy socket          SEC-07
- *   - non-listed host -> 403 via the bound proxy socket           SEC-07
- *   - no provider (bwrapPath undefined) -> create REJECTS         SEC-16
+ *   - cred ENOENT at credentialHome:exclude (default)
+ *   - cred READABLE at credentialHome:include (seeded fixture)
+ *   - write-outside-workspace fails at filesystem:workspace
+ *   - ~/.comis ENOENT EVEN at filesystem:full (the carve-out, flagship)
+ *   - child runs as uid==65534 (nobody) at uid:dedicated
+ *   - env in the jail has NO NODE_OPTIONS / CLAUDE_CODE_*
+ *   - direct --noproxy egress fails rc=7 at network:none
+ *   - allowlisted host -> 200 via the bound proxy socket
+ *   - non-listed host -> 403 via the bound proxy socket
+ *   - no provider (bwrapPath undefined) -> create REJECTS
  *
  * CAVEAT (the credibility map, MEMORY): a kernel sandbox firewall saturates
  * trivially but is bypassed by adaptive/obfuscated attacks (Bhagwatkar
  * NeurIPS'25). Every assertion below reports its OWN probe outcome; this file
- * makes NO global "unbypassable sandbox" claim. The R3 microVM/gVisor escalation
+ * makes NO global "unbypassable sandbox" claim. The microVM/gVisor escalation
  * is noted-not-built.
  *
  * FILE SPLIT (composes with `bwrap-egress-integration.test.ts` without overlap):
@@ -156,7 +156,7 @@ function runProbe(argv: string[], probe: string): ReturnType<typeof spawnSync> {
  * contract as the production `createTerminalEgressProxy`
  * (`packages/daemon/src/wiring/terminal-egress-proxy.ts`), inlined here because
  * @comis/skills must not value-import @comis/daemon (it would be a dependency
- * cycle — daemon depends on skills). It mirrors the proven 118 G-3 `g3-proxy.mjs`
+ * cycle — daemon depends on skills). It mirrors the proven `g3-proxy.mjs`
  * transport: on a CONNECT to a LISTED host it dials the real upstream and tunnels
  * the bytes (a real 200 round-trip through the in-jail relay -> bound socket ->
  * here -> upstream); a non-listed host -> 403 with NO upstream dial (the no-SSRF
@@ -181,7 +181,7 @@ function startAllowlistProxy(
       const port = m?.[2] ? Number.parseInt(m[2], 10) : 443;
       if (host !== undefined && allow.has(host)) {
         // ALLOW — dial the real upstream and tunnel (a genuine 200 round-trip;
-        // matches 118 G-3 ALLOWLISTED=200). curl then completes its TLS handshake
+        // the allowlisted host returns 200). curl then completes its TLS handshake
         // end-to-end through the relay -> socket -> here -> upstream.
         const upstream = net.connect(port, host, () => {
           client.write("HTTP/1.1 200 Connection established\r\n\r\n");
@@ -196,8 +196,8 @@ function startAllowlistProxy(
           }
         });
       } else {
-        // DENY — 403, no upstream dial (the production no-SSRF semantics; 118 G-3
-        // NONLISTED was a proxy BLOCK).
+        // DENY — 403, no upstream dial (the production no-SSRF semantics; a
+        // non-listed host is a proxy BLOCK).
         client.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
       }
     };
@@ -228,13 +228,13 @@ function fixedEgressControl(socketPath: string): EgressControlPort {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!linuxBwrap)(
-  "122 VPS scope matrix × probes (built via the production buildScopeArgs) [VPS-ONLY]",
+  "VPS scope matrix × probes (built via the production buildScopeArgs) [VPS-ONLY]",
   () => {
     // -----------------------------------------------------------------------
-    // SEC-04/05 — credential home: ENOENT at the default (exclude), readable
+    // Credential home: ENOENT at the default (exclude), readable
     //             only at the operator opt-in (include).
     // -----------------------------------------------------------------------
-    describe("SEC-04/05 — credentialHome", () => {
+    describe("credentialHome", () => {
       let home: string;
       let credFile: string;
 
@@ -263,10 +263,10 @@ describe.skipIf(!linuxBwrap)(
         });
         const r = runProbe(argv, `cat "${credFile}"; echo "rc=$?"`);
         const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-        // GO: the cred file is NOT bound -> cat fails (no such file).
+        // The cred file is NOT bound -> cat fails (no such file).
         expect(
           r.status !== 0 || out.includes("No such file or directory"),
-          `SEC-04/05: ~/.claude/.credentials.json MUST be absent at credentialHome:exclude ` +
+          `~/.claude/.credentials.json MUST be absent at credentialHome:exclude ` +
             `(the baseline never binds it). status=${r.status} out=${out}`,
         ).toBe(true);
       });
@@ -284,10 +284,10 @@ describe.skipIf(!linuxBwrap)(
           dataDir: join(home, ".comis"),
         });
         const r = runProbe(argv, `cat "${credFile}"`);
-        // GO: the operator opt-in binds ~/.claude RO -> the fixture is readable.
+        // The operator opt-in binds ~/.claude RO -> the fixture is readable.
         expect(
           r.status,
-          `SEC-05: ~/.claude/.credentials.json MUST be readable at credentialHome:include ` +
+          `~/.claude/.credentials.json MUST be readable at credentialHome:include ` +
             `(the operator opt-in binds it RO). status=${r.status} stderr=${r.stderr}`,
         ).toBe(0);
         expect(r.stdout ?? "").toContain("fixture");
@@ -295,10 +295,10 @@ describe.skipIf(!linuxBwrap)(
     });
 
     // -----------------------------------------------------------------------
-    // SEC-02 — filesystem:workspace: a write OUTSIDE the bound workspace fails;
+    // filesystem:workspace: a write OUTSIDE the bound workspace fails;
     //          the child runs as the net-new uid (65534).
     // -----------------------------------------------------------------------
-    describe("SEC-02 — filesystem confinement + net-new uid", () => {
+    describe("filesystem confinement + net-new uid", () => {
       it("a jailed write to an unbound host path does NOT escape to the host (filesystem:workspace)", () => {
         const ws = makeWorkspace();
         const home = mkdtempSync(join(tmpdir(), "scope-matrix-home-"));
@@ -330,19 +330,19 @@ describe.skipIf(!linuxBwrap)(
             `touch "${ws}/inside" 2>&1; echo "inside_rc=$?"`,
         );
         const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-        // GO (HOST-ISOLATION): the jailed write did NOT escape — the host path is
+        // HOST-ISOLATION: the jailed write did NOT escape — the host path is
         // absent even though the in-jail touch may have returned rc=0. This is the
         // real confinement invariant (the write hit the ephemeral jail tmpfs root).
         expect(
           existsSync(hostEscapeTarget),
-          `SEC-02: a jailed write to an UNBOUND host path MUST NOT escape to the host ` +
+          `a jailed write to an UNBOUND host path MUST NOT escape to the host ` +
             `at filesystem:workspace. The host file appeared — the jail leaked. out=${out}`,
         ).toBe(false);
         // And the workspace itself IS writable on the host (confinement, not lockout):
         // the bound workspace write propagates to the host file.
         expect(
           out.includes("inside_rc=0") && existsSync(join(ws, "inside")),
-          `SEC-02: the bound workspace MUST be writable (the session's working dir) ` +
+          `the bound workspace MUST be writable (the session's working dir) ` +
             `and the write MUST reach the host-side bound dir. out=${out}`,
         ).toBe(true);
       });
@@ -362,23 +362,23 @@ describe.skipIf(!linuxBwrap)(
           dataDir: join(home, ".comis"),
         });
         const r = runProbe(argv, "id -u");
-        // GO: the driven child runs as the net-new uid, NOT the daemon uid
-        // (118 G-2 proved uid=65534(nobody) on the VPS).
-        expect(r.status, `SEC-02: id -u failed: ${r.stderr}`).toBe(0);
+        // The driven child runs as the net-new uid, NOT the daemon uid
+        // (uid=65534(nobody) is proven on the VPS).
+        expect(r.status, `id -u failed: ${r.stderr}`).toBe(0);
         expect(
           (r.stdout ?? "").trim(),
-          `SEC-02: the child MUST run as the net-new uid ${DEDICATED_UID.uid} (nobody), ` +
+          `the child MUST run as the net-new uid ${DEDICATED_UID.uid} (nobody), ` +
             `not the daemon uid. got "${(r.stdout ?? "").trim()}"`,
         ).toBe(String(DEDICATED_UID.uid));
       });
     });
 
     // -----------------------------------------------------------------------
-    // SEC-13 (FLAGSHIP) — ~/.comis is shadowed by the always-on --tmpfs carve-out
+    // FLAGSHIP — ~/.comis is shadowed by the always-on --tmpfs carve-out
     //                     EVEN at filesystem:full (the broad --bind / / cannot
     //                     expose the master key / secret store to a driven child).
     // -----------------------------------------------------------------------
-    describe("SEC-13 (flagship) — the ~/.comis carve-out wins even at filesystem:full", () => {
+    describe("flagship — the ~/.comis carve-out wins even at filesystem:full", () => {
       it("cat ~/.comis/<sentinel> -> ENOENT inside a filesystem:full jail", () => {
         // Prove against the REAL ~/.comis (the operator's actual data dir): seed a
         // sentinel there ONLY if absent (never clobber a real config), and prove
@@ -424,24 +424,24 @@ describe.skipIf(!linuxBwrap)(
           }
         }
 
-        // GO: even at filesystem:full the sentinel under ~/.comis is unreadable —
+        // Even at filesystem:full the sentinel under ~/.comis is unreadable —
         // the tmpfs carve-out (bind-order-last) shadows the host dir entirely.
         expect(
           !out.includes("SCOPE_MATRIX_CARVE_OUT_SENTINEL"),
-          `SEC-13: ~/.comis MUST be unreadable EVEN at filesystem:full (the always-on ` +
+          `~/.comis MUST be unreadable EVEN at filesystem:full (the always-on ` +
             `--tmpfs carve-out wins). The sentinel leaked. out=${out}`,
         ).toBe(true);
       });
     });
 
     // -----------------------------------------------------------------------
-    // SEC-07 — the jail env has NO interpreter-control / nested-CLI markers.
+    // The jail env has NO interpreter-control / nested-CLI markers.
     //          bwrap inherits the spawner env (no --clearenv); the worker scrubs
     //          it via scrubChildEnv before the spawn. Here we set the dangerous
     //          vars in the spawner env and assert they do NOT survive INTO the
     //          jail when the env is the SCRUBBED env the production path produces.
     // -----------------------------------------------------------------------
-    describe("SEC-07 — env-scrub: no NODE_OPTIONS / CLAUDE_CODE_* in the jail", () => {
+    describe("env-scrub: no NODE_OPTIONS / CLAUDE_CODE_* in the jail", () => {
       it("env inside the jail has no NODE_OPTIONS, CLAUDECODE, or CLAUDE_CODE_* keys", async () => {
         const home = mkdtempSync(join(tmpdir(), "scope-matrix-home-"));
         createdPaths.push(home);
@@ -485,27 +485,27 @@ describe.skipIf(!linuxBwrap)(
           timeout: 15_000,
           env: plan.env, // the SCRUBBED env the worker would hand bwrap
         });
-        expect(r.status, `SEC-07: env probe failed: ${r.stderr}`).toBe(0);
+        expect(r.status, `env probe failed: ${r.stderr}`).toBe(0);
         const lines = (r.stdout ?? "").split("\n");
         const hasKey = (k: string): boolean =>
           lines.some((l) => l.startsWith(`${k}=`));
-        // GO: the interpreter-control + nested-CLI markers are stripped.
-        expect(hasKey("NODE_OPTIONS"), "SEC-07: NODE_OPTIONS MUST be scrubbed").toBe(false);
-        expect(hasKey("CLAUDECODE"), "SEC-07: CLAUDECODE MUST be scrubbed").toBe(false);
+        // The interpreter-control + nested-CLI markers are stripped.
+        expect(hasKey("NODE_OPTIONS"), "NODE_OPTIONS MUST be scrubbed").toBe(false);
+        expect(hasKey("CLAUDECODE"), "CLAUDECODE MUST be scrubbed").toBe(false);
         expect(
           lines.some((l) => l.startsWith("CLAUDE_CODE_")),
-          "SEC-07: CLAUDE_CODE_* MUST be scrubbed",
+          "CLAUDE_CODE_* MUST be scrubbed",
         ).toBe(false);
         // And a benign var survives (the scrub is a blocklist, not a wipe).
-        expect(hasKey("SAFE_KEEPER"), "SEC-07: a benign env var MUST survive the scrub").toBe(true);
+        expect(hasKey("SAFE_KEEPER"), "a benign env var MUST survive the scrub").toBe(true);
       });
     });
 
     // -----------------------------------------------------------------------
-    // SEC-07 — egress: direct bypass is impossible (rc=7), the allowlist proxy
+    // Egress: direct bypass is impossible (rc=7), the allowlist proxy
     //          allows a listed host (200) and 403s a non-listed host.
     // -----------------------------------------------------------------------
-    describe("SEC-07 — egress: netns isolation + the allowlist gate", () => {
+    describe("egress: netns isolation + the allowlist gate", () => {
       it("a direct --noproxy curl fails (rc=7) at network:none (kernel netns, no route)", () => {
         const home = mkdtempSync(join(tmpdir(), "scope-matrix-home-"));
         createdPaths.push(home);
@@ -525,23 +525,23 @@ describe.skipIf(!linuxBwrap)(
           `curl --noproxy '*' --max-time 3 --silent --show-error https://1.1.1.1/ 2>&1; echo "rc=$?"`,
         );
         const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-        // GO: --unshare-net gives the jail an empty netns -> no route -> curl
-        // rc=7 (118 G-3 DIRECT_BYPASS rc=7). Accept the adjacent netns failures
+        // --unshare-net gives the jail an empty netns -> no route -> curl
+        // rc=7 (the direct-bypass rc=7). Accept the adjacent netns failures
         // too (6 DNS, 28 timeout) — all prove "no egress without the proxy".
         expect(
           /rc=(7|6|28)\b/.test(out) || out.includes("Network is unreachable") || out.includes("Could not resolve"),
-          `SEC-07: a direct (--noproxy) egress MUST fail at network:none (kernel-enforced ` +
+          `a direct (--noproxy) egress MUST fail at network:none (kernel-enforced ` +
             `netns, no route). Expected rc=7 (or 6/28). out=${out}`,
         ).toBe(true);
       });
 
-      // KNOWN-PENDING — Phase 122 follow-on (does NOT block the SEC-07 model): the egress
-      // TRANSPORT is proven LIVE on this VPS by the Phase-118 G-3 spike (allowlisted=200 /
-      // non-listed=403 / direct-bypass=rc7 — 118-SPIKE-GO.md + spike-scripts/g3-*.mjs). The
+      // KNOWN-PENDING — a follow-on (does NOT block the egress model): the egress
+      // TRANSPORT is proven LIVE on this VPS by the earlier spike (allowlisted=200 /
+      // non-listed=403 / direct-bypass=rc7). The
       // PRODUCTION relay-init now loads + runs in-jail (no crash) but the full allowlisted-200
       // round-trip hangs (~5s) — a relay-composition tuning follow-on. Unique coverage is kept
       // by sibling cells: netns ISOLATION (deny-all + direct-bypass rc=7) passes live; the
-      // proxy allowlist DECISION (403) is macOS-unit-tested. Re-enable once tuned (see STATE).
+      // proxy allowlist DECISION (403) is macOS-unit-tested. Re-enable once tuned.
       it.skip("the relay-init bridges egress: allowlisted host -> 200, non-listed -> 403, direct bypass -> fail", async () => {
         const home = mkdtempSync(join(tmpdir(), "scope-matrix-home-"));
         createdPaths.push(home);
@@ -549,7 +549,7 @@ describe.skipIf(!linuxBwrap)(
         createdSockets.push(socketPath);
 
         // The host-side allowlist proxy: allow `example.com` (a real upstream the
-        // VPS can reach — mirrors 118 G-3's ALLOWLISTED=example.com=200), 403 the
+        // VPS can reach — the allowlisted example.com returns 200), 403 the
         // rest. It dials the real upstream on allow so the 200 is a genuine
         // end-to-end round-trip through the relay (NOT a synthetic decision).
         const server = startAllowlistProxy(socketPath, ["example.com"]);
@@ -613,7 +613,7 @@ describe.skipIf(!linuxBwrap)(
           const allowed = await planCurl("https://example.com/");
           expect(
             allowed.out.includes("200"),
-            `SEC-07: an ALLOWLISTED host MUST get 200 end-to-end through the relay-init ` +
+            `an ALLOWLISTED host MUST get 200 end-to-end through the relay-init ` +
               `(HTTPS_PROXY -> 127.0.0.1 relay -> bound socket -> allowlist proxy -> upstream). ` +
               `out=${allowed.out} status=${allowed.status}`,
           ).toBe(true);
@@ -621,20 +621,20 @@ describe.skipIf(!linuxBwrap)(
           // NON-LISTED -> 403: the proxy refuses (no upstream dial). curl reports the
           // 403 as the proxy CONNECT response (its http_code is 000, but the body /
           // stderr carries the 403). Accept either the 403 surfaced by curl or a
-          // CONNECT-refused failure — both prove the block (118 G-3 NONLISTED).
+          // CONNECT-refused failure — both prove the block for a non-listed host.
           const denied = await planCurl("https://blocked.example/");
           expect(
             denied.out.includes("403") || (denied.status !== null && denied.status !== 0),
-            `SEC-07: a NON-LISTED host MUST be blocked by the allowlist proxy (403 / CONNECT ` +
+            `a NON-LISTED host MUST be blocked by the allowlist proxy (403 / CONNECT ` +
               `refused, no upstream dial). out=${denied.out} status=${denied.status}`,
           ).toBe(true);
 
           // DIRECT BYPASS -> fail (rc≠0): even with the relay present, a child that
-          // forces --noproxy has no route out of the empty netns (118 G-3 rc=7).
+          // forces --noproxy has no route out of the empty netns (rc=7).
           const direct = await planCurl("https://example.com/", ["--noproxy", "*"]);
           expect(
             direct.status !== 0,
-            `SEC-07: a DIRECT (--noproxy) egress MUST fail even at network:listed-hosts ` +
+            `a DIRECT (--noproxy) egress MUST fail even at network:listed-hosts ` +
               `(the kernel netns has no route; only the relay socket bridges out). ` +
               `out=${direct.out} status=${direct.status}`,
           ).toBe(true);
@@ -645,12 +645,12 @@ describe.skipIf(!linuxBwrap)(
     });
 
     // -----------------------------------------------------------------------
-    // SEC-16 — fail-closed: no provider (bwrapPath undefined) -> the production
+    // Fail-closed: no provider (bwrapPath undefined) -> the production
     //          spawn plan REJECTS (JailUnavailableError), never an unjailed spawn.
     //          This is the REAL production path (buildSpawnPlan), confirming the
-    //          118 G-5 result on the production composer (not a hand-rolled gate).
+    //          fail-closed result on the production composer (not a hand-rolled gate).
     // -----------------------------------------------------------------------
-    describe("SEC-16 — fail-closed: no provider -> create rejects", () => {
+    describe("fail-closed: no provider -> create rejects", () => {
       it("buildSpawnPlan with bwrapPath undefined throws JailUnavailableError (no unjailed spawn)", async () => {
         const home = mkdtempSync(join(tmpdir(), "scope-matrix-home-"));
         createdPaths.push(home);
@@ -660,7 +660,7 @@ describe.skipIf(!linuxBwrap)(
           credentialHome: "exclude",
           uid: "dedicated",
         };
-        // GO: undefined bwrapPath (provider absent) -> reject BEFORE any spawn.
+        // Undefined bwrapPath (provider absent) -> reject BEFORE any spawn.
         await expect(
           buildSpawnPlan(
             {

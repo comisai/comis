@@ -1,11 +1,11 @@
-# Comis Test Configuration — WIRE-06 activity composition acceptance test.
+# Comis Test Configuration — activity composition acceptance test.
 #
 # Dedicated config for packages/daemon/src/__tests__/setup-activity.composition.test.ts
-# (Part B — daemon-level WIRE-01/05 boot proof). A UNIQUE gateway port (47668)
+# (Part B — daemon-level boot proof). A UNIQUE gateway port (47668)
 # + a dedicated memory db keep this boot isolated from the 4766 default-config
 # port and other parallel test suites. The activity pipe assertions are proven
 # in-memory (Part A); this boot only confirms the daemon constructs + drains the
-# ActivityStream (WIRE-01/05) without a long-running timer leak.
+# ActivityStream without a long-running timer leak.
 
 tenantId: "test"
 logLevel: "debug"
@@ -27,7 +27,7 @@ agents:
       halfOpenTimeoutMs: 500
     rag:
       enabled: false
-    # WIRE-06 fail-closed enable map (research §H): the activation test drives an
+    # Fail-closed enable map (research §H): the activation test drives an
     # Echo turn for agent `default`, channelType `echo`, channelId `echo-activation`,
     # so the pipeline (execution-pipeline.ts:407) mints the 3-segment rendererKey
     # `default:echo:echo-activation`. Enabling it + emergencyDisabled:false ensures

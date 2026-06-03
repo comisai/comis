@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED->GREEN unit suite for {@link buildBenchmarkReport} (BENCH-04) -- the
+ * RED->GREEN unit suite for {@link buildBenchmarkReport} -- the
  * reproducible benchmark report builder, and its LOAD-BEARING security
  * property: it structurally omits all secrets.
  *
@@ -9,7 +9,7 @@
  * `qa-report.ts` so it is never a 0%-coverage file under the agent all:true
  * floor.
  *
- * THE SECURITY GATE (Pitfall 6 / T-89-02-03, ASVS V7): the report is written via
+ * THE SECURITY GATE (Pitfall 6, ASVS V7): the report is written via
  * writeRegularFile (NOT Pino), so Pino's credential redaction does NOT apply.
  * The builder MUST structurally select only `{ provider, modelId }` per model
  * role and NEVER spread the config -- so `JSON.stringify(report)` can contain no
@@ -57,7 +57,7 @@ function cleanConfig() {
   };
 }
 
-describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
+describe("buildBenchmarkReport -- reproducibility object", () => {
   it("Test 1: carries ALL required reproducibility fields", () => {
     const report = buildBenchmarkReport(cleanConfig(), sampleMetrics(), NOW_MS);
     expect(report.benchmark).toBe("longmemeval");
@@ -82,7 +82,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(report.harnessVersion).toBe("phase-89-v1");
   });
 
-  it("Test 2 (BENCH-04): each models.* role records { provider, modelId } -- the comparability anchor", () => {
+  it("Test 2: each models.* role records { provider, modelId } -- the comparability anchor", () => {
     const report = buildBenchmarkReport(cleanConfig(), sampleMetrics(), NOW_MS);
     expect(report.models.extraction).toEqual({ provider: "openai", modelId: "gpt-4o-mini" });
     expect(report.models.answer).toEqual({ provider: "openai", modelId: "gpt-4o" });
@@ -115,7 +115,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(serialized).toContain("claude-sonnet");
   });
 
-  it("Test 3b (THE SECURITY GATE, WR-01): a credential-bearing local modelUri is sanitized -- no userinfo / auth query param reaches JSON.stringify(report)", () => {
+  it("Test 3b (THE SECURITY GATE): a credential-bearing local modelUri is sanitized -- no userinfo / auth query param reaches JSON.stringify(report)", () => {
     // modelUri is a free-form z.string() (HF URI or local path). An authenticated
     // weights endpoint can embed a credential in BOTH userinfo (`user:token@`) AND
     // an auth-bearing query param (`?token=...`). Both must be stripped structurally,
@@ -147,7 +147,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(serialized).not.toContain("svc:hf");
   });
 
-  it("Test 3c (WR-01): a plain local path / authority-less scheme modelUri is preserved verbatim (it carries no credential)", () => {
+  it("Test 3c: a plain local path / authority-less scheme modelUri is preserved verbatim (it carries no credential)", () => {
     const cfg = cleanConfig();
     const cfgPaths = {
       ...cfg,
@@ -202,7 +202,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // BASE-01 (v2.8 Phase 98): the manifest must also carry tokens/query (cost) +
+  // The manifest must also carry tokens/query (cost) +
   // latency (p50/p95). RED-first — these assert fields the pre-patch builder does
   // not yet produce. Mirrors the dataset.sha256 optional-field pattern above:
   // additive, byte-identity when omitted, and structurally secret-free (pure
@@ -234,7 +234,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     };
   }
 
-  it("Test 5 (BASE-01): records cost.tokensPerQuery (answer + judge) as numbers when the config carries a cost block", () => {
+  it("Test 5: records cost.tokensPerQuery (answer + judge) as numbers when the config carries a cost block", () => {
     const cfg = { ...cleanConfig(), cost: sampleCost() };
     const report = buildBenchmarkReport(cfg, sampleMetrics(), NOW_MS);
     expect(report.cost).toBeDefined();
@@ -247,7 +247,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(report.cost?.judgeCostUsd).toBe(0.0009);
   });
 
-  it("Test 6 (BASE-01): records latency p50/p95 (recall/answer/judge/end-to-end) as numbers when the config carries a latency block", () => {
+  it("Test 6: records latency p50/p95 (recall/answer/judge/end-to-end) as numbers when the config carries a latency block", () => {
     const cfg = { ...cleanConfig(), latency: sampleLatency() };
     const report = buildBenchmarkReport(cfg, sampleMetrics(), NOW_MS);
     expect(report.latency).toBeDefined();
@@ -263,7 +263,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(report.latency?.endToEndP95Ms).toBe(6238.1);
   });
 
-  it("Test 7 (BASE-01): omits cost AND latency cleanly when absent from the config (byte-identity for an unmeasured run)", () => {
+  it("Test 7: omits cost AND latency cleanly when absent from the config (byte-identity for an unmeasured run)", () => {
     const report: BenchmarkReport = buildBenchmarkReport(cleanConfig(), sampleMetrics(), NOW_MS);
     expect(report.cost).toBeUndefined();
     expect(report.latency).toBeUndefined();
@@ -273,7 +273,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(serialized).not.toContain("\"latency\"");
   });
 
-  it("Test 8 (THE SECURITY GATE, BASE-01): the secret-omission gate still holds with cost + latency populated alongside a secret-bearing config", () => {
+  it("Test 8 (THE SECURITY GATE): the secret-omission gate still holds with cost + latency populated alongside a secret-bearing config", () => {
     // Even with the new numeric fields populated, a secret-bearing model config must
     // NOT leak into JSON.stringify(report). cost/latency are pure numbers — structurally
     // secret-free — so they cannot reopen the Test-3/3b hole.
@@ -301,10 +301,10 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // BASE-01 (v2.8 Phase 98, Plan 02): the manifest must ALSO carry a Letta-style
+  // The manifest must ALSO carry a Letta-style
   // filesystem-baseline CONTROL row — a labelled, full-haystack no-memory
   // reference (NEVER Comis's own score). RED-first — these assert a `control?`
-  // field the post-Plan-01 builder does not yet produce. Mirrors the
+  // field the cost/latency builder does not yet produce. Mirrors the
   // cost/latency optional-field pattern above: additive, byte-identity when
   // omitted, and structurally secret-free (label string + pure AccuracyResult
   // numbers) so the Test-3/3b/8 security gate still holds with it populated.
@@ -315,7 +315,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     return { label: "filesystem-baseline-full-context-control", results: sampleMetrics() };
   }
 
-  it("Test 9 (BASE-01): records control.label + control.results.overall when the config carries a control block", () => {
+  it("Test 9: records control.label + control.results.overall when the config carries a control block", () => {
     const control = sampleControl();
     const cfg = { ...cleanConfig(), control };
     const report = buildBenchmarkReport(cfg, sampleMetrics(), NOW_MS);
@@ -327,7 +327,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(report.control?.results.perCategory).toEqual(control.results.perCategory);
   });
 
-  it("Test 10 (BASE-01): the control row is DISTINCT from the headline results (never conflated with Comis's score)", () => {
+  it("Test 10: the control row is DISTINCT from the headline results (never conflated with Comis's score)", () => {
     // Headline `results` and the control `results` are independent objects — the
     // control must NEVER overwrite/alias Comis's own recall accuracy.
     const headline = aggregateAccuracy([
@@ -346,7 +346,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(report.control?.label).not.toBe("");
   });
 
-  it("Test 11 (BASE-01): omits control cleanly when absent from the config (byte-identity for a run without the control)", () => {
+  it("Test 11: omits control cleanly when absent from the config (byte-identity for a run without the control)", () => {
     const report: BenchmarkReport = buildBenchmarkReport(cleanConfig(), sampleMetrics(), NOW_MS);
     expect(report.control).toBeUndefined();
     // The serialized manifest carries no `control` key at all when the control was not run.
@@ -354,7 +354,7 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(serialized).not.toContain("\"control\"");
   });
 
-  it("Test 12 (THE SECURITY GATE, BASE-01): the secret-omission gate still holds with the control row populated alongside a secret-bearing config", () => {
+  it("Test 12 (THE SECURITY GATE): the secret-omission gate still holds with the control row populated alongside a secret-bearing config", () => {
     // The control's `results` is a pure AccuracyResult (numbers) and its `label` is a
     // fixed string — structurally secret-free — so it cannot reopen the Test-3/3b hole.
     const cfg = {

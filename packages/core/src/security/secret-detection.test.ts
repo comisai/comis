@@ -3,9 +3,9 @@
  * Keystone secret-detection tests.
  *
  * Anchors (assert the WRONG-answer fixes vs the old `looksLikePlaintextSecret`):
- *   - looksLikeSecretValue("Bearer hf_<44+>") === true  (SEC-02)
- *   - isSecretFieldName("Authorization") === true        (SEC-03)
- *   - scanForSecrets({headers:{Authorization:"Bearer ${TOK}"}}) === []  (SEC-04 exemption)
+ *   - looksLikeSecretValue("Bearer hf_<44+>") === true
+ *   - isSecretFieldName("Authorization") === true
+ *   - scanForSecrets({headers:{Authorization:"Bearer ${TOK}"}}) === []  (env-ref exemption)
  *
  * @module
  */
@@ -29,7 +29,7 @@ import {
 // backstop fires after a leading scheme is stripped.
 const HF_BODY = "hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789AbCdEf";
 
-describe("looksLikeSecretValue — scheme strip (SEC-02 bug closure)", () => {
+describe("looksLikeSecretValue — scheme strip (bug closure)", () => {
   it("detects a Bearer-prefixed high-entropy token", () => {
     expect(looksLikeSecretValue(`Bearer ${HF_BODY}`)).toBe(true);
   });
@@ -74,7 +74,7 @@ describe("looksLikeSecretValue — scheme strip (SEC-02 bug closure)", () => {
   });
 });
 
-describe("isSecretFieldName — superset (SEC-03)", () => {
+describe("isSecretFieldName — superset", () => {
   it("flags Authorization (the old pattern missed it)", () => {
     expect(isSecretFieldName("Authorization")).toBe(true);
   });
@@ -119,7 +119,7 @@ describe("isSecretFieldName — superset (SEC-03)", () => {
   });
 });
 
-describe("scanForSecrets — findings + exemptions (SEC-04)", () => {
+describe("scanForSecrets — findings + exemptions", () => {
   it("flags a secret-bearing header value at the correct path", () => {
     const findings = scanForSecrets({
       headers: { Authorization: `Bearer ${HF_BODY}` },

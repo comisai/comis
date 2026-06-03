@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Statistical-significance layer (Phase 104, Plan 104-01, PROVE-03) -- the N +
- * confidence-interval + significance computations every published benchmark
- * number must carry.
+ * Statistical-significance layer -- the N + confidence-interval + significance
+ * computations every published benchmark number must carry.
  *
  * THE BELIEVABILITY REQUIREMENT (.planning/MEMORY_BENCHMARK_CREDIBILITY.md):
  * every headline number reports N + a significance flag; a single-judge,
  * no-N, no-significance number is not credible. This module supplies (1) a
  * Wilson 95% confidence interval for a single accuracy over integer counts, and
  * (2) a two-proportion z-test for an A-vs-B accuracy delta -- the only genuinely
- * net-new algorithm in Phase 104 (no prior statistical test exists in the repo;
+ * net-new statistical algorithm (no prior statistical test exists in the repo;
  * `qa-accuracy.ts`'s `accuracyOf` is a plain fold).
  *
  * WHY WILSON (not the naive Wald interval): the Wald interval (pHat +- z*SE)
@@ -27,7 +26,7 @@
  * PURE MATH (no Result, no throws, no I/O, no clock, no env, no randomness --
  * AGENTS.md 2.1 pure-fn carve-out, the same one qa-accuracy.ts uses).
  *
- * NEVER-NaN / FAIL-SAFE (T-104-01-03): every degenerate count maps to a safe,
+ * NEVER-NaN / FAIL-SAFE: every degenerate count maps to a safe,
  * non-fabricated value -- `total === 0` -> all-zero CI; a zero denominator or a
  * zero pooled standard error -> `pValue: 1, significant: false`. A divide-by-zero
  * can never silently surface a NaN that reads as a missing number, nor a
@@ -109,7 +108,7 @@ export function wilsonInterval(correct: number, total: number): AccuracyCI {
  * from the standard normal CDF. Reports the combined N + a `significant` flag at
  * the 0.05 level.
  *
- * FAIL-SAFE (T-104-01-03): a zero denominator (`a.total === 0` or
+ * FAIL-SAFE: a zero denominator (`a.total === 0` or
  * `b.total === 0`) or a zero pooled SE (both arms at the same boundary, e.g.
  * both all-correct -> pooled p=1 -> SE=0) returns `{ n, pValue: 1, significant:
  * false }` -- a degenerate comparison is never reported as significant and never

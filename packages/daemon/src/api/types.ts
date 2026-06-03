@@ -108,10 +108,10 @@ export interface SessionsApiDeps {
 // @optional-field-count: 17 optional fields — MemoryApiDeps is the shared slice
 // for memory-handlers + context-handlers, so it carries THREE feature-gated dep
 // families: the context-DAG quartet (contextStore/store/config/contextEngineConfig/
-// resolveConversationId/rpcCall — a binary dispatcher gate); as of Phase 86
-// (Plan 05), the OBS-06 memory-diagnostic deps (consolidationStore/entityStore/
+// resolveConversationId/rpcCall — a binary dispatcher gate); the
+// memory-diagnostic deps (consolidationStore/entityStore/
 // recallCounters/dataDir — each absent ⇒ the corresponding admin diagnostic is
-// unavailable / zeroed, never a stub); and, as of Phase 109 (Plan 03), the
+// unavailable / zeroed, never a stub); and the
 // dialectic deps (dialecticSeam/buildDialecticRecall — each absent ⇒ memory.ask
 // returns the abstain sentinel, never a stub). Every optional is a real runtime
 // feature-switch documented row-by-row in packages/daemon/AUDIT-memory.md
@@ -152,17 +152,17 @@ export interface MemoryApiDeps {
   embeddingCacheStats?: () => import("@comis/memory").EmbeddingCacheStats;
   /** Embedding circuit breaker state accessor for memory persistence operations. */
   embeddingCircuitBreakerState?: () => import("@comis/agent").CircuitState;
-  // Memory-diagnostic deps (Phase 86 / OBS-06)
+  // Memory-diagnostic deps
   /** Consolidation store — the `memory.observations` handler reads provenance
    *  via `listObservations(agentId, tenantId, limit)` (scoped). Same port type
    *  setup-memory builds; optional so existing handler tests construct deps
    *  without it. */
   consolidationStore?: import("@comis/core").MemoryConsolidationStore;
   /** Entity store — the `memory.entities` handler reads the entity graph via
-   *  `listEntities(agentId, tenantId, limit)` (ENT-03 scoped). Optional for the
+   *  `listEntities(agentId, tenantId, limit)` (scoped). Optional for the
    *  same backward-compat reason. */
   entityStore?: import("@comis/core").MemoryEntityStore;
-  /** Live in-process recall counters (OBS-07). The `memory.recall_stats`
+  /** Live in-process recall counters. The `memory.recall_stats`
    *  handler reads `snapshot()`; wired from `wireRecallCounters(eventBus)` at
    *  the composition root. Optional — when unset the handler returns zeroed
    *  counters (the gauge is process-lifetime, resets on restart). */
@@ -172,9 +172,9 @@ export interface MemoryApiDeps {
    *  `resolveRecallTraceFilePath`. Optional — mirrors ObservabilityApiDeps.dataDir;
    *  defaults to ~/.comis at handler-construction time when omitted. */
   dataDir?: string;
-  // Dialectic deps (Phase 109 / DIAL-01/02 — the memory.ask handler).
-  /** The INJECTED query-time dialectic synthesis seam (Plan 02's `createDialecticSeam`
-   *  output; Plan 04 builds + injects it from a cheap resolved model + key). The
+  // Dialectic deps (the memory.ask handler).
+  /** The INJECTED query-time dialectic synthesis seam (the `createDialecticSeam`
+   *  output, built + injected from a cheap resolved model + key). The
    *  `memory.ask` handler calls it ONLY on the non-empty-recall path (empty recall ⇒
    *  abstain in CODE without the seam call). Optional so existing handler tests construct
    *  deps without it; the handler abstains gracefully when absent (no key / not wired). */
@@ -184,20 +184,20 @@ export interface MemoryApiDeps {
     groundingText: string,
   ) => Promise<import("@comis/agent").DialecticParsed>;
   /** A per-agent recall factory returning the FULL `createMemoryRecall` orchestrator built
-   *  with the daemon's store set + the INVOKING agent's RagConfig (CR-04 — re-reads the calling
+   *  with the daemon's store set + the INVOKING agent's RagConfig (re-reads the calling
    *  agent's `rag`, not the default agent's). The `memory.ask` handler runs THIS over the
    *  question — NOT `deps.memoryApi.search` (which bypasses the trust filter). Injecting the
    *  builder keeps the 8-store deps off this slice. Optional so existing handler tests construct
    *  deps without it; the handler abstains when absent. */
   buildDialecticRecall?: (agentId: string) => import("@comis/agent").MemoryRecall;
   /** The per-agent dialectic grounding-set HARD ceiling resolver (`dialectic.maxRecall`, default
-   *  10) — the DoS bound on the synthesis LLM input (CR-02/CR-04). The `memory.ask` handler calls
+   *  10) — the DoS bound on the synthesis LLM input. The `memory.ask` handler calls
    *  it with the INVOKING agentId and clamps the caller-controlled `limit` to `[1, ceiling]`: a
    *  huge/negative `limit` can never flood the prompt or negative-slice the grounding. A function
    *  (not a scalar) so each agent's OWN bound is honored. Optional so existing handler tests omit
    *  it; the handler falls back to the schema default (10) when absent. */
   dialecticMaxRecall?: (agentId: string) => number;
-  /** Suspicious-pattern telemetry callback for the dialectic grounding (CR-01) — surfaced to
+  /** Suspicious-pattern telemetry callback for the dialectic grounding — surfaced to
    *  `wrapExternalContent` so a detected injection in recalled content is reported (the SAME
    *  hook rag-retriever threads). Optional; absent ⇒ no telemetry (sanitization still runs). */
   onSuspiciousContent?: import("@comis/core").WrapExternalContentOptions["onSuspiciousContent"];
@@ -250,7 +250,7 @@ export interface AgentsApiDeps {
   suspendedAgents: Set<string>;
   /** Hot-add callback passed through to agent handlers for runtime agent creation without restart.
    *  `rawRerankEnabled` is the RAW (pre-Zod-default) rag.rerank.enabled from the RPC input so the
-   *  hot-added agent's effective-rerank precedence distinguishes unset from explicit-off (CR-01). */
+   *  hot-added agent's effective-rerank precedence distinguishes unset from explicit-off. */
   hotAdd?: (agentId: string, config: PerAgentConfig, rawRerankEnabled?: boolean | undefined) => Promise<void>;
   /** Hot-remove callback passed through to agent handlers for runtime agent deletion without restart. */
   hotRemove?: (agentId: string) => Promise<void>;
@@ -363,7 +363,7 @@ export interface WorkspaceApiDeps {
   /** mcp-handlers reads deps.secretManager?.has for env-ref validation. */
   secretManager?: import("@comis/core").SecretManager;
   /** mcp-handlers reads deps.secretStore for static-secret header extraction.
-   *  Always wired after Plan 02-04 (selectSecretStore returns a store for all modes).
+   *  Always wired (selectSecretStore returns a store for all modes).
    *  Same shape as AuthApiDeps.secretStore / ConfigApiDeps.secretStore
    *  so the ApiDispatchDeps multi-extends remains well-formed. */
   secretStore: SecretStorePort;
@@ -406,11 +406,11 @@ export interface ConfigApiDeps {
    *  ApiDispatchDeps multi-extends remains well-formed. */
   oauthCredentialStore?: import("@comis/core").OAuthCredentialStorePort;
   /** env-handlers reads deps.secretStore for the secret write path.
-   *  Always wired after Plan 02-04 (selectSecretStore returns a store for all modes).
+   *  Always wired (selectSecretStore returns a store for all modes).
    *  Same shape as AuthApiDeps.secretStore so the ApiDispatchDeps multi-extends remains well-formed. */
   secretStore: SecretStorePort;
   /** Daemon-owned write handle over the shared SecretManager backing Map.
-   *  Used by env-handlers to upsert new-name writes live (additive no-restart — P4a).
+   *  Used by env-handlers to upsert new-name writes live (additive no-restart).
    *  MUST NOT appear on AppContainer. Required — always wired at the composition root. */
   mutableSecretManager: MutableSecretManager;
   /**
@@ -429,10 +429,10 @@ export interface ConfigApiDeps {
  * (auth.oauth.list/connect, secrets.get/set, tokens.list/create/revoke).
  */
 export interface AuthApiDeps {
-  // Secret store (env-handlers, secrets-handlers) — always wired after Plan 02-04
+  // Secret store (env-handlers, secrets-handlers) — always wired
   secretStore: SecretStorePort;
   /** Daemon-owned write handle over the shared SecretManager backing Map.
-   *  Used by secrets-handlers to upsert/remove live (additive no-restart — P4a). Required. */
+   *  Used by secrets-handlers to upsert/remove live (additive no-restart). Required. */
   mutableSecretManager: MutableSecretManager;
   // Token management deps. The structural shape mirrors `TokenRegistry`
   // declared in `./token-handlers.ts` -- inlined here to keep this file at

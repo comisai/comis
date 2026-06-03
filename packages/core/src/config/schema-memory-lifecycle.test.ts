@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { MemoryLifecycleConfigSchema } from "./schema-memory-lifecycle.js";
 
-describe("MemoryLifecycleConfigSchema (FORGET-02 — the SCAFFOLD-DORMANT default-OFF lifecycle cron knob)", () => {
+describe("MemoryLifecycleConfigSchema (the scaffolded, dormant default-OFF lifecycle cron knob)", () => {
   it("parses an empty object to the off-by-default dormant policy configuration", () => {
     const result = MemoryLifecycleConfigSchema.parse({});
     expect(result).toEqual({

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * egress-relay-init -- the in-jail relay-as-init for `network: listed-hosts`
- * (SEC-07, §3.5). It is NOT imported by any package — it is spawned as a
+ * (§3.5). It is NOT imported by any package — it is spawned as a
  * SUBPROCESS *inside* the bwrap jail, AFTER bwrap's `--` separator, as the jail's
  * userns-root PID-1 init (the `relayArgv` that {@link buildEgressRelayLaunch}
  * points {@link RELAY_INIT_SCRIPT_URL} at). It composes the two net-new dimensions
- * (egress relay + uid drop) into ONE launcher, in the exact order the 118 G-3 GO
- * proved on the VPS (`118-SPIKE-GO.md` §3, the `g3-relay.mjs` transport):
+ * (egress relay + uid drop) into ONE launcher, in the exact order the egress
+ * transport spike proved on the VPS (the `g3-relay.mjs` transport):
  *
  *   1. Bring loopback (`lo`) UP. The jail owns its netns (`--unshare-net`) and the
  *      init runs as userns-root, so it holds CAP_NET_ADMIN over that netns — `ip
@@ -32,9 +32,9 @@
  * and injects NOTHING into the stream (the host proxy enforces the allowlist).
  *
  * Live enforcement is VPS-only (the loopback-up + TCP->unix bridge + uid drop need
- * a real `--unshare-net` userns): the 122-07 `terminal-scope-matrix.linux.test.ts`
+ * a real `--unshare-net` userns): the `terminal-scope-matrix.linux.test.ts`
  * egress cell drives a real request through this init (allowlisted -> 200,
- * non-listed -> 403, direct `--noproxy` -> rc=7), mirroring 118 G-3.
+ * non-listed -> 403, direct `--noproxy` -> rc=7), mirroring the egress transport spike.
  *
  * @module
  */
@@ -174,12 +174,12 @@ function defaultAudit(record: RelayInitAudit): void {
  * setgid is refused). Only meaningful when the init runs as userns-root; a no-op
  * when the ids are absent.
  *
- * CRITICAL (Phase-122 gap 1, SEC-07): for `network: listed-hosts` the bwrap jail does
+ * CRITICAL: for `network: listed-hosts` the bwrap jail does
  * NOT pre-drop `--uid` (the init must run as userns-root to bring `lo` up), so the
  * init attempts the uid drop here. On the root-worker VPS the bwrap user namespace
  * maps a SINGLE uid (host-root → userns-root), so 65534 is NOT a mapped target and
  * `process.setuid(65534)` throws (EPERM/EINVAL via `does_own_process_state`). The
- * Phase-118 G-3 spike PROVED the egress transport working as userns-root with NO uid
+ * egress transport spike PROVED the egress transport working as userns-root with NO uid
  * drop, so we MUST NOT throw: a throw would crash the relay-init PID-1 and kill the
  * whole listed-hosts session. Instead we emit a STRUCTURED audit WARN (the session is
  * running at the jail userns-uid because the drop target isn't mapped) and CONTINUE.
@@ -271,8 +271,8 @@ async function main(): Promise<void> {
   bringLoopbackUp();
   await startRelay(args.socketPath, args.port);
   // Privilege drop happens AFTER the privileged netns setup (lo up) + the relay
-  // bind, but BEFORE exec — the child never holds the cap (118 §3 composition).
-  // Best-effort (Phase-122 gap 1): on the root-worker VPS the net-new uid is not
+  // bind, but BEFORE exec — the child never holds the cap (the spike composition).
+  // Best-effort: on the root-worker VPS the net-new uid is not
   // mapped in the bwrap single-uid userns, so the drop is refused; dropPrivileges
   // logs the audit posture and continues rather than crash the relay-init PID-1.
   dropPrivileges(args.setuid, args.setgid);

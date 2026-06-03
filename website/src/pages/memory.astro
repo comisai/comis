@@ -62,7 +62,7 @@ const costLatency = {
   manifest: baselineManifest,
 };
 
-// --- MECHANICAL v2.8 deltas (sets B/D — keyless, $0) ------------------------
+// --- MECHANICAL deltas (sets B/D — keyless, $0) -----------------------------
 // A SEPARATE panel. These are STRUCTURAL gate deltas measured keyless at $0 —
 // NOT end-to-end QA-accuracy lifts. Never blended into the accuracy table.
 const mechanicalDeltas = [
@@ -82,8 +82,8 @@ const mechanicalDeltas = [
   },
 ];
 
-// --- What the v2.9 tracks provably do (keyless, $0) — SEPARATE from accuracy -
-// Six v2.9 capabilities shipped + proven keyless at $0. Each row is a STRUCTURAL
+// --- What the new tracks provably do (keyless, $0) — SEPARATE from accuracy --
+// Six capabilities shipped + proven keyless at $0. Each row is a STRUCTURAL
 // invariant of the shipped code, NOT an end-to-end QA-accuracy lift, and is kept
 // out of the accuracy table on purpose. The ask-your-memory row cites the
 // gate-safe consolidated re-prove capstone (the per-track manifest dir slug
@@ -134,11 +134,11 @@ const v29Capabilities = [
   },
 ];
 
-// --- v2.10 COMPETITIVE HEAD-TO-HEAD (the costed re-run, finally measured) ---
-// accuracy, cross-judged — the SECOND real QA-accuracy set after the Phase-98
+// --- COMPETITIVE HEAD-TO-HEAD (the costed re-run, finally measured) ---------
+// accuracy, cross-judged — the SECOND real QA-accuracy set after the measured
 // baseline. Competitors re-run by US under one protocol (answer claude-sonnet-4-6
 // + judges gpt-4o AND claude, cross-judge spread 0.0 on every cell), best-effort
-// N=8. Every cell read from the phase114-prove2 manifest. BINDING CONSTRAINT #8:
+// N=8. Every cell read from the phase114-prove2 manifest. Binding framing:
 // Comis TIED mem0 — the framing is "competitive-with mem0 / at-$0-on-device",
 // NEVER a superiority claim. The differentiator is cost/latency/locality, not quality.
 const h2hManifest = "benchmarks/results/2026-06-02-phase114-prove2";
@@ -168,7 +168,7 @@ const competitiveHeadToHead = {
   ],
   // measure-first per-capability QA-lift (N=50 mix) — also from the same manifest.
   capabilityNote:
-    "Per-capability QA-lift (N=50 mix, cross-judged): Comis baseline 98.0% / 94.0% (spread 4.0, survives); the two recall-config v2.9 capabilities are byte-identical to baseline on all 50 questions → +0.0 pt measured lift. No recall-config capability showed a measured QA-lift — the measure-first outcome.",
+    "Per-capability QA-lift (N=50 mix, cross-judged): Comis baseline 98.0% / 94.0% (spread 4.0, survives); the two recall-config capabilities are byte-identical to baseline on all 50 questions → +0.0 pt measured lift. No recall-config capability showed a measured QA-lift — the measure-first outcome.",
   scopeNote:
     "N=8 / N=50 are best-effort operator-costed samples, not the definitive scale. Zep / Hindsight / Mnemosyne were skip-with-disclosure (not wired this run) — never a fabricated cell. Comis TIED mem0: competitive-with, never a superiority claim.",
 };
@@ -246,7 +246,7 @@ const headToHead = {
         <p class="text-muted text-sm mt-6 leading-relaxed max-w-3xl">
           QA accuracy is on a disclosed 135-item category-stratified subset; retrieval recall@5 is
           full-set. Judges are cross-<strong class="text-muted-light">model</strong> (gpt-4o + gpt-4.1),
-          not cross-provider (BUG-004). single-session-preference is omitted — judge-noisy, 15pt spread;
+          not cross-provider. single-session-preference is omitted — judge-noisy, 15pt spread;
           LoCoMo is comparability-only and is never headlined.
         </p>
       </div>
@@ -279,11 +279,11 @@ const headToHead = {
       </div>
     </section>
 
-    <!-- What the v2.8 tracks provably do (keyless, $0) — SEPARATE from accuracy -->
+    <!-- What the mechanical tracks provably do (keyless, $0) — SEPARATE from accuracy -->
     <section class="px-6 py-16 md:py-24 bg-navy-light/50">
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Keyless, at $0</p>
-        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">What the v2.8 tracks provably do</h2>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">What the mechanical tracks provably do</h2>
         <p class="text-muted text-lg mb-10 max-w-2xl leading-relaxed">
           These are <strong class="text-muted-light">structural</strong> gate deltas — measured with no
           answer model, no judge, no key, at $0. They are <strong class="text-muted-light">not</strong>
@@ -302,11 +302,11 @@ const headToHead = {
       </div>
     </section>
 
-    <!-- What the v2.9 tracks provably do (keyless, $0) — SEPARATE from accuracy -->
+    <!-- What the newer tracks provably do (keyless, $0) — SEPARATE from accuracy -->
     <section class="px-6 py-16 md:py-24">
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Keyless, at $0</p>
-        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">What the v2.9 tracks provably do</h2>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">What the newer tracks provably do</h2>
         <p class="text-muted text-lg mb-10 max-w-2xl leading-relaxed">
           Six capabilities Comis now ships — each proven with no answer model, no judge, no key, at
           $0. As above, these are <strong class="text-muted-light">structural</strong> invariants,
@@ -327,7 +327,7 @@ const headToHead = {
       </div>
     </section>
 
-    <!-- v2.10 competitive head-to-head — the costed re-run, finally measured -->
+    <!-- competitive head-to-head — the costed re-run, finally measured -->
     <section class="px-6 py-16 md:py-24 bg-navy-light/50">
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Competitive head-to-head · cross-judged</p>

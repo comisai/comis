@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   parseMemoryEntry,
   MemorySourceSchema,
-  // Phase 82 — structured-extraction schemas (EXTR-01) + Phase-83 domain target
+  // Structured-extraction schemas + resolved-entity domain target
   MemoryExtractionResultSchema,
   StructuredMemorySchema,
   ExtractedEntitySchema,
   MemoryEntitySchema,
-  // Phase 107 — the per-user representation prefix-type enum (USER-01)
+  // The per-user representation prefix-type enum
   UserRepresentationTypeSchema,
   type MemorySource,
 } from "./memory-entry.js";
@@ -234,7 +234,7 @@ describe("MemoryEntry", () => {
     });
   });
 
-  describe("memoryType field (LANES-03 — persisted classification)", () => {
+  describe("memoryType field (persisted classification)", () => {
     it("accepts MemoryEntry with an explicit memoryType", () => {
       const result = parseMemoryEntry(validEntry({ memoryType: "episodic" }));
       expect(result.ok).toBe(true);
@@ -269,7 +269,7 @@ describe("MemoryEntry", () => {
     });
   });
 
-  describe("observationKind + patternType fields (REASON-01 — typed reasoning observations)", () => {
+  describe("observationKind + patternType fields (typed reasoning observations)", () => {
     it("accepts MemoryEntry with an inductive observationKind AND a patternType (both round-trip through safeParse)", () => {
       const result = parseMemoryEntry(
         validEntry({ observationKind: "inductive", patternType: "preference" }),
@@ -343,7 +343,7 @@ describe("ExtractedEntitySchema", () => {
   });
 });
 
-describe("StructuredMemorySchema (lenient LLM output — EXTR-01)", () => {
+describe("StructuredMemorySchema (lenient LLM output)", () => {
   it("parses a valid structured memory", () => {
     const result = StructuredMemorySchema.safeParse({
       content: "X",
@@ -360,7 +360,7 @@ describe("StructuredMemorySchema (lenient LLM output — EXTR-01)", () => {
 
   it("STRIPS a benign extra LLM key instead of rejecting (Pitfall 5)", () => {
     // The LLM may emit { confidence: 0.9 }; a lenient z.object must keep the valid
-    // content and drop the unknown key — NOT discard the whole memory (EXTR-01).
+    // content and drop the unknown key — NOT discard the whole memory.
     const result = StructuredMemorySchema.safeParse({
       content: "X",
       entities: [],
@@ -419,7 +419,7 @@ describe("StructuredMemorySchema (lenient LLM output — EXTR-01)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EXTRACT-03 (Phase 96) — the additive LENIENT `causes` field.
+  // The additive LENIENT `causes` field.
   //
   // The fact stated in `content` is the CAUSE; each `effect` string is a
   // consequence (A2 — the cause is the memory's own content). The field is
@@ -481,7 +481,7 @@ describe("StructuredMemorySchema (lenient LLM output — EXTR-01)", () => {
   });
 });
 
-describe("MemoryExtractionResultSchema (envelope — EXTR-01)", () => {
+describe("MemoryExtractionResultSchema (envelope)", () => {
   it("parses { memories: [...] }", () => {
     const result = MemoryExtractionResultSchema.safeParse({
       memories: [
@@ -519,7 +519,7 @@ describe("MemoryExtractionResultSchema (envelope — EXTR-01)", () => {
   });
 });
 
-describe("MemoryEntitySchema (Phase-83 domain target — strict)", () => {
+describe("MemoryEntitySchema (resolved-entity domain target — strict)", () => {
   function validEntity(overrides: Record<string, unknown> = {}) {
     return {
       id: VALID_UUID,
@@ -563,7 +563,7 @@ describe("MemoryEntitySchema (Phase-83 domain target — strict)", () => {
   });
 });
 
-describe("MemorySource type export (provenance shape — EXTR-04)", () => {
+describe("MemorySource type export (provenance shape)", () => {
   it("is importable as a type and round-trips through MemorySourceSchema", () => {
     const s: MemorySource = { who: "system", channel: "memory-review" };
     const result = MemorySourceSchema.parse(s);
@@ -573,18 +573,18 @@ describe("MemorySource type export (provenance shape — EXTR-04)", () => {
 });
 
 /**
- * Phase 107 (USER-01) — the per-user representation prefix-type enum.
+ * The per-user representation prefix-type enum.
  *
- * The offline profile-builder (Plan 03) classifies each profile entry into one
- * of four PREFIX types — `identity` / `preference` / `relationship` /
- * `instruction` (Honcho's "representation" read). This is a DISTINCT vocabulary
- * from the cognitive `memoryType` (`working`/`episodic`/`semantic`/`procedural`)
- * and from the trust ladder (`system`/`learned`/`external`): a memoryType value
- * or a trust value MUST NOT parse as a representation type. The enum lives in
- * the domain layer beside `TrustLevelSchema` (the analog precedent); the
- * type-only `UserRepresentationStore` port (Plan 02) imports the inferred TYPE.
+ * The offline profile-builder classifies each profile entry into one of four
+ * PREFIX types — `identity` / `preference` / `relationship` / `instruction`
+ * (Honcho's "representation" read). This is a DISTINCT vocabulary from the
+ * cognitive `memoryType` (`working`/`episodic`/`semantic`/`procedural`) and from
+ * the trust ladder (`system`/`learned`/`external`): a memoryType value or a
+ * trust value MUST NOT parse as a representation type. The enum lives in the
+ * domain layer beside `TrustLevelSchema` (the analog precedent); the type-only
+ * `UserRepresentationStore` port imports the inferred TYPE.
  */
-describe("UserRepresentationTypeSchema (USER-01 — the prefix-type enum, distinct from memoryType)", () => {
+describe("UserRepresentationTypeSchema (the prefix-type enum, distinct from memoryType)", () => {
   it("parses each of the four prefix types", () => {
     expect(UserRepresentationTypeSchema.parse("identity")).toBe("identity");
     expect(UserRepresentationTypeSchema.parse("preference")).toBe("preference");
@@ -592,7 +592,7 @@ describe("UserRepresentationTypeSchema (USER-01 — the prefix-type enum, distin
     expect(UserRepresentationTypeSchema.parse("instruction")).toBe("instruction");
   });
 
-  it("REJECTS the memoryType vocabulary (the enums are distinct — OD1)", () => {
+  it("REJECTS the memoryType vocabulary (the enums are distinct)", () => {
     // None of the cognitive memory classes is a representation prefix type.
     expect(UserRepresentationTypeSchema.safeParse("working").success).toBe(false);
     expect(UserRepresentationTypeSchema.safeParse("episodic").success).toBe(false);

@@ -3,11 +3,11 @@
  * Unit tests for the length-prefixed JSON IPC framer (spec §2.3).
  *
  * Pure-JS → runs green on macOS. Proves the framing + correlation contract the
- * worker (119-03) and the daemon-side reply router route over:
+ * worker and the daemon-side reply router route over:
  *   - length-prefixed JSON frames round-trip losslessly (uint32-BE prefix);
  *   - a stateful decoder reassembles arbitrary chunk splits (no premature/double emit);
  *   - two replies for one session correlate by (sessionId,requestId), NEVER arrival order
- *     (the OPS-08 framing half);
+ *     (the framing half of out-of-order correlation);
  *   - event frames decode distinctly from reply frames (the separate push channel).
  *
  * @module
@@ -93,7 +93,7 @@ describe("createFrameDecoder", () => {
   });
 });
 
-describe("correlate (OPS-08 framing half)", () => {
+describe("correlate (the framing half of out-of-order correlation)", () => {
   it("matches an out-of-order reply to its request by (sessionId,requestId), not arrival order", () => {
     // Two requests for the SAME session; replies encoded in REVERSE order.
     const reply1: TerminalReplyFrame = { sessionId: "s1", requestId: "r1", ok: true, result: { grid: "one" } };
@@ -133,7 +133,7 @@ describe("correlate (OPS-08 framing half)", () => {
   });
 });
 
-describe("createFrameDecoder — HR-01 max-frame guard (memory-DoS / desync)", () => {
+describe("createFrameDecoder — max-frame guard (memory-DoS / desync)", () => {
   it("throws FrameTooLargeError on a length prefix above MAX_FRAME_BYTES instead of buffering toward a ~4 GiB body", () => {
     // A single hostile/corrupt uint32 length prefix (0xFFFFFFFF = ~4 GiB) with
     // NO body. The pre-patch decoder computes frameEnd = 4 + 4294967295, sees

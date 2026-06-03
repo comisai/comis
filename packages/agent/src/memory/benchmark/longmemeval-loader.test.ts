@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * UNGATED unit tests for the pure LongMemEval loader (BENCH-01).
+ * UNGATED unit tests for the pure LongMemEval loader.
  *
  * TIER: default CI / fast unit tier (no model, no dataset download, no store).
  * Runs over the tiny vendored neutral-placeholder fixture in __fixtures__/.
@@ -84,7 +84,7 @@ describe("loadLongMemEval (one dated document per haystack session)", () => {
     for (const doc of docs) {
       expect(Number.isInteger(doc.createdAt)).toBe(true);
       expect(doc.createdAt).toBeGreaterThan(0);
-      // IN-02: the per-doc questionId is dead (the harness keys on sessionId and
+      // The per-doc questionId is dead (the harness keys on sessionId and
       // resolves gold via answerSessionIdsByQuestion / questions[]). The doc no
       // longer carries it, so the contract is not overstated.
       expect("questionId" in doc).toBe(false);
@@ -105,7 +105,7 @@ describe("loadLongMemEval (one dated document per haystack session)", () => {
   });
 });
 
-describe("loadLongMemEval (BENCH-03: judge category + gold answer side-channel)", () => {
+describe("loadLongMemEval (judge category + gold answer side-channel)", () => {
   it("emits the judge category from question_type on questions[]", () => {
     const parsed = loadLongMemEval(RAW);
     expect(parsed.ok).toBe(true);
@@ -148,7 +148,7 @@ describe("loadLongMemEval (BENCH-03: judge category + gold answer side-channel)"
     expect(noType.value.questions[0].answer).toBe("");
   });
 
-  it("ANTI-LEAK: category/answer are NOT spliced into docs[].content (T-89-01-01)", () => {
+  it("ANTI-LEAK: category/answer are NOT spliced into docs[].content", () => {
     // The invariant is that the new `category`/`answer` side-channels stay on
     // the questions[] channel and are NEVER concatenated into doc.content —
     // content must remain byte-identical to JSON.stringify(stripHasAnswer(turns)).
@@ -196,8 +196,8 @@ describe("parseHaystackDate (YYYY/MM/DD (Day) HH:MM -> epoch ms)", () => {
     expect(r.ok).toBe(false);
   });
 
-  it("returns err on out-of-range components instead of rolling over (WR-01)", () => {
-    // WR-01: Date.UTC silently rolls over out-of-range-but-numeric components
+  it("returns err on out-of-range components instead of rolling over", () => {
+    // Date.UTC silently rolls over out-of-range-but-numeric components
     // (month 13 -> next year, day 45, hour 99). The regex's \d{2} classes accept
     // them, so the parser MUST range-check and return err rather than emit a
     // plausible-but-wrong epoch. The Number.isNaN guard never fires for these.
@@ -210,7 +210,7 @@ describe("parseHaystackDate (YYYY/MM/DD (Day) HH:MM -> epoch ms)", () => {
     expect(parseHaystackDate("2023/05/00 (Sat) 02:21").ok).toBe(false); // day 00
   });
 
-  it("returns err on a day that rolls over within a valid month (WR-01 round-trip)", () => {
+  it("returns err on a day that rolls over within a valid month (round-trip)", () => {
     // Feb 30 is numerically in-range (day 1-31) but rolls into March — the
     // round-trip guard must reject it.
     expect(parseHaystackDate("2023/02/30 (Thu) 02:21").ok).toBe(false);

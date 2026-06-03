@@ -16,7 +16,7 @@
  * which is the risk this gate closes. The CI gate enforces ANNOTATION
  * PRESENCE only; the literal value (safe / permission-gated /
  * never-export) is the security policy, gated behind a HUMAN-UAT
- * security-reviewer step before the v2.4 / v2.5 ship.
+ * security-reviewer step before ship.
  *
  * Walker pattern: mirrors test/architecture/contract-handler-parity.test.ts
  * (lines 76-228) — TypeScript-compiler AST walker. Scope limited to a

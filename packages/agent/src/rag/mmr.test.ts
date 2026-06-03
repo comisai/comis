@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for mmrRerank() — pure greedy embedding-MMR diversity re-rank (IQ-01).
+ * Tests for mmrRerank() — pure greedy embedding-MMR diversity re-rank.
  *
  * Load-bearing RED-first assertions (all fail on the throwing stub):
  * - DETERMINISM: two calls on the same (ranked, embeddingsById, λ) return the same order.

@@ -62,7 +62,7 @@ describe("classifyAction", () => {
     }
   });
 
-  describe("v2.0 tool read actions", () => {
+  describe("tool read actions", () => {
     const v2ReadActions = [
       "tool.execute",
       "cron.list",
@@ -90,7 +90,7 @@ describe("classifyAction", () => {
     }
   });
 
-  describe("v2.0 tool mutate actions", () => {
+  describe("tool mutate actions", () => {
     const v2MutateActions = [
       "message.reply",
       "message.react",
@@ -111,7 +111,7 @@ describe("classifyAction", () => {
     }
   });
 
-  describe("v2.0 tool destructive actions", () => {
+  describe("tool destructive actions", () => {
     const v2DestructiveActions = [
       "cron.remove",
       "message.delete",

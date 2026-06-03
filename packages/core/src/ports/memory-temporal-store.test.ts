@@ -23,24 +23,24 @@ import type { MemorySearchResult } from "./memory.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./memory-temporal-store.ts"), "utf8");
 
-// The two PUBLIC core barrels the 94-01 lesson demands BOTH carry the port (a
+// The two PUBLIC core barrels must BOTH carry the port (a
 // ports/index-only add fails the @comis/memory build TS2724 — the public barrel
 // exports/ports.ts is what consumers see). Grep them as a source-level RED guard.
 const portsIndexSrc = readFileSync(resolve(here, "./index.ts"), "utf8");
 const exportsPortsSrc = readFileSync(resolve(here, "../exports/ports.ts"), "utf8");
 
 /**
- * Phase 95 (LANES-02) — the temporal-spread recall lane port. Type-only.
+ * The temporal-spread recall lane port. Type-only.
  *
  * An implementer must expose `spreadLane(seedOccurredAts, scope, windowMs, cap)`
  * returning `Promise<Result<MemorySearchResult[], Error>>`. Given the seed
  * memories' event times, it returns OTHER memories (scoped to (tenant, agent),
  * seeds excluded) whose `occurred_at` is within `windowMs` of ANY seed time,
- * hydrated nearest-first. Empty when no seeds / no neighbours (the ENT-04 no-op —
+ * hydrated nearest-first. Empty when no seeds / no neighbours (the no-op —
  * the lane is then empty and RRF ranking is unchanged). This is a NEW segregated
  * port — it does NOT widen the security-reviewed `MemoryPort`.
  */
-describe("MemoryTemporalStore — temporal-spread recall port (LANES-02)", () => {
+describe("MemoryTemporalStore — temporal-spread recall port", () => {
   it("declares the port interface and stays a type-only port (no zod, no @comis/memory)", () => {
     // Runtime RED proof: fails on the absent/empty source where the interface +
     // method do not exist yet.
@@ -57,7 +57,7 @@ describe("MemoryTemporalStore — temporal-spread recall port (LANES-02)", () =>
     );
   });
 
-  it("is exported from BOTH core barrels (ports/index.ts AND exports/ports.ts — the 94-01 TS2724 lesson)", () => {
+  it("is exported from BOTH core barrels (ports/index.ts AND exports/ports.ts — the TS2724 lesson)", () => {
     expect(portsIndexSrc, "MemoryTemporalStore must be re-exported from ports/index.ts").toMatch(
       /\bMemoryTemporalStore\b/,
     );

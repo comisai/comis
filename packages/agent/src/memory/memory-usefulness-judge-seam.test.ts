@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the OFFLINE usefulness-judge seam (Phase 110 — LEARN-02 OPTIONAL,
- * Track H3).
+ * Tests for the OFFLINE usefulness-judge seam.
  *
  * createUsefulnessJudgeSeam wraps a cheap cron model + an agent-internal prompt +
  * a lenient/total parser into a `judge({ candidateIds, answer })` seam that a
- * future Phase 111 sentinel injects. The LLM is MOCKED here (determinism — no API
+ * future sentinel injects. The LLM is MOCKED here (determinism — no API
  * key, no provider call): completeSimple returns canned text, getModel a stub.
  *
  * The seam IMPORTS the module (so the scaffold file is covered — the

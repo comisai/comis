@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Orchestration suite for the offline DIRECTIONAL relationship builder (Phase 108
-// — SOCIAL-01, Track E2). Two units under test:
+// Orchestration suite for the offline DIRECTIONAL relationship builder. Two units
+// under test:
 //
 //   1. The agent-internal directional builder prompt + parser
 //      (`memory-relationship-prompt.ts`) — the build() seam's payload shape: a
@@ -9,13 +9,14 @@
 //      model-emitted trust (trust is CODE-computed, never LLM-chosen) and drops a
 //      candidate missing either directional endpoint.
 //   2. `runRelationshipBuild` (`memory-relationship-job.ts`) — the offline
-//      directional builder mirroring `runUserRepresentationBuild` 1:1: default-OFF
+//      directional builder mirroring `runUserRepresentationBuild` exactly: default-OFF
 //      gate → read sources → EXCLUDE external-trust (anti-poisoning) → bound →
-//      INJECTED build() seam (non-fatal) → validateMemoryWrite (skip non-clean —
-//      Pitfall 2, NO downgrade-and-store) → upsert via the @comis/core port →
-//      counts-only event → idempotent. The DELTA from 107: the candidate is
+//      INJECTED build() seam (non-fatal) → validateMemoryWrite (skip non-clean,
+//      NO downgrade-and-store) → upsert via the @comis/core port →
+//      counts-only event → idempotent. The DELTA from the user-representation
+//      builder: the candidate is
 //      DIRECTIONAL (subjectUserId from the speaker, aboutUserId from the LLM), the
-//      sourceText is SENDER-PREFIXED (`- [userId]: content`, RQ3), and the scope
+//      sourceText is SENDER-PREFIXED (`- [userId]: content`), and the scope
 //      carries channelId.
 //
 // The offline build() LLM is INJECTED as `deps.build` (the offline seam — it is
@@ -25,11 +26,11 @@
 // imports @comis/core TYPES only (the agent↛memory build cut), so this suite never
 // needs @comis/memory.
 //
-// Anti-poisoning headline (SOCIAL-01): an `external`/low-trust source candidate is
+// Anti-poisoning headline: an `external`/low-trust source candidate is
 // SKIPPED (filtered out BEFORE the build), NEVER downgraded-and-stored — the
-// 108-02 DB CHECK forbids `external`, so an external source RED-proves 0
+// DB CHECK forbids `external`, so an external source proves 0
 // relationship rows. A `warn`/`critical` validateMemoryWrite verdict is likewise
-// SKIPPED (blocked++), not downgraded (Pitfall 2 — the high-trust floor has no
+// SKIPPED (blocked++), not downgraded (the high-trust floor has no
 // landing for a non-clean entry).
 import { describe, it, expect } from "vitest";
 import type { Result } from "@comis/shared";
@@ -160,7 +161,7 @@ function makeClock(): ClockPort {
  * A FAKE in-memory RelationshipStore implementing the @comis/core port. Keeps the
  * suite @comis/memory-free (the agent↛memory cut). `upsert` is idempotent per the
  * DIRECTIONAL key (subjectUserId, aboutUserId, content) so a re-run over identical
- * candidates does NOT grow the row set — mirroring the 108-02 adapter's
+ * candidates does NOT grow the row set — mirroring the adapter's
  * upsert-replace contract; A→B and B→A are DISTINCT keys (never collapsed).
  * `upsertCalls` records every entry the job tried to write (the bound/skip proofs).
  */
@@ -302,7 +303,7 @@ describe("runRelationshipBuild — Task 2: gate / anti-poisoning / directional /
     expect(fake.rows[0]?.aboutUserId).toBe(USER_B);
     // Trust is CODE-computed at the source ceiling — NEVER `external`, NEVER LLM-chosen.
     expect(fake.rows[0]?.trust).toBe("learned");
-    // The sourceText preserved SENDER attribution (RQ3): both speakers are tagged.
+    // The sourceText preserved SENDER attribution: both speakers are tagged.
     const sent = buildSpy.calls.join("\n");
     expect(sent).toContain(`[${USER_A}]`);
     expect(sent).toContain(`[${USER_B}]`);
@@ -398,7 +399,7 @@ describe("runRelationshipBuild — Task 2: gate / anti-poisoning / directional /
     expect(buildSpy.calls.join("\n")).not.toContain("rumor");
   });
 
-  it("validator skip (Pitfall 2): a `warn` candidate is SKIPPED (blocked++), NOT downgraded-and-stored", async () => {
+  it("validator skip: a `warn` candidate is SKIPPED (blocked++), NOT downgraded-and-stored", async () => {
     // The KG/reasoning path downgrades a `warn` to external and STILL stores it. For
     // relationships that is INVALID — the high-trust floor + the DB CHECK forbid
     // `external`. A `warn` candidate produces 0 rows, SAME as `critical`.
@@ -475,7 +476,7 @@ describe("runRelationshipBuild — Task 2: gate / anti-poisoning / directional /
     }
   });
 
-  it("MR-02 input bound (count): with more sources than maxSourceMemories, build() sees only the capped HEAD and the event flags truncation", async () => {
+  it("input bound (count): with more sources than maxSourceMemories, build() sees only the capped HEAD and the event flags truncation", async () => {
     const buildSpy = makeBuildSpy(() => [
       { subjectUserId: USER_A, aboutUserId: USER_B, content: "distilled" },
     ]);

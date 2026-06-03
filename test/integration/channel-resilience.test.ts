@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CHAN: Channel Pipeline Resilience Integration Tests
+ * Channel Pipeline Resilience Integration Tests
  *
  * Validates channel pipeline resilience guarantees:
- *   CHAN-04: Retry engine recovery from adapter failures
- *   CHAN-05: Concurrent message injection without duplicates
- *   CHAN-06: Adapter failure does not crash daemon
- *   CHAN-07: Queue overflow policy drop-old
- *   CHAN-08: Queue overflow policy drop-new
+ *   - Retry engine recovery from adapter failures
+ *   - Concurrent message injection without duplicates
+ *   - Adapter failure does not crash daemon
+ *   - Queue overflow policy drop-old
+ *   - Queue overflow policy drop-new
  *
  * Tests exercise ChaosEchoAdapter for fault injection, RetryEngine for
  * retry logic, EchoChannelAdapter for concurrent message handling,
@@ -162,8 +162,9 @@ function makeMinimalDeps(
   };
 
   // Minimal pipeline stub: drive the executor for each inbound message and
-  // forward the response back through the adapter. CHAN-05 tests concurrency
-  // of the manager's per-adapter dispatch, not the full inbound pipeline.
+  // forward the response back through the adapter. The concurrent-injection
+  // tests exercise concurrency of the manager's per-adapter dispatch, not the
+  // full inbound pipeline.
   const processInboundMessage = (async (deps, adapter, msg) => {
     const exec = deps.createExecutor("default");
     if (!exec) return;
@@ -172,7 +173,7 @@ function makeMinimalDeps(
   }) as ChannelManagerDeps["processInboundMessage"];
 
   // Minimal delivery service stub: directly hand off to adapter.sendMessage.
-  // The CHAN-05 tests don't exercise retry/queue/hook paths.
+  // The concurrent-injection tests don't exercise retry/queue/hook paths.
   const deliveryService = {
     deliverToChannel: (async (adapter, channelId, text) => {
       const sendResult = await adapter.sendMessage(channelId, text);
@@ -202,10 +203,10 @@ function makeMinimalDeps(
 }
 
 // ---------------------------------------------------------------------------
-// CHAN-04: Retry engine recovery from adapter failure
+// Retry engine recovery from adapter failure
 // ---------------------------------------------------------------------------
 
-describe("CHAN-04: Retry engine recovery from adapter failure", () => {
+describe("Retry engine recovery from adapter failure", () => {
   it("retries after transient failures and eventually succeeds", async () => {
     // Use transient failure adapter (503 errors are classified as retryable)
     const { adapter, callLog } = createTransientFailureAdapter(2);
@@ -291,10 +292,10 @@ describe("CHAN-04: Retry engine recovery from adapter failure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CHAN-05: Concurrent message injection without duplicates
+// Concurrent message injection without duplicates
 // ---------------------------------------------------------------------------
 
-describe("CHAN-05: Concurrent message injection without duplicates", () => {
+describe("Concurrent message injection without duplicates", () => {
   it("N concurrent messages produce N unique responses with no duplicates", async () => {
     const adapter = new EchoChannelAdapter({
       channelId: "echo-concurrent",
@@ -384,10 +385,10 @@ describe("CHAN-05: Concurrent message injection without duplicates", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CHAN-06: Adapter failure does not crash daemon
+// Adapter failure does not crash daemon
 // ---------------------------------------------------------------------------
 
-describe("CHAN-06: Adapter failure does not crash daemon", () => {
+describe("Adapter failure does not crash daemon", () => {
   let handle: TestDaemonHandle;
 
   beforeAll(async () => {
@@ -451,10 +452,10 @@ describe("CHAN-06: Adapter failure does not crash daemon", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CHAN-07: Queue overflow policy drop-old
+// Queue overflow policy drop-old
 // ---------------------------------------------------------------------------
 
-describe("CHAN-07: Queue overflow policy drop-old", () => {
+describe("Queue overflow policy drop-old", () => {
   it("drops oldest messages when count exceeds maxDepth", () => {
     const messages = Array.from({ length: 5 }, (_, i) =>
       makeMessage({ text: `msg-${i}` }),
@@ -584,10 +585,10 @@ describe("CHAN-07: Queue overflow policy drop-old", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CHAN-08: Queue overflow policy drop-new
+// Queue overflow policy drop-new
 // ---------------------------------------------------------------------------
 
-describe("CHAN-08: Queue overflow policy drop-new", () => {
+describe("Queue overflow policy drop-new", () => {
   it("rejects newest message when count exceeds maxDepth", () => {
     const messages = Array.from({ length: 4 }, (_, i) =>
       makeMessage({ text: `msg-${i}` }),

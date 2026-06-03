@@ -4,13 +4,13 @@
  * FileSecretStore — SecretStorePort implementation with plaintext JSON storage.
  * File-mode is the documented plaintext-at-rest bargain (DESIGN §5.1).
  * Writes are sync-atomic: unique-temp → O_NOFOLLOW open → fsync → rename → parent-dir fsync.
- * Single-writer invariant: all writes route through daemon-RPC (D5/D14).
+ * Single-writer invariant: all writes route through daemon-RPC.
  *
  * Threat model:
- *  T-02-01: O_CREAT|O_EXCL|O_NOFOLLOW on temp path prevents symlink injection at temp location.
- *  T-02-02: safePath-equivalent path validation + single-writer daemon-RPC invariant (D5).
- *  T-02-04: Schema version check prevents silent misparse of future/corrupted file.
- *  T-02-05: list() maps only metadata fields — value never returned (residency invariant).
+ *  - O_CREAT|O_EXCL|O_NOFOLLOW on temp path prevents symlink injection at temp location.
+ *  - safePath-equivalent path validation + single-writer daemon-RPC invariant.
+ *  - Schema version check prevents silent misparse of future/corrupted file.
+ *  - list() maps only metadata fields — value never returned (residency invariant).
  */
 
 import * as fs from "node:fs";
@@ -185,7 +185,7 @@ function cleanupStaleTmps(dataDir: string): void {
  * with restricted permissions (0o600 / 0o700).
  *
  * All methods are synchronous. This adapter is safe for single-writer use
- * (daemon-RPC routing guarantees no concurrent writes — D5).
+ * (daemon-RPC routing guarantees no concurrent writes).
  *
  * @param opts.dataDir - Absolute path to the data directory. Will be created
  *   on first write with mode 0o700.

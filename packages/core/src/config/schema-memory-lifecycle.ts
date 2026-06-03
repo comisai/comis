@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Memory-lifecycle sweep configuration schema (Phase 112 — FORGET-02, Track C).
+ * Memory-lifecycle sweep configuration schema.
  *
  * The CRON knob for the periodic, KEYLESS memory-lifecycle sweep — the
  * hysteresis-banded tier promote/demote + usefulness-aware eviction pass. OFF by
@@ -11,11 +11,11 @@
  * — in the live policy — marks rows). So enabling it costs nothing in LLM spend;
  * the gate exists for behavior-opt-in + a bounded write, not cost.
  *
- * SCAFFOLD-DORMANT per Phase-106 gap-report OD4: this schema + the port
- * ({@link MemoryLifecyclePort}) + the adapter (112-03) + the cron (112-04) exist
+ * SCAFFOLD-DORMANT: this schema + the port
+ * ({@link MemoryLifecyclePort}) + the adapter + the cron exist
  * and are wired, but EVEN WHEN ENABLED the sweep's demote/evict step performs
  * NOTHING (`promoted`/`demoted`/`evicted` stay 0) — the live eviction policy is
- * the deferred operator/v2.10 step. The default-OFF is therefore a behavior gate,
+ * the deferred operator step. The default-OFF is therefore a behavior gate,
  * NOT a back-compat fallback (mirror the online-tuning framing): a default agent
  * registers NO `__MEMORY_LIFECYCLE__` cron → byte-identical to today.
  *
@@ -38,12 +38,12 @@ import { z } from "zod";
 
 /**
  * MemoryLifecycleConfigSchema: Zod schema for the per-agent SCAFFOLD-DORMANT
- * memory-lifecycle sweep cron (Phase 112, Track C — FORGET-02).
+ * memory-lifecycle sweep cron.
  *
  * Fields:
  * - enabled: opt-in (default false — a behavior gate, NOT back-compat; and even
  *   when enabled the SCAFFOLD evicts/demotes nothing — the live policy is the
- *   deferred operator/v2.10 step, OD4). KEYLESS, so this is not a COST gate.
+ *   deferred operator step). KEYLESS, so this is not a COST gate.
  * - schedule: cron expression, default daily at 09:00 UTC — AFTER online-tuning's
  *   "0 8" slot so the FEED + the tuned alphas have fully settled before the sweep
  *   reads them (the judge `0 7` → tuning `0 8` → lifecycle `0 9` chain).

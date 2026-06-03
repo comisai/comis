@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 111 (LEARN-03) daemon-composition-root field-plumbing guard — the SECOND
+ * Daemon-composition-root field-plumbing guard for the tuned-alpha store — the SECOND
  * hop the sibling `setup-agents-tuned-alpha-wiring.test.ts` cannot see.
  *
  * That test drives `setupSingleAgent` with a `SingleAgentDeps` it CONSTRUCTS itself,
@@ -10,15 +10,15 @@
  * `bootAgents` (and thence `setupAgents`) consumes. A store can be destructured from
  * `setupMemory` yet OMITTED from that `BootContext` literal — so `bootAgents` receives
  * `tunedAlphaStore: undefined`, `SingleAgentDeps.tunedAlphaStore` is always undefined,
- * and the 111-03 gated `buildScoringAlphas` read never sees the store (the learned
- * alphas silently never apply in the live daemon — Pitfall 5, the SAME field-plumbing
- * class as the Phase-107/108 BLOCKERS). The keyless bench passes (it builds the adapter
+ * and the gated `buildScoringAlphas` read never sees the store (the learned
+ * alphas silently never apply in the live daemon — the SAME field-plumbing
+ * class as the per-user and directional-relationship store BLOCKERS). The keyless bench passes (it builds the adapter
  * directly) and the unit forward-test passes (it builds the deps directly), yet the
  * live daemon is a no-op. This is exactly the gap that reached `main` masked: the
  * per-package executor run never ran the full `lint:security`, which flagged the
  * destructured-but-unforwarded binding as an unused-var error at the phase boundary.
  *
- * THE INVARIANT (a source-grep belt, the 111-01/02/04 convention): in `daemon.ts`
+ * THE INVARIANT (a source-grep belt): in `daemon.ts`
  * `tunedAlphaStore` must appear in BOTH (a) the `setupMemory(...)` destructure block
  * AND (b) a downstream forwarding position (the `BootContext` literal that feeds
  * `bootAgents`). Removing the forward re-opens the no-op and re-trips this test.
@@ -37,7 +37,7 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const daemonSrc = readFileSync(join(here, "daemon.ts"), "utf8");
 
-describe("daemon.ts threads tunedAlphaStore from setupMemory into the BootContext (LEARN-03 field-plumbing)", () => {
+describe("daemon.ts threads tunedAlphaStore from setupMemory into the BootContext (field-plumbing)", () => {
   it("destructures tunedAlphaStore from setupMemory(...)", () => {
     // Find the destructure block whose closing line is `} = await setupMemory(`.
     const idx = daemonSrc.indexOf("= await setupMemory(");

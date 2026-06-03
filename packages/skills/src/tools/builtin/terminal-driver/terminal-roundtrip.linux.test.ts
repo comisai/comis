@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TR-01 (Linux/VPS) — the LIVE create→read→kill round-trip under the real
- * process boundary + the 118-proven `--permission` worker posture, driving a
+ * (Linux/VPS) — the LIVE create→read→kill round-trip under the real
+ * process boundary + the proven `--permission` worker posture, driving a
  * real PTY via node-pty `forkpty`. Mirrors `bwrap-egress-integration.test.ts`'s
  * gate: `describe.skipIf(process.platform !== "linux")` so it COMPILES + SKIPS
  * on the macOS author box and runs live on `comisvps` (where forkpty + bwrap
@@ -42,8 +42,8 @@ function isLinux(): boolean {
 const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 /**
- * 122-06: the registry threads the daemon-resolved bwrapPath onto the create frame
- * (the SEC-16 seam). The worker now ALWAYS jails (bwrap [scope args] -- bin argv),
+ * The registry threads the daemon-resolved bwrapPath onto the create frame
+ * (the fail-closed provider seam). The worker now ALWAYS jails (bwrap [scope args] -- bin argv),
  * so without a bwrapPath create fails closed. Resolved once like `BwrapProvider`.
  */
 function resolveBwrapPath(): string {
@@ -51,9 +51,9 @@ function resolveBwrapPath(): string {
 }
 
 /**
- * The operator-declared sandbox scope on the allow entry (SEC-02/03) — sourced
+ * The operator-declared sandbox scope on the allow entry — sourced
  * EXCLUSIVELY from the matched entry (the create tool has no scope param). bash runs
- * fine in this workspace jail; the create tool threads it onto the frame for 122-06.
+ * fine in this workspace jail; the create tool threads it onto the frame.
  */
 const WORKSPACE_SCOPE: TerminalScope = {
   filesystem: "workspace",
@@ -116,26 +116,26 @@ function toolDeps(registry: ReturnType<typeof createTerminalSessionRegistry>, en
     eventBus: { emit: () => true },
     nowMs: () => Date.now(),
     agentId: "agent-roundtrip-linux",
-    // 123-05: no-limit caps (the live create→read→kill round-trip does not exercise the caps).
+    // No-limit caps (the live create→read→kill round-trip does not exercise the caps).
     caps: createSessionCaps(undefined, () => Date.now()),
   };
 }
 
-describe.skipIf(!isLinux())("TR-01 (Linux) — live PTY create→read→kill round-trip under the worker posture", () => {
+describe.skipIf(!isLinux())("Linux — live PTY create→read→kill round-trip under the worker posture", () => {
   it("creates a real-PTY session, reads its grid, kills it, and it drops from list", async () => {
     const shell = realShell();
     const registry = createTerminalSessionRegistry({
       spawnWorker: makeBridgedPtyWorkerChild,
       logger: noopLogger,
       nowMs: () => Date.now(),
-      // 122-06: the registry threads this onto the create frame so the worker jails
+      // The registry threads this onto the create frame so the worker jails
       // bash (without it the worker fail-closes — no unjailed spawn).
       bwrapPath: resolveBwrapPath(),
     });
     const entry: AllowEntryLike = {
       id: "bash",
       match: { path: shell, argsPrefix: ["--norc", "--noprofile", "-c", "echo TR01_LINUX_OK; sleep 0.3"] },
-      // SEC-02/03: the operator scope rides the frame to 122-06's jail composer.
+      // The operator scope rides the frame to the jail composer.
       scope: WORKSPACE_SCOPE,
     };
 
@@ -156,10 +156,10 @@ describe.skipIf(!isLinux())("TR-01 (Linux) — live PTY create→read→kill rou
       await new Promise((r) => setTimeout(r, 25));
     }
     // On a live PTY the marker renders onto the grid. This read goes through the
-    // TOOL layer, so SEC-15 (§3.6) applies: the screen is REDACTED then wrapped as
-    // untrusted external content. Assert BOTH halves — the wrap IS present (the
-    // injection-defense framing is not bypassed) AND the marker survives INSIDE it
-    // (the live PTY genuinely rendered it). We do NOT weaken SEC-15.
+    // TOOL layer, so the §3.6 untrusted-content rule applies: the screen is REDACTED
+    // then wrapped as untrusted external content. Assert BOTH halves — the wrap IS
+    // present (the injection-defense framing is not bypassed) AND the marker survives
+    // INSIDE it (the live PTY genuinely rendered it). We do NOT weaken that rule.
     expect(screen).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/); // the wrap start marker
     expect(screen).toMatch(/<<<END_UNTRUSTED_[a-f0-9]+>>>/); // the wrap end marker
     expect(screen).toContain("TR01_LINUX_OK"); // the marker, framed within the wrap

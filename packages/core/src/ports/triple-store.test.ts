@@ -29,7 +29,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./triple-store.ts"), "utf8");
 
 /**
- * Phase 100 (KG-01/KG-03) — the segregated `TripleStorePort` foundation.
+ * The segregated `TripleStorePort` foundation.
  *
  * The trust-first bi-temporal knowledge-graph port lives type-only in
  * @comis/core (mirrors memory-causal-store.ts): the agent consumes it by TYPE,
@@ -37,7 +37,7 @@ const portSrc = readFileSync(resolve(here, "./triple-store.ts"), "utf8");
  * carries the WRITE (`upsertTriple`), the as-of READ (`asOf`), and the
  * graph-spread lane READ (`spreadLane`).
  */
-describe("TripleStorePort — type-only segregated KG port (KG-01/KG-03)", () => {
+describe("TripleStorePort — type-only segregated KG port", () => {
   it("declares upsertTriple/asOf/spreadLane on TripleStorePort and stays type-only (no zod, no @comis/memory)", () => {
     // Runtime RED proof: fails on pre-patch source where the file/method/type are absent.
     expect(portSrc, "TripleStorePort interface must be declared").toMatch(
@@ -181,9 +181,9 @@ describe("TripleStorePort — type-only segregated KG port (KG-01/KG-03)", () =>
 });
 
 /**
- * Phase 100 (KG-03) — the as-of time-travel contract completion.
+ * The as-of time-travel contract completion.
  *
- * Plan 01 shipped the valid-time `asOf`; Plan 03 adds (a) a txn-time variant of
+ * The earlier cut shipped the valid-time `asOf`; this one adds (a) a txn-time variant of
  * `asOf` (the `mode: "valid" | "txn"` discriminator — valid-time answers "what
  * was BELIEVED true at instant t", txn-time answers "what the system had
  * RECORDED as of t") and (b) `currentTruth`, the default-recall read that
@@ -191,7 +191,7 @@ describe("TripleStorePort — type-only segregated KG port (KG-01/KG-03)", () =>
  * for Graphiti's opt-in-filter stale-fact leak (where default search leaks
  * superseded edges). All three reads stay (tenant, agent) scoped.
  */
-describe("TripleStorePort — as-of time-travel + current-truth default-filter (KG-03)", () => {
+describe("TripleStorePort — as-of time-travel + current-truth default-filter", () => {
   const portSrcKg03 = readFileSync(resolve(here, "./triple-store.ts"), "utf8");
 
   it("declares currentTruth + the asOf txn-time mode and stays type-only (no zod, no @comis/memory)", () => {
@@ -222,7 +222,7 @@ describe("TripleStorePort — as-of time-travel + current-truth default-filter (
       spreadLane: async (): Promise<Result<MemorySearchResult[], Error>> => ok([]),
     };
     // The mode is OPTIONAL (default valid) — so a 2-arg call still type-checks
-    // (the Plan-01 valid-time callers are unbroken) AND a 3-arg txn call does.
+    // (the original valid-time callers are unbroken) AND a 3-arg txn call does.
     expectTypeOf(stub.asOf).parameters.toEqualTypeOf<
       [number, Omit<TripleScope, "now">, ("valid" | "txn")?]
     >();

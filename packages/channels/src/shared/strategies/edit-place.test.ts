@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * EditPlace strategy tests (STRAT-05, §7.3 row "EditPlace" + §17.1 row "edit-place").
+ * EditPlace strategy tests (§7.3 row "EditPlace" + §17.1 row "edit-place").
  *
  * EditPlace is the debounce/edit/delete sequencer used by edit-capable channels
  * (Telegram, Discord, Slack, WhatsApp). The hard contract:
@@ -29,7 +29,7 @@ import { createEditPlaceRenderer } from "./edit-place.js";
 import type { ActivityRenderActions } from "./actions.js";
 
 const DEBOUNCE_MS = 800;
-/** The ascii theme's markers (75-01): bracketed pure-ASCII tags, zero emoji. */
+/** The ascii theme's markers: bracketed pure-ASCII tags, zero emoji. */
 const ASCII_MARKERS = { success: "[OK]", failure: "[ERR]", subagent: "[SUB]", running: "[..]" } as const;
 
 type Call =
@@ -256,7 +256,7 @@ describe("createEditPlaceRenderer", () => {
     expect(edits[edits.length - 1].text).toBe("✓ done");
   });
 
-  it("unref's the debounce-edit and deliveredAt-gated delete timers so they never hold the event loop open (WR-02)", async () => {
+  it("unref's the debounce-edit and deliveredAt-gated delete timers so they never hold the event loop open", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
     const { actions } = makeRecordingActions();
@@ -301,14 +301,14 @@ describe("createEditPlaceRenderer", () => {
     expect(calls.some((c) => c.op === "edit")).toBe(false);
   });
 
-  // --- Phase 78 / SPEC-§8.5 production wiring (Task 3 — elapsedMs threading) ---
+  // --- SPEC-§8.5 production wiring (elapsedMs threading) ---
   //
   // EditPlace captures `startedAtMs` on the first apply() (via clock.now() if
   // a clock is injected) and passes `elapsedMs = clock.now() - startedAtMs`
   // as the 3rd arg to renderFrameText. The §8.5 fallback "(running N s)"
   // appears in the sent/edited text whenever the frame has no plan snapshot
   // AND a clock is injected. These tests regression-lock the live production
-  // path so the fallback is not silently inert after Plan 78-05 lands.
+  // path so the fallback is not silently inert.
 
   it("EditPlace passes elapsedMs=0 on the first apply (no time advancement) so the placeholder carries (running 0 s)", async () => {
     const timer = createFakeTimers();

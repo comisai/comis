@@ -327,7 +327,7 @@ function handleStatus(deps: CommandHandlerDeps, sessionKey: SessionKey): Command
     lines.push(`Budget caps: $${budgetInfo.perExecution.toFixed(2)}/exec, $${budgetInfo.perHour.toFixed(2)}/hr, $${budgetInfo.perDay.toFixed(2)}/day`);
   }
 
-  // -- Activity section (WIRE-08) --
+  // -- Activity section --
   // Surface auto-managed circuit breakers that have tripped for this agent, so
   // an operator sees a silently-disabled channel without grepping logs. Only
   // rendered when the optional accessor reports a non-empty trip list.

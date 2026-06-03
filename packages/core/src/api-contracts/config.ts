@@ -532,8 +532,8 @@ export const GatewayRestartContract = defineContract({
  * error — `env` is not a member of the storage enum, and the
  * preflight in `gateway-tool.ts` blocks the call before it reaches
  * the handler. `restarting` is a boolean (secret writes still trigger
- * restart in P1; the TYPE widens now so Plan 04 can flip the value
- * without a schema change).
+ * a restart for now; the TYPE widens now so a later change can flip the
+ * value without a schema change).
  *
  * **Residency canary.** The contract response schema deliberately
  * omits a `value` field — env.set NEVER returns the secret value
@@ -542,7 +542,7 @@ export const GatewayRestartContract = defineContract({
  * (the absent key is not in the schema; strict mode is implicit
  * because we don't `.passthrough()`).
  *
- * **Dev-mode canary (T-02-06).** `EnvSetContract.response.parse(result)` in
+ * **Dev-mode canary.** `EnvSetContract.response.parse(result)` in
  * env-handlers.ts:237-238 acts as a residency canary and defense-in-depth
  * type guard. If a handler mistakenly returns `storage: "env"` the dev-mode
  * parse throws immediately — `"env"` is not in the enum.
@@ -559,7 +559,7 @@ export const EnvSetContract = defineContract({
     // Writable storage backends only: "encrypted" (AES-256-GCM via SecretStorePort)
     // or "file" (plaintext 0600 secrets.json). "env" is intentionally excluded —
     // env mode is read-only; any handler returning storage:"env" would fail the
-    // dev-mode parse (T-02-06 canary).
+    // dev-mode parse (the residency canary).
     storage: z.enum(["encrypted", "file"]),
     restarting: z.boolean(),
   }),

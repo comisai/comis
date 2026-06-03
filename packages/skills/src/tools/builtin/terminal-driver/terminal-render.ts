@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The per-session terminal-emulator wrapper (spec §2.4 rendering, TR-02).
+ * The per-session terminal-emulator wrapper (spec §2.4 rendering).
  *
  * Wraps a REAL `@xterm/headless` `Terminal` into a small pluggable surface the
  * worker stores per session. This is the new source of truth for the `read`
  * snapshot: a stable `cols×rows` character grid, the REAL cursor
  * (`buffer.active.cursorX/cursorY`), and the REAL alt-screen flag
- * (`buffer.active.type === "alternate"`) — REPLACING the P0/P1 raw stdout-ring
+ * (`buffer.active.type === "alternate"`) — REPLACING the earlier raw stdout-ring
  * snapshot. Full-screen TUIs (`vim`/`htop`) draw into a stable grid; the agent
  * must perceive that grid, not a raw byte log.
  *
@@ -14,18 +14,18 @@
  * worker stays under the 800-line architecture cap — the heavy @xterm
  * integration lives here.
  *
- * Render formats (§2.4, TR-02): `snapshot({format})` returns the plain grid
+ * Render formats (§2.4): `snapshot({format})` returns the plain grid
  * (`text`, default), the ansi-with-SGR serialization (`ansi` via the
  * SerializeAddon's `serialize()`), or an HTML fragment (`html` via
  * `serializeAsHTML()`). `snapshot({scrollback:N})` includes the N retained rows
- * ABOVE the viewport (TR-14 perception beyond the fold). Per §11 the
- * addon-serialize dep is pinned (0.14.0) + golden-frame tested (Plan 05) against
+ * ABOVE the viewport (perception beyond the fold). Per §11 the
+ * addon-serialize dep is pinned (0.14.0) + golden-frame tested against
  * churn.
  *
- * TR-14 perception signals: `hasContentBelowFold()` is the "more content below
+ * Perception signals: `hasContentBelowFold()` is the "more content below
  * the fold ⇒ NOT settled" rendering signal the settle composes (a still-scrolling
  * frame is not marked idle); `diffSnapshot(prev, next)` is the per-read
- * screen-diff (a changed flag + changed-row range) so the agent / the P5
+ * screen-diff (a changed flag + changed-row range) so the agent / the
  * classifier can cheaply see what changed without re-diffing whole grids.
  *
  * §2.4 flush primitive: `@xterm`'s `term.write(data, cb)` is ASYNC-PARSED — the
@@ -51,7 +51,7 @@ import { createRequire } from "node:module";
 // `SyntaxError: Named export 'Terminal' not found …` the instant this BUILT file
 // is loaded under Node's NATIVE ESM loader — which is exactly how the registry's
 // SEPARATE spawned worker process loads it (buildProductionSpawnWorker →
-// childSpawn(process.execPath, …) for OPS-01 crash isolation). Vitest's bundler
+// childSpawn(process.execPath, …) for crash isolation). Vitest's bundler
 // rewrites the CJS interop and so masks the crash in every unit/.linux test.
 //
 // Load both via `createRequire` instead — the SAME guarded-CJS pattern
@@ -82,8 +82,8 @@ export interface SessionEmulatorOptions {
   /**
    * Retained rows ABOVE the viewport (the scrollback depth). Bounds per-session
    * memory to `(rows + scrollback) × cols` cells — @xterm discards older lines
-   * past this depth (a ring buffer). Plan 02 reads these for the off-screen
-   * `scrollback:N` perception; Plan 04 makes the depth config-driven.
+   * past this depth (a ring buffer). These rows back the off-screen
+   * `scrollback:N` perception; the depth is config-driven.
    */
   scrollback: number;
 }
@@ -94,7 +94,7 @@ export type RenderFormat = "text" | "ansi" | "html";
 /**
  * Options for {@link SessionEmulator.snapshot}. `format` selects the `screen`
  * encoding (plain grid / ansi-with-SGR / html); `scrollback` is how many retained
- * rows ABOVE the viewport to include (TR-14 perception beyond the fold). Both
+ * rows ABOVE the viewport to include (perception beyond the fold). Both
  * default to the viewport-only plain grid.
  */
 export interface SnapshotOptions {
@@ -106,7 +106,7 @@ export interface SnapshotOptions {
 
 /**
  * The render options the `terminal_session_read` tool threads through
- * `registry.read` into the worker's read frame (TR-02/14) — {@link SnapshotOptions}
+ * `registry.read` into the worker's read frame — {@link SnapshotOptions}
  * plus `includeAltBuffer`. Lives here (cohesive with the other render-param types)
  * so the registry stays under the 800-line cap. All optional — a bare
  * `read(sessionId)` forwards none; the worker applies its render defaults.
@@ -139,9 +139,9 @@ export interface EmulatorSnapshot {
 }
 
 /**
- * The per-session emulator surface the worker drives. `term` is exposed so Plan
- * 02 can `loadAddon` the SerializeAddon against it and Plan 03 can read
- * `buffer.active` for the below-fold predicate.
+ * The per-session emulator surface the worker drives. `term` is exposed so the
+ * SerializeAddon can be `loadAddon`ed against it and `buffer.active` can be read
+ * for the below-fold predicate.
  */
 export interface SessionEmulator {
   /**
@@ -153,21 +153,21 @@ export interface SessionEmulator {
   /**
    * Build the current grid snapshot (real cursor + real alt). `opts.format`
    * selects the `screen` encoding (text/ansi/html via the SerializeAddon);
-   * `opts.scrollback` includes off-screen rows above the viewport (TR-14).
+   * `opts.scrollback` includes off-screen rows above the viewport.
    */
   snapshot(opts?: SnapshotOptions): EmulatorSnapshot;
   /** Resize the grid; reflows the buffer. */
   resize(cols: number, rows: number): void;
   /**
-   * True when buffer lines exist BELOW the displayed viewport bottom — the §2.4 /
-   * TR-14 "more content below the fold" signal the settle composes (a below-fold
+   * True when buffer lines exist BELOW the displayed viewport bottom — the §2.4
+   * "more content below the fold" signal the settle composes (a below-fold
    * frame is NOT settled). False at the bottom, on short output, and on the
    * alternate buffer (alt apps own the full screen, no scrollback below).
    */
   hasContentBelowFold(): boolean;
   /** Dispose the underlying Terminal once; a second call is a no-op. */
   dispose(): void;
-  /** The underlying @xterm Terminal (Plan 02 loads the addon; Plan 03 reads the buffer). */
+  /** The underlying @xterm Terminal (the addon loads against it; the buffer is read from it). */
   readonly term: XtermTerminal;
 }
 
@@ -179,7 +179,7 @@ export interface SessionEmulator {
  * Construct a per-session emulator over a real `@xterm/headless` Terminal.
  *
  * Everything is closure-local on the returned object — no module-global state.
- * `allowProposedApi:true` is required: the SerializeAddon (Plan 02) uses proposed
+ * `allowProposedApi:true` is required: the SerializeAddon uses proposed
  * APIs; enabling it here unlocks serialization, NOT any host capability (the
  * Terminal is a PARSER, never an executor — it mutates only its in-memory grid).
  *
@@ -194,9 +194,9 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
     allowProposedApi: true,
   });
 
-  // The SerializeAddon backs the `ansi`/`html` formats (Plan 02). Loaded once at
+  // The SerializeAddon backs the `ansi`/`html` formats. Loaded once at
   // construction; `serialize()`/`serializeAsHTML()` read the buffer on demand.
-  // Pinned 0.14.0 + golden-frame tested (Plan 05) against addon churn (§11).
+  // Pinned 0.14.0 + golden-frame tested against addon churn (§11).
   const serializeAddon = new SerializeAddon();
   term.loadAddon(serializeAddon);
 
@@ -207,7 +207,7 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
    * `getLine(baseY + y)?.translateToString(true)` for `y` in `0..rows-1` (read
    * via `baseY` so the viewport is correct even when scrollback has accumulated).
    * When `scrollback > 0`, the off-screen rows ABOVE the viewport
-   * (`max(0, baseY - scrollback) .. baseY - 1`) are prepended (TR-14 perception).
+   * (`max(0, baseY - scrollback) .. baseY - 1`) are prepended (the scrollback perception).
    */
   function readText(scrollback: number): string {
     const buf = term.buffer.active;
@@ -292,7 +292,7 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
 }
 
 // ---------------------------------------------------------------------------
-// Screen-diff (the per-read changed-region signal, TR-14)
+// Screen-diff (the per-read changed-region signal)
 // ---------------------------------------------------------------------------
 
 /** The screen-diff between two snapshots: a changed flag + the changed-row range. */
@@ -306,9 +306,9 @@ export interface SnapshotDiff {
 }
 
 /**
- * Diff two snapshots' `screen` text line-by-line (TR-14). A pure helper (no
+ * Diff two snapshots' `screen` text line-by-line. A pure helper (no
  * emulator access) so the worker can cheaply compare two snapshots and tell the
- * agent / the P5 classifier "did anything change" without re-diffing whole grids.
+ * agent / the classifier "did anything change" without re-diffing whole grids.
  *
  * `prev === undefined` ⇒ `changed:true` over the full range (the first read).
  * Otherwise the line arrays are compared: `changed` is true when they differ;
@@ -346,12 +346,12 @@ export function diffSnapshot(
 // ---------------------------------------------------------------------------
 
 /**
- * The worker's `read` reply view (H-1): the rendered grid + real cursor + real
- * alt-screen flag (P2/121), serialized from the per-session emulator. The raw
+ * The worker's `read` reply view: the rendered grid + real cursor + real
+ * alt-screen flag, serialized from the per-session emulator. The raw
  * stdout ring is retained only as the emulator-absent / degraded fallback (NOT a
  * dual path on the live backend). `alive` reflects whether the backend runs.
- * `diff` is the per-read screen-diff vs the prior read (TR-14, Plan 03) —
- * ADDITIVE to the P1 view; absent only on the emulator-absent fallback.
+ * `diff` is the per-read screen-diff vs the prior read —
+ * ADDITIVE to the base view; absent only on the emulator-absent fallback.
  */
 export interface ReadResult {
   screen: string;
@@ -360,7 +360,7 @@ export interface ReadResult {
   rows: number;
   alt: boolean;
   alive: boolean;
-  /** The screen-diff vs the previous read (changed flag + changed-row range); TR-14. */
+  /** The screen-diff vs the previous read (changed flag + changed-row range). */
   diff?: SnapshotDiff;
 }
 
@@ -369,7 +369,7 @@ export interface ReadResult {
  * validated to one of `text|ansi|html` (anything else → `text`); `scrollback` is
  * a non-negative number (anything else → `0`). Kept here so the worker stays
  * under the 800-line cap. `includeAltBuffer` is ignored for now — alt is captured
- * by default per §2.4; an explicit alt-exclude is not in TR-02/14 scope.
+ * by default per §2.4; an explicit alt-exclude is out of scope.
  *
  * @param params - The decoded read-frame params (`frame.params`).
  * @returns The validated `{format, scrollback}` snapshot options.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ToolCapabilityPort -- hexagonal architecture boundary for the v1.1 capability layer.
+ * ToolCapabilityPort -- hexagonal architecture boundary for the capability layer.
  *
  * Provides both a static config-derived view (clusters, hints, aliases) AND a
  * live runtime view (connected MCP servers, visible prompt skills). One port,
@@ -145,7 +145,7 @@ export interface ToolCapabilityPort {
    * Pre-normalized package alias map (PEP-503-like keys for Python:
    * lowercase, `_` and `.` collapsed to `-`).
    *
-   * Build fresh on each call (no memoization in v1.1) -- visible skills can
+   * Build fresh on each call (no memoization) -- visible skills can
    * change mid-session (skill discovery, allow/deny edits), connected MCP
    * servers can connect/disconnect, capturing at construction would freeze
    * stale state.

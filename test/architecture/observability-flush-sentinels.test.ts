@@ -72,7 +72,7 @@ describe("architecture — observability flush sentinel symmetry", () => {
     const namespaces = [
       { truncated: '"trace.truncated"', writeFailures: '"trace.write_failures"', name: "trace" },
       { truncated: '"cache_trace.truncated"', writeFailures: '"cache_trace.write_failures"', name: "cache_trace" },
-      // recall-trace (Phase 86): a daemon-wide JSONL recorder built on the
+      // recall-trace: a daemon-wide JSONL recorder built on the
       // queued-file-writer chassis with its own `recall_trace.*` namespace.
       // Like cache_trace it delegates bounds to the writer chassis (no
       // separate per-file dropped-event accounting), so only the

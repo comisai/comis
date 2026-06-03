@@ -328,7 +328,7 @@ describe("setupObservability", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 10. UX-01 wiring: a forwarded ascii theme reaches the ActivityStream so the
+  // 10. Theme wiring: a forwarded ascii theme reaches the ActivityStream so the
   //     subagent label is emoji-free (proves theme threads end-to-end here).
   // -------------------------------------------------------------------------
 

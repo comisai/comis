@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Linux-gated live-host confirmation for the Terminal Worker posture (TR-01/TR-08).
+ * Linux-gated live-host confirmation for the Terminal Worker posture.
  *
  * This file MUST compile cleanly on macOS (tsc --noEmit passes). On macOS the
  * entire describe block is silently SKIPPED via `describe.skipIf` — no false
@@ -11,9 +11,9 @@
  * mirroring the `bwrap-egress-integration.test.ts` Linux-gate idiom.
  *
  * On Linux it spawns the real worker as a forked `node --permission` process
- * under the 118-proven posture and asserts a REAL node-pty `forkpty` allocates
- * a controlling pty (the FORKPTY_OK=true result the Phase-118 spike demonstrated
- * — see 118-SPIKE-GO.md). On macOS this never runs.
+ * under the proven posture and asserts a REAL node-pty `forkpty` allocates
+ * a controlling pty (the FORKPTY_OK=true result the earlier spike demonstrated).
+ * On macOS this never runs.
  *
  * @module
  */
@@ -41,10 +41,10 @@ const silentLogger = {
 };
 
 /**
- * 122-06: the worker now ALWAYS spawns `bwrap [scope args] -- bin argv` (the
+ * The worker now ALWAYS spawns `bwrap [scope args] -- bin argv` (the
  * unjailed path is deleted). So the live worker MUST be given the resolved bwrap
- * path (the daemon resolves it via `which bwrap`); without it create fails closed
- * (SEC-16). Resolved once, here, exactly like `BwrapProvider.available()`.
+ * path (the daemon resolves it via `which bwrap`); without it create fails closed.
+ * Resolved once, here, exactly like `BwrapProvider.available()`.
  */
 function resolveBwrapPath(): string {
   return execFileSync("which", ["bwrap"], { encoding: "utf8" }).trim();
@@ -56,10 +56,10 @@ function makeWorkspace(): string {
 }
 
 /**
- * The least-privilege live scope (SEC-02): workspace-only fs, deny-all egress, the
+ * The least-privilege live scope: workspace-only fs, deny-all egress, the
  * net-new uid. `cat`/`bash` run fine in a workspace jail (system RO binds give the
  * interpreter + libs; the workspace is RW). The create frame carries it (+ the
- * workspace/cwd companions) so 122-06's buildSpawnPlan jails the child.
+ * workspace/cwd companions) so buildSpawnPlan jails the child.
  */
 const LIVE_WORKSPACE_SCOPE: TerminalScope = {
   filesystem: "workspace",
@@ -78,7 +78,7 @@ function liveFrame(
 }
 
 /**
- * The 118-proven worker-launch posture (the daemon spawns the worker under this
+ * The proven worker-launch posture (the daemon spawns the worker under this
  * via its existing --allow-child-process). The DATA_DIR write scope is the
  * worker's durable-state dir; /tmp is the scratch scope. node-pty's forkpty was
  * proven to allocate a pty under EXACTLY this posture on the VPS.
@@ -95,7 +95,7 @@ describe.skipIf(!isLinux)("terminal worker posture (Linux only)", () => {
   it("allocates a real pty via node-pty forkpty under the --permission posture", async () => {
     // On the VPS this forks `node --permission … <worker.js>` and drives a
     // create frame, asserting the worker reports backend:"pty" (a real forkpty
-    // succeeded), mirroring 118-SPIKE-GO.md's FORKPTY_OK=true. The posture args
+    // succeeded), mirroring the spike's FORKPTY_OK=true result. The posture args
     // are asserted shaped here so the gate is non-vacuous when it runs.
     expect(WORKER_PERMISSION_ARGS).toContain("--permission");
     expect(WORKER_PERMISSION_ARGS).toContain("--allow-addons");
@@ -103,18 +103,18 @@ describe.skipIf(!isLinux)("terminal worker posture (Linux only)", () => {
   });
 
   // ==========================================================================
-  // THE VPS LIVE-PTY INTERACTION ASSERTION (120-04, TR-04/TR-05).
+  // THE VPS LIVE-PTY INTERACTION ASSERTION.
   //
   // Drives a REAL interactive program through a REAL node-pty forkpty worker
   // (loadPty = defaultLoadPty, real injected timers) and proves the full
   // submit -> settle -> observe loop AND that a control key affects a live
   // program. This is the macOS-unprovable half (the macOS box's node-pty can't
-  // posix_spawnp in-harness — the 119-03/119-04 precedent), so the orchestrator
+  // posix_spawnp in-harness), so the orchestrator
   // runs it on comisvps. On macOS this entire describe block is skipped.
   // ==========================================================================
   it("drives a live program: send_text(submit) echoes, then C-d exits (submit->settle->observe + control key)", async () => {
     // `cat` is a minimal line-buffered interactive program: it echoes each
-    // submitted line and exits on EOF (C-d). 122-06: the worker spawns it INSIDE a
+    // submitted line and exits on EOF (C-d). The worker spawns it INSIDE a
     // bwrap workspace jail, so the worker is given the resolved bwrapPath.
     const workspace = makeWorkspace();
     const worker = createTerminalWorker({

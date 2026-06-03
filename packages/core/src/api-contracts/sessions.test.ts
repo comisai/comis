@@ -372,7 +372,7 @@ describe("SessionHistoryContract", () => {
         createdAt: 0, lastActiveAt: 0,
       },
       messages: [
-        // No deliveryStatus field -- pre-Phase-69 callers continue to work.
+        // No deliveryStatus field -- older callers that omit it continue to work.
         { role: "user", content: "Hello", timestamp: 1 },
       ],
       total: 1, offset: 0, limit: 20, hasMore: false,

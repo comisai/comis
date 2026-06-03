@@ -314,23 +314,23 @@ describe("MCP OAuth RPC handlers", () => {
       expect(calledText).toContain("27");
     });
 
-    // DEVAUTH-05 (2026-05-28). Pin the integrated chain for the VPS deployment
+    // Pin the integrated chain for the VPS deployment
     // model. The PKCE headless path above (Fix 6/8/9 tests) was already
     // green; this test exercises the device-flow path through the same
     // captured-onAuthorized scaffolding. The runOauthLogin fake returns
     // status:"device_code_pending" + verificationUri/userCode/expiresIn
-    // (the plan-02 union widening) and captures onAuthorized so the test
+    // (the union widening) and captures onAuthorized so the test
     // can simulate the background-poll completion firing it. The Higgsfield
-    // verification_uri host is the placeholder confirmed by 09-RESEARCH.md
-    // — this test does NOT hit the real device-auth host.
+    // verification_uri host is a placeholder — this test does NOT hit the
+    // real device-auth host.
     //
-    // Coverage chain (DEVAUTH-05):
+    // Coverage chain:
     //   discovery (mocked by runOauthLogin fake)
     //   → user_code WDJB-MJHT + verificationUri returned synchronously
     //   → onAuthorized captured
     //   → manager.connect called with config built from persisted entry (Fix 8)
     //   → notifyOperatorChannel called with the captured _deliveryTarget (Fix 9)
-    //   → RPC response carries the 3 new fields verbatim (DEVAUTH-03 surface)
+    //   → RPC response carries the 3 new fields verbatim (device-flow surface)
     it("Higgsfield-shaped device-flow E2E: dual auth servers, userCode WDJB-MJHT, poll pending+slow_down+tokens, onAuthorized fires manager.connect + notifyOperatorChannel", async () => {
       let capturedOnAuthorized: ((name: string) => Promise<void>) | undefined;
 
@@ -386,8 +386,8 @@ describe("MCP OAuth RPC handlers", () => {
         expiresIn?: number;
       };
 
-      // === Assertion 1 (DEVAUTH-03): RPC response carries the 3 new fields ===
-      // (this exercises plan 02's conditional-spread + Zod-parse dev-mode gate)
+      // === Assertion 1: RPC response carries the 3 new fields ===
+      // (this exercises the conditional-spread + Zod-parse dev-mode gate)
       expect(response).toMatchObject({
         server_name: "higgsfield",
         status: "device_code_pending",
@@ -420,7 +420,7 @@ describe("MCP OAuth RPC handlers", () => {
 
       // === Assertion 4: NEVER touch a real network ===
       // (proxy by absence of any fetch import in the test file body —
-      //  enforced by the grep gate in plan 09-03 verification)
+      //  enforced by the grep gate in verification)
     });
 
     it("headless onAuthorized without an injected _deliveryTarget → notification is skipped (no throw)", async () => {

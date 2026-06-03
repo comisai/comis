@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Slack approval-UI tests (APV-02 rich-channel half; §7.7 / §17.3).
+ * Slack approval-UI tests (rich-channel half; §7.7 / §17.3).
  *
- * Phase 73 turns the Slack renderer's deferred Block Kit `actions` shell into a
+ * The Slack renderer turns its deferred Block Kit `actions` shell into a
  * real signed approval UI: a `kind:"approval"` frame paints the choices as
  * `RichButton` rows whose `callback_data` is the signed §6.4.2 wire string
  * `v1.<choice>.<shortId>.<hmac>` (from `buildApprovalButtons` over the
@@ -11,7 +11,7 @@
  * how Slack carries callback data back on a button click). The frame stays
  * redacted — labels/styles come from the choice hints, never raw params.
  *
- * The signing seam (73-06) is consumed, not re-derived: the renderer reaches the
+ * The signing seam is consumed, not re-derived: the renderer reaches the
  * core HMAC primitive through the injected `signCallbackData` — never importing
  * `@comis/orchestrator`.
  */
@@ -66,7 +66,7 @@ function approvalFrame(corr: ApprovalCorrelation = approval()): ActivityRenderFr
   };
 }
 
-describe("Slack Block Kit approval actions (signed callback value — APV-02)", () => {
+describe("Slack Block Kit approval actions (signed callback value)", () => {
   it("paints a kind:'approval' frame as action elements whose value is the signed wire string", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
@@ -97,8 +97,8 @@ describe("Slack Block Kit approval actions (signed callback value — APV-02)", 
   it("renders the approval prompt text alongside the actions", async () => {
     const timer = createFakeTimers();
     const fake = createFakeSlackAdapter();
-    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
-    // is skipped — the test asserts send.text byte-stably.
+    // Drop clock so the §8.5 elapsed fallback is skipped — the test asserts
+    // send.text byte-stably.
     const r = createSlackActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 
     await r.apply(approvalFrame());

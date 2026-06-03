@@ -3,7 +3,7 @@
  * Recall orchestrator public types (the deps + config + surface), extracted from
  * memory-recall.ts so BOTH the orchestrator and its extracted observability tail
  * (recall-observability.ts) can import them WITHOUT a source-level import cycle
- * (ARCH-BASE-05 / no-cycles.test.ts counts type-only edges). memory-recall.ts
+ * (no-cycles.test.ts counts type-only edges). memory-recall.ts
  * re-exports these so existing consumers (the daemon composition, prompt-assembly,
  * the index barrel) are unaffected.
  *
@@ -39,58 +39,58 @@ import type { ScoringAlphas } from "./score.js";
 export interface MemoryRecallDeps {
   /** Tenant+agent-scoped memory search port (the candidate supply). */
   memoryPort: MemoryPort;
-  /** Optional cross-encoder reranker. Absent/unavailable -> fusion order (RANK-03). */
+  /** Optional cross-encoder reranker. Absent/unavailable -> fusion order. */
   reranker?: RerankerPort;
   /**
-   * Optional entity-associative store (ENT-02). When present AND entityLane.enabled,
+   * Optional entity-associative store. When present AND entityLane.enabled,
    * the read path queries `associativeLane(seedIds, scope, cap)` for memories sharing
    * an entity with the top search hits and fuses them as a 2nd lane. Absent -> no
    * entity lane (graceful; RRF unchanged). TYPE-only from @comis/core — the agent
    * never imports the memory package (the agent↛memory build cut); the daemon injects
-   * the concrete adapter (Plan 05).
+   * the concrete adapter.
    */
   entityStore?: MemoryEntityStore;
   /**
-   * Optional temporal-spread store (LANES-02). When present AND cfg.lanes.temporal.enabled,
+   * Optional temporal-spread store. When present AND cfg.lanes.temporal.enabled,
    * the read path queries `spreadLane(seedTimes, scope, windowMs, cap)` for memories near
    * the seed hits' `occurred_at` event times and fuses them as a 4th lane. Absent / disabled
-   * / no seed times -> no temporal lane (graceful; RRF unchanged — the ENT-04 no-op). TYPE-only
+   * / no seed times -> no temporal lane (graceful; RRF unchanged — the empty-lane no-op). TYPE-only
    * from @comis/core — the agent never imports the memory package (the agent↛memory build cut);
    * the daemon injects the concrete adapter (the composition root).
    */
   temporalStore?: MemoryTemporalStore;
   /**
-   * Optional causal store (EXTRACT-03). When present AND cfg.lanes.causal.enabled, the read path
+   * Optional causal store. When present AND cfg.lanes.causal.enabled, the read path
    * queries `causalLane` (in appendCausalLane) for memories causally linked to the top base hits
    * and fuses them as a 5th lane; absent / disabled / no seeds -> no causal lane (RRF unchanged).
    * TYPE-only (the agent↛memory cut); the daemon injects the SAME store the write path uses for linkCausal.
    */
   causalStore?: MemoryCausalStore;
   /**
-   * Optional trust-first triple store (KG-04). When present AND cfg.lanes.graphSpread.enabled,
+   * Optional trust-first triple store. When present AND cfg.lanes.graphSpread.enabled,
    * recall queries `spreadLane` (in appendGraphSpreadLane) for memories STRUCTURALLY connected
    * to the top base hits (a bounded recursive-CTE walk over current-truth subject→object edges,
    * LLM-free) and fuses them as a 6th lane; absent / disabled / no seeds -> RRF unchanged (the
-   * ENT-04 no-op). TYPE-only (the agent↛memory cut); the daemon injects the SqliteTripleStore (Plan 05).
+   * empty-lane no-op). TYPE-only (the agent↛memory cut); the daemon injects the SqliteTripleStore.
    */
   tripleStore?: TripleStorePort;
   /**
-   * Optional embedding read store (IQ-01). When present AND cfg.mmr.enabled AND ≥2 ranked
+   * Optional embedding read store. When present AND cfg.mmr.enabled AND ≥2 ranked
    * candidates, recall does a bulk SCOPED read of the post-rerank candidate ids' embeddings
    * (the adapter LEFT JOINs vec_memories per (tenant, agent)) and runs MMR diversity re-rank.
    * Absent / disabled / <2 embedded candidates → no read, no MMR (byte-identical). A FAILED
    * read is NON-FATAL (WARN + rank without MMR). TYPE-only from @comis/core — the agent never
    * imports @comis/memory (the agent↛memory cut); the daemon injects the concrete adapter
-   * (the composition root, 102-05).
+   * (the composition root).
    */
   embeddingStore?: MemoryEmbeddingStore;
   /**
-   * Optional usefulness store (FEED-03). When present AND cfg.feedback.enabled, recall does a
+   * Optional usefulness store. When present AND cfg.feedback.enabled, recall does a
    * bulk read of the per-memory signal for the ranked ids and folds the used-rate into the
    * usefulnessFactor in score.ts. Absent or flag-off -> no read, usefulnessById stays
-   * undefined, every usefulnessNorm(undefined) -> factor 1.0 (byte-identical to v2.6).
+   * undefined, every usefulnessNorm(undefined) -> factor 1.0 (byte-identical to the pre-feedback path).
    * TYPE-only from @comis/core — the agent never imports the memory package (the agent↛memory
-   * build cut); the daemon injects the concrete adapter (Plan 03 wiring).
+   * build cut); the daemon injects the concrete adapter.
    */
   usefulnessStore?: MemoryUsefulnessStore;
   /** Timer port for the rerank wall-clock deadline. Absent -> no timeout wrap. */
@@ -100,18 +100,18 @@ export interface MemoryRecallDeps {
   /** Structural logger (WARN on degrade/timeout with errorKind + hint, counts only). */
   logger: ComisLogger;
   /**
-   * Optional recall-trace recorder (OBS-01/02). When present, recall writes ONE rich
+   * Optional recall-trace recorder. When present, recall writes ONE rich
    * record per call (lanes+counts, fused order, rerank pre/post + outcome, the final
    * ranked set with per-memory breakdown + include/exclude reason, degradations). The
    * recorder is `null` when `diagnostics.recallTrace.enabled` is false at the
    * construction site, so an ABSENT recorder reproduces today's behavior exactly
    * (no record, zero overhead). TYPE-only from @comis/observability — the agent↛memory
    * cut is untouched. recordRecall is wrapped non-fatal: a recorder failure NEVER fails
-   * the recall hot path (observability degrades, never errors — T-86-13).
+   * the recall hot path (observability degrades, never errors).
    */
   recallTrace?: RecallTrace;
   /**
-   * Optional event bus (OBS-04). When present, recall emits the counts-only
+   * Optional event bus. When present, recall emits the counts-only
    * `memory:recalled` (once per recall) and `memory:reranked` (only when a rerank stage
    * was attempted). Payloads are counts/booleans/ids ONLY — never the query text or
    * memory bodies. Absent -> no emit (today's behavior). The emit is wrapped non-fatal.
@@ -132,51 +132,51 @@ export interface MemoryRecallConfig {
   /** Multiplicative scoring boost weights. */
   scoring: ScoringAlphas;
   /**
-   * Per-lane RRF weights for the FTS + vector fusion lanes (LANES-01; sourced from
+   * Per-lane RRF weights for the FTS + vector fusion lanes (sourced from
    * RagConfig.lanes). When the injected MemoryPort exposes `searchLanes`, recall builds
    * TWO lanes (fts + vector) and fuses them with these weights. Optional so a caller
    * predating the field leaves it absent -> the per-lane fallbacks {fts:1.0, vector:1.5}
-   * (the parity defaults) apply. The defaults reproduce v2.6's pre-fused ranking
-   * byte-for-byte (the parity guard, T-95-01).
+   * (the parity defaults) apply. The defaults reproduce the prior pre-fused ranking
+   * byte-for-byte (the parity guard).
    */
   lanes?: {
     fts: { weight: number };
     vector: { weight: number };
     /**
-     * Temporal-spread lane knobs (LANES-02; from RagConfig.lanes.temporal). Default-OFF
-     * (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the ENT-04 no-op).
+     * Temporal-spread lane knobs (from RagConfig.lanes.temporal). Default-OFF
+     * (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the empty-lane no-op).
      * Optional so a caller predating the field leaves it absent -> no temporal lane.
      */
     temporal?: { enabled: boolean; weight: number; windowDays: number };
-    /** Causal one-hop lane knobs (EXTRACT-03; from RagConfig.lanes.causal). Default-OFF
-     *  (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the ENT-04 no-op). */
+    /** Causal one-hop lane knobs (from RagConfig.lanes.causal). Default-OFF
+     *  (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the empty-lane no-op). */
     causal?: { enabled: boolean; weight: number };
-    /** Graph-spread lane knobs (KG-04; from RagConfig.lanes.graphSpread). Default-OFF
-     *  (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the ENT-04 no-op).
+    /** Graph-spread lane knobs (from RagConfig.lanes.graphSpread). Default-OFF
+     *  (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the empty-lane no-op).
      *  `maxDepth` caps the recursive-CTE hop count, `fanOut` caps per-node expansion. */
     graphSpread?: { enabled: boolean; weight: number; maxDepth: number; fanOut: number };
   };
   /**
    * Entity-associative lane knobs (sourced from RagConfig.entityLane). Optional so
-   * callers that predate the lane (or the daemon before Plan 05 wiring) leave it
-   * absent -> no entity lane. Default-OFF (`enabled: false`) -> RRF unchanged (ENT-04).
+   * callers that predate the lane (or the daemon before the entity-lane wiring) leave it
+   * absent -> no entity lane. Default-OFF (`enabled: false`) -> RRF unchanged.
    */
   entityLane?: { enabled: boolean; seedCount: number; perEntityCap: number; weight: number };
   /**
-   * Recall-utility feedback toggle (FEED-03; sourced from RagConfig.feedback). The toggle
+   * Recall-utility feedback toggle (sourced from RagConfig.feedback). The toggle
    * ONLY — there is NO usefulnessAlpha here. The boost MAGNITUDE is the single canonical
    * `rag.scoring.usefulnessAlpha` (on {@link MemoryRecallConfig.scoring}, exactly like the
    * other alphas), so there is no second knob and no drift. Optional so a caller predating
-   * the field (or the daemon before Plan 03 wiring) leaves it absent -> off (no read). The
+   * the field (or the daemon before the feedback wiring) leaves it absent -> off (no read). The
    * primary default-off guard is skipping the read entirely, so the alpha is irrelevant off.
    */
   feedback?: { enabled: boolean };
-  /** MMR diversity re-rank knobs (IQ-01; sourced from RagConfig.mmr). Default-OFF
+  /** MMR diversity re-rank knobs (sourced from RagConfig.mmr). Default-OFF
    *  (`enabled:false`) → no read, no MMR (byte-identical). λ in [0,1]; 1.0 = pure relevance =
-   *  identity. Optional so a caller predating the field (or the daemon before 102-05 wiring)
+   *  identity. Optional so a caller predating the field (or the daemon before the MMR wiring)
    *  leaves it absent → off. */
   mmr?: { enabled: boolean; lambda: number };
-  /** FadeMem per-type decay gate (FORGET-01; sourced from RagConfig.forget). The toggle ONLY —
+  /** FadeMem per-type decay gate (sourced from RagConfig.forget). The toggle ONLY —
    *  there is NO forgetAlpha here. The decay MAGNITUDE is the single canonical
    *  `rag.scoring.forgetAlpha` (on {@link MemoryRecallConfig.scoring}, exactly like the other
    *  alphas), so there is no second knob and no drift. Default-OFF (`enabled:false`) → score.ts
@@ -184,7 +184,7 @@ export interface MemoryRecallConfig {
    *  the neutral-importance byte-identity holds even when ON (event-age 0 → factor 1.0, way #2).
    *  Optional so a caller predating the field leaves it absent → off. */
   forget?: { enabled: boolean };
-  /** Query-understanding knobs (IQ-02/03; sourced from RagConfig.queryUnderstanding). All
+  /** Query-understanding knobs (sourced from RagConfig.queryUnderstanding). All
    *  default-OFF → no reweight, no expansion, no range filter (byte-identical). Optional so a
    *  caller predating the field leaves it absent → off. */
   queryUnderstanding?: { intentReweight: boolean; synonyms: boolean; temporalParse: boolean };

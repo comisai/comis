@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: internal helpers (requestDeviceAuthorization, ensureClientRegistration) throw at their own function boundaries; the public runDeviceFlow boundary catches and translates to OAuthLoginResult. Mirrors oauth-device-code.ts:2 precedent. NEVER logs device_code at any level (T-09-03 mitigation).
+// @allow-throw: internal helpers (requestDeviceAuthorization, ensureClientRegistration) throw at their own function boundaries; the public runDeviceFlow boundary catches and translates to OAuthLoginResult. Mirrors oauth-device-code.ts:2 precedent. NEVER logs device_code at any level.
 /**
  * RFC 8628 OAuth device-authorization grant for headless / VPS deployments.
  *
@@ -10,7 +10,7 @@
  * AUTHORIZED the onAuthorized hook fires manager.connect (Fix 8) →
  * notifyOperatorChannel (Fix 9), unchanged from the PKCE path.
  *
- * Discovery cascade (Pitfall 11 in 09-RESEARCH.md):
+ * Discovery cascade:
  *   1. oauthConfig.deviceAuthorizationEndpoint operator override (PRIORITY —
  *      required: Higgsfield's fnf-device-auth.higgsfield.ai returns 404 on
  *      every probed RFC 8414 / OIDC well-known path, 2026-05-28).
@@ -27,9 +27,9 @@
  * — no bare Date.now() / setTimeout. Tests inject `nowMs` / `sleep` seams.
  *
  * SECURITY: `device_code` is bearer-equivalent for the polling round-trip and
- * is closure-only — NEVER logged at any level (T-09-03 mitigation). The
+ * is closure-only — NEVER logged at any level. The
  * cross-origin `createRedirectPolicyFetch` strips Authorization on redirect
- * (T-09-04 mitigation; reused from PKCE path).
+ * (reused from PKCE path).
  *
  * @module
  */
@@ -63,7 +63,7 @@ const DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 /** Re-exports OAuthLoginLogger as DeviceFlowLogger alias for symmetry with login.ts. */
 export type DeviceFlowLogger = OAuthLoginLogger;
 
-/** Per-server OAuth hints extended with the RFC 8628 operator escape hatch (DEVAUTH-06). */
+/** Per-server OAuth hints extended with the RFC 8628 operator escape hatch. */
 export interface DeviceFlowOAuthConfig extends OAuthLoginConfig {
   /**
    * Cascade fallback for RFC 8628 device-authorization: operator-supplied
@@ -126,7 +126,7 @@ export async function runDeviceFlow(deps: RunDeviceFlowDeps): Promise<OAuthLogin
 
   try {
     // 1. Resolve the device-authorization endpoint via the two-stage cascade.
-    //    Operator override wins (Pitfall 11 in 09-RESEARCH.md). Fail-closed
+    //    Operator override wins. Fail-closed
     //    with errorKind:"config" if neither stage yields a value — the
     //    operator's actionable next step is to set
     //    oauth.deviceAuthorizationEndpoint in ~/.comis/config.yaml.
@@ -140,9 +140,9 @@ export async function runDeviceFlow(deps: RunDeviceFlowDeps): Promise<OAuthLogin
       return { status: "failed" };
     }
 
-    // 2. DCR — shares <server>.client.json with the PKCE path per Open
-    //    Question 1 in 09-RESEARCH.md. Plan 03 splits if Higgsfield's
-    //    device-auth server returns `unauthorized_client`.
+    // 2. DCR — shares <server>.client.json with the PKCE path. This may need
+    //    to split into a separate registration if Higgsfield's device-auth
+    //    server returns `unauthorized_client`.
     const clientInfo = await ensureClientRegistration({
       serverName,
       discoveryState,
@@ -175,8 +175,8 @@ export async function runDeviceFlow(deps: RunDeviceFlowDeps): Promise<OAuthLogin
       return { status: "failed" };
     }
 
-    // 5. Spawn background polling task (Pattern 2 in 09-RESEARCH.md — Fix 6
-    //    mirror). The synchronous return carries `device_code_pending` +
+    // 5. Spawn background polling task (Fix 6 mirror). The synchronous
+    //    return carries `device_code_pending` +
     //    verification fields so the agent can deliver them BEFORE polling
     //    completes. All failures inside the IIFE are caught + WARN-logged.
     const deadlineMs = nowMs() + deviceAuth.expiresIn * 1000;
@@ -216,7 +216,7 @@ export async function runDeviceFlow(deps: RunDeviceFlowDeps): Promise<OAuthLogin
     })();
 
     // Sync return: device_code_pending lives in OAuthLoginResult.status
-    // (plan 09-02 widened the union). The 3 new optional fields land here;
+    // (the union was widened to add it). The 3 new optional fields land here;
     // the agent surfaces verificationUri + userCode to the operator via the
     // `message` tool. The background polling task (above) drives saveTokens
     // + onAuthorized on success — that path returns nothing (fire-and-forget).
@@ -363,7 +363,7 @@ async function requestDeviceAuthorization(args: {
 /**
  * RFC 8628 §3.5 polling loop. Switches on HTTP status BEFORE inspecting the
  * body so a Cloudflare-style 502 with HTML body cannot reach the terminal
- * branch (Pitfall 7 in 09-RESEARCH.md). Returns synchronously without
+ * branch. Returns synchronously without
  * throwing — terminal codes + deadline overrun return `{status: "failed"}`.
  */
 async function pollDeviceCode(args: {

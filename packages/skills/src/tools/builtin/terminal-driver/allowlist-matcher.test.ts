@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the canonical-binary allowlist matcher (spec §3.2 / SEC-14).
+ * Unit tests for the canonical-binary allowlist matcher (spec §3.2).
  *
- * Pure FS/realpath/hash logic → runs green on macOS. Proves the SEC-14 gate:
+ * Pure FS/realpath/hash logic → runs green on macOS. Proves the canonical-binary gate:
  *   - a requested command is canonicalized via `realpath` BEFORE comparison;
  *   - a symlink / PATH-shadowed binary whose realpath != the pinned match.path
  *     is REJECTED (cannot impersonate the allowlisted canonical);
@@ -77,7 +77,7 @@ describe("matchAllowEntry — canonical match", () => {
     const matched = matchAllowEntry(link, [entry()]);
     expect(matched).toBeDefined();
     expect(matched?.entry.id).toBe("bash");
-    // MR-02: the matcher returns the SINGLE realpath resolution it verified, so
+    // The matcher returns the SINGLE realpath resolution it verified, so
     // the caller can thread the exact verified inode to spawn (no second resolve).
     expect(matched?.requestedReal).toBe(CANONICAL_BASH);
   });
@@ -94,7 +94,7 @@ describe("matchAllowEntry — canonical match", () => {
   });
 });
 
-describe("matchAllowEntry — PATH-shadow rejection (SEC-14)", () => {
+describe("matchAllowEntry — PATH-shadow rejection", () => {
   it("rejects a PATH-shadowed bash whose real target differs from the pinned canonical", () => {
     // A fixture `bash` symlink that actually points at a DIFFERENT real binary
     // (the classic PATH-hijack): its realpath != CANONICAL_BASH → rejected.
@@ -106,7 +106,7 @@ describe("matchAllowEntry — PATH-shadow rejection (SEC-14)", () => {
   });
 });
 
-describe("matchAllowEntry — hash pin (SEC-14)", () => {
+describe("matchAllowEntry — hash pin", () => {
   it("rejects a file whose sha256 differs from the pinned hash", () => {
     const file = join(work, "pinned-bin");
     writeFileSync(file, "real-content\n");
@@ -132,14 +132,14 @@ describe("matchAllowEntry — hash pin (SEC-14)", () => {
   });
 });
 
-describe("buildDirectSpawn — direct argv, never a shell (SEC-14)", () => {
+describe("buildDirectSpawn — direct argv, never a shell", () => {
   it("returns a literal { bin, argv } with the resolved canonical bin and merged argsPrefix", () => {
     const link = join(work, "bash-link");
     symlinkSync(CANONICAL_BASH, link);
     const matched = matchAllowEntry(link, [entry({ argsPrefix: ["--noprofile", "--norc"] })]);
     expect(matched).toBeDefined();
 
-    // MR-02: buildDirectSpawn consumes the matcher's already-resolved real path
+    // buildDirectSpawn consumes the matcher's already-resolved real path
     // (NOT the raw symlink) — a single canonicalization, threaded through.
     const spawn = buildDirectSpawn(matched!.entry, matched!.requestedReal, ["-c", "echo hi"]);
 
@@ -163,7 +163,7 @@ describe("buildDirectSpawn — direct argv, never a shell (SEC-14)", () => {
   });
 });
 
-describe("MR-02 — single canonicalization (no double-realpath TOCTOU)", () => {
+describe("single canonicalization (no double-realpath TOCTOU)", () => {
   it("buildDirectSpawn does NOT re-resolve the requested path — it spawns the EXACT inode the matcher hash-verified", () => {
     // The hash-pin promise ("rejects a content-swapped binary at the same path")
     // is only atomic if the verified bytes and the executed bytes are the SAME
@@ -206,18 +206,18 @@ describe("MR-02 — single canonicalization (no double-realpath TOCTOU)", () => 
 });
 
 describe("canonicalize", () => {
-  it("resolves a path to its realpath, exposing the SEC-14 canonicalization anchor", () => {
+  it("resolves a path to its realpath, exposing the canonicalization anchor", () => {
     const link = join(work, "bash-link");
     symlinkSync(CANONICAL_BASH, link);
     expect(canonicalize(link)).toBe(CANONICAL_BASH);
   });
 });
 
-describe("AllowEntryLike.scope — the SEC-02 scope contract carried verbatim (SEC-03 no-mutate)", () => {
+describe("AllowEntryLike.scope — the scope contract carried verbatim (no-mutate)", () => {
   it("returns the matched entry WITH its declared scope on AllowMatchResult.entry.scope", () => {
-    // SEC-02: the operator-declared scope must survive the match so the create
+    // The operator-declared scope must survive the match so the create
     // tool can thread it into the worker create frame. Pre-patch, AllowEntryLike
-    // is {id, match} only — scope is silently dropped (RESEARCH Pitfall 4).
+    // is {id, match} only — scope is silently dropped.
     const link = join(work, "bash-link");
     symlinkSync(CANONICAL_BASH, link);
     const scope: TerminalScope = {
@@ -234,8 +234,8 @@ describe("AllowEntryLike.scope — the SEC-02 scope contract carried verbatim (S
     expect(matched!.entry.scope).toEqual(scope);
   });
 
-  it("does NOT derive, default-substitute, or widen the entry's scope (SEC-03 — scope is operator-only)", () => {
-    // SEC-03: the matcher is a pure pass-through for scope. It must NEVER swap a
+  it("does NOT derive, default-substitute, or widen the entry's scope (scope is operator-only)", () => {
+    // The matcher is a pure pass-through for scope. It must NEVER swap a
     // declared scope for a default, nor widen it. Given an entry with a NON-default
     // scope, the matcher returns EXACTLY that scope — byte-for-byte (same reference).
     const link = join(work, "bash-link");

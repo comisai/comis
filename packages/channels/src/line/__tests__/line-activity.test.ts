@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LINE AppendOnly renderer tests (CHAN-08, CHAN-11; §18.3 LINE column).
+ * LINE AppendOnly renderer tests (§18.3 LINE column).
  *
  * LINE is send-only for the activity renderer — it has no in-place edit and no
- * delete, so it wires the Phase-70 AppendOnly strategy IDENTICALLY to iMessage:
+ * delete, so it wires the AppendOnly strategy IDENTICALLY to iMessage:
  * ONE opening status (the first non-trivial frame), later frames are no-ops, the
  * closing follow-up is SUPPRESSED on success (the assistant reply is the signal),
  * and a failure posts exactly one `❌ {errorKind}` follow-up.
  *
- * CHAN-08 scope: only the AppendOnly RENDERING half is covered here. The LINE
- * Quick Reply approval-chip affordance rides with Phase 73 (the port is
+ * Scope: only the AppendOnly RENDERING half is covered here. The LINE
+ * Quick Reply approval-chip affordance lands separately (the port is
  * `send(text)`-only; no button param, no `kind:"approval"` event yet, ZERO S8
  * fixtures). The single net-new piece of logic is `classifyLineError` — the live
  * adapter wraps send failures in `new Error("Failed to send LINE message: …")`
  * with no structured numeric code, so the classifier defaults to `internal` and
  * reads the error structurally ONLY (never renders the `.message` as activity
- * text — SEC-05/§19.3). `makeLineRenderActions` maps `send` through it and guards
+ * text — §19.3). `makeLineRenderActions` maps `send` through it and guards
  * the absent `editMessage` / `deleteMessage`; `createLineActivityRenderer` wires
- * the Phase-70 `createAppendOnlyRenderer` (no duplicated state machine, NO timer/clock).
+ * the `createAppendOnlyRenderer` (no duplicated state machine, NO timer/clock).
  *
  * Golden fixtures assert via readFixture + toEqual (NEVER an auto-writing
  * inline/file snapshot, which self-heals a wrong fixture — Pitfall 3).
@@ -151,7 +151,7 @@ describe("createLineActivityRenderer (AppendOnly wiring)", () => {
 
     const sends = fake.recorded.calls.filter((c) => c.op === "send");
     expect(sends).toHaveLength(1);
-    // [Rule 1 — bug fix, quick-260528-nsv] First frame's event line carries
+    // First frame's event line carries
     // the running 🔧 marker; the post-once / no-spam invariant is the
     // load-bearing assertion.
     expect(sends[0]).toEqual({ op: "send", id: "line-msg-0", text: "🔧 step 1" });

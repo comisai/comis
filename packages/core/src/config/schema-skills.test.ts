@@ -36,13 +36,13 @@ describe("SkillsConfigSchema -- toolDiscovery.minBm25Score [.max(1) tightening]"
 });
 
 /**
- * OPS-02: the closed `TerminalDriverConfig` schema. A `z.strictObject` at every
+ * The closed `TerminalDriverConfig` schema. A `z.strictObject` at every
  * level rejects unknown/legacy keys by construction (a typo'd or injected key
  * throws at config load rather than being silently dropped — a restriction the
  * operator believes is in effect must actually be parsed). The whole spec §6
  * shape is implemented now so the operator allow-set round-trips.
  */
-describe("TerminalDriverConfigSchema -- closed allow-set (OPS-02)", () => {
+describe("TerminalDriverConfigSchema -- closed allow-set", () => {
   // A config whose allow[] has one FULL entry exercising every allow-entry field.
   const validCfg = {
     enabled: true,

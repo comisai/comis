@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for attributeRecallUsage() — the FEED-01 pure overlap heuristic that
+ * Tests for attributeRecallUsage() — the pure overlap heuristic that
  * partitions recalled memories into {used, ignored} from the agent's response.
  *
  * Load-bearing RED-first assertions (mirror score.test.ts determinism style):

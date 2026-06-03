@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * inbound-gate — button-callback intercept + shortId slash-path tests (73-07).
+ * inbound-gate — button-callback intercept + shortId slash-path tests.
  *
- * Two behaviours under test (APV-09 / APV-05 inbound wiring):
+ * Two behaviours under test:
  *
  *  (A) A platform button callback arrives as a `NormalizedMessage` carrying
  *      `metadata.isButtonCallback === true` + `metadata.callbackData`. It MUST

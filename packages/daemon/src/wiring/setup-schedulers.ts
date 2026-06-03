@@ -91,7 +91,7 @@ export async function setupSchedulers(deps: {
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
 
-  // Master cost-feature kill switch (v1 opt-out posture). When the operator sets
+  // Master cost-feature kill switch (opt-out posture). When the operator sets
   // memory.costFeatures.enabled:false, EVERY LLM cost-bearing memory cron is force-disabled at
   // its registration site below — regardless of the agent's own per-feature opt-in. The gated
   // set is the SIX cost crons: memoryReview, memoryConsolidation, memoryReasoning,
@@ -304,10 +304,10 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Memory consolidation cron job (Phase 84, CONS-07) --
+    // -- Memory consolidation cron job --
     // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat).
     // Registered ONLY when the operator sets memoryConsolidation.enabled; a default
-    // agent registers NO job (T-84-19). Default schedule 30 3 * * * runs AFTER the
+    // agent registers NO job. Default schedule 30 3 * * * runs AFTER the
     // memory-review's 0 2 so review-minted memories are consolidation candidates the
     // same night. Job options mirror the review job 1:1 (isolated / next-heartbeat /
     // no forward-to-main / fresh session); the __MEMORY_CONSOLIDATION__ sentinel is
@@ -337,10 +337,10 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Memory reasoning cron job (Phase 101, REASON-02/03 — 101-06) --
+    // -- Memory reasoning cron job --
     // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat).
     // Registered ONLY when the operator sets memoryReasoning.enabled; a default agent
-    // registers NO job (T-101-06-02) → byte-identical behavior with the config absent.
+    // registers NO job → byte-identical behavior with the config absent.
     // Default schedule 0 4 * * * runs AFTER consolidation's 30 3 so reasoning works
     // over freshly-consolidated observations the same night. Job options mirror the
     // consolidation job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh
@@ -371,7 +371,7 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Per-user representation cron job (Phase 107, USER-03/04 — Track E1) --
+    // -- Per-user representation cron job --
     // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat). Registered ONLY
     // when the operator sets memoryUserRepresentation.enabled; a default agent registers NO job →
     // byte-identical behavior with the config absent. Default schedule 0 5 * * * runs AFTER reasoning's
@@ -404,8 +404,8 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Social modeling cron job (Phase 108, SOCIAL-01/02/03 — Track E2) --
-    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron). The SOCIAL-03 gate is STRICTER than
+    // -- Social modeling cron job --
+    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron). The privacy-review gate is STRICTER than
     // the other memory crons: register ONLY when the operator BOTH sets socialModeling.enabled AND
     // records a privacy-review sign-off (privacyReviewSignedOffBy). A knob-on-but-not-signed-off agent
     // registers NO job → byte-identical with the config absent (the sign-off is the operator gate; the
@@ -438,14 +438,14 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Usefulness-judge cron job (Phase 110, LEARN-02 OPTIONAL — Track H3) --
+    // -- Usefulness-judge cron job --
     // OPT-IN, OFF by default (a cost gate — an OFFLINE cheap-model judge). Registered ONLY when the
     // operator sets memoryUsefulnessJudge.enabled; a default agent registers NO job → byte-identical
     // with the config absent. Default schedule 0 7 * * * runs AFTER social's 0 6 so the judge scores
     // recalled-memory usefulness over a fully-settled night. Job options mirror the reasoning/userrep
     // job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh session). The __USEFULNESS_JUDGE__
-    // sentinel's full dispatch (the seam → recordUsage write) is Phase 111's costed enablement; this
-    // registration is the default-OFF scaffold (the citation-marker core, Plan 110-04, is keyless).
+    // sentinel's full dispatch (the seam → recordUsage write) is a later costed enablement; this
+    // registration is the default-OFF scaffold (the citation-marker core is keyless).
     // Gated by the master cost-feature kill switch AND the per-agent opt-in.
     const memoryUsefulnessJudgeConfig = agentConfig.memoryUsefulnessJudge;
     if (costFeaturesEnabled && memoryUsefulnessJudgeConfig?.enabled) {
@@ -471,7 +471,7 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Online-tuning bandit cron job (Phase 111, LEARN-03 — Track H2) --
+    // -- Online-tuning bandit cron job --
     // OPT-IN, OFF by default. Unlike the usefulness judge this bandit is DETERMINISTIC +
     // KEYLESS (no LLM call, no API key — the sentinel dispatch makes NO model resolution),
     // so enabling it is a behavior opt-in, not a cost opt-in. Registered ONLY when the
@@ -506,7 +506,7 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Memory lifecycle cron job (Phase 112, FORGET-02 — Track C) --
+    // -- Memory lifecycle cron job --
     // OPT-IN, OFF by default. Like the online-tuning bandit (NOT the LLM crons) this
     // sweep is DETERMINISTIC + KEYLESS (no LLM call, no API key — the sentinel dispatch
     // makes NO model resolution), so enabling it is a behavior opt-in, not a cost opt-in.
@@ -516,7 +516,7 @@ export async function setupSchedulers(deps: {
     // options mirror the online-tuning job 1:1 (isolated / next-heartbeat / no forward-to-main
     // / fresh). The __MEMORY_LIFECYCLE__ sentinel (setup-channels-memory-crons → the DORMANT
     // runLifecycleSweep) re-checks the knob; even when on, the SCAFFOLD evicts/demotes NOTHING
-    // (the live policy is the deferred operator/v2.10 step — OD4).
+    // (the live policy is the deferred operator step — OD4).
     const memoryLifecycleConfig = agentConfig.memoryLifecycle;
     if (memoryLifecycleConfig?.enabled) {
       const memLifecycleJobId = `memory-lifecycle-${agentId}`;
@@ -542,7 +542,7 @@ export async function setupSchedulers(deps: {
     }
   }
 
-  // First-run cost-disclosure notice (v1 opt-out posture). Once per startup, right after the
+  // First-run cost-disclosure notice (opt-out posture). Once per startup, right after the
   // cron-registration sweep: when the kill switch is ON (the default) AND at least one LLM
   // cost-bearing memory feature is active for some agent, emit ONE prominent WARN naming the
   // active features + the one-line off-switch. Today's default bare config emits nothing. Lives

@@ -1,30 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated end-to-end QA + LLM-judge harness (BENCH-03 + BENCH-04) -- the phase's
+ * Env-gated end-to-end QA + LLM-judge harness -- the
  * apples-to-apples ACCURACY engine.
  *
- * It REUSES Phase 88's ingest + live-recall block verbatim (ingest the Plan-01
+ * It REUSES the retrieval harness's ingest + live-recall block verbatim (ingest the
  * LongMemEval + LoCoMo documents ONCE into a real `SqliteMemoryAdapter` in
  * `beforeAll`, then run the live `createMemoryRecall` pipeline per question), and
- * ADDS the QA path after recall: format the recalled context (Plan 01
- * `formatAnswerContext`) -> drive it through an ANSWER LLM (`completeSimple`) ->
+ * ADDS the QA path after recall: format the recalled context
+ * (`formatAnswerContext`) -> drive it through an ANSWER LLM (`completeSimple`) ->
  * grade with a category-specific JUDGE LLM (`completeSimple`, temperature 0) ->
- * parse the verdict (Plan 02 `parseJudgeVerdict`) -> aggregate overall +
- * per-category accuracy (Plan 02 `aggregateAccuracy`) -> build the reproducible
- * BENCH-04 report (Plan 02 `buildBenchmarkReport`) -> write it via the confined
- * `writeRegularFile`. The number this prints is the v2.6 "better memory" claim
- * turned into an end-to-end QA-accuracy figure (NOT recall@k -- that is Phase 88).
+ * parse the verdict (`parseJudgeVerdict`) -> aggregate overall +
+ * per-category accuracy (`aggregateAccuracy`) -> build the reproducible
+ * report (`buildBenchmarkReport`) -> write it via the confined
+ * `writeRegularFile`. The number this prints is the "better memory" claim
+ * turned into an end-to-end QA-accuracy figure (NOT recall@k -- that is the
+ * retrieval harness's job).
  *
- * ARCHITECTURE CUT (the single escape hatch in this phase): this *.test.ts MAY
+ * ARCHITECTURE CUT (the single escape hatch): this *.test.ts MAY
  * import the memory package (a devDependency); the agent->memory architecture cut
  * excludes .test.ts via findForbiddenImports' suffix filter (source-rules.test.ts,
- * excludeFileSuffixes: [".test.ts"]). The five pure Plan-01/02 modules
+ * excludeFileSuffixes: [".test.ts"]). The five pure modules
  * (qa-answer-prompt.ts, qa-judge-prompt.ts, qa-judge-parse.ts, qa-accuracy.ts,
  * qa-report.ts) + the loaders import ONLY @comis/core types -- this harness is the
  * single cut escape. Mirrors the blessed precedent retrieval-harness.bench.test.ts
- * (the Phase-88 sibling) and recall-eval.test.ts.
+ * and recall-eval.test.ts.
  *
- * DUPLICATED INGEST (intentional, RESEARCH A1 / Anti-Pattern): the ingest + recall
+ * DUPLICATED INGEST (intentional): the ingest + recall
  * block is DUPLICATED VERBATIM from retrieval-harness.bench.test.ts rather than
  * factored into a shared `__support__` helper -- a non-`.test.ts` helper importing
  * @comis/memory WOULD trip the agent->memory cut (only the `.test.ts` suffix is the
@@ -32,7 +33,7 @@
  *
  * TWO-TIER GATE (mirrors retrieval-harness.bench.test.ts):
  * - UNGATED (default CI, `pnpm test`/`pnpm validate`): the deterministic, structural
- *   correctness of the pure modules is unit-tested in Plan 01/02's co-located
+ *   correctness of the pure modules is unit-tested in the co-located
  *   *.test.ts over the tiny vendored fixtures + the fake-LLM stub. A default
  *   `pnpm test` run (no COMIS_BENCH) SKIPS this entire suite -- no provider call, no
  *   dataset / GGUF weight, no cost reaches CI.
@@ -46,20 +47,20 @@
  * SECURITY:
  * - Bench store is a fresh `mkdtempSync` tmp DB (NEVER ~/.comis), `trustLevel:
  *   "learned"`, `tenantId:"default"` / `agentId:"bench"` -- isolated from any live
- *   agent (T-89-03-05). No live daemon.
+ *   agent. No live daemon.
  * - The operator-provided `COMIS_BENCH_DATA` base is resolved and each dataset file
  *   path is asserted to live under it before any read (rejects `..`-escape;
- *   T-89-03-01, ASVS V5).
- * - Content comes from Plan 01's loaders, which strip `has_answer` (LongMemEval) and
+ *   ASVS V5).
+ * - Content comes from the loaders, which strip `has_answer` (LongMemEval) and
  *   exclude the `qa` block (LoCoMo); gold (`answer`) lives only on the question-list
- *   channel, never ingested (T-89-03-02).
- * - The report records ONLY `{provider, modelId}` per role (the Plan-02 builder
+ *   channel, never ingested.
+ * - The report records ONLY `{provider, modelId}` per role (the report builder
  *   structurally omits keys); the report is written via the confined `writeRegularFile`
- *   (O_NOFOLLOW + EXCL + confinement; T-89-03-01). The harness `console.log`s only the
- *   structured `metrics`, never an api key or a model answer (T-89-03-03; Pitfall 3,6).
+ *   (O_NOFOLLOW + EXCL + confinement). The harness `console.log`s only the
+ *   structured `metrics`, never an api key or a model answer.
  * - The judge is advisory MEASUREMENT only -- prompt injection from dataset content
- *   into answer->judge is a documented, non-eliminable caveat (T-89-03-04, accept);
- *   the rubric is placed first (Plan-01 buildJudgePrompt) and content is never `eval`'d.
+ *   into answer->judge is a documented, non-eliminable caveat (accepted);
+ *   the rubric is placed first (buildJudgePrompt) and content is never `eval`'d.
  *
  * @module
  */
@@ -73,22 +74,22 @@ import {
   createEmbeddingProvider,
   createLocalRerankerProvider,
 } from "@comis/memory";
-// BARE production orchestrator (the live recall pipeline reused from Phase 88).
+// BARE production orchestrator (the live recall pipeline reused from the retrieval harness).
 import { createMemoryRecall, type MemoryRecallDeps } from "@comis/agent";
 // VALUE completion entry point (fine in a .test.ts) -- the answer + judge LLM calls.
 import { completeSimple, getModel } from "@earendil-works/pi-ai";
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
 import { writeRegularFile } from "@comis/observability";
-// RELATIVE Plan 01 loaders (consumed verbatim; the loaders own field shapes).
+// RELATIVE loaders (consumed verbatim; the loaders own field shapes).
 import { loadLongMemEvalDataset } from "./longmemeval-loader.js";
 import { loadLocomoDataset } from "./locomo-loader.js";
-// RELATIVE Plan 01 prompt builders (the system/user answer split + the per-category judge rubric).
+// RELATIVE prompt builders (the system/user answer split + the per-category judge rubric).
 import { ANSWER_SYSTEM_PROMPT, formatAnswerContext, buildAnswerPrompt } from "./qa-answer-prompt.js";
 import { buildJudgePrompt } from "./qa-judge-prompt.js";
-// RELATIVE Plan 98-02 control formatter — the Letta-style FULL-haystack dump (no
+// RELATIVE control formatter — the Letta-style FULL-haystack dump (no
 // recall ranking). Builds the parallel CONTROL answerables alongside the recall path.
 import { formatFilesystemContext } from "./filesystem-baseline.js";
-// RELATIVE Plan 02 pure logic (verdict parse -> accuracy -> reproducible report).
+// RELATIVE pure logic (verdict parse -> accuracy -> reproducible report).
 import { parseJudgeVerdict } from "./qa-judge-parse.js";
 import { aggregateAccuracy, type CategorizedVerdict } from "./qa-accuracy.js";
 import { buildBenchmarkReport } from "./qa-report.js";
@@ -105,7 +106,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
 // ENV GATES -- read process.env ONLY at the test boundary (allowed in a .test.ts;
-// the globals rule scopes to src/**). Names pinned by PATTERNS/RESEARCH Env-Gating Plan.
+// the globals rule scopes to src/**). Names pinned by the env-gating plan.
 const COMIS_BENCH = process.env.COMIS_BENCH; // the full ingest+recall+answer+judge run
 const LLAMA_MODEL_PATH = process.env.LLAMA_MODEL_PATH; // vector lane (embeddings)
 const LLAMA_RERANKER_MODEL_PATH = process.env.LLAMA_RERANKER_MODEL_PATH; // rerank lift
@@ -117,7 +118,7 @@ const ANSWER_API_KEY = process.env.COMIS_BENCH_ANSWER_API_KEY;
 const JUDGE_PROVIDER = process.env.COMIS_BENCH_JUDGE_PROVIDER;
 const JUDGE_MODEL = process.env.COMIS_BENCH_JUDGE_MODEL;
 const JUDGE_API_KEY = process.env.COMIS_BENCH_JUDGE_API_KEY;
-// PROVE2 (Phase 114) cost-bounding knobs. COMIS_BENCH_LIMIT caps the per-dataset item
+// PROVE2 cost-bounding knobs. COMIS_BENCH_LIMIT caps the per-dataset item
 // count for a sampled, cost-bounded COSTED run (absent -> the full set, byte-identical
 // to the prior behaviour). COMIS_BENCH_SKIP_CONTROL skips the expensive full-haystack
 // letta-fs control answer+judge loop (the control roughly DOUBLES the LLM spend and
@@ -126,22 +127,22 @@ const JUDGE_API_KEY = process.env.COMIS_BENCH_JUDGE_API_KEY;
 const COMIS_BENCH_LIMIT = process.env.COMIS_BENCH_LIMIT;
 const COMIS_BENCH_SKIP_CONTROL = process.env.COMIS_BENCH_SKIP_CONTROL;
 
-/** Fixed epoch (matches the Phase-88 sibling's neutral clock). */
+/** Fixed epoch (matches the retrieval-harness sibling's neutral clock). */
 const BENCH_NOW = 1_700_000_000_000;
 /** Per-LLM-call wall-clock deadline (standard timer is allowed in a .test.ts). */
 const LLM_TIMEOUT_MS = 120_000;
 /** Harness version stamp -- a number is always attributable to fixed harness code. */
 const HARNESS_VERSION = "phase-89-v1";
 /**
- * BASE-01 (Plan 98-02) control label — the explicit, immutable identifier under
+ * The control label — the explicit, immutable identifier under
  * which the Letta-style filesystem-baseline control row is recorded in the
- * manifest. Pinned as a constant so Plan 03's run + Plan 05's gap report cite it
- * verbatim and it can NEVER be confused with Comis's recall score (T-98-02-01).
+ * manifest. Pinned as a constant so the run + gap report cite it
+ * verbatim and it can NEVER be confused with Comis's recall score.
  */
 const CONTROL_LABEL = "filesystem-baseline-full-context-control";
 
 /**
- * The bench store config (mirrors the Phase-88 sibling). `as MemoryConfig`:
+ * The bench store config (mirrors the retrieval-harness sibling). `as MemoryConfig`:
  * the adapter reads the fields it needs; `dims` = the probed embedding dimensions
  * (or 4 for the FTS-only honest fallback).
  */
@@ -167,7 +168,7 @@ const BENCH_SESSION_KEY: SessionKey = {
  * The pi-ai content-block walk. DUPLICATED VERBATIM from memory-review-job.ts
  * (it is independently re-declared there AND in memory-consolidation-job.ts --
  * there is no shared export; copying it is consistent with that intentional
- * duplication, PATTERNS Correction #4). Sums the `{type:"text"}` blocks.
+ * duplication). Sums the `{type:"text"}` blocks.
  */
 function extractResponseText(response: { content?: unknown[] }): string {
   let text = "";
@@ -188,11 +189,11 @@ function extractResponseText(response: { content?: unknown[] }): string {
 }
 
 /**
- * Inline percentile over a numeric sample (BASE-01 latency p50/p95). Sorts a COPY
+ * Inline percentile over a numeric sample (latency p50/p95). Sorts a COPY
  * ascending, index = ceil(p/100 * n) - 1 clamped to [0, n-1] (the nearest-rank
  * method). Empty sample -> 0. Kept LOCAL to this `.bench.test.ts` (NOT a new src
  * file) so it never becomes a 0%-coverage src module under the agent all:true
- * floor (RESEARCH TDD hard rule). Inputs are real `performance.now()` deltas, never
+ * floor (the TDD hard rule). Inputs are real `performance.now()` deltas, never
  * the fake clock.
  */
 function percentile(samples: number[], p: number): number {
@@ -202,7 +203,7 @@ function percentile(samples: number[], p: number): number {
   return sorted[idx];
 }
 
-/** Mean of a numeric sample (BASE-01 tokens/query); empty -> 0. */
+/** Mean of a numeric sample (tokens/query); empty -> 0. */
 function mean(samples: number[]): number {
   if (samples.length === 0) return 0;
   return samples.reduce((sum, x) => sum + x, 0) / samples.length;
@@ -212,7 +213,7 @@ function mean(samples: number[]): number {
  * Read a vendored fixture (default) or an operator-placed dataset file under
  * `COMIS_BENCH_DATA`. When the operator base is set, resolve it and assert the
  * resolved file path stays under it BEFORE `readFileSync` -- this rejects a
- * `..`-escape on the operator path (T-89-03-01, ASVS V5). DUPLICATED VERBATIM
+ * `..`-escape on the operator path (ASVS V5). DUPLICATED VERBATIM
  * from retrieval-harness.bench.test.ts. Returns BOTH the parsed value and the raw
  * bytes (the bytes feed the dataset sha256, computed here where the file is read;
  * qa-report.ts stays pure by accepting only the hash string).
@@ -241,7 +242,7 @@ function readDataset(
  * alongside the operator haystack (resolved, asserted to be the base itself --
  * no traversal); otherwise a fresh tmp dir. The actual write uses
  * `writeRegularFile({ confinedBaseDir })`, so the O_NOFOLLOW + EXCL + confinement
- * guard applies regardless (T-89-03-01).
+ * guard applies regardless.
  */
 function resolveReportDir(fallbackTmpDir: string): string {
   if (COMIS_BENCH_DATA !== undefined && COMIS_BENCH_DATA.length > 0) {
@@ -255,7 +256,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
   // asserted structurally below (the it.skipIf body itself drives the LLM calls).
   let metrics: ReturnType<typeof aggregateAccuracy> | undefined;
   let reportJson = "";
-  // The ingest-once structural witness (BENCH-03 SC-3): store-call count vs doc count.
+  // The ingest-once structural witness: store-call count vs doc count.
   let storedCount = 0;
   let docCount = 0;
   // Per-question answerables, built ONCE in beforeAll: recall (LLM-free) runs THERE,
@@ -270,13 +271,13 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
     /**
      * Per-question recall wall-clock latency (ms), measured around `recall.recall`
      * in `beforeAll` via real `performance.now()` (NOT the injected fake clock --
-     * the fake clock is for recency determinism and reads constant; RESEARCH
-     * Landmine 7). Carried on the answerable so the gated it body can fold recall
-     * latency into the end-to-end per-question total.
+     * the fake clock is for recency determinism and reads constant). Carried on the
+     * answerable so the gated it body can fold recall latency into the end-to-end
+     * per-question total.
      */
     recallMs: number;
   }> = [];
-  // BASE-01 (Plan 98-02): the PARALLEL control answerables — the SAME questions, but
+  // The PARALLEL control answerables — the SAME questions, but
   // each `context` is the FULL-haystack filesystem dump (formatFilesystemContext over
   // ALL of the item's docs, no recall, no ranking) instead of the ranked top-5. Built
   // ONCE in beforeAll alongside `answerables`; the gated it body grades them with the
@@ -294,7 +295,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
   let datasetItemCount = 0;
   let embeddingEnabled = false;
 
-  // Provider-backed run nests on the answer/judge model env (RESEARCH Env-Gating Plan).
+  // Provider-backed run nests on the answer/judge model env (the env-gating plan).
   const haveAnswer = !!ANSWER_PROVIDER && !!ANSWER_MODEL && !!ANSWER_API_KEY;
   const haveJudge = !!JUDGE_PROVIDER && !!JUDGE_MODEL && !!JUDGE_API_KEY;
 
@@ -414,7 +415,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       const controlContext = formatFilesystemContext(lme.docs);
       for (const q of lme.questions) {
         // LATENCY (recall segment) -- real wall-clock around the LLM-free recall call
-        // (performance.now(), NOT the fake clock; RESEARCH Landmine 7).
+        // (performance.now(), NOT the fake clock).
         const recallStart = performance.now();
         const r = await recall.recall(q.query, BENCH_SESSION_KEY);
         const recallMs = performance.now() - recallStart;
@@ -471,7 +472,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
     await rerankerPort?.dispose?.();
     // 2h hook timeout: full-set ingest + LLM-free recall for all items runs HERE in
     // beforeAll (the it body only grades). The 2-min default trips on the real 500-item
-    // set before any grading begins — must match the raised it-body budget (BASE-01).
+    // set before any grading begins — must match the raised it-body budget.
   }, 7_200_000);
 
   it.skipIf(!haveAnswer || !haveJudge)(
@@ -493,11 +494,11 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
 
       const verdicts: CategorizedVerdict[] = [];
 
-      // BASE-01 measurement accumulators (valid questions only -- a question whose
+      // Measurement accumulators (valid questions only -- a question whose
       // model lane failed to resolve is excluded from tokens + latency, exactly as it
       // is excluded from the accuracy denominator). Tokens via `usage.totalTokens`
       // (pi-ai returns it on every completeSimple); latency via real performance.now()
-      // wall-clock deltas (NOT the fake clock; RESEARCH Landmine 7).
+      // wall-clock deltas (NOT the fake clock).
       const answerTokens: number[] = [];
       const judgeTokens: number[] = [];
       const answerCosts: number[] = [];
@@ -521,15 +522,15 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         }
 
         // ANSWER LLM -- ANSWER_SYSTEM_PROMPT is the systemPrompt; buildAnswerPrompt is the
-        // USER content only (the Info-4 split -- no preamble duplication). Low temperature.
+        // USER content only (the system/user split -- no preamble duplication). Low temperature.
         // The operator key is forwarded to pi-ai's typed option field (the only way to
         // authenticate the call -- exactly memory-review-job.ts:361) and is never stored,
-        // logged, or placed in the report (T-89-03-03; the secret-omission assertion below
+        // logged, or placed in the report (the secret-omission assertion below
         // proves the report carries none of it).
         const answerController = new AbortController();
         const answerTimer = setTimeout(() => answerController.abort(), LLM_TIMEOUT_MS);
         let modelAnswer = "";
-        // BASE-01 per-question answer measurements (tokens via usage.totalTokens;
+        // Per-question answer measurements (tokens via usage.totalTokens;
         // latency via real wall-clock around the completeSimple call).
         let answerTokensThis = 0;
         let answerCostThis = 0;
@@ -556,8 +557,8 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         }
         const answerMs = performance.now() - answerStart;
 
-        // JUDGE LLM -- a SEPARATE model lane, temperature 0 (Pitfall 2 determinism). The
-        // category-specific rubric is placed FIRST (prompt-injection ordering, Plan 01).
+        // JUDGE LLM -- a SEPARATE model lane, temperature 0 (for determinism). The
+        // category-specific rubric is placed FIRST (prompt-injection ordering).
         const judgeController = new AbortController();
         const judgeTimer = setTimeout(() => judgeController.abort(), LLM_TIMEOUT_MS);
         let judgeText = "";
@@ -595,7 +596,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
             : { category: a.category, correct: verdict.correct, invalid: false },
         );
 
-        // BASE-01: record tokens + latency for VALID questions only (same exclusion
+        // Record tokens + latency for VALID questions only (same exclusion
         // as the accuracy denominator). End-to-end = recall (from beforeAll) + answer +
         // judge for this question.
         if (!invalid) {
@@ -610,11 +611,11 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         }
       }
 
-      // AGGREGATE -- overall + per-category, invalid-excluded denominator (Plan 02).
+      // AGGREGATE -- overall + per-category, invalid-excluded denominator.
       metrics = aggregateAccuracy(verdicts);
 
       // ─────────────────────────────────────────────────────────────────────
-      // BASE-01 CONTROL (Plan 98-02): the Letta-style filesystem-baseline. Run the
+      // CONTROL: the Letta-style filesystem-baseline. Run the
       // SAME answer->judge->parse loop over `controlAnswerables` (full-haystack dump
       // context, NO recall), with the SAME models + temperature 0, and aggregate as a
       // SEPARATE `controlMetrics`. This roughly DOUBLES the answer+judge LLM calls for
@@ -690,7 +691,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       // The control's aggregate accuracy (the labelled control row's `results`).
       const controlMetrics = aggregateAccuracy(controlVerdicts);
 
-      // BASE-01 COST + LATENCY blocks -- mean tokens/query (answer + judge, valid
+      // COST + LATENCY blocks -- mean tokens/query (answer + judge, valid
       // questions only) and p50/p95 wall-clock latency (recall/answer/judge/end-to-end).
       // Pure numbers; threaded into the builder so qa-report.json carries them.
       const answerTokensPerQuery = mean(answerTokens);
@@ -713,7 +714,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         endToEndP95Ms: percentile(endToEndLatencies, 95),
       };
 
-      // REPORT -- record ONLY {provider,modelId} per role (Pitfall 6; the builder
+      // REPORT -- record ONLY {provider,modelId} per role (the builder
       // structurally omits any api key even if one were passed). Dataset sha256 from
       // beforeAll. Production-representative defaults recorded for reproducibility.
       const report = buildBenchmarkReport(
@@ -749,7 +750,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
           harnessVersion: HARNESS_VERSION,
           cost: cost,
           latency: latency,
-          // BASE-01 CONTROL row (Plan 98-02): the Letta-style filesystem-baseline,
+          // CONTROL row: the Letta-style filesystem-baseline,
           // recorded under an explicit label so it is impossible to mistake for Comis's
           // score. The headline `report.results` stays the recall accuracy (`metrics`).
           control: { label: CONTROL_LABEL, results: controlMetrics },
@@ -759,7 +760,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       );
       reportJson = JSON.stringify(report, null, 2);
 
-      // WRITE the report via the CONFINED writer (T-89-03-01) -- O_NOFOLLOW + EXCL +
+      // WRITE the report via the CONFINED writer -- O_NOFOLLOW + EXCL +
       // confinement; never a raw fs.writeFileSync.
       const writeResult = writeRegularFile({
         path: join(reportDir, "qa-report.json"),
@@ -768,8 +769,8 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       });
       expect(writeResult.ok, "report written to the confined dir").toBe(true);
 
-      // Operator-visible number (like the Phase-88 sibling's BENCH recall@k/MRR line).
-      // ONLY the structured metrics -- never an api key or a model answer (Pitfall 3,6).
+      // Operator-visible number (like the retrieval-harness sibling's BENCH recall@k/MRR line).
+      // ONLY the structured metrics -- never an api key or a model answer.
       // eslint-disable-next-line no-console -- gated bench harness reports its number (this is a .test.ts, not packages/cli)
       console.log(
         "BENCH QA accuracy",
@@ -779,9 +780,9 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         "rerank:",
         !!LLAMA_RERANKER_MODEL_PATH,
       );
-      // BASE-01 CONTROL line (Plan 98-02) -- printed SEPARATELY under an explicit
+      // CONTROL line -- printed SEPARATELY under an explicit
       // "CONTROL (filesystem baseline, NOT Comis)" prefix so the run output can NEVER
-      // conflate the full-haystack control with Comis's recall score (T-98-02-01).
+      // conflate the full-haystack control with Comis's recall score.
       // eslint-disable-next-line no-console -- gated bench harness reports the control number alongside Comis's
       console.log(
         "BENCH QA accuracy — CONTROL (filesystem baseline, NOT Comis):",
@@ -789,7 +790,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         JSON.stringify(controlMetrics),
       );
 
-      // STRUCTURAL invariants ONLY (Anti-Pattern: never a hard accuracy floor -- the
+      // STRUCTURAL invariants ONLY (never a hard accuracy floor -- the
       // number is machine/model-dependent).
       expect(metrics.overall).toBeGreaterThanOrEqual(0);
       expect(metrics.overall).toBeLessThanOrEqual(100);
@@ -799,12 +800,12 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         expect(c.accuracy).toBeGreaterThanOrEqual(0);
         expect(c.accuracy).toBeLessThanOrEqual(100);
       }
-      // The report must carry NO secret substring (T-89-03-03) -- the ONLY allowed
+      // The report must carry NO secret substring -- the ONLY allowed
       // occurrence of these tokens in this file is inside this negation.
       expect(reportJson).not.toMatch(/apiKey|sk-|Bearer/);
       // (Per-item bench stores were already closed in beforeAll; nothing to close here.)
     },
-    // BASE-01 / RESEARCH Landmine 6: the full ~4080-call run (≈2040 answer + ≈2040
+    // The full ~4080-call run (≈2040 answer + ≈2040
     // judge LLM round-trips, serial) exceeds the prior ten-minute Vitest `it`
     // ceiling. Raise to a 2h bound sized for the full set: ≈2040 calls × up to 120s
     // each (worst case) still fits, while the per-call LLM_TIMEOUT_MS=120_000
@@ -815,11 +816,11 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
     7_200_000,
   );
 
-  // INGEST-ONCE structural witness (BENCH-03 SC-3): the store-call count equals the
+  // INGEST-ONCE structural witness: the store-call count equals the
   // doc count -- the harness ingested ONCE in beforeAll, never re-ingesting per
   // question (re-ingesting would inflate storedCount to docCount * questionCount).
   // This runs even when the provider-backed it is skipped (no model env needed).
-  it("ingests Phase-88 docs ONCE (store count == doc count, not re-ingested per question)", () => {
+  it("ingests docs ONCE (store count == doc count, not re-ingested per question)", () => {
     expect(docCount).toBeGreaterThanOrEqual(1);
     expect(storedCount).toBe(docCount);
   });

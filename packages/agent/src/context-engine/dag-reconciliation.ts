@@ -585,7 +585,7 @@ export function createDagContextEngine(
         "DAG reconciliation complete",
       );
 
-      // DAG-05: emit context:mode_switched on a REAL engine-mode switch only.
+      // Emit context:mode_switched on a REAL engine-mode switch only.
       // The switch DIRECTION is detected upstream at the daemon rebuild seam
       // (old vs new contextEngine.version) and surfaced here one-shot via
       // consumePendingModeSwitch — NOT inferred from fullImport (which also
@@ -594,7 +594,7 @@ export function createDagContextEngine(
       // one-time import cost (fullImport / importedCount / durationMs) is known.
       // Guarded on the consumed switch (`if (sw)`), so a brand-new DAG
       // conversation (consume returns undefined) emits nothing. Payload is
-      // identifiers + counts + durations only — no message text (T-85-11).
+      // identifiers + counts + durations only — no message text.
       const sw = deps.consumePendingModeSwitch?.(deps.agentId ?? "");
       if (sw) {
         deps.eventBus?.emit("context:mode_switched", {

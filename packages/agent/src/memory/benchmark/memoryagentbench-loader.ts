@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure MemoryAgentBench dataset loader (SUITE-08 — the academic-core
- * conflict-resolution headline).
+ * Pure MemoryAgentBench dataset loader (the academic-core conflict-resolution
+ * headline).
  *
  * MemoryAgentBench (arXiv 2507.05257, ICLR 2026; github.com/HUST-AI-HYZ/
  * MemoryAgentBench, MIT; UCSD/McAuley) defines FOUR memory abilities —
@@ -11,13 +11,13 @@
  * `{ docs, questions[], abilityType }`: one dated document per source document,
  * and each question tagged with `abilityType` as its `category` so the EXISTING
  * `aggregateAccuracy` (qa-accuracy.ts) scores per-ability with no new scorer.
- * The Conflict-Resolution split is the SUITE-08 headline (it maps to Comis's
+ * The Conflict-Resolution split is the headline (it maps to Comis's
  * Track-F contradiction handling).
  *
  * The full MemoryAgentBench corpus is OPERATOR-PLACED under `$COMIS_BENCH_DATA`
- * (documented in Plan 08's DATASETS.md) and is NEVER committed — only the tiny
+ * (documented in DATASETS.md) and is NEVER committed — only the tiny
  * neutral-placeholder fixture in `__fixtures__/memoryagentbench-sample.json`
- * ships with the repo (licensing + leak hygiene, T-99-07-05).
+ * ships with the repo (licensing + leak hygiene).
  *
  * The source format carries no per-document timestamp, so the loader SYNTHESIZES
  * a deterministic, strictly-increasing per-index `createdAt` from a fixed epoch
@@ -33,13 +33,12 @@
  *
  * SECURITY (ASVS V5): the dataset JSON is UNTRUSTED external input. Every field
  * is read defensively (type-guarded before access) and a structural mismatch —
- * including an ability outside the closed union — returns `err`, never throws
- * (T-99-07). Document content is only ever `JSON.stringify`'d (or kept verbatim
+ * including an ability outside the closed union — returns `err`, never throws.
+ * Document content is only ever `JSON.stringify`'d (or kept verbatim
  * when already a string) into an opaque `content` string, NEVER `eval`/`Function`
- * (T-99-07-04 / AGENTS.md §2.2); a hostile `__proto__` key inside a document is
- * just serialized text and never indexes a write, so it cannot pollute
- * (T-99-07-01). Gold answers ride the questions[] channel only — never doc
- * content (T-99-07-03).
+ * (AGENTS.md §2.2); a hostile `__proto__` key inside a document is
+ * just serialized text and never indexes a write, so it cannot pollute.
+ * Gold answers ride the questions[] channel only — never doc content.
  *
  * @module
  */
@@ -49,7 +48,7 @@ import { ok, err, type Result } from "@comis/shared";
 /**
  * The four MemoryAgentBench ability splits (the closed union — an ability outside
  * this set is a structural mismatch and returns `err`). Conflict-Resolution is the
- * SUITE-08 headline.
+ * headline.
  */
 export type MemoryAgentBenchAbility =
   | "accurate-retrieval"
@@ -95,10 +94,10 @@ export interface MemoryAgentBenchParsed {
    * Question text under `query` (uniform with the other loaders) PLUS the judge's
    * two channels: `category` = the `abilityType` (so `aggregateAccuracy` buckets
    * per-ability) and `answer` (the gold the judge grades against). The gold rides
-   * HERE only — never in `docs[].content` (the anti-leak invariant, T-99-07-03).
+   * HERE only — never in `docs[].content` (the anti-leak invariant).
    */
   questions: Array<{ questionId: string; query: string; category: string; answer: string }>;
-  /** The MemoryAgentBench ability split this item belongs to (the SUITE-08 headline = conflict-resolution). */
+  /** The MemoryAgentBench ability split this item belongs to (the headline = conflict-resolution). */
   abilityType: MemoryAgentBenchAbility;
 }
 
@@ -115,9 +114,9 @@ function isAbility(value: unknown): value is MemoryAgentBenchAbility {
 /**
  * Serialize one source document to opaque `content`. A string document is kept
  * VERBATIM (it is already plain text); any other shape (object/number/array) is
- * `JSON.stringify`'d. NEVER `eval`'d / interpreted (T-99-07-04). A hostile
+ * `JSON.stringify`'d. NEVER `eval`'d / interpreted. A hostile
  * `__proto__` key inside an object document becomes serialized text only — it
- * never indexes a write, so it cannot pollute the prototype (T-99-07-01).
+ * never indexes a write, so it cannot pollute the prototype.
  */
 function docContent(rawDoc: unknown): string {
   return typeof rawDoc === "string" ? rawDoc : JSON.stringify(rawDoc);
@@ -190,7 +189,7 @@ export function loadMemoryAgentBench(raw: unknown): Result<MemoryAgentBenchParse
 }
 
 /**
- * Load a FULL MemoryAgentBench dataset (SUITE-08, full-set half). The
+ * Load a FULL MemoryAgentBench dataset (full-set half). The
  * operator-placed file is an ARRAY of items; a single item object is also
  * accepted (back-compat with the vendored single-item fixture). Each item is
  * parsed by {@link loadMemoryAgentBench}.

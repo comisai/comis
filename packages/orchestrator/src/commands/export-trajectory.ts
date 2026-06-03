@@ -63,7 +63,7 @@ export async function handleExportTrajectory(
 
   // ---- Owner gate ----
   // Pattern from inbound-gate.ts:189.
-  // Only the session owner may trigger an export (STRIDE T-06-05-01).
+  // Only the session owner may trigger an export (STRIDE mitigation).
   if (msg.senderId !== sessionKey.userId) {
     await deliveryService.deliverToChannel(
       adapter,
@@ -80,7 +80,7 @@ export async function handleExportTrajectory(
   // ---- Group: send the ack FIRST, then export ----
   // The ack fires before the await so group members see a prompt response
   // even if the export takes several seconds.
-  // CRITICAL: the ack MUST NOT contain the bundle path (STRIDE T-06-05-02).
+  // CRITICAL: the ack MUST NOT contain the bundle path (STRIDE mitigation).
   if (isGroup) {
     await deliveryService.deliverToChannel(
       adapter,
@@ -113,7 +113,7 @@ export async function handleExportTrajectory(
 
   // ---- Deliver the bundle path ----
   // Privacy reminder is always included to make recipients aware the bundle
-  // contains session transcript + tool outputs (STRIDE T-06-05-02).
+  // contains session transcript + tool outputs (STRIDE mitigation).
   const message =
     `Bundle ready: ${result.bundlePath}\n\n` +
     "This bundle contains session data — treat as sensitive. " +

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * activity-turn-coordinator.test — TURN-04/07 + SEC-04.
+ * activity-turn-coordinator.test.
  *
  * The per-turn coordinator: subscribe on start, unsubscribe on end (and on an
  * aborted turn via try/finally), debounce renderer.apply to ≤1/800ms, feed the
@@ -172,10 +172,10 @@ function makeCoordinatorDeps(overrides?: {
 }
 
 // ---------------------------------------------------------------------------
-// TURN-04 — lifecycle + debounce + WARN translation
+// Lifecycle + debounce + WARN translation
 // ---------------------------------------------------------------------------
 
-describe("createActivityTurnCoordinator — TURN-04 lifecycle + debounce", () => {
+describe("createActivityTurnCoordinator — lifecycle + debounce", () => {
   it("subscribes on start and unsubscribes on dispose", () => {
     const { deps, stream } = makeCoordinatorDeps();
     const coord = createActivityTurnCoordinator(deps);
@@ -261,10 +261,10 @@ describe("createActivityTurnCoordinator — TURN-04 lifecycle + debounce", () =>
 });
 
 // ---------------------------------------------------------------------------
-// SEC-04 — the delete gate
+// The delete gate
 // ---------------------------------------------------------------------------
 
-describe("createActivityTurnCoordinator — SEC-04 delete gate", () => {
+describe("createActivityTurnCoordinator — delete gate", () => {
   it("finalizes a success outcome ONLY after deliveredAtMs is reached (delete never precedes the answer)", async () => {
     const clock = createFakeClock(1_000);
     const { deps, timer, renderer } = makeCoordinatorDeps({ clock });
@@ -358,7 +358,7 @@ describe("createActivityTurnCoordinator — SEC-04 delete gate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// APV-01 — active sub-agent stack + parentActivityId resolution
+// Active sub-agent stack + parentActivityId resolution
 // ---------------------------------------------------------------------------
 //
 // Linkage seam (Open Question 2 / Assumption A2): the ActivityStream emits a
@@ -374,7 +374,7 @@ describe("createActivityTurnCoordinator — SEC-04 delete gate", () => {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-describe("createActivityTurnCoordinator — APV-01 sub-agent parent stack", () => {
+describe("createActivityTurnCoordinator — sub-agent parent stack", () => {
   it("annotates a subagent start event with a uuid parentActivityId resolved from the active turn", () => {
     const { deps, timer, stream, renderer } = makeCoordinatorDeps();
     const coord = createActivityTurnCoordinator(deps);
@@ -604,7 +604,7 @@ describe("createActivityTurnCoordinator — error mapping + counters", () => {
     coord.dispose();
   });
 
-  it("unref's the SEC-04 delivery-gate timer so it never holds the event loop open (WR-01)", async () => {
+  it("unref's the delivery-gate timer so it never holds the event loop open", async () => {
     const clock = createFakeClock(1_000);
     const { deps, timer } = makeCoordinatorDeps({ clock });
     const coord = createActivityTurnCoordinator(deps);
@@ -621,7 +621,7 @@ describe("createActivityTurnCoordinator — error mapping + counters", () => {
     coord.dispose();
   });
 
-  it("cancels the in-flight delivery-gate timer when the turn is disposed mid-gate (WR-01)", () => {
+  it("cancels the in-flight delivery-gate timer when the turn is disposed mid-gate", () => {
     const clock = createFakeClock(1_000);
     const { deps, timer } = makeCoordinatorDeps({ clock });
     const coord = createActivityTurnCoordinator(deps);
@@ -647,7 +647,7 @@ describe("createActivityTurnCoordinator — error mapping + counters", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WIRE-08 — circuit-breaker gate inside flushApply (skip apply when tripped,
+// Circuit-breaker gate inside flushApply (skip apply when tripped,
 // record every apply result, single WARN + counter bump per fresh trip)
 // ---------------------------------------------------------------------------
 
@@ -679,7 +679,7 @@ function makeBreakerStub(opts?: { tripped?: boolean }) {
   };
 }
 
-describe("createActivityTurnCoordinator — WIRE-08 circuit-breaker gate", () => {
+describe("createActivityTurnCoordinator — circuit-breaker gate", () => {
   it("skips renderer.apply for a turn whose breaker key is already tripped", () => {
     const stub = makeBreakerStub({ tripped: true });
     const { deps, timer, stream, renderer } = makeCoordinatorDeps();
@@ -793,7 +793,7 @@ describe("createActivityTurnCoordinator — WIRE-08 circuit-breaker gate", () =>
 });
 
 // ---------------------------------------------------------------------------
-// WS-D Phase 78 — planStream subscription + PlanUpdate→PlanSnapshot adapter
+// planStream subscription + PlanUpdate→PlanSnapshot adapter
 // with Security V9 description redaction (Pitfall 3 lock).
 //
 // The coordinator subscribes the injected `planStream` inside start(ctx) and
@@ -842,7 +842,7 @@ function makePlanStream(): {
   };
 }
 
-describe("createActivityTurnCoordinator — WS-D planStream subscription", () => {
+describe("createActivityTurnCoordinator — planStream subscription", () => {
   it("subscribes to planStream on start(ctx) and unsubscribes on releaseSubscription via dispose", () => {
     const planStream = makePlanStream();
     const { deps } = makeCoordinatorDeps();

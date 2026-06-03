@@ -30,7 +30,7 @@ import { buildInstallDetourHint } from "./exec-tool/index.js";
 // ProcessSession.installDetourDecision (process-registry.ts type-only import);
 // no direct import here — never re-derive at status-query time.
 
-// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
+// Activity label spec. Descriptor name ==
 // emitted name (process-tool.ts:111 → `name: "process"`). No detailKeys: the
 // process tool is action-discriminated (start/stop/status/...) and the
 // per-action labels can be added later via the `actions` map — the static
@@ -100,7 +100,7 @@ interface ToolLogger {
 export interface ProcessToolDeps {
   readonly registry: ProcessRegistry;
   readonly logger?: ToolLogger;
-  /** REQUIRED for the v1.1 capability layer — used by `process.status` augmentation. */
+  /** REQUIRED for the capability layer — used by `process.status` augmentation. */
   readonly toolCapabilityPort: ToolCapabilityPort;
 }
 

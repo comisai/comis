@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for approval-token-route.ts (APV-10 / SEC-06 email approval link).
+ * Unit tests for approval-token-route.ts (email approval link).
  *
  * The email `[FAILED]` digest carries a single-use, time-bounded, signed approval
  * LINK to this gateway GET handler. The token is the ONLY credential, so it must be:
@@ -10,12 +10,12 @@
  *   2. revoke-BEFORE-outcome regardless of HTTP method — a HEAD/preview prefetch
  *      consumes the token (mail clients prefetch links), so a following GET finds
  *      a dead token; and even when the resolution path errors AFTER the revoke,
- *      the token is already gone (no reusable state, T-73-29).
+ *      the token is already gone (no reusable state).
  *   3. 5-min auto-expiry — after APPROVAL_TOKEN_TIMEOUT_MS the entry auto-deletes
  *      and a GET → invalid.
  *   4. unguessable — minted via generateStrongToken() (384-bit) — asserted at the
  *      composition root; here the route consumes whatever token the map holds.
- *   5. the token NEVER appears in any log line (T-73-31).
+ *   5. the token NEVER appears in any log line.
  *
  * Mirrors oauth-callback-route.test.ts: a Hono `app.request(url, { method })`
  * driver, a fake clock/timer (vi.useFakeTimers), a token `Map`, and a fake
@@ -162,7 +162,7 @@ describe("createApprovalTokenRoute — single-use email approval token", () => {
     expect(resolver.calls).toHaveLength(1);
   });
 
-  it("leaves the token dead even when the resolution path errors AFTER the revoke (no reusable state, T-73-29)", async () => {
+  it("leaves the token dead even when the resolution path errors AFTER the revoke (no reusable state)", async () => {
     const resolver = makeResolver({ throwOnCall: true });
     const deps = makeDeps({ resolveApproval: resolver.fn });
     seedToken(deps.tokens, "tok-1", makeEntry());
@@ -170,7 +170,7 @@ describe("createApprovalTokenRoute — single-use email approval token", () => {
 
     // The forced-failure resolution must not re-arm the token.
     const res = await request(app, "tok-1");
-    // WR-02: a post-revoke resolution failure is a CONSUMED-but-failed terminal
+    // A post-revoke resolution failure is a CONSUMED-but-failed terminal
     // state, NOT a transient server error. 500 is the conventional "retry me"
     // signal and contradicts the "cannot be retried" body copy (a mail-client
     // prefetch that trips this would invite the user to retry a dead token).
@@ -194,7 +194,7 @@ describe("createApprovalTokenRoute — single-use email approval token", () => {
     expect(resolver.calls).toHaveLength(0);
   });
 
-  it("does not log the token string on any line (T-73-31)", async () => {
+  it("does not log the token string on any line", async () => {
     const logger = makeMockLogger();
     const resolver = makeResolver({ resolved: true });
     const deps = makeDeps({ resolveApproval: resolver.fn, logger });

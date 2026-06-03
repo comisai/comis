@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * INFRA: Infrastructure Mutation Operations Integration Tests
+ * Infrastructure Mutation Operations Integration Tests
  *
  * Validates mutation RPC methods through the running daemon's internal rpcCall:
- *   INFRA-02: config.patch modifies config with validation, immutable key protection,
- *             and admin trust enforcement
- *   INFRA-05: gateway.restart returns correct response with admin trust enforcement
+ *   - config.patch modifies config with validation, immutable key protection,
+ *     and admin trust enforcement
+ *   - gateway.restart returns correct response with admin trust enforcement
  *
  * Uses a temp config file (copied from config.test.yaml with port 8451 and unique
  * dbPath) to avoid corrupting committed test configs when config.patch writes to disk.
@@ -54,7 +54,7 @@ type RpcCall = (method: string, params: Record<string, unknown>) => Promise<unkn
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("INFRA: Infrastructure Mutation Operations", () => {
+describe("Infrastructure Mutation Operations", () => {
   let handle: TestDaemonHandle;
   let rpcCall: RpcCall;
   let tmpDir: string;
@@ -117,7 +117,7 @@ describe("INFRA: Infrastructure Mutation Operations", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // INFRA-02: config.patch tests
+  // config.patch tests
   // -------------------------------------------------------------------------
 
   it(
@@ -203,7 +203,7 @@ describe("INFRA: Infrastructure Mutation Operations", () => {
   );
 
   // -------------------------------------------------------------------------
-  // INFRA-05: gateway.restart tests
+  // gateway.restart tests
   // -------------------------------------------------------------------------
 
   // Non-admin rejection MUST run before the success test (which kills the daemon)

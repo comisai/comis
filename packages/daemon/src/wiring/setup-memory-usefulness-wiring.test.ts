@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for wireMemoryUsefulness() — the FEED-01 → FEED-02 write-back subscriber.
+ * Tests for wireMemoryUsefulness() — the recall-utility write-back subscriber.
  *
  * The daemon is the ONLY place holding BOTH the bus AND the @comis/memory
  * adapter (the agent↛memory cut). This wiring subscribes to memory:recall_used
@@ -71,7 +71,7 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     );
   });
 
-  it("forwards the event intent into the recordUsage scope (LEARN-01 write — the per-intent bucket)", async () => {
+  it("forwards the event intent into the recordUsage scope (the per-intent bucket)", async () => {
     const bus = new TypedEventBus();
     const recordUsage = vi.fn(async (): Promise<Result<void, Error>> => ok(undefined));
     const usefulnessStore = {
@@ -93,11 +93,11 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     expect(recordUsage).toHaveBeenCalledTimes(1);
     const scope = recordUsage.mock.calls[0]![2] as { intent?: string };
     // The event's intent reaches recordUsage so the per-intent usefulness bucket
-    // is actually written (the LEARN-01 write side).
+    // is actually written (the per-intent write side).
     expect(scope.intent).toBe("temporal");
   });
 
-  it("omits intent from the scope when the event carries none (the GLOBAL bucket — byte-identical v2.8)", async () => {
+  it("omits intent from the scope when the event carries none (the GLOBAL bucket — byte-identical to the pre-per-intent write)", async () => {
     const bus = new TypedEventBus();
     const recordUsage = vi.fn(async (): Promise<Result<void, Error>> => ok(undefined));
     const usefulnessStore = {
@@ -120,7 +120,7 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     expect(recordUsage).toHaveBeenCalledTimes(1);
     const scope = recordUsage.mock.calls[0]![2] as Record<string, unknown>;
     // No intent key at all (NOT intent: undefined) → the adapter resolves the
-    // global bucket; the scope is byte-identical to the pre-LEARN-01 write.
+    // global bucket; the scope is byte-identical to the pre-per-intent write.
     expect("intent" in scope).toBe(false);
   });
 

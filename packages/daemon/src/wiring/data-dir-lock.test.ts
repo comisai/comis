@@ -90,7 +90,7 @@ describe("acquireDataDirLock", () => {
   });
 });
 
-describe("acquireDataDirLock parent-dir fsync (WR-03)", () => {
+describe("acquireDataDirLock parent-dir fsync", () => {
   let dataDir: string;
 
   beforeEach(() => {

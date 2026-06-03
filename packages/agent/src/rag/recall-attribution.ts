@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Recall-usage attribution (FEED-01). PURE function — no I/O, no Result, no
+ * Recall-usage attribution. PURE function — no I/O, no Result, no
  * throws, no clock (AGENTS.md §2.1 pure-fn carve-out; mirrors score.ts /
  * recall-eval.ts). Imports @comis/core types only — the agent↛memory build cut
  * (architecture.test.ts "agent -> memory cut", MEMORY_ALLOWLIST = []).
@@ -17,7 +17,7 @@
  * Privacy: this fn reads memory content IN-PROCESS only. It NEVER logs, emits,
  * or returns content — its output is opaque memory IDS partitioned into
  * {used, ignored}. The caller (executor-post-execution.ts) puts ids+counts on
- * the bus; content never leaves the agent boundary (Pitfall 4 / 9, T-93-06/07).
+ * the bus; content never leaves the agent boundary.
  *
  * Scoring (per recalled memory):
  *   overlap = |memSignificantUnigrams ∩ respTokens| + |memSignificantBigrams ∩ respBigrams|
@@ -45,9 +45,9 @@ export interface RecallAttribution {
 /**
  * Small inline stopword set. Kept deliberately tiny (the most frequent English
  * function words) — the goal is to drop terms that carry no attribution signal,
- * not to do full linguistic stemming. Matches the heuristic-design note in
- * 93-RESEARCH.md (Pattern 4): "drop a small stopword set; prefer content-word +
- * bigram overlap over raw bag-of-words".
+ * not to do full linguistic stemming. This follows the heuristic-design
+ * principle of dropping a small stopword set and preferring content-word +
+ * bigram overlap over raw bag-of-words.
  */
 const STOPWORDS: ReadonlySet<string> = new Set([
   "the", "a", "an", "of", "and", "to", "in", "is", "it", "for", "on", "with",

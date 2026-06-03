@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated KEYLESS HEAD-TO-HEAD PROVING-MACHINE harness (PROVE-01/02/03, Phase
- * 104-04) -- the 4th replay of the KG-05 / REASON-05 / IQ-04 gate discipline: a
- * deterministic, no-API-cost ($0) proof that the WHOLE believability machine
- * built across Wave 1 (104-01/02/03) runs end-to-end, keyless, before a single
- * dollar of competitor/judge spend is paid.
+ * Env-gated KEYLESS HEAD-TO-HEAD PROVING-MACHINE harness -- the latest replay of
+ * the keyless gate discipline: a deterministic, no-API-cost ($0) proof that the
+ * WHOLE believability machine built across the first wave runs end-to-end, keyless,
+ * before a single dollar of competitor/judge spend is paid.
  *
  * THE HONEST SCOPE SPLIT (the reason VERDICT is PARTIAL):
  *   - WHAT THIS HARNESS MEASURES (keyless, $0, deterministic): the proving
@@ -14,14 +13,14 @@
  *     sweep's off-toggle is byte-identical to the shipping baseline (a mistyped
  *     leaf would fail loudly), an ABSENT competitor adapter skips-with-disclosure
  *     (never a fabricated number), the letta-fs baseline runs as the control, and
- *     a REAL Comis recall cell with the v2.8 lanes ON drives the production
+ *     a REAL Comis recall cell with the lanes ON drives the production
  *     pipeline (the lanes-are-not-dormant wiring proof).
  *   - WHAT IS DEFERRED to the OPERATOR-COSTED re-run (NOT measured here): the
  *     ACTUAL competitor numbers (mem0 / zep / hindsight / mnemosyne under one
  *     protocol) and the cross-JUDGED headline spread over two REAL judge passes.
  *     Those need keys + competitor installs + LLM spend; quoting a guessed delta
  *     would be exactly the fabrication this gate exists to prevent. They are the
- *     home for the KG-05 / REASON-05 / IQ-04 deferred QA lifts.
+ *     home for the deferred QA lifts from the earlier KG / reasoning / IQ gates.
  *
  * NO LLM, NO KEY, NO PROVIDER CALL: the judge is an INJECTED deterministic stub
  * (a pure fixed-verdict map -- there is no keyless LLM judge), the competitor
@@ -36,13 +35,13 @@
  *   - recall = `createMemoryRecall(deps, cfg)` (bare @comis/agent orchestrator),
  *   - deps.tripleStore = `createSqliteTripleStore({ db: adapter.getDb() })`,
  *   - cfg.lanes.graphSpread = { enabled:true, ... } + cfg.mmr = { enabled:true },
- * so a green "ranked results returned" is the Pitfall-2 guard that the shipped
+ * so a green "ranked results returned" is the guard that the shipped
  * lanes are wired into recall, not dormant.
  *
  * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import
  * @comis/memory (a devDependency) -- the agent->memory cut excludes the `.test.ts`
  * suffix (source-rules.test.ts `excludeFileSuffixes: [".test.ts"]`). Mirrors the
- * blessed precedent graph-spread-lane-contribution.bench.test.ts (KG-05).
+ * blessed precedent graph-spread-lane-contribution.bench.test.ts.
  *
  * SECURITY: fresh `mkdtempSync` tmp DB + tmp history dir (NEVER ~/.comis),
  * `trustLevel:"learned"`, `tenantId:"default"`/`agentId:"bench"` -- isolated from
@@ -116,7 +115,7 @@ const BENCH_SESSION_KEY: SessionKey = {
 const BENCH_AGENT_ID = "bench";
 
 /**
- * Base recall config with the v2.8 lanes ON (the lanes-ON wiring proof, Pitfall 2).
+ * Base recall config with the lanes ON (the lanes-ON wiring proof).
  * graphSpread + mmr enabled; alphas 0 so the lift is attributable to the lanes, not
  * a recency/trust confound.
  */
@@ -138,10 +137,10 @@ function lanesOnRecallConfig(): MemoryRecallConfig {
 }
 
 /**
- * The shipping-default baseline used for the off=byte-identity oracle: every v2.8
+ * The shipping-default baseline used for the off=byte-identity oracle: every
  * factor's leaf EXPLICITLY off. `applyFactor(baseline, factor, false)` must be
  * JSON-byte-identical to this -- a mistyped knob leaf would set a phantom key and
- * diverge, failing loudly (the T-104-04 / T-104-02-04 safety net).
+ * diverge, failing loudly (the safety net).
  */
 function explicitOffBaseline(): MemoryRecallConfig {
   return {
@@ -216,7 +215,7 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
       ],
     });
 
-    // 2. REAL COMIS CELL: drive the production recall pipeline with the v2.8 lanes ON
+    // 2. REAL COMIS CELL: drive the production recall pipeline with the lanes ON
     //    over a fresh adapter + a structurally-linked triple edge (the lanes-ON proof).
     const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "prove.db")), undefined);
     const seedId = randomUUID();
@@ -340,7 +339,7 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
       expect(controlResult.system).toBe("letta-fs-baseline");
       // The manifestRef embeds the explicit control label -> never Comis's headline.
       expect(controlResult.manifestRef).toContain(LETTA_FS_BASELINE_CONTROL_LABEL);
-      // WR-02: the control OBSERVED its formatted full-dump context — contextChars
+      // The control OBSERVED its formatted full-dump context — contextChars
       // is the rendered length of the two-doc haystack, proving the format call is
       // load-bearing (a faithful $0 execution, not a discarded call).
       expect(
@@ -350,8 +349,8 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
     }
   });
 
-  it("a Comis cell with the v2.8 lanes ON drives the REAL recall pipeline at $0", () => {
-    // The lanes-ON wiring proof (Pitfall 2): the real production pipeline runs and
+  it("a Comis cell with the lanes ON drives the REAL recall pipeline at $0", () => {
+    // The lanes-ON wiring proof: the real production pipeline runs and
     // returns ranked results. We assert it ran (not a number) -- the lanes are wired,
     // not dormant. The seed doc (FTS-matched) must be present.
     expect(comisRanked.length, "the real recall pipeline returned ranked results").toBeGreaterThan(0);
@@ -369,7 +368,7 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
     expect(ledgerDifferentDateOk, "a DIFFERENT-date row coexists (append-only)").toBe(true);
   });
 
-  it("the ablation sweep enumerates each v2.8 factor; off === baseline byte-identity", () => {
+  it("the ablation sweep enumerates each factor; off === baseline byte-identity", () => {
     const baselineJson = JSON.stringify(explicitOffBaseline());
     for (const factor of V28_ABLATION_FACTORS) {
       // The write-side reason-observations factor is a recall-config no-op (its knob
@@ -480,7 +479,7 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
         system: controlResult.ran === true ? controlResult.system : "ERROR",
         ran: controlResult.ran === true,
         isControl: controlResult.ran === true ? controlResult.isControl : false,
-        // WR-02: the observed length of the control's formatted full-dump context —
+        // The observed length of the control's formatted full-dump context —
         // the load-bearing proof that the keyless control did real work (not 0).
         contextChars: controlResult.ran === true ? (controlResult.contextChars ?? 0) : 0,
       },

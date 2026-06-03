@@ -39,7 +39,7 @@
  *     deduper internally calls the SDK's `refreshAuthorization`, the same
  *     function the SDK transport would have called on a 401.
  *
- * What this test does NOT cover (DEFERRED to human UAT / DEF-66-01):
+ * What this test does NOT cover (deferred to human UAT):
  *   - The literal SDK transport (`StreamableHTTPClientTransport`) chained end
  *     to end. The transport requires a working MCP server; the in-process
  *     mock does NOT implement the MCP wire protocol. Asserting the SAME

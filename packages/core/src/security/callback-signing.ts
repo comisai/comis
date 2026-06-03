@@ -3,7 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { err, ok, type Result } from "@comis/shared";
 
 /**
- * Signed interactive-approval callback primitive (APV-05 / SEC-06).
+ * Signed interactive-approval callback primitive.
  *
  * Wire format (spec §6.4.2): `v1.<choice>.<shortId>.<hmac>` where
  * - `choice` ∈ {approve|deny|details}

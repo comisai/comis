@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * bounded-queue — the per-consumer backpressure ring at the ActivityStream
- * subscription boundary (STRAT-08, spec §5.1).
+ * subscription boundary (spec §5.1).
  *
  * Spec §5.1: every consumer downstream of ActivityStream uses a bounded queue
  * with a documented drop policy so the agent loop never blocks on a slow
@@ -17,7 +17,7 @@
  *   - `push(item)` is non-blocking: a synchronous enqueue, no await, no timer.
  *
  * Pure data structure. No logger here — the *consumer* (ActivityStream /
- * coordinator) reads `droppedCount()` / `highWater()` and emits the OBS-01
+ * coordinator) reads `droppedCount()` / `highWater()` and emits the
  * `activity.events.dropped` + `queue_high_water` counters (spec §20.1).
  *
  * The optional `timer: TimerPort` is accepted only so a test can assert the
@@ -67,9 +67,9 @@ export interface BoundedQueue<T> {
   drain(): T[];
   /** Current total queued count (main ring + failure overflow). */
   size(): number;
-  /** Cumulative count of items dropped since construction (OBS-01). */
+  /** Cumulative count of items dropped since construction. */
   droppedCount(): number;
-  /** Peak `size()` observed since construction — never resets on drain (OBS-01 `queue_high_water`). */
+  /** Peak `size()` observed since construction — never resets on drain (`queue_high_water`). */
   highWater(): number;
 }
 

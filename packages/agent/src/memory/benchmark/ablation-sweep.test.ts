@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first co-located unit tests for the v2.8 ablation-sweep registry
- * (Phase 104, Plan 104-02, PROVE-03 -- "each new factor has an ablation toggle").
+ * RED-first co-located unit tests for the ablation-sweep registry
+ * (each new factor has an ablation toggle).
  *
- * THE SAFETY-NET TEST (Test 3): off=byte-identity. The corrected PATTERNS finding
- * (104-PATTERNS.md, recall-types.ts:142-182) is that the verified knob leaves are
+ * THE SAFETY-NET TEST (Test 3): off=byte-identity. The corrected finding
+ * (recall-types.ts:142-182) is that the verified knob leaves are
  * `lanes.graphSpread.enabled`, `mmr.enabled` (NOT `rag.mmr.enabled`),
  * `queryUnderstanding.intentReweight` (NOT `.intent`), `queryUnderstanding.temporalParse`,
  * and the write-side `memoryReasoning.enabled`. A MISTYPED leaf is a silent no-op
@@ -48,7 +48,7 @@ function baselineConfig(): MemoryRecallConfig {
 }
 
 describe("ablation-sweep -- V28_ABLATION_FACTORS registry (the verified leaves)", () => {
-  it("Test 1: maps exactly the 5 shipped v2.8 factors to their VERIFIED knob leaves", () => {
+  it("Test 1: maps exactly the 5 shipped factors to their VERIFIED knob leaves", () => {
     const byFactor = new Map(V28_ABLATION_FACTORS.map((f) => [f.factor, f.knobPath]));
     expect(byFactor.get("kg-graph-spread")).toBe("lanes.graphSpread.enabled");
     expect(byFactor.get("iq-mmr")).toBe("mmr.enabled");

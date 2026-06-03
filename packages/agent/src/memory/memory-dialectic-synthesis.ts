@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The PURE dialectic synthesis helpers (Phase 109 — DIAL-01 + DIAL-03).
+ * The PURE dialectic synthesis helpers.
  *
  * The genuinely-new logic of the phase, isolated as side-effect-free functions so the
  * trust-first contradiction ordering, the mandatory abstention, and the
@@ -20,7 +20,7 @@
  *   over the recall set + the parsed result — it does NOT call the seam.
  * - CITATIONS are validated ⊆ recalled ids ({@link mapCitationsToSourceIds}, Pitfall 4): a
  *   hallucinated/forged id the model emits is DROPPED; each surviving citation is traversed
- *   to its `sourceIds` (the DIAL-03 reasoning-tree provenance chain).
+ *   to its `sourceIds` (the reasoning-tree provenance chain).
  *
  * Architecture: agent-side, `@comis/core` port TYPES only (`MemorySearchResult`,
  * `TrustLevel`). No memory-package import, no clock, no IO, no model (the agent↛memory cut
@@ -57,7 +57,7 @@ export type ParsedSynthesis =
   | { abstain: true }
   | { abstain: false; answer: string; citedIds: string[] };
 
-/** The DIAL-03 reasoning-tree chain: a validated citation id and the sourceIds it traverses to. */
+/** The reasoning-tree chain: a validated citation id and the sourceIds it traverses to. */
 export interface CitationChain {
   /** The recalled memory id the model cited (validated ⊆ the recalled ids). */
   citationId: string;
@@ -73,7 +73,7 @@ export interface AssembledSynthesis {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Trust-first contradiction ordering (DIAL-01)
+// 1. Trust-first contradiction ordering
 // ---------------------------------------------------------------------------
 
 /**
@@ -99,7 +99,7 @@ export function orderByTrust(items: MemorySearchResult[]): MemorySearchResult[] 
 }
 
 // ---------------------------------------------------------------------------
-// 2. Mandatory abstention, decided in CODE (DIAL-01, Pitfall 5)
+// 2. Mandatory abstention, decided in CODE (Pitfall 5)
 // ---------------------------------------------------------------------------
 
 /** The set of recalled ids — the citation-validation domain. */
@@ -129,12 +129,12 @@ export function abstainIfInsufficient(
 }
 
 // ---------------------------------------------------------------------------
-// 3. Citation → recalled-id → sourceId mapping (DIAL-02 citations-are-ids + DIAL-03)
+// 3. Citation → recalled-id → sourceId mapping (citations-are-ids)
 // ---------------------------------------------------------------------------
 
 /**
  * Validate citations ⊆ recalled ids, then traverse each survivor to its `sourceIds` (the
- * DIAL-03 reasoning-tree chain). A model-emitted id that is NOT in the recalled set is
+ * reasoning-tree chain). A model-emitted id that is NOT in the recalled set is
  * DROPPED (Pitfall 4 — a hallucinated/forged citation can never enter the answer). An entry
  * with no `sourceIds` yields an empty chain.
  */
@@ -153,8 +153,8 @@ export function mapCitationsToSourceIds(
 }
 
 /**
- * The full validated citation→sourceId chain for the recall-trace (DIAL-03). A thin alias
- * over {@link mapCitationsToSourceIds} so Plan 03 can surface the reasoning tree in the
+ * The full validated citation→sourceId chain for the recall-trace. A thin alias
+ * over {@link mapCitationsToSourceIds} so the daemon can surface the reasoning tree in the
  * recall-trace without re-deriving it from the assembled answer.
  */
 export function citationChains(
@@ -165,7 +165,7 @@ export function citationChains(
 }
 
 // ---------------------------------------------------------------------------
-// Composed assembler (consumed by Plan 03's RPC handler)
+// Composed assembler (consumed by the `memory.ask` RPC handler)
 // ---------------------------------------------------------------------------
 
 /**

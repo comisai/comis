@@ -22,11 +22,11 @@ export interface InfraEvents {
      * Short, renderer-safe approval id (12-char base62) minted by the
      * approval gate. REQUIRED on the event so renderer prompts and the
      * `/approve <id>` / `/deny <id>` slash commands share the same id, and
-     * the full `requestId` never reaches renderers (§4.2, §6.4.1; EVT-05).
+     * the full `requestId` never reaches renderers (§4.2, §6.4.1).
      *
      * Build coupling: the SOLE emit site that mints + supplies `shortId`
-     * (`approval/approval-gate.ts`) lands in plan 70-12 — this schema only
-     * declares the required field.
+     * lives in `approval/approval-gate.ts` — this schema only declares the
+     * required field.
      */
     shortId: string;
     toolName: string;
@@ -576,11 +576,11 @@ export interface InfraEvents {
    * Secret written to or removed from the live SecretManager (metadata only — never the value).
    *
    * For `action: "upserted"` on a NEW key: the value is immediately available
-   * via `secretManager.get()` — live-applied to the shared Map (additive no-restart, P4a).
+   * via `secretManager.get()` — live-applied to the shared Map (additive, no restart).
    *
    * For `action: "upserted"` on an EXISTING key (rotation): the Map holds the OLD value
    * until the daemon restarts (SIGUSR2 is scheduled); do NOT call `secretManager.get()`
-   * in response to this event expecting the new value. Phase 6/P4b will make rotation
+   * in response to this event expecting the new value. A future change will make rotation
    * live-apply too, at which point this note becomes obsolete.
    *
    * For `action: "removed"`: the key is no longer in the Map (removed before emit).
@@ -680,7 +680,7 @@ export interface InfraEvents {
   };
 
   // -------------------------------------------------------------------------
-  // Credential broker events (Phase 1: type declarations; Phase 2: emit sites)
+  // Credential broker events
   // -------------------------------------------------------------------------
 
   /** Broker resolved a binding for a CONNECT request */
@@ -714,7 +714,7 @@ export interface InfraEvents {
   "broker:injected": {
     sessionId: string;
     host: string;
-    /** IN-02: closed union matching InjectionRule["kind"] — not open string */
+    /** Closed union matching InjectionRule["kind"] — not open string */
     ruleKind: InjectionRule["kind"];
     timestamp: number;
   };
@@ -739,7 +739,7 @@ export interface InfraEvents {
   /** Egress attempt to non-broker host blocked (broker-only mode) */
   "broker:egress_blocked": {
     sessionId: string;
-    /** SHA-256 hex of the target host — never plaintext (OBS-01 redaction) */
+    /** SHA-256 hex of the target host — never plaintext (redaction) */
     targetHostHash: string;
     timestamp: number;
   };

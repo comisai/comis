@@ -67,54 +67,54 @@ export interface SingleAgentDeps {
   /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
    *  rerank). Threaded into createPiExecutor like memoryPort; absent -> fusion order. */
   rerankerPort?: import("@comis/core").RerankerPort;
-  /** Phase 92: model-present probe result from setup-memory; drives per-agent effective
+  /** Model-present probe result from setup-memory; drives per-agent effective
    *  rerank precedence. Same value as the build gate (Pitfall 4 — one source). */
   rerankerModelPresent?: boolean;
-  /** Entity-associative store (Phase 83). Threaded into each per-agent createPiExecutor
+  /** Entity-associative store. Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the
    *  shared db handle; the entity lane stays dormant until an operator enables
    *  `agents.<id>.rag.entityLane.enabled` (default OFF). */
   entityStore?: import("@comis/core").MemoryEntityStore;
-  /** Temporal-spread store (Phase 95, LANES-02). Threaded into each per-agent createPiExecutor
+  /** Temporal-spread store. Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the shared
    *  db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator enables
    *  `agents.<id>.rag.lanes.temporal.enabled` (default OFF). */
   temporalStore?: import("@comis/core").MemoryTemporalStore;
-  /** Causal store (Phase 96, EXTRACT-03). Threaded into each per-agent createPiExecutor
+  /** Causal store. Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall, the 5th causal lane). Built in
    *  setup-memory on the shared db handle; the segregated port TYPE (agent↛memory cut). Dormant
    *  until an operator enables `agents.<id>.rag.lanes.causal.enabled` (default OFF). */
   causalStore?: import("@comis/core").MemoryCausalStore;
-  /** Triple store (Phase 100, KG-01). Threaded into each per-agent createPiExecutor (the
+  /** Triple store. Threaded into each per-agent createPiExecutor (the
    *  executor recall read path -> createMemoryRecall, the 6th graph-spread lane). Built in
    *  setup-memory on the shared db handle; the segregated port TYPE (agent↛memory cut). Dormant
    *  until an operator enables `agents.<id>.rag.lanes.graphSpread.enabled` (default OFF). */
   tripleStore?: import("@comis/core").TripleStorePort;
-  /** Embedding read store (Phase 102, IQ-01). Threaded into each per-agent createPiExecutor
+  /** Embedding read store. Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall, the MMR diversity re-rank's scoped
    *  embedding read). Built in setup-memory on the shared db handle; the segregated port TYPE
    *  (agent↛memory cut). Dormant until an operator enables `agents.<id>.rag.mmr.enabled`
    *  (default OFF). */
   embeddingStore?: import("@comis/core").MemoryEmbeddingStore;
-  /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
+  /** Usefulness store. Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the
    *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator
    *  enables `agents.<id>.rag.feedback.enabled` (default OFF). */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
-  /** Per-user representation store (Phase 107, USER-03 — Track E1). Threaded into each per-agent
+  /** Per-user representation store. Threaded into each per-agent
    *  createPiExecutor (the executor recall read path -> prompt-assembly's LLM-free `<user_profile>`
    *  standing-block injection). Built in setup-memory on the shared db handle; the segregated port
    *  TYPE (agent↛memory cut). Dormant until the offline builder writes rows (default-OFF cost gate);
    *  absent ⇒ no read, no push, byte-identical prompt. */
   userRepresentationStore?: import("@comis/core").UserRepresentationStore;
-  /** Directional relationship store (Phase 108, SOCIAL-02/03 — Track E2). Threaded into each per-agent
+  /** Directional relationship store. Threaded into each per-agent
    *  createPiExecutor (the executor recall read path -> prompt-assembly's LLM-free `<channel_relationships>`
    *  standing-block injection). Built in setup-memory on the shared db handle; the segregated port TYPE
    *  (agent↛memory cut). Dormant until the offline builder writes rows AND the operator enables the
-   *  SOCIAL-03 dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`); absent ⇒
+   *  dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`); absent ⇒
    *  no read, no push, byte-identical prompt. */
   relationshipStore?: import("@comis/core").RelationshipStore;
-  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2). Threaded into each per-agent createPiExecutor
+  /** Tuned-alpha store. Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> prompt-assembly's buildScoringAlphas overlay; the four learned
    *  non-trust alphas, the trust weight stays config-sourced — belt #2). Built in setup-memory on the
    *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until BOTH the recall-side
@@ -230,8 +230,8 @@ export interface SingleAgentResult {
   /**
    * Per-agent ExecutionPlanHolder (typed as the read-only port surface). This
    * is the SAME reference threaded into PiExecutorDeps.executionPlanHolder
-   * AND AcpServerDeps.executionPlanPort via createAcpWiring (T-74-33). WS-D
-   * Phase 78 exposes it here so the daemon can also thread it into
+   * AND AcpServerDeps.executionPlanPort via createAcpWiring. It is exposed here
+   * so the daemon can also thread it into
    * ChannelsDeps.executionPlanPort — keeping the single-shared-holder
    * invariant (Pitfall 1: a parallel holder would always read empty).
    */

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated KEYLESS per-user-representation mechanical-claims harness (USER-04,
- * Phase 107-05) -- the FREE, deterministic, no-API-cost measurement of the SIX
+ * Env-gated KEYLESS per-user-representation mechanical-claims harness
+ * -- the FREE, deterministic, no-API-cost measurement of the SIX
  * MECHANICAL claims the per-user representation feature makes, over the REAL SOLE
  * adapter + the REAL offline builder + the REAL LLM-free injection formatter.
  *
@@ -22,7 +22,7 @@
  *      external-only source set writes 0 rows (the job's unconditional external-exclude).
  *   3. REDACTION-CLEAN: a secret-bearing candidate is blocked by `validateMemoryWrite`
  *      (the job's redaction firewall -> 0 rows; a non-`clean` verdict is SKIPPED, never
- *      down-stored -- the USER Pitfall-2 hardening).
+ *      down-stored -- the redaction hardening).
  *   4. (tenant, agent, user) ISOLATION: a row written under scope A is ABSENT across all
  *      three foreign axes (cross-tenant / cross-agent / cross-user) and PRESENT in-scope.
  *   5. DEFAULT-OFF BYTE-IDENTITY: with no profile rows the formatter returns null (nothing
@@ -42,7 +42,7 @@
  * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import
  * @comis/memory (a devDependency) -- the agent->memory cut excludes the `.test.ts`
  * suffix (source-rules.test.ts `excludeFileSuffixes: [".test.ts"]`). Mirrors the
- * blessed precedent recall-iq-contribution.bench.test.ts (IQ-04).
+ * blessed precedent recall-iq-contribution.bench.test.ts.
  *
  * SECURITY: fresh `mkdtempSync` tmp DB (NEVER ~/.comis); `tenantId:"default"`/
  * `agentId:"bench"` -- isolated from any live agent. All fixture strings are synthetic
@@ -167,7 +167,7 @@ async function runBuilderWith(args: {
 // CLAIM 1 -- prefix-typing round-trips
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("user-representation: prefix-typing round-trips (USER-04 claim 1, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("user-representation: prefix-typing round-trips (claim 1, keyless gated)", () => {
   it("upserts each of the four prefix-types and the scoped read returns them typed", async () => {
     const { store, dir } = makeStore("prefix");
     const reportDir = resolveReportDir(dir);
@@ -199,7 +199,7 @@ describe.skipIf(!COMIS_BENCH)("user-representation: prefix-typing round-trips (U
 // CLAIM 2 -- external REJECTED (anti-poisoning)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("user-representation: external REJECTED (USER-04 claim 2, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("user-representation: external REJECTED (claim 2, keyless gated)", () => {
   it("rejects an external-trust upsert at the write boundary AND writes 0 rows from external-only sources", async () => {
     const { store, dir } = makeStore("external");
     const reportDir = resolveReportDir(dir);
@@ -247,7 +247,7 @@ describe.skipIf(!COMIS_BENCH)("user-representation: external REJECTED (USER-04 c
 // CLAIM 3 -- redaction-clean
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("user-representation: redaction-clean (USER-04 claim 3, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("user-representation: redaction-clean (claim 3, keyless gated)", () => {
   it("blocks a secret-bearing candidate via validateMemoryWrite (0 rows, never down-stored)", async () => {
     const { store, dir } = makeStore("redaction");
     const reportDir = resolveReportDir(dir);
@@ -259,7 +259,7 @@ describe.skipIf(!COMIS_BENCH)("user-representation: redaction-clean (USER-04 cla
     expect(verdict.severity, "the firewall flags the secret-shaped content").not.toBe("clean");
 
     // The builder over a HIGH-TRUST source whose build seam emits the secret-shaped candidate:
-    // the candidate is SKIPPED (blocked++), NEVER down-stored (the USER Pitfall-2 hardening).
+    // the candidate is SKIPPED (blocked++), NEVER down-stored (the redaction hardening).
     const result = await runBuilderWith({
       store,
       sources: [{ id: "s1", content: "the user mentioned their setup", trustLevel: "learned" }],
@@ -293,7 +293,7 @@ describe.skipIf(!COMIS_BENCH)("user-representation: redaction-clean (USER-04 cla
 // CLAIM 4 -- (tenant, agent, user) isolation
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("user-representation: 3-way isolation (USER-04 claim 4, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("user-representation: 3-way isolation (claim 4, keyless gated)", () => {
   it("a row written under scope A is ABSENT across all three foreign axes and PRESENT in-scope", async () => {
     const { store, dir } = makeStore("isolation");
     const reportDir = resolveReportDir(dir);
@@ -334,7 +334,7 @@ describe.skipIf(!COMIS_BENCH)("user-representation: 3-way isolation (USER-04 cla
 // CLAIMS 5 + 6 -- default-OFF byte-identity + LLM-free injection (the spy)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("user-representation: default-OFF byte-identity + LLM-free injection (USER-04 claims 5+6, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("user-representation: default-OFF byte-identity + LLM-free injection (claims 5+6, keyless gated)", () => {
   it("no rows => formatter returns null (nothing pushed) AND the read+format path makes NO model call", async () => {
     const { store, dir } = makeStore("offgate");
     const reportDir = resolveReportDir(dir);

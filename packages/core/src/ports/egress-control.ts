@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * EgressControlPort: the SEGREGATED hexagonal boundary for the terminal driver's
- * `network: listed-hosts` egress filter (SEC-07, §3.5). It materializes a
+ * `network: listed-hosts` egress filter (§3.5). It materializes a
  * **no-secret host-allowlist CONNECT proxy** bound to the entry's `scope.hosts[]`
- * and returns a unix socket to bind-mount into the jail. The Phase-118 spike
- * PROVED the transport end-to-end on the VPS (allowlisted host -> 200, non-listed
+ * and returns a unix socket to bind-mount into the jail. A spike PROVED the
+ * transport end-to-end on the VPS (allowlisted host -> 200, non-listed
  * -> 403, direct `--unshare-net` bypass -> rc=7, no route): a host-side allowlist
  * proxy on a unix socket, bridged into the jail by an in-jail loopback relay
  * exposed to the driven CLI as `HTTPS_PROXY=http://127.0.0.1:<port>`.
  *
- * This is DISTINCT from the credential broker (§3.9 / the optional P6 tier). The
+ * This is DISTINCT from the credential broker (§3.9, an optional tier). The
  * broker injects an Authorization header to mint scoped credentials; this port
  * injects NOTHING into the stream — it is a pure CONNECT relay whose only job is
  * to gate the destination host against the operator allowlist. The two never
  * share an implementation; conflating them is a security regression (a credential
  * leak), so this port carries no secret material by construction.
  *
- * Placement (binding constraint, 122-RESEARCH): the PORT TYPE lives here in
+ * Placement (binding constraint): the PORT TYPE lives here in
  * @comis/core; the worker-side relay launcher (@comis/skills) imports ONLY this
  * type and NEVER value-imports @comis/infra (the architecture test names the
  * relay file as infra-free). The concrete proxy (a Node `net` server, no infra)
@@ -40,7 +40,7 @@
  * The result of standing up the host-side allowlist proxy for one
  * `listed-hosts` session: the unix socket to bind-mount into the jail, plus a
  * teardown handle. The `socketPath` is exactly the value the scope->argv composer
- * (`buildScopeArgs`, 122-03) binds via its `relaySocketPath` input
+ * (`buildScopeArgs`) binds via its `relaySocketPath` input
  * (`--bind <socketPath> <socketPath>`), so the bind-mount and the proxy listen on
  * the same path.
  */

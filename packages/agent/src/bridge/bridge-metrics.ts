@@ -55,7 +55,7 @@ export interface BridgeMetricsState {
   toolArgSnapshots: Map<string, Record<string, unknown>>;
   /** Raw (un-sanitized) tool args captured at tool_execution_start, keyed by
    *  toolCallId. Forwarded through `redactValue()` into the redacted `params`
-   *  field of the paired `tool:executed` emit (EVT-01). Distinct from
+   *  field of the paired `tool:executed` emit. Distinct from
    *  `toolArgSnapshots` (which holds the `sanitizeToolArgs` failure-diagnostic
    *  snapshot); deleted in lockstep with `toolArgSnapshots` at tool_execution_end. */
   toolRawArgs: Map<string, unknown>;

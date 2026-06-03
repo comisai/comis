@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The `default` activity theme (UX-01, Plan 75-01).
+ * The `default` activity theme.
  *
  * Baseline status markers — the glyphs currently hardcoded downstream
  * (`✓ done` / `❌ {errorKind}` / `🤖 {agentId} subagent` / the running wrench).
- * Plan 75-05 redirects those downstream literals to read these markers so the
+ * Those downstream literals are redirected to read these markers so the
  * default rendering is byte-identical to today's behavior.
  *
  * @module
@@ -18,7 +18,7 @@ export const defaultTheme: ActivityTheme = {
     failure: "❌",
     subagent: "🤖",
     running: "🔧",
-    // WS-E Phase 78 / SPEC-§9: surrogate-count separator (e.g. `reading config ×3`).
+    // Per spec §9: surrogate-count separator (e.g. `reading config ×3`).
     // The default theme uses the multiplication sign U+00D7 — humane glyph.
     surrogateSeparator: "×",
   },

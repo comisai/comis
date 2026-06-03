@@ -554,7 +554,7 @@ describe("createChannelManager", () => {
         "message:received",
         expect.objectContaining({ message: msg }),
       );
-      // TURN-06: message:sent now carries the receipt's real lastChunkMessageId
+      // message:sent now carries the receipt's real lastChunkMessageId
       // (the fake adapter.sendMessage returns "msg-99"), not the prior synthetic id.
       expect(deps.eventBus.emit).toHaveBeenCalledWith(
         "message:sent",
@@ -950,8 +950,8 @@ describe("createChannelManager", () => {
       await expect(manager.injectMessage("telegram", makeMessage())).resolves.not.toThrow();
     });
 
-    it("processes a message whose metadata is FROZEN without throwing on the traceId write (WR-05)", async () => {
-      // WR-05: the inbound traceId-seed wrote `msg.metadata.traceId = …` in place.
+    it("processes a message whose metadata is FROZEN without throwing on the traceId write", async () => {
+      // The inbound traceId-seed wrote `msg.metadata.traceId = …` in place.
       // On a frozen metadata object that assignment throws a TypeError in strict
       // mode (ES module), which aborts the whole injected turn. Context propagation
       // already rides on runWithContext({ traceId }) — the metadata write is a
@@ -1434,7 +1434,7 @@ describe("createChannelManager", () => {
     });
   });
 
-  describe("credential-rotation targeted reconnect (REQ-13)", () => {
+  describe("credential-rotation targeted reconnect", () => {
     it("rotated channel token triggers targeted stop+start for the matching adapter only", async () => {
       // Capture the secret:changed listener registered by createChannelManager.
       // The makeEventBus() mock records all on() calls — we look up the listener
@@ -1579,7 +1579,7 @@ describe("createChannelManager", () => {
     });
   });
 
-  describe("WR-01: secret:changed handler is void-synchronous — rejection does not bubble to bus", () => {
+  describe("secret:changed handler is void-synchronous — rejection does not bubble to bus", () => {
     it("adapter.stop() rejection is caught internally and does not propagate as unhandled rejection", async () => {
       let secretChangedListener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
       const captureEventBus = {
@@ -1611,7 +1611,7 @@ describe("createChannelManager", () => {
       vi.clearAllMocks();
 
       // The listener must return void synchronously — if it returned a rejected
-      // Promise, the bus would surface an unhandled rejection (WR-01). We verify
+      // Promise, the bus would surface an unhandled rejection. We verify
       // the return value is not a Promise (undefined), and that the rejection is
       // captured internally (warn logged) rather than thrown to the caller.
       const returnValue = secretChangedListener!({ name: "TELEGRAM_BOT_TOKEN", action: "upserted", timestamp: Date.now() });

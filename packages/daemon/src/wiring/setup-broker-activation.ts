@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Broker activation seam types for tool assembly (INTEG-03).
+ * Broker activation seam types for tool assembly.
  *
  * Extracted from setup-tools.ts to keep setup-tools.ts under 800 lines.
  * setup-tools.ts re-exports BrokerContextDeps so existing call sites that
  * import from setup-tools.js continue to resolve the type.
  *
- * Phase 9 follow-on: per-command token issuance will expand this module with
+ * Follow-on: per-command token issuance will expand this module with
  * the full broker-activation wiring (brokerSpawnEnv construction, issueToken
  * lifecycle) currently inlined inside assembleToolsForAgent in setup-tools.ts.
  * @module
@@ -49,7 +49,7 @@ export type { IssuedSession };
  * context is wired (the default open-network path; no regression). Extracted
  * from setup-tools.ts to keep that file under the 800-line cap.
  *
- * FIXME(INTEG-03): the token is issued once per assembleToolsForAgent call
+ * FIXME: the token is issued once per assembleToolsForAgent call
  * (per assembly, not per exec). The first exec consumes it; later calls in the
  * same assembly receive 407 from the broker. Path to per-command issuance:
  * thread sessionManager into ExecToolDeps and call issueToken() inside

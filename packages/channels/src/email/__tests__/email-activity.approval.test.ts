@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Email approval-link tests (APV-10 / SEC-06 email clause).
+ * Email approval-link tests (email approval clause).
  *
  * Email cannot show buttons — the single-use, time-bounded, signed approval LINK
  * IS the approval action. When a `[FAILED]` digest's trail carries a
  * `kind:"approval"` event AND the composition root injected a `mintApprovalLink`
  * accessor, the digest body carries that link (a GET to the gateway approval-token
  * route). The body carries the LINK only — never a raw HMAC/secret (the token is
- * opaque, minted server-side at the composition root; SEC-06 / T-73-31).
+ * opaque, minted server-side at the composition root).
  *
- * When no link minter is injected (pre-73-10 wiring) OR the trail has no approval
- * event, the digest stays exactly the Phase-72 `[FAILED] {errorKind}` + bullet
+ * When no link minter is injected (pre-wiring) OR the trail has no approval
+ * event, the digest stays exactly the `[FAILED] {errorKind}` + bullet
  * trail — byte-stable, no link, so the 5 existing golden fixtures are unaffected.
  */
 import { describe, it, expect } from "vitest";
@@ -90,7 +90,7 @@ describe("Email approval link (single-use, signed, time-bounded)", () => {
     }
   });
 
-  it("carries NO raw HMAC/secret in the body — only the opaque link (SEC-06 / T-73-31)", async () => {
+  it("carries NO raw HMAC/secret in the body — only the opaque link", async () => {
     const fake = createFakeEmailAdapter();
     // A realistic opaque token (no `v1.<choice>.<shortId>.<hmac>` signed wire form).
     const link = "https://comis.example/approve/opaqueTokenABC123";
@@ -127,7 +127,7 @@ describe("Email approval link (single-use, signed, time-bounded)", () => {
     expect(seen.some((e) => e.approval !== undefined)).toBe(true);
   });
 
-  it("stays byte-stable (NO link) when no mintApprovalLink is injected — the Phase-72 digest is unchanged", async () => {
+  it("stays byte-stable (NO link) when no mintApprovalLink is injected — the failure digest is unchanged", async () => {
     const fake = createFakeEmailAdapter();
     const r = createEmailActivityRenderer(fake, "inbox-1");
 

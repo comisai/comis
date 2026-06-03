@@ -5,7 +5,7 @@ import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("MemoryUsefulnessJudgeConfigSchema", () => {
   it("parses an empty object to the ON-by-default (v1 opt-out) bounded configuration", () => {
-    // v2.9 increment 2 — v1 OPT-OUT posture: the offline usefulness judge defaults ON (a COST
+    // v1 OPT-OUT posture: the offline usefulness judge defaults ON (a COST
     // feature, still force-disabled by the master kill switch). Bounded tuning constants frozen.
     const result = MemoryUsefulnessJudgeConfigSchema.parse({});
     expect(result).toEqual({
@@ -59,7 +59,7 @@ describe("PerAgentConfigSchema memoryUsefulnessJudge field", () => {
   });
 
   it("defaults memoryUsefulnessJudge ON for a bare config (v1 opt-out posture; kill-switch-gated)", () => {
-    // v2.9 increment 2 — the subtree is no longer `.optional()`; a bare config gets it populated
+    // the subtree is no longer `.optional()`; a bare config gets it populated
     // + enabled. The master cost-feature kill switch still force-disables it at the cron site.
     const result = PerAgentConfigSchema.parse({});
     expect(result.memoryUsefulnessJudge).toBeDefined();

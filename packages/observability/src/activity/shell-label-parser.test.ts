@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the OpenClaw shell-label-parser (STRAT-09, spec §6.3 / §13.1).
+ * RED test for the OpenClaw shell-label-parser (spec §6.3 / §13.1).
  *
  * Fails on pre-patch code: `./shell-label-parser.js` does not exist.
  *
@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { parseShellCommand } from "./shell-label-parser.js";
 
-describe("parseShellCommand (STRAT-09 / spec §6.3)", () => {
+describe("parseShellCommand (spec §6.3)", () => {
   it("summarizes `head -n N file` as showing the first N lines", () => {
     expect(parseShellCommand("head -n 20 file.txt")).toBe("show first 20 lines of file.txt");
   });
@@ -71,7 +71,7 @@ describe("parseShellCommand (STRAT-09 / spec §6.3)", () => {
   });
 });
 
-describe("parseShellCommand — secret redaction in the produced label (WR-03 / SEC-07)", () => {
+describe("parseShellCommand — secret redaction in the produced label", () => {
   it("redacts a Bearer token that reaches the label through a grep pattern operand", () => {
     // grep's pattern operand flows straight into the label
     // (`search for \`<pattern>\``), so a secret-bearing pattern would leak.
@@ -87,7 +87,7 @@ describe("parseShellCommand — secret redaction in the produced label (WR-03 / 
   });
 
   it("redacts a ghp_* GitHub PAT that reaches the label through a grep pattern", () => {
-    // SEC-07 M5: CONTEXT names `ghp_*` explicitly as the secret shape the
+    // `ghp_*` is named explicitly as the secret shape the
     // shell-label cases must cover; the sibling sk-/Bearer cases above did not.
     // The shipped parser already masks it (it runs `redactValue`, whose
     // `SECRET_SHAPE_PATTERNS` includes `GITHUB_TOKEN_FULL` = /\bgh[pousr]_…/),

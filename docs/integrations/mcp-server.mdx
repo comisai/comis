@@ -15,7 +15,7 @@ connect to.
 <Warning>
 Before you flip `/mcp/v1` live on any publicly reachable Comis instance,
 complete the **security-reviewer gate** on the 51-tool classification (see
-[Exposed tools](#exposed-tools)). The conservative defaults shipped in v2.4
+[Exposed tools](#exposed-tools)). The conservative defaults that ship
 are the right starting point, but the literal `safe` / `permission-gated` /
 `never-export` split _is_ the security policy and must be human-reviewed.
 </Warning>
@@ -208,7 +208,7 @@ resources, and hits the default 30/min/tool ceiling.
 ## Exposed tools
 
 Tools are partitioned into three buckets per `mcpExportPolicy`. This is the
-**v2.4 starting classification** — see the [security-reviewer gate](#security-reviewer-gate-on-the-51-tool-classification)
+**starting classification** — see the [security-reviewer gate](#security-reviewer-gate-on-the-51-tool-classification)
 before flipping `/mcp/v1` live on a publicly reachable instance.
 
 ### `safe` (3) — exposed to any mcp-client token
@@ -275,7 +275,7 @@ delegation outside the MCP server surface.
 | Cost-bearing synthesis | `tts_synthesize` |
 
 **Total:** 3 safe + 20 permission-gated + 28 never-export = 51 unique
-tools, the full platform-tool surface as of v2.4.
+tools, the full platform-tool surface.
 
 ### Security-reviewer gate on the 51-tool classification
 
@@ -291,8 +291,8 @@ Use the rubric:
   cross-account, or anything whose RPC contract is scoped `["admin"]`.
 
 The four media tools (`image_analyze`, `describe_video`, `extract_document`,
-`transcribe_audio`) are conservatively classified as `permission-gated` in
-v2.4. The reviewer decides whether any can be upgraded to `safe` (if the
+`transcribe_audio`) are conservatively classified as `permission-gated`.
+The reviewer decides whether any can be upgraded to `safe` (if the
 tool only ever reads caller-supplied media) or must stay
 `permission-gated` (if any code path resolves a Comis-stored media ID).
 
@@ -335,7 +335,7 @@ URI, set a short TTL or invalidate on every conversation turn.
 
 ## What's NOT exposed
 
-Out of scope for the v2.4 server, deferred to v2.5+:
+Out of scope for the current server, deferred:
 
 - **`sampling/createMessage`** — server-initiated LLM calls from Comis back
   to the client. Not advertised.
@@ -344,7 +344,7 @@ Out of scope for the v2.4 server, deferred to v2.5+:
 - **`prompts/*`** — Comis does not expose prompts via MCP. The `prompts`
   capability is not advertised; clients should fall back gracefully.
 - **Native binary content in `tools/call` results** — image and audio tool
-  outputs are returned as text descriptions (JSON-stringified) in v2.4.
+  outputs are returned as text descriptions (JSON-stringified).
   Native `{type: "image", data: base64}` content is deferred.
 
 ## See also

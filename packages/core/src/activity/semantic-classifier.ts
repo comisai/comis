@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * semantic-classifier — maps a tool name to a {@link SemanticPhase} (ACT-07,
- * spec §6 / §17.1 line 1758). Pure string mapping; no channel coupling, no
- * logger. The label resolver (plan 70-08) uses this as the deterministic
+ * semantic-classifier — maps a tool name to a {@link SemanticPhase}
+ * (spec §6 / §17.1 line 1758). Pure string mapping; no channel coupling, no
+ * logger. The label resolver uses this as the deterministic
  * fallback when no per-tool `LabelSpec` is registered.
  *
  * @module
@@ -25,8 +25,8 @@ export type SemanticPhase =
   | "error";
 
 /**
- * Classify a tool name into its {@link SemanticPhase} by name prefix (ACT-07,
- * spec §17.1 line 1758). Deterministic, pure, total — every input resolves to a
+ * Classify a tool name into its {@link SemanticPhase} by name prefix
+ * (spec §17.1 line 1758). Deterministic, pure, total — every input resolves to a
  * member of the closed union; the default is `"tool"`.
  *
  * Prefix rules (most specific first; `web_search` before the generic default):

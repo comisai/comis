@@ -5,26 +5,26 @@ import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("MemoryUserRepresentationConfigSchema", () => {
   it("parses an empty object to the ON-by-default (v1 opt-out) bounded configuration", () => {
-    // v2.9 increment 2 — v1 OPT-OUT posture: the per-user profile build defaults ON (a COST
+    // v1 OPT-OUT posture: the per-user profile build defaults ON (a COST
     // feature, still force-disabled by the master kill switch). Bounded tuning constants frozen.
     const result = MemoryUserRepresentationConfigSchema.parse({});
     expect(result).toEqual({
       enabled: true,
       schedule: "0 5 * * *",
       maxEntriesPerRun: 50,
-      // MR-02 per-build INPUT bounds (default-bounded so the prompt is never unbounded).
+      // Per-build INPUT bounds (default-bounded so the prompt is never unbounded).
       maxSourceMemories: 200,
       maxSourceChars: 24_000,
     });
   });
 
-  it("MR-02: defaults the per-build input bounds (maxSourceMemories / maxSourceChars)", () => {
+  it("defaults the per-build input bounds (maxSourceMemories / maxSourceChars)", () => {
     const result = MemoryUserRepresentationConfigSchema.parse({});
     expect(result.maxSourceMemories).toBe(200);
     expect(result.maxSourceChars).toBe(24_000);
   });
 
-  it("MR-02: rejects a non-positive / fractional input bound (the DoS bound is a positive int)", () => {
+  it("rejects a non-positive / fractional input bound (the DoS bound is a positive int)", () => {
     expect(() => MemoryUserRepresentationConfigSchema.parse({ maxSourceMemories: 0 })).toThrow();
     expect(() => MemoryUserRepresentationConfigSchema.parse({ maxSourceChars: -1 })).toThrow();
     expect(() => MemoryUserRepresentationConfigSchema.parse({ maxSourceMemories: 1.5 })).toThrow();
@@ -69,7 +69,7 @@ describe("PerAgentConfigSchema memoryUserRepresentation field", () => {
   });
 
   it("defaults memoryUserRepresentation ON for a bare config (v1 opt-out posture; kill-switch-gated)", () => {
-    // v2.9 increment 2 — the subtree is no longer `.optional()`; a bare config gets it populated
+    // the subtree is no longer `.optional()`; a bare config gets it populated
     // + enabled. The master cost-feature kill switch still force-disables it at the cron site.
     const result = PerAgentConfigSchema.parse({});
     expect(result.memoryUserRepresentation).toBeDefined();

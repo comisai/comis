@@ -101,11 +101,11 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
   // Logging rotation config requires daemon restart
   "daemon.logging",         // File transport config requires daemon restart
 
-  // v1.1 capability layer -- operator-only; agents must not self-configure
+  // Capability layer -- operator-only; agents must not self-configure
   // capability map or detour policy.
   "tooling",
 
-  // REQ-19/D16 §8.1: broker anti-exfiltration guard — executor section is
+  // D16 §8.1: broker anti-exfiltration guard — executor section is
   // operator-only. An agent must NOT be able to self-configure
   // executor.broker.bindings to route credentials to an attacker-controlled
   // host. "executor" as the prefix catches all three write paths:

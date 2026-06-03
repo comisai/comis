@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Holder-backed `ExecutionPlanPort` implementation (ACP-03, spec §16.7 /
- * §17.1).
+ * Holder-backed `ExecutionPlanPort` implementation (spec §16.7 / §17.1).
  *
  * The Silent Execution Planner (SEP) stores the live plan for the active turn
  * in a mutable `executionPlanRef` created per-execute in `session-bootstrap.ts`
@@ -16,7 +15,7 @@
  * `completedCount` bumps) are reflected by the next `getCurrentPlan()` call —
  * no re-publish needed. `clear()` drops the active ref at turn end so
  * `getCurrentPlan()` returns `undefined` between turns (prevents a stale plan
- * from a previous turn leaking into a new session — threat T-74-05).
+ * from a previous turn leaking into a new session).
  *
  * The agent `ExecutionPlan` / `PlanStep` types are STRUCTURALLY identical to the
  * core `ReadonlyExecutionPlan` / `ReadonlyPlanStep` (same field names + the same

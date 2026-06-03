@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TR-01 — the headline create→read→kill→list round-trip on an allowlisted bash,
- * wired through the REAL TerminalSessionRegistry (119-03) + the REAL Terminal
- * Worker (`createTerminalWorker`, 119-03) + the REAL allowlist matcher (119-02),
+ * The headline create→read→kill→list round-trip on an allowlisted bash,
+ * wired through the REAL TerminalSessionRegistry + the REAL Terminal
+ * Worker (`createTerminalWorker`) + the REAL allowlist matcher,
  * driving a REAL bash subprocess.
  *
  * The OS process boundary is stood in for by an IN-PROCESS pipe bridge (a fake
@@ -74,13 +74,13 @@ function realShell(): string {
  * This replaces the OS pipe so the full daemon-side path runs on macOS.
  */
 /**
- * macOS jail-unwrapping pipe spawner (122-06): the worker now spawns
+ * macOS jail-unwrapping pipe spawner: the worker now spawns
  * `bwrap [scopeArgs] -- bin ...argv` for BOTH backends. There is no real bwrap on
  * the macOS author box, so this in-process bridge UNWRAPS the jail — it spawns the
  * child that appears AFTER the `--` separator directly. This keeps the deterministic
  * macOS daemon-path round-trip alive; the LIVE bwrap jail enforcement (bwrap as
  * arg0, the scope matrix, the real child INSIDE the namespaces) is the VPS-gated
- * `.linux.test.ts` sibling (+ 122-07). The bwrap argv composition itself is unit-
+ * `.linux.test.ts` sibling. The bwrap argv composition itself is unit-
  * asserted on macOS in terminal-worker-entry.test.ts (recording pty.spawn).
  */
 function unwrapBwrapSpawn(
@@ -99,7 +99,7 @@ function unwrapBwrapSpawn(
 
 function makeBridgedWorkerChild(): FakeWorkerChild {
   // A real worker with the pipe backend forced (this box's node-pty can't spawn) +
-  // a resolved bwrapPath (so the SEC-16 fail-closed branch passes) + the macOS
+  // a resolved bwrapPath (so the fail-closed branch passes) + the macOS
   // jail-unwrapping spawnPipe (the real bwrap jail is the VPS .linux sibling).
   const worker = createTerminalWorker({
     loadPty: () => {
@@ -114,7 +114,7 @@ function makeBridgedWorkerChild(): FakeWorkerChild {
   let onStdout: ((chunk: Buffer) => void) | undefined;
   const stdinDecoder = decoder;
   // The serialization queue — frames are handled in arrival order (a real worker's
-  // sequential frame loop), so create's async 122-06 composition finishes (and the
+  // sequential frame loop), so create's async jail composition finishes (and the
   // backend attaches) before a subsequent read/kill frame runs.
   let frameQueue: Promise<void> = Promise.resolve();
 
@@ -157,7 +157,7 @@ function toolDeps(registry: ReturnType<typeof createTerminalSessionRegistry>, en
     eventBus: { emit: () => true },
     nowMs: () => Date.now(),
     agentId: "agent-roundtrip",
-    // 123-05: no-limit caps (these round-trips assert the create/read/kill path, not the
+    // No-limit caps (these round-trips assert the create/read/kill path, not the
     // caps; a pass-through caps keeps every send audited but never rejected/evicted).
     caps: createSessionCaps(undefined, () => Date.now()),
   };
@@ -179,7 +179,7 @@ async function readUntilGrid(
   return res.details as { screen: string; cols: number; rows: number; alive: boolean };
 }
 
-describe("TR-01 — create→read→kill→list round-trip (real registry + worker, degraded pipe backend)", () => {
+describe("create→read→kill→list round-trip (real registry + worker, degraded pipe backend)", () => {
   it("creates a session, reads a grid, kills it, and the killed id drops from list", async () => {
     const shell = realShell();
     const registry = createTerminalSessionRegistry({
@@ -219,7 +219,7 @@ describe("TR-01 — create→read→kill→list round-trip (real registry + work
     const killed = await killTool.execute("kill-call", { sessionId });
     expect((killed.details as { ok: boolean }).ok).toBe(true);
 
-    // LIST — the killed session has dropped (TR-01 headline).
+    // LIST — the killed session has dropped (the headline assertion).
     const after = (await listTool.execute("list-call", {})).details as Array<{ sessionId: string }>;
     expect(after.map((r) => r.sessionId)).not.toContain(sessionId);
 
@@ -248,9 +248,9 @@ describe("barrel — the 9 factories + the registry are importable from @comis/s
 });
 
 // ===========================================================================
-// 121-04 — the read tool's format/scrollback params reach the worker END-TO-END
+// The read tool's format/scrollback params reach the worker END-TO-END
 // (real registry + real worker + real bash, through the REAL read tool — NOT a
-// FakeRegistry). Proves the 119-04 schema-only gap is closed at the seam: ansi
+// FakeRegistry). Proves the schema-only gap is closed at the seam: ansi
 // carries SGR while text strips it, and scrollback exposes an off-screen line the
 // default read omits — all observed through `readTool.execute(...)`.
 // ===========================================================================
@@ -272,7 +272,7 @@ async function readToolUntil(
   return (res.details as { screen: string }).screen;
 }
 
-describe("121-04 — read tool format/scrollback reach the worker end-to-end (through the real tool)", () => {
+describe("read tool format/scrollback reach the worker end-to-end (through the real tool)", () => {
   it("ansi preserves SGR while text strips it, and scrollback surfaces an off-screen line", async () => {
     const shell = realShell();
     const registry = createTerminalSessionRegistry({

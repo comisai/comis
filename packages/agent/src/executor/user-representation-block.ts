@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The PURE deterministic per-user-profile formatter (USER-03, Phase 107). The
+ * The PURE deterministic per-user-profile formatter. The
  * read-path analog of {@link buildTemporalGuidanceBlock} (rag/temporal-guidance.ts):
  * a pure function over {@link UserRepresentationEntry}[] that returns a FIXED-shape
  * system-prompt block (a `<user_profile>` block, the §7.3-guidance analog), or
@@ -8,7 +8,7 @@
  * NOTHING onto `memorySections` — that is the default-OFF byte-identity no-op
  * (a user with no profile leaves the prompt byte-identical to today's).
  *
- * Wiring (Plan 107-04): prompt-assembly reads the profile LLM-FREE
+ * Wiring: prompt-assembly reads the profile LLM-FREE
  * (`userRepresentationStore.read(scope)`, a deterministic store read — NO model
  * call) and pushes this block onto `memorySections`, exactly like the
  * temporal-guidance block. This is the milestone's #1 binding constraint: the
@@ -27,7 +27,7 @@
  * Imports ONLY @comis/core TYPES — the agent-package production source must not
  * import the memory package (architecture.test.ts "agent -> memory cut"). The
  * profile `content` was already redaction-checked + `validateMemoryWrite`-clean +
- * high-trust at WRITE time (Plan 107-02/03); this read-side formatter does not
+ * high-trust at WRITE time; this read-side formatter does not
  * re-validate — it deterministically formats trusted-at-write rows.
  *
  * @module
@@ -71,7 +71,7 @@ function compareWithinGroup(a: UserRepresentationEntry, b: UserRepresentationEnt
 }
 
 /**
- * Build the per-user profile system-prompt block (USER-03). Returns `null` for an
+ * Build the per-user profile system-prompt block. Returns `null` for an
  * empty array (no entries → no block → the caller pushes nothing → byte-identity).
  * Otherwise returns a deterministic `<user_profile>` block: a fixed header, then
  * each non-empty group (in {@link GROUP_ORDER}) as a heading + one bullet per

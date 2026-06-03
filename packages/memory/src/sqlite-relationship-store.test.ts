@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteRelationshipStore` — the SOLE @comis/memory adapter
- * for the `RelationshipStore` port (Phase 108, Track E2 — SOCIAL-02). It owns ALL
+ * for the `RelationshipStore` port. It owns ALL
  * the directional relationship SQL over the additive `relationship` table.
  *
  * The harness constructs a real `SqliteMemoryAdapter` over an in-memory DB (so
@@ -10,7 +10,7 @@
  * `source_memory_id -> memories(id)` ON DELETE CASCADE fire) and gets
  * `adapter.getDb()`.
  *
- * ## The load-bearing security boundary (SOCIAL-02, the §5.2 / ENT-03 pattern,
+ * ## The load-bearing security boundary (the §5.2 pattern,
  *    EXTENDED with `channelId` — the NEW privacy axis)
  *
  * Comis runs many agents, many channels, and many users in ONE DB. Every adapter
@@ -18,18 +18,18 @@
  * `WHERE tenant_id = ? AND agent_id = ? AND channel_id = ?` (bound params). A
  * relationship edge written under one (tenant, agent, channel) MUST NEVER be
  * returned for another scope — proven by the 4-way "scope isolation" describe
- * (cross-CHANNEL [the SOCIAL-02 headline], cross-tenant, AND cross-agent all
+ * (cross-CHANNEL [the headline cross-channel axis], cross-tenant, AND cross-agent all
  * ABSENT, with a positive control). The directional `(subjectUserId, aboutUserId)`
  * pair is ROW DATA inside that scope, never the security filter, and is preserved
  * verbatim — A→B is a DISTINCT row from B→A (never symmetrized).
  *
- * ## The high-trust floor at the DB layer (T-108-05)
+ * ## The high-trust floor at the DB layer
  *
  * `trust='external'` can NEVER ENTER a relationship: the table's
  * `CHECK(trust IN ('system','learned'))` rejects it at the DB layer, and the
  * adapter's `upsert` rejects below-floor trust at the write boundary BEFORE the
  * INSERT (defense-in-depth — layers 1+3 of the 3-layer anti-poisoning defense; the
- * port-type layer is 108-01).
+ * port-type layer is layer 2).
  *
  * @module
  */
@@ -55,7 +55,7 @@ const T0 = 1_700_000_000_000;
 const SCOPE_A = { tenantId: "tenant_a", agentId: "agent_x", channelId: "channel_x", now: T0 } as const;
 const READ_A = { tenantId: "tenant_a", agentId: "agent_x", channelId: "channel_x" } as const;
 // The THREE foreign read scopes — each differs from SCOPE_A on EXACTLY one axis.
-// READ_FOREIGN_CHANNEL is THE SOCIAL-02 headline cross-channel proof (the new axis).
+// READ_FOREIGN_CHANNEL is THE headline cross-channel proof (the new axis).
 const READ_FOREIGN_CHANNEL = { tenantId: "tenant_a", agentId: "agent_x", channelId: "channel_y" } as const;
 const READ_FOREIGN_TENANT = { tenantId: "tenant_b", agentId: "agent_x", channelId: "channel_x" } as const;
 const READ_FOREIGN_AGENT = { tenantId: "tenant_a", agentId: "agent_y", channelId: "channel_x" } as const;
@@ -402,10 +402,10 @@ describe("createSqliteRelationshipStore", () => {
   });
 
   // =====================================================================
-  // Scope isolation (SOCIAL-02) — THE 4-way structural-impossibility proof
+  // Scope isolation — THE 4-way structural-impossibility proof
   // =====================================================================
 
-  describe("(tenant, agent, channel) scope isolation — the SOCIAL-02 headline", () => {
+  describe("(tenant, agent, channel) scope isolation — the cross-channel headline", () => {
     async function seedUnderScopeA(): Promise<void> {
       const r = await store.upsert(
         { subjectUserId: "user_a", aboutUserId: "user_b", content: "in-scope", trust: "learned" },
@@ -414,7 +414,7 @@ describe("createSqliteRelationshipStore", () => {
       expect(r.ok).toBe(true);
     }
 
-    it("a cross-CHANNEL read is ABSENT — an edge written under channel_x is not returned for channel_y (THE SOCIAL-02 proof)", async () => {
+    it("a cross-CHANNEL read is ABSENT — an edge written under channel_x is not returned for channel_y (THE cross-channel proof)", async () => {
       await seedUnderScopeA();
       const res = await store.read(READ_FOREIGN_CHANNEL);
       expect(res.ok).toBe(true);

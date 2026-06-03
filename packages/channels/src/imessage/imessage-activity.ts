@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * iMessage AppendOnly activity renderer (CHAN-07; §7.2 / §18.3 row "AppendOnly").
- * iMessage is send-only — no in-place edit, no delete — so it wires the Phase-70
+ * iMessage AppendOnly activity renderer (§7.2 / §18.3 row "AppendOnly").
+ * iMessage is send-only — no in-place edit, no delete — so it wires the
  * `createAppendOnlyRenderer`: ONE opening status (the first non-trivial frame),
  * later frames are no-ops, the closing follow-up is SUPPRESSED on success (the
  * assistant reply is the signal — posting a "✓ done" on every success would be
  * noise on a channel that cannot edit), and a failure posts exactly one
- * `❌ {errorKind}` follow-up. Three parts, copying the Phase-71/72
+ * `❌ {errorKind}` follow-up. Three parts, copying the per-channel
  * `classify<Ch>Error` / `make<Ch>RenderActions` / `create<Ch>ActivityRenderer`
  * shape (signal-activity.ts is the closest non-EditPlace structural analog —
  * `buttons:"none"`, no rich effect, thin wiring):
@@ -18,7 +18,7 @@
  *      reliable structural signal to disambiguate a retryable/permission case on
  *      this send-only channel, so the classifier DEFAULTS to
  *      `{kind:"internal", cause:e}` (KISS — Pitfall 4; no invented rich
- *      classifier). SEC-05/§19.3: the wrapped "Failed to send …" message is read
+ *      classifier). Per §19.3, the wrapped "Failed to send …" message is read
  *      for NOTHING user-facing — it selects the variant only and is NEVER rendered
  *      or logged as activity text. The S4 fixture proves the failure text is
  *      `❌ {errorKind}` (from `failureLabel`), not the bridge error body.
@@ -33,13 +33,13 @@
  *      `not_supported` is the honest answer. All paths return `Result`; nothing
  *      throws across the boundary.
  *
- *   3. `createIMessageActivityRenderer` — wires the Phase-70
+ *   3. `createIMessageActivityRenderer` — wires the
  *      {@link createAppendOnlyRenderer}. AppendOnly has no delete to sequence, so
  *      its deps are `{ actions }` ONLY — there is NO TimerPort / ClockPort (the
  *      strategy schedules nothing; Pitfall 5). It does NOT re-implement any
  *      sequencing — the strategy owns the opening-once + suppress-on-success +
- *      one-closing-on-failure finalize table. This is the signature the 72-05
- *      WIRE-02 daemon wiring constructs.
+ *      one-closing-on-failure finalize table. This is the signature the daemon
+ *      wiring constructs.
  *
  * The channels package depends on core + shared only (no observability substrate),
  * so no diagnostics primitive is reachable here.
@@ -61,8 +61,7 @@ import { buildApprovalPrompt } from "../shared/strategies/approval-render.js";
  * union. The live adapter wraps send/not-started failures in a bare `Error` with
  * no structured numeric code to read, so this DEFAULTS to `internal` carrying the
  * cause. The error is consulted for NOTHING that reaches the user — it selects the
- * variant only and is never rendered or logged as activity text
- * (SEC-05/§19.3, T-72-02-01).
+ * variant only and is never rendered or logged as activity text (§19.3).
  */
 export function classifyIMessageError(e: unknown): ActivityRenderError {
   // The iMessage bridge offers no structured code for send failures; there is no
@@ -106,16 +105,16 @@ export function makeIMessageRenderActions(
 }
 
 /**
- * Create the iMessage AppendOnly activity renderer — wires the Phase-70
+ * Create the iMessage AppendOnly activity renderer — wires the
  * {@link createAppendOnlyRenderer} with the per-channel render-actions adapter.
  *
  * AppendOnly has no delete to sequence — NO TimerPort. Pitfall 5 was about
  * the delete-sequencing TimerPort, NOT a read-only clock for elapsed display.
- * The optional `deps.clock` (Phase 78 / WS-F / SPEC-§8.5) is forwarded into
+ * The optional `deps.clock` (§8.5) is forwarded into
  * the strategy so the "(running N s)" fallback lights up when no SEP plan is
  * active; `clock.now()` is read-only display arithmetic (no scheduling, no
- * I/O). The optional `deps.markers` (UX-01) is forwarded to the strategy's
- * themed closing line. The daemon constructs this with the chat id (WIRE-02)
+ * I/O). The optional `deps.markers` is forwarded to the strategy's
+ * themed closing line. The daemon constructs this with the chat id
  * and threads `clock` via the uniform `ActivityRendererDeps` spread (at
  * `setup-channels-activity-renderers.ts:189-197`).
  */
@@ -126,7 +125,7 @@ export function createIMessageActivityRenderer(
 ): ChannelActivityRenderer {
   return createAppendOnlyRenderer({
     actions: makeIMessageRenderActions(adapter, channelId),
-    // Phase 78 / SPEC-§8.5 wiring (plan-checker iter-1 fix): forward the
+    // §8.5 wiring: forward the
     // daemon-injected ClockPort so AppendOnly's first-apply startedAtMs
     // capture + elapsedMs feeds renderFrameText's "(running N s)" fallback.
     // Without this forward, §8.5 would be silently inert in iMessage.
@@ -134,7 +133,7 @@ export function createIMessageActivityRenderer(
     markers: deps.markers,
     // iMessage has no button surface, so an approval frame appends the plain-text
     // prompt ("Reply approve or deny …", with shortIds when >1 pending) to the
-    // opening status (APV-10, §6.4.6). A non-approval frame yields "" (no append).
+    // opening status (§6.4.6). A non-approval frame yields "" (no append).
     buildPrompt: buildApprovalPrompt,
   });
 }

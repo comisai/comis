@@ -38,11 +38,10 @@ import {
 import { executeForeground } from "./exec-foreground.js";
 import { executeBackground } from "./exec-background.js";
 
-// Activity label spec (LBL-01 / SPEC-§6.3 / Phase 78 WS-A + WS-C). Descriptor
-// name == emitted name (exec-tool/index.ts:75 → `name: "exec"`). The
-// transform hook wires parseShellCommand (LBL-02 runtime completion); the
-// fallback `label` literal renders when the transform returns "" (empty
-// command).
+// Activity label spec (SPEC §6.3). Descriptor name == emitted name
+// (exec-tool/index.ts:75 → `name: "exec"`). The transform hook wires
+// parseShellCommand for runtime completion; the fallback `label` literal
+// renders when the transform returns "" (empty command).
 //
 // Security (Pitfall 4 — defense-in-depth):
 //   1) parseShellCommand self-redacts via redactValue at

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeEchoAdapter — a deterministic, clock-free `ChannelPort` test double
- * (CHAN-05; §18.1 "fake adapter records every method call").
+ * (§18.1 "fake adapter records every method call").
  *
- * Distinct from the production `EchoChannelAdapter` (Open Q3 → distinct): the
+ * Distinct from the production `EchoChannelAdapter`: the
  * production adapter stamps `systemNowMs()` timestamps (echo-adapter.ts:92),
  * which would make golden fixtures flap (Pitfall 2). This fake records call
  * ORDER only — an ordered, discriminated call-log with deterministic

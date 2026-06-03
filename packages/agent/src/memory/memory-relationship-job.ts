@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The offline DIRECTIONAL relationship builder job (Phase 108 — SOCIAL-01, Track E2).
+ * The offline DIRECTIONAL relationship builder job.
  *
  * The WRITE path of the per-channel directional relationship model. Mirrors
  * {@link runUserRepresentationBuild} 1:1 (the canonical offline-job template): a
@@ -10,39 +10,39 @@
  * bound → INJECTED `build()` seam → `validateMemoryWrite` on every candidate →
  * `upsert` via the port → counts-only event → idempotent.
  *
- * The DELTA from the 107 per-user profile (Delta Map row 8):
+ * The DELTA from the per-user profile builder:
  * - The candidate is DIRECTIONAL — `subjectUserId` (the speaker) + `aboutUserId`
  *   (whom the statement concerns) + free `content`. A→B is a DISTINCT edge from B→A;
  *   the idempotency key + the upsert are keyed on the full directional triple
  *   `(subjectUserId, aboutUserId, content)` — they are never collapsed/symmetrized.
- * - The `sourceText` is SENDER-PREFIXED `- [userId]: content` (RQ3) instead of the
- *   107 bare `- content`, so the build seam can attribute the speaker (the subject).
- * - The scope carries `channelId` (the new per-channel privacy isolation axis,
- *   SOCIAL-02) alongside `tenantId` + `agentId`.
+ * - The `sourceText` is SENDER-PREFIXED `- [userId]: content` instead of the
+ *   per-user-profile bare `- content`, so the build seam can attribute the speaker (the subject).
+ * - The scope carries `channelId` (the new per-channel privacy isolation axis)
+ *   alongside `tenantId` + `agentId`.
  *
  * Security posture (the same anti-poisoning discipline as the user-representation +
  * reasoning + triple-extraction jobs):
- * - Anti-poisoning (SOCIAL-01, T-108-08, layer 3): `external`-trust source memories
+ * - Anti-poisoning (layer 3): `external`-trust source memories
  *   are filtered out BEFORE the build — UNCONDITIONALLY. An `external` claim can
- *   NEVER build a relationship edge (the 108-02 DB CHECK + write-time reject are
+ *   NEVER build a relationship edge (the DB CHECK constraint + write-time reject are
  *   layers 1+2; the port-type floor is the contract layer). The build seam never
  *   sees the excluded content.
- * - The redaction firewall (T-108-09): every build() candidate runs through
+ * - The redaction firewall: every build() candidate runs through
  *   `validateMemoryWrite` (the secret-egress guard FIRST) BEFORE upsert. A
  *   non-`clean` verdict (`warn` OR `critical`) is SKIPPED (`blocked++`) — NOT
- *   downgraded-and-stored (Pitfall 2): the high-trust floor + the DB CHECK forbid
+ *   downgraded-and-stored: the high-trust floor + the DB CHECK forbid
  *   `external`, so a `warn` entry cannot be a valid relationship row; it is skipped
  *   exactly like `critical`.
- * - Trust is computed in CODE at the source ceiling (T-108-10), NEVER chosen by the
+ * - Trust is computed in CODE at the source ceiling, NEVER chosen by the
  *   LLM (the parser STRIPS any smuggled trust field). The writer can only lower
  *   trust toward the surviving sources' floor — it can never raise it.
  * - DEFAULT-OFF cost gate: with `config.enabled === false` the build() seam is NEVER
  *   called and nothing is written (no LLM spend, no write).
  * - The run is BOUNDED by `maxEntriesPerRun` (caps writes; overflow counted as
- *   `skippedOverCap`) + the MR-02 input bounds. It emits a MINIMAL, counts-only
+ *   `skippedOverCap`) + the input bounds. It emits a MINIMAL, counts-only
  *   `memory:relationship_built` event + counts-only logs — NEVER the relationship
- *   `content` or the directional user-id pair as content (AGENTS.md §2.7 / T-108-12).
- * - Idempotent (SOCIAL-01): a re-run over unchanged sources writes 0 new — the
+ *   `content` or the directional user-id pair as content (AGENTS.md §2.7).
+ * - Idempotent: a re-run over unchanged sources writes 0 new — the
  *   upsert is keyed on `(scope, subjectUserId, aboutUserId, content)`, so
  *   re-distilling the same sources replaces in place rather than appending.
  *
@@ -90,8 +90,8 @@ function minTrust(a: RelationshipTrust, b: RelationshipTrust): RelationshipTrust
  * One high-trust source memory the builder distills directional edges from. The
  * builder reads these via the INJECTED `readSources` seam (so the job stays free of
  * any memory-package import — the agent↛memory build cut); the daemon wires a
- * channel-scoped `memories` read. `userId` is the SPEAKER (the subject candidate,
- * RQ3) — sender-prefixed into the `sourceText` so the build seam can attribute who
+ * channel-scoped `memories` read. `userId` is the SPEAKER (the subject candidate)
+ * — sender-prefixed into the `sourceText` so the build seam can attribute who
  * said what about whom. `trustLevel` is the FULL ladder (`system`/`learned`/
  * `external`) so the job can EXCLUDE `external` before the build (anti-poisoning).
  */
@@ -113,7 +113,7 @@ export interface MemoryRelationshipConfig {
   /** Upper bound on entries WRITTEN per run (the DoS cost bound on the write side). */
   maxEntriesPerRun: number;
   /**
-   * MR-02 INPUT bound: the max number of source memories fed into ONE build()
+   * INPUT bound: the max number of source memories fed into ONE build()
    * prompt. The sources arrive newest-first (the cron's `inspect` orders
    * `created_at DESC`), so the cap keeps the NEWEST `maxSourceMemories` and drops
    * the older tail — the build prompt can never grow unbounded with a chatty
@@ -122,7 +122,7 @@ export interface MemoryRelationshipConfig {
    */
   maxSourceMemories?: number;
   /**
-   * MR-02 INPUT bound: the max total characters of the concatenated `sourceText`
+   * INPUT bound: the max total characters of the concatenated `sourceText`
    * fed into ONE build() prompt. Applied AFTER the count cap — sources are admitted
    * newest-first until the next one would exceed the budget. Optional: absent ⇒
    * {@link DEFAULT_MAX_SOURCE_CHARS}.
@@ -131,7 +131,7 @@ export interface MemoryRelationshipConfig {
 }
 
 /**
- * MR-02 default input bounds. Conservative caps that keep ONE distillation prompt
+ * Default input bounds. Conservative caps that keep ONE distillation prompt
  * well within a cheap model's context window while admitting a rich channel's worth
  * of recent high-trust sources. An operator can widen/narrow them via config; they
  * mirror `maxEntriesPerRun`'s DoS-bound intent on the INPUT axis.
@@ -143,7 +143,7 @@ const DEFAULT_MAX_SOURCE_CHARS = 24_000;
 export interface MemoryRelationshipDeps {
   agentId: string;
   tenantId: string;
-  /** The per-channel privacy isolation axis (SOCIAL-02) — threaded into deps + the upsert scope. */
+  /** The per-channel privacy isolation axis — threaded into deps + the upsert scope. */
   channelId: string;
   config: MemoryRelationshipConfig;
   /**
@@ -178,15 +178,15 @@ export interface MemoryRelationshipStats {
   built: number;
   /** Entries written via the port upsert. */
   written: number;
-  /** Candidates blocked by validateMemoryWrite (warn OR critical — Pitfall 2). */
+  /** Candidates blocked by validateMemoryWrite (warn OR critical). */
   blocked: number;
   /** Candidates skipped because they exceeded maxEntriesPerRun. */
   skippedOverCap: number;
-  /** MR-02: surviving (post-external-exclude) high-trust sources for this channel. */
+  /** Surviving (post-external-exclude) high-trust sources for this channel. */
   sourcesConsidered: number;
-  /** MR-02: sources actually fed into the bounded build() prompt. */
+  /** Sources actually fed into the bounded build() prompt. */
   sourcesUsed: number;
-  /** MR-02: true when the input bound dropped one or more sources from the prompt. */
+  /** True when the input bound dropped one or more sources from the prompt. */
   sourcesTruncated: boolean;
 }
 
@@ -222,7 +222,7 @@ export async function runRelationshipBuild(
   let written = 0;
   let blocked = 0;
   let skippedOverCap = 0;
-  // MR-02 input-bound counters (counts-only; never carry source content).
+  // Input-bound counters (counts-only; never carry source content).
   let sourcesConsidered = 0;
   let sourcesUsed = 0;
   let sourcesTruncated = false;
@@ -269,7 +269,7 @@ export async function runRelationshipBuild(
   if (!sourcesResult.value.ok) return err(sourcesResult.value.error);
   const allSources = sourcesResult.value.value;
 
-  // 2. ANTI-POISONING EXCLUDE (SOCIAL-01, T-108-08, layer 3): drop `external`-trust
+  // 2. ANTI-POISONING EXCLUDE (layer 3): drop `external`-trust
   //    sources UNCONDITIONALLY, BEFORE the build. An `external` claim can NEVER build
   //    a relationship edge. The build seam never sees the excluded content.
   const sources = allSources.filter((s) => s.trustLevel !== "external");
@@ -280,14 +280,14 @@ export async function runRelationshipBuild(
     return ok(stats());
   }
 
-  // 3. MR-02 INPUT BOUND: cap the source set fed into ONE build() prompt so it can
+  // 3. INPUT BOUND: cap the source set fed into ONE build() prompt so it can
   //    never grow unbounded (an over-context prompt silently fails the build → no
   //    edges; mirrors maxEntriesPerRun's DoS intent, on the INPUT axis). Sources are
   //    newest-first (the cron orders `created_at DESC`), so we keep the NEWEST and
   //    drop the older tail: first the count cap, then a cumulative-char budget.
-  //    DELTA (RQ3): each line is SENDER-PREFIXED `- [userId]: content` so the build
-  //    seam can attribute the speaker (the subject) — instead of the 107 bare
-  //    `- content`. Truncation is surfaced as a counts-only WARN + on the event.
+  //    DELTA: each line is SENDER-PREFIXED `- [userId]: content` so the build
+  //    seam can attribute the speaker (the subject) — instead of the per-user-profile
+  //    bare `- content`. Truncation is surfaced as a counts-only WARN + on the event.
   const maxSourceMemories = config.maxSourceMemories ?? DEFAULT_MAX_SOURCE_MEMORIES;
   const maxSourceChars = config.maxSourceChars ?? DEFAULT_MAX_SOURCE_CHARS;
   const countCapped = sources.slice(0, maxSourceMemories);
@@ -322,7 +322,7 @@ export async function runRelationshipBuild(
     );
   }
 
-  // 4. The source-trust ceiling, computed in CODE over the USED sources (T-108-10) —
+  // 4. The source-trust ceiling, computed in CODE over the USED sources —
   //    the candidates are distilled from exactly these, so the ceiling must reflect
   //    them. All are high-trust (external already excluded), so the ceiling is the
   //    floor of the used sources — a system+learned mix yields `learned`; the writer
@@ -356,7 +356,7 @@ export async function runRelationshipBuild(
 
   const now = clock.now();
 
-  // 5. IDEMPOTENCY (SOCIAL-01): a re-run over unchanged sources must write 0 new.
+  // 5. IDEMPOTENCY: a re-run over unchanged sources must write 0 new.
   //    Read the current channel edges once and dedup candidates against the EXISTING
   //    DIRECTIONAL `(subjectUserId, aboutUserId, content)` set — re-distilling the
   //    same sources yields the same candidates, which are already present, so they
@@ -402,7 +402,7 @@ export async function runRelationshipBuild(
       continue;
     }
 
-    // T-108-09 / Pitfall 2: the redaction firewall on the LLM-produced content (the
+    // The redaction firewall on the LLM-produced content (the
     // secret-egress guard runs FIRST). For relationships there is no `external` tier
     // to down-store a `warn` into — the high-trust floor + the DB CHECK forbid it —
     // so a non-`clean` verdict (`warn` OR `critical`) is SKIPPED, NOT downgraded-and-
@@ -425,7 +425,7 @@ export async function runRelationshipBuild(
       continue;
     }
 
-    // Trust is CODE-computed at the source ceiling (T-108-10) — NEVER from the LLM,
+    // Trust is CODE-computed at the source ceiling — NEVER from the LLM,
     // NEVER `external`. `sourceMemoryId` is omitted: a relationship edge is distilled
     // from the FUSED multi-party source set, not a single message (provenance to a
     // single id would be misleading; the table column is optional). CONSEQUENCE:

@@ -2,7 +2,7 @@
 /**
  * exec-shared.ts unit tests.
  *
- * EGRESS-03 — per-spawn proxy env (brokerSpawnEnv):
+ * Per-spawn proxy env (brokerSpawnEnv):
  *  - buildExecEnv with brokerSpawnEnv → env contains proxy vars + placeholder keys
  *  - brokerSpawnEnv wins over wrapEnv output (merge-last)
  *  - buildExecEnv without brokerSpawnEnv → NO proxy vars (property-tested over 3 shapes)
@@ -58,7 +58,7 @@ const FIXED_BASE: Record<string, string> = {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("EGRESS-03 — per-spawn proxy env (brokerSpawnEnv)", () => {
+describe("per-spawn proxy env (brokerSpawnEnv)", () => {
   it('buildExecEnv with brokerSpawnEnv → result contains HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, and placeholder keys', () => {
     const result = buildExecEnv({
       workspacePath: "/home/agent/workspace",
@@ -154,10 +154,10 @@ describe("EGRESS-03 — per-spawn proxy env (brokerSpawnEnv)", () => {
   });
 });
 
-// ── CR-02 RED: buildSpawnCommand must forward network + secureCredentialHome ──
+// ── buildSpawnCommand must forward network + secureCredentialHome ──
 
-describe("CR-02 — buildSpawnCommand forwards network + secureCredentialHome to buildArgs (EGRESS-01/02 production path)", () => {
-  it("buildSpawnCommand with broker-only + secureCredentialHome config → args contain --unshare-net (EGRESS-01 production wiring)", () => {
+describe("buildSpawnCommand forwards network + secureCredentialHome to buildArgs (production path)", () => {
+  it("buildSpawnCommand with broker-only + secureCredentialHome config → args contain --unshare-net (production wiring)", () => {
     // Track what SandboxOptions were actually passed to buildArgs
     let capturedOpts: Record<string, unknown> | undefined;
     const fakeSandbox = {
@@ -198,7 +198,7 @@ describe("CR-02 — buildSpawnCommand forwards network + secureCredentialHome to
     expect(capturedOpts?.["secureCredentialHome"]).toBe(true);
   });
 
-  it("buildSpawnCommand without network field → --share-net in args (EGRESS-03 no-regression)", () => {
+  it("buildSpawnCommand without network field → --share-net in args (no-regression)", () => {
     let capturedOpts: Record<string, unknown> | undefined;
     const fakeSandbox = {
       name: "bwrap",
@@ -232,13 +232,13 @@ describe("CR-02 — buildSpawnCommand forwards network + secureCredentialHome to
   });
 });
 
-// ── W-1 / REQ-18: resolveSecretRefs — platformSecretNames refused + normal resolve ──
+// ── resolveSecretRefs — platformSecretNames refused + normal resolve ──
 
-describe("W-1 / REQ-18 — resolveSecretRefs: platformSecretNames refused, normal secret resolves", () => {
+describe("resolveSecretRefs: platformSecretNames refused, normal secret resolves", () => {
   // -------------------------------------------------------------------------
-  // W-1-a: platformSecretNames.has(name) === true → refused (ok:false)
+  // Case a: platformSecretNames.has(name) === true → refused (ok:false)
   // -------------------------------------------------------------------------
-  it("W-1-a: resolveSecretRefs returns ok:false with error when name is in platformSecretNames", () => {
+  it("resolveSecretRefs returns ok:false with error when name is in platformSecretNames", () => {
     const { secretManager } = createSecretManagerWithMutableHandle({
       ANTHROPIC_API_KEY: "sk-real-key",
     });
@@ -254,7 +254,7 @@ describe("W-1 / REQ-18 — resolveSecretRefs: platformSecretNames refused, norma
     }
   });
 
-  it("W-1-a (multiple refs): stops at the first platformSecretNames hit and returns ok:false", () => {
+  it("multiple refs: stops at the first platformSecretNames hit and returns ok:false", () => {
     const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({});
     mutableHandle.upsert("MY_TASK_SECRET", "task-value");
     const platformSecretNames: ReadonlySet<string> = new Set(["ANTHROPIC_API_KEY"]);
@@ -276,10 +276,10 @@ describe("W-1 / REQ-18 — resolveSecretRefs: platformSecretNames refused, norma
   });
 
   // -------------------------------------------------------------------------
-  // W-1-b: normal secret (not in platformSecretNames) resolves to { ok: true }
+  // Case b: normal secret (not in platformSecretNames) resolves to { ok: true }
   //         with env populated from secretManager.get
   // -------------------------------------------------------------------------
-  it("W-1-b: resolveSecretRefs returns ok:true and populates env when secret is not platform-managed", () => {
+  it("resolveSecretRefs returns ok:true and populates env when secret is not platform-managed", () => {
     const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({});
     mutableHandle.upsert("MY_TASK_SECRET", "task-value-resolved");
     const platformSecretNames: ReadonlySet<string> = new Set(["ANTHROPIC_API_KEY"]);
@@ -292,8 +292,8 @@ describe("W-1 / REQ-18 — resolveSecretRefs: platformSecretNames refused, norma
     }
   });
 
-  it("W-1-b (additive upsert): secretManager.get returns a newly upserted value without restart", () => {
-    // This test verifies REQ-18: broker/exec can resolve a newly upserted key
+  it("additive upsert: secretManager.get returns a newly upserted value without restart", () => {
+    // This test verifies that broker/exec can resolve a newly upserted key
     // per-request without daemon restart. createSecretManagerWithMutableHandle
     // returns both handles over ONE shared Map — upsert() is immediately visible
     // to secretManager.get() on the next call.
@@ -316,11 +316,11 @@ describe("W-1 / REQ-18 — resolveSecretRefs: platformSecretNames refused, norma
   });
 });
 
-// ── §5.5 Path A (REQ-19): resolveSecretRefs places real value; platform secret blocked ──
+// ── §5.5 Path A: resolveSecretRefs places real value; platform secret blocked ──
 
-describe("§5.5 Path A (REQ-19) — resolveSecretRefs in sandbox exec path", () => {
+describe("§5.5 Path A — resolveSecretRefs in sandbox exec path", () => {
   it("resolveSecretRefs places real value in sandbox env for user-task secret (exec-shared.ts:204)", () => {
-    // REQ-19 §5.5 Path A: the exec sandbox must receive the REAL value for
+    // §5.5 Path A: the exec sandbox must receive the REAL value for
     // user-controlled secrets (non-platform-managed names). This test verifies
     // the exec-shared.ts:204 secretManager.get(name) path works end-to-end.
     const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({});
@@ -336,7 +336,7 @@ describe("§5.5 Path A (REQ-19) — resolveSecretRefs in sandbox exec path", () 
   });
 
   it("resolveSecretRefs blocks a platform-managed secret name (exec-shared.ts:193)", () => {
-    // REQ-19 §5.5 Path A: platform-managed secrets (e.g., ANTHROPIC_API_KEY)
+    // §5.5 Path A: platform-managed secrets (e.g., ANTHROPIC_API_KEY)
     // MUST be refused — the exec sandbox must never receive them. This prevents
     // agents from exfiltrating daemon credentials through secretRefs.
     const { secretManager } = createSecretManagerWithMutableHandle({

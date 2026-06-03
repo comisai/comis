@@ -42,7 +42,7 @@ describe("ApprovalCorrelation", () => {
     });
   });
 
-  describe("shortId is 12-char base62 (ACT-04)", () => {
+  describe("shortId is 12-char base62", () => {
     it("rejects a shortId of length 11", () => {
       expect(ApprovalCorrelationSchema.safeParse(validCorrelation({ shortId: "aB3xY9zK2mN" })).success).toBe(false);
     });
@@ -70,7 +70,7 @@ describe("ApprovalCorrelation", () => {
     });
   });
 
-  describe("strict block — full requestId must NEVER appear (T-70-01-02)", () => {
+  describe("strict block — full requestId must NEVER appear", () => {
     it("rejects an unknown key such as requestId", () => {
       const result = ApprovalCorrelationSchema.safeParse(
         validCorrelation({ requestId: "550e8400-e29b-41d4-a716-446655440000" }),

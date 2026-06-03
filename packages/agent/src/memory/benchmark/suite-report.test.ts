@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED->GREEN unit suite for {@link buildSuiteReport} (Phase 99, Plan 99-01) --
- * the GENERIC per-tier benchmark-report builder every Wave-2 Tier-3 / external /
- * BEAM harness writes via writeRegularFile, and its LOAD-BEARING security
- * property: it structurally omits all secrets.
+ * RED->GREEN unit suite for {@link buildSuiteReport} -- the GENERIC per-tier
+ * benchmark-report builder every Tier-3 / external / BEAM harness writes via
+ * writeRegularFile, and its LOAD-BEARING security property: it structurally
+ * omits all secrets.
  *
- * WHY A SIBLING OF qa-report.ts (99-RESEARCH.md Pitfall 4): `BenchmarkReport.benchmark`
+ * WHY A SIBLING OF qa-report.ts: `BenchmarkReport.benchmark`
  * is a CLOSED union (`"longmemeval" | "locomo" | "combined"`). The Tier-3 / BEAM /
  * external tiers (`poisoning`, `redaction`, `trust-contradiction`, `recall-learning`,
  * `beam`, `longmemeval-v2`, `memoryagentbench`, …) need OPEN tier names, so widening
@@ -15,9 +15,9 @@
  * UNGATED, default-CI: pure deterministic object construction (the only import
  * with behavior is `systemDateFrom`, which takes an injected `nowMs`); imports
  * `suite-report.ts` so it is never a 0%-coverage file under the agent all:true
- * floor (99-RESEARCH.md Pitfall 3).
+ * floor.
  *
- * THE SECURITY GATE (T-99-01-01, ASVS V7 -- the qa-report.ts doctrine): the report
+ * THE SECURITY GATE (ASVS V7 -- the qa-report.ts doctrine): the report
  * is written via writeRegularFile (NOT Pino), so Pino's credential redaction does
  * NOT apply. The builder MUST structurally rebuild each ability field-by-field and
  * NEVER spread the input config -- so `JSON.stringify(report)` can contain none of

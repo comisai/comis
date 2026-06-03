@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TR-03/04/05 — the end-to-end INTERACTION round-trip: the four implemented
+ * The end-to-end INTERACTION round-trip: the four implemented
  * interaction tools (send_text / send_key / resize / wait) driven through the
- * REAL TerminalSessionRegistry (120-03 forwarding) + the REAL Terminal Worker
- * (120-04 handlers + the Wave-1 grammar/settle) + a REAL bash subprocess.
+ * REAL TerminalSessionRegistry (the forwarding layer) + the REAL Terminal Worker
+ * (the handlers + the Wave-1 grammar/settle) + a REAL bash subprocess.
  *
- * This is the consumer-half integration proof for Phase 120: it composes the
+ * This is the consumer-half integration proof: it composes the
  * whole stack (tool -> registry.sendText/sendKey/resize/wait -> encodeFrame ->
  * worker.handle{SendText,SendKey,Resize,Wait} -> settle -> reply -> decode ->
  * tool) and asserts the agent-observable behaviour:
@@ -21,7 +21,7 @@
  *
  * Backend: this box's node-pty prebuild cannot `posix_spawnp`, so the worker is
  * wired with a `loadPty` that throws -> the DEGRADED pipe backend (a real
- * `child_process.spawn` of bash). Per the 119-04 precedent that still yields a
+ * `child_process.spawn` of bash). That still yields a
  * stable sessionId + a text grid; the live-PTY interaction (a real SIGINT / a real
  * control-key exit) is the VPS-gated `.linux.test.ts`.
  *
@@ -108,10 +108,10 @@ function makeFastTimer(): {
  * interaction path runs deterministically on macOS.
  */
 /**
- * macOS jail-unwrapping pipe spawner (122-06): the worker spawns
+ * macOS jail-unwrapping pipe spawner: the worker spawns
  * `bwrap [scopeArgs] -- bin ...argv`; with no real bwrap on macOS this bridge spawns
  * the child AFTER the `--` directly so the deterministic macOS interaction round-trip
- * survives. The LIVE bwrap jail is the VPS `.linux.test.ts` sibling (+ 122-07); the
+ * survives. The LIVE bwrap jail is the VPS `.linux.test.ts` sibling; the
  * argv composition is unit-asserted on macOS in terminal-worker-entry.test.ts.
  */
 function unwrapBwrapSpawn(
@@ -151,7 +151,7 @@ function makeBridgedWorkerChild(): FakeWorkerChild {
     stdin: {
       write(chunk: Buffer): boolean {
         // Serialize frame handling (chain onto frameQueue) to mirror a real worker's
-        // SEQUENTIAL frame loop: create's async handler (the 122-06 scope-jail
+        // SEQUENTIAL frame loop: create's async handler (the scope-jail
         // composition) must complete + attach the backend before the next frame
         // (send_text/resize/wait) runs — otherwise a concurrent send writes to a
         // not-yet-attached backend and is dropped.
@@ -189,7 +189,7 @@ function toolDeps(registry: ReturnType<typeof createTerminalSessionRegistry>, en
     eventBus: { emit: () => true },
     nowMs: () => Date.now(),
     agentId: "agent-interaction",
-    // 123-05: no-limit caps (these round-trips assert the interaction path, not the caps).
+    // No-limit caps (these round-trips assert the interaction path, not the caps).
     caps: createSessionCaps(undefined, () => Date.now()),
   };
 }
@@ -224,11 +224,11 @@ async function readUntil(
 }
 
 /**
- * A submit-echo bash entry for the TR-04 submit path on the DEGRADED PIPE backend.
+ * A submit-echo bash entry for the submit path on the DEGRADED PIPE backend.
  *
  * On a real PTY the line discipline maps the submit `\r` to `\n` and echoes input;
- * the degraded pipe backend has neither (the macOS box can't `posix_spawnp` a PTY
- * — 119-04). So this bash reads ONE `\r`-delimited line (exactly what `send_text`
+ * the degraded pipe backend has neither (the macOS box can't `posix_spawnp` a PTY).
+ * So this bash reads ONE `\r`-delimited line (exactly what `send_text`
  * submit writes — the worker writes the text, settles, then writes `\r`), prints
  * the marker, and EXITS (exit flushes the otherwise block-buffered pipe so the ring
  * captures it). This proves the full tool -> registry -> worker -> bash submit
@@ -256,7 +256,7 @@ function bashInteractiveEntry(shell: string): AllowEntryLike {
 }
 
 describe("terminal interaction round-trip — send_text submit ordering (real registry + worker + bash, degraded pipe)", () => {
-  it("send_text { submit:true } runs a command and the echo appears on a subsequent read (TR-04 submit path)", async () => {
+  it("send_text { submit:true } runs a command and the echo appears on a subsequent read (submit path)", async () => {
     const shell = realShell();
     const registry = createTerminalSessionRegistry({
       spawnWorker: makeBridgedWorkerChild,
@@ -271,7 +271,7 @@ describe("terminal interaction round-trip — send_text submit ordering (real re
     expect(sessionId.length).toBeGreaterThan(0);
 
     // send_text "echo HELLO" with submit -> worker writes text, settles, writes \r
-    // as a SEPARATE write (TR-04). The bash reads the \r-delimited line and prints
+    // as a SEPARATE write. The bash reads the \r-delimited line and prints
     // "GOT:echo HELLO" (then exits, flushing the pipe) — proving the submit \r ran
     // the line end-to-end through the tool->registry->worker->bash path.
     const sent = await tools.sendText.execute("send-call", { sessionId, text: "echo HELLO", submit: true });
@@ -311,7 +311,7 @@ describe("terminal interaction round-trip — send_key delivers bytes (degraded 
   });
 });
 
-describe("terminal interaction round-trip — wait settles + honestly times out (TR-05)", () => {
+describe("terminal interaction round-trip — wait settles + honestly times out", () => {
   it("wait resolves isComplete:true when the session is idle (idle settle, end-to-end)", async () => {
     const shell = realShell();
     const registry = createTerminalSessionRegistry({
@@ -363,7 +363,7 @@ describe("terminal interaction round-trip — wait settles + honestly times out 
   });
 });
 
-describe("terminal interaction round-trip — resize keeps geometry coherent (TR-03)", () => {
+describe("terminal interaction round-trip — resize keeps geometry coherent", () => {
   it("resize { cols:100, rows:30 } resolves { ok:true } and a subsequent list reflects cols:100", async () => {
     const shell = realShell();
     const registry = createTerminalSessionRegistry({
@@ -380,7 +380,7 @@ describe("terminal interaction round-trip — resize keeps geometry coherent (TR
     const resized = await tools.resize.execute("resize-call", { sessionId, cols: 100, rows: 30 });
     expect((resized.details as { ok: boolean }).ok).toBe(true);
 
-    // The registry updated the handle geometry on the ok reply (120-03) — a read
+    // The registry updated the handle geometry on the ok reply — a read
     // reflects the new cols (the snapshot stays coherent through the stack).
     const view = (await tools.read.execute("read-call", { sessionId })).details as { cols: number; rows: number };
     expect(view.cols).toBe(100);

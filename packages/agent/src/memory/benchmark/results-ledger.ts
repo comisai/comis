@@ -1,29 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The dated, append-only, NEVER-OVERWRITTEN results ledger (Phase 104, Plan
- * 104-02, PROVE-03) -- the per-release history that makes the continuous
- * regression gate real. Every scheduled gate run appends ONE dated row carrying
+ * The dated, append-only, NEVER-OVERWRITTEN results ledger -- the per-release
+ * history that makes the continuous regression gate real. Every scheduled gate
+ * run appends ONE dated row carrying
  * {date, commit, branch, systemVersions, tier, judgeSpread, N, significance,
  * cost, latency}; a prior dated entry can NEVER be mutated or overwritten by a
  * later release.
  *
- * THE CORRECTED NEVER-OVERWRITE MECHANISM (104-PATTERNS.md Pattern 3, verified
- * against fs-safe.ts:436-452 this phase): `writeRegularFile`'s default
+ * THE CORRECTED NEVER-OVERWRITE MECHANISM (verified against
+ * fs-safe.ts:436-452): `writeRegularFile`'s default
  * `unlinkExisting:true` does `fs.unlinkSync(path)` (swallowing ENOENT) and THEN
  * opens with O_EXCL on the now-clean path -- so it SILENTLY OVERWRITES a
  * pre-existing dated file. The O_EXCL there is anti-TOCTOU-symlink-recreation,
- * NOT anti-clobber. RESEARCH's "O_EXCL gives never-overwrite for free" was FALSE
- * on the default path. The invariant is therefore enforced HERE by an explicit
+ * NOT anti-clobber. The assumption that "O_EXCL gives never-overwrite for free"
+ * was FALSE on the default path. The invariant is therefore enforced HERE by an explicit
  * `existsSync` guard in {@link appendLedgerRow}: a write to an already-existing
  * dated path is REFUSED (returns `err`) and the prior bytes are left untouched.
  * The dated filename embeds the commit (`<date>-<commit>.json`), so two runs of
  * DIFFERENT commits on the same day are non-colliding, while a re-run of the
  * SAME commit is correctly refused (it would clobber a committed row). The RED
  * Test-3 in results-ledger.test.ts proves the real semantics (2nd same-path
- * write refused + 1st file byte-identical). (T-104-02-01.)
+ * write refused + 1st file byte-identical).
  *
- * SECURITY -- structural secret omission (T-104-02-02, the suite-report.ts /
- * qa-report.ts doctrine): the row is persisted via `writeRegularFile`, OUTSIDE
+ * SECURITY -- structural secret omission (the suite-report.ts / qa-report.ts
+ * doctrine): the row is persisted via `writeRegularFile`, OUTSIDE
  * Pino's redaction net, so the builder must guarantee no credential ever reaches
  * the file. It does so STRUCTURALLY: the input is NEVER spread; every field is
  * rebuilt field-by-field; `systemVersions` is rematerialized as a null-prototype
@@ -34,7 +34,7 @@
  * path to the output. (RED gate: results-ledger.test.ts Test 2 asserts the
  * serialized row matches none of /apiKey|sk-|Bearer|secret@/.)
  *
- * SECURITY -- path confinement (T-104-02-03): the dated path is composed via
+ * SECURITY -- path confinement: the dated path is composed via
  * `safePath(historyDir, filename)` (rejects traversal/null-byte/symlink escape,
  * per OWASP V12 -- the source-rules safePath gate), and `writeRegularFile` is
  * additionally given `confinedBaseDir: historyDir` (O_NOFOLLOW + assertConfinedPath).
@@ -83,7 +83,7 @@ export interface LedgerRow {
   systemVersions: Record<string, string>;
   /** The benchmark tier (OPEN string -- e.g. "head-to-head", "longmemeval-v2"). */
   tier: string;
-  /** The per-category inter-judge spread (PROVE-02) -- a number headlines only if it survives. */
+  /** The per-category inter-judge spread -- a number headlines only if it survives. */
   judgeSpread: CategorySpread[];
   /** The sample size behind the headline (the N every credible number reports). */
   n: number;
@@ -239,8 +239,8 @@ export interface AppendLedgerRowSuccess {
 }
 
 /**
- * Append a dated row to the ledger -- the corrected NEVER-OVERWRITE writer
- * (T-104-02-01). Computes the dated path; **refuses** if a file already exists at
+ * Append a dated row to the ledger -- the corrected NEVER-OVERWRITE writer.
+ * Computes the dated path; **refuses** if a file already exists at
  * that path (the explicit `existsSync` guard -- `writeRegularFile`'s default
  * would SILENTLY clobber it, fs-safe.ts:436-452); else writes it confined to
  * `historyDir`. A traversal-shaped date/commit is rejected at the `safePath`

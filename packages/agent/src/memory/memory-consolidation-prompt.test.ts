@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Prompt-parser suite for consolidation (Phase 84). `parseConsolidationResult`
+// Prompt-parser suite for consolidation. `parseConsolidationResult`
 // is the LENIENT, total, never-throws parser for the MERGE-only LLM contract:
 // it accepts `{content, confidence?, sourceIds?}`, STRIPS any extra key, and —
 // critically — IGNORES any LLM-supplied `trustLevel`/`supersededIds` (trust is
@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { CONSOLIDATION_PROMPT, parseConsolidationResult } from "./memory-consolidation-prompt.js";
 
-describe("parseConsolidationResult — lenient MERGE-only parser (CONS contract)", () => {
+describe("parseConsolidationResult — lenient MERGE-only parser (consolidation contract)", () => {
   it("accepts a well-formed merge object with content + confidence", () => {
     const parsed = parseConsolidationResult('{"content":"merged fact","confidence":0.8}');
     expect(parsed).toEqual({ content: "merged fact", confidence: 0.8 });

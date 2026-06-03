@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LINE wrapper elapsed-fallback wiring (Phase 78 / SPEC-§8.5; plan-checker iter-1
- * fix). Regression-locks the LIVE production path: when the daemon injects a
- * `ClockPort` into the wrapper deps, the wrapper MUST forward it into
- * `createAppendOnlyRenderer({...clock})` so the strategy's first-apply `startedAtMs`
- * capture fires and the opening status carries the "(running N s)" elapsed-time
- * fallback.
+ * LINE wrapper elapsed-fallback wiring (§8.5). Regression-locks the LIVE
+ * production path: when the daemon injects a `ClockPort` into the wrapper deps,
+ * the wrapper MUST forward it into `createAppendOnlyRenderer({...clock})` so the
+ * strategy's first-apply `startedAtMs` capture fires and the opening status
+ * carries the "(running N s)" elapsed-time fallback.
  *
- * Pre-78-05 the LINE wrapper's deps shape ALREADY declared `clock?: ClockPort` (so
+ * Previously the LINE wrapper's deps shape ALREADY declared `clock?: ClockPort` (so
  * type-level passing `{ clock }` would compile), but the wrapper destructured ONLY
  * `signCallbackData` and dropped `clock` on the floor at the `createAppendOnlyRenderer`
  * call. The RED form of this test (without the production patch) FAILS at runtime —
@@ -63,7 +62,7 @@ function frameWithPlan(label: string): ActivityRenderFrame {
   };
 }
 
-describe("LINE wrapper forwards deps.clock into AppendOnly (Phase 78 plan-checker iter-1 fix)", () => {
+describe("LINE wrapper forwards deps.clock into AppendOnly", () => {
   it("forwards deps.clock → AppendOnly: opening status carries '(running 0 s)' on the first frame (no SEP plan)", async () => {
     const fake = createFakeLineAdapter();
     const clock = createFakeClock(1000);
@@ -71,7 +70,7 @@ describe("LINE wrapper forwards deps.clock into AppendOnly (Phase 78 plan-checke
     // contract is that `clock` is now destructured AND forwarded into
     // `createAppendOnlyRenderer({...clock})`. Without the forward, startedAtMs
     // would stay undefined in the strategy → elapsedMs undefined → fallback
-    // skipped → this assertion fails. Regression-lock for the iter-1 wrapper fix.
+    // skipped → this assertion fails. Regression-lock for the wrapper fix.
     const r = createLineActivityRenderer(fake, "chat-1", { clock });
 
     await r.apply(frameNoPlan("running tool"));
@@ -93,7 +92,7 @@ describe("LINE wrapper forwards deps.clock into AppendOnly (Phase 78 plan-checke
     const sends = fake.recorded.calls.filter((c) => c.op === "send");
     expect(sends).toHaveLength(1);
     if (sends[0]?.op === "send") {
-      // [Rule 1 — bug fix, quick-260528-nsv] Tool-event line carries the
+      // Tool-event line carries the
       // running 🔧 marker; the no-elapsed-fallback invariant (`(running …)`
       // absent) is the load-bearing assertion.
       expect(sends[0].text).not.toContain("(running");
@@ -106,7 +105,7 @@ describe("LINE wrapper forwards deps.clock into AppendOnly (Phase 78 plan-checke
     const clock = createFakeClock(1000);
     const r = createLineActivityRenderer(fake, "chat-1", { clock });
 
-    // The plan header above the events satisfies SPEC-§8.5's first half — the
+    // The plan header above the events satisfies §8.5's first half — the
     // elapsed fallback (second half) is suppressed to avoid double-display.
     await r.apply(frameWithPlan("running tool"));
 

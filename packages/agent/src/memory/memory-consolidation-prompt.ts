@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The consolidation MERGE prompt + its lenient, total parser (Phase 84).
+ * The consolidation MERGE prompt + its lenient, total parser.
  *
  * Split out of `memory-consolidation-job.ts` (sibling to `memory-extraction.ts`)
  * so the verbose prompt + the cleanest defined-I/O unit (string → value) get
@@ -10,8 +10,8 @@
  * homogeneous cluster of near-duplicate memories into ONE concise factual
  * statement. It emits `{ content, confidence?, sourceIds? }` and NOTHING ELSE —
  * it has NO trust field and NO supersede field. Trust is computed in CODE
- * (`minTrust`, the ceiling, CONS-02); supersession is out of scope (CONS-05,
- * non-destructive). Any `trustLevel`/`supersededIds` the model emits anyway is
+ * (`minTrust`, the ceiling); supersession is out of scope (non-destructive).
+ * Any `trustLevel`/`supersededIds` the model emits anyway is
  * STRIPPED by the lenient `z.object` (unknown keys dropped), so it can never
  * influence the stored observation.
  *
@@ -28,7 +28,7 @@ import { z } from "zod";
  * The MERGE-only consolidation system prompt (design §6.3).
  *
  * Each call receives ONE homogeneous sub-cluster (a single trust level + tag
- * scope — the caller partitions via `groupByTrustAndTagScope`, CONS-06). The
+ * scope — the caller partitions via `groupByTrustAndTagScope`). The
  * model merges the cluster into a single statement; it explicitly does NOT
  * choose a trust level and does NOT mark anything superseded.
  */
@@ -80,7 +80,7 @@ export type ConsolidationResult = z.infer<typeof ConsolidationResultSchema>;
  *      shape, or out-of-range confidence → `undefined`; unknown keys stripped).
  *
  * The model's MERGE-only contract has no trust field — any `trustLevel` /
- * `supersededIds` it emits is stripped here, never propagated (CONS-02/05).
+ * `supersededIds` it emits is stripped here, never propagated.
  */
 export function parseConsolidationResult(text: string): ConsolidationResult | undefined {
   const cleaned = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();

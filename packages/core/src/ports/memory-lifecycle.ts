@@ -3,7 +3,7 @@ import type { Result } from "@comis/shared";
 
 /**
  * MemoryLifecyclePort: the SEGREGATED hexagonal boundary for the per-(tenant,
- * agent) memory LIFECYCLE sweep (Phase 112, Track C — FORGET-02). A periodic,
+ * agent) memory LIFECYCLE sweep (Track C). A periodic,
  * KEYLESS maintenance pass that computes each memory's importance-decayed
  * strength + its hysteresis-banded tier and (in the LIVE policy) promotes,
  * demotes, or evicts rows accordingly.
@@ -13,18 +13,18 @@ import type { Result } from "@comis/shared";
  * security-reviewed `MemoryPort` (store/search/delete). New capabilities arrive
  * as their own segregated port. The sole adapter is in @comis/memory (it owns the
  * `db` handle and runs all SQL over the `memories` table + its additive lifecycle
- * marker, filtered on `(tenant_id, agent_id)` — 112-03); the daemon wires it into
- * a default-OFF `__MEMORY_LIFECYCLE__` cron (112-04). The agent package consumes
+ * marker, filtered on `(tenant_id, agent_id)`); the daemon wires it into
+ * a default-OFF `__MEMORY_LIFECYCLE__` cron. The agent package consumes
  * this port TYPE from @comis/core — it cannot import @comis/memory (the
  * agent↛memory build cut). No new authority is granted beyond a scoped sweep
  * within the caller's own (tenant, agent).
  *
- * SCAFFOLD per Phase-106 gap-report OD4 — the sweep computes strengths/tiers but
+ * SCAFFOLD per gap-report OD4 — the sweep computes strengths/tiers but
  * its demote/evict step performs NOTHING (`promoted`/`demoted`/`evicted` stay 0)
- * until an operator enables it; live eviction is the deferred operator/v2.10 step.
+ * until an operator enables it; live eviction is the deferred operator step.
  * The default-OFF `MemoryLifecycleConfigSchema` knob is a behavior gate, NOT a
  * back-compat fallback (mirror the schema-memory-online-tuning framing); even when
- * the cron is enabled the DORMANT adapter (112-03) evicts/demotes nothing. The
+ * the cron is enabled the DORMANT adapter evicts/demotes nothing. The
  * eviction policy is NON-DESTRUCTIVE by design (a marker column — mirror
  * `consolidated_at` — never a hard DELETE of the raw row).
  *
@@ -45,7 +45,7 @@ import type { Result } from "@comis/shared";
 export type MemoryTier = "durable" | "ephemeral";
 
 /**
- * The isolation boundary for every lifecycle sweep (FORGET-02). Every statement
+ * The isolation boundary for every lifecycle sweep. Every statement
  * in the sole adapter filters on `(tenantId, agentId)` — this is a load-bearing
  * SECURITY scope in a multi-agent DB, not a nicety: a sweep run under one
  * (tenant, agent) must NEVER touch (promote/demote/evict) another scope's rows.
@@ -67,9 +67,9 @@ export interface MemoryLifecycleScope {
 }
 
 /**
- * The counts-only summary of one lifecycle sweep (FORGET-02). Ids/counts only —
+ * The counts-only summary of one lifecycle sweep. Ids/counts only —
  * NEVER memory bodies or query text (AGENTS.md §2.7). For the SCAFFOLD-DORMANT
- * adapter (112-03) `promoted`/`demoted`/`evicted` are always 0 (the demote/evict
+ * adapter `promoted`/`demoted`/`evicted` are always 0 (the demote/evict
  * step is the deferred live policy); `scanned` reflects the candidate rows the
  * sweep considered. This shape is what the daemon cron logs/emits as a single
  * counts-only event.
@@ -87,23 +87,23 @@ export interface LifecycleSweepReport {
 
 export interface MemoryLifecyclePort {
   /**
-   * MAINTENANCE PATH (FORGET-02). Run one lifecycle sweep for the caller's
+   * MAINTENANCE PATH. Run one lifecycle sweep for the caller's
    * (tenant, agent) scope ONLY: scan the candidate rows, compute each one's
    * importance-decayed strength + its hysteresis-banded tier (θ_promote 0.7 >
    * θ_demote 0.3 dead-band; the bands + capacity caps + dormancy come from
    * `MemoryLifecycleConfigSchema`), and — in the LIVE policy — promote/demote/
-   * evict accordingly (lowest-strength-first, FEED-usefulness-aware,
+   * evict accordingly (lowest-strength-first, usefulness-feedback-aware,
    * NON-DESTRUCTIVE via a marker column). Returns a counts-only
    * {@link LifecycleSweepReport}. Called ONLY by the daemon's default-OFF
    * `__MEMORY_LIFECYCLE__` cron — never on the recall hot path.
    *
-   * SCAFFOLD-DORMANT (OD4): the sole adapter (112-03) computes strengths/tiers but
+   * SCAFFOLD-DORMANT (OD4): the sole adapter computes strengths/tiers but
    * its demote/evict step performs NOTHING — `promoted`/`demoted`/`evicted` are 0;
-   * live eviction is the deferred operator/v2.10 step. With the knob off the cron
+   * live eviction is the deferred operator step. With the knob off the cron
    * is not even registered (a default agent runs no sweep → byte-identical).
    *
-   * NOTE (Plan 112-02): this is the type contract only. The SQLite adapter is
-   * implemented in Plan 112-03; the daemon cron wiring lands in Plan 112-04.
+   * NOTE: this is the type contract only. The SQLite adapter and the daemon cron
+   * wiring land in the implementation phases that follow.
    */
   runLifecycleSweep(scope: MemoryLifecycleScope): Promise<Result<LifecycleSweepReport, Error>>;
 }

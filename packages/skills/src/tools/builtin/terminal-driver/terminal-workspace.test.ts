@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-session jail workspace allocation (Phase-122 gap 2, P3 functional).
+ * Per-session jail workspace allocation.
  *
  * The create path must ALLOCATE a real per-session workspace directory and thread
  * it as `workspace`+`cwd` onto the create frame, so the worker's `buildSpawnPlan`
@@ -84,7 +84,7 @@ function baseDeps(
   return { spawnWorker, logger: makeLogger(), nowMs: () => 1_700_000_000_000, ...over };
 }
 
-/** Single owner threaded through these registry calls (create/kill are owner-scoped — 123-03). */
+/** Single owner threaded through these registry calls (create/kill are owner-scoped). */
 const OWNER = { agentId: "a", sessionKey: "s" };
 
 describe("allocateSessionWorkspace — a real per-session jail workspace (gap 2)", () => {

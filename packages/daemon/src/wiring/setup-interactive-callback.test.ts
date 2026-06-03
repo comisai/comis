@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the APV-07 signing-secret lifecycle helper.
+ * Unit tests for the signing-secret lifecycle helper.
  *
  * `resolveInteractiveCallbackSigningSecret` is the daemon composition-root seam
  * that supplies the 32-byte `activity.interactiveCallbackSigningSecret` backing
@@ -11,7 +11,7 @@
  *   - store DISABLED (`undefined`, the default — schema-secrets enabled:false):
  *     an in-memory secret is generated per process (regenerated each start) — a
  *     documented fallback; in-flight 5-min approvals invalidate across restart.
- *   - the secret value never appears in any log line (T-73-31).
+ *   - the secret value never appears in any log line.
  *
  * The store is SYNCHRONOUS (SecretStorePort.set/getDecrypted return Result, not
  * Promise) so the resolver is synchronous.
@@ -66,7 +66,7 @@ function makeStubStore(overrides: Partial<SecretStorePort> = {}): {
   return { store, backing };
 }
 
-describe("resolveInteractiveCallbackSigningSecret (APV-07)", () => {
+describe("resolveInteractiveCallbackSigningSecret", () => {
   it("generates a 32-byte base64url secret and persists it via set when the store is enabled and empty", () => {
     const { store, backing } = makeStubStore();
     const logger = makeLogger();
@@ -108,7 +108,7 @@ describe("resolveInteractiveCallbackSigningSecret (APV-07)", () => {
     expect(a).not.toBe(b);
   });
 
-  it("never writes the secret value into any log line (T-73-31)", () => {
+  it("never writes the secret value into any log line", () => {
     const { store } = makeStubStore();
     const logger = makeLogger();
 
@@ -138,7 +138,7 @@ describe("resolveInteractiveCallbackSigningSecret (APV-07)", () => {
     expect(secret.length).toBeGreaterThan(0);
   });
 
-  it("treats an EMPTY-STRING store value as absent and regenerates (WR-03 — never key HMAC with an empty secret)", () => {
+  it("treats an EMPTY-STRING store value as absent and regenerates (never key HMAC with an empty secret)", () => {
     // A degenerate/hand-edited store row decrypts to "". HMAC accepts an empty
     // key, so an empty secret would not break verification — but it collapses the
     // keyspace to a publicly-computable constant, making EVERY callback forgeable.

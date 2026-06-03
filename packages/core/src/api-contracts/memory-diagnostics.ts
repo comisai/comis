@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Memory diagnostics RPC contracts (Phase 86 / OBS-06).
+ * Memory diagnostics RPC contracts.
  *
  * Four admin-scoped diagnostic contracts: recall-trace inspect, observation
  * provenance, entity graph, and recall stats. Extracted from
@@ -9,15 +9,15 @@
  * of the memory domain and are re-exported from `memory.ts`, so every existing
  * `from "./memory.js"` import (and the api-contracts barrel) still resolves.
  *
- * CROSS-WAVE SEAM (closed in Plan 05): these are grouped in their OWN
- * `MEMORY_DIAGNOSTIC_CONTRACTS` array below. Plan 02 held them OUT of
+ * CROSS-WAVE SEAM (now closed): these are grouped in their OWN
+ * `MEMORY_DIAGNOSTIC_CONTRACTS` array below. They were initially held OUT of
  * `MEMORY_CONTRACTS` (which feeds `API_CONTRACTS` via index.ts) — and tagged
- * each with `// @contract-deferred-handler: 86-05` — because the
+ * each with `// @contract-deferred-handler` — because the
  * `api-contracts-bidirectional.test.ts` + `contract-handler-parity.test.ts`
  * gates require every `API_CONTRACTS` entry to have a MIGRATED
  * (`[Contract.method]:` computed-key) daemon handler, and registering them
  * before the handlers existed would have turned those gates RED between waves.
- * Plan 05 (this wave) landed the four daemon handlers in
+ * The four daemon handlers later landed in
  * `packages/daemon/src/api/memory-handlers.ts`, spread
  * `...MEMORY_DIAGNOSTIC_CONTRACTS` into `MEMORY_CONTRACTS`, AND removed the
  * four `@contract-deferred-handler` annotations — all in one diff — so the
@@ -35,7 +35,7 @@ import { defineContract } from "./types.js";
 /**
  * `memory.recall_trace` — read recall-trace JSONL records for one recall,
  * keyed by `session_key` OR `trace_id` (admin-only). Models the obs-trace
- * file-reading handler (`bindObsTraceHandlers`): the handler (Plan 05) reads
+ * file-reading handler (`bindObsTraceHandlers`): the handler reads
  * the `diagnostics.recallTrace` artifact (LRU + day-bounded scan) and returns
  * the matching records.
  *
@@ -57,7 +57,7 @@ export const MemoryRecallTraceContract = defineContract({
     trace_id: z.string().optional(),
     tenant_id: z.string().optional(),
     agent_id: z.string().optional(),
-    // WR-05: bound the limit at parse time — positive integer with a sane cap.
+    // Bound the limit at parse time — positive integer with a sane cap.
     // An unbounded/negative/fractional limit used to flow straight into the
     // file-scan guard (`records.length >= limit`), so reject malformed bounds
     // here (defense-in-depth + clearer UX), consistent with Comis's other
@@ -76,7 +76,7 @@ export const MemoryRecallTraceContract = defineContract({
 
 /**
  * `memory.observations` — list consolidation observations with their
- * provenance (admin-only). The handler (Plan 05) reuses the existing
+ * provenance (admin-only). The handler reuses the existing
  * `MemoryConsolidationStore.listObservations` SQL-scoped read.
  *
  * Request: `{ tenant_id?, agent_id?, limit? }` — the scope dimensions the
@@ -92,7 +92,7 @@ export const MemoryObservationsContract = defineContract({
   request: z.object({
     tenant_id: z.string().optional(),
     agent_id: z.string().optional(),
-    // WR-05: bound the limit at parse time — it flows straight into `LIMIT ?`.
+    // Bound the limit at parse time — it flows straight into `LIMIT ?`.
     limit: z.number().int().positive().max(1000).optional(),
   }),
   response: z.object({
@@ -117,7 +117,7 @@ export const MemoryObservationsContract = defineContract({
 
 /**
  * `memory.entities` — list the entity graph for the scope, ordered
- * most-mentioned-first (admin-only). The handler (Plan 05) calls the new
+ * most-mentioned-first (admin-only). The handler calls the new
  * `MemoryEntityStore.listEntities(agentId, tenantId, limit)` scoped read
  * (defined in `ports/memory-entity-store.ts`).
  *
@@ -131,7 +131,7 @@ export const MemoryEntitiesContract = defineContract({
   request: z.object({
     tenant_id: z.string().optional(),
     agent_id: z.string().optional(),
-    // WR-05: bound the limit at parse time — it flows straight into `LIMIT ?`.
+    // Bound the limit at parse time — it flows straight into `LIMIT ?`.
     limit: z.number().int().positive().max(1000).optional(),
   }),
   response: z.object({
@@ -154,8 +154,8 @@ export const MemoryEntitiesContract = defineContract({
 
 /**
  * `memory.recall_stats` — return the in-process recall counters
- * (admin-only). The handler (Plan 05) returns `createRecallCounters().
- * snapshot()` (the `@comis/observability` registry wired in Plan 01) plus the
+ * (admin-only). The handler returns `createRecallCounters().
+ * snapshot()` (the `@comis/observability` registry) plus the
  * two derived rates. Counters reset on process restart (documented).
  *
  * Request: `{ tenant_id?, agent_id? }` — accepted for symmetry with the other
@@ -194,10 +194,10 @@ export const MemoryRecallStatsContract = defineContract({
 });
 
 /**
- * Phase 86 admin-scoped diagnostic contracts (OBS-06). Defined here but held
- * OUT of `MEMORY_CONTRACTS` until Plan 05 lands the matching daemon handlers —
- * see the cross-wave-seam note at the top of this file. Plan 05 folds this
- * array into `MEMORY_CONTRACTS` (`...MEMORY_DIAGNOSTIC_CONTRACTS`) in the same
+ * Admin-scoped diagnostic contracts. Originally defined here but held
+ * OUT of `MEMORY_CONTRACTS` until the matching daemon handlers landed —
+ * see the cross-wave-seam note at the top of this file. They are now folded
+ * into `MEMORY_CONTRACTS` (`...MEMORY_DIAGNOSTIC_CONTRACTS`) in the same
  * diff as the handlers.
  */
 export const MEMORY_DIAGNOSTIC_CONTRACTS = [

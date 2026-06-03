@@ -164,7 +164,7 @@ describe("wrapWithAudit", () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]!.success).toBe(false);
-    // EVT-06 / Pitfall 2 / T-70-06-03: "nonzero-exit" is NOT a closed ErrorKind.
+    // "nonzero-exit" is NOT a closed ErrorKind.
     // The emit must map it to "dependency" (matches pi-event-bridge.ts).
     expect(events[0]!.errorKind).toBe("dependency");
   });
@@ -217,7 +217,7 @@ describe("wrapWithAudit", () => {
   });
 
   // -------------------------------------------------------------------
-  // EVT-06: the tool-audit.ts:77 leak close (Pitfall 2 / T-70-06-01)
+  // The tool-audit.ts:77 leak close
   // -------------------------------------------------------------------
   it("redacts params before the tool:executed emit (apiKey -> <redacted>, no raw leak)", async () => {
     const eventBus = new TypedEventBus();
@@ -239,7 +239,7 @@ describe("wrapWithAudit", () => {
     expect(params!.q).toBe("weather");
   });
 
-  it("compacts $HOME paths to ~ in the emitted params when homeDir is threaded (WR-05)", async () => {
+  it("compacts $HOME paths to ~ in the emitted params when homeDir is threaded", async () => {
     const eventBus = new TypedEventBus();
     const events: EventMap["tool:executed"][] = [];
     eventBus.on("tool:executed", (payload) => events.push(payload));

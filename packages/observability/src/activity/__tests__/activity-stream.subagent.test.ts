@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the subagent event → ActivityEvent mapping (APV-01, spec §17.3).
+ * RED test for the subagent event → ActivityEvent mapping (spec §17.3).
  *
  * Fails on pre-patch code: `activity-stream.ts` does NOT map
  * `session:sub_agent_spawned`/`session:sub_agent_completed` (the source comment
@@ -8,7 +8,7 @@
  * `activity-stream.test.ts` asserts they are IGNORED). These cases pin the new
  * mapping → RED.
  *
- * ── Linkage seam (Open Question 2 / Assumption A2) ──────────────────────────
+ * Linkage seam:
  * The spawn event payload is `{ runId, parentSessionKey, agentId, task,
  * timestamp }` — it carries NO `traceId` and NO parent `activityId`. The
  * `ActivityEvent` schema, however, requires a non-optional `traceId` and the
@@ -25,7 +25,7 @@
  * side of this seam is pinned in
  * `orchestrator/.../activity-turn-coordinator.test.ts`.
  *
- * Threat T-73-07: the free-text `task` field is NEVER reflected into the
+ * Threat: the free-text `task` field is NEVER reflected into the
  * rendered label — only `agentId` + the `🤖` marker. Asserted below.
  */
 import { describe, it, expect, vi } from "vitest";
@@ -62,7 +62,7 @@ function makeLogger(): ComisLogger {
   return logger;
 }
 
-describe("createActivityStream — subagent mapping (APV-01 / spec §17.3)", () => {
+describe("createActivityStream — subagent mapping (spec §17.3)", () => {
   it("maps session:sub_agent_spawned to a kind:'subagent' start event scoped to the turn", () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus, logger: makeLogger() });
@@ -91,7 +91,7 @@ describe("createActivityStream — subagent mapping (APV-01 / spec §17.3)", () 
     sub.unsubscribe();
   });
 
-  it("renders the label from agentId + the 🤖 marker and NEVER reflects the free-text task (T-73-07)", () => {
+  it("renders the label from agentId + the 🤖 marker and NEVER reflects the free-text task", () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus, logger: makeLogger() });
     const received: ActivityEvent[] = [];
@@ -199,7 +199,7 @@ describe("createActivityStream — subagent mapping (APV-01 / spec §17.3)", () 
     sub.unsubscribe();
   });
 
-  it("preserves the APV-03 trace-less-restore guard — approval:requested with no traceId emits NO live activity (T-73-08)", () => {
+  it("preserves the trace-less-restore guard — approval:requested with no traceId emits NO live activity", () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus, logger: makeLogger() });
     const received: ActivityEvent[] = [];

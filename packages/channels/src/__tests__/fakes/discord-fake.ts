@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeDiscordAdapter — a deterministic, clock-free `ChannelPort` test double for
- * the Discord EditPlace renderer (CHAN-03 / CHAN-05; §18.1 "fake adapter records
- * every method call").
+ * the Discord EditPlace renderer (§18.1 "fake adapter records every method call").
  *
- * Mirrors `createFakeTelegramAdapter` (the 71-02 canonical fake) but:
+ * Mirrors `createFakeTelegramAdapter` (the canonical fake) but:
  *   - mints `dc-msg-N` ids (Discord's determinism source for byte-stable
  *     fixtures — Pitfall 2),
  *   - records a `threadCreate` call when `send` is given `{ threadReply: true }`
@@ -21,7 +20,7 @@
  *
  * The affordance is a SHELL only: this fake records the thread-create egress, but
  * NO interaction handler is registered and NO signed callback_data is produced —
- * the InteractiveCallbackRouter is Phase 73 (§17.3 / T-71-03-03).
+ * the InteractiveCallbackRouter is delivered later (§17.3).
  */
 import { ok, err, type Result } from "@comis/shared";
 import type {
@@ -115,8 +114,8 @@ export function createFakeDiscordAdapter(channelId = "chat-1"): FakeDiscordAdapt
       const id = `dc-msg-${messageCounter++}`;
       // Discord silently ignores rich effects (discord-adapter.ts:392-395); the
       // fixture records silent:false to reflect the real platform behaviour. The
-      // approval `buttons` (Phase 73 native components) are recorded ONLY when
-      // present so the button-less golden fixtures stay byte-stable.
+      // approval `buttons` (native components) are recorded ONLY when present so
+      // the button-less golden fixtures stay byte-stable.
       recorded.calls.push({
         op: "send",
         id,
@@ -125,7 +124,7 @@ export function createFakeDiscordAdapter(channelId = "chat-1"): FakeDiscordAdapt
         ...(options?.buttons !== undefined ? { buttons: options.buttons } : {}),
       });
       // S7 affordance SHELL: a thread-expand request records the thread-create
-      // egress (no callback handler, no signed callback_data — Phase 73).
+      // egress (no callback handler, no signed callback_data).
       if (options?.threadReply) {
         recorded.calls.push({ op: "threadCreate", parentId: id });
       }

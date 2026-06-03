@@ -3,7 +3,7 @@ import type { Result } from "@comis/shared";
 
 /**
  * MemoryEmbeddingStore: the SEGREGATED hexagonal boundary for the MMR diversity
- * re-rank (IQ-01) — a bulk, (tenant, agent)-scoped read of the embedding VECTORS
+ * re-rank — a bulk, (tenant, agent)-scoped read of the embedding VECTORS
  * for an already-ranked candidate id set, so the agent-side `mmrRerank` can run
  * `λ·rel − (1−λ)·maxCosineToSelected` over the candidates' ACTUAL embeddings (not
  * a lexical proxy — the locked decision #3).
@@ -11,8 +11,8 @@ import type { Result } from "@comis/shared";
  * This is a NEW port — it deliberately does NOT widen the security-reviewed
  * `MemoryPort` (store/search/delete). Per design §3.2 that surface is never
  * widened for agent use; new capabilities arrive as their own segregated port
- * (the same pattern as `MemoryUsefulnessStore` §FEED-02 / `MemoryTemporalStore`
- * §LANES-02 / `MemoryConsolidationStore` §6.5). The sole adapter is in
+ * (the same pattern as `MemoryUsefulnessStore` / `MemoryTemporalStore` /
+ * `MemoryConsolidationStore` §6.5). The sole adapter is in
  * @comis/memory (it owns the `db` handle and runs all SQL); the agent read path
  * (recall MMR) consumes this port TYPE from @comis/core — it cannot import
  * @comis/memory (the agent↛memory build cut). No new authority is granted beyond

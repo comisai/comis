@@ -25,8 +25,8 @@ import type { SendPolicyConfig, ElevatedReplyConfig } from "@comis/core";
 import type { SendMessageOptions } from "@comis/core";
 import { formatSessionKey, runWithContext, tryGetContext, createDeliveryOrigin, systemNowMs, narrowChatType } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
-// WIRE-03: the orchestrator imports ONLY the core activity port + types (never
-// the @comis/observability implementation — TURN-03/§4.7). The ActivityStreamPort
+// The orchestrator imports ONLY the core activity port + types (never
+// the @comis/observability implementation — see §4.7). The ActivityStreamPort
 // impl + the per-channel renderer are injected at the daemon composition root.
 import type { ActivityStreamPort, TurnActivityContext, TurnOutcome } from "@comis/core";
 import type { ActivityTurnCoordinator } from "./activity-turn-coordinator.js";
@@ -124,20 +124,20 @@ export interface ExecutionPipelineDeps {
   /** When true, only content inside <final> blocks reaches users. */
   enforceFinalTag?: boolean;
   /**
-   * The orchestrator-facing activity stream port (WIRE-03, §17.7). Injected at
+   * The orchestrator-facing activity stream port (§17.7). Injected at
    * the daemon composition root (the observability `createActivityStream` impl).
    * Optional — when absent (or `coordinatorFactory` is absent) the turn runs
    * exactly as before with no activity coordinator. The orchestrator depends ONLY
-   * on this core port shape; it never imports `@comis/observability` (TURN-03).
+   * on this core port shape; it never imports `@comis/observability`.
    */
   activityStreamPort?: ActivityStreamPort;
   /**
-   * Per-turn coordinator factory (WIRE-03). `executeAndDeliver` calls this once
+   * Per-turn coordinator factory. `executeAndDeliver` calls this once
    * per turn with the turn's {@link TurnActivityContext}, returning an unstarted
    * {@link ActivityTurnCoordinator}; the pipeline `start()`s it on turn begin and
    * `finalize(outcome)`s it after delivery (gated on the §16.6 receipt). The
    * factory captures the per-channel renderer + TimerPort/ClockPort/logger at the
-   * composition root and resolves the renderer by `ctx.channelType` (WIRE-02).
+   * composition root and resolves the renderer by `ctx.channelType`.
    * Optional — present only when activity rendering is wired for the turn.
    */
   coordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
@@ -381,7 +381,7 @@ export async function executeAndDeliver(
   }
 
   // ===================================================================
-  // WIRE-03: per-turn activity coordinator. Construct ONE coordinator for
+  // Per-turn activity coordinator. Construct ONE coordinator for
   // this turn (after the send-policy gate — denied turns deliver nothing, so
   // they get no coordinator) and subscribe it to the activity stream BEFORE
   // execution so it observes every tool:*/model:* event emitted during the
@@ -410,7 +410,7 @@ export async function executeAndDeliver(
     coordinator.start(turnCtx);
   }
 
-  // Finalize the coordinator exactly once with the turn's outcome (SEC-04 delete
+  // Finalize the coordinator exactly once with the turn's outcome (the delete
   // gate lives inside finalize). Idempotent: subsequent calls no-op so each
   // early-return path can finalize and the finally can dispose safely.
   let coordinatorFinalized = false;
@@ -466,7 +466,7 @@ export async function executeAndDeliver(
     }
 
     // Stage 4: Chunking, coalescing, block pacing, delivery.
-    // TURN-05/06: deliverExecutionResponse now returns a delivery receipt.
+    // deliverExecutionResponse now returns a delivery receipt.
     const deliveryReceipt = await deliverExecutionResponse(
       deps, adapter, effectiveMsg, filterResult.text,
       blockStreamCfg, activePacers, replyTo,
@@ -474,7 +474,7 @@ export async function executeAndDeliver(
     );
 
     // Emit message:sent with the REAL last-chunk message id from the receipt
-    // (TURN-06 — replaces the prior synthetic placeholder id). On a delivery
+    // (replaces the prior synthetic placeholder id). On a delivery
     // failure, or when nothing was delivered (visibleReplies suppression =>
     // deliveredChunks 0, empty id), there is no real message to announce, so
     // the message:sent emit is skipped — downstream subscribers only ever see
@@ -487,8 +487,8 @@ export async function executeAndDeliver(
       });
     }
 
-    // Finalize the activity coordinator from the §16.6 delivery receipt
-    // (WIRE-03). Success → the SEC-04 gate inside finalize defers the renderer's
+    // Finalize the activity coordinator from the §16.6 delivery receipt.
+    // Success → the gate inside finalize defers the renderer's
     // delete until deliveredAtMs; any observed status:"failed" event reclassifies
     // to failure (no delete). A delivery failure receipt → kind:"failure" so the
     // diagnostic trail is kept.
@@ -512,7 +512,7 @@ export async function executeAndDeliver(
   } finally {
     // Release the activity coordinator's subscription (idempotent; safe after
     // finalize). Guarantees unsubscribe even on an unexpected throw before
-    // finalize ran (aborted-turn cleanup, TURN-04).
+    // finalize ran (aborted-turn cleanup).
     coordinator?.dispose();
 
     // Cleanup event listeners from execution phase

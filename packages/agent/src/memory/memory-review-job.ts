@@ -19,13 +19,13 @@ import { ok, err, fromPromise, type Result } from "@comis/shared";
 import { safePath, systemDateFrom, systemSetTimeout, systemClearTimeout, validateMemoryWrite } from "@comis/core";
 import type { MemoryReviewConfig } from "@comis/core";
 import type { MemoryPort, MemorySearchOptions } from "@comis/core";
-// IN-01 (Phase 83): the SEGREGATED entity-store port — imported as a TYPE ONLY.
+// The SEGREGATED entity-store port — imported as a TYPE ONLY.
 // The concrete adapter lives in the memory package; the agent↛memory build cut
 // forbids importing that package here (architecture-graph.test.ts). The daemon
-// (Plan 05) injects the adapter through `MemoryReviewDeps.entityStore`.
-// EXTRACT-03 (Phase 96): the SEGREGATED causal-store port — likewise TYPE ONLY.
+// injects the adapter through `MemoryReviewDeps.entityStore`.
+// The SEGREGATED causal-store port — likewise TYPE ONLY.
 // The agent reaches it as a @comis/core port type (NEVER `@comis/memory`); the
-// daemon (96-03) injects the concrete adapter via `MemoryReviewDeps.causalStore`.
+// daemon injects the concrete adapter via `MemoryReviewDeps.causalStore`.
 import type { MemoryEntityStore, MemoryCausalStore } from "@comis/core";
 import type { MemoryEntry, MemorySource, TrustLevel, ClockPort } from "@comis/core";
 import type { SessionData, SessionKey } from "@comis/core";
@@ -58,21 +58,21 @@ export interface MemoryReviewDeps {
   config: MemoryReviewConfig;
   memoryPort: MemoryPort;
   /**
-   * OPTIONAL entity-associative store (IN-01, Phase 83). When injected, each
+   * OPTIONAL entity-associative store. When injected, each
    * memory's emitted entity mentions are resolved + linked AFTER a successful
    * store, populating `memory_entities` / `memory_entity_links`. When ABSENT,
-   * the job behaves exactly as Phase 82 (entities are emit-only, not persisted)
-   * — so the daemon (Plan 05) can light this up independently. A link failure
-   * is NON-FATAL (mirrors the WR-01 store/search guards): the watermark still
+   * the job behaves as if no entity store were wired (entities are emit-only, not
+   * persisted) — so the daemon can light this up independently. A link failure
+   * is NON-FATAL (mirrors the store/search guards): the watermark still
    * advances, so a resolver fault never stalls + reprocesses every cron tick.
    */
   entityStore?: MemoryEntityStore;
   /**
-   * OPTIONAL causal-edge store (EXTRACT-03, Phase 96). When injected, each
+   * OPTIONAL causal-edge store. When injected, each
    * memory's emitted `causes` are persisted AFTER a successful store as directed
    * cause→effect edges (`linkCausal(entry.id, effect, scope, confidence)`),
-   * populating `memory_causal_edges`. When ABSENT, the job behaves exactly as
-   * Phase 91 (causes are emit-only, not persisted) — so the daemon (96-03) can
+   * populating `memory_causal_edges`. When ABSENT, the job behaves as if no causal
+   * store were wired (causes are emit-only, not persisted) — so the daemon can
    * light this up independently. Injected as the @comis/core port TYPE (the
    * agent↛memory cut: the concrete adapter is daemon-built). A link failure is
    * NON-FATAL (mirrors the entity-store guard): the watermark still advances, so
@@ -91,7 +91,7 @@ export interface MemoryReviewDeps {
   /**
    * Wall-clock reads — the relative-date RESOLUTION reference + each stored
    * entry's `createdAt`/event timestamps. Never `Date.now()` (globals rule);
-   * Plan 04 wires the daemon's `createSystemClock()` adapter here.
+   * the daemon wires its `createSystemClock()` adapter here.
    */
   clock: ClockPort;
   logger: ReviewLogger;
@@ -100,7 +100,7 @@ export interface MemoryReviewDeps {
 /**
  * The structural logger contract this job needs (a subset of `ComisLogger`).
  * `child(bindings)` returns the SAME shape so a `submodule`-scoped child logger
- * (OBS-05) carries the canonical stage logs (AGENTS.md §2.7 contract vs impl).
+ * carries the canonical stage logs (AGENTS.md §2.7 contract vs impl).
  */
 interface ReviewLogger {
   info(obj: Record<string, unknown>, msg: string): void;
@@ -120,11 +120,11 @@ interface ReviewWatermark {
 }
 
 /**
- * An extracted memory paired with its emitted entity mentions (Phase 82, EXTR-04 / Q4b).
+ * An extracted memory paired with its emitted entity mentions.
  *
  * Entities are EMITTED on this in-memory result carrying the stored memory's
  * inherited trust + provenance — they are NOT persisted (no entity table exists
- * until Phase 83). `memoryId` is the link target Phase 83's resolver consumes.
+ * yet). `memoryId` is the link target the entity resolver consumes.
  */
 interface ExtractedMemoryWithEntities {
   memoryId: string;
@@ -264,11 +264,11 @@ function extractResponseText(response: { content?: unknown[] }): string {
  *
  * Scans sessions updated since last watermark, batches them into a single
  * cheap-model LLM call, then parses the LLM output into zod-validated STRUCTURED
- * memories (`{ content, occurredAt?, entities[] }`, Phase 82 / EXTR-01..05),
+ * memories (`{ content, occurredAt?, entities[] }`),
  * resolves each `occurredAt` via the injected clock, deduplicates, and stores
  * new findings (content + occurredAt only) via MemoryPort. Entity mentions are
- * EMITTED (not persisted — Q4b). Malformed output is non-fatal: the watermark
- * advances and the run returns ok (EXTR-05).
+ * EMITTED (not persisted). Malformed output is non-fatal: the watermark
+ * advances and the run returns ok.
  *
  * @param deps - Injected dependencies (memoryPort, sessionStore, eventBus, clock, LLM config, etc.)
  * @returns Result<void, Error> -- ok on success (even if 0 memories extracted), err on fatal failure
@@ -276,7 +276,7 @@ function extractResponseText(response: { content?: unknown[] }): string {
 export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<void, Error>> {
   const { config, agentId, tenantId, memoryPort, sessionStore, eventBus, logger, clock } = deps;
   const startTime = clock.now();
-  // OBS-05: scope the per-stage step logs to a `submodule` child logger so an
+  // Scope the per-stage step logs to a `submodule` child logger so an
   // operator can answer "what did extraction do?" from logs alone (AGENTS.md
   // §2.6/§2.7). The pre-existing `logger.*` WARN/DEBUG calls are left intact
   // (their byte-identical strings are guarded by the degradation/forensic
@@ -389,14 +389,14 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   }
 
   // Parse LLM response into the zod-validated structured envelope. A total
-  // parser (Plan 02): undefined on ANY whole-payload failure (bad JSON, schema
+  // parser: undefined on ANY whole-payload failure (bad JSON, schema
   // mismatch, or the DELETED flat `[{content, session}]` shape — there is NO
-  // fallback to the old path, design principle 8).
+  // fallback to the old path).
   const extraction = parseExtractionResult(responseText);
   if (!extraction) {
-    // EXTR-05 (whole-batch non-fatal): warn + advance the watermark for EVERY
-    // reviewed session BEFORE returning ok, so a malformed batch never stalls
-    // (Pitfall 4). errorKind + hint are the canonical structured fields.
+    // Whole-batch non-fatal: warn + advance the watermark for EVERY
+    // reviewed session BEFORE returning ok, so a malformed batch never stalls.
+    // errorKind + hint are the canonical structured fields.
     logger.warn(
       {
         agentId,
@@ -421,7 +421,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     return ok(undefined);
   }
 
-  // OBS-05 EXTRACT stage: the parse succeeded — report the parsed memory count.
+  // EXTRACT stage: the parse succeeded — report the parsed memory count.
   // O(1)/run boundary line → INFO (per-item store/link detail stays DEBUG).
   log.info(
     { agentId, step: "extract" as const, parsed: extraction.memories.length, durationMs: clock.now() - startTime },
@@ -448,11 +448,11 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   let duplicatesSkipped = 0;
   const extractedEntities: ExtractedMemoryWithEntities[] = [];
 
-  // OBS-04 (memory:entities_linked): `entitiesLinked` counts SUCCESSFUL
+  // memory:entities_linked: `entitiesLinked` counts SUCCESSFUL
   // resolveAndLink calls this run; `seenEntityNames` derives `newEntities`.
   // `resolveAndLink` returns only the resolved id — it does NOT signal
   // create-vs-reuse, and adding a port method just to surface that is out of
-  // scope (Plan 02/05). We therefore derive `newEntities` CONSERVATIVELY as the
+  // scope. We therefore derive `newEntities` CONSERVATIVELY as the
   // count of DISTINCT entity names first-seen in THIS run (a lower-bound proxy
   // for "minted a fresh row"): the run's first mention of a name is treated as
   // new, recurrences as reuse. Counts only ever leave this function — never a name.
@@ -460,7 +460,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   const seenEntityNames = new Set<string>();
 
   for (const m of extraction.memories) {
-    // Per-item resilience (EXTR-05): a single bad memory must `continue`, never
+    // Per-item resilience: a single bad memory must `continue`, never
     // abort the batch. The lenient schema already guarantees content.min(1),
     // but guard defensively.
     if (!m.content) continue;
@@ -469,10 +469,10 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     // from untrusted conversation text. Scan it BEFORE store. `critical`
     // (dangerous-command / secret-egress patterns) → skip the item; `warn`
     // (jailbreak/role patterns) → store with trust downgraded to "external";
-    // `clean` → the inherited `system` trust (EXTR-04). T-82-07 mitigation.
+    // `clean` → the inherited `system` trust.
     const verdict = validateMemoryWrite(m.content);
     if (verdict.severity === "critical") {
-      // WR-02: the audit record for a security-blocking event must carry the
+      // The audit record for a security-blocking event must carry the
       // COMPLETE matched-pattern set, not just the critical subset. The previous
       // code logged the value `verdict.criticalPatterns` under the misleading
       // field name `patterns`, silently dropping the broader `verdict.patterns`
@@ -493,12 +493,12 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     const trustLevel: TrustLevel = verdict.severity === "warn" ? "external" : "system";
 
     // Dedup check (reused — scoped to the review session key + system trust).
-    // WR-01: MemoryPort returns Promise<Result<…>> (non-throwing), but a real
+    // MemoryPort returns Promise<Result<…>> (non-throwing), but a real
     // adapter can VIOLATE the contract and REJECT (SQLITE_BUSY on a locked DB,
     // disk-full, a better-sqlite3 throw surfaced async). Route through
     // `fromPromise` so a rejection becomes an `err` Result instead of an
     // exception escaping `runMemoryReview` before the watermark saves — which
-    // would reprocess the same sessions every cron tick (the EXTR-05 stall).
+    // would reprocess the same sessions every cron tick (the watermark stall).
     const searchOutcome = await fromPromise(memoryPort.search(reviewSessionKey, m.content, searchOpts));
     if (!searchOutcome.ok) {
       // Dedup unavailable (adapter rejected) — skip this item rather than store
@@ -522,12 +522,12 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       continue;
     }
 
-    // Resolve the LLM's ISO event time → epoch ms against the injected clock
-    // (EXTR-02); undefined → omit the key (falls back to createdAt per TEMP-01).
+    // Resolve the LLM's ISO event time → epoch ms against the injected clock;
+    // undefined → omit the key (falls back to createdAt).
     const occurredAt = resolveOccurredAt(m.occurredAt, clock.now());
 
     // Store ONLY content + occurredAt. Trust + provenance inherit one consistent
-    // value (EXTR-04); NO `entities` field is persisted (Q4b — the strict
+    // value; NO `entities` field is persisted (the strict
     // MemoryRowSchema has no entity column; entities are emit-only below).
     const memorySource: MemorySource = { who: "system", channel: "memory-review" };
     const entry: MemoryEntry = {
@@ -540,7 +540,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       source: memorySource,
       tags: ["auto-review", ...config.autoTags],
       sourceType: "conversation",
-      // Persist the LLM-classified memory class (P95/LANES-03) instead of dropping it
+      // Persist the LLM-classified memory class instead of dropping it
       // to the adapter's 'semantic' fallback. `m.memoryType` is ALWAYS present post-parse
       // (StructuredMemorySchema.memoryType has `.default("semantic")`), so the persisted
       // value is the real classification.
@@ -549,7 +549,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       ...(occurredAt !== undefined ? { occurredAt } : {}),
     };
 
-    // WR-01: same contract-violation guard as the dedup search above — a
+    // Same contract-violation guard as the dedup search above — a
     // rejecting `store` (locked DB, disk-full) must NOT escape before the
     // watermark saves. `fromPromise` collapses a rejection into an `err` that
     // the existing non-fatal branch logs; the loop and watermark advance survive.
@@ -557,21 +557,21 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     const storeResult = storeOutcome.ok ? storeOutcome.value : storeOutcome;
     if (storeResult.ok) {
       memoriesExtracted++;
-      // EXTR-04 / Q4b: emit the entity mentions on the in-memory result with the
-      // SAME inherited trust + provenance. NOT persisted — for the Phase-83 handoff.
+      // Emit the entity mentions on the in-memory result with the
+      // SAME inherited trust + provenance. NOT persisted — for the entity-link handoff.
       extractedEntities.push({
         memoryId: entry.id,
         entities: m.entities.map((e) => ({ name: e.name, trustLevel, source: memorySource })),
       });
 
-      // IN-01 (Phase 83): persist the entity associations — resolve each emitted
+      // Persist the entity associations — resolve each emitted
       // entity to a (tenant, agent)-scoped entity row and link it to THIS stored
       // memory. The scope (tenantId, agentId) is the stored entry's own partition
-      // (ENT-03 isolation enforced at the write side); `now` comes from the
+      // (isolation enforced at the write side); `now` comes from the
       // injected clock (NEVER the wall-clock global — globals rule). Guarded by
-      // `deps.entityStore` so an un-injected port reproduces Phase-82 behaviour exactly.
+      // `deps.entityStore` so an un-injected port reproduces the no-entity-store behaviour exactly.
       //
-      // NON-FATAL (mirrors the WR-01 store/search guards above): `resolveAndLink`
+      // NON-FATAL (mirrors the store/search guards above): `resolveAndLink`
       // returns Promise<Result<string, Error>>, but a real adapter can REJECT
       // (SQLITE_BUSY on a locked DB, disk-full). `fromPromise` collapses a
       // rejection into an `err` Result; `!linked.ok` then covers the rejection and
@@ -594,7 +594,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
               "Entity resolve/link failed (non-fatal)",
             );
           } else {
-            // OBS-04 counters: a successful resolve+link. `entitiesLinked` is the
+            // Counters: a successful resolve+link. `entitiesLinked` is the
             // total (the event's `entityCount`); a name's FIRST appearance this
             // run counts toward `newEntities` (conservative create proxy above).
             entitiesLinked++;
@@ -603,9 +603,9 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
         }
       }
 
-      // EXTRACT-03 (Phase 96): persist the causal edges. Guarded by
-      // `deps.causalStore` so an un-injected port reproduces Phase-91 behaviour
-      // EXACTLY (no write). The cause is THIS stored memory (`entry.id`, A2); each
+      // Persist the causal edges. Guarded by
+      // `deps.causalStore` so an un-injected port reproduces the no-causal-store behaviour
+      // EXACTLY (no write). The cause is THIS stored memory (`entry.id`); each
       // emitted `effect` is resolved to a counterpart memory id by the injected
       // adapter (scoped FTS top-1 — the agent never sees the SQL). NON-FATAL
       // (mirrors the entity guard above): a failing linkCausal — an `err` Result
@@ -647,14 +647,14 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
 
   const entitiesExtracted = extractedEntities.reduce((n, e) => n + e.entities.length, 0);
 
-  // OBS-05 STORE stage: report what the per-memory store loop persisted.
+  // STORE stage: report what the per-memory store loop persisted.
   log.info(
     { agentId, step: "store" as const, memoriesExtracted, duplicatesSkipped, durationMs: clock.now() - startTime },
     "memories stored",
   );
 
-  // OBS-05 LINK stage + OBS-04 emit — only meaningful when the entity-store port
-  // is injected (un-injected ⇒ Phase-82 behaviour: no link work, no event). The
+  // LINK stage + entities-linked emit — only meaningful when the entity-store port
+  // is injected (un-injected ⇒ no link work, no event). The
   // `entitiesLinked > 0` guard keeps a no-entity run silent (no zero-count noise).
   if (deps.entityStore && entitiesLinked > 0) {
     const newEntities = seenEntityNames.size;
@@ -662,8 +662,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       { agentId, step: "link" as const, entitiesLinked, newEntities, durationMs: clock.now() - startTime },
       "entities linked",
     );
-    // OBS-04: counts ONLY — entityCount (total resolved) + newEntities (distinct
-    // first-seen) + durationMs. NEVER an entity name (AGENTS.md §2.7 / T-86-16).
+    // Counts ONLY — entityCount (total resolved) + newEntities (distinct
+    // first-seen) + durationMs. NEVER an entity name (AGENTS.md §2.7).
     eventBus.emit("memory:entities_linked", {
       agentId,
       entityCount: entitiesLinked,

@@ -117,7 +117,7 @@ vi.mock("@comis/skills/tools", () => ({
   createFileStateTracker: mockCreateFileStateTracker,
   sanitizeImageForApi: mockSanitizeImageForApi,
   createMediaPersistenceService: mockCreateMediaPersistenceService,
-  // Terminal-driver (v2.11) wiring deps consumed by setup-terminal-tools.ts.
+  // Terminal-driver wiring deps consumed by setup-terminal-tools.ts.
   createTerminalSessionRegistry: vi.fn(() => ({
     create: vi.fn(),
     read: vi.fn(),
@@ -138,7 +138,7 @@ vi.mock("@comis/skills/tools", () => ({
   createTerminalSessionWaitTool: vi.fn(() => ({ name: "terminal_session_wait", execute: vi.fn() })),
   createTerminalSessionStatusTool: vi.fn(() => ({ name: "terminal_session_status", execute: vi.fn() })),
   createTerminalSessionResizeTool: vi.fn(() => ({ name: "terminal_session_resize", execute: vi.fn() })),
-  // P4 OPS-03/06: the per-session caps factory the terminal wiring constructs ONCE per
+  // The per-session caps factory the terminal wiring constructs ONCE per
   // agent (buildTerminalSharedDeps). Returns a SessionCaps-shaped no-op double here.
   createSessionCaps: vi.fn(() => ({
     startSession: vi.fn(),
@@ -1734,7 +1734,7 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 22. §8.1 ctx_* force-include under restricted profiles (DAG-02)
+  // 22. §8.1 ctx_* force-include under restricted profiles
   //
   // A restricted tool profile (anything that is NOT "full") drops the ctx_*
   // recall tools -- no profile/group in TOOL_PROFILES lists them. Yet in DAG
@@ -1758,7 +1758,7 @@ describe("setupTools", () => {
   // appear are the four ctx_* recall tools introduced by the force-include.
   // -------------------------------------------------------------------------
 
-  describe("§8.1 ctx_* force-include under restricted profiles (DAG-02)", () => {
+  describe("§8.1 ctx_* force-include under restricted profiles", () => {
     const CTX_TOOLS = ["ctx_search", "ctx_inspect", "ctx_recall", "ctx_expand"] as const;
 
     /** Restricted-profile agent ("minimal") whose contextEngine.version is set. */

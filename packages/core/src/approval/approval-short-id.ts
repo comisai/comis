@@ -24,14 +24,14 @@ const SHORT_ID_LENGTH = 12;
  * Each character is drawn independently from a CSPRNG (`node:crypto` `randomInt`,
  * the same house pattern as `security/token-generator.ts`), giving ~71 bits of
  * entropy (62^12 ≈ 3.2e21). That is large enough that brute-forcing a live id is
- * uneconomic (Spoofing — T-70-12-01) yet small enough to fit a channel callback
+ * uneconomic (Spoofing) yet small enough to fit a channel callback
  * budget (e.g. Telegram's 64-byte `callback_data`). The wide space also makes a
  * birthday collision between two concurrent pending approvals negligible
- * (Tampering — T-70-12-02).
+ * (Tampering).
  *
  * A predictable `Date.now()`/counter id is deliberately avoided — guessability
  * would let an attacker forge an approval callback for a victim's pending request.
- * The signed-HMAC callback wrapper (defense-in-depth) is Phase 73; this primitive
+ * The signed-HMAC callback wrapper provides defense-in-depth; this primitive
  * guarantees only that the id itself is unpredictable.
  *
  * Matches `ApprovalRequestSchema.shortId` exactly: `z.string().length(12).regex(/^[0-9A-Za-z]+$/)`.

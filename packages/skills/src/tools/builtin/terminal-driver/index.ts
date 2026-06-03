@@ -30,7 +30,7 @@ export {
   type TerminalEvictedEvent,
 } from "./terminal-tools.js";
 
-// The lone remaining stub tool (registered, never-export, rejects not_implemented → Phase 124).
+// The lone remaining stub tool (registered, never-export, rejects not_implemented).
 export { createTerminalSessionStatusTool } from "./terminal-tools-stubs.js";
 
 // The daemon-side session registry.
@@ -56,8 +56,8 @@ export {
   WORKER_PERMISSION_ARGS,
 } from "./terminal-worker-launch.js";
 
-// P4 OPS-03/06: the per-session usage-cap primitive (closure-local counters + injected
-// clock). The tool layer (Plan 05) consumes createSessionCaps to REJECT on
+// The per-session usage-cap primitive (closure-local counters + injected
+// clock). The tool layer consumes createSessionCaps to REJECT on
 // maxRequestsPerSession and EVICT on maxInteractions/wallClockMs.
 export {
   createSessionCaps,
@@ -66,8 +66,8 @@ export {
   type CapBreach,
 } from "./terminal-caps.js";
 
-// P4 TR-06/OPS-06: the injected-timer reaper (idle-TTL + wall-clock sweep + max-sessions
-// overflow). The registry composes it (Plan 04); Plan 05 reuses EvictReason on the same
+// The injected-timer reaper (idle-TTL + wall-clock sweep + max-sessions
+// overflow). The registry composes it; the tool layer reuses EvictReason on the same
 // onEvict path for max_interactions. TYPE-ONLY TimerPort + injected clock — never @comis/infra.
 export {
   createTerminalReaper,
@@ -78,7 +78,7 @@ export {
   type ReaperEvictInfo,
 } from "./terminal-reaper.js";
 
-// The length-prefixed IPC framer's max-frame guard (HR-01) — the registry's
+// The length-prefixed IPC framer's max-frame guard — the registry's
 // stdout handler branches on FrameTooLargeError to drop a corrupt worker.
 export {
   FrameTooLargeError,
@@ -90,8 +90,7 @@ export {
 } from "./terminal-ipc.js";
 
 // The canonical-binary allowlist matcher + the config-mapping types. `TerminalScope`
-// is the SEC-02 scope contract the daemon wiring maps config scope onto (122-01 is
-// the SOLE writer of this barrel in Wave 1).
+// is the scope contract the daemon wiring maps config scope onto.
 export {
   matchAllowEntry,
   buildDirectSpawn,

@@ -93,7 +93,7 @@ describe("setup-agents-runtime skills directory creation", () => {
 describe("setupSingleAgent OAuth wiring", () => {
   const source = readRuntimeSource();
   // The OAuth auth-provider construction was extracted to setup-agents-oauth.ts
-  // (85-05 file-size split); the runtime file now calls wireAuthProvider(...).
+  // (file-size split); the runtime file now calls wireAuthProvider(...).
   const oauthSource = readFileSync(
     join(__dirname, "setup-agents-oauth.ts"),
     "utf-8",
@@ -281,10 +281,10 @@ describe("setupSingleAgent structural parity", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DAG-05: context-engine mode-switch DIRECTION detection at the rebuild seam
+// Context-engine mode-switch DIRECTION detection at the rebuild seam
 // ---------------------------------------------------------------------------
 
-describe("setupSingleAgent context-engine mode-switch detection (DAG-05)", () => {
+describe("setupSingleAgent context-engine mode-switch detection", () => {
   const source = readRuntimeSource();
   const typesSource = readFileSync(
     join(__dirname, "setup-agents-types.ts"),
@@ -295,7 +295,7 @@ describe("setupSingleAgent context-engine mode-switch detection (DAG-05)", () =>
     "utf-8",
   );
   // The detection + one-shot consume logic was extracted to
-  // setup-agents-mode-switch.ts (85-05 file-size split); the runtime file calls
+  // setup-agents-mode-switch.ts (file-size split); the runtime file calls
   // detectAndRecordModeSwitch(...) + makeConsumePendingModeSwitch(...).
   const modeSwitchSource = readFileSync(
     join(__dirname, "setup-agents-mode-switch.ts"),
@@ -369,7 +369,7 @@ describe("setupSingleAgent context-engine mode-switch detection (DAG-05)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// OBS-02: recall-trace config threading (Phase 86)
+// Recall-trace config threading
 //
 // The recall-trace recorder + sanitization pipeline are built and proven in
 // isolation, but the daemon never threaded diagnostics.recallTrace into the
@@ -380,7 +380,7 @@ describe("setupSingleAgent context-engine mode-switch detection (DAG-05)", () =>
 // the createPiExecutor deps object.
 // ---------------------------------------------------------------------------
 
-describe("setupSingleAgent recall-trace config wiring (OBS-02)", () => {
+describe("setupSingleAgent recall-trace config wiring", () => {
   const source = readRuntimeSource();
 
   it("threads container.config.diagnostics.recallTrace into createPiExecutor deps as recallTraceConfig", () => {
@@ -418,11 +418,11 @@ describe("setupSingleAgent recall-trace config wiring (OBS-02)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 92: per-agent effective rag.rerank.enabled precedence (RERANK-01) +
+// Per-agent effective rag.rerank.enabled precedence +
 // the modelPresent threading daemon -> registry -> types -> runtime (Pitfall 4).
 // ---------------------------------------------------------------------------
 
-describe("setupSingleAgent rerank auto-on precedence (RERANK-01)", () => {
+describe("setupSingleAgent rerank auto-on precedence", () => {
   const source = readRuntimeSource();
   const typesSource = readFileSync(
     join(__dirname, "setup-agents-types.ts"),
@@ -440,7 +440,7 @@ describe("setupSingleAgent rerank auto-on precedence (RERANK-01)", () => {
   );
 
   it("imports resolveEffectiveRerank from ./setup-agents-tooling.js", () => {
-    // The pure precedence fn lives beside its sibling resolveAgentModel (Plan 01).
+    // The pure precedence fn lives beside its sibling resolveAgentModel.
     expect(source).toMatch(
       /import\s*\{[^}]*resolveEffectiveRerank[^}]*\}\s*from\s*"\.\/setup-agents-tooling\.js"/s,
     );
@@ -457,10 +457,10 @@ describe("setupSingleAgent rerank auto-on precedence (RERANK-01)", () => {
     );
   });
 
-  it("feeds resolveEffectiveRerank the GENUINE raw tri-state signal, not the zod-defaulted parse (CR-01)", () => {
-    // CR-01 fix: the precedence MUST read the RAW (pre-Zod-default) rerank value.
+  it("feeds resolveEffectiveRerank the GENUINE raw tri-state signal, not the zod-defaulted parse", () => {
+    // The precedence MUST read the RAW (pre-Zod-default) rerank value.
     // The parsed agentConfig.rag.rerank.enabled is ALWAYS a concrete boolean
-    // (it carries a `.default()` — v2.9 increment 2: default-ON), so reading it would
+    // (it carries a `.default()` — default-ON), so reading it would
     // erase the unset signal and make the zero-download auto-on precedence impossible.
     // The raw value comes from the explicit `rawRerankEnabled` arg (hot-add)
     // else the daemon-wide map on the container (boot path). The OLD broken code read
@@ -508,9 +508,9 @@ describe("setupSingleAgent rerank auto-on precedence (RERANK-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 6 Wave 0: AuthStorage hot-swap RED tests
+// AuthStorage hot-swap RED tests
 //
-// These tests describe behaviour that Plan 06-04 will wire into
+// These tests describe behaviour that will be wired into
 // setup-agents-runtime.ts (or setup-agents-registry.ts). They MUST fail
 // RED because the subscription does not exist in production code yet.
 //
@@ -521,7 +521,7 @@ describe("setupSingleAgent rerank auto-on precedence (RERANK-01)", () => {
 // A non-provider key (e.g. MY_DATABASE_URL) is a no-op.
 // ---------------------------------------------------------------------------
 
-describe("Phase 6 Wave 0: AuthStorage secret:changed hot-swap wiring (RED — not yet implemented)", () => {
+describe("AuthStorage secret:changed hot-swap wiring (RED — not yet implemented)", () => {
   const runtimeSrc = readFileSync(
     join(__dirname, "setup-agents-runtime.ts"),
     "utf-8",
@@ -533,8 +533,8 @@ describe("Phase 6 Wave 0: AuthStorage secret:changed hot-swap wiring (RED — no
 
   it("secret:changed subscription is wired in setup-agents wiring source (RED)", () => {
     // Asserts that the production source contains the hot-swap subscription.
-    // Fails RED because Plan 06-04 has not landed yet.
-    // After Plan 06-04, one of these sources will subscribe to secret:changed.
+    // Fails RED because the subscription has not landed yet.
+    // Once wired, one of these sources will subscribe to secret:changed.
     const runtimeContains = runtimeSrc.includes('"secret:changed"');
     const registryContains = registrySrc.includes('"secret:changed"');
     expect(runtimeContains || registryContains).toBe(true);
@@ -545,7 +545,7 @@ describe("Phase 6 Wave 0: AuthStorage secret:changed hot-swap wiring (RED — no
     // the wiring must call piAuthStorage.setRuntimeApiKey(provider, newValue).
     // Fails RED because the wiring-level hot-swap call is not implemented yet.
     // Currently only auth-rotation-adapter.ts calls setRuntimeApiKey at runtime
-    // (not at boot wiring). Plan 06-04 adds the composition-root subscription.
+    // (not at boot wiring). The composition-root subscription will add it.
     const runtimeContains = runtimeSrc.includes("secret:changed") && runtimeSrc.includes("setRuntimeApiKey");
     const registryContains = registrySrc.includes("secret:changed") && registrySrc.includes("setRuntimeApiKey");
     expect(runtimeContains || registryContains).toBe(true);

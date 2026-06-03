@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Forensic events INFO-level architecture test (INFO-01, design §5 D11).
+ * Forensic events INFO-level architecture test (design §5 D11).
  *
  * The 7 forensic events that are O(1)/turn MUST emit at INFO so they
  * are visible when production daemons run at logLevel:"info". Any site
@@ -186,7 +186,7 @@ function checkFile(
   return { violations, infoCount };
 }
 
-describe("forensic-events-info-level -- all 7 forensic events emit at INFO (INFO-01)", () => {
+describe("forensic-events-info-level -- all 7 forensic events emit at INFO", () => {
   it("walker sanity: all source files resolve and contain message strings (pre-check)", () => {
     // Verify at least one forensic site has content (sanity that paths are right).
     const absPath = resolve(REPO_ROOT, "packages/orchestrator/src/channel-manager.ts");
@@ -208,7 +208,7 @@ describe("forensic-events-info-level -- all 7 forensic events emit at INFO (INFO
         expect(
           allViolations,
           formatViolations({
-            description: `INFO-01: "${site.message}" (${site.eventName}) must emit at INFO, not DEBUG. Production daemons running at logLevel:"info" will miss this forensic event.`,
+            description: `"${site.message}" (${site.eventName}) must emit at INFO, not DEBUG. Production daemons running at logLevel:"info" will miss this forensic event.`,
             violations: allViolations.map((v) => ({
               file: v.file,
               line: v.line,
@@ -233,7 +233,7 @@ describe("forensic-events-info-level -- all 7 forensic events emit at INFO (INFO
           expect(
             totalInfoCount,
             formatViolations({
-              description: `INFO-01: "${site.message}" (${site.eventName}) must exist as a logger.info call in the specified file(s). The log line is missing entirely.`,
+              description: `"${site.message}" (${site.eventName}) must exist as a logger.info call in the specified file(s). The log line is missing entirely.`,
               violations: site.files.map((f) => ({ file: f, line: 0, snippet: `Expected logger.info(..., "${site.message}")` })),
               suggestedFix: `Add a logger.info({...}, "${site.message}") call in the indicated file(s). For "Message dequeued": add it in executeLaneTask after the queue:dequeued bus emit in command-queue.ts.`,
               designRef: "OBSERVABILITY_DESIGN §5 D11",

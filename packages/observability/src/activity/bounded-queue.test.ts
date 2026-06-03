@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the per-consumer bounded queue (STRAT-08, spec §5.1).
+ * RED test for the per-consumer bounded queue (spec §5.1).
  *
  * Fails on pre-patch code: `./bounded-queue.js` does not exist.
  *
@@ -25,7 +25,7 @@ function makeItem(seq: number, failed = false): Item {
   return { seq, failed };
 }
 
-describe("createBoundedQueue (STRAT-08 / spec §5.1)", () => {
+describe("createBoundedQueue (spec §5.1)", () => {
   it("holds capacity 64 and FIFO-drops the oldest non-failure items on overflow", () => {
     const q = createBoundedQueue<Item>({ isFailure: (i) => i.failed });
     for (let seq = 0; seq < 70; seq++) {
@@ -68,7 +68,7 @@ describe("createBoundedQueue (STRAT-08 / spec §5.1)", () => {
     expect(q.droppedCount()).toBe(4);
   });
 
-  it("tracks the queue high-water mark for OBS-01", () => {
+  it("tracks the queue high-water mark", () => {
     const q = createBoundedQueue<Item>({ isFailure: (i) => i.failed });
     for (let seq = 0; seq < 30; seq++) q.push(makeItem(seq));
     expect(q.highWater()).toBe(30);

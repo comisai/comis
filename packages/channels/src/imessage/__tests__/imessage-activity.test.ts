@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * iMessage AppendOnly renderer tests (CHAN-07, CHAN-11; §18.3 iMessage column).
+ * iMessage AppendOnly renderer tests (§18.3 iMessage column).
  *
  * iMessage is send-only — it has no in-place edit and no delete, so it wires the
- * Phase-70 AppendOnly strategy: ONE opening status (the first non-trivial frame),
+ * AppendOnly strategy: ONE opening status (the first non-trivial frame),
  * later frames are no-ops, the closing follow-up is SUPPRESSED on success (the
  * assistant reply is the signal), and a failure posts exactly one
  * `❌ {errorKind}` follow-up. The single net-new piece of logic here is
  * `classifyIMessageError` — the live adapter wraps send failures in
  * `new Error("Failed to send iMessage: …")` with no structured numeric code, so
  * the classifier defaults to `internal` and reads the error structurally ONLY
- * (never renders the `.message` as activity text — SEC-05/§19.3).
+ * (never renders the `.message` as activity text — §19.3).
  * `makeIMessageRenderActions` maps `send` through it and guards the absent
  * `editMessage` / `deleteMessage`; `createIMessageActivityRenderer` wires the
- * Phase-70 `createAppendOnlyRenderer` (no duplicated state machine, NO timer/clock).
+ * `createAppendOnlyRenderer` (no duplicated state machine, NO timer/clock).
  *
  * Golden fixtures assert via readFixture + toEqual (NEVER an auto-writing
  * inline/file snapshot, which self-heals a wrong fixture — Pitfall 3).

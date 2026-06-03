@@ -144,7 +144,7 @@ export interface DaemonInstance {
    * configured at boot — `setup-channels-runtime.ts` only constructs it when
    * `adaptersByType.size > 0`). Exposed so integration tests can drive a real
    * inbound turn through the daemon's REAL pipeline deps via
-   * `channelManager.injectMessage(channelType, msg)` — the WIRE-06 activation
+   * `channelManager.injectMessage(channelType, msg)` — the activation
    * test (`test/integration/activity-composition.test.ts`) registers a test
    * adapter on `adapterRegistry` and drives `renderer.apply` end-to-end.
    */
@@ -235,7 +235,7 @@ export interface DaemonOverrides {
   timers?: TimerPort;
   /**
    * Override the per-channelType activity-renderer factory at the composition
-   * root (WIRE-06 test seam). When provided, replaces the renderer produced by
+   * root (test seam). When provided, replaces the renderer produced by
    * `buildActivityRenderers` for a given channelType so an integration test can
    * inject a spy/TestSink it retains a reference to and assert `apply` fired on
    * a real inbound turn. Production must never set this; the override is test-only.
@@ -322,23 +322,23 @@ export interface BootContext {
   clock: import("@comis/core").ClockPort;
   env: import("@comis/core").EnvPort;
   timers: import("@comis/core").TimerPort;
-  // WIRE-08: the single process-singleton ActivityCircuitBreaker, constructed once
-  // in bootFoundation (D2) and threaded to `buildChannelManagerDeps` → `ChannelsDeps`
+  // The single process-singleton ActivityCircuitBreaker, constructed once
+  // in bootFoundation and threaded to `buildChannelManagerDeps` → `ChannelsDeps`
   // → the inbound coordinatorFactory, where it is shared across every per-turn
   // coordinator. Structurally the `ActivityBreakerGate` slice the coordinator
   // consumes (the concrete breaker's record/isTripped satisfy it).
   activityBreaker: import("@comis/orchestrator").ActivityBreakerGate;
-  // WIRE-06 test-only renderer-injection seam, captured from the daemon override
+  // Test-only renderer-injection seam, captured from the daemon override
   // in bootFoundation and threaded to `buildChannelManagerDeps` → `ChannelsDeps`
   // → `buildActivityRenderers`. Named distinctly from the DaemonOverrides field
   // (which is the canonical test-only seam) so the seam declaration stays
   // single-sourced. Optional + default-undefined; production never sets it
   // (mirrors the `timers` test-only discipline). Inert on the inbound path until
-  // Plan 03 builds the inbound coordinatorFactory over the renderers map.
+  // the inbound coordinatorFactory is built over the renderers map.
   activityRendererFactoryOverride?: (channelType: string) => ChannelActivityRenderer | undefined;
-  // Secrets (5 fields) — secretStore is always wired after Plan 02-04
+  // Secrets (5 fields) — secretStore is always wired
   secretStore: SecretStorePort;
-  /** Daemon-owned write handle over the shared SecretManager backing Map (P4a).
+  /** Daemon-owned write handle over the shared SecretManager backing Map.
    *  Threaded from bootFoundation to buildRpcDispatchDeps via PostChannelsBootContext.
    *  MUST NOT appear on AppContainer or any agent-accessible path. */
   mutableHandle: MutableSecretManager;
@@ -366,8 +366,8 @@ export interface BootContext {
   billingEstimator: ReturnType<typeof setupObservability>["billingEstimator"];
   channelActivityTracker: ReturnType<typeof setupObservability>["channelActivityTracker"];
   deliveryTracer: ReturnType<typeof setupObservability>["deliveryTracer"];
-  // WIRE-01: the canonical ActivityStream (orchestrator-facing ActivityStreamPort)
-  // + its WIRE-05 drain hook, threaded from bootFoundation to bootShutdown.
+  // The canonical ActivityStream (orchestrator-facing ActivityStreamPort)
+  // + its drain hook, threaded from bootFoundation to bootShutdown.
   activityStream: ReturnType<typeof setupObservability>["activityStream"];
   disposeActivityStream: ReturnType<typeof setupObservability>["disposeActivityStream"];
   contextPipelineCollector: ReturnType<typeof createContextPipelineCollector>;
@@ -385,70 +385,70 @@ export interface BootContext {
   embeddingCacheStats: Awaited<ReturnType<typeof setupMemory>>["embeddingCacheStats"];
   embeddingCircuitBreakerState: Awaited<ReturnType<typeof setupMemory>>["embeddingCircuitBreakerState"];
   rerankerPort: Awaited<ReturnType<typeof setupMemory>>["rerankerPort"];
-  /** Phase 92 (RERANK-01/02): the no-download model-present probe result computed once in
+  /** The no-download model-present probe result computed once in
    *  setup-memory. Carried through BootContext so bootAgents threads the SAME boolean into
-   *  setupAgents (the per-agent effective rerank precedence consults one source — Pitfall 4). */
+   *  setupAgents (the per-agent effective rerank precedence consults one source). */
   rerankerModelPresent: Awaited<ReturnType<typeof setupMemory>>["rerankerModelPresent"];
   disposeReranker: Awaited<ReturnType<typeof setupMemory>>["disposeReranker"];
-  /** Entity-associative store (Phase 83) — threaded into setupAgents (executor recall
+  /** Entity-associative store — threaded into setupAgents (executor recall
    *  read path) + the cron review (write path). Built in setup-memory on the shared db. */
   entityStore: Awaited<ReturnType<typeof setupMemory>>["entityStore"];
-  /** Temporal-spread store (Phase 95, LANES-02) — threaded into setupAgents (the executor recall
+  /** Temporal-spread store — threaded into setupAgents (the executor recall
    *  read path → createMemoryRecall) ONLY. NOT the cron/diagnostic paths. Built in setup-memory
    *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator
    *  enables `agents.<id>.rag.lanes.temporal.enabled` (default OFF). */
   temporalStore: Awaited<ReturnType<typeof setupMemory>>["temporalStore"];
-  /** Causal store (Phase 96, EXTRACT-03) — threaded into setupAgents (the executor recall read
+  /** Causal store — threaded into setupAgents (the executor recall read
    *  path → createMemoryRecall, the 5th causal lane) AND the cron-review write path
    *  (registerCronEventListeners → runMemoryReview → linkCausal). Built in setup-memory on the
    *  shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator enables
    *  `agents.<id>.rag.lanes.causal.enabled` (default OFF); the write guards on extracted causes. */
   causalStore: Awaited<ReturnType<typeof setupMemory>>["causalStore"];
-  /** Triple store (Phase 100, KG-01) — threaded into setupAgents (the executor recall read
+  /** Triple store — threaded into setupAgents (the executor recall read
    *  path → createMemoryRecall, the 6th graph-spread lane). Built in setup-memory on the shared
    *  db; injected as the port TYPE (agent↛memory cut). Dormant until an operator enables
    *  `agents.<id>.rag.lanes.graphSpread.enabled` (default OFF). */
   tripleStore: Awaited<ReturnType<typeof setupMemory>>["tripleStore"];
-  /** Embedding read store (Phase 102, IQ-01) — threaded into setupAgents (the executor recall
+  /** Embedding read store — threaded into setupAgents (the executor recall
    *  read path → createMemoryRecall, the MMR diversity re-rank). Built in setup-memory on the
    *  shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator enables
    *  `agents.<id>.rag.mmr.enabled` (default OFF). */
   embeddingStore: Awaited<ReturnType<typeof setupMemory>>["embeddingStore"];
-  /** Usefulness store (Phase 93, FEED-03) — threaded into setupAgents (the executor recall
+  /** Usefulness store — threaded into setupAgents (the executor recall
    *  read path → createMemoryRecall) + exposed to the memory.* diagnostic deps alongside its
    *  siblings. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory
    *  cut). Dormant until an operator enables `agents.<id>.rag.feedback.enabled` (default OFF). */
   usefulnessStore: Awaited<ReturnType<typeof setupMemory>>["usefulnessStore"];
-  /** Per-user representation store (Phase 107, USER-03 — Track E1) — threaded into setupAgents (the
+  /** Per-user representation store — threaded into setupAgents (the
    *  executor recall read path -> prompt-assembly's LLM-free `<user_profile>` standing-block injection)
    *  AND the offline-builder cron (setup-channels -> the __USER_REPRESENTATION__ sentinel). Built in
    *  setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until the
    *  offline builder writes rows (default-OFF cost gate). */
   userRepresentationStore: Awaited<ReturnType<typeof setupMemory>>["userRepresentationStore"];
-  /** Directional relationship store (Phase 108, SOCIAL-01/02 — Track E2) — threaded into setupAgents
+  /** Directional relationship store — threaded into setupAgents
    *  (the executor recall read path -> prompt-assembly's LLM-free `<channel_relationships>` standing-block
    *  injection) AND the offline-builder cron (setup-channels -> the __SOCIAL_MODELING__ sentinel). Built
    *  in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until the
-   *  offline builder writes rows AND the operator enables the SOCIAL-03 dual gate (default-OFF +
+   *  offline builder writes rows AND the operator enables the social-modeling dual gate (default-OFF +
    *  sign-off-gated). */
   relationshipStore: Awaited<ReturnType<typeof setupMemory>>["relationshipStore"];
-  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2) — threaded into setupAgents (the executor
+  /** Tuned-alpha store — threaded into setupAgents (the executor
    *  recall read path -> prompt-assembly's buildScoringAlphas overlay) AND the OFFLINE bandit cron
    *  (setup-channels -> the __ONLINE_TUNING__ sentinel). Built in setup-memory on the shared db;
    *  injected as the port TYPE (agent↛memory cut). Dormant until BOTH the recall-side gate
    *  (`rag.onlineTuning.enabled`) AND the bandit cron (`memoryOnlineTuning.enabled`) are on. */
   tunedAlphaStore: Awaited<ReturnType<typeof setupMemory>>["tunedAlphaStore"];
-  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C) — threaded into the cron
+  /** Memory-lifecycle sweep store — threaded into the cron
    *  path ONLY (the KEYLESS __MEMORY_LIFECYCLE__ sentinel → the DORMANT runLifecycleSweep). NOT
-   *  the executor recall path (RQ8: daemon-cron-side, no 3-hop forwarding). Built in setup-memory
+   *  the executor recall path (daemon-cron-side, no 3-hop forwarding). Built in setup-memory
    *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant — even when the cron
    *  (`memoryLifecycle.enabled`, default OFF) is on the sweep evicts/demotes 0 rows. */
   memoryLifecycleStore: Awaited<ReturnType<typeof setupMemory>>["memoryLifecycleStore"];
-  /** Consolidation store (Phase 84, CONS-07) — threaded into the cron path ONLY (the
+  /** Consolidation store — threaded into the cron path ONLY (the
    *  registerCronEventListeners → runMemoryConsolidation sentinel). NOT the executor recall
    *  path. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). */
   consolidationStore: Awaited<ReturnType<typeof setupMemory>>["consolidationStore"];
-  /** Live recall-counter wiring (Phase 86, OBS-07) — the single
+  /** Live recall-counter wiring — the single
    *  `wireRecallCounters(eventBus)` subscriber, stood up in setup-memory (the
    *  composition site that holds the event bus). Threaded into
    *  MemoryApiDeps.recallCounters so `memory.recall_stats` reads the live gauge. */
@@ -499,10 +499,10 @@ export interface BootContext {
   toolCapabilityPorts?: Awaited<ReturnType<typeof setupAgents>>["toolCapabilityPorts"];
   /** Session-scoped trajectory recorder registry. Drained on shutdown. */
   trajectoryRegistry?: Awaited<ReturnType<typeof setupAgents>>["trajectoryRegistry"];
-  /** Per-agent ExecutionPlanHolder reference map (typed as the read-only port). WS-D
-   * Phase 78: surfaces the per-agent holder so the daemon can thread the DEFAULT
+  /** Per-agent ExecutionPlanHolder reference map (typed as the read-only port).
+   * Surfaces the per-agent holder so the daemon can thread the DEFAULT
    * agent's reference into ChannelsDeps.executionPlanPort. Same object the
-   * createAcpWiring path already shares (Pitfall 1 single-shared-holder invariant). */
+   * createAcpWiring path already shares (the single-shared-holder invariant). */
   executionPlanPorts?: Awaited<ReturnType<typeof setupAgents>>["executionPlanPorts"];
   mcpClientManager?: Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"];
   // Restart continuation tracker
@@ -524,7 +524,7 @@ export interface BootContext {
   // Media
   ttsAdapter?: Awaited<ReturnType<typeof setupMedia>>["ttsAdapter"];
   visionRegistry?: Awaited<ReturnType<typeof setupMedia>>["visionRegistry"];
-  /** REQ-13 (WR-05): stable holder for the vision registry — updated on first
+  /** Stable holder for the vision registry — updated on first
    *  materialisation (undefined → Map) so late-bound consumers observe rotation. */
   visionRegistryHolder?: Awaited<ReturnType<typeof setupMedia>>["visionRegistryHolder"];
   linkRunner?: Awaited<ReturnType<typeof setupMedia>>["linkRunner"];
@@ -539,7 +539,7 @@ export interface BootContext {
   wireDispatch?: ReturnType<typeof setupRpcBridge>["wireDispatch"];
   // Approval gate
   approvalGate?: ReturnType<typeof createApprovalGate>;
-  // Interactive-callback wiring (73-10): signer for renderers + single-use email
+  // Interactive-callback wiring: signer for renderers + single-use email
   // link minter + gateway approval-token map/resolver + the InteractiveCallbackRouter.
   // Built once in the agents phase; consumed by bootChannels (signer + minter) and
   // bootGateway (token map + resolveApproval route mount).

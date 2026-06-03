@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WhatsApp windowed EditPlace renderer tests (CHAN-04 / CHAN-05; §18.2 row
- * "EditPlace"). Copies the Telegram canonical test shape (71-02) but exercises the
+ * WhatsApp windowed EditPlace renderer tests (§18.2 row
+ * "EditPlace"). Copies the Telegram canonical test shape but exercises the
  * baileys-specific classifier:
  *
  *   - `classifyWhatsAppError` maps a windowed edit-expiry (a Boom with a 4xx
@@ -10,8 +10,8 @@
  *     "WhatsApp not connected" Error → `{kind:"transient_network", cause}`, and
  *     everything else → `{kind:"internal", cause}`.
  *   - The approval is a plain-text instruction SHELL (`buttons:"none"`): the
- *     recorded `send` carries NO button surface (resolution is Phase 73).
- *   - 11 golden fixtures (S1-S7, S9-S12; S8 deferred to Phase 73) assert the
+ *     recorded `send` carries NO button surface.
+ *   - 11 golden fixtures (S1-S7, S9-S12; S8 deferred) assert the
  *     serialised `FakeWhatsAppAdapter` call-log via `readFixture` + `toEqual`
  *     (NEVER `toMatchSnapshot`).
  *
@@ -280,7 +280,7 @@ async function runScenario(drive: ScenarioDriver): Promise<FakeWhatsAppCallLog> 
   const fake = createFakeWhatsAppAdapter(CHANNEL_ID);
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
-  // Phase 78 reconciliation (option ii — plan §530): the golden fixtures were
+  // The golden fixtures were
   // pinned BEFORE renderFrameText emitted the §8.5 "(running N s)" elapsed
   // fallback. Omitting `clock` from the wrapper deps here skips the strategy's
   // first-apply startedAtMs capture (elapsedMs stays undefined → fallback

@@ -28,12 +28,12 @@ export * from "./execution/execution-execute.js";
 export * from "./execution/execution-filter.js";
 export * from "./execution/execution-deliver.js";
 
-// Per-turn activity coordinator (70-09; TURN-04/07, SEC-04). The daemon
-// composition root (70-10, WIRE-03) builds `ExecutionPipelineDeps.coordinatorFactory`
+// Per-turn activity coordinator. The daemon
+// composition root builds `ExecutionPipelineDeps.coordinatorFactory`
 // from `createActivityTurnCoordinator` — capturing the per-channel renderer +
 // injected TimerPort/ClockPort/logger, adapting acpProjection to the unified
 // ActivityProjection signature. Imports ONLY @comis/core (the port + types); the
-// orchestrator gains no @comis/observability dependency (TURN-03).
+// orchestrator gains no @comis/observability dependency.
 export {
   createActivityTurnCoordinator,
   type ActivityTurnCoordinator,
@@ -45,14 +45,14 @@ export {
   type CoordinatorFactory,
 } from "./execution/activity-turn-coordinator.js";
 
-// Auto-managed per-agent×channel circuit breaker (76-03; WIRE-08, §17.7).
+// Auto-managed per-agent×channel circuit breaker (§17.7).
 // Classifies on the ActivityRenderError.kind union: 3 consecutive `permission`
 // errors trip STICKY (reset only on config reload), 5 consecutive
 // `internal`|`transient_network` errors trip with a clock-delta half-open probe
 // after 5 min. The daemon composition root will construct one instance and feed
 // `isTripped`/`record` into the coordinator + `getTripped()` into the /status
 // accessor — the live thread-through is the same documented composition-root
-// follow-on as the WIRE-07 kill switch (Phase-74 factory wiring; see 76-02).
+// follow-on as the kill switch factory wiring.
 export {
   createActivityCircuitBreaker,
   type ActivityCircuitBreaker,

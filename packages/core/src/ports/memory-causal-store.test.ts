@@ -23,24 +23,24 @@ import type { MemorySearchResult } from "./memory.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./memory-causal-store.ts"), "utf8");
 
-// The two PUBLIC core barrels the 94-01 lesson demands BOTH carry the port (a
+// Both PUBLIC core barrels must carry the port (a
 // ports/index-only add fails the @comis/memory build TS2724 — the public barrel
 // exports/ports.ts is what consumers see). Grep them as a source-level RED guard.
 const portsIndexSrc = readFileSync(resolve(here, "./index.ts"), "utf8");
 const exportsPortsSrc = readFileSync(resolve(here, "../exports/ports.ts"), "utf8");
 
 /**
- * Phase 96 (EXTRACT-03) — the combined causal-edge store port. Type-only.
+ * The combined causal-edge store port. Type-only.
  *
  * An implementer must expose BOTH `linkCausal(sourceMemoryId, effectText, scope,
  * confidence)` (WRITE — record a directed cause→effect edge, idempotent,
  * returning the count of edges written) AND `causalLane(seedMemoryIds, scope,
  * cap)` (READ — return OTHER memories linked by a causal edge, seeds excluded,
  * hydrated as MemorySearchResult[]). This is the `MemoryEntityStore` dual-method
- * shape (NOT a split read/write port, NOT the FEED-01 bus pattern). It is a NEW
+ * shape (NOT a split read/write port, NOT a bus pattern). It is a NEW
  * segregated port — it does NOT widen the security-reviewed `MemoryPort`.
  */
-describe("MemoryCausalStore — combined causal-edge store port (EXTRACT-03)", () => {
+describe("MemoryCausalStore — combined causal-edge store port", () => {
   it("declares the port interface with linkCausal + causalLane and stays type-only (no zod, no @comis/memory)", () => {
     // Runtime RED proof: fails on the absent/empty source where the interface +
     // both methods do not exist yet.
@@ -59,7 +59,7 @@ describe("MemoryCausalStore — combined causal-edge store port (EXTRACT-03)", (
     );
   });
 
-  it("is exported from BOTH core barrels (ports/index.ts AND exports/ports.ts — the 94-01 TS2724 lesson)", () => {
+  it("is exported from BOTH core barrels (ports/index.ts AND exports/ports.ts — the TS2724 lesson)", () => {
     expect(portsIndexSrc, "MemoryCausalStore must be re-exported from ports/index.ts").toMatch(
       /\bMemoryCausalStore\b/,
     );

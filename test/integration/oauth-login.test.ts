@@ -146,7 +146,7 @@ function cleanupTmpDir(dir: string | undefined): void {
  * builds (it can either parse to `null` and trigger Zod's "Expected object,
  * received null" error, or be treated as an absent file). A real file with
  * the bare `security.storage: file` setting routes the CLI deterministically
- * through the file-adapter path that these tests need. (v1.5: the legacy
+ * through the file-adapter path that these tests need. (The legacy
  * `oauth.storage` key was removed — a config using it now fails boot with a
  * [MIGRATION_ERROR]; `security.storage` is the unified switch.)
  */

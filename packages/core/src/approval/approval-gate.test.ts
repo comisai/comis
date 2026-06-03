@@ -1340,12 +1340,12 @@ describe("approval cache serialization and logging", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 16. shortId minting / emission / persistence (EVT-05, §6.4.1)
+// 16. shortId minting / emission / persistence (§6.4.1)
 // ---------------------------------------------------------------------------
 
 const SHORT_ID_RE = /^[0-9A-Za-z]{12}$/;
 
-describe("shortId minting and emission (EVT-05)", () => {
+describe("shortId minting and emission", () => {
   it("requestApproval input omits shortId — a caller supplying only tool/action/session context succeeds", () => {
     // makeRequest() supplies NO shortId (nor requestId/createdAt/timeoutMs) — the gate mints them.
     gate.requestApproval(makeRequest());
@@ -1491,11 +1491,11 @@ describe("shortId minting and emission (EVT-05)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 17. shortId secondary index + read helpers (APV-04 delta — 73-02)
+// 17. shortId secondary index + read helpers
 //     getRequestByShortId / pendingForSession + atomic dual-map removal.
 // ---------------------------------------------------------------------------
 
-describe("shortId secondary index + read helpers (APV-04)", () => {
+describe("shortId secondary index + read helpers", () => {
   it("getRequestByShortId(shortId) returns the pending request for a live minted shortId", () => {
     gate.requestApproval(makeRequest());
     const [pending] = gate.pending();
@@ -1522,7 +1522,7 @@ describe("shortId secondary index + read helpers (APV-04)", () => {
     gate.resolveApproval(pending!.requestId, true, "chat:u");
     await promise;
 
-    // The index entry MUST be gone with the pending entry — a stale entry would defeat replay rejection (T-73-05).
+    // The index entry MUST be gone with the pending entry — a stale entry would defeat replay rejection.
     expect(gate.getRequestByShortId(shortId)).toBeUndefined();
   });
 
@@ -1587,7 +1587,7 @@ describe("shortId secondary index + read helpers (APV-04)", () => {
     expect(gate.pendingForSession("default:alice:discord")).toEqual([]);
   });
 
-  it("a restored approval is reachable via getRequestByShortId (callback identity survives restart — 70-12 invariant)", () => {
+  it("a restored approval is reachable via getRequestByShortId (callback identity survives restart)", () => {
     // 1) original gate mints + serializes a pending request.
     gate.requestApproval(makeRequest({ action: "agents.delete", toolName: "agents_manage" }));
     const original = gate.pending()[0]!;

@@ -49,9 +49,9 @@ function makeMockedDeps(
     // has() returns false by default (new key) so existing tests stay green.
     secretManager: { has: vi.fn(() => false) },
   } as unknown as AppContainer;
-  // After Plan 02-04: secretStore is always wired (REQ-04).
+  // secretStore is always wired.
   const secretStore = createMockSecretStore(secretStoreOverrides);
-  // Default mutableSecretManager (no-op stubs); 03-03 tests use real handles.
+  // Default mutableSecretManager (no-op stubs); restart-truth tests use real handles.
   const mutableSecretManager = { upsert: vi.fn(), remove: vi.fn(() => false) };
   const handlers = createSecretsHandlers({ secretStore, container, logger, mutableSecretManager } as unknown as SecretsHandlerDeps);
   return { handlers, capturedAuditEvents, loggerSpy: logger };
@@ -111,7 +111,7 @@ describe("createSecretsHandlers", () => {
     });
 
     it("returns exists:false for a name not in the adapter (env-mode empty snapshot)", async () => {
-      // After Plan 02-04: secretStore is always wired; env-mode getDecrypted returns
+      // secretStore is always wired; env-mode getDecrypted returns
       // ok(undefined) for unknown names — adapter never rejects on reads.
       const { handlers } = makeMockedDeps({ getDecrypted: vi.fn(() => ok(undefined)) });
       const result = (await handlers["secrets.get"]!({ _trustLevel: "admin", name: "NONEXISTENT_KEY" })) as {
@@ -164,7 +164,7 @@ describe("createSecretsHandlers", () => {
         value: CANARY,
         provider: "anthropic",
       });
-      // After 03-03: result also includes restarting:boolean; use toMatchObject to be forward-compat.
+      // result also includes restarting:boolean; use toMatchObject to be forward-compat.
       expect(result).toMatchObject({ name: "ANTHROPIC_API_KEY", stored: true });
       expect(JSON.stringify(capturedAuditEvents)).not.toContain(CANARY);
       expect(loggerCallsAsString(loggerSpy)).not.toContain(CANARY);
@@ -264,7 +264,7 @@ describe("createSecretsHandlers", () => {
     });
 
     it("returns empty array when store has no entries (env-mode with no sensitive vars)", async () => {
-      // After Plan 02-04: secretStore is always wired; env-mode adapter's list()
+      // secretStore is always wired; env-mode adapter's list()
       // returns an empty array when no sensitive vars are in the snapshot.
       const { handlers } = makeMockedDeps({ list: vi.fn(() => ok([])) });
       const result = (await handlers["secrets.list"]!({ _trustLevel: "admin" })) as {
@@ -303,7 +303,7 @@ describe("createSecretsHandlers", () => {
         _trustLevel: "admin",
         name: "TO_DELETE",
       });
-      // After 03-03: result also includes restarting:boolean; use toMatchObject to be forward-compat.
+      // result also includes restarting:boolean; use toMatchObject to be forward-compat.
       expect(result).toMatchObject({ name: "TO_DELETE", deleted: true });
       const audit = capturedAuditEvents[0] as Record<string, unknown>;
       expect(audit.classification).toBe("destructive");
@@ -346,10 +346,10 @@ describe("createSecretsHandlers", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 03-03 — secrets restart-truth and event emit (RED: handlers don't implement yet)
+// secrets restart-truth and event emit (RED: handlers don't implement yet)
 // ---------------------------------------------------------------------------
 
-describe("03-03 — secrets restart-truth and event emit", () => {
+describe("secrets restart-truth and event emit", () => {
   let killSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -402,7 +402,7 @@ describe("03-03 — secrets restart-truth and event emit", () => {
     expect(result.restarting).toBe(false);
   });
 
-  it("06-02: secrets.set on an existing name live-applies (restarting:false)", async () => {
+  it("secrets.set on an existing name live-applies (restarting:false)", async () => {
     const { handlers } = makeHandlersWithSecretManager({ EXISTING_SECRET: "old-val" });
     const result = await handlers["secrets.set"]!({
       _trustLevel: "admin",
@@ -410,11 +410,11 @@ describe("03-03 — secrets restart-truth and event emit", () => {
       value: "new-val",
     }) as Record<string, unknown>;
 
-    // P4b/06-02: rotation live-applies — restarting:false always.
+    // rotation live-applies — restarting:false always.
     expect(result.restarting).toBe(false);
   });
 
-  it("06-02: secrets.set on existing name does not schedule SIGUSR2 restart", async () => {
+  it("secrets.set on existing name does not schedule SIGUSR2 restart", async () => {
     const { handlers } = makeHandlersWithSecretManager({ EXISTING_SECRET: "old-val" });
 
     await handlers["secrets.set"]!({
@@ -427,7 +427,7 @@ describe("03-03 — secrets restart-truth and event emit", () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
-  it("06-02: secrets.delete on an existing name live-applies (restarting:false)", async () => {
+  it("secrets.delete on an existing name live-applies (restarting:false)", async () => {
     const { handlers } = makeHandlersWithSecretManager({ TO_DELETE: "val" }, {
       delete: vi.fn(() => ok(true)),
     });
@@ -436,7 +436,7 @@ describe("03-03 — secrets restart-truth and event emit", () => {
       name: "TO_DELETE",
     }) as Record<string, unknown>;
 
-    // P4b/06-02: delete live-applies — restarting:false always.
+    // delete live-applies — restarting:false always.
     expect(result.restarting).toBe(false);
   });
 
@@ -509,14 +509,14 @@ describe("03-03 — secrets restart-truth and event emit", () => {
     expect(changedCalls).toHaveLength(0);
   });
 
-  // WR-02: deleted/restarting consistency — derive deleted from existed||delResult.value
-  // so Map-store desync (e.g. secret in store but absent from Map due to prior WR-01 bug)
-  // cannot produce contradictory { deleted: false, restarting: true } or
+  // deleted/restarting consistency — derive deleted from existed||delResult.value
+  // so Map-store desync (e.g. secret in store but absent from Map due to a prior
+  // desync bug) cannot produce contradictory { deleted: false, restarting: true } or
   // { deleted: true, restarting: false } where the CLI shows "Secret not found"
   // while SIGUSR2 fires.
-  it("secrets.delete: deleted=true when store delete returns true regardless of existed (WR-02 consistency)", async () => {
-    // Simulate the WR-01 desync: secret is in store (store.delete returns true)
-    // but NOT in the shared Map (existed = false). After WR-01 fix this can't
+  it("secrets.delete: deleted=true when store delete returns true regardless of existed (consistency)", async () => {
+    // Simulate the desync: secret is in store (store.delete returns true)
+    // but NOT in the shared Map (existed = false). With the fix in place this can't
     // happen in practice for newly extracted secrets, but the invariant must
     // still hold for any legacy state.
     const { handlers } = makeHandlersWithSecretManager(
@@ -548,11 +548,11 @@ describe("03-03 — secrets restart-truth and event emit", () => {
     }) as Record<string, unknown>;
 
     expect(result.deleted).toBe(true);
-    // P4b/06-02: restarting:false always — live-applies without restart.
+    // restarting:false always — live-applies without restart.
     expect(result.restarting).toBe(false);
   });
 
-  it("secrets.delete: deleted=true (not false) when Map had key (existed=true) even if store.delete returns false (WR-02 soft-delete regression guard)", async () => {
+  it("secrets.delete: deleted=true (not false) when Map had key (existed=true) even if store.delete returns false (soft-delete regression guard)", async () => {
     // Simulates a hypothetical store soft-delete regression: existed=true (Map has it)
     // but store.delete returns false. Without the fix, this produces
     // { deleted: false } — CLI shows "Secret not found" even though Map tracked it.
@@ -570,16 +570,16 @@ describe("03-03 — secrets restart-truth and event emit", () => {
     // deleted must be true because Map had the key (existed=true) — the Map is
     // authoritative for what was live-tracked (existed || delResult.value).
     expect(result.deleted).toBe(true);
-    // P4b/06-02: restarting:false always — live-applies without restart.
+    // restarting:false always — live-applies without restart.
     expect(result.restarting).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 06-02 — rotation/delete must live-apply (restarting:false, no SIGUSR2) — RED phase
+// rotation/delete must live-apply (restarting:false, no SIGUSR2) — RED phase
 // ---------------------------------------------------------------------------
 
-describe("06-02 — secrets rotation/delete: restarting:false, upsert/remove called, no SIGUSR2", () => {
+describe("secrets rotation/delete: restarting:false, upsert/remove called, no SIGUSR2", () => {
   let killSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {

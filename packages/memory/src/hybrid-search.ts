@@ -255,12 +255,12 @@ export interface HybridSearchOptions {
   tenantId?: string;
   agentId?: string;
   /**
-   * Read-side NL temporal-range filter (IQ-03b). Epoch ms. ANDed onto the
+   * Read-side NL temporal-range filter. Epoch ms. ANDed onto the
    * post-fusion WHERE as `occurred_at BETWEEN ? AND ?` (bound params) — it
    * composes with the existing (tenant_id, agent_id) scope via ` AND `, so it
    * can only NARROW, never widen scope (§5.2). NULL `occurred_at` rows fail
    * BETWEEN and drop out (no event time ⇒ not in any range). Absent → no range
-   * filter. NOT the Phase-100 temporal LANE (a post-search spread); this is a
+   * filter. NOT the temporal LANE (a post-search spread); this is a
    * pre-fetch filter — they compose, no double-apply.
    */
   occurredAtRange?: { start: number; end: number };
@@ -362,7 +362,7 @@ export function hybridSearch(
       params.push(options.agentId);
     }
     if (options.occurredAtRange) {
-      // IQ-03b: ANDed onto the scoped clause (never widens). Bound params, never
+      // ANDed onto the scoped clause (never widens). Bound params, never
       // concat. NULL occurred_at fails BETWEEN → drops out (no event time ⇒ not
       // in any range).
       conditions.push("occurred_at BETWEEN ? AND ?");

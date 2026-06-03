@@ -17,7 +17,7 @@
  * (per-line citation with absolute path) makes the in-scope/out-of-scope
  * distinction visible at review time.
  *
- * Enforces the v2.1 "no backward-compat" policy (see CLAUDE.md user
+ * Enforces the "no backward-compat" policy (see CLAUDE.md user
  * memory `feedback_no_backward_compat`) by gating production source at
  * `packages/*\/src/` against:
  *
@@ -25,7 +25,7 @@
  *    outside `noBackwardCompatAllowlist` (line-pinned) and outside the
  *    in-file `PRE_EXISTING_BENIGN_PATH_TAIL_ALLOWLIST` (pre-existing-benign
  *    sub-allowlist; see comment block on the constant).
- *  - `@deprecated` JSDoc annotations (zero permitted; the v2.1 policy is
+ *  - `@deprecated` JSDoc annotations (zero permitted; the policy is
  *    no-deprecation-period: delete, don't deprecate).
  *  - `agent/src/index.ts` contains no `export { X as Y } from "..."`
  *    alias re-exports.
@@ -106,7 +106,7 @@ const PRE_EXISTING_BENIGN_PATH_TAIL_ALLOWLIST: readonly string[] = [
   "packages/agent/src/executor/cache-detection/cache-state.ts", // doc-comment on optional field default-0 rationale
   "packages/agent/src/executor/cache-break-diff-writer.ts", // doc-comment on `?? false` default rationale for newer fields
   "packages/agent/src/spawn/sub-agent-runner.ts", // legacy-fallback branch — out of current deletion scope (spawn pipeline rewrites tracked separately)
-  "packages/agent/src/session/comis-session-manager.ts", // doc-string about session-mapping carry-over (pre-v2.1 paths still resolvable)
+  "packages/agent/src/session/comis-session-manager.ts", // doc-string about session-mapping carry-over (older paths still resolvable)
   "packages/agent/src/context-engine/types-core.ts", // doc-string on optional-field default-0 rationale
   "packages/core/src/config/schema-secrets.ts", // doc-strings on default-false / empty-array rationale (zod schema defaults)
   "packages/core/src/config/schema-channel.ts", // doc-string on default-true rationale (per-channel toggles)
@@ -288,7 +288,7 @@ describe("no-backward-compat", () => {
       violations,
       formatViolations({
         description:
-          "Production source must contain zero @deprecated JSDoc annotations. The v2.1 policy is no-deprecation-period (feedback_no_backward_compat): delete the deprecated code and retarget consumers atomically.",
+          "Production source must contain zero @deprecated JSDoc annotations. The policy is no-deprecation-period (feedback_no_backward_compat): delete the deprecated code and retarget consumers atomically.",
         violations,
         suggestedFix:
           "Delete the @deprecated annotation AND the code it annotates; retarget all consumers in the same commit. If retargeting is non-trivial, split into a follow-up change but do not ship @deprecated.",

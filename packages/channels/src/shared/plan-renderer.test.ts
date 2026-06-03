@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * plan-renderer tests (STRAT-05, §8.3 plan-state checkboxes).
+ * plan-renderer tests (§8.3 plan-state checkboxes).
  *
  * `renderPlan(snapshot)` is a pure function that maps a PlanSnapshot's steps to
  * deterministic checkbox text. An empty plan renders the empty string.
@@ -57,7 +57,7 @@ describe("renderPlan", () => {
 
   it("falls back to an empty checkbox for an out-of-union status (exhaustive default)", () => {
     // The typed union forbids this; the `never` default is the AGENTS.md §2.8
-    // safety arm. Cast through `unknown` (the 70-05 house pattern) to exercise it.
+    // safety arm. Cast through `unknown` (the house pattern) to exercise it.
     const snapshot = {
       entries: [{ id: "1", label: "Bogus", status: "__bogus__" }],
     } as unknown as PlanSnapshot;

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteUserRepresentationStore` — the SOLE @comis/memory
- * adapter for the `UserRepresentationStore` port (Phase 107, Track E1 — USER-01
- * part B). It owns ALL the per-user-representation SQL over the additive
- * `user_representation` table.
+ * adapter for the `UserRepresentationStore` port. It owns ALL the
+ * per-user-representation SQL over the additive `user_representation` table.
  *
  * The harness constructs a real `SqliteMemoryAdapter` over an in-memory DB (so
  * `initSchema` runs — the `user_representation` table is created on boot and
@@ -11,7 +10,7 @@
  * `source_memory_id -> memories(id)` ON DELETE CASCADE fire) and gets
  * `adapter.getDb()`.
  *
- * ## The load-bearing security boundary (T-107-02-01, the §5.2 / ENT-03 pattern,
+ * ## The load-bearing security boundary (the §5.2 isolation pattern,
  *    extended with `userId`)
  *
  * Comis runs many agents and many users in ONE DB. Every adapter statement —
@@ -20,13 +19,13 @@
  * MUST NEVER be returned for another scope — proven by the 3-way "scope
  * isolation" describe (cross-agent, cross-tenant, AND cross-user all ABSENT).
  *
- * ## The high-trust floor at the DB layer (T-107-02-02)
+ * ## The high-trust floor at the DB layer
  *
  * `trust='external'` can NEVER ENTER the profile: the table's
  * `CHECK(trust IN ('system','learned'))` rejects it at the DB layer, and the
  * adapter's `upsert` rejects below-floor trust at the write boundary BEFORE the
  * INSERT (defense-in-depth — layers 1+3 of the 3-layer anti-poisoning defense;
- * the port-type layer is 107-01).
+ * the port-type layer is layer 2).
  *
  * @module
  */
@@ -210,7 +209,7 @@ describe("createSqliteUserRepresentationStore", () => {
     });
 
     it("REJECTS a redaction-firewall hit at the WRITE boundary (a secret-shaped body returns err; nothing persisted; WARN logged)", async () => {
-      // The adapter's OWN validateMemoryWrite belt (T-107-02-04) — separate from the
+      // The adapter's OWN validateMemoryWrite belt — separate from the
       // offline builder's. A non-`clean` verdict is REJECTED (no `external` tier to
       // down-store into); the WARN branch (counts-only) fires with a logger present.
       const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
@@ -293,7 +292,7 @@ describe("createSqliteUserRepresentationStore", () => {
   });
 
   // =====================================================================
-  // Scope isolation (T-107-02-01) — the load-bearing 3-way security boundary
+  // Scope isolation — the load-bearing 3-way security boundary
   // =====================================================================
 
   describe("(tenant, agent, user) scope isolation", () => {

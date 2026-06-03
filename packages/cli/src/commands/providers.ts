@@ -108,7 +108,7 @@ export function registerProvidersCommand(program: Command): void {
 
         // Sequentially fetch model counts. With ~11-23 providers this
         // is acceptable (single-digit RPC roundtrips). N+1 batching is
-        // a v1.5 enhancement (DoS disposition: accept).
+        // an enhancement (DoS disposition: accept).
         const rows: Array<{
           provider: string;
           modelCount: number;

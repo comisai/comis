@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the terminal-driver reaper (spec §4.6; TR-06, OPS-06).
+ * Unit tests for the terminal-driver reaper (spec §4.6).
  *
  * Fully-injected → runs green on macOS without real time. `createTerminalReaper`
  * is a FACTORY closing over a single timer handle (no module-global state); the
@@ -8,11 +8,11 @@
  * `timers` (a `createFakeTimers` TimerPort) drives the periodic sweep. Proves:
  *   - idle-TTL eviction: a session idle > `idleTtlMs` is evicted (reason `idle`)
  *     on the next sweep; a fresh session is NOT.
- *   - wall-clock eviction (OPS-06): a session whose wall-clock age
+ *   - wall-clock eviction: a session whose wall-clock age
  *     (`nowMs - startedAtMs`) exceeds `wallClockMs` is evicted (reason
  *     `wall_clock`) even when actively used (recent lastActivity); a session
  *     within the budget is NOT.
- *   - overflow (TR-06): `checkOverflow` over an over-cap snapshot evicts the
+ *   - overflow: `checkOverflow` over an over-cap snapshot evicts the
  *     idlest (lowest lastActivity) with reason `max_sessions`, exactly the
  *     overflow count; an at/under-cap snapshot evicts nothing.
  *   - unref + stop: `start()` unref's the sweep interval; `stop()` cancels it
@@ -65,7 +65,7 @@ function makeDeps(
   return { deps, onEvict, timers, clock };
 }
 
-describe("createTerminalReaper — idle-TTL sweep (TR-06)", () => {
+describe("createTerminalReaper — idle-TTL sweep", () => {
   it("evicts a session idle longer than idleTtlMs (reason idle), leaving a fresh one", () => {
     const now0 = 1_000_000;
     const rows: Row[] = [
@@ -93,7 +93,7 @@ describe("createTerminalReaper — idle-TTL sweep (TR-06)", () => {
   });
 });
 
-describe("createTerminalReaper — wall-clock sweep (OPS-06)", () => {
+describe("createTerminalReaper — wall-clock sweep", () => {
   it("evicts an actively-used session whose wall-clock age exceeds wallClockMs (reason wall_clock)", () => {
     const now0 = 1_000_000;
     const rows: Row[] = [
@@ -121,7 +121,7 @@ describe("createTerminalReaper — wall-clock sweep (OPS-06)", () => {
   });
 });
 
-describe("createTerminalReaper — max-sessions overflow (TR-06)", () => {
+describe("createTerminalReaper — max-sessions overflow", () => {
   it("checkOverflow evicts the idlest until size == maxSessions (reason max_sessions)", () => {
     const now0 = 1_000_000;
     const rows: Row[] = [

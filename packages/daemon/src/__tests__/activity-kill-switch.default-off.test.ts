@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * §22.2 acceptance — WIRE-07 "default-off" fail-closed regression guard.
+ * §22.2 acceptance — "default-off" fail-closed regression guard.
  *
- * Builds the SAME daemon-shaped `coordinatorFactory` Plan 03 wired (a per-turn
+ * Builds the SAME daemon-shaped `coordinatorFactory` the daemon wires (a per-turn
  * `createActivityTurnCoordinator` over a real redacted `ActivityStream`, with a
  * `killSwitch` getter that RE-READS `agents[ctx.agentId]?.activity` fresh on
  * every `flushApply`), but with the schema-default empty `channels: {}` map.
@@ -13,10 +13,10 @@
  * `renderer.apply`. This test asserts `sink.recorded.frames.length === 0`.
  *
  * REGRESSION-GUARD, not a red-first driver: an empty `channels` map suppresses
- * regardless of whether Plan 03 landed (an absent/`undefined` killSwitch leaves
- * suppression off, but the daemon getter returns the agent's `{channels:{}}`
- * slice, which suppresses). It guards against a FUTURE change that defaults the
- * gate ON (T-77-04-01) — flip the default to enabled and this test goes red.
+ * regardless of whether the kill-switch wiring landed (an absent/`undefined`
+ * killSwitch leaves suppression off, but the daemon getter returns the agent's
+ * `{channels:{}}` slice, which suppresses). It guards against a FUTURE change
+ * that defaults the gate ON — flip the default to enabled and this test goes red.
  *
  * @module
  */
@@ -61,7 +61,7 @@ function makeCtx(rendererKey: string, channelKey: string): TurnActivityContext {
   };
 }
 
-describe("WIRE-07 §22.2 default-off: an empty channels map suppresses every renderer (fail-closed)", () => {
+describe("§22.2 default-off: an empty channels map suppresses every renderer (fail-closed)", () => {
   it("drives zero renderer.apply for a real tool turn when no rendererKey is enabled (Day-0 fail-closed)", async () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus });
@@ -80,7 +80,7 @@ describe("WIRE-07 §22.2 default-off: an empty channels map suppresses every ren
     };
 
     // Daemon-shaped factory: the killSwitch getter RE-READS agents[ctx.agentId]
-    // fresh per flushApply (mirrors Plan 03's live getter; NOT a captured const).
+    // fresh per flushApply (mirrors the daemon's live getter; NOT a captured const).
     const coordinatorFactory = (ctx: TurnActivityContext) =>
       createActivityTurnCoordinator({
         activityStreamPort: stream,

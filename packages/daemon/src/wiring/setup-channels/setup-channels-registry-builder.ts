@@ -24,7 +24,7 @@ import type { ChannelRegistry } from "@comis/channels";
 import { err } from "@comis/shared";
 
 /**
- * REQ-13 (WR-04): Map each enabled channel's secret env-var name → channelType
+ * Map each enabled channel's secret env-var name → channelType
  * for use with the createChannelManager targeted-reconnect subscription.
  */
 export function buildChannelCredentialMap(channels: unknown): Map<string, string> {

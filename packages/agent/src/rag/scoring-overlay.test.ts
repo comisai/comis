@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED→GREEN for {@link buildScoringAlphas} (LEARN-03, the deterministic apply
+ * RED→GREEN for {@link buildScoringAlphas} (the deterministic apply
  * overlay). The overlay replaces the four non-trust alphas with the tuned vector
  * when present, while the fifth (trust) weight is sourced ONLY from config — the
  * second structural trust-freeze belt (the OD2 ship-gate, RESEARCH Pitfall 1).
@@ -40,7 +40,7 @@ const TUNED: TunedAlphaVector = {
   usefulnessAlpha: 0.6,
 };
 
-describe("buildScoringAlphas — the deterministic apply overlay (LEARN-03)", () => {
+describe("buildScoringAlphas — the deterministic apply overlay", () => {
   it("Test 1 (overlay): the four non-trust alphas come from the tuned vector; trust comes from config", () => {
     const out = buildScoringAlphas(CONFIG, TUNED);
     expect(out).toEqual({

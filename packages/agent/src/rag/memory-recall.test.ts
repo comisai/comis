@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for createMemoryRecall — the single recall orchestrator composing
- * search -> fuse -> rerank -> score -> trust-filter -> dedup (RANK-01/03/06/07/08).
+ * search -> fuse -> rerank -> score -> trust-filter -> dedup.
  *
  * Load-bearing RED-first assertions:
  * - DEFAULT-OFF CHARACTERIZATION (no-regression pin): with rerank.enabled=false,
@@ -9,12 +9,12 @@
  *   (single-lane fuse = identity -> score boosts -> trust-filter -> dedup).
  * - Trust filter: results whose trustLevel ∉ includeTrustLevels are dropped.
  * - Dedup: two same-content entries collapse to one.
- * - Graceful degrade (RANK-03): reranker.isAvailable()===false -> fused order, ok, non-empty.
- * - Rerank applied (RANK-01): a mock reranker inverting fused order -> top result is the
+ * - Graceful degrade: reranker.isAvailable()===false -> fused order, ok, non-empty.
+ * - Rerank applied: a mock reranker inverting fused order -> top result is the
  *   highest-CE-scored candidate.
- * - Timeout fallback (RANK-08): a never-resolving rank + fake TimerPort firing the
+ * - Timeout fallback: a never-resolving rank + fake TimerPort firing the
  *   deadline -> fused order + WARN errorKind:"timeout".
- * - Trust tie-break (RANK-06): at equal reranked relevance, system outranks learned/external.
+ * - Trust tie-break: at equal reranked relevance, system outranks learned/external.
  * - Cap: maxCandidates=2 with 5 candidates -> exactly 2 docs reach reranker.rank; tail keeps
  *   fused order.
  *
@@ -51,7 +51,7 @@ import { appendCausalLane } from "./recall-causal-lane.js";
 import { expandSynonyms, parseTemporalRange } from "./query-understanding.js";
 import type { FusionLane } from "./fuse.js";
 
-// DIAL-02 (Phase 109): the binding constraint — the recall hot path is deterministic +
+// The binding constraint — the recall hot path is deterministic +
 // LLM-FREE. memory-recall.ts must NEVER reach the query-time LLM surface. We mock the
 // pi-ai call surface as spies; the `llm-free` describe at the foot of this file runs a
 // FULL recall and asserts neither spy was ever called. The mock is file-wide (vi.mock is
@@ -95,7 +95,7 @@ function makeResult(
     tags: [],
     createdAt: opts.createdAt ?? NOW,
     // The temporal lane seeds on entry.occurredAt — set it only when provided so the
-    // no-seed gate (occurredAt absent on every top hit) is exercisable (Pitfall 6).
+    // no-seed gate (occurredAt absent on every top hit) is exercisable.
     ...(opts.occurredAt !== undefined ? { occurredAt: opts.occurredAt } : {}),
   };
   return {
@@ -263,7 +263,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.map((r) => r.entry.id)).not.toContain("c");
   });
 
-  it("ME-01: a weak top hit (adapter score < 0.7) stays below the inline gate on the default path (single-lane fuse pass-through, not rank-ramped to ≈1.0)", async () => {
+  it("a weak top hit (adapter score < 0.7) stays below the inline gate on the default path (single-lane fuse pass-through, not rank-ramped to ≈1.0)", async () => {
     // Pre-fix, single-lane fuse rebuilt the score from rank → the top hit became
     // ≈1.0 and (after the default 0.2 recency / 0.1 trust boosts) sat WELL above the
     // injector's 0.7 inlineMinScore, force-promoting a genuinely weak hit to inline
@@ -329,7 +329,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.length).toBe(1);
   });
 
-  it("TEMP-03 NON-DESTRUCTIVE: two CONFLICTING memories about the same subject BOTH survive recall (no write-time deletion of older facts)", async () => {
+  it("NON-DESTRUCTIVE: two CONFLICTING memories about the same subject BOTH survive recall (no write-time deletion of older facts)", async () => {
     // Distinct content (so the 200-char dedup fingerprint does NOT collapse them) but
     // contradictory about the same subject. Recall resolves contradictions at READ time
     // (the §7.3 guidance block, injected at prompt-assembly) — it NEVER deletes, supersedes,
@@ -351,7 +351,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.length).toBe(2); // both live — non-destructive
   });
 
-  it("RANK-03 graceful degrade: reranker isAvailable()===false -> fused order, ok, non-empty (no error)", async () => {
+  it("graceful degrade: reranker isAvailable()===false -> fused order, ok, non-empty (no error)", async () => {
     const input = [
       makeResult("a", { base: 0.9 }),
       makeResult("b", { base: 0.6 }),
@@ -372,7 +372,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(["a", "b", "c"]);
   });
 
-  it("RANK-01 rerank applied: a reranker INVERTING fused order makes the last fused candidate the top result", async () => {
+  it("rerank applied: a reranker INVERTING fused order makes the last fused candidate the top result", async () => {
     const input = [
       makeResult("a", { base: 0.9 }),
       makeResult("b", { base: 0.6 }),
@@ -398,7 +398,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value[0]?.entry.id).toBe("c");
   });
 
-  it("RANK-08 timeout fallback: a never-resolving rank + fired deadline -> fused order + WARN errorKind:timeout", async () => {
+  it("timeout fallback: a never-resolving rank + fired deadline -> fused order + WARN errorKind:timeout", async () => {
     const input = [
       makeResult("a", { base: 0.9 }),
       makeResult("b", { base: 0.6 }),
@@ -431,7 +431,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(warnArg).toBeDefined();
   });
 
-  it("RANK-06 trust tie-break: at EQUAL reranked relevance, system outranks learned/external", async () => {
+  it("trust tie-break: at EQUAL reranked relevance, system outranks learned/external", async () => {
     const input = [
       makeResult("learned", { trustLevel: "learned", base: 0.5 }),
       makeResult("system", { trustLevel: "system", base: 0.5 }),
@@ -482,7 +482,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(["a", "b", "c", "d", "e"]);
   });
 
-  it("HI-01 scale-mismatch: a LOW absolute CE pool score still precedes the higher-fused-score tail (no global re-sort across scales)", async () => {
+  it("scale-mismatch: a LOW absolute CE pool score still precedes the higher-fused-score tail (no global re-sort across scales)", async () => {
     // 5 candidates, pool=top-2. The reranker scores the pool with LOW absolute CE
     // probabilities ([0.3, 0.2]) — BELOW the tail's fused-by-rank scores (rank 3/4/5 at
     // k=60 ≈ 0.968/0.953/0.938). Pre-fix, the orchestrator concatenated the CE-scored
@@ -517,15 +517,15 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(["a", "b", "c", "d", "e"]);
   });
 
-  it("LO-01: when deps.timers is undefined, rerank is SKIPPED entirely (degrade to fused order; reranker.rank is never called → no unbounded hang)", async () => {
+  it("when deps.timers is undefined, rerank is SKIPPED entirely (degrade to fused order; reranker.rank is never called → no unbounded hang)", async () => {
     const input = [
       makeResult("a", { base: 0.9 }),
       makeResult("b", { base: 0.6 }),
       makeResult("c", { base: 0.3 }),
     ];
     // A reranker that would HANG forever if invoked. With no timers there is no
-    // deadline, so invoking it would block recall indefinitely (RANK-08 cannot
-    // fire). The fix is to skip rerank when timers is absent, NOT to await an
+    // deadline, so invoking it would block recall indefinitely (the rerank
+    // timeout cannot fire). The fix is to skip rerank when timers is absent, NOT to await an
     // unbounded rank(). The hang is proven impossible by asserting rank is never
     // called AND that recall resolves to fused order.
     const { port, calls } = mockReranker({
@@ -548,7 +548,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(["a", "b", "c"]);
   });
 
-  it("LO-02: equal CE scores inside the reranked pool keep a deterministic (original pool index) order", async () => {
+  it("equal CE scores inside the reranked pool keep a deterministic (original pool index) order", async () => {
     // All pool docs share the SAME CE score and the SAME trust level, so neither the
     // CE-primary key nor score()'s trust tie-break can decide their relative order.
     // Without an explicit secondary key the order is left to sort happenstance; the
@@ -601,7 +601,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
   });
 });
 
-describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () => {
+describe("createMemoryRecall — entity associative lane", () => {
   // Boosts neutralized so the FUSION verdict (not score() boosts) is what orders the
   // output — the entity-lane RRF contribution is then the only thing under test.
   const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
@@ -609,8 +609,8 @@ describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () =>
   const DISABLED_LANE = { enabled: false, seedCount: 5, perEntityCap: 200, weight: 1.0 };
 
   /**
-   * Reference: the pre-Phase-83 single-lane fused output (no entity lane) — exactly
-   * what the disabled / no-seed / err paths must reproduce verbatim (ENT-04).
+   * Reference: the pre-entity-lane single-lane fused output (no entity lane) — exactly
+   * what the disabled / no-seed / err paths must reproduce verbatim.
    */
   function singleLaneReference(input: MemorySearchResult[]): string[] {
     const fused = fuse([{ results: input, weight: 1.0 }]);
@@ -621,7 +621,7 @@ describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () =>
     );
   }
 
-  it("ENT-02: a shared-entity memory (from the lane, absent from search) OUTRANKS a non-sharing weak search hit after fusion", async () => {
+  it("a shared-entity memory (from the lane, absent from search) OUTRANKS a non-sharing weak search hit after fusion", async () => {
     // Search lane: a strong seed + a WEAK non-sharing hit. Without the lane, single-lane
     // fuse is pass-through → order is [seed, nonSharing] and `shared` is absent entirely.
     const input = [
@@ -662,7 +662,7 @@ describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () =>
     expect(calls[0]?.cap).toBe(200);
   });
 
-  it("ENT-02 seedCount: only the top `seedCount` search hits seed the lane", async () => {
+  it("seedCount: only the top `seedCount` search hits seed the lane", async () => {
     const input = [
       makeResult("s1", { base: 0.9 }),
       makeResult("s2", { base: 0.8 }),
@@ -687,7 +687,7 @@ describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () =>
     expect(calls[0]?.seedIds).toEqual(["s1", "s2"]);
   });
 
-  it("ENT-04 disabled: entityLane.enabled=false -> lane NOT called, output identical to single-lane fuse", async () => {
+  it("disabled: entityLane.enabled=false -> lane NOT called, output identical to single-lane fuse", async () => {
     const input = [
       makeResult("a", { base: 0.9 }),
       makeResult("b", { base: 0.4 }),
@@ -710,7 +710,7 @@ describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () =>
     expect(got.value.map((r) => r.entry.id)).toEqual(singleLaneReference(input));
   });
 
-  it("ENT-04 no entityStore: an undefined store -> no lane, output identical to single-lane fuse", async () => {
+  it("no entityStore: an undefined store -> no lane, output identical to single-lane fuse", async () => {
     const input = [
       makeResult("a", { base: 0.9 }),
       makeResult("b", { base: 0.4 }),
@@ -725,7 +725,7 @@ describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () =>
     expect(got.value.map((r) => r.entry.id)).toEqual(singleLaneReference(input));
   });
 
-  it("ENT-04 no seeds: search returned nothing -> associativeLane NOT called (no empty-seed query)", async () => {
+  it("no seeds: search returned nothing -> associativeLane NOT called (no empty-seed query)", async () => {
     const { store, calls } = fakeEntityStore(ok([makeResult("shared", { base: 0.99 })]));
     const recall = createMemoryRecall(
       {
@@ -743,7 +743,7 @@ describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () =>
     expect(got.value).toEqual([]);
   });
 
-  it("ENT-04 empty lane: associativeLane returns ok([]) -> no 2nd lane pushed, output identical to single-lane fuse", async () => {
+  it("empty lane: associativeLane returns ok([]) -> no 2nd lane pushed, output identical to single-lane fuse", async () => {
     const input = [
       makeResult("a", { base: 0.9 }),
       makeResult("b", { base: 0.4 }),
@@ -766,7 +766,7 @@ describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () =>
     expect(got.value.map((r) => r.entry.id)).toEqual(singleLaneReference(input));
   });
 
-  it("ENT-04 err-fallback NON-FATAL: associativeLane err -> WARN(errorKind+hint) + fall back to search lane only (recall succeeds)", async () => {
+  it("err-fallback NON-FATAL: associativeLane err -> WARN(errorKind+hint) + fall back to search lane only (recall succeeds)", async () => {
     const input = [
       makeResult("a", { base: 0.9 }),
       makeResult("b", { base: 0.4 }),
@@ -798,7 +798,7 @@ describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () =>
   });
 });
 
-describe("createMemoryRecall — usefulness signal read-path (FEED-03)", () => {
+describe("createMemoryRecall — usefulness signal read-path", () => {
   // Boosts neutralized EXCEPT usefulnessAlpha so the usefulness factor is the only thing
   // that can reorder the output — the read-path effect is then isolated.
   const USEFULNESS_ONLY = {
@@ -971,7 +971,7 @@ describe("createMemoryRecall — usefulness signal read-path (FEED-03)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 110 Plan 03 (LEARN-01) — recall passes the ALREADY-computed deterministic
+// Recall passes the ALREADY-computed deterministic
 // classifyIntent into readUsefulness so the per-intent usefulness bucket drives the
 // order. The binding constraint: this stays LLM-FREE (the `intent` const at
 // memory-recall.ts:91 is the SAME pure classify already done for lane reweighting —
@@ -979,7 +979,7 @@ describe("createMemoryRecall — usefulness signal read-path (FEED-03)", () => {
 // degrades to the global bucket then to the shipped neutral 1.0 factor; feedback OFF
 // skips the read entirely (read-spy = 0 + byte-identical).
 // ---------------------------------------------------------------------------
-describe("createMemoryRecall — per-intent usefulness read (LEARN-01)", () => {
+describe("createMemoryRecall — per-intent usefulness read", () => {
   // Only usefulnessAlpha is live so the usefulness factor is the SOLE reorder lever.
   const USEFULNESS_ONLY = {
     recencyAlpha: 0,
@@ -999,7 +999,7 @@ describe("createMemoryRecall — per-intent usefulness read (LEARN-01)", () => {
    * receives — so the test can assert `scope.intent` — AND returns a DIFFERENT signal map
    * per requested intent bucket (so a per-intent bucket can drive a different order than the
    * global bucket). When the requested intent has no entry in `byIntent`, it falls back to
-   * `byIntent[""]` (the global bucket) — mirroring the adapter's degrade-to-global (Plan 110-02).
+   * `byIntent[""]` (the global bucket) — mirroring the adapter's degrade-to-global.
    */
   function fakeIntentUsefulnessStore(byIntent: Record<string, Map<string, UsefulnessSignal>>): {
     store: MemoryUsefulnessStore;
@@ -1103,7 +1103,7 @@ describe("createMemoryRecall — per-intent usefulness read (LEARN-01)", () => {
     expect(offIds.indexOf("m1")).toBeLessThan(offIds.indexOf("m2"));
   });
 
-  it("INTENT OFF: with intentReweight off the read scope OMITS intent (the adapter reads the global bucket → byte-identical to v2.8)", async () => {
+  it("INTENT OFF: with intentReweight off the read scope OMITS intent (the adapter reads the global bucket → byte-identical to the prior default behaviour)", async () => {
     const input = [makeResult("m1", { base: 0.5, trustLevel: "learned", createdAt: NOW })];
     const { store, scopes } = fakeIntentUsefulnessStore({
       "": new Map<string, UsefulnessSignal>(),
@@ -1234,7 +1234,7 @@ describe("createMemoryRecall — per-intent usefulness read (LEARN-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan 03 — recall-trace capture + memory:recalled/reranked emit + vec→FTS signal
+// Recall-trace capture + memory:recalled/reranked emit + vec→FTS signal
 // ---------------------------------------------------------------------------
 
 /** A recording RecallTrace spy: captures every recordRecall payload. */
@@ -1278,7 +1278,7 @@ function recallWithObs(
   return createMemoryRecall(deps as unknown as Parameters<typeof createMemoryRecall>[0], cfg);
 }
 
-describe("createMemoryRecall — recall-trace capture (OBS-01)", () => {
+describe("createMemoryRecall — recall-trace capture", () => {
   it("writes exactly ONE recordRecall per recall carrying lanes, fusedOrder, rerank.outcome, and ranked[] with id+reason+breakdown", async () => {
     const input = [
       makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW }),
@@ -1384,7 +1384,7 @@ describe("createMemoryRecall — recall-trace capture (OBS-01)", () => {
   });
 });
 
-describe("createMemoryRecall — memory:recalled / memory:reranked emit (OBS-04)", () => {
+describe("createMemoryRecall — memory:recalled / memory:reranked emit", () => {
   it("emits memory:recalled once with a counts-only payload (no query text / memory body)", async () => {
     const input = [
       makeResult("a", { base: 0.9, content: "sensitive body text" }),
@@ -1450,7 +1450,7 @@ describe("createMemoryRecall — memory:recalled / memory:reranked emit (OBS-04)
   });
 });
 
-describe("createMemoryRecall — vec→FTS-only degradation signal (OBS-03 gap)", () => {
+describe("createMemoryRecall — vec→FTS-only degradation signal", () => {
   it("logs ONE WARN (errorKind dependency + hint) AND records a vec_unavailable degradation AND zero vectorCandidates when the vector lane cannot contribute", async () => {
     // A whitespace-only query cannot produce a vector embedding (the memory layer's
     // zero-length-embedding → FTS-only fallback). The recall layer surfaces this as the
@@ -1512,7 +1512,7 @@ describe("createMemoryRecall — vec→FTS-only degradation signal (OBS-03 gap)"
     };
     expect(rec.vectorLaneActive).toBe(true);
     expect((rec.degradations ?? []).some((d) => d.kind === "vec_unavailable")).toBe(false);
-    // WR-04: even with the vector lane ACTIVE, lanes.vector is reported as 0 (honest) —
+    // Even with the vector lane ACTIVE, lanes.vector is reported as 0 (honest) —
     // the MemoryPort fuses vec+fts internally, so the recall layer never sees a real
     // vector-candidate count and must NOT duplicate the FTS count into the vector lane.
     expect(rec.lanes?.vector).toBe(0);
@@ -1546,7 +1546,7 @@ describe("createMemoryRecall — vec→FTS-only degradation signal (OBS-03 gap)"
   });
 });
 
-// ── LANES-01: the 2-lane build from searchLanes ───────────────────────────
+// ── The 2-lane build from searchLanes ───────────────────────────
 //
 // When the injected MemoryPort exposes searchLanes, recall builds TWO lanes
 // (fts + vector) from it, routes them through fuse() with the operator weights
@@ -1573,7 +1573,7 @@ function fakeLaneMemoryPort(
   } as unknown as MemoryPort;
 }
 
-describe("createMemoryRecall — two-lane build from searchLanes (LANES-01)", () => {
+describe("createMemoryRecall — two-lane build from searchLanes", () => {
   // Boosts neutralized so the FUSION verdict (not score() boosts) orders the output.
   const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
   const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
@@ -1604,17 +1604,17 @@ describe("createMemoryRecall — two-lane build from searchLanes (LANES-01)", ()
     );
   });
 
-  it("W1 FULL-SET PARITY: at DEFAULT config the returned SET (count + ids + order) equals v2.6's maxResults-capped search() result, not just its head ordering", async () => {
-    // W1 (load-bearing): v2.6's search() → hybridSearch() sliced the FTS+vector fused
+  it("FULL-SET PARITY: at DEFAULT config the returned SET (count + ids + order) equals the maxResults-capped search() result, not just its head ordering", async () => {
+    // Load-bearing: the prior search() → hybridSearch() sliced the FTS+vector fused
     // union to options.limit (= maxResults) BEFORE returning (hybrid-search.ts:374), so
-    // recall() returned AT MOST maxResults entries. The LANES-01 unfuse moved the fusion
+    // recall() returned AT MOST maxResults entries. The lane-split unfuse moved the fusion
     // into fuse() but DROPPED that cap — searchLanes returns both lanes un-truncated, the
     // distinct union can exceed maxResults, and finalRanked was never re-capped (the only
     // slice(0,maxResults) is trace-only). prompt-assembly feeds the full uncapped set to
-    // an injector that caps by CHARACTERS, not count → more memories injected than v2.6.
+    // an injector that caps by CHARACTERS, not count → more memories injected than before.
     //
-    // This pins the FULL returned set (count AND ids AND order) to v2.6's behavior:
-    //   v2.6 = preFused(fts, vector).slice(0, maxResults)
+    // This pins the FULL returned set (count AND ids AND order) to the prior behavior:
+    //   prior = preFused(fts, vector).slice(0, maxResults)
     // RED on the un-capped code (returns the full 7-id union); GREEN once the FTS+vector
     // base is capped to maxResults before scoring (mirroring hybridSearch's slice).
     const ftsIds = ["L1", "L2", "L3", "L4", "L5"];
@@ -1632,7 +1632,7 @@ describe("createMemoryRecall — two-lane build from searchLanes (LANES-01)", ()
     const got = await recall.recall("q", SESSION_KEY, "default");
     expect(got.ok).toBe(true);
     if (!got.ok) return;
-    // v2.6 baseline: hybridSearch fused then sliced to limit=maxResults.
+    // prior baseline: hybridSearch fused then sliced to limit=maxResults.
     const v26Capped = preFused(ftsIds, vecIds).slice(0, MAX);
     expect(v26Capped).toHaveLength(MAX); // sanity: the union really exceeds maxResults
     // FULL set: count AND ids AND order — NOT a slice(0, oldOrder.length) of a longer list.
@@ -1786,7 +1786,7 @@ describe("createMemoryRecall — two-lane build from searchLanes (LANES-01)", ()
 });
 
 // ===========================================================================
-// LANES-02: the temporal-spread lane — the 4th fused lane (default-OFF).
+// The temporal-spread lane — the 4th fused lane (default-OFF).
 // ===========================================================================
 
 /** Milliseconds per day — for authoring occurredAt offsets in the temporal tests. */
@@ -1821,7 +1821,7 @@ function fakeTemporalStore(laneResult: Result<MemorySearchResult[], Error>): {
   return { store, calls };
 }
 
-describe("createMemoryRecall — temporal-spread lane (LANES-02)", () => {
+describe("createMemoryRecall — temporal-spread lane", () => {
   // Boosts neutralized so the FUSION verdict (not score() boosts) orders the output —
   // the temporal-lane RRF contribution is then the only thing under test.
   const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
@@ -1832,7 +1832,7 @@ describe("createMemoryRecall — temporal-spread lane (LANES-02)", () => {
 
   /**
    * The pre-temporal-lane fused output (fts + vector, no temporal lane) — exactly what
-   * the default-OFF / no-seed / err paths must reproduce verbatim (the ENT-04 no-op).
+   * the default-OFF / no-seed / err paths must reproduce verbatim (the entity-lane no-op).
    */
   function baseLaneReference(
     fts: MemorySearchResult[],
@@ -1948,12 +1948,12 @@ describe("createMemoryRecall — temporal-spread lane (LANES-02)", () => {
     if (!got.ok) return;
     // The load-bearing neutrality: spreadLane is NEVER called when off (the spy proves it).
     expect(calls.length).toBe(0);
-    // Byte-identical to the pre-temporal-lane fused path (the ENT-04 no-op reused).
+    // Byte-identical to the pre-temporal-lane fused path (the entity-lane no-op reused).
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
     expect(got.value.map((r) => r.entry.id)).not.toContain("nearSeed");
   });
 
-  it("NO TEMPORAL CONFIG: an absent `lanes.temporal` → spreadLane NEVER called (byte-identical to before this plan)", async () => {
+  it("NO TEMPORAL CONFIG: an absent `lanes.temporal` → spreadLane NEVER called (byte-identical to before the temporal lane)", async () => {
     const fts = [makeResult("a", { base: 0.9, occurredAt: SEED_T })];
     const { store, calls } = fakeTemporalStore(ok([makeResult("nearSeed", { base: 0.99, occurredAt: SEED_T })]));
     const recall = createMemoryRecall(
@@ -1963,7 +1963,7 @@ describe("createMemoryRecall — temporal-spread lane (LANES-02)", () => {
         clock: fixedClock,
         logger: noopLogger,
       } as unknown as Parameters<typeof createMemoryRecall>[0],
-      // lanes carries ONLY fts/vector (the 95-01 shape) — no temporal sub-object.
+      // lanes carries ONLY fts/vector (the base shape) — no temporal sub-object.
       baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
     );
     const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
@@ -1973,7 +1973,7 @@ describe("createMemoryRecall — temporal-spread lane (LANES-02)", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
   });
 
-  it("NO-SEED GATE: when the top base hits all LACK occurredAt → spreadLane NOT called (Pitfall 6 — no event time to spread from)", async () => {
+  it("NO-SEED GATE: when the top base hits all LACK occurredAt → spreadLane NOT called (no event time to spread from)", async () => {
     // None of the base hits carry occurredAt → seedTimes is empty → the lane is skipped
     // even though it is ENABLED.
     const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
@@ -2050,7 +2050,7 @@ describe("createMemoryRecall — temporal-spread lane (LANES-02)", () => {
 });
 
 // ===========================================================================
-// Causal lane (EXTRACT-03) — the 5th fused lane, APPENDED after the temporal
+// Causal lane — the 5th fused lane, APPENDED after the temporal
 // lane. Mirrors the temporal-spread block above tier-for-tier: a causal store
 // stub + the LANE-ON lift / DEFAULT-OFF byte-identity (the spy proves ZERO
 // calls) / EMPTY-lane neutral / NO-store / NON-FATAL invariants.
@@ -2079,7 +2079,7 @@ function fakeCausalStore(laneResult: Result<MemorySearchResult[], Error>): {
   return { store, calls };
 }
 
-describe("createMemoryRecall — causal lane (EXTRACT-03)", () => {
+describe("createMemoryRecall — causal lane", () => {
   // Boosts neutralized so the FUSION verdict (not score() boosts) orders the output — the
   // causal-lane RRF contribution is then the only thing under test.
   const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
@@ -2089,7 +2089,7 @@ describe("createMemoryRecall — causal lane (EXTRACT-03)", () => {
 
   /**
    * The pre-causal-lane fused output (fts + vector, no causal lane) — exactly what the
-   * default-OFF / empty / err paths must reproduce verbatim (the ENT-04 no-op).
+   * default-OFF / empty / err paths must reproduce verbatim (the entity-lane no-op).
    */
   function baseLaneReference(fts: MemorySearchResult[], vector: MemorySearchResult[]): string[] {
     const lanes = [] as Parameters<typeof fuse>[0];
@@ -2155,12 +2155,12 @@ describe("createMemoryRecall — causal lane (EXTRACT-03)", () => {
     if (!got.ok) return;
     // The load-bearing neutrality: causalLane is NEVER called when off (the spy proves it).
     expect(calls.length).toBe(0);
-    // Byte-identical to the pre-causal-lane fused path (the ENT-04 no-op reused).
+    // Byte-identical to the pre-causal-lane fused path (the entity-lane no-op reused).
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
     expect(got.value.map((r) => r.entry.id)).not.toContain("linked");
   });
 
-  it("NO CAUSAL CONFIG: an absent `lanes.causal` → causalLane NEVER called (byte-identical to before this plan)", async () => {
+  it("NO CAUSAL CONFIG: an absent `lanes.causal` → causalLane NEVER called (byte-identical to before the causal lane)", async () => {
     const fts = [makeResult("a", { base: 0.9 })];
     const { store, calls } = fakeCausalStore(ok([makeResult("linked", { base: 0.99 })]));
     const recall = createMemoryRecall(
@@ -2180,7 +2180,7 @@ describe("createMemoryRecall — causal lane (EXTRACT-03)", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
   });
 
-  it("EMPTY-LANE NEUTRAL: an injected store whose causalLane returns ok([]) pushes nothing → output unchanged (the ENT-04 no-op)", async () => {
+  it("EMPTY-LANE NEUTRAL: an injected store whose causalLane returns ok([]) pushes nothing → output unchanged (the entity-lane no-op)", async () => {
     const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
     const { store, calls } = fakeCausalStore(ok([]));
     const recall = createMemoryRecall(
@@ -2288,7 +2288,7 @@ describe("appendCausalLane (the extracted 5th-lane helper)", () => {
 });
 
 // ===========================================================================
-// Graph-spread lane (KG-04) — the 6th fused lane, APPENDED after the causal
+// Graph-spread lane — the 6th fused lane, APPENDED after the causal
 // lane (fts, vector, entity, temporal, causal, graphSpread). Mirrors the causal
 // block tier-for-tier: a triple-store stub + the LANE-ON lift / DEFAULT-OFF
 // byte-identity (the spy proves ZERO calls) / NO-CONFIG / EMPTY-lane neutral /
@@ -2337,7 +2337,7 @@ function fakeTripleStore(laneResult: Result<MemorySearchResult[], Error>): {
   return { store, calls };
 }
 
-describe("createMemoryRecall — graph-spread lane (KG-04)", () => {
+describe("createMemoryRecall — graph-spread lane", () => {
   // Boosts neutralized so the FUSION verdict (not score() boosts) orders the output — the
   // graph-spread RRF contribution is then the only thing under test.
   const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
@@ -2423,7 +2423,7 @@ describe("createMemoryRecall — graph-spread lane (KG-04)", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
   });
 
-  it("EMPTY-LANE NEUTRAL: an injected store whose spreadLane returns ok([]) pushes nothing → output unchanged (the ENT-04 no-op)", async () => {
+  it("EMPTY-LANE NEUTRAL: an injected store whose spreadLane returns ok([]) pushes nothing → output unchanged (the entity-lane no-op)", async () => {
     const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
     const { store, calls } = fakeTripleStore(ok([]));
     const recall = createMemoryRecall(
@@ -2483,18 +2483,18 @@ describe("createMemoryRecall — graph-spread lane (KG-04)", () => {
   });
 });
 
-// ── IQ-02/03: query-understanding wiring (intent reweight + synonyms + NL range) ──
+// ── Query-understanding wiring (intent reweight + synonyms + NL range) ──
 //
 // Three thin gated call-sites in createMemoryRecall, all DEFAULT-OFF byte-identical:
-//   IQ-02 intent reweight  — classifyIntent(query) once; intentMultiplier(intent, lane)
-//                            multiplies each lane's FusionLane weight (1.0 when off/factual).
-//   IQ-03a synonym         — expandSynonyms(query) replaces the search query string (whole-query).
-//   IQ-03b NL temporal     — parseTemporalRange(query, deps.clock.now()) → occurredAtRange on
-//                            the search options (no Phase-100 temporal-lane double-apply).
+//   intent reweight  — classifyIntent(query) once; intentMultiplier(intent, lane)
+//                      multiplies each lane's FusionLane weight (1.0 when off/factual).
+//   synonym          — expandSynonyms(query) replaces the search query string (whole-query).
+//   NL temporal      — parseTemporalRange(query, deps.clock.now()) → occurredAtRange on
+//                      the search options (no temporal-lane double-apply).
 //
 // The spy on fakeLaneMemoryPort records the (query, options) the search received, so the off-path
 // proof is: ORIGINAL query + NO occurredAtRange + the fused ids === baseLaneReference (mirror :2109).
-describe("createMemoryRecall — query understanding (IQ-02/03)", () => {
+describe("createMemoryRecall — query understanding", () => {
   const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
   const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
   const QU_OFF = { intentReweight: false, synonyms: false, temporalParse: false };
@@ -2590,7 +2590,7 @@ describe("createMemoryRecall — query understanding (IQ-02/03)", () => {
     // contributes a candidate at rank 1. With NO reweight the base hit leads; with the ×1.5
     // temporal-lane weight the temporal candidate's RRF contribution overtakes it.
     const fts = [makeResult("base_top", { base: 1 }), makeResult("base_mid", { base: 1 })];
-    // The seed needs an occurredAt so the temporal lane fires (Pitfall 6 — seed on event time).
+    // The seed needs an occurredAt so the temporal lane fires (seed on event time).
     const ftsSeeded = [
       makeResult("base_top", { base: 1, occurredAt: NOW }),
       makeResult("base_mid", { base: 1, occurredAt: NOW }),
@@ -2746,13 +2746,13 @@ describe("createMemoryRecall — query understanding (IQ-02/03)", () => {
   });
 });
 
-// ── IQ-01: MMR diversity re-rank slot (gated, scoped, non-fatal) ──────────────
+// ── MMR diversity re-rank slot (gated, scoped, non-fatal) ──────────────
 //
 // A gated scoped embedding read + mmrRerank, placed AFTER the trust-filter and BEFORE dedup
-// (FORK 1 — diversify EXACTLY the set that will be injected). DEFAULT-OFF byte-identity is the
+// (diversify EXACTLY the set that will be injected). DEFAULT-OFF byte-identity is the
 // load-bearing discipline: with mmr.enabled=false / no embeddingStore / <2 candidates, the block
 // is SKIPPED — readEmbeddings is NEVER called (the spy proves it) and `ranked` is unchanged.
-describe("createMemoryRecall — MMR diversity re-rank (IQ-01)", () => {
+describe("createMemoryRecall — MMR diversity re-rank", () => {
   const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
   const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
 
@@ -2972,7 +2972,7 @@ describe("createMemoryRecall — MMR diversity re-rank (IQ-01)", () => {
 
   it("PLACEMENT: MMR re-orders ONLY the post-trust-filter survivors (an excluded candidate is never re-surfaced)", async () => {
     // An "external" candidate is dropped by the trust filter BEFORE MMR. Even though it would be
-    // maximally diverse (orthogonal embedding), MMR can never re-surface it — FORK 1 placement.
+    // maximally diverse (orthogonal embedding), MMR can never re-surface it — by placement.
     const fts = [
       makeResult("A", { base: 0.9, trustLevel: "learned" }),
       makeResult("B", { base: 0.85, trustLevel: "learned" }),
@@ -3003,7 +3003,7 @@ describe("createMemoryRecall — MMR diversity re-rank (IQ-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DIAL-02 — recall stays LLM-FREE (the binding constraint, Phase 109)
+// Recall stays LLM-FREE (the binding constraint)
 // ---------------------------------------------------------------------------
 
 describe("llm-free", () => {

@@ -23,13 +23,13 @@ import type {
   MemoryTier,
   LifecycleSweepReport,
 } from "./memory-lifecycle.js";
-// Public-surface RED proof (Task 1): the port types must be re-exported on the
+// Public-surface RED proof: the port types must be re-exported on the
 // @comis/core barrel (../index.js is the in-package equivalent of the bare
 // `@comis/core` specifier — index.ts `export *`s the curated exports/ports.js).
 // These imports fail to resolve (a tsc build error) until the export-wiring in
 // ports/index.ts + exports/ports.ts lands. The public-export-consumers gate
 // requires the port be on the public surface; the consumers (the @comis/memory
-// adapter + the daemon cron) land in 112-03/04.
+// adapter + the daemon cron) land in later implementation phases.
 import type {
   MemoryLifecyclePort as PublicMemoryLifecyclePort,
   MemoryLifecycleScope as PublicMemoryLifecycleScope,
@@ -41,22 +41,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./memory-lifecycle.ts"), "utf8");
 
 /**
- * Phase 112 (FORGET-02 / Track C) — the segregated, SCAFFOLD-DORMANT
- * `MemoryLifecyclePort` foundation.
+ * The segregated, SCAFFOLD-DORMANT `MemoryLifecyclePort` foundation.
  *
  * The lifecycle port lives type-only in @comis/core (mirrors tuned-alpha-store.ts /
- * user-representation-store.ts): the sole adapter lands in @comis/memory (112-03),
- * the daemon cron wires it (112-04); they consume it by TYPE. The port carries a
+ * user-representation-store.ts): the sole adapter lands in @comis/memory, the
+ * daemon cron wires it; they consume it by TYPE. The port carries a
  * single maintenance method `runLifecycleSweep`, scoped per (tenant, agent) with an
  * injected `now`, Result-returning.
  *
- * THE binding contract (Phase-106 gap-report OD4): the port is SCAFFOLD-DORMANT —
+ * THE binding contract (gap-report OD4): the port is SCAFFOLD-DORMANT —
  * the sweep computes strengths/tiers but its demote/evict step performs NOTHING
  * (promoted/demoted/evicted stay 0) until an operator enables it; live eviction is
- * the deferred operator/v2.10 step. The port is a NEW segregated port — it does NOT
+ * the deferred operator step. The port is a NEW segregated port — it does NOT
  * widen the security-reviewed MemoryPort.
  */
-describe("MemoryLifecyclePort — type-only segregated lifecycle port (FORGET-02)", () => {
+describe("MemoryLifecyclePort — type-only segregated lifecycle port", () => {
   it("declares runLifecycleSweep on the port and stays type-only (no zod, no @comis/memory)", () => {
     // Runtime RED proof: fails on pre-patch source where the file/method/type are absent.
     expect(portSrc, "MemoryLifecyclePort interface must be declared").toMatch(
@@ -100,7 +99,7 @@ describe("MemoryLifecyclePort — type-only segregated lifecycle port (FORGET-02
     // evicts/demotes nothing (OD4). The doc-comment must name the scaffold + the
     // deferral so a future reader does not "complete" the live eviction by mistake.
     expect(portSrc, "the doc must call the contract SCAFFOLD/dormant").toMatch(/SCAFFOLD/);
-    expect(portSrc, "the doc must cite the Phase-106 gap-report OD4 deferral").toMatch(/OD4/);
+    expect(portSrc, "the doc must cite the gap-report OD4 deferral").toMatch(/OD4/);
     expect(portSrc, "the doc must record live eviction as deferred").toMatch(/deferred/i);
     // The NEW-port framing carried verbatim from tuned-alpha-store.ts.
     expect(portSrc, "the doc must state the port does NOT widen MemoryPort").toMatch(
@@ -179,16 +178,16 @@ describe("MemoryLifecyclePort — type-only segregated lifecycle port (FORGET-02
 });
 
 /**
- * Phase 112 (FORGET-02) — the public @comis/core surface re-export.
+ * The public @comis/core surface re-export.
  *
- * The sole adapter (112-03) and the daemon cron wiring (112-04) consume these
+ * The sole adapter and the daemon cron wiring consume these
  * TYPES from `@comis/core` (never @comis/memory). This block proves the port types
  * are on the public barrel — the same names, structurally identical to the
  * relative-path types. (The public-export-consumers gate requires the export; its
- * consumers land in 112-03/04, so this is an ahead-of-consumer planned-orphan
- * tracked in the SUMMARY.)
+ * consumers land in later implementation phases, so this is an ahead-of-consumer
+ * planned-orphan.)
  */
-describe("MemoryLifecyclePort — public @comis/core re-export (FORGET-02)", () => {
+describe("MemoryLifecyclePort — public @comis/core re-export", () => {
   it("re-exports the port types on the public barrel, identical to the relative-path types", () => {
     expectTypeOf<PublicMemoryLifecyclePort>().toEqualTypeOf<MemoryLifecyclePort>();
     expectTypeOf<PublicMemoryLifecycleScope>().toEqualTypeOf<MemoryLifecycleScope>();

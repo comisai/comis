@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Activity-transparency emit-site tests for the PiEventBridge (plan 70-06,
- * EVT-01/02/10). Co-located (NOT a __tests__/ dir — Pitfall 1).
+ * Activity-transparency emit-site tests for the PiEventBridge. Co-located
+ * (NOT a __tests__/ dir — Pitfall 1).
  *
  * Asserts the producer-side redaction obligation at the bridge's two tool-event
  * emit sites and the failureDetector hook placement (§16.1 + §16.10):
@@ -122,7 +122,7 @@ function emitPayload(deps: PiEventBridgeDeps, name: string): any {
   return call?.[1];
 }
 
-describe("PiEventBridge activity emit-site redaction (EVT-01/02)", () => {
+describe("PiEventBridge activity emit-site redaction", () => {
   it("tool:started forwards redacted params (no raw apiKey) and an action field", () => {
     const deps = createMockDeps();
     const { listener } = createPiEventBridge(deps);
@@ -158,7 +158,7 @@ describe("PiEventBridge activity emit-site redaction (EVT-01/02)", () => {
   });
 });
 
-describe("PiEventBridge $HOME compaction at the emit sites (WR-05)", () => {
+describe("PiEventBridge $HOME compaction at the emit sites", () => {
   const HOME = "/home/operator";
 
   it("tool:started compacts a $HOME-rooted param path to ~ when homeDir is wired", () => {
@@ -169,7 +169,7 @@ describe("PiEventBridge $HOME compaction at the emit sites (WR-05)", () => {
 
     const started = emitPayload(deps, "tool:started");
     // $HOME compacts to ~; the trailing 2 segments (.comis/agents.md) survive
-    // per the SEC-02 compaction contract.
+    // per the compaction contract.
     expect(started.params.path).toContain("~/.comis/agents.md");
     expect(JSON.stringify(started.params)).not.toContain(HOME);
   });
@@ -187,7 +187,7 @@ describe("PiEventBridge $HOME compaction at the emit sites (WR-05)", () => {
   });
 });
 
-describe("PiEventBridge failureDetector hook (EVT-10, §16.10)", () => {
+describe("PiEventBridge failureDetector hook (§16.10)", () => {
   it("a failureDetector returning true marks success:false with an errorKind on an isError:false result", () => {
     registerToolMetadata("activity_flaky_70_06", { failureDetector: () => true });
     const deps = createMockDeps();
@@ -255,14 +255,14 @@ describe("PiEventBridge failureDetector hook (EVT-10, §16.10)", () => {
 });
 
 // ===========================================================================
-// UX-03 end-to-end: a REAL registered detector flips success BEFORE the
+// End-to-end: a REAL registered detector flips success BEFORE the
 // tool:executed emit, and the flip propagates through ActivityStream as
 // status:"failed" + semanticPhase:"error" — without the raw result ever
 // reaching the emit or the rendered ActivityEvent.
 //
 // Per AGENTS.md §2.10 this is a CONTRACT test pinning the existing-correct
 // seam (pi-event-bridge.ts:566-593) + downstream mapping
-// (activity-stream.ts:414-435). It is the UX-03 "verified end-to-end"
+// (activity-stream.ts:414-435). It is the "verified end-to-end"
 // success-criterion proof; it must fail if a future edit regresses the
 // before-emit flip, the status:"failed" mapping, or the no-raw-result-leak
 // boundary.
@@ -271,7 +271,7 @@ describe("PiEventBridge failureDetector hook (EVT-10, §16.10)", () => {
 // not depend on the production web_search wiring being driven.
 // ===========================================================================
 
-describe("UX-03 end-to-end -- detector flip produces ActivityStream status:failed", () => {
+describe("end-to-end -- detector flip produces ActivityStream status:failed", () => {
   const RAW_BODY = "rate limit exceeded";
 
   // The mock deps emit with these identities (see createMockDeps); the turn
@@ -332,7 +332,7 @@ describe("UX-03 end-to-end -- detector flip produces ActivityStream status:faile
     expect(endEvt!.semanticPhase).toBe("error");
     expect(endEvt!.errorKind).toBe("resource");
 
-    // (3) NO RAW RESULT LEAK (T-75-03-01) — the load-bearing UX-03 guarantee
+    // (3) NO RAW RESULT LEAK — the load-bearing guarantee
     // is "observability never sees the raw result". The OBSERVABILITY artifact
     // is the rendered ActivityEvent (what reaches the channel painter): its
     // defaultLabel is built from `params` ONLY (activity-stream.ts:417), never
@@ -391,7 +391,7 @@ describe("UX-03 end-to-end -- detector flip produces ActivityStream status:faile
 });
 
 // ===========================================================================
-// FIX-TRACEID-01: pi-event-bridge must honor the ALS RequestContext.traceId at
+// pi-event-bridge must honor the ALS RequestContext.traceId at
 // every emit site, falling back to deps.executionId only when ALS is absent.
 // Pre-patch the bridge stamps deps.executionId unconditionally — that ID is a
 // per-pi-mono-run UUID, NOT the channel ingress traceId the activity stream's
@@ -400,7 +400,7 @@ describe("UX-03 end-to-end -- detector flip produces ActivityStream status:faile
 // both pre- and post-patch (the fallback was accidentally correct).
 // ===========================================================================
 
-describe("PiEventBridge traceId honors ALS RequestContext when present (FIX-TRACEID-01)", () => {
+describe("PiEventBridge traceId honors ALS RequestContext when present", () => {
   // The ingress traceId the channel adapter sets via runWithContext at the
   // pipeline entry — distinct from deps.executionId so the bug is unambiguous.
   const ALS_TRACE = "4efb2c13-946d-43bc-a87e-2fe26fe29fa1";

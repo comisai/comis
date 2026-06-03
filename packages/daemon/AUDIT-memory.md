@@ -35,10 +35,10 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | entityStore | optional | memory.entities throws "entity store not wired"; the entity-graph diagnostic is unavailable until setup-memory threads the store | packages/daemon/src/api/types.ts:150 |
 | recallCounters | optional | memory.recall_stats returns a zeroed counter snapshot (the gauge is process-lifetime; absent ⇒ no live counts) when wireRecallCounters has not been wired | packages/daemon/src/api/types.ts:155 |
 | dataDir | optional | memory.recall_trace resolves the JSONL artifact under ~/.comis by default (safePath fallback) when no explicit data dir is threaded | packages/daemon/src/api/types.ts:160 |
-| dialecticSeam | optional | memory.ask returns the abstain sentinel `{ answer:"", citations:[], abstained:true }` (the dialectic is not wired / no key) — the injected query-time synthesis seam (Plan 109-04 builds + injects it) | packages/daemon/src/api/types.ts:173 |
-| buildDialecticRecall | optional | memory.ask returns the abstain sentinel (the per-agent recall factory is not wired) — Plan 109-04 supplies the createMemoryRecall builder over the daemon store set | packages/daemon/src/api/types.ts:184 |
-| dialecticMaxRecall | optional | memory.ask falls back to the schema-default grounding ceiling (10) when the per-agent `dialectic.maxRecall` resolver is not wired (CR-04 — a per-agent `(agentId) => number`; the handler clamps `limit` to `[1, ceiling]`) | packages/daemon/src/api/types.ts:192 |
-| onSuspiciousContent | optional | memory.ask still sanitizes + wraps recalled grounding content (CR-01) but emits no suspicious-pattern telemetry when the hook is not threaded (detection is silent; neutralization still runs) | packages/daemon/src/api/types.ts:199 |
+| dialecticSeam | optional | memory.ask returns the abstain sentinel `{ answer:"", citations:[], abstained:true }` (the dialectic is not wired / no key) — the injected query-time synthesis seam | packages/daemon/src/api/types.ts:173 |
+| buildDialecticRecall | optional | memory.ask returns the abstain sentinel (the per-agent recall factory is not wired) — the createMemoryRecall builder over the daemon store set | packages/daemon/src/api/types.ts:184 |
+| dialecticMaxRecall | optional | memory.ask falls back to the schema-default grounding ceiling (10) when the per-agent `dialectic.maxRecall` resolver is not wired (a per-agent `(agentId) => number`; the handler clamps `limit` to `[1, ceiling]`) | packages/daemon/src/api/types.ts:192 |
+| onSuspiciousContent | optional | memory.ask still sanitizes + wraps recalled grounding content but emits no suspicious-pattern telemetry when the hook is not threaded (detection is silent; neutralization still runs) | packages/daemon/src/api/types.ts:199 |
 
 ## Removed Fields (stale-fallback — deleted)
 
@@ -47,7 +47,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 18
-- **Final count:** 26 (7 required + 19 optional) — +4 OBS-06 diagnostic deps (Phase 86 Plan 05: consolidationStore, entityStore, recallCounters, dataDir); +4 dialectic deps (Phase 109: dialecticSeam, buildDialecticRecall in Plan 03; dialecticMaxRecall + onSuspiciousContent in the 109 review-fix — the memory.ask handler's per-agent DoS bound + the CR-01 injection-telemetry hook)
+- **Final count:** 26 (7 required + 19 optional) — +4 diagnostic deps (consolidationStore, entityStore, recallCounters, dataDir); +4 dialectic deps (dialecticSeam, buildDialecticRecall; dialecticMaxRecall + onSuspiciousContent in the review-fix — the memory.ask handler's per-agent DoS bound + the injection-telemetry hook)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

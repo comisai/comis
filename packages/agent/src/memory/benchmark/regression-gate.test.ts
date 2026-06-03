@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED->GREEN unit suite for {@link compareToBaseline} (Phase 116, GATE-01) -- the
- * pure per-category regression-vs-baseline verdict that backs the SCHEDULED CI
- * regression gate (`.github/workflows/bench-regression.yml`).
+ * RED->GREEN unit suite for {@link compareToBaseline} -- the pure per-category
+ * regression-vs-baseline verdict that backs the SCHEDULED CI regression gate
+ * (`.github/workflows/bench-regression.yml`).
  *
- * WHY THIS MODULE EXISTS: the per-release gate (PROVE-03 / GATE-REPORT.md §4)
- * needs a TESTED, reproducible comparison of a CURRENT run's per-category
+ * WHY THIS MODULE EXISTS: the per-release gate needs a TESTED, reproducible
+ * comparison of a CURRENT run's per-category
  * accuracy against the committed J1 baseline
  * (`benchmarks/results/2026-05-31-j1-baseline/qa-report.judge-a.json`). A category
  * "regresses" ONLY when the current accuracy is BELOW baseline beyond a tolerance
@@ -57,7 +57,7 @@ function cat(correct: number, total: number, invalid = 0): CategoryAccuracy {
   };
 }
 
-describe("compareToBaseline -- per-category regression verdict vs the committed baseline (GATE-01)", () => {
+describe("compareToBaseline -- per-category regression verdict vs the committed baseline", () => {
   it("Test 1: an identical run never regresses (every category byte-equal -> deltaPts 0, regressed false)", () => {
     const baseline: Record<string, CategoryAccuracy> = {
       "temporal-reasoning": cat(9, 20),

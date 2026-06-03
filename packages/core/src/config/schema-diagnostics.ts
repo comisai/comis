@@ -11,9 +11,9 @@
  *     OPT-IN sibling of `cacheTrace`: default OFF because it records
  *     per-recall ranking previews — an operator flips `enabled:true` for a
  *     debug session. There is NO `includeMessages`/`includeSystem` raw-content
- *     opt-in (the recorder always full-sanitizes via `sanitizeForPersistence`,
- *     OBS-02). The `COMIS_DISABLE_RECALL_TRACE` env escape hatch (read by
- *     Plan 01's recorder) hard-disables it regardless of config.
+ *     opt-in (the recorder always full-sanitizes via `sanitizeForPersistence`).
+ *     The `COMIS_DISABLE_RECALL_TRACE` env escape hatch (read by the recorder)
+ *     hard-disables it regardless of config.
  *
  * The unused fourth subschema (a placeholder slot for future redact
  * knobs) was deleted. Runtime redaction lives in
@@ -161,9 +161,9 @@ const ConfigAuditConfigSchema = z
   });
 
 /**
- * `diagnostics.recallTrace.*` schema (Phase 86 / OBS-02).
+ * `diagnostics.recallTrace.*` schema.
  *
- * Configures the per-recall recall-trace JSONL artifact written by Plan 01's
+ * Configures the per-recall recall-trace JSONL artifact written by the
  * recorder (`packages/observability/src/recall-trace/runtime.ts`), a
  * near-verbatim sibling of the cache-trace runtime. All fields carry defaults
  * so an empty `diagnostics.recallTrace: {}` block in YAML produces a valid
@@ -184,8 +184,8 @@ const ConfigAuditConfigSchema = z
  * NOTE: there is intentionally NO `includeMessages` / `includeSystem` /
  * `includePrompt` slot (unlike `cacheTrace`). The recall-trace recorder has no
  * raw-content opt-in — every payload is full-sanitized via
- * `sanitizeForPersistence` (bound → sanitize → redact) before it touches disk
- * (OBS-02). Adding a raw-content toggle here would be a security regression.
+ * `sanitizeForPersistence` (bound → sanitize → redact) before it touches disk.
+ * Adding a raw-content toggle here would be a security regression.
  */
 const RecallTraceConfigSchemaInner = z.object({
   enabled: z.boolean().default(false),

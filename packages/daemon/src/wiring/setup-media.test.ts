@@ -307,8 +307,8 @@ describe("setupMedia", () => {
   // 6. Creates STT provider and fallback chain
   // -------------------------------------------------------------------------
 
-  it("creates STT provider and fallback chain when fallbackProviders configured — chain built per transcribe() call (REQ-13)", async () => {
-    // With lazy-delegation wiring (WR-03), createFallbackTranscription is called
+  it("creates STT provider and fallback chain when fallbackProviders configured — chain built per transcribe() call", async () => {
+    // With lazy-delegation wiring, createFallbackTranscription is called
     // on each transcribe() invocation (not during setupMedia). We verify this by
     // calling transcribe() and asserting the fallback chain was built at that point.
     const primaryTranscribe = vi.fn(async () => ({ ok: true as const, value: { text: "hello", language: "en" } }));
@@ -452,10 +452,10 @@ describe("setupMedia", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 9b. WR-05: visionRegistryHolder materialises on first secret:changed rotation
+  // 9b. visionRegistryHolder materialises on first secret:changed rotation
   // -------------------------------------------------------------------------
 
-  it("WR-05: visionRegistryHolder.value is updated when registry materialises from undefined at first rotation", async () => {
+  it("visionRegistryHolder.value is updated when registry materialises from undefined at first rotation", async () => {
     // Scenario: no vision providers at boot (visionRegistry = undefined).
     // After a credential rotation, visionRegistryHolder.value must reflect the
     // newly-materialised registry — even though the BootContext visionRegistry
@@ -488,7 +488,7 @@ describe("setupMedia", () => {
     expect(secretChangedListener).toBeDefined();
     secretChangedListener!({ name: "OPENAI_API_KEY" });
 
-    // WR-05: the holder must be updated — consumers holding visionRegistryHolder
+    // The holder must be updated — consumers holding visionRegistryHolder
     // see the new registry on their next access without re-reading the boot snapshot.
     expect(result.visionRegistryHolder.value).toBe(rotatedRegistry);
 
@@ -497,7 +497,7 @@ describe("setupMedia", () => {
     expect(result.visionRegistry).toBeUndefined();
   });
 
-  it("WR-05: visionRegistryHolder.value is set at boot when registry is non-empty", async () => {
+  it("visionRegistryHolder.value is set at boot when registry is non-empty", async () => {
     const bootRegistry = new Map([["openai", { id: "openai", describe: vi.fn() }]]);
     mockCreateVisionProviderRegistry.mockReturnValue(bootRegistry);
 
@@ -598,20 +598,20 @@ describe("setupMedia", () => {
     expect(result).toHaveProperty("ssrfFetcher");
     expect(result).toHaveProperty("linkRunner");
     expect(result).toHaveProperty("fileExtractor");
-    // REQ-13 (WR-05): stable holder returned alongside the boot snapshot
+    // Stable holder returned alongside the boot snapshot
     expect(result).toHaveProperty("visionRegistryHolder");
     expect(result.visionRegistryHolder).toHaveProperty("value");
   });
 });
 
 // =============================================================================
-// Phase 6 WR-03: STT/TTS read-on-use behavioral tests
+// STT/TTS read-on-use behavioral tests
 //
 // These tests verify that the transcriber and ttsAdapter returned by setupMedia
 // are lazy-delegation wrappers: each transcribe()/synthesize() call re-invokes
 // the underlying factory (createSTTProvider / createTTSProvider) with the
 // current secretManager state. This means a rotated API key is observed on the
-// LIVE path without a daemon restart (REQ-13).
+// LIVE path without a daemon restart.
 //
 // The key behavioral invariant: createSTTProvider / createTTSProvider are
 // called DURING transcribe()/synthesize(), not only during setupMedia(). After
@@ -619,7 +619,7 @@ describe("setupMedia", () => {
 // invoke the factory again — confirming read-on-use, not boot-snapshot.
 // =============================================================================
 
-describe("Phase 6 WR-03: STT/TTS lazy-delegation — rotated key observed per call without restart", () => {
+describe("STT/TTS lazy-delegation — rotated key observed per call without restart", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDetectFfmpeg.mockResolvedValue({
@@ -660,7 +660,7 @@ describe("Phase 6 WR-03: STT/TTS lazy-delegation — rotated key observed per ca
     // Clear the call counts recorded during setupMedia.
     // With boot-snapshot: createSTTProvider was called once in setupMedia and
     //   never again → after clearing, the count stays 0 on the next transcribe().
-    // With lazy-delegation (WR-03): createSTTProvider is called on each
+    // With lazy-delegation: createSTTProvider is called on each
     //   transcribe() → after clearing, the count is 1 after one transcribe().
     vi.clearAllMocks();
 
@@ -753,10 +753,10 @@ describe("Phase 6 WR-03: STT/TTS lazy-delegation — rotated key observed per ca
   // 16. image-gen lazy factory still exported (symbol-export sanity)
   // -------------------------------------------------------------------------
 
-  it("createImageGenProviderFactory is exported from setup-media for callers that need on-demand image-gen (REQ-13)", async () => {
+  it("createImageGenProviderFactory is exported from setup-media for callers that need on-demand image-gen", async () => {
     const mod = await import("./setup-media.js");
     // The factory is exported so callers can build on-demand image-gen providers
-    // without snapshotting the key at construction time (REQ-13).
+    // without snapshotting the key at construction time.
     expect(typeof mod.createImageGenProviderFactory).toBe("function");
     expect(typeof mod.createImageGenGetter).toBe("function");
   });

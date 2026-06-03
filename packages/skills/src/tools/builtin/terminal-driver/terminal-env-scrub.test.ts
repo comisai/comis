@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the child-env scrubber (SEC-07) — the BLOCKLIST that strips
+ * Unit tests for the child-env scrubber — the BLOCKLIST that strips
  * interpreter-control vars + the net-new nested-CLI markers + Shellshock
  * function-exports from the env handed to the jailed CLI, while PRESERVING a rich
  * env (a driven full-screen CLI like `claude`/`vim` needs `TERM`/`LANG`/`PATH`/...).
  *
  * Pure function (env-in → env-out) → runs green on macOS. The VPS `env`-in-jail
- * probe (122-07) is the enforcement backstop; this asserts the transform itself.
+ * probe is the enforcement backstop; this asserts the transform itself.
  *
  * CRITICAL CONTRAST: this is a BLOCKLIST (strip known-dangerous keys, keep the
  * rest), NOT the MCP allowlist (`scrubStdioEnv` / `MCP_STDIO_BUILTIN_ENV_ALLOWLIST`)
- * — reusing the MCP allowlist verbatim would strip the rich env a driven TUI needs
- * (RESEARCH Anti-Pattern). The "rich env survives" case guards that regression.
+ * — reusing the MCP allowlist verbatim would strip the rich env a driven TUI needs.
+ * The "rich env survives" case guards that regression.
  *
  * @module
  */
@@ -20,7 +20,7 @@ import { describe, it, expect } from "vitest";
 
 import { scrubChildEnv } from "./terminal-env-scrub.js";
 
-describe("scrubChildEnv — interpreter-control blocklist (SEC-07, T-122-04)", () => {
+describe("scrubChildEnv — interpreter-control blocklist", () => {
   it("strips EVERY interpreter-control var and keeps PATH", () => {
     const out = scrubChildEnv({
       NODE_OPTIONS: "--require /tmp/evil.js",
@@ -54,7 +54,7 @@ describe("scrubChildEnv — interpreter-control blocklist (SEC-07, T-122-04)", (
   });
 });
 
-describe("scrubChildEnv — nested-CLI markers (SEC-07, T-122-06, net-new)", () => {
+describe("scrubChildEnv — nested-CLI markers (net-new)", () => {
   it("strips CLAUDECODE (exact) + every CLAUDE_CODE_* (prefix) and keeps HOME", () => {
     const out = scrubChildEnv({
       CLAUDECODE: "1",
@@ -78,7 +78,7 @@ describe("scrubChildEnv — nested-CLI markers (SEC-07, T-122-06, net-new)", () 
   });
 });
 
-describe("scrubChildEnv — Shellshock function-export skip (SEC-07, T-122-05)", () => {
+describe("scrubChildEnv — Shellshock function-export skip", () => {
   it("drops a value starting with '()' (Bash CVE-2014-6271) and keeps a normal value", () => {
     const out = scrubChildEnv({ FOO: "() { :; }; echo pwned", BAR: "ok" });
     expect(out).not.toHaveProperty("FOO");
@@ -86,7 +86,7 @@ describe("scrubChildEnv — Shellshock function-export skip (SEC-07, T-122-05)",
   });
 });
 
-describe("scrubChildEnv — BLOCKLIST not allowlist: a rich env survives (T-122-07 own-goal guard)", () => {
+describe("scrubChildEnv — BLOCKLIST not allowlist: a rich env survives (own-goal guard)", () => {
   it("preserves a rich driven-CLI env WHOLLY (an allowlist would drop these)", () => {
     // The explicit contrast with the MCP scrubber: a full-screen TUI needs a far
     // richer env than a headless MCP stdio server. Every benign var must survive.

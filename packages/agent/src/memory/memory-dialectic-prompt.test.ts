@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for the agent-internal dialectic prompt + its lenient/total parser
- * (Phase 109 — DIAL-01 grounded/abstain/cite/trust-first).
+ * (grounded/abstain/cite/trust-first).
  *
  * `buildDialecticPrompt` is a pure builder (no IO) that returns the synthesis system
  * prompt — agent-internal, so the prompt STRING never crosses the package boundary

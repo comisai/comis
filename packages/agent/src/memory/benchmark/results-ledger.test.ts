@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first co-located unit tests for the append-only results ledger
- * (Phase 104, Plan 104-02, PROVE-03 -- the dated, append-only, NEVER-OVERWRITTEN
- * results history).
+ * RED-first co-located unit tests for the append-only results ledger -- the
+ * dated, append-only, NEVER-OVERWRITTEN results history.
  *
  * THE LOAD-BEARING TEST (Test 3): the never-overwrite invariant. The corrected
- * PATTERNS finding (104-PATTERNS.md Pattern 3 / fs-safe.ts:436-452) is that
+ * finding (fs-safe.ts:436-452) is that
  * `writeRegularFile`'s default `unlinkExisting:true` SILENTLY OVERWRITES a
  * pre-existing dated file -- the O_EXCL there is anti-TOCTOU-symlink, NOT
  * anti-clobber. So the never-overwrite invariant is enforced by an explicit

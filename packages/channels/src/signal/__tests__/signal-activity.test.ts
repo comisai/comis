@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Signal DeleteAndRepost renderer tests (CHAN-06, CHAN-11; §18.3 Signal column).
+ * Signal DeleteAndRepost renderer tests (§18.3 Signal column).
  *
  * Signal is the ONLY one of the 5 non-EditPlace channels with a real
  * `deleteMessage` — it is the canonical DeleteAndRepost wiring. The single
@@ -8,9 +8,9 @@
  * structured numeric code for send/delete failures (the live adapter returns
  * `err(result.error)`, a raw signal-cli RPC Error), so the classifier defaults
  * to `internal` and reads the error structurally ONLY (never renders the
- * `.message` as activity text — SEC-05/§19.3). `makeSignalRenderActions` maps
+ * `.message` as activity text — §19.3). `makeSignalRenderActions` maps
  * each ChannelPort call through it and guards the absent `editMessage`;
- * `createSignalActivityRenderer` wires the Phase-70 `createDeleteAndRepostRenderer`
+ * `createSignalActivityRenderer` wires the `createDeleteAndRepostRenderer`
  * (no duplicated state machine).
  *
  * Time discipline: every fixture test drives the injected FakeTimers/FakeClock —
@@ -253,10 +253,10 @@ async function runScenario(
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
   const fake = createFakeSignalAdapter();
-  // Phase 78 reconciliation (option ii — plan §530): omit `clock` so the §8.5
-  // "(running N s)" elapsed fallback is skipped and committed fixtures stay
-  // byte-stable. Strategy-level tests in delete-and-repost.test.ts inject a
-  // clock and assert the elapsed text — that is the live-production contract.
+  // Omit `clock` so the §8.5 "(running N s)" elapsed fallback is skipped and
+  // committed fixtures stay byte-stable. Strategy-level tests in
+  // delete-and-repost.test.ts inject a clock and assert the elapsed text — that
+  // is the live-production contract.
   const r = createSignalActivityRenderer(fake, "chat-1", { timer });
 
   for (const f of frames) {
@@ -310,11 +310,11 @@ describe("Signal golden fixtures (§18.3 DeleteAndRepost rows — readFixture + 
     expect(log).toEqual(readFixture("signal", "S4"));
   });
 
-  // NOTE: the shipped Phase-70 createDeleteAndRepostRenderer treats
+  // NOTE: the shipped createDeleteAndRepostRenderer treats
   // success_with_recovered_failures identically to success (delete the last
   // activity after deliveredAt). §18.2-S5 aspires to "0 delete" for the recovered
-  // case; that keep-policy lives in delete-and-repost.ts (Phase-70) and is out of
-  // scope for this wiring plan. The fixture pins the ACTUAL renderer output (the
+  // case; that keep-policy lives in delete-and-repost.ts and is out of
+  // scope for this wiring. The fixture pins the ACTUAL renderer output (the
   // delete is present) — mirroring the Telegram/Discord/Slack/WhatsApp S5 decision.
   it("S5 recovered failure — repost-per-transition then a final delete, kind:success_with_recovered_failures (renderer deletes)", async () => {
     const recovered = ev(1, { status: "failed", errorKind: "network" });

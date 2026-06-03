@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * In-process recall counter registry (OBS-07).
+ * In-process recall counter registry.
  *
  * A process-lifetime GAUGE that accumulates lane usage, rerank
  * runs/fallbacks, consolidation throughput, and recall hit-rate inputs.
@@ -11,8 +11,7 @@
  * health/metrics gauges (mirroring the in-process side of `comis cache
  * stats`), not durable accounting; the requirement explicitly calls for
  * "in-process counters," and a durable SQLite table would add a schema
- * migration + write path for no operational gain (86-RESEARCH "Alternatives
- * Considered").
+ * migration + write path for no operational gain.
  *
  * Each `createRecallCounters()` call owns its OWN accumulators — there is no
  * module-global state, so two registries are fully independent. `snapshot()`

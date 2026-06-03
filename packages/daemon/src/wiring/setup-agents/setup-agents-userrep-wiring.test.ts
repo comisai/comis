@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 107 (USER-03) gap-closure forward-presence test — drives the REAL
+ * Gap-closure forward-presence test — drives the REAL
  * `setupSingleAgent` boot path and asserts that `userRepresentationStore` from
  * `SingleAgentDeps` is actually forwarded into the `createPiExecutor(...)` deps
  * object literal.
  *
- * The 107-VERIFICATION BLOCKER this file reproduces: the field was threaded
+ * The bug this file reproduces: the field was threaded
  * through the TYPES (setup-agents-types.ts, pi-executor-types.ts,
  * executor-tool-assembly.ts) and POPULATED in setup-agents-registry.ts, but the
  * `createPiExecutor` construction site in setup-agents-runtime.ts omitted it from
  * its 6-sibling-store line — so in the live daemon `deps.userRepresentationStore`
  * is always `undefined` and the LLM-free `<user_profile>` standing block is never
- * injected. (The 107-04/05 forward-presence tests checked the prompt-assembly /
+ * injected. (The earlier forward-presence tests checked the prompt-assembly /
  * setup-memory layers, NOT this executor-construction hop — which was untested for
  * every sibling store.)
  *
@@ -151,7 +151,7 @@ function makeDeps(container: AppContainer): SingleAgentDeps {
 
 // --- Test ------------------------------------------------------------------
 
-describe("setupSingleAgent forwards userRepresentationStore into createPiExecutor (USER-03 gap closure)", () => {
+describe("setupSingleAgent forwards userRepresentationStore into createPiExecutor (gap closure)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

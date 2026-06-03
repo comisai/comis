@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WIRE-08 acceptance — a tripped circuit breaker skips `renderer.apply` on the
+ * Acceptance — a tripped circuit breaker skips `renderer.apply` on the
  * LIVE (daemon-shaped) coordinator path; an untripped one renders and records.
  *
- * Builds the SAME daemon-shaped `coordinatorFactory` Plan 03 wired (a per-turn
+ * Builds the SAME daemon-shaped `coordinatorFactory` the daemon wires (a per-turn
  * `createActivityTurnCoordinator` over a real redacted `ActivityStream`, with a
- * re-reading WIRE-07 `killSwitch` getter), but with chan-1 EXPLICITLY enabled so
- * the kill-switch does NOT suppress — isolating the WIRE-08 breaker gate. A fake
+ * re-reading `killSwitch` getter), but with chan-1 EXPLICITLY enabled so
+ * the kill-switch does NOT suppress — isolating the breaker gate. A fake
  * `ActivityBreakerGate` is injected; its `isTripped(key)` keys on the turn's
  * `{ agentId: "default", channelKey: "chan-1" }` (activity-turn-coordinator.ts
  * breakerKey()). The gate ordering is killSwitch FIRST, breaker SECOND, then
@@ -20,7 +20,7 @@
  *
  * The suppress assertion depends on the wired breaker: a coordinator built
  * WITHOUT a breaker would render the enabled channel, so `frames.length === 0`
- * is a genuine WIRE-08 driver (T-77-04-03).
+ * is a genuine breaker driver.
  *
  * @module
  */
@@ -128,10 +128,10 @@ async function driveTurn(
   await Promise.resolve();
 }
 
-describe("WIRE-08 breaker injection: a tripped breaker skips renderer.apply on the live coordinator path", () => {
+describe("breaker injection: a tripped breaker skips renderer.apply on the live coordinator path", () => {
   it("suppresses the paint while the (agent, channel) breaker isTripped and renders + records when not tripped", async () => {
     let tripped = true;
-    // WR-03: type the fake against the EXPORTED RecordOutcome (not an inline cast) so a
+    // Type the fake against the EXPORTED RecordOutcome (not an inline cast) so a
     // rename of the breaker contract (`tripped`/`reason`) fails this test at compile time.
     // `recordResult` is mutable so the fresh-trip arm below can drive the `onFreshTrip` path.
     let recordResult: RecordOutcome = { tripped: false };
@@ -166,7 +166,7 @@ describe("WIRE-08 breaker injection: a tripped breaker skips renderer.apply on t
     expect(recordSpy).toHaveBeenCalled();
     c2.dispose();
 
-    // (3) WR-03: not tripped at the gate, but the apply's `record` returns a FRESH trip
+    // (3) not tripped at the gate, but the apply's `record` returns a FRESH trip
     // → the coordinator must take the onFreshTrip branch exactly once (counter bump). The
     // prior arm's cast hid that `record` never returned a `reason`, leaving onFreshTrip
     // (activity-turn-coordinator.ts:337-338) untested at this seam.

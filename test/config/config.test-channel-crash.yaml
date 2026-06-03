@@ -1,6 +1,6 @@
 # Comis Test Configuration (Channel Crash Isolation Tests)
 #
-# Variant of config.test.yaml for CHAN-06 crash isolation test:
+# Variant of config.test.yaml for the channel crash isolation test:
 # - Separate port (8470) to avoid conflicts with other test suites
 # - Separate memory database (test-memory-104-crash.db) to avoid data contamination
 # - RAG disabled (no embeddings needed for crash tests)

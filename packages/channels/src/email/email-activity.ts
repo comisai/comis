@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Email DigestOnly activity renderer (CHAN-10, CHAN-11; §7.2 / §18.3 row
+ * Email DigestOnly activity renderer (§7.2 / §18.3 row
  * "DigestOnly"). Email is the largest-cap, send-only channel — it wires the
- * Phase-70 `createDigestOnlyRenderer`: buffer the trail in `apply`, send NOTHING
+ * `createDigestOnlyRenderer`: buffer the trail in `apply`, send NOTHING
  * mid-turn, send NOTHING on success (the assistant reply IS the activity, so a
  * separate "done" email would be noise), and on failure emit exactly ONE
  * failure-digest carrying the activity trail (a `FAILED {errorKind}` header line
  * plus one bullet line per trailed event) so a failed turn still leaves a
- * diagnostic record. Three parts, copying the Phase-71/72 `classify<Ch>Error`
+ * diagnostic record. Three parts, copying the `classify<Ch>Error`
  * / `make<Ch>RenderActions` /
  * `create<Ch>ActivityRenderer` shape (imessage-activity.ts is the closest
  * send-only structural analog — `buttons:"none"`, no rich effect, thin wiring):
@@ -20,7 +20,7 @@
  *      adapter's OWN log call, not on the value handed back. There is no reliable
  *      structural signal to disambiguate a richer variant on the returned error,
  *      so the classifier DEFAULTS to `{kind:"internal", cause:e}` (KISS —
- *      Pitfall 4; no invented rich classifier). SEC-05/§19.3: the SMTP error body
+ *      Pitfall 4; no invented rich classifier). §19.3: the SMTP error body
  *      is read for NOTHING user-facing — it selects the variant only and is NEVER
  *      rendered or logged as activity text. The S4 fixture proves the digest body
  *      is the `FAILED {errorKind}` header + the redacted bullet trail, not the
@@ -36,13 +36,12 @@
  *      `not_supported` is the honest answer. All paths return `Result`; nothing
  *      throws across the boundary.
  *
- *   3. `createEmailActivityRenderer` — wires the Phase-70
+ *   3. `createEmailActivityRenderer` — wires the
  *      {@link createDigestOnlyRenderer}. DigestOnly is purely end-of-turn (it
  *      schedules nothing), so its deps are `{ actions }` ONLY — there is NO
  *      TimerPort / ClockPort (Pitfall 5). It does NOT re-implement the digest body:
  *      the `FAILED {errorKind}` header + bullet-trail assembly lives in
- *      `digest-only.ts`. This is the signature the 72-05 WIRE-02 daemon wiring
- *      constructs.
+ *      `digest-only.ts`. This is the signature the daemon wiring constructs.
  *
  * Subject vs. body boundary: the threading subject a mail client shows (the
  * reply prefix + the original thread title) is the EMAIL TRANSPORT SUBJECT LINE
@@ -50,19 +49,19 @@
  * (existing reply-threading behavior), OUTSIDE the `send(text)` string this
  * renderer controls. The renderer's digest BODY is the `FAILED {errorKind}`
  * header + the trail; the reply-prefix subject is never injected into the body
- * string (doing so would diverge from the Phase-70 DigestOnly body and trip
- * CHAN-11).
+ * string (doing so would diverge from the DigestOnly body and trip the
+ * digest-body contract).
  *
- * Approval link (APV-10 / SEC-06): Email cannot show buttons, so the single-use,
+ * Approval link: Email cannot show buttons, so the single-use,
  * time-bounded, signed LINK to the gateway approval-token route IS the approval
  * action. When the `[FAILED]` digest's buffered trail carries a `kind:"approval"`
  * event AND the daemon composition root injected a `mintApprovalLink` accessor,
  * the digest body appends that link (an `ApprovalLinkRenderer` that scans the
  * trail and mints the URL). The body carries the OPAQUE link only — the token is
  * minted server-side (`generateStrongToken()`) and the signed-callback HMAC wire
- * format never appears in an email body (SEC-06 / T-73-31). When no minter is
+ * format never appears in an email body. When no minter is
  * injected (pre-wiring) or the trail has no approval event, the digest stays the
- * byte-stable Phase-72 `[FAILED] {errorKind}` + bullet trail, so the 5 golden
+ * byte-stable `[FAILED] {errorKind}` + bullet trail, so the 5 golden
  * fixtures are unaffected. The renderer reaches NO orchestrator/router code — it
  * only invokes the injected accessor (Pitfall 5).
  *
@@ -90,13 +89,13 @@ import { createDigestOnlyRenderer } from "../shared/strategies/digest-only.js";
  */
 export type MintApprovalLink = (event: ActivityEvent) => string | undefined;
 
-/** Optional deps for the Email renderer. `mintApprovalLink` wires the APV-10 link. */
+/** Optional deps for the Email renderer. `mintApprovalLink` wires the approval link. */
 export interface EmailActivityRendererDeps {
   mintApprovalLink?: MintApprovalLink;
   /**
-   * Resolved theme status markers (UX-01). The `[FAILED]` digest header glyph
+   * Resolved theme status markers. The `[FAILED]` digest header glyph
    * follows the resolved `failure` marker. Omitted → the `[FAILED]` default,
-   * keeping the digest body byte-identical to the pre-75-06 Phase-72 fixtures.
+   * keeping the digest body byte-identical to the earlier fixtures.
    */
   markers?: ActivityStatusMarkers;
 }
@@ -107,7 +106,7 @@ export interface EmailActivityRendererDeps {
  * failure with no structured numeric code on the returned value, so this DEFAULTS
  * to `internal` carrying the cause. The error is consulted for NOTHING that
  * reaches the user — it selects the variant only and is never rendered or logged
- * as activity text (SEC-05/§19.3, T-72-04-01).
+ * as activity text (§19.3).
  */
 export function classifyEmailError(e: unknown): ActivityRenderError {
   // The SMTP send path offers no structured code on the returned Error; there is
@@ -156,8 +155,8 @@ export function makeEmailRenderActions(
  * `kind:"approval"` event in the trail, or `undefined` when there is none / no
  * minter. Email shows ONE link (the most recent pending approval the failed turn
  * raised); the minter returns `undefined` for non-approval events so a trail with
- * no approval yields no trailer (byte-stable Phase-72 body). The trailer is a
- * single line carrying the opaque URL — never a raw HMAC/secret (T-73-31).
+ * no approval yields no trailer (byte-stable failure body). The trailer is a
+ * single line carrying the opaque URL — never a raw HMAC/secret.
  */
 function buildApprovalLinkTrailer(
   trail: readonly ActivityEvent[],
@@ -174,13 +173,13 @@ function buildApprovalLinkTrailer(
 }
 
 /**
- * Create the Email DigestOnly activity renderer — wires the Phase-70
+ * Create the Email DigestOnly activity renderer — wires the
  * {@link createDigestOnlyRenderer} with the per-channel render-actions adapter.
  * DigestOnly is purely end-of-turn, so it takes NO TimerPort / ClockPort (Pitfall
- * 5). The daemon composition root constructs this with the recipient id (WIRE-02)
- * and the optional `mintApprovalLink` accessor (APV-10): when present, a `[FAILED]`
+ * 5). The daemon composition root constructs this with the recipient id
+ * and the optional `mintApprovalLink` accessor: when present, a `[FAILED]`
  * digest whose trail carries a `kind:"approval"` event appends the minted
- * single-use link. When absent, the digest is the byte-stable Phase-72 body.
+ * single-use link. When absent, the digest is the byte-stable failure body.
  */
 export function createEmailActivityRenderer(
   adapter: ChannelPort,
@@ -190,11 +189,11 @@ export function createEmailActivityRenderer(
   const { mintApprovalLink, markers } = deps;
   return createDigestOnlyRenderer({
     actions: makeEmailRenderActions(adapter, channelId),
-    // UX-01: forward the resolved theme markers so the `[FAILED]` digest header
+    // Forward the resolved theme markers so the `[FAILED]` digest header
     // glyph follows the operator theme; omitting them keeps the `[FAILED]`
     // default byte-identical to the 5 golden fixtures.
     markers,
-    // Append the APV-10 single-use approval link only when a minter is injected;
+    // Append the single-use approval link only when a minter is injected;
     // otherwise the digest stays byte-stable (the 5 golden fixtures are unaffected).
     appendToFailureDigest:
       mintApprovalLink === undefined

@@ -13,7 +13,7 @@ export { AuditEventSchema, createAuditEvent } from "../security/index.js";
 export type { AuditEvent, CreateAuditEventParams } from "../security/index.js";
 export { sanitizeLogString } from "../security/index.js";
 // Bounded redaction primitive (security/redact-value.ts) — surfaced on the
-// @comis/core barrel for the template engine (70-04) and emit sites (70-06).
+// @comis/core barrel for the template engine and emit sites.
 export { redactValue, REDACT_LIMITS } from "../security/index.js";
 export type {
   RedactedValue,
@@ -28,7 +28,7 @@ export { wrapExternalContent, wrapWebContent, detectSuspiciousPatterns, EXTERNAL
 export type { ExternalContentSource, WrapExternalContentOptions } from "../security/index.js";
 export { createOutputGuard } from "../security/index.js";
 export { generateCanaryToken, detectCanaryLeakage } from "../security/index.js";
-// Signed interactive-approval callback primitive (APV-05 / SEC-06) — channels
+// Signed interactive-approval callback primitive — channels
 // MAY import this; the orchestrator's InteractiveCallbackRouter delegates here.
 export {
   signCallbackData,
@@ -61,7 +61,7 @@ export { resolveSecretRef, resolveConfigSecretRefs } from "../security/index.js"
 export type { ResolveSecretRefDeps, ResolveSecretRefOptions } from "../security/index.js";
 export { scanConfigForSecrets, scanEnvForSecrets, auditSecrets } from "../security/index.js";
 export type { AuditFinding, AuditSeverity, AuditOptions } from "../security/index.js";
-// Secret egress guard — R4 shared text scrubber (wave 2 wiring sites: write-tool, edit-tool, result-condenser, sub-agent-result-processor)
+// Secret egress guard — shared text scrubber (wiring sites: write-tool, edit-tool, result-condenser, sub-agent-result-processor)
 export { scrubSecretsFromText } from "../security/index.js";
 export {
   ZERO_WIDTH_REGEX,
@@ -158,7 +158,7 @@ export {
 } from "../security/index.js";
 export type { OAuthErrorCode, RewrittenOAuthError } from "../security/index.js";
 
-// Provider-catalog: types and pure functions for the MITM broker (Phase 2, BROKER-01..03)
-// WR-05: RequestFinalizer exported here so @comis/infra finalizer-stage.ts can consume it
+// Provider-catalog: types and pure functions for the MITM broker.
+// RequestFinalizer exported here so @comis/infra finalizer-stage.ts can consume it.
 export type { BrokerBinding, InjectionRule, HostRule, InjectionInput, RequestFinalizer } from "../security/index.js";
 export { resolveBinding, applyInjections, normalizeHost, pathAllowed } from "../security/index.js";

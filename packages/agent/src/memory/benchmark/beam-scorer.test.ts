@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED→GREEN unit test for the pure per-ability BEAM recall scorer (SUITE-01, Plan
- * 99-06, Task 2). Pins per-ability recall@k over the planted needles by REUSING
+ * RED→GREEN unit test for the pure per-ability BEAM recall scorer. Pins
+ * per-ability recall@k over the planted needles by REUSING
  * `scoreRanking` from `../recall-eval.js` (never reimplementing recall@k). Mirrors
  * the recall-eval.test.ts pure-math discipline.
  *

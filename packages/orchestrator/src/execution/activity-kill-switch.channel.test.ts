@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * activity-kill-switch.channel.test — WIRE-07 per-renderer enable gate.
+ * activity-kill-switch.channel.test — per-renderer enable gate.
  *
  * The operator kill switch `agents.<id>.activity.channels.<rendererKey>.enabled`
  * is enforced inside the coordinator's `flushApply()` BEFORE `renderer.apply` is
@@ -135,7 +135,7 @@ function makeKillSwitchDeps(backing: KillSwitchValue, renderer: RecordingRendere
       clock,
       logger,
       config: { verbosity: "normal" as const },
-      // WIRE-07: the live getter the gate reads on every flushApply.
+      // The live getter the gate reads on every flushApply.
       killSwitch: (): KillSwitchValue => backing,
     },
     timer,
@@ -144,10 +144,10 @@ function makeKillSwitchDeps(backing: KillSwitchValue, renderer: RecordingRendere
 }
 
 // ---------------------------------------------------------------------------
-// WIRE-07 — per-renderer enable gate
+// Per-renderer enable gate
 // ---------------------------------------------------------------------------
 
-describe("createActivityTurnCoordinator — WIRE-07 per-renderer kill switch", () => {
+describe("createActivityTurnCoordinator — per-renderer kill switch", () => {
   it("suppresses renderer.apply when the per-renderer channel switch is disabled", () => {
     const renderer = makeRenderer();
     const applySpy = vi.spyOn(renderer, "apply");

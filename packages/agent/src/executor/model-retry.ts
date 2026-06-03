@@ -201,7 +201,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
   const { eventBus, logger, authRotation, modelRegistry, clock, timers } = deps;
   const fallbackModels = deps.fallbackModels ?? [];
 
-  // EVT-04 (§16.9): turn-scoping ids stamped onto every model:* emit so
+  // §16.9: turn-scoping ids stamped onto every model:* emit so
   // kind:"model" activity groups to the right turn. agentId/sessionKey come
   // from deps; traceId rides on the RequestContext (AsyncLocalStorage) — the
   // same source tool:* uses. Omit a field when absent so the optional schema

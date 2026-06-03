@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Email DigestOnly renderer tests (CHAN-10, CHAN-11; §18.3 Email column).
+ * Email DigestOnly renderer tests (§18.3 Email column).
  *
- * Email is the largest-cap, send-only channel — it wires the Phase-70 DigestOnly
+ * Email is the largest-cap, send-only channel — it wires the DigestOnly
  * strategy: buffer the trail in `apply`, send NOTHING mid-turn, send NOTHING on
  * success (the assistant reply IS the activity), and on failure emit exactly ONE
  * `[FAILED] {errorKind}` digest carrying the activity trail (one `• <label>` line
@@ -11,17 +11,17 @@
  * (`err(error)`) on an SMTP send failure with no structured numeric code attached
  * to the returned object, so the classifier defaults to `internal` and reads the
  * error structurally ONLY (never renders the `.message` as activity text —
- * SEC-05/§19.3). `makeEmailRenderActions` maps `send` through it and returns
+ * §19.3). `makeEmailRenderActions` maps `send` through it and returns
  * `not_supported` for edit/delete (Email is send-only);
- * `createEmailActivityRenderer` wires the Phase-70 `createDigestOnlyRenderer`
+ * `createEmailActivityRenderer` wires the `createDigestOnlyRenderer`
  * (no duplicated state machine, NO timer/clock — DigestOnly is purely end-of-turn).
  *
- * Boundary note: the `Re: <thread>` part of CHAN-10's "[FAILED] Re: <thread>"
+ * Boundary note: the `Re: <thread>` part of the "[FAILED] Re: <thread>"
  * digest is the EMAIL TRANSPORT SUBJECT (the adapter's reply-threading concern on
  * its own send path), NOT the `send(text)` BODY the renderer controls. The body
  * the strategy produces — and these fixtures pin — is `[FAILED] {errorKind}` +
  * the `• <label>` trail. No `Re:` is injected into the body. The signed
- * single-use approval LINK is Phase 73 — none of these 5 fixtures involves it.
+ * single-use approval LINK is delivered separately — none of these 5 fixtures involves it.
  *
  * Golden fixtures assert via readFixture + toEqual (NEVER an auto-writing
  * inline/file snapshot, which self-heals a wrong fixture — Pitfall 3). DigestOnly
@@ -211,11 +211,11 @@ describe("createEmailActivityRenderer (DigestOnly wiring)", () => {
   });
 });
 
-// --- Task 2: 5 golden fixtures (S4, S5, S10, S11, S12 only; S1-S3/S6/S7/S9 n/a; no S8) ---
+// --- 5 golden fixtures (S4, S5, S10, S11, S12 only; S1-S3/S6/S7/S9 n/a; no S8) ---
 //
 // The §18.3 Email column requires ONLY S4, S5, S10, S11, S12 (footnote ¹: success
 // generates no email beyond the assistant reply, so S1-S3/S6/S7/S9 are n/a; the
-// approval S8 is Phase 73). Each scenario drives the renderer and asserts the
+// approval S8 is deferred). Each scenario drives the renderer and asserts the
 // serialised FakeEmailAdapter call-log against the committed fixture (readFixture
 // + toEqual — never an auto-writing inline/file snapshot, which self-heals a wrong
 // fixture, Pitfall 3). 4 of the 5 are empty call-logs (silent on

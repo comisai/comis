@@ -35,9 +35,9 @@ import type {
 } from "./acp-activity-bridge.js";
 import type { AcpApprovalBridge } from "./acp-approval-bridge.js";
 
-// WIRE-04 (§17.7): the orchestrator-facing activity stream port + the read-only
-// SEP plan port + the agent event bus, all injected at the composition root.
-// startAcpServer (74-07) constructs the three ACP bridges from these seams.
+// §17.7: the orchestrator-facing activity stream port + the read-only SEP plan
+// port + the agent event bus, all injected at the composition root.
+// startAcpServer constructs the three ACP bridges from these seams.
 import type {
   ActivityStreamPort,
   ExecutionPlanPort,
@@ -76,16 +76,15 @@ export interface AcpServerDeps {
   version?: string;
 
   /**
-   * Orchestrator-facing activity stream port (WIRE-04, §17.7), injected at the
+   * Orchestrator-facing activity stream port (§17.7), injected at the
    * composition root. When present, startAcpServer constructs the activity +
-   * approval bridges (ACP-02 / ACP-04) from it (their `subscribe(ctx)` is the
-   * per-turn live-IDE seam — see startAcpServer). Optional — absent in
-   * non-activity ACP runs.
+   * approval bridges from it (their `subscribe(ctx)` is the per-turn live-IDE
+   * seam — see startAcpServer). Optional — absent in non-activity ACP runs.
    */
   activityStreamPort?: ActivityStreamPort;
 
   /**
-   * Read-only SEP plan accessor (ACP-03). This is the `ExecutionPlanHolder`
+   * Read-only SEP plan accessor. This is the `ExecutionPlanHolder`
    * from `@comis/agent`, consumed here as a `@comis/core` `ExecutionPlanPort` —
    * the gateway never imports `@comis/agent` (hexagonal boundary). When present
    * (together with {@link eventBus}), startAcpServer constructs the plan bridge
@@ -99,7 +98,7 @@ export interface AcpServerDeps {
    * `tool:executed`). Injected by the composition root alongside
    * {@link executionPlanPort}. When {@link executionPlanPort} is present but
    * this is absent, startAcpServer logs a single WARN and skips the plan bridge
-   * (fail-safe: no frames rather than a raw leak — T-74-34). Optional.
+   * (fail-safe: no frames rather than a raw leak). Optional.
    */
   eventBus?: TypedEventBus;
 }
@@ -122,7 +121,7 @@ function extractUserMessage(prompt: PromptRequest["prompt"]): string {
 
 /**
  * Handle returned by {@link createAcpAgent} — the ACP Agent plus the seams the
- * Phase 74 bridges need to reach a live session.
+ * ACP bridges need to reach a live session.
  */
 export interface AcpAgentHandle {
   /** The ACP Agent interface implementation. */
@@ -130,7 +129,7 @@ export interface AcpAgentHandle {
   /** ACP session id → Comis SessionKey map. */
   sessionMap: AcpSessionMap;
   /**
-   * Look up the retained `AgentSideConnection` for an ACP session id (ACP-01).
+   * Look up the retained `AgentSideConnection` for an ACP session id.
    * The Wave 2 bridges (acp-activity-bridge / acp-plan-bridge /
    * acp-approval-bridge) call this so `connection.sessionUpdate(...)` /
    * `connection.requestPermission(...)` target the right session from OUTSIDE
@@ -138,21 +137,21 @@ export interface AcpAgentHandle {
    */
   getConnection(acpSessionId: string): AgentSideConnection | undefined;
   /**
-   * Register the `AgentSideConnection` constructed in {@link startAcpServer}
-   * (ACP-01). Sessions opened after this call are keyed to the connection, and
-   * the registry is emptied when the connection's `signal` aborts (close).
+   * Register the `AgentSideConnection` constructed in {@link startAcpServer}.
+   * Sessions opened after this call are keyed to the connection, and the
+   * registry is emptied when the connection's `signal` aborts (close).
    */
   registerConnection(connection: AgentSideConnection): void;
   /**
-   * Constructed-but-not-yet-subscribed activity + approval bridges (ACP-02 /
-   * ACP-04), present when {@link AcpServerDeps.activityStreamPort} was injected.
+   * Constructed-but-not-yet-subscribed activity + approval bridges, present
+   * when {@link AcpServerDeps.activityStreamPort} was injected.
    * startAcpServer builds them once per connection from that port + this
    * handle's `getConnection`. Their `subscribe(ctx)` is the PER-TURN seam: it
    * must be invoked from the ACP turn lifecycle once a `TurnActivityContext`
-   * exists. That per-turn invocation is the live-IDE rendering path covered by
-   * the `human_needed` verification item (74-VERIFICATION.md) — the
-   * construction (here) is what 74-07 wires and tests; no fabricated per-turn
-   * ctx is invented. Undefined when no activityStreamPort was injected.
+   * exists. That per-turn invocation is the live-IDE rendering path verified
+   * separately — the construction (here) is what the bridge wiring covers and
+   * tests; no fabricated per-turn ctx is invented. Undefined when no
+   * activityStreamPort was injected.
    */
   bridges?: {
     readonly activity: AcpActivityBridge;
@@ -166,7 +165,7 @@ export interface AcpAgentHandle {
  * The returned object satisfies the ACP Agent interface with:
  * - initialize: Returns protocol version, agent info, and capabilities
  * - newSession: Creates an Comis session mapped to the ACP session and retains
- *   the active connection per session id (ACP-01)
+ *   the active connection per session id
  * - prompt: Extracts user message and delegates to executeAgent
  * - authenticate: No-op for local agent
  * - cancel: Removes session from the map AND drops the retained connection
@@ -178,13 +177,13 @@ export interface AcpAgentHandle {
  *
  * @param deps - Server dependencies (executeAgent, logger, version)
  * @returns Handle exposing the ACP Agent, the session map, and the connection
- *   registry accessors (ACP-01)
+ *   registry accessors
  */
 export function createAcpAgent(deps: AcpServerDeps): AcpAgentHandle {
   const sessionMap = createAcpSessionMap();
   const version = deps.version ?? "0.0.1";
 
-  // Per-session AgentSideConnection registry (ACP-01). Keyed by ACP sessionId
+  // Per-session AgentSideConnection registry. Keyed by ACP sessionId
   // (which equals AcpSessionKey.peerId — see acp-session-map.ts). The bridges
   // (Wave 2) read it via getConnection; populated in newSession, dropped in
   // cancel and on connection-signal abort (close).
@@ -216,22 +215,22 @@ export function createAcpAgent(deps: AcpServerDeps): AcpAgentHandle {
       const sessionId = crypto.randomUUID();
       sessionMap.create(sessionId);
 
-      // ACP-01: retain the active connection per ACP session id so the bridges
+      // Retain the active connection per ACP session id so the bridges
       // (Wave 2) can push sessionUpdate / requestPermission from outside this
       // handler. Dropped in cancel and on connection-signal abort.
       if (activeConnection) {
         connections.set(sessionId, activeConnection);
       }
 
-      // WIRE-04 hook: register an ACP activity renderer through the injected
+      // Register an ACP activity renderer through the injected
       // ActivityStreamPort on session open so the activity pipe is reachable from
       // ACP. The full per-turn subscription + frame→`connection.sessionUpdate`
-      // bridge (acp-activity-bridge.ts) is Phase 74; this plan only proves the
+      // bridge lives in acp-activity-bridge.ts; this seam only proves the
       // port is wired and reachable here (the registration seam).
       if (deps.activityStreamPort) {
         deps.logger.info(
           { sessionId, submodule: "acp-activity-renderer" },
-          "ACP activity renderer registered for session (Structured strategy; bridge lands in Phase 74)",
+          "ACP activity renderer registered for session (Structured strategy; full bridge lands separately)",
         );
       }
 
@@ -278,9 +277,9 @@ export function createAcpAgent(deps: AcpServerDeps): AcpAgentHandle {
         "ACP cancel request received",
       );
       sessionMap.remove(params.sessionId);
-      // ACP-01: drop the retained connection for this session so a cancelled
+      // Drop the retained connection for this session so a cancelled
       // session is no longer reachable via getConnection (a dropped entry makes
-      // the bridges no-op — T-74-01 / T-74-04).
+      // the bridges no-op).
       connections.delete(params.sessionId);
       // Actual execution abort is a future enhancement
     },
@@ -296,18 +295,18 @@ export function createAcpAgent(deps: AcpServerDeps): AcpAgentHandle {
     activeConnection = connection;
     // Drop every retained connection when this connection closes (the SDK
     // aborts connection.signal on close — acp.d.ts:150). A closed/aborted
-    // connection must never be used to write to a dead session (T-74-01).
+    // connection must never be used to write to a dead session.
     connection.signal.addEventListener("abort", () => {
       connections.clear();
       activeConnection = undefined;
     });
   }
 
-  // ACP-02 / ACP-04: construct the activity + approval bridge FACTORIES once
+  // Construct the activity + approval bridge FACTORIES once
   // (when the redacted ActivityStreamPort is injected) from that port + this
   // handle's getConnection. §19.6 M6: only the redacted port + getConnection
   // cross into the bridges — no raw event source. Their per-turn `subscribe(ctx)`
-  // is invoked from the ACP turn lifecycle (the live-IDE seam, human_needed).
+  // is invoked from the ACP turn lifecycle (the live-IDE seam).
   const bridges = deps.activityStreamPort
     ? {
         // logger omitted: the narrow AcpServerDeps.logger ({info,error,warn})
@@ -352,7 +351,7 @@ export async function startAcpServer(deps: AcpServerDeps): Promise<void> {
   const stream = ndJsonStream(writableStdout, readableStdin);
 
   // Build the ACP agent handle ONCE so the per-session connection registry
-  // (ACP-01) survives for the life of the connection. The handle's agent is
+  // survives for the life of the connection. The handle's agent is
   // handed to the SDK; the constructed connection is threaded back via
   // registerConnection so newSession can key it per ACP session id.
   const handle = createAcpAgent(deps);
@@ -360,20 +359,20 @@ export async function startAcpServer(deps: AcpServerDeps): Promise<void> {
   // Create the agent-side connection
   const connection = new AgentSideConnection(() => handle.agent, stream);
 
-  // ACP-01: retain the connection in the per-session registry. Sessions opened
+  // Retain the connection in the per-session registry. Sessions opened
   // after this point are keyed to it; the registry empties on signal abort.
   handle.registerConnection(connection);
 
-  // ACP-03: construct the plan bridge ONCE per connection when both the
+  // Construct the plan bridge ONCE per connection when both the
   // read-only ExecutionPlanPort and the event bus are injected. The bridge
   // subscribes `sep:plan_extracted` + `tool:executed` on the bus and pushes a
   // `{ sessionUpdate: "plan", entries }` frame through the connection resolved
   // via handle.getConnection. §19.6 M6: ONLY the read-only port + getConnection
-  // cross into the bridge — no raw plan ref / unredacted source. T-74-34: if the
+  // cross into the bridge — no raw plan ref / unredacted source. If the
   // port is present but the bus is absent, log a single WARN and skip (fail-safe
   // no-frames rather than fail-open). The activity + approval bridges are
   // constructed on the handle (handle.bridges) — their per-turn `subscribe(ctx)`
-  // is the live-IDE seam invoked from the ACP turn lifecycle (human_needed).
+  // is the live-IDE seam invoked from the ACP turn lifecycle.
   let unsubscribePlan: (() => void) | undefined;
   if (deps.executionPlanPort) {
     if (deps.eventBus) {
@@ -399,9 +398,9 @@ export async function startAcpServer(deps: AcpServerDeps): Promise<void> {
   // Wait for the connection to close (stdin ends or IDE disconnects)
   await connection.closed;
 
-  // Teardown symmetry (RESEARCH Pattern 3 / 74-06 NOTE step 4): detach the plan
-  // bridge's bus handlers so it stops re-emitting once the connection ends
-  // (T-74-32 — no frame written to a dead/wrong session after close).
+  // Teardown symmetry: detach the plan bridge's bus handlers so it stops
+  // re-emitting once the connection ends (no frame written to a dead/wrong
+  // session after close).
   unsubscribePlan?.();
 
   deps.logger.info("ACP server connection closed, shutting down");

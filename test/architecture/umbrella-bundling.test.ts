@@ -206,23 +206,48 @@ describe("umbrella-bundling -- bidirectional 5-way alignment vs bundledDependenc
   // boot-breaking gap (reflect-metadata / @peculiar/x509 / tsyringe were
   // declared in @comis/infra + @comis/daemon but never added to the umbrella).
   //
+  // Both `dependencies` AND `optionalDependencies` count, on each side: npm
+  // installs optionalDependencies by default (it only skips one whose own
+  // install/build fails). So a native optional dep — e.g. `node-pty`, which the
+  // terminal-driver loads via a guarded `createRequire` and falls back to a pipe
+  // backend if absent — is still load-bearing on every host where its build
+  // succeeds. Omitting it from the umbrella means the published install NEVER
+  // gets it (the bundled @comis/skills has its own deps stripped by prepack.js),
+  // so the terminal-driver silently runs degraded forever. Ignoring optional
+  // deps here is the blind spot that let that gap reach main.
+  //
   // `web` is excluded (NAMESPACED_PACKAGES already drops it): it is
   // frontend-bundled — `vite build` inlines lit / @dagrejs/dagre into the
   // client assets, so they are never require()d from the Node runtime.
   it("umbrella dependencies are a superset of every bundled backend package's third-party runtime deps", () => {
     const umbrella = readUmbrellaPackageJson() as unknown as {
       dependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
     };
-    const umbrellaDeps = umbrella.dependencies ?? {};
+    // The umbrella satisfies a bundled import whether it declares the dep as a
+    // regular OR an optional dependency (npm installs both by default), so the
+    // "have" side merges the two maps. `dependencies` last → a dep declared in
+    // both is matched against its regular-dep version.
+    const umbrellaDeps = {
+      ...(umbrella.optionalDependencies ?? {}),
+      ...(umbrella.dependencies ?? {}),
+    };
 
-    // dep -> set of versions declared by the backend bundled packages
+    // dep -> set of versions declared by the backend bundled packages.
+    // dependencies AND optionalDependencies both impose a runtime resolution
+    // requirement the umbrella's flat node_modules must satisfy.
     const required = new Map<string, Set<string>>();
     for (const pkg of NAMESPACED_PACKAGES) {
       const path = resolve(REPO_ROOT, `packages/${pkg}/package.json`);
       const json = JSON.parse(readFileSync(path, "utf8")) as {
         dependencies?: Record<string, string>;
+        optionalDependencies?: Record<string, string>;
       };
-      for (const [dep, version] of Object.entries(json.dependencies ?? {})) {
+      const declared = {
+        ...(json.optionalDependencies ?? {}),
+        ...(json.dependencies ?? {}),
+      };
+      for (const [dep, version] of Object.entries(declared)) {
         if (dep.startsWith("@comis/")) continue;
         if (!required.has(dep)) required.set(dep, new Set());
         required.get(dep)?.add(version);

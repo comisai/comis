@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * UNGATED unit tests for the pure answer-prompt builder + the deterministic
- * fake-LLM stub (BENCH-03).
+ * fake-LLM stub.
  *
  * TIER: default CI / fast unit tier (no model, no store). This file imports BOTH
  * `qa-answer-prompt.ts` AND `__fixtures__/qa-judge-stub.ts` so NEITHER is a
@@ -14,7 +14,7 @@
  *   entry.content + a dated anchor derived from occurredAt ?? createdAt,
  * - buildAnswerPrompt: the USER content carries Question / Retrieved Context /
  *   Answer slots with question + context substituted,
- * - the system/user SPLIT (Info-4): ANSWER_SYSTEM_PROMPT is exported + non-empty,
+ * - the system/user SPLIT: ANSWER_SYSTEM_PROMPT is exported + non-empty,
  *   and its preamble text does NOT appear inside buildAnswerPrompt output,
  * - the stub drives the content-block walk deterministically (round-trip).
  */
@@ -105,7 +105,7 @@ describe("buildAnswerPrompt (USER content — question + formatted context)", ()
   });
 });
 
-describe("ANSWER_SYSTEM_PROMPT (Info-4: the system/user split)", () => {
+describe("ANSWER_SYSTEM_PROMPT (the system/user split)", () => {
   it("is exported and non-empty", () => {
     expect(typeof ANSWER_SYSTEM_PROMPT).toBe("string");
     expect(ANSWER_SYSTEM_PROMPT.length).toBeGreaterThan(0);
@@ -114,7 +114,7 @@ describe("ANSWER_SYSTEM_PROMPT (Info-4: the system/user split)", () => {
   it("does NOT appear inside buildAnswerPrompt output (preamble lives only in the system slot)", () => {
     const p = buildAnswerPrompt("q", "ctx", "2023/05/21");
     // The whole preamble string must not be duplicated into the user turn —
-    // so 89-03's completeSimple({ systemPrompt: ANSWER_SYSTEM_PROMPT,
+    // so the gated harness's completeSimple({ systemPrompt: ANSWER_SYSTEM_PROMPT,
     // messages:[{role:'user', content: buildAnswerPrompt(...)}] }) is consistent.
     expect(p).not.toContain(ANSWER_SYSTEM_PROMPT);
   });

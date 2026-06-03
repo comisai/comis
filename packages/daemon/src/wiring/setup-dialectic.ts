@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The dialectic wiring (Phase 109 — DIAL-01/02). Builds the ONE query-time synthesis
+ * The dialectic wiring. Builds the ONE query-time synthesis
  * seam + a per-agent recall factory for the `memory.ask` RPC handler, daemon-side, so
  * `daemon.ts` gains ZERO net new lines (it is at the 3000-line cap): `buildRpcDispatchDeps`
  * calls `buildDialecticWiring(...)` and SPREADS its `{ dialecticSeam, buildDialecticRecall }`
@@ -15,9 +15,9 @@
  * `buildDialecticRecall(agentId)` factory that constructs the FULL `createMemoryRecall` (NOT
  * `memoryApi.search`) over the daemon's store set + the per-agent RagConfig — reconstructing
  * the A1 deps + config exactly as prompt-assembly's executor read path does, INCLUDING the two
- * v2.9 recall-config inputs the main path passes (the main↔dialectic recall-parity fix): the
- * `forget` FadeMem decay gate (WARNING-2 / FORGET-01) and the LLM-free tuned-alpha overlay
- * (WARNING-1 / LEARN-03 — gated on `rag.onlineTuning.enabled`, applied via `buildScoringAlphas`
+ * recall-config inputs the main path passes (the main↔dialectic recall-parity fix): the
+ * `forget` FadeMem decay gate and the LLM-free tuned-alpha overlay
+ * (gated on `rag.onlineTuning.enabled`, applied via `buildScoringAlphas`
  * with the trust weight STILL config-frozen, belt #2). Both default-OFF ⇒ byte-identical recall.
  *
  * The agent receives the store port TYPEs only (the agent↛memory build cut is untouched —
@@ -67,7 +67,7 @@ export interface DialecticStoreSet {
   tripleStore?: TripleStorePort;
   embeddingStore?: MemoryEmbeddingStore;
   usefulnessStore?: MemoryUsefulnessStore;
-  /** Tuned-alpha store (LEARN-03 — Track H2). When present AND the invoking agent's
+  /** Tuned-alpha store. When present AND the invoking agent's
    *  `rag.onlineTuning.enabled`, the dialectic recall reads the learned 4-tuple at recall time
    *  (scoped to (tenant, agent)) and overlays the four non-trust alphas via `buildScoringAlphas`
    *  — the SAME deterministic, LLM-free overlay prompt-assembly applies (the main↔dialectic recall
@@ -77,7 +77,7 @@ export interface DialecticStoreSet {
   tunedAlphaStore?: TunedAlphaStore;
 }
 
-/** Injected dependencies for the dialectic wiring. CR-04: the dialectic resolves PER-AGENT —
+/** Injected dependencies for the dialectic wiring. The dialectic resolves PER-AGENT —
  *  the seam (model/key/maxOutputTokens), the recall RagConfig, and the maxRecall DoS bound are
  *  all read from the INVOKING agent's config (resolved lazily + memoized per agent), not from
  *  the default agent. So a non-default agent with `dialectic.enabled: true` gets a live seam
@@ -90,7 +90,7 @@ export interface DialecticWiringDeps {
    *  model/operationModels + rag). The wiring enables when ANY agent opts in and resolves the
    *  seam/recall/maxRecall per invoking agent from THIS map. */
   agentsConfig: Record<string, PerAgentConfig>;
-  /** The master cost-feature kill switch (`memory.costFeatures.enabled`, v1 opt-out posture).
+  /** The master cost-feature kill switch (`memory.costFeatures.enabled`, opt-out posture).
    *  The dialectic (`memory_ask`) is the ONE query-time LLM tool in the memory stack — a
    *  cost-bearing feature — so when this is `false` the wiring returns the dead `{}` (no seam,
    *  no recall builder, no maxRecall ⇒ the handler abstains, the tool is never exposed) EVEN
@@ -104,7 +104,7 @@ export interface DialecticWiringDeps {
   /** The daemon-constructed recall store set (the SAME stores prompt-assembly wires). */
   stores: DialecticStoreSet;
   /** The configured tenant (`container.config.tenantId`) — the (tenant, agent) scope for the
-   *  LEARN-03 tuned-alpha read on the dialectic recall path, mirroring prompt-assembly's
+   *  tuned-alpha read on the dialectic recall path, mirroring prompt-assembly's
    *  `deps.tenantId ?? sessionKey.tenantId` apply-site scope. Required so a tuned vector written
    *  under one tenant is never read for another. */
   tenantId: string;
@@ -120,10 +120,10 @@ export interface DialecticWiringDeps {
 }
 
 /** The dialectic wiring result spread into the memory.ask handler deps. All undefined when NO
- *  agent has the dialectic enabled (the cost gate) ⇒ the handler abstains gracefully. CR-04:
- *  each function resolves PER the invoking agentId. */
+ *  agent has the dialectic enabled (the cost gate) ⇒ the handler abstains gracefully. Each
+ *  function resolves PER the invoking agentId. */
 export interface DialecticWiring {
-  /** The ONE query-time synthesis seam, resolved PER-AGENT (CR-04): the model/key/maxOutputTokens
+  /** The ONE query-time synthesis seam, resolved PER-AGENT: the model/key/maxOutputTokens
    *  come from `agentId`ʼs OWN config (lazily resolved + memoized). The handler passes the
    *  invoking agentId so a non-default agent synthesizes with its own cheap model + key. */
   dialecticSeam?: (
@@ -132,9 +132,9 @@ export interface DialecticWiring {
     groundingText: string,
   ) => Promise<DialecticParsed>;
   /** A per-agent recall factory returning the FULL createMemoryRecall orchestrator built from
-   *  the INVOKING agentʼs RagConfig (CR-04 — re-reads `agentsConfig[agentId].rag`). */
+   *  the INVOKING agentʼs RagConfig (re-reads `agentsConfig[agentId].rag`). */
   buildDialecticRecall?: (agentId: string) => MemoryRecall;
-  /** The per-agent `dialectic.maxRecall` DoS bound (CR-02/CR-04) — the grounding-set ceiling the
+  /** The per-agent `dialectic.maxRecall` DoS bound — the grounding-set ceiling the
    *  handler clamps `limit` to, resolved from the INVOKING agentʼs config. */
   dialecticMaxRecall?: (agentId: string) => number;
 }
@@ -151,7 +151,7 @@ export interface DialecticBootSlice {
     secretManager: { get: (name: string) => string | undefined };
     config: {
       providers?: { entries?: Record<string, { apiKeyName?: string } | undefined> };
-      /** The configured tenant — the (tenant, agent) scope for the LEARN-03 tuned-alpha read on
+      /** The configured tenant — the (tenant, agent) scope for the tuned-alpha read on
        *  the dialectic recall path (the SAME field daemon.ts reads for the handler's tenantId). */
       tenantId: string;
       /** The master cost-feature kill switch (`memory.costFeatures.enabled`). Threaded into the
@@ -169,7 +169,7 @@ export interface DialecticBootSlice {
   tripleStore?: TripleStorePort;
   embeddingStore?: MemoryEmbeddingStore;
   usefulnessStore?: MemoryUsefulnessStore;
-  /** Tuned-alpha store (LEARN-03) — the SAME concrete adapter daemon.ts threads into
+  /** Tuned-alpha store — the SAME concrete adapter daemon.ts threads into
    *  createPiExecutor (built in setup-memory on the shared db). Threaded onto the dialectic recall
    *  so `memory.ask` applies the SAME tuned-alpha overlay as prompt-assembly. A @comis/core port
    *  TYPE (the agent↛memory cut); the seam/recall consume the TYPE only. */
@@ -181,7 +181,7 @@ export interface DialecticBootSlice {
 
 /**
  * Map the post-channels boot context to the dialectic wiring deps (the mapping daemon.ts
- * would otherwise inline). CR-04: passes ALL per-agent configs so the wiring enables when ANY
+ * would otherwise inline). Passes ALL per-agent configs so the wiring enables when ANY
  * agent opts in and resolves the seam/recall/maxRecall PER the invoking agent. Lives here so
  * daemon.ts stays at the line cap.
  */
@@ -203,7 +203,7 @@ export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWir
       tripleStore: c.tripleStore,
       embeddingStore: c.embeddingStore,
       usefulnessStore: c.usefulnessStore,
-      // LEARN-03/DIAL: thread the tuned-alpha store so the dialectic recall applies the SAME
+      // Thread the tuned-alpha store so the dialectic recall applies the SAME
       // buildScoringAlphas overlay as the main path (the main↔dialectic recall-parity fix).
       tunedAlphaStore: c.tunedAlphaStore,
     },
@@ -222,7 +222,7 @@ const DIALECTIC_DEFAULT_MAX_RECALL = 10;
 
 /**
  * Build the dialectic seam + the per-agent recall factory + the per-agent maxRecall resolver
- * for the memory.ask handler. CR-04: resolution is PER-AGENT. Returns `{}` (the cost gate) ONLY
+ * for the memory.ask handler. Resolution is PER-AGENT. Returns `{}` (the cost gate) ONLY
  * when NO agent has the dialectic enabled — so a non-default agentʼs opt-in is never silently
  * dead. Each returned function resolves the invoking agentʼs OWN config (model/key/maxOutputTokens
  * for the seam, RagConfig for recall, maxRecall for the DoS bound), memoizing the seam per agent.
@@ -230,7 +230,7 @@ const DIALECTIC_DEFAULT_MAX_RECALL = 10;
 export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring {
   const { defaultAgentId, agentsConfig, costFeaturesEnabled, secretManager, providers, stores, tenantId, clock, timers, eventBus, logger } = deps;
 
-  // The master cost-feature kill switch (v1 opt-out posture). The dialectic (memory_ask) is the
+  // The master cost-feature kill switch (opt-out posture). The dialectic (memory_ask) is the
   // ONE query-time LLM tool — a cost-bearing feature — so when the operator turns all cost
   // features off this returns the dead `{}` (no seam, no recall builder, no maxRecall ⇒ the
   // handler abstains, the tool is never exposed) EVEN when an agent's own dialectic.enabled is
@@ -240,7 +240,7 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
     return {};
   }
 
-  // The per-agent cost gate: enable when ANY agent opts in (CR-04 — a non-default opt-in must not
+  // The per-agent cost gate: enable when ANY agent opts in (a non-default opt-in must not
   // be dead). No agent enabled ⇒ no seam/recall/maxRecall ⇒ the handler abstains (no query-time-LLM wired).
   const anyEnabled = Object.values(agentsConfig).some((a) => a?.dialectic?.enabled === true);
   if (!anyEnabled) {
@@ -307,22 +307,22 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
     return seam;
   };
 
-  // CR-04: the seam the handler calls passes the invoking agentId so the per-agent model/key/
+  // The seam the handler calls passes the invoking agentId so the per-agent model/key/
   // token bound are used (not the default agentʼs).
   const dialecticSeam = (agentId: string, question: string, groundingText: string) =>
     seamFor(agentId)(question, groundingText);
 
-  // CR-04: the per-agent recall factory re-reads the INVOKING agentʼs RagConfig (the prior code
+  // The per-agent recall factory re-reads the INVOKING agentʼs RagConfig (the prior code
   // ignored its agentId param and always read the default agentʼs rag — so a non-default agentʼs
   // includeTrustLevels / maxResults / scoring were never honored). The FULL createMemoryRecall
   // (trust-filtered) is reconstructed exactly as prompt-assemblyʼs executor read path does.
   //
-  // v2.9 main↔dialectic recall-parity fix:
-  //   - WARNING-2 (FORGET-01/DIAL): `forget` (the FadeMem decay gate) is now passed — the SAME
+  // The main↔dialectic recall-parity fix:
+  //   - `forget` (the FadeMem decay gate) is now passed — the SAME
   //     field the main path passes at prompt-assembly.ts:854 — so memory.ask applies the per-type
   //     decay when `rag.forget.enabled`. Default-OFF byte-identity holds (score.ts forces the
   //     forgetFactor to EXACTLY 1.0 when off).
-  //   - WARNING-1 (LEARN-03/DIAL): the LLM-free tuned-alpha overlay. GATED on
+  //   - The LLM-free tuned-alpha overlay. GATED on
   //     `rag.onlineTuning.enabled` AND a present `tunedAlphaStore`, the learned 4-tuple is read
   //     (scoped to (tenant, agent)) at recall time and overlaid via `buildScoringAlphas` — the
   //     SAME deterministic, single-source-of-truth overlay prompt-assembly applies. Default-OFF
@@ -336,9 +336,9 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
   // scope exists — exactly once per memory.ask (mirroring prompt-assembly's once-per-recall read).
   const buildDialecticRecall = (agentId: string): MemoryRecall => {
     const rag = configFor(agentId).rag;
-    // FEED-03: `feedback` predates its config landing — structural-widen like prompt-assembly.
+    // `feedback` predates its config landing — structural-widen like prompt-assembly.
     const ragFeedback = (rag as typeof rag & { feedback?: { enabled: boolean } }).feedback;
-    // LEARN-03: `onlineTuning` is read through a structural widening (the SAME posture as
+    // `onlineTuning` is read through a structural widening (the SAME posture as
     // prompt-assembly.ts:804-806) so the gate compiles regardless of RagConfig type drift.
     const onlineTuningEnabled =
       (rag as typeof rag & { onlineTuning?: { enabled: boolean } }).onlineTuning?.enabled === true;
@@ -366,7 +366,7 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
           minScore: rag.minScore,
           includeTrustLevels: rag.includeTrustLevels,
           rerank: rag.rerank,
-          // WARNING-1: the deterministic apply overlay (config alphas, or the tuned 4-tuple with
+          // The deterministic apply overlay (config alphas, or the tuned 4-tuple with
           // the trust weight STILL from config — belt #2). buildScoringAlphas with `undefined`
           // returns `rag.scoring` unchanged (the default-OFF byte-identity no-op).
           scoring,
@@ -374,7 +374,7 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
           entityLane: rag.entityLane,
           mmr: rag.mmr,
           queryUnderstanding: rag.queryUnderstanding,
-          // WARNING-2: the FadeMem decay gate — the SAME field prompt-assembly.ts:854 passes.
+          // The FadeMem decay gate — the SAME field prompt-assembly.ts:854 passes.
           forget: rag.forget,
           ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },
@@ -403,7 +403,7 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
     };
   };
 
-  // CR-02/CR-04: the per-agent DoS bound the handler clamps `limit` to — the INVOKING agentʼs
+  // The per-agent DoS bound the handler clamps `limit` to — the INVOKING agentʼs
   // dialectic.maxRecall (the schema default when its dialectic block is absent).
   const dialecticMaxRecall = (agentId: string): number =>
     configFor(agentId).dialectic?.maxRecall ?? DIALECTIC_DEFAULT_MAX_RECALL;

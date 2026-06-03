@@ -153,7 +153,7 @@ export COMIS_OFFLINE=1
 | **Format** | 64-character hex string or base64-encoded 32 bytes |
 | **Default** | Auto-generated on first boot and written to `~/.comis/.env` (mode 0600) |
 
-The AES-256-GCM master encryption key used to encrypt and decrypt secrets stored in `secrets.db`. Starting with v1.1, the key is auto-generated on first boot — you do not need to run `comis secrets init` for a fresh install. The daemon and CLI both resolve this key in the same order: first from the environment, then from `~/.comis/.env`.
+The AES-256-GCM master encryption key used to encrypt and decrypt secrets stored in `secrets.db`. The key is auto-generated on first boot — you do not need to run `comis secrets init` for a fresh install. The daemon and CLI both resolve this key in the same order: first from the environment, then from `~/.comis/.env`.
 
 Providing this variable explicitly overrides the auto-generated value.
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED->GREEN unit suite for {@link computeCrossJudgeSpread} (Phase 104, Plan
- * 104-01, PROVE-02) -- the per-category inter-judge |A-B| survival fold that
+ * RED->GREEN unit suite for {@link computeCrossJudgeSpread} -- the per-category
+ * inter-judge |A-B| survival fold that
  * decides whether a headline number is "stable" (safe to drive a decision).
  *
  * WHY THIS MODULE EXISTS: the cross-judge spread was hand-arithmetic'd per
@@ -14,13 +14,13 @@
  *
  * UNGATED, default-CI: pure deterministic numeric fold (no LLM, no I/O, no
  * clock, no env); imports `cross-judge-spread.ts` so it is never a 0%-coverage
- * file under the agent all:true floor (104-RESEARCH Pitfall 6).
+ * file under the agent all:true floor.
  *
- * THE SECURITY GATE (T-104-01-01, ASVS V7 -- the suite-report.ts doctrine): the
- * spread output is written to a committed file via writeRegularFile (in 104-04),
+ * THE SECURITY GATE (ASVS V7 -- the suite-report.ts doctrine): the
+ * spread output is written to a committed file via writeRegularFile,
  * OUTSIDE Pino's redaction net, so the fold MUST structurally rebuild every
  * CategorySpread field-by-field and NEVER spread an input map value. Test 5
- * below is that RED gate; Test 6 is the prototype-pollution gate (T-104-01-02).
+ * below is that RED gate; Test 6 is the prototype-pollution gate.
  *
  * ARCHITECTURE: imports the in-package pure module + (for the convenience
  * helper) the `AccuracyResult` type from `qa-accuracy.ts` -- no @comis/memory
@@ -36,7 +36,7 @@ import {
 } from "./cross-judge-spread.js";
 import { aggregateAccuracy, type AccuracyResult } from "./qa-accuracy.js";
 
-describe("computeCrossJudgeSpread -- per-category inter-judge |A-B| survival fold (PROVE-02)", () => {
+describe("computeCrossJudgeSpread -- per-category inter-judge |A-B| survival fold", () => {
   it("Test 1: a 3pt gap survives at the 5.0pt tolerance (temporal 45 vs 42 -> spread 3, survives true)", () => {
     const out = computeCrossJudgeSpread({ temporal: 45 }, { temporal: 42 });
     expect(out).toHaveLength(1);
@@ -127,7 +127,7 @@ describe("computeCrossJudgeSpread -- per-category inter-judge |A-B| survival fol
     expect(ctorEntry?.spread).toBe(0);
   });
 
-  it("Test 7 (RED, IN-03): a non-finite judge-B value DROPS the category (symmetric with the A-guard), never a kept NaN row", () => {
+  it("Test 7 (RED): a non-finite judge-B value DROPS the category (symmetric with the A-guard), never a kept NaN row", () => {
     // A finite judge-A category whose judge-B value is a secret-shaped string
     // coerces B to NaN. The guard must be SYMMETRIC: a garbage B is "no comparable
     // judge-B value for this category" and the category is DROPPED — never kept as a

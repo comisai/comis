@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * acp-activity-bridge — maps redacted {@link ActivityEvent}s to ACP
- * `session/update` frames (ACP-02) while NEVER letting raw tool params cross
- * the wire (ACP-05, spec §19.6 M6).
+ * `session/update` frames while NEVER letting raw tool params cross
+ * the wire (spec §19.6).
  *
  * The bridge subscribes a single turn's activity stream via the
- * `ActivityStreamPort` (the WIRE-04 seam), and for each redacted event:
+ * `ActivityStreamPort`, and for each redacted event:
  *
- *   - pushes it into a LOCAL 256-slot FIFO drop-oldest queue (Plan 01's
- *     `createAcpBoundedQueue`, NOT the observability one — gateway depends on
+ *   - pushes it into a LOCAL 256-slot FIFO drop-oldest queue
+ *     (`createAcpBoundedQueue`, NOT the observability one — gateway depends on
  *     `@comis/core` + `@comis/shared` + the SDK only; spec §5.1 line 717),
  *   - drains the queue SEQUENTIALLY, awaiting each `connection.sessionUpdate`
- *     so the SDK write-queue preserves enqueue order (success criterion 2),
+ *     so the SDK write-queue preserves enqueue order,
  *   - resolves the ACP session id from `event.sessionKey` via
  *     `parseFormattedSessionKey(...).peerId` (the AcpSessionMap keys
  *     `peerId === acpSessionId`), and no-ops if no connection is retained.
@@ -20,13 +20,13 @@
  * `tool_call`, `progress | end` → `tool_call_update`, with an exhaustive
  * `const _exhaustive: never` default.
  *
- * §19.6 M6 (ACP-05): the produced `tool_call` / `tool_call_update` objects
+ * §19.6: the produced `tool_call` / `tool_call_update` objects
  * carry ONLY `toolCallId` / `title` / `status`. The SDK's raw-input/raw-output
  * fields are NEVER referenced, and the redacted event params (even though
  * sanitized at emit) are NEVER forwarded to any SDK field — carrying them would
- * re-open the data-protection surface and make ACP-05 fragile. The bridge is a
+ * re-open the data-protection surface and make this guarantee fragile. The bridge is a
  * void-emitter (it does not throw and carries no allow-throw annotation); the
- * logger is injected via Deps (OBS-02 — no module-level logger factory, no
+ * logger is injected via Deps (no module-level logger factory, no
  * infra-package import).
  *
  * @module
@@ -50,20 +50,20 @@ import {
 /** Dependencies for {@link createAcpActivityBridge}. */
 export interface CreateAcpActivityBridgeDeps {
   /**
-   * Per-turn activity subscription seam (WIRE-04). The concrete impl lives in
+   * Per-turn activity subscription seam. The concrete impl lives in
    * the observability package; the gateway receives the bound port shape from
    * `@comis/core`.
    */
   readonly activityStreamPort: ActivityStreamPort;
   /**
-   * Look up the retained `AgentSideConnection` for an ACP session id (Plan 01,
-   * ACP-01). Returns `undefined` for an unknown / dropped session — the bridge
+   * Look up the retained `AgentSideConnection` for an ACP session id.
+   * Returns `undefined` for an unknown / dropped session — the bridge
    * then no-ops for that event.
    */
   readonly getConnection: (
     acpSessionId: string,
   ) => AgentSideConnection | undefined;
-  /** Injected bound logger (OBS-02). Optional — DEBUG-level drop/no-op traces. */
+  /** Injected bound logger. Optional — DEBUG-level drop/no-op traces. */
   readonly logger?: ComisLogger;
 }
 
@@ -80,7 +80,7 @@ export interface AcpActivityBridge {
 /**
  * Map a redacted {@link ActivityEvent} to its SDK {@link SessionUpdate}.
  *
- * §19.6 M6: carries ONLY `toolCallId` / `title` / `status`. The SDK's
+ * §19.6: carries ONLY `toolCallId` / `title` / `status`. The SDK's
  * raw-input/raw-output fields are never set and the redacted event params are
  * never forwarded.
  */
@@ -122,7 +122,7 @@ export function createAcpActivityBridge(
 ): AcpActivityBridge {
   return {
     subscribe(ctx: TurnActivityContext): () => void {
-      // Local 256-slot bounded queue (Plan 01). Drop-oldest backpressure caps
+      // Local 256-slot bounded queue. Drop-oldest backpressure caps
       // memory if the IDE consumer is slow (spec §5.1 line 717 = 256).
       const queue = createAcpBoundedQueue<ActivityEvent>({
         capacity: DEFAULT_ACP_QUEUE_CAPACITY,
@@ -161,7 +161,7 @@ export function createAcpActivityBridge(
             // closes) is logged and dropped WITHOUT rejecting the `draining`
             // chain — a rejected chain would poison every later pump's
             // `.then`, silently dropping all remaining frames for the turn
-            // (WR-01). The bridge stays a non-throwing void-emitter (no
+            // The bridge stays a non-throwing void-emitter (no
             // allow-throw); only the redacted SDK error is logged, never the
             // params.
             try {

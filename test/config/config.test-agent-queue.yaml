@@ -1,11 +1,11 @@
 # Comis Test Configuration: Agent Queue E2E Tests
 #
 # Port 8510 -- unique to agent queue E2E tests
-# Tests CommandQueue session serialization (AGT-01/02), stale lock recovery
-# (AGT-03), graceful session deletion (AGT-04), agent identity persistence
-# (AGT-05), memory WAL concurrency (AGT-06/07), RAG memory retrieval (AGT-08),
-# maxSteps enforcement (TOOL-03), and budget pre-check (TOOL-04).
-# Circuit breaker lifecycle (TOOL-04/05/06) tested via direct import (no daemon).
+# Tests CommandQueue session serialization, stale lock recovery,
+# graceful session deletion, agent identity persistence,
+# memory WAL concurrency, RAG memory retrieval,
+# maxSteps enforcement, and budget pre-check.
+# Circuit breaker lifecycle tested via direct import (no daemon).
 
 tenantId: "test"
 logLevel: "debug"

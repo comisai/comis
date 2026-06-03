@@ -2,7 +2,7 @@
 import { describe, expect, it, expectTypeOf } from "vitest";
 import { ChatTypeSchema, narrowChatType, type ChatType } from "./chat-type.js";
 
-describe("ChatType (TURN-02)", () => {
+describe("ChatType", () => {
   describe("ChatTypeSchema enum", () => {
     it("accepts the three narrowed values", () => {
       for (const v of ["direct", "group", "channel"]) {

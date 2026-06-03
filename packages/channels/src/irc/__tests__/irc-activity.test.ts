@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * IRC LinePerEvent renderer tests (CHAN-09, CHAN-11; §18.3 IRC column).
+ * IRC LinePerEvent renderer tests (§18.3 IRC column).
  *
  * IRC is text-only: no in-place edit, no delete, a hard 512-char per-line cap
- * (§7.1). The renderer wires the Phase-70 `createLinePerEventRenderer` — that
+ * (§7.1). The renderer wires the `createLinePerEventRenderer` — that
  * strategy OWNS the 512-cap/`…` truncation and the closing summary line; this
  * file proves the wiring (one send per `changeSet.added` event, `✓ done · N steps`
  * on success, `[ERR] {errorKind}` on failure) and the thin classifier.
@@ -12,7 +12,7 @@
  * failures in `new Error("Failed to send IRC message: …")` with NO structured
  * numeric code, so the classifier defaults to `internal` and reads the error for
  * NOTHING user-facing (it selects the variant only and is NEVER rendered as
- * activity text — SEC-05/§19.3). `makeIrcRenderActions` maps `send` through it and
+ * activity text — §19.3). `makeIrcRenderActions` maps `send` through it and
  * answers `edit`/`delete` with `not_supported` (IRC has neither);
  * `createIrcActivityRenderer` wires the strategy (no duplicated state machine).
  *
@@ -243,7 +243,7 @@ describe("IRC golden fixtures (§18.3 LinePerEvent rows — readFixture + toEqua
     expect(log).toEqual(readFixture("irc", "S4"));
   });
 
-  // The shipped Phase-70 createLinePerEventRenderer treats
+  // The shipped createLinePerEventRenderer treats
   // success_with_recovered_failures identically to success (a closing ✓ done line).
   // The fixture pins the ACTUAL renderer output.
   it("S5 recovered failure — per-event lines + ✓ done · N steps (treated like success)", async () => {
@@ -263,7 +263,7 @@ describe("IRC golden fixtures (§18.3 LinePerEvent rows — readFixture + toEqua
     expect(log).toEqual(readFixture("irc", "S6"));
   });
 
-  it("S7 subagent — added events carry a `↳ ` depth prefix in defaultLabel (CHAN-09)", async () => {
+  it("S7 subagent — added events carry a `↳ ` depth prefix in defaultLabel", async () => {
     const log = await runScenario(
       [addedFrame(0, "a-0", "↳ subagent: search"), addedFrame(1, "a-1", "↳ subagent: done")],
       { kind: "success", trivial: false, delivery: receipt(4000) },

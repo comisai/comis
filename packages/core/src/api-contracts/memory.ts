@@ -130,7 +130,7 @@ export const MemorySearchFilesContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
-// memory.ask  (Phase 109 — DIAL-01/02, the dialectic grounded-Q&A surface)
+// memory.ask  (the dialectic grounded-Q&A surface)
 // ---------------------------------------------------------------------------
 
 /**
@@ -146,33 +146,34 @@ export const MemorySearchFilesContract = defineContract({
  * Response: `{ answer, citations, abstained }`.
  *   - `citations` are recalled memory IDS (the entry id is a `z.guid()` at the
  *     source, but the contract types it as opaque `string` — citations are ids,
- *     never free text; DIAL-02). The cited ids traverse `sourceIds` in the
- *     recall-trace (DIAL-03).
- *   - `abstained` is the EXPLICIT DIAL-01 mandatory-abstention signal — a
+ *     never free text). The cited ids traverse `sourceIds` in the
+ *     recall-trace.
+ *   - `abstained` is the EXPLICIT mandatory-abstention signal — a
  *     required boolean, never inferred from an empty `answer`. Insufficient
  *     grounding ⇒ `{ answer: "", citations: [], abstained: true }`, never a
  *     fabricated answer.
  *   - the `answer` text is built ONLY from the trust-filtered + redacted recall
- *     output (enforced in the Plan 03 handler), with the higher-trust source
+ *     output (enforced in the handler), with the higher-trust source
  *     winning on conflict (trust-first, a HARD boundary).
  *
  * Registered via agent tool dispatch (the `memory_ask` tool); contract scope
  * `["rpc"]` documents the intended trust model.
  *
- * CROSS-WAVE SEAM CLOSED (Plan 03): the contract SHAPE shipped in Plan 01 with a
+ * CROSS-WAVE SEAM (now closed): the contract SHAPE shipped first with a
  * deferred-handler annotation and was kept OUT of `MEMORY_CONTRACTS` until its
  * daemon handler existed (registering it before the handler would RED-gate
- * contract-handler-parity + bidirectional 1:1). Plan 03 landed the
- * `[MemoryAskContract.method]:` handler in `memory-handlers.ts` and, in the SAME
- * diff, spread this contract into `MEMORY_CONTRACTS` (8 + 4 + 7 + 1 = 20) and
- * removed that annotation — so the registry ↔ handler set is 1:1 by construction.
- * (Mirrors the OBS-06 cross-wave seam closed in Phase 86 Plan 05.)
+ * contract-handler-parity + bidirectional 1:1). The
+ * `[MemoryAskContract.method]:` handler later landed in `memory-handlers.ts` and,
+ * in the SAME diff, this contract was spread into `MEMORY_CONTRACTS`
+ * (8 + 4 + 7 + 1 = 20) and that annotation removed — so the registry ↔ handler
+ * set is 1:1 by construction. (Mirrors the diagnostic cross-wave seam closed
+ * earlier.)
  */
 export const MemoryAskContract = defineContract({
   method: "memory.ask",
   request: z.object({
     question: z.string(),
-    // CR-02: a positive integer — the grounding-set size the caller may request. The handler
+    // A positive integer — the grounding-set size the caller may request. The handler
     // additionally clamps it DOWN to the per-agent `dialectic.maxRecall` DoS ceiling; this
     // contract bound rejects the negative / non-integer / huge cases at the parse boundary so
     // the DoS / negative-slice path cannot reach the handler in the first place.
@@ -699,7 +700,7 @@ export const ContextSearchByConversationContract = defineContract({
 });
 
 // ===========================================================================
-// --- memory-handlers.ts (Phase 86 / OBS-06 diagnostic surface) ---
+// --- memory-handlers.ts (diagnostic surface) ---
 //
 // The four admin-scoped memory-diagnostic contracts (memory.recall_trace /
 // .observations / .entities / .recall_stats) and their
@@ -709,10 +710,10 @@ export const ContextSearchByConversationContract = defineContract({
 // existing `from "./memory.js"` import — and the api-contracts barrel — still
 // resolves, and so they remain part of the memory domain's public surface.
 //
-// CROSS-WAVE SEAM (closed in Plan 05): the four contracts are now spread into
+// CROSS-WAVE SEAM (now closed): the four contracts are now spread into
 // `MEMORY_CONTRACTS` below (`...MEMORY_DIAGNOSTIC_CONTRACTS`), in the SAME wave
 // that landed their daemon handlers in `memory-handlers.ts`, and the
-// `@contract-deferred-handler: 86-05` annotations were removed from
+// `@contract-deferred-handler` annotations were removed from
 // `./memory-diagnostics.ts`. The bidirectional 1:1 + contract-handler-parity
 // gates remain green by construction (registry ↔ handler set is 1:1).
 // ===========================================================================
@@ -738,17 +739,17 @@ export { MEMORY_DIAGNOSTIC_CONTRACTS };
  * The grouping below is documentation-only (the bidirectional 1:1 test
  * treats the tuple as an unordered set).
  *
- * Phase 86 (Plan 05): `MEMORY_DIAGNOSTIC_CONTRACTS` (the four OBS-06
+ * `MEMORY_DIAGNOSTIC_CONTRACTS` (the four diagnostic
  * contracts) is now spread in — in the SAME wave that landed the matching
  * `[Contract.method]:` daemon handlers in `memory-handlers.ts` — so the
- * `API_CONTRACTS` registry ↔ handler set stays 1:1 (the cross-wave seam from
- * Plan 02 is closed; the `@contract-deferred-handler: 86-05` annotations were
+ * `API_CONTRACTS` registry ↔ handler set stays 1:1 (the cross-wave seam is
+ * closed; the `@contract-deferred-handler` annotations were
  * removed in the same diff).
  *
- * Phase 109 (Plan 03): `MemoryAskContract` (the dialectic memory.ask surface) is
+ * `MemoryAskContract` (the dialectic memory.ask surface) is
  * now spread in — in the SAME diff that landed its `[MemoryAskContract.method]:`
  * handler in `memory-handlers.ts` — so the registry ↔ handler set stays 1:1 and
- * the `@contract-deferred-handler: 109-03` tag was removed in the same diff.
+ * the `@contract-deferred-handler` tag was removed in the same diff.
  */
 export const MEMORY_CONTRACTS = [
   // --- memory-handlers.ts ---
@@ -761,7 +762,7 @@ export const MEMORY_CONTRACTS = [
   MemoryDeleteContract,
   MemoryFlushContract,
   MemoryExportContract,
-  // --- memory-handlers.ts (Phase 86 / OBS-06 diagnostic surface) ---
+  // --- memory-handlers.ts (diagnostic surface) ---
   ...MEMORY_DIAGNOSTIC_CONTRACTS,
   // --- context-handlers.ts ---
   ContextSearchContract,

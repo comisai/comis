@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED (Phase-122 gap) — `cwd` must be validated against the scope's bound paths.
+ * RED — `cwd` must be validated against the scope's bound paths.
  *
  * THE GAP. `terminal_session_create` accepts an agent-supplied `cwd` (the jail
  * `--chdir` target). It flows verbatim — tool params -> `resolveCreateWorkspace`
@@ -25,7 +25,7 @@
  * EXPECTED BEHAVIOR (drives the fix): `buildSpawnPlan` REJECTS with a typed error
  * carrying `errorKind: "permission_denied"` and a message naming `cwd` when the
  * resolved `cwd` is not contained by `workspace ∪ <scope binds>`. Pure function,
- * no bwrap — macOS-runnable (the live chdir proof is the VPS scope matrix, 122-07).
+ * no bwrap — macOS-runnable (the live chdir proof is the VPS scope matrix).
  *
  * STATUS: RED against current code — `buildSpawnPlan` currently RESOLVES for every
  * cell below (it composes `--chdir <out-of-bounds>` instead of rejecting). The

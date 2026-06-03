@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * NodeCaManager — TLS CA management adapter for MITM broker (Phase 3).
+ * NodeCaManager — TLS CA management adapter for MITM broker.
  * Implements CaManagerPort: mints a self-signed ECDSA P-256 root CA, persists
  * key/cert under dataDir (key at 0o600), and issues per-host leaf certs
  * (SAN=dnsName, short validity) cached in a bounded FIFO Map.
@@ -72,7 +72,7 @@ async function initCa(dataDir: string, clock: ClockPort): Promise<CaState> {
   const certPath = safePath(dataDir, "broker-ca.pem");
 
   if (existsSync(keyPath) && existsSync(certPath)) {
-    // Reload existing CA (same issuer DN across restarts — CA-01b)
+    // Reload existing CA (same issuer DN across restarts)
     const keyPem = readFileSync(keyPath, "utf8");
     const certPem = readFileSync(certPath, "utf8");
 
@@ -131,7 +131,7 @@ async function initCa(dataDir: string, clock: ClockPort): Promise<CaState> {
   // before writing the cert, the next start finds key-present/cert-absent,
   // skips the reload branch, and falls into this mint-new-CA path. Using "w"
   // ensures we truncate the stale key and write a single fresh PEM block
-  // rather than appending a second one (CR-01 fix for the append-corruption bug).
+  // rather than appending a second one (fixes the append-corruption bug).
   // chmodSync is defensive: "w" respects the process umask but we want exactly 0o600.
   const fd = openSync(keyPath, "w", 0o600);
   try {
@@ -153,7 +153,7 @@ export function createNodeCaManager(deps: NodeCaManagerDeps): CaManagerPort {
   let caState: CaState | null = null;
   // Promise singleton — guards against concurrent first-start CONNECTs that
   // would both see caState===null and each launch a separate initCa(), producing
-  // a double-PEM key file on disk (CR-03 fix). All concurrent callers await the
+  // a double-PEM key file on disk. All concurrent callers await the
   // same in-flight promise and receive the same CaState.
   let initPromise: Promise<CaState> | null = null;
   const leafCache = new Map<string, LeafCacheEntry>();
@@ -212,7 +212,7 @@ export function createNodeCaManager(deps: NodeCaManagerDeps): CaManagerPort {
         ),
         // ExtendedKeyUsage with id-kp-serverAuthentication (1.3.6.1.5.5.7.3.1)
         // RFC 5280 §4.2.1.12 — required for TLS server certs in hardened clients
-        // and enforced by future Node.js/OpenSSL versions (WR-02 fix).
+        // and enforced by future Node.js/OpenSSL versions.
         new x509.ExtendedKeyUsageExtension(["1.3.6.1.5.5.7.3.1"], false),
         await x509.SubjectKeyIdentifierExtension.create(leafKeys.publicKey),
       ],

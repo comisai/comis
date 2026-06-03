@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Unit suite for runOnlineTuning (Phase 111 — LEARN-03, Track H2): the OFFLINE,
-// DETERMINISTIC, KEYLESS tuned-alpha bandit job. The job is gate + read + aggregate +
+// Unit suite for runOnlineTuning: the OFFLINE, DETERMINISTIC, KEYLESS tuned-alpha
+// bandit job. The job is gate + read + aggregate +
 // pure-step + write — the PURE computeTunedAlphas it calls is TDD'd separately
 // (tuned-alpha-update.test.ts), so here we cover the orchestration: default-OFF →
 // no read/write; enabled + a positive FEED signal → one clamped upsert + updated:true;
@@ -58,7 +58,7 @@ function makeDeps(overrides: Partial<MemoryOnlineTuningDeps> = {}): MemoryOnline
   };
 }
 
-describe("runOnlineTuning — default-OFF gate (T-111-11)", () => {
+describe("runOnlineTuning — default-OFF gate", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("reads nothing, writes nothing, returns updated:false when disabled", async () => {
@@ -173,7 +173,7 @@ describe("runOnlineTuning — enabled + a positive FEED signal", () => {
   });
 });
 
-describe("runOnlineTuning — non-fatal failure paths (T-111-13)", () => {
+describe("runOnlineTuning — non-fatal failure paths", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("a FEED-read failure is non-fatal: WARN + updated:false, NO upsert", async () => {
@@ -208,7 +208,7 @@ describe("runOnlineTuning — non-fatal failure paths (T-111-13)", () => {
   });
 });
 
-describe("runOnlineTuning — counts-only event (T-111-14) + KEYLESS/deterministic source belts", () => {
+describe("runOnlineTuning — counts-only event + KEYLESS/deterministic source belts", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("the emitted event carries COUNTS ONLY — no alpha values, no FEED content", async () => {

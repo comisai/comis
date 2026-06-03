@@ -100,7 +100,7 @@ describe("selectOAuthCredentialStore", () => {
     ).toThrow(/setup-agents/);
   });
 
-  // WR-01: env branch — must throw actionable error (env is read-only; no writable store)
+  // env branch — must throw actionable error (env is read-only; no writable store)
   it("storage='env' throws with actionable error mentioning 'env' and 'read-only' or 'login'", () => {
     const fileLock = makeStubFileLock();
     expect(() =>

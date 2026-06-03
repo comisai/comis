@@ -51,16 +51,16 @@ function makeObservation(): MemoryEntry {
 }
 
 /**
- * Phase 94 (FOLD-01/FOLD-02) — the proof-accrual `foldIntoExisting` write on
+ * The proof-accrual `foldIntoExisting` write on
  * `MemoryConsolidationStore` + its `ConsolidationFoldPlan` input.
  *
  * Type-only assertions: an implementer must expose `foldIntoExisting(plan:
  * ConsolidationFoldPlan)` returning `Promise<Result<MemoryEntry, Error>>` — the
- * EXTENSION of the Phase-84 create-only port (it does NOT replace the existing
+ * EXTENSION of the earlier create-only port (it does NOT replace the existing
  * three methods). The port stays type-only (mirrors the entity-store port):
  * neither a zod dependency nor a runtime import of @comis/memory.
  */
-describe("MemoryConsolidationStore.foldIntoExisting — proof accrual (FOLD-01/02)", () => {
+describe("MemoryConsolidationStore.foldIntoExisting — proof accrual", () => {
   it("declares foldIntoExisting + ConsolidationFoldPlan and stays a type-only port (no zod, no @comis/memory)", () => {
     // Runtime RED proof: fails on pre-patch source where the method/type are absent.
     expect(portSrc, "ConsolidationFoldPlan type must be declared").toMatch(
@@ -69,7 +69,7 @@ describe("MemoryConsolidationStore.foldIntoExisting — proof accrual (FOLD-01/0
     expect(portSrc, "foldIntoExisting method must be on the port").toMatch(
       /\bfoldIntoExisting\s*\(/,
     );
-    // The stale Phase-84 "create-only, no fold method — deferred" class-doc
+    // The stale "create-only, no fold method — deferred" class-doc
     // sentence must be gone now that the 4th method exists.
     expect(portSrc, "the stale 'is deferred' class-doc sentence must be removed").not.toMatch(
       /is deferred/,
@@ -151,10 +151,10 @@ describe("MemoryConsolidationStore.foldIntoExisting — proof accrual (FOLD-01/0
 });
 
 /**
- * Phase 101 (REASON-04) — the surprisal-gate engine: a corpus-wide k-NN cosine
+ * The surprisal-gate engine: a corpus-wide k-NN cosine
  * DISTANCES read on `MemoryConsolidationStore`. The agent cannot run SQL, so the
- * read crosses the agent↛memory cut as a port TYPE method (the adapter
- * implements it in 101-03). The method is (tenantId, agentId)-scoped and returns
+ * read crosses the agent↛memory cut as a port TYPE method (implemented in the
+ * adapter). The method is (tenantId, agentId)-scoped and returns
  * the distances sorted ascending, or `ok([])` when sqlite-vec is unavailable
  * (graceful degrade).
  *
@@ -162,7 +162,7 @@ describe("MemoryConsolidationStore.foldIntoExisting — proof accrual (FOLD-01/0
  * k, agentId, tenantId)` returning `Promise<Result<number[], Error>>`. The port
  * stays type-only — no zod, no @comis/memory runtime import (the CUT INVARIANT).
  */
-describe("MemoryConsolidationStore.knnDistances — surprisal k-NN read (REASON-04)", () => {
+describe("MemoryConsolidationStore.knnDistances — surprisal k-NN read", () => {
   it("declares knnDistances on the port and stays type-only (no zod, no @comis/memory)", () => {
     // Runtime RED proof: fails on pre-patch source where the method is absent.
     expect(portSrc, "knnDistances method must be on the port").toMatch(

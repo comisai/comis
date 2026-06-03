@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Coalesce engine tests (ACT-11).
+ * Coalesce engine tests.
  *
  * Pure rules engine (spec §9): drop fast successes at `normal`, group
  * consecutive same-tool/same-action events <800ms apart, preserve failures
@@ -149,7 +149,7 @@ describe("coalesce applies the chat coalescing rules", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Quick fix 260528-mch — three render-side activity scaffold bugs.
+  // Three render-side activity scaffold bugs.
   //
   // RED tests for Bug A (phase-pair dedup by activityId) and Bug B (surrogate
   // count counts distinct activityIds). Surfaced by a live IBM-info turn
@@ -162,7 +162,7 @@ describe("coalesce applies the chat coalescing rules", () => {
     // Live-evidence reconstruction: a single slow tool call ("managing MCP
     // servers", 2300ms) emits two events sharing the same activityId — a
     // start/running with the running marker baked into defaultLabel by
-    // activity-stream (Pitfall 7 emit-site behavior), and an end/completed
+    // activity-stream (emit-site behavior), and an end/completed
     // with a BARE defaultLabel (no marker). Pre-patch coalesce passes both
     // through Step 1's "drop fast successes" filter (the end has
     // durationMs:2300 > 1500ms, so it's kept; the start has no durationMs

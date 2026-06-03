@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the daemon-side TerminalSessionRegistry (spec §2.1, OPS-01).
+ * Unit tests for the daemon-side TerminalSessionRegistry (spec §2.1, crash isolation).
  *
  * Fully-injected → runs green on macOS without spawning a real worker. The
  * registry is a FACTORY (`createTerminalSessionRegistry(deps)`) closing over a
@@ -8,12 +8,12 @@
  * state); `deps.spawnWorker` substitutes a fake child (an EventEmitter-shaped
  * stub) so crash isolation, lazy re-spawn, the create/read round-trip, and the
  * kill→drop-from-list invariant are all macOS-testable. Proves:
- *   - OPS-01: a child `error` → sessions flip to `lost`, the handle clears, the
- *     registry stays usable; a child `close(1)` → `exited` with exitCode 1.
+ *   - crash isolation: a child `error` → sessions flip to `lost`, the handle clears,
+ *     the registry stays usable; a child `close(1)` → `exited` with exitCode 1.
  *   - lazy re-spawn: after the handle clears, the next `create` re-spawns.
- *   - H-1: `registry.read(id, OWNER)` round-trips a read frame to the worker and
- *     returns `{screen,cursor,cols,rows,alt,alive}` (the 119-04 round-trip shape).
- *   - M-1: `create` forwards buildDirectSpawn's `{bin,argv}` to the worker
+ *   - read round-trip: `registry.read(id, OWNER)` round-trips a read frame to the
+ *     worker and returns `{screen,cursor,cols,rows,alt,alive}`.
+ *   - `create` forwards buildDirectSpawn's `{bin,argv}` to the worker
  *     VERBATIM (no re-canonicalization in the registry).
  *   - kill drops the session from `list()`.
  *   - two registries are isolated (no module-global session map).
@@ -114,14 +114,14 @@ function baseDeps(
 }
 
 /**
- * The single owner threaded through the P0–P3 tests (123-03 made create/list/
- * read/get/kill/send* owner-scoped — required arg, NO return-all fallback). These
- * tests are a single-origin world, so they all use one `(agentId, sessionKey)`.
- * The multi-owner invisibility/isolation tests below use their own owners.
+ * The single owner threaded through these tests. create/list/read/get/kill/send*
+ * are owner-scoped (required arg, NO return-all fallback). These tests are a
+ * single-origin world, so they all use one `(agentId, sessionKey)`. The
+ * multi-owner invisibility/isolation tests below use their own owners.
  */
 const OWNER = { agentId: "a", sessionKey: "s" };
 
-describe("createTerminalSessionRegistry — OPS-01 crash isolation", () => {
+describe("createTerminalSessionRegistry — crash isolation", () => {
   it("flips a session to 'lost' on child error, clears the handle, and stays usable", async () => {
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
@@ -221,7 +221,7 @@ describe("createTerminalSessionRegistry — kill drops from list", () => {
   });
 });
 
-describe("createTerminalSessionRegistry — H-1 read round-trip", () => {
+describe("createTerminalSessionRegistry — read round-trip", () => {
   it("round-trips a read frame to the worker and resolves the {screen,...} shape", async () => {
     const fake = makeFakeWorker((req) => {
       if (req.method !== "read") return undefined;
@@ -261,7 +261,7 @@ describe("createTerminalSessionRegistry — H-1 read round-trip", () => {
   });
 });
 
-describe("createTerminalSessionRegistry — M-1 create forwards bin/argv verbatim", () => {
+describe("createTerminalSessionRegistry — create forwards bin/argv verbatim", () => {
   it("sends a create frame whose params carry the daemon's {bin,argv} unmodified", async () => {
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
@@ -282,11 +282,11 @@ describe("createTerminalSessionRegistry — M-1 create forwards bin/argv verbati
 });
 
 // ===========================================================================
-// 121-04 Task 1 — read(sessionId, opts) forwards {format,scrollback,
-// includeAltBuffer} + returns the diff; create carries a scrollback depth.
+// read(sessionId, opts) forwards {format,scrollback,includeAltBuffer} + returns
+// the diff; create carries a scrollback depth.
 // ===========================================================================
 
-describe("createTerminalSessionRegistry — TR-02/14 read forwards the render opts", () => {
+describe("createTerminalSessionRegistry — read forwards the render opts", () => {
   it("forwards {format,scrollback,includeAltBuffer} into the read frame's params", async () => {
     const fake = makeFakeWorker((req) =>
       req.method === "read"
@@ -311,7 +311,7 @@ describe("createTerminalSessionRegistry — TR-02/14 read forwards the render op
 
     await registry.read(sessionId, OWNER, { format: "ansi", scrollback: 10, includeAltBuffer: false });
 
-    // The read frame must carry the render opts (Plan 02's handleRead reads them).
+    // The read frame must carry the render opts (the worker's handleRead reads them).
     const readFrame = fake.requestFrames.find((f) => f.method === "read");
     expect(readFrame).toBeDefined();
     expect(readFrame?.params["sessionId"]).toBe(sessionId);
@@ -353,7 +353,7 @@ describe("createTerminalSessionRegistry — TR-02/14 read forwards the render op
     expect(readFrame?.params["includeAltBuffer"]).toBeUndefined();
   });
 
-  it("returns the worker's diff field on the TerminalView (TR-14 screen-diff reaches the daemon)", async () => {
+  it("returns the worker's diff field on the TerminalView (screen-diff reaches the daemon)", async () => {
     const fake = makeFakeWorker((req) =>
       req.method === "read"
         ? {
@@ -384,12 +384,12 @@ describe("createTerminalSessionRegistry — TR-02/14 read forwards the render op
     }, OWNER);
 
     const view = await registry.read(sessionId, OWNER);
-    // The diff Plan 03 produced rides the view through to the tool layer.
+    // The worker-produced diff rides the view through to the tool layer.
     expect(view.diff).toEqual({ changed: true, firstChangedRow: 1, lastChangedRow: 3 });
   });
 });
 
-describe("createTerminalSessionRegistry — TR-14 create threads a scrollback depth", () => {
+describe("createTerminalSessionRegistry — create threads a scrollback depth", () => {
   it("carries an explicit scrollback into the create frame's params", async () => {
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
@@ -410,18 +410,18 @@ describe("createTerminalSessionRegistry — TR-14 create threads a scrollback de
   });
 
   it("exposes DEFAULT_SCROLLBACK (1000) as the registry-level default scrollback const", async () => {
-    // The const is the single source the create tool defaults to (Task 2). It is
-    // the value Plan 01 hard-coded worker-side, now sourced from the registry.
+    // The const is the single source the create tool defaults to. It is the value
+    // previously hard-coded worker-side, now sourced from the registry.
     expect(DEFAULT_SCROLLBACK).toBe(1000);
   });
 });
 
 // ===========================================================================
-// 122-01 Task 2 — scope (SEC-02) + workspace/cwd ride the create frame to the
-// worker (so 122-06 can call buildScopeArgs(scope, workspace, cwd) jail-side).
+// scope + workspace/cwd ride the create frame to the worker (so the jail-side
+// composer can call buildScopeArgs(scope, workspace, cwd)).
 // ===========================================================================
 
-describe("createTerminalSessionRegistry — SEC-02 scope rides the create frame", () => {
+describe("createTerminalSessionRegistry — scope rides the create frame", () => {
   it("carries the entry's declared scope onto the create frame's params verbatim", async () => {
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
@@ -445,11 +445,11 @@ describe("createTerminalSessionRegistry — SEC-02 scope rides the create frame"
 
     const createFrame = fake.requestFrames.find((f) => f.method === "create");
     expect(createFrame).toBeDefined();
-    // The worker's handleCreate reads p["scope"] for the 122-06 jail composer.
+    // The worker's handleCreate reads p["scope"] for the jail composer.
     expect(createFrame?.params["scope"]).toEqual(scope);
   });
 
-  it("carries workspace + cwd onto the create frame (the worker needs them to build the jail binds in 122-06)", async () => {
+  it("carries workspace + cwd onto the create frame (the worker needs them to build the jail binds)", async () => {
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
 
@@ -471,13 +471,13 @@ describe("createTerminalSessionRegistry — SEC-02 scope rides the create frame"
 });
 
 // ===========================================================================
-// 122-06 Task 2 — the registry is the seam that threads the daemon-resolved
-// bwrapPath toward the worker. bwrapPath is a STRING, so it rides the create
-// frame (like scope/workspace/cwd) for the eventual worker-main to read; the
-// live egressControl port is a daemon->worker-main concern (not frame-serialized).
+// The registry is the seam that threads the daemon-resolved bwrapPath toward the
+// worker. bwrapPath is a STRING, so it rides the create frame (like scope/
+// workspace/cwd) for the eventual worker-main to read; the live egressControl
+// port is a daemon->worker-main concern (not frame-serialized).
 // ===========================================================================
 
-describe("createTerminalSessionRegistry — 122-06 bwrapPath rides the create frame (SEC-16 seam)", () => {
+describe("createTerminalSessionRegistry — bwrapPath rides the create frame (jail seam)", () => {
   it("forwards the daemon-resolved bwrapPath onto the create frame's params", async () => {
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(
@@ -503,7 +503,7 @@ describe("createTerminalSessionRegistry — 122-06 bwrapPath rides the create fr
 
   it("omits bwrapPath (undefined) on the frame when no provider resolved one (fail-closed downstream)", async () => {
     const fake = makeFakeWorker();
-    // No bwrapPath dep — the worker fail-closes (SEC-16) when it reads undefined.
+    // No bwrapPath dep — the worker fail-closes when it reads undefined.
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
 
     await registry.create({
@@ -537,9 +537,9 @@ describe("createTerminalSessionRegistry — no module-global state", () => {
 
 /**
  * Build a fake worker whose stdout can be driven to emit RAW (non-frame) bytes,
- * so the registry's stdout handler is fed a malformed / hostile chunk. Used by
- * HR-02. `emitRaw` pushes arbitrary bytes onto the reply channel; `emitOversizedPrefix`
- * pushes a uint32 length prefix above the framer cap (the HR-01 DoS prefix).
+ * so the registry's stdout handler is fed a malformed / hostile chunk.
+ * `emitRaw` pushes arbitrary bytes onto the reply channel; `emitOversizedPrefix`
+ * pushes a uint32 length prefix above the framer cap (the DoS prefix).
  */
 function makeRawDrivableWorker(): {
   child: FakeWorkerChild;
@@ -567,7 +567,7 @@ function makeRawDrivableWorker(): {
   };
 }
 
-describe("createTerminalSessionRegistry — HR-02 malformed-frame on stdout does NOT crash (OPS-01)", () => {
+describe("createTerminalSessionRegistry — malformed-frame on stdout does NOT crash (crash isolation)", () => {
   it("a non-JSON reply byte on stdout is caught (no uncaughtException), logs WARN errorKind:'protocol', and drops the worker", async () => {
     const fake = makeRawDrivableWorker();
     const logger = makeLogger();
@@ -583,7 +583,7 @@ describe("createTerminalSessionRegistry — HR-02 malformed-frame on stdout does
 
     // A length-prefixed frame whose body is NOT valid JSON ("{" then garbage):
     // JSON.parse throws INSIDE the stdout 'data' listener. Pre-patch this is an
-    // uncaughtException that takes the daemon down (the precise opposite of OPS-01).
+    // uncaughtException that takes the daemon down (the precise opposite of crash isolation).
     const garbageBody = Buffer.from("{not-json", "utf8");
     const prefix = Buffer.alloc(4);
     prefix.writeUInt32BE(garbageBody.length, 0);
@@ -601,7 +601,7 @@ describe("createTerminalSessionRegistry — HR-02 malformed-frame on stdout does
     expect(warn).toBeDefined();
   });
 
-  it("an oversized HR-01 length prefix on stdout is caught (FrameTooLargeError), not rethrown — daemon survives", async () => {
+  it("an oversized length prefix on stdout is caught (FrameTooLargeError), not rethrown — daemon survives", async () => {
     const fake = makeRawDrivableWorker();
     const logger = makeLogger();
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { logger }));
@@ -621,7 +621,7 @@ describe("createTerminalSessionRegistry — HR-02 malformed-frame on stdout does
   });
 });
 
-describe("createTerminalSessionRegistry — HR-03 worker create failure is surfaced (OPS-07)", () => {
+describe("createTerminalSessionRegistry — worker create failure is surfaced", () => {
   it("an ok:false create reply flips the session to 'lost' (list/read agree alive:false) and fires onSpawnFailed", async () => {
     // The worker's handleCreate throws (bad bin ENOENT, forkpty failure, …) → the
     // worker replies { ok:false } to the create frame. Pre-patch the registry does
@@ -660,7 +660,7 @@ describe("createTerminalSessionRegistry — HR-03 worker create failure is surfa
     expect(registry.list(OWNER).find((s) => s.sessionId === sessionId)?.alive).toBe(false);
     const view = await registry.read(sessionId, OWNER);
     expect(view.alive).toBe(false);
-    // OPS-07: the spawn-failure hook fired with the session id + the worker error.
+    // The spawn-failure hook fired with the session id + the worker error.
     expect(spawnFailures).toHaveLength(1);
     expect(spawnFailures[0].sessionId).toBe(sessionId);
     expect(spawnFailures[0].error).toMatch(/ENOENT/);
@@ -695,7 +695,7 @@ describe("createTerminalSessionRegistry — HR-03 worker create failure is surfa
   });
 });
 
-describe("createTerminalSessionRegistry — MR-01 request() reply timeout (wedged worker)", () => {
+describe("createTerminalSessionRegistry — request() reply timeout (wedged worker)", () => {
   it("read() against a worker that never replies settles to alive:false on the injected timeout (no hang, no leaked resolver)", async () => {
     // A worker that ACCEPTS the read frame but NEVER replies (wedged, not crashed:
     // no close/error to trigger clearWorker). Pre-patch read() awaits forever.
@@ -772,7 +772,7 @@ describe("createTerminalSessionRegistry — MR-01 request() reply timeout (wedge
   });
 });
 
-describe("createTerminalSessionRegistry — LR-02 clearWorker preserves waiter identity", () => {
+describe("createTerminalSessionRegistry — clearWorker preserves waiter identity", () => {
   it("resolves a flushed read waiter with the REAL (sessionId,requestId) — observable via the flush-debug log carrying the real session id, not a blank", async () => {
     // A worker that accepts the read frame but never replies; then the worker
     // crashes (close), so clearWorker() flushes the parked read waiter. The
@@ -814,7 +814,7 @@ describe("createTerminalSessionRegistry — LR-02 clearWorker preserves waiter i
 });
 
 // ===========================================================================
-// 120-03 Task 1 — sendText / sendKey forwarding (-> {screen,cursor})
+// sendText / sendKey forwarding (-> {screen,cursor})
 // ===========================================================================
 
 /** An advancing clock: each call returns a strictly larger value (for lastActivity). */
@@ -823,7 +823,7 @@ function makeAdvancingClock(start = 1_700_000_000_000): () => number {
   return () => (t += 1000);
 }
 
-describe("createTerminalSessionRegistry — TR-03 sendText forwarding", () => {
+describe("createTerminalSessionRegistry — sendText forwarding", () => {
   it("forwards a send_text frame and resolves the {screen,cursor} subset", async () => {
     const fake = makeFakeWorker((req) =>
       req.method === "send_text"
@@ -890,7 +890,7 @@ describe("createTerminalSessionRegistry — TR-03 sendText forwarding", () => {
     expect(after).toBeGreaterThan(created as number);
   });
 
-  it("degrades a send_text on an MR-01 timeout reply (ok:false) — no throw, no hang", async () => {
+  it("degrades a send_text on a reply timeout (ok:false) — no throw, no hang", async () => {
     // A worker that ACCEPTS the frame but never replies; the injected timeout fires.
     const fake = makeFakeWorker(); // no autoReply
     let firedCb: (() => void) | undefined;
@@ -928,7 +928,7 @@ describe("createTerminalSessionRegistry — TR-03 sendText forwarding", () => {
   });
 });
 
-describe("createTerminalSessionRegistry — TR-03 sendKey forwarding", () => {
+describe("createTerminalSessionRegistry — sendKey forwarding", () => {
   it("forwards a send_key frame with keys[] and resolves {screen,cursor}", async () => {
     const fake = makeFakeWorker((req) =>
       req.method === "send_key"
@@ -960,7 +960,7 @@ describe("createTerminalSessionRegistry — TR-03 sendKey forwarding", () => {
     expect(out).toEqual({ screen: "^C", cursor: { x: 0, y: 1 } });
   });
 
-  it("degrades a send_key on an MR-01 timeout reply (ok:false) — no throw, no hang", async () => {
+  it("degrades a send_key on a reply timeout (ok:false) — no throw, no hang", async () => {
     const fake = makeFakeWorker(); // no autoReply
     let firedCb: (() => void) | undefined;
     const setTimer = vi.fn((cb: () => void) => {
@@ -991,10 +991,10 @@ describe("createTerminalSessionRegistry — TR-03 sendKey forwarding", () => {
 });
 
 // ===========================================================================
-// 120-03 Task 2 — resize (-> {ok}) and wait (-> {matched,isComplete,reason,screen,cursor})
+// resize (-> {ok}) and wait (-> {matched,isComplete,reason,screen,cursor})
 // ===========================================================================
 
-describe("createTerminalSessionRegistry — TR-03 resize forwarding", () => {
+describe("createTerminalSessionRegistry — resize forwarding", () => {
   it("forwards a resize frame, returns {ok:true}, and updates the handle geometry", async () => {
     const fake = makeFakeWorker((req) =>
       req.method === "resize"
@@ -1020,7 +1020,7 @@ describe("createTerminalSessionRegistry — TR-03 resize forwarding", () => {
     expect(frame?.params["rows"]).toBe(30);
 
     expect(out).toEqual({ ok: true });
-    // TR-03: the snapshot stays coherent — list()/get() reflect the new geometry.
+    // The snapshot stays coherent — list()/get() reflect the new geometry.
     expect(registry.get(sessionId, OWNER)?.cols).toBe(100);
     expect(registry.get(sessionId, OWNER)?.rows).toBe(30);
   });
@@ -1033,7 +1033,7 @@ describe("createTerminalSessionRegistry — TR-03 resize forwarding", () => {
   });
 });
 
-describe("createTerminalSessionRegistry — TR-03 wait forwarding", () => {
+describe("createTerminalSessionRegistry — wait forwarding", () => {
   it("forwards a wait frame and resolves {matched,isComplete,reason,screen,cursor} verbatim", async () => {
     const fake = makeFakeWorker((req) =>
       req.method === "wait"
@@ -1101,7 +1101,7 @@ describe("createTerminalSessionRegistry — TR-03 wait forwarding", () => {
     expect(out.screen).toBe("still working");
   });
 
-  it("yields the honest not-complete shape on an MR-01 worker-timeout (ok:false) — never isComplete:true, never a hang", async () => {
+  it("yields the honest not-complete shape on a worker-timeout (ok:false) — never isComplete:true, never a hang", async () => {
     const fake = makeFakeWorker(); // no autoReply → the request() reply timeout fires
     let firedCb: (() => void) | undefined;
     const setTimer = vi.fn((cb: () => void) => {
@@ -1125,7 +1125,7 @@ describe("createTerminalSessionRegistry — TR-03 wait forwarding", () => {
     }, OWNER);
 
     const p = registry.wait(sessionId, OWNER, { forIdleMs: 120 });
-    firedCb?.(); // simulate the MR-01 reply-timeout expiry → ok:false
+    firedCb?.(); // simulate the reply-timeout expiry → ok:false
     const out = await p;
     expect(out).toEqual({
       matched: false,
@@ -1166,17 +1166,17 @@ describe("createTerminalSessionRegistry — TR-03 wait forwarding", () => {
 });
 
 // ===========================================================================
-// 123-03 (P4) — origin-keying: owner-stamped + owner-scoped create/list/read/
-// get/kill/send* (TR-13 visibility + TR-09 isolation). The session stays the
-// opaque handle; ownership is the gate. A SessionOwner is (agentId, sessionKey);
-// two subagents share an agentId but differ on sessionKey (a subagent channelId
-// is "sub-agent:<uuid>", session-key.ts:78-79) so they are MUTUALLY INVISIBLE.
+// Origin-keying: owner-stamped + owner-scoped create/list/read/get/kill/send*
+// (owner-scoped visibility + isolation). The session stays the opaque handle;
+// ownership is the gate. A SessionOwner is (agentId, sessionKey); two subagents
+// share an agentId but differ on sessionKey (a subagent channelId is
+// "sub-agent:<uuid>", session-key.ts:78-79) so they are MUTUALLY INVISIBLE.
 //
 // RED on the pre-patch single-owner code: list()/read()/get()/kill() ignore the
 // owner arg, so two owners' sessions are visible to each other (list length 2,
 // cross-owner read alive:true) — the invisibility/no-op assertions fail at
-// runtime. The 3-session isolation (TR-09) is proven via a fake worker keying
-// each read reply to the frame's sessionId.
+// runtime. The 3-session isolation is proven via a fake worker keying each read
+// reply to the frame's sessionId.
 // ===========================================================================
 
 /**
@@ -1205,7 +1205,7 @@ function makeIsolatingWorker() {
 
 const bashReq = { allowId: "bash", bin: "/bin/bash", argv: [] as string[], cols: 80, rows: 24 };
 
-describe("createTerminalSessionRegistry — TR-09 per-session isolation (3 interleaved reads)", () => {
+describe("createTerminalSessionRegistry — per-session isolation (3 interleaved reads)", () => {
   it("each of three sessions reads ONLY its own bytes under interleaved Promise.all (no state bleed)", async () => {
     const fake = makeIsolatingWorker();
     const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
@@ -1232,7 +1232,7 @@ describe("createTerminalSessionRegistry — TR-09 per-session isolation (3 inter
   });
 });
 
-describe("createTerminalSessionRegistry — TR-13 two subagents are mutually invisible", () => {
+describe("createTerminalSessionRegistry — two subagents are mutually invisible", () => {
   // Two owners: same agentId, distinct sessionKey (two subagent runs — each
   // subagent's channelId is "sub-agent:<uuid>", so formatSessionKey() differs).
   const sub1 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-1" };
@@ -1251,7 +1251,7 @@ describe("createTerminalSessionRegistry — TR-13 two subagents are mutually inv
     expect(reg.list(sub1)[0].sessionId).not.toBe(reg.list(sub2)[0].sessionId);
   });
 
-  it("a cross-owner read returns the not-found minimal view (alive:false) — never the other owner's bytes (T-123-06)", async () => {
+  it("a cross-owner read returns the not-found minimal view (alive:false) — never the other owner's bytes", async () => {
     const fake = makeIsolatingWorker();
     const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
 
@@ -1268,7 +1268,7 @@ describe("createTerminalSessionRegistry — TR-13 two subagents are mutually inv
     expect(ownView.screen).toContain(s2.sessionId);
   });
 
-  it("a cross-owner get returns undefined; the owner's get returns the handle (T-123-06)", async () => {
+  it("a cross-owner get returns undefined; the owner's get returns the handle", async () => {
     const fake = makeIsolatingWorker();
     const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
 
@@ -1279,7 +1279,7 @@ describe("createTerminalSessionRegistry — TR-13 two subagents are mutually inv
   });
 });
 
-describe("createTerminalSessionRegistry — TR-13 kill cannot cross owners (T-123-07)", () => {
+describe("createTerminalSessionRegistry — kill cannot cross owners", () => {
   const sub1 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-1" };
   const sub2 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-2" };
 
@@ -1332,11 +1332,11 @@ describe("createTerminalSessionRegistry — cleanup() is owner-agnostic (tears d
 });
 
 // ===========================================================================
-// 123-04 (P4) — compose the reaper into the registry (TR-06, OPS-06). On
-// maxSessions overflow at create the idlest session is evicted (max_sessions);
-// cleanup() stops the sweep (no leaked interval); EVERY eviction runs the single
-// audited site — drop + cleanupSessionWorkspace + onEvict(reason) + onCapForget
-// (so the cap-state map is forgotten on the reap path, not only the tool kill).
+// Compose the reaper into the registry. On maxSessions overflow at create the
+// idlest session is evicted (max_sessions); cleanup() stops the sweep (no leaked
+// interval); EVERY eviction runs the single audited site — drop +
+// cleanupSessionWorkspace + onEvict(reason) + onCapForget (so the cap-state map
+// is forgotten on the reap path, not only the tool kill).
 //
 // RED on the pre-patch registry: the deps have no maxSessions/idleTtlMs/timers/
 // onEvict/onCapForget, there is no reaper.checkOverflow() in create, no
@@ -1345,7 +1345,7 @@ describe("createTerminalSessionRegistry — cleanup() is owner-agnostic (tears d
 // fires.
 // ===========================================================================
 
-describe("createTerminalSessionRegistry — 123-04 reaper composition (TR-06/OPS-06)", () => {
+describe("createTerminalSessionRegistry — reaper composition", () => {
   const subA = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-A" };
 
   /** baseDeps + the reaper wiring: fake timers, an onEvict + onCapForget spy. */
@@ -1404,7 +1404,7 @@ describe("createTerminalSessionRegistry — 123-04 reaper composition (TR-06/OPS
 
     const s = await reg.create(bashReq, subA);
 
-    // The public evict() entry point (Plan 05 reuses it for max_interactions) —
+    // The public evict() entry point (also reused for max_interactions) —
     // owner-checked, then the single audited eviction site that reuses the kill
     // drop + cleanupSessionWorkspace (proven gone from list) + onEvict + onCapForget.
     await reg.evict(s.sessionId, subA, "max_interactions");
@@ -1415,7 +1415,7 @@ describe("createTerminalSessionRegistry — 123-04 reaper composition (TR-06/OPS
     expect(onEvict).toHaveBeenCalledTimes(1);
     expect(onEvict.mock.calls[0][0]).toMatchObject({ sessionId: s.sessionId, reason: "max_interactions" });
     expect(typeof onEvict.mock.calls[0][0].durationMs).toBe("number");
-    // The cap-state map is forgotten on the reap path (Warning-4: no SessionCaps leak).
+    // The cap-state map is forgotten on the reap path (no SessionCaps leak).
     expect(onCapForget).toHaveBeenCalledWith(s.sessionId);
   });
 

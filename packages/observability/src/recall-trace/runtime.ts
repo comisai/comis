@@ -12,7 +12,7 @@
  *   - Crucially, the recall trace has NO opt-in raw-content slot (unlike
  *     cache-trace's `includeMessages` / `includeSystem` exemptions). EVERY
  *     payload always goes through full `sanitizeForPersistence` (bound →
- *     sanitize → redact) with NO overrides — this is the OBS-02 chokepoint
+ *     sanitize → redact) with NO overrides — this is the chokepoint
  *     proven by the mandatory failing-first redaction test in
  *     runtime.test.ts. A buggy/malicious producer that stuffs a secret, a
  *     password, or an absolute path into the payload has those values
@@ -52,7 +52,7 @@ import type { RecallTraceEvent } from "./types.js";
 
 // 50 MB per-file cap (parity with cache-trace). Recall-trace events
 // accumulate across many sessions in one long-lived daemon-wide file; the
-// cap bounds DoS exposure (T-86-03) and pairs with the queued writer's
+// cap bounds DoS exposure and pairs with the queued writer's
 // backpressure (`dropped`) + `failureCount()`.
 const DEFAULT_MAX_FILE_BYTES = 50 * 1024 * 1024;
 const DEFAULT_MAX_QUEUED_BYTES = 4 * 1024 * 1024;
@@ -112,7 +112,7 @@ export interface RecallTrace {
   /**
    * Enqueue one recall record. The `record` payload is routed through
    * `sanitizeForPersistence` (bound → sanitize → redact) BEFORE the envelope
-   * is built and written — the OBS-02 chokepoint.
+   * is built and written — the chokepoint.
    */
   recordRecall(record: Record<string, unknown>): "queued" | "dropped";
   /** Await the queue tail. */
@@ -205,7 +205,7 @@ export function createRecallTrace(init: RecallTraceInit): RecallTrace | null {
       const writerFailureCount = writer.failureCount();
       if (!state.writeFailureSentinelEmitted && writerFailureCount > 0) {
         state.writeFailureSentinelEmitted = true;
-        // WR-07: the sentinel `data` goes through the same
+        // The sentinel `data` goes through the same
         // sanitizeForPersistence chokepoint as every per-recall record so the
         // "no raw value reaches disk" invariant covers control-plane lines too.
         // (The inline sentinel's current fields are numbers/ISO timestamps, but
@@ -221,7 +221,7 @@ export function createRecallTrace(init: RecallTraceInit): RecallTrace | null {
         state.seq += 1;
       }
 
-      // THE OBS-02 CHOKEPOINT. Route EVERY payload through
+      // THE CHOKEPOINT. Route EVERY payload through
       // sanitizeForPersistence (bound → sanitize → redact in one walk). NO
       // overrides — the recall trace has NO opt-in raw-content slot (unlike
       // cache-trace's includeMessages/includeSystem), so nothing is exempt
@@ -265,7 +265,7 @@ export function createRecallTrace(init: RecallTraceInit): RecallTrace | null {
         // is unrecoverable this write fails too; failureCount() continues to
         // surface the truth even when nothing lands.
         //
-        // WR-07: route the sentinel `data` through sanitizeForPersistence
+        // Route the sentinel `data` through sanitizeForPersistence
         // (the SAME chokepoint every per-recall record uses) so the
         // "no raw value reaches disk" invariant holds for control-plane lines
         // too. The raw `lastError.message` for an fs append error is the trace
@@ -322,10 +322,10 @@ function buildEvent(
 ): RecallTraceEvent {
   const ts = systemDateFrom(systemNowMs()).toISOString();
   const traceId = resolveTraceId(init.sessionId);
-  // WR-03: merge the sanitized payload FIRST, then assign the scope/envelope
+  // Merge the sanitized payload FIRST, then assign the scope/envelope
   // identifiers LAST so they ALWAYS win. The scope ids (agentId, sessionId,
   // traceId, sessionKey, tenantId, runId) are authoritative — the read-side
-  // scope-filter (WR-01) trusts them — so a (buggy/future) producer that places
+  // scope-filter trusts them — so a (buggy/future) producer that places
   // a same-named key in the record must NOT be able to clobber them. The old
   // order (envelope first, payload merged on top) left the invariant enforced
   // only by the current contents of buildRecallRecord rather than by the code.

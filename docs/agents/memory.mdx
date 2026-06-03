@@ -153,7 +153,7 @@ flowchart LR
 1. **SEARCH** -- each retrieval lane runs. The FTS5 keyword lane and the vector
    (meaning) lane are now **two independent, operator-weighted RRF lanes**
    (`rag.lanes.fts.weight`, default `1.0`; `rag.lanes.vector.weight`, default
-   `1.5` — the parity defaults reproduce the v2.6 ranking byte-for-byte). On top
+   `1.5` — the parity defaults reproduce the prior ranking byte-for-byte). On top
    of those two base lanes, three further lanes are fused in **only when enabled**
    — the entity lane, the temporal-spread lane, and the causal lane (all
    **default-OFF**). See [Search](/agents/search).
@@ -197,7 +197,7 @@ which is more accurate than the bi-encoder similarity used for the vector lane
   all-default install performs **zero** reranker-model download at startup; the
   ~606 MB GGUF is fetched only when an agent **explicitly** enables rerank. The
   presence probe never reaches the download path, which **decouples default-on
-  from the download** (the v2.7 change vs the old "stay opt-in to avoid the
+  from the download** (the change vs the old "stay opt-in to avoid the
   download").
 - **On-device, zero new dependency** — the reranker is a local GGUF model
   (`bge-reranker-v2-m3`, Q8_0 quantization) run through the same `node-llama-cpp`
@@ -292,7 +292,7 @@ agents:
 Comis can **learn which recalled memories actually got used** and fold that signal
 back into ranking — boosting memories that have proven useful, demoting ones that
 were recalled but ignored. This is **opt-in and default-OFF**; with the loop off,
-recall is byte-identical to v2.6 (no read, no emit, no extra factor).
+recall is byte-identical to the baseline (no read, no emit, no extra factor).
 
 - **Default `false`** (`rag.feedback.enabled`) — the single master toggle. When
   **on**, after each turn Comis attributes which recalled memories were actually

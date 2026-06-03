@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Dialectic configuration schema (Phase 109 — DIAL-02, Track G + D3).
+ * Dialectic configuration schema.
  *
  * Gates the `memory_ask` agent tool — the grounded, cited Q&A surface over the
  * agent's LLM-free recall pipeline. Enabling it is a COST opt-in: `memory_ask`
@@ -26,8 +26,7 @@
 import { z } from "zod";
 
 /**
- * DialecticConfigSchema: Zod schema for the per-agent `memory_ask` Q&A tool
- * (Phase 109, Track G — DIAL-02).
+ * DialecticConfigSchema: Zod schema for the per-agent `memory_ask` Q&A tool.
  *
  * Fields:
  * - enabled: opt-in (default false — a COST gate, not back-compat). Enabling
@@ -40,12 +39,11 @@ import { z } from "zod";
  *   the LLM call is fed).
  *
  * Positive-int bounds on both cost fields cap per-ask spend; `z.strictObject`
- * rejects unknown keys so a typo'd field can never silently widen the surface
- * (T-109-01 / T-109-04).
+ * rejects unknown keys so a typo'd field can never silently widen the surface.
  */
 export const DialecticConfigSchema = z.strictObject({
-  /** Enable the `memory_ask` grounded-Q&A tool for this agent. Default: true (v1 opt-out posture,
-   *  v2.9 increment 2). A COST feature (it makes the one query-time LLM call) — force-disabled
+  /** Enable the `memory_ask` grounded-Q&A tool for this agent. Default: true (opt-out posture).
+   *  A COST feature (it makes the one query-time LLM call) — force-disabled
    *  when `memory.costFeatures.enabled: false`. */
   enabled: z.boolean().default(true),
   /** Per-ask synthesis-LLM output bound (the cost axis — the DoS bound on one answer). */

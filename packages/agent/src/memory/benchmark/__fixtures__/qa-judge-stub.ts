@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Deterministic fake `completeSimple`-shaped LLM stub for the UNGATED QA/judge
- * wiring tests (BENCH-03) — drives the pure answer/judge pipeline (format ->
+ * wiring tests — drives the pure answer/judge pipeline (format ->
  * answer-prompt -> judge-prompt -> verdict-parse -> aggregate) WITHOUT a real
  * provider or the `COMIS_BENCH` gate.
  *
- * This is the ONLY genuinely new shape in Phase 89 (89-PATTERNS.md "No Analog
- * Found"): the repo has no shared fake-`completeSimple` stub — LLM call sites are
+ * This is the ONLY genuinely new shape here: the repo has no shared
+ * fake-`completeSimple` stub — LLM call sites are
  * mocked ad hoc per test. The return shape is dictated by pi-ai's
  * `AssistantMessage.content: (TextContent | ...)[]` with
  * `TextContent = { type: "text"; text: string }`

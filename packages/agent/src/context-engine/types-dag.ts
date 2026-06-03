@@ -269,7 +269,7 @@ export interface DagContextEngineDeps extends ContextEngineDeps {
   /** Optional partial compaction deps (store/logger provided internally). */
   dagCompactionDeps?: Omit<DagCompactionDeps, "store" | "logger">;
   /**
-   * DAG-05: one-shot consumer of a pending engine-mode switch for this agent.
+   * One-shot consumer of a pending engine-mode switch for this agent.
    * Returns {from,to} on the FIRST reconcile after an operator switched the
    * engine (detected at the daemon rebuild seam by comparing old vs new
    * contextEngine.version), then clears it. undefined = no switch (e.g. a

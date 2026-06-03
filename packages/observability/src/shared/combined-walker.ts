@@ -12,9 +12,9 @@
  *   3. redactNode    - value-mode credential mask (edge-keeping).
  *
  * Ordering is LOAD-BEARING. Bounding BEFORE redacting prevents a
- * truncated-prefix leak of oversize credentials (RESEARCH §LM-1).
+ * truncated-prefix leak of oversize credentials.
  *
- * Cycle sentinel convention (LM-2):
+ * Cycle sentinel convention:
  *   - With `boundCheck` set (e.g., sanitizeForPersistence) → record-shape
  *     sentinel `{__bounded__: "bounded-payload-cycle-detected"}` at first
  *     back-edge.

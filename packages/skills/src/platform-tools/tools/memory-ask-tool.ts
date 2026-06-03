@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Memory Ask Tool (Phase 109 — DIAL-01/02): the dialectic's grounded Q&A.
+ * Memory Ask Tool: the dialectic's grounded Q&A.
  *
  * Delegates to the daemon-side `memory.ask` RPC, which runs the LLM-free recall
  * pipeline for the question and synthesizes a cited answer over the
@@ -12,8 +12,8 @@
  * This tool is a THIN rpcCall dispatcher: it holds NO model and NO DB handle
  * (the `@comis/skills` tier discipline). It MUST NOT import the LLM-call package
  * (`@earendil-works/pi`-agent's ai module) or resolve a model — the synthesis
- * seam lives in the daemon (T-109-03). Registration + the opt-in
- * `dialectic.enabled` gate land in a later plan (this file only defines the
+ * seam lives in the daemon. Registration + the opt-in
+ * `dialectic.enabled` gate land later (this file only defines the
  * factory).
  *
  * @module
@@ -25,7 +25,7 @@ import { registerActivityLabelSpec } from "@comis/core";
 import { jsonResult, readStringParam, readNumberParam } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
 
-// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name.
+// Activity label spec (§17.6). Descriptor name == emitted name.
 registerActivityLabelSpec("memory_ask", {
   semanticPhase: "memory",
   label: "asking memory",
@@ -68,7 +68,7 @@ export function createMemoryAskTool(rpcCall: RpcCall): AgentTool<typeof MemoryAs
       const limit = readNumberParam(params, "limit", false);
 
       // rpcCall + readStringParam/readNumberParam errors propagate as-is (the dispatcher
-      // converts them to the tool-error result). CR-05: the prior try/catch was a no-op —
+      // converts them to the tool-error result). The prior try/catch was a no-op —
       // both branches rethrew `err`, the only effect being a non-Error normalization that the
       // single fallthrough already covered. Dropped; nothing here can throw a non-Error.
       const result = await rpcCall("memory.ask", {

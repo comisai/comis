@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED->GREEN unit suite for {@link aggregateAccuracy} (BENCH-03) -- the overall
+ * RED->GREEN unit suite for {@link aggregateAccuracy} -- the overall
  * + per-category accuracy aggregator with the LOAD-BEARING invalid-excluded
  * denominator.
  *
@@ -8,7 +8,7 @@
  * `qa-accuracy.ts` so it is never a 0%-coverage file under the agent all:true
  * floor.
  *
- * THE LOAD-BEARING INVARIANT (PATTERNS Correction #1, verified vs Hindsight
+ * THE LOAD-BEARING INVARIANT (verified vs Hindsight
  * benchmark_runner.py:840-866): accuracy = correct / (total - invalid) * 100 for
  * BOTH overall and per-category. An INVALID verdict is EXCLUDED from the
  * denominator -- it is NOT counted as wrong. Test 2 below is the apples-to-apples
@@ -20,7 +20,7 @@
 import { describe, it, expect } from "vitest";
 import { aggregateAccuracy } from "./qa-accuracy.js";
 
-describe("aggregateAccuracy -- overall + per-category, invalid-excluded denominator (BENCH-03)", () => {
+describe("aggregateAccuracy -- overall + per-category, invalid-excluded denominator", () => {
   it("Test 1: 1 correct + 1 wrong (no invalid) -> overall 50, perCategory.a {1,2,0,50}, validTotal 2", () => {
     const r = aggregateAccuracy([
       { category: "a", correct: true, invalid: false },

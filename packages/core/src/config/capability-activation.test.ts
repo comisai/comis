@@ -13,8 +13,8 @@ import {
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 // ---------------------------------------------------------------------------
-// Phase 115 (ACTIVATE) — ACT-01 the default-activation FRAMEWORK, reconciled for
-// the v1 OPT-OUT posture (v2.9 increment 2).
+// The default-activation FRAMEWORK, reconciled for
+// the v1 OPT-OUT posture.
 //
 // A capability resolves ON via EITHER the v1 opt-out posture (membership in
 // V1_OPT_OUT_CAPABILITIES — the eight non-privacy capabilities whose schema
@@ -24,8 +24,8 @@ import { PerAgentConfigSchema } from "./schema-agent/index.js";
 // and has no recorded measured-lift decision.
 // ---------------------------------------------------------------------------
 
-describe("ACT-01 v2.9 capability registry", () => {
-  it("enumerates each v2.9 capability with a config path whose as-shipped value matches its posture (8 ON via opt-out, SOCIAL OFF)", () => {
+describe("capability registry", () => {
+  it("enumerates each capability with a config path whose as-shipped value matches its posture (8 ON via opt-out, SOCIAL OFF)", () => {
     const cfg = PerAgentConfigSchema.parse({});
     // Each registered capability must name a real config path; we read it off a
     // parsed PerAgentConfig to prove the path is live (not a typo'd dead string).
@@ -66,16 +66,16 @@ describe("ACT-01 v2.9 capability registry", () => {
   });
 });
 
-describe("ACT-01 measured-winner activation set (gated on PROVE2)", () => {
+describe("measured-winner activation set", () => {
   it("is EMPTY (the measured-lift path drove nothing; the v1 opt-out posture is the active path)", () => {
-    // The measured-lift path stays committed-decision-driven and is empty (PROVE2 found
-    // +0.0pt). After the v1 opt-out reconciliation this empty set no longer means
+    // The measured-lift path stays committed-decision-driven and is empty (the
+    // measured-lift evaluation found +0.0pt). After the v1 opt-out reconciliation this empty set no longer means
     // "everything OFF" — the eight opt-out capabilities flip ON via V1_OPT_OUT_CAPABILITIES,
     // and SOCIAL (the lone non-opt-out cap) stays OFF for lack of a recorded decision.
     expect(ACTIVATED_CAPABILITIES).toEqual([]);
   });
 
-  it("every entry that IS in the activation set must carry a recorded PROVE2 decision (structural gate)", () => {
+  it("every entry that IS in the activation set must carry a recorded measured-lift decision (structural gate)", () => {
     // Even though the set is empty today, the gate is structural: an entry
     // cannot be added without a manifest reference + a measured delta. This
     // proves the type forces the recorded decision (compiles only with it).
@@ -87,7 +87,7 @@ describe("ACT-01 measured-winner activation set (gated on PROVE2)", () => {
   });
 });
 
-describe("ACT-01 frozen trust invariant", () => {
+describe("frozen trust invariant", () => {
   it("declares the trust filter + trustAlpha paths as FROZEN (never activatable)", () => {
     expect(FROZEN_TRUST_PATHS).toContain("rag.scoring.trustAlpha");
     expect(FROZEN_TRUST_PATHS).toContain("rag.includeTrustLevels");
@@ -119,7 +119,7 @@ describe("ACT-01 frozen trust invariant", () => {
   });
 });
 
-describe("ACT-01 resolver (effective default-OFF→ON, v1 opt-out posture)", () => {
+describe("resolver (effective default-OFF→ON, v1 opt-out posture)", () => {
   it("resolves the eight opt-out capabilities ON via the v1 opt-out path (no recorded decision needed)", () => {
     for (const cap of V2_9_CAPABILITIES) {
       const resolved = resolveCapabilityDefault(cap.id);
@@ -156,14 +156,14 @@ describe("ACT-01 resolver (effective default-OFF→ON, v1 opt-out posture)", () 
 });
 
 // ---------------------------------------------------------------------------
-// ACT-02 — framework/schema PARITY under the v1 opt-out posture. The framework's
+// Framework/schema PARITY under the v1 opt-out posture. The framework's
 // resolved default for every capability must MATCH its as-shipped schema default:
 // the eight opt-out members resolve ON and ship ON; SOCIAL resolves OFF and ships
 // OFF. This proves the framework table and the Zod schema stay in lock-step (a
 // flip in one without the other trips this test).
 // ---------------------------------------------------------------------------
 
-describe("ACT-02 framework/schema parity (v1 opt-out posture)", () => {
+describe("framework/schema parity (v1 opt-out posture)", () => {
   it("the framework's resolved default equals the as-shipped schema default for every capability", () => {
     const cfg = PerAgentConfigSchema.parse({}) as unknown as Record<string, unknown>;
     for (const cap of V2_9_CAPABILITIES) {
@@ -204,13 +204,13 @@ describe("ACT-02 framework/schema parity (v1 opt-out posture)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ACT-03 — SOCIAL enablement. SOCIAL is default-OFF behind the SOCIAL-03
+// SOCIAL enablement. SOCIAL is default-OFF behind the
 // recorded `privacyReviewSignedOffBy` operator sign-off. No sign-off is
 // recorded, so SOCIAL stays OFF; and the sign-off (+ enabled) IS the
 // activation path. We assert the gate, never enable it.
 // ---------------------------------------------------------------------------
 
-describe("ACT-03 SOCIAL stays gated (no recorded sign-off)", () => {
+describe("SOCIAL stays gated (no recorded sign-off)", () => {
   it("a bare config has no socialModeling subtree → SOCIAL OFF, no sign-off", () => {
     const cfg = PerAgentConfigSchema.parse({});
     expect(cfg.socialModeling).toBeUndefined();
@@ -218,14 +218,14 @@ describe("ACT-03 SOCIAL stays gated (no recorded sign-off)", () => {
 
   it("enabling socialModeling WITHOUT a sign-off leaves the sign-off absent (gate NOT satisfied)", () => {
     const cfg = PerAgentConfigSchema.parse({ socialModeling: { enabled: true } });
-    // enabled alone is not the activation: the SOCIAL-03 gate is
+    // enabled alone is not the activation: the SOCIAL gate is
     // `enabled === true && typeof privacyReviewSignedOffBy === "string" && length > 0`.
     expect(cfg.socialModeling!.enabled).toBe(true);
     expect(cfg.socialModeling!.privacyReviewSignedOffBy).toBeUndefined();
     expect(socialGateSatisfied(cfg)).toBe(false);
   });
 
-  it("the recorded sign-off + enabled IS the activation path (the SOCIAL-03 gate)", () => {
+  it("the recorded sign-off + enabled IS the activation path (the SOCIAL gate)", () => {
     const cfg = PerAgentConfigSchema.parse({
       socialModeling: { enabled: true, privacyReviewSignedOffBy: "privacy-reviewer" },
     });
@@ -246,7 +246,7 @@ describe("ACT-03 SOCIAL stays gated (no recorded sign-off)", () => {
   });
 });
 
-/** The SOCIAL-03 activation gate, evaluated on a parsed PerAgentConfig. */
+/** The SOCIAL activation gate, evaluated on a parsed PerAgentConfig. */
 function socialGateSatisfied(cfg: ReturnType<typeof PerAgentConfigSchema.parse>): boolean {
   const social = cfg.socialModeling;
   return (

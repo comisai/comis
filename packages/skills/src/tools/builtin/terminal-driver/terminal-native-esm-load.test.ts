@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Native-ESM module-load guard for the terminal-worker load chain (OPS-01).
+ * Native-ESM module-load guard for the terminal-worker load chain.
  *
  * The Terminal Worker is spawned as a SEPARATE node process — the registry's
  * `buildProductionSpawnWorker` does `childSpawn(process.execPath, [...permArgs,
@@ -81,7 +81,7 @@ function loadUnderNativeNode(distPath: string): { status: number | null; stderr:
   return { status: res.status, stderr: res.stderr ?? "" };
 }
 
-describe.skipIf(!allBuilt)("terminal worker load chain — native ESM module load (OPS-01)", () => {
+describe.skipIf(!allBuilt)("terminal worker load chain — native ESM module load", () => {
   it.each(ENTRIES)(
     "loads the built $name under a real node process (not vitest's CJS-interop bundler)",
     ({ distPath }) => {

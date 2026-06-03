@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Shared render-helper tests (§7.2 / §7.3 + APV-02/03 subagent render side).
+ * Shared render-helper tests (§7.2 / §7.3 + subagent render side).
  *
  * Covers the channel-agnostic text helpers:
  *   - `eventLabel` / `renderFrameText`: best-effort short label + one line per
@@ -13,7 +13,7 @@
  *
  * Plus a type-level assertion that the extended `ActivityRenderActions.send`
  * now accepts an optional approval-`buttons` argument so a renderer can paint
- * native choices (the port carries approval choices for 73-08/09).
+ * native choices (the port carries approval choices).
  */
 import { describe, it, expect, expectTypeOf } from "vitest";
 import type { Result } from "@comis/shared";
@@ -27,7 +27,7 @@ import { eventLabel, renderFrameText, failureLabel, successLabel, subagentLine }
 import type { ActivityRenderActions } from "./actions.js";
 
 /**
- * Build a render frame with sensible defaults. WS-D `renderFrameText(frame,
+ * Build a render frame with sensible defaults. `renderFrameText(frame,
  * markers?)` consumes the whole frame; tests construct one via this factory
  * instead of passing a bare events array.
  */
@@ -42,9 +42,9 @@ function frame(partial: Partial<ActivityRenderFrame> = {}): ActivityRenderFrame 
   };
 }
 
-/** The ascii theme's markers (75-01): bracketed pure-ASCII tags, zero emoji. */
+/** The ascii theme's markers: bracketed pure-ASCII tags, zero emoji. */
 const ASCII_MARKERS = { success: "[OK]", failure: "[ERR]", subagent: "[SUB]", running: "[..]" } as const;
-/** The default theme's markers (75-01): today's hardcoded closing-line glyphs. */
+/** The default theme's markers: today's hardcoded closing-line glyphs. */
 const DEFAULT_THEME_MARKERS = { success: "✓", failure: "❌", subagent: "🤖", running: "🔧" } as const;
 
 function event(partial: Partial<ActivityEvent> & Pick<ActivityEvent, "kind">): ActivityEvent {
@@ -94,7 +94,7 @@ describe("renderFrameText", () => {
   });
 
   it("paints a subagent event's 🤖-marked defaultLabel verbatim", () => {
-    // The projection sets `🤖`-prefixed defaultLabel (activity-stream T-73-07);
+    // The projection sets `🤖`-prefixed defaultLabel (activity-stream);
     // the text path renders it unchanged — Discord/Slack key the thread shell
     // off the 🤖 marker in the sent text.
     const out = renderFrameText(
@@ -105,7 +105,7 @@ describe("renderFrameText", () => {
     expect(out).toBe("🤖 subagent: 3 steps");
   });
 
-  // WS-D Phase 78 — SPEC §8.3 plan-state header + SPEC §8.5 (step N of M).
+  // SPEC §8.3 plan-state header + SPEC §8.5 (step N of M).
   //
   // The atomic signature migration (events array -> ActivityRenderFrame) is a
   // combined RED+GREEN per AGENTS.md §2.10 escape: pre-patch test code would
@@ -203,7 +203,7 @@ describe("renderFrameText", () => {
     expect(allDone).toContain("───");
   });
 
-  // --- Phase 78 WS-E: ×N / xN surrogate count (SPEC-§9) --------------------
+  // --- ×N / xN surrogate count (SPEC-§9) --------------------
   //
   // When a visible event represents a coalesced surrogate
   // (`frame.groupedActivityIds[event.activityId].length > 1`), the rendered
@@ -342,8 +342,8 @@ describe("renderFrameText", () => {
   // Side effect of quick-260528-mch's coalesce.ts Step 1.5 prefer-end dedup:
   // slow-completed events (>=1500ms, exempt from isDroppableFastSuccess)
   // survive Step 1 with BOTH start and end events kept; Step 1.5 then keeps
-  // the END (whose defaultLabel has no 🔧 baked in — Phase 78-02 bakes the
-  // running marker on START events only). Result: the live IBM web_fetch
+  // the END (whose defaultLabel has no 🔧 baked in — the running marker is
+  // baked on START events only). Result: the live IBM web_fetch
   // (1676ms) rendered as "fetching <host>/<path>" with NO running glyph —
   // asymmetric with sub-1500ms calls whose marked START survives Step 1 and
   // shows 🔧. SPEC §3.1 / §3.11: every in-flight tool step shows the running
@@ -405,7 +405,7 @@ describe("renderFrameText", () => {
     );
   });
 
-  // --- Phase 78 WS-F: elapsed-time fallback (SPEC-§8.5 second half) --------
+  // --- elapsed-time fallback (SPEC-§8.5 second half) --------
   //
   // When `frame.planSnapshot` is undefined AND the strategy supplies an
   // elapsedMs value, the rendered text appends a `(running N s)` line where
@@ -468,7 +468,7 @@ describe("renderFrameText", () => {
   });
 });
 
-// --- Phase 78 WS-F: successLabel(markers?, recoveredFailures?) ---------------
+// --- successLabel(markers?, recoveredFailures?) ---------------
 //
 // SPEC-§8.6 — when a turn completes with `recoveredFailures > 0`, the closing
 // success line carries `(with N recovered failure[s])` after the base label.
@@ -505,7 +505,7 @@ describe("subagentLine", () => {
 
 describe("failureLabel", () => {
   it("formats the closing ❌ {errorKind} by default (marker-less byte parity)", () => {
-    // No markers arg → today's hardcoded glyph, byte-identical to pre-75-06.
+    // No markers arg → today's hardcoded glyph, byte-identical to the historical output.
     expect(failureLabel({ kind: "failure", errorKind: "timeout" })).toBe("❌ timeout");
   });
 
@@ -517,7 +517,7 @@ describe("failureLabel", () => {
   });
 
   it("failure label uses the ascii marker and drops the cross emoji", () => {
-    // The ascii theme strips ALL emoji (UX-01): the closing failure line carries
+    // The ascii theme strips ALL emoji: the closing failure line carries
     // the bracketed `[ERR]` tag and NO `❌`.
     const out = failureLabel({ kind: "failure", errorKind: "timeout" }, ASCII_MARKERS);
     expect(out).toBe("[ERR] timeout");
@@ -544,7 +544,7 @@ describe("successLabel", () => {
   });
 
   it("success label uses the ascii marker and drops the check emoji", () => {
-    // The ascii theme strips ALL emoji (UX-01): the windowed-edit success line
+    // The ascii theme strips ALL emoji: the windowed-edit success line
     // carries the bracketed `[OK]` tag and NO `✓`.
     const out = successLabel(ASCII_MARKERS);
     expect(out).toBe("[OK] done");
@@ -557,7 +557,7 @@ describe("ActivityRenderActions.send (extended port)", () => {
   it("accepts an optional approval-buttons argument (type-level)", () => {
     // The extended port lets a renderer paint native approval choices. The
     // existing `send(text)` shape stays valid; `send(text, { buttons })` is the
-    // additive overload 73-08/09 consume.
+    // additive overload the approval renderers consume.
     expectTypeOf<ActivityRenderActions["send"]>().parameters.toMatchTypeOf<
       [string, { buttons?: RichButton[][] }?]
     >();

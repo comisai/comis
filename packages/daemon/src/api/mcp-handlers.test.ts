@@ -286,10 +286,10 @@ describe("MCP RPC Handlers", () => {
     });
 
     // -------------------------------------------------------------------------
-    // R8.4'-01: Structured throw with .data.needs_oauth_login at RPC boundary.
+    // Structured throw with .data.needs_oauth_login at RPC boundary.
     //
     // When manager.connect returns a NeedsOAuthLoginError, the RPC handler must
-    // throw an Error with .data.needs_oauth_login === true so Plan 06's
+    // throw an Error with .data.needs_oauth_login === true so the
     // mcp_manage catch block can surface the actionable "run mcp login" hint.
     // -------------------------------------------------------------------------
     it("throws structured error with data.needs_oauth_login when manager returns NeedsOAuthLoginError", async () => {
@@ -318,7 +318,7 @@ describe("MCP RPC Handlers", () => {
       }
 
       expect(thrownError).toBeInstanceOf(Error);
-      // R8.4'-01: structured .data must carry needs_oauth_login flag + guidance.
+      // Structured .data must carry needs_oauth_login flag + guidance.
       expect((thrownError as { data?: unknown }).data).toMatchObject({
         needs_oauth_login: true,
         server_name: "oauth-srv",
@@ -1332,7 +1332,7 @@ describe("MCP RPC Handlers", () => {
       expect(mockPersistToConfig).not.toHaveBeenCalled();
     });
 
-    // R11 follow-up — closes the chicken-and-egg between mcp.connect's
+    // Closes the chicken-and-egg between mcp.connect's
     // needs_oauth_login refusal and mcp.oauth_login's "server not found"
     // lookup (mcp-oauth-handlers.ts:135-138 reads container.config). When the
     // operator explicitly opts in with auth:"oauth" and connect fails with
@@ -1367,7 +1367,7 @@ describe("MCP RPC Handlers", () => {
         thrownError = e;
       }
 
-      // The structured needs_oauth_login throw is preserved (R8.4').
+      // The structured needs_oauth_login throw is preserved.
       expect((thrownError as { data?: unknown }).data).toMatchObject({
         needs_oauth_login: true,
         server_name: "higgsfield",
@@ -1393,7 +1393,7 @@ describe("MCP RPC Handlers", () => {
       expect(servers[0]).toMatchObject({ name: "higgsfield", auth: "oauth" });
     });
 
-    // R11.1 / v1.2-plan completion — Fix 4. The agent's mcp_manage(connect,
+    // Fix 4. The agent's mcp_manage(connect,
     // auth:"oauth") on a fresh server SHOULD NOT call manager.connect at all
     // (the SDK's DCR would fail with "at least one redirect_uri is required"
     // because Comis only populates clientMetadata.redirect_uris when
@@ -2065,7 +2065,7 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R11-01: first-install auth:"oauth" promotion
+  // first-install auth:"oauth" promotion
   //
   // When mcp.connect is called with auth:"oauth" and there is no prior
   // persistedEntry (first install), buildPersistedMcpEntry must receive
@@ -2078,7 +2078,7 @@ describe("MCP RPC Handlers", () => {
   // explicitly says "No explicit pass-through needed", which is wrong for
   // the first-install case.
   // -------------------------------------------------------------------------
-  describe("mcp.connect first-install auth:oauth promotion (R11-01)", () => {
+  describe("mcp.connect first-install auth:oauth promotion", () => {
     it("stores auth:oauth on the persisted entry when params.auth='oauth' on first install (no prior persistedEntry)", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("higgsfield", [])));
       const { persistDeps, container } = makePersistDeps([]); // empty — no prior entry
@@ -3004,14 +3004,14 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // mcp.connect / mcp.test — mutableSecretManager live-apply (WR-01)
+  // mcp.connect / mcp.test — mutableSecretManager live-apply
   //
   // When a static-secret header is extracted, the mutableSecretManager.upsert
   // must be called so secretManager.get() returns the value without a restart.
   // The test uses a real shared-Map pair to prove end-to-end visibility.
   // -------------------------------------------------------------------------
 
-  describe("mcp.connect header credential — mutableSecretManager live-apply (WR-01)", () => {
+  describe("mcp.connect header credential — mutableSecretManager live-apply", () => {
     const STATIC_SECRET_WR01 = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
     it("mcp.connect: mutableSecretManager.upsert is called after secretStore.set for a static-secret header", async () => {
@@ -3041,8 +3041,8 @@ describe("MCP RPC Handlers", () => {
       });
 
       expect(secretStore.set).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_WR01);
-      // WR-01: mutableSecretManager.upsert must fire so the value is live
-      // without a daemon restart (additive no-restart guarantee — REQ-13).
+      // mutableSecretManager.upsert must fire so the value is live
+      // without a daemon restart (additive no-restart guarantee).
       expect(upsert).toHaveBeenCalledOnce();
       expect(upsert).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_WR01);
     });
@@ -3111,7 +3111,7 @@ describe("MCP RPC Handlers", () => {
       });
 
       expect(secretStore.set).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_WR01);
-      // WR-01: mutableSecretManager.upsert must fire in mcp.test too.
+      // mutableSecretManager.upsert must fire in mcp.test too.
       expect(upsert).toHaveBeenCalledOnce();
       expect(upsert).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_WR01);
     });

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Pure-helper suite for the consolidation clustering math (Phase 84 — CONS-01/02/04/06)
-// + the surprisal novelty gate (Phase 101 — REASON-04).
+// Pure-helper suite for the consolidation clustering math
+// + the surprisal novelty gate.
 //
 // These helpers are deterministic, IO-free, and contain the SECURITY-critical
-// trust ceiling (`minTrust` — the privilege-escalation guard, CONS-02) plus the
-// anti-trust-laundering partition (`groupByTrustAndTagScope`, CONS-06), the
-// greedy single-link clusterer (CONS-01), the order-independent dedup key
-// (`deterministicDedupKey`, CONS-04), and the surprisal score + top-fraction
-// selector (`surprisal`/`surprisalSelect`, REASON-04). No LLM, no clock, no SQL —
+// trust ceiling (`minTrust` — the privilege-escalation guard) plus the
+// anti-trust-laundering partition (`groupByTrustAndTagScope`), the
+// greedy single-link clusterer, the order-independent dedup key
+// (`deterministicDedupKey`), and the surprisal score + top-fraction
+// selector (`surprisal`/`surprisalSelect`). No LLM, no clock, no SQL —
 // pure RED→GREEN.
 import { describe, it, expect } from "vitest";
 import type { MemoryEntry, TrustLevel } from "@comis/core";
@@ -47,7 +47,7 @@ function makeCand(overrides: Partial<MemoryEntry> = {}, embedding?: number[]): C
   return { entry: makeEntry(overrides), ...(embedding ? { embedding } : {}) };
 }
 
-describe("minTrust — the privilege-escalation guard (CONS-02)", () => {
+describe("minTrust — the privilege-escalation guard", () => {
   it("returns the LEAST-trusted member so [learned, external] yields external", () => {
     expect(minTrust([makeEntry({ trustLevel: "learned" }), makeEntry({ trustLevel: "external" })])).toBe(
       "external",
@@ -87,7 +87,7 @@ describe("minTrust — the privilege-escalation guard (CONS-02)", () => {
   });
 });
 
-describe("minTrustLevel — the 2-arg fold trust CEILING (FOLD-01, the escalation guard on the fold path)", () => {
+describe("minTrustLevel — the 2-arg fold trust CEILING (the escalation guard on the fold path)", () => {
   it("returns the LESS-trusted of the two — a fold can only LOWER trust", () => {
     expect(minTrustLevel("system", "learned")).toBe("learned");
     expect(minTrustLevel("system", "external")).toBe("external");
@@ -125,7 +125,7 @@ describe("minTrustLevel — the 2-arg fold trust CEILING (FOLD-01, the escalatio
   });
 });
 
-describe("groupByTrustAndTagScope — anti-trust-laundering partition (CONS-06)", () => {
+describe("groupByTrustAndTagScope — anti-trust-laundering partition", () => {
   it("splits a mixed cluster into homogeneous (trust, sorted-tags) sub-clusters", () => {
     const cluster = [
       makeEntry({ id: "00000000-0000-4000-8000-00000000000a", trustLevel: "learned", tags: ["a"] }),
@@ -171,7 +171,7 @@ describe("groupByTrustAndTagScope — anti-trust-laundering partition (CONS-06)"
   });
 });
 
-describe("clusterByEntityThenEmbedding — greedy deterministic single-link (CONS-01)", () => {
+describe("clusterByEntityThenEmbedding — greedy deterministic single-link", () => {
   it("unions cosine-near neighbours into one cluster and leaves a far one a singleton", () => {
     const cands = [
       makeCand({ id: "00000000-0000-4000-8000-000000000001" }, [1, 0, 0]),
@@ -235,7 +235,7 @@ describe("clusterByEntityThenEmbedding — greedy deterministic single-link (CON
   });
 });
 
-describe("deterministicDedupKey — order-independent source-id hash (CONS-04)", () => {
+describe("deterministicDedupKey — order-independent source-id hash", () => {
   it("is identical for the same source set regardless of order", () => {
     const a = deterministicDedupKey(["s3", "s1", "s2"]);
     const b = deterministicDedupKey(["s1", "s2", "s3"]);
@@ -276,7 +276,7 @@ describe("cosine — pure vector proximity", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Surprisal novelty gate (Phase 101 — REASON-04)
+// Surprisal novelty gate
 //
 // `surprisal(distances, dim)` = dim · log(mean kNN cosine distance), guarding the
 // empty + mean<=0 cases to 0 (NEVER -Infinity/NaN — a poisoned sort key). The
@@ -291,7 +291,7 @@ describe("cosine — pure vector proximity", () => {
 // is not deterministic).
 // ---------------------------------------------------------------------------
 
-describe("surprisal — the per-candidate novelty score (REASON-04)", () => {
+describe("surprisal — the per-candidate novelty score", () => {
   it("returns 0 for an empty distance set (no neighbour → not surprising-vs-corpus)", () => {
     expect(surprisal([], 768)).toBe(0);
   });
@@ -319,7 +319,7 @@ describe("surprisal — the per-candidate novelty score (REASON-04)", () => {
   });
 });
 
-describe("surprisalSelect — the deterministic top-fraction novelty gate (REASON-04)", () => {
+describe("surprisalSelect — the deterministic top-fraction novelty gate", () => {
   /** A candidate id → its (constant) per-element kNN distances, for a known surprisal order. */
   function candAt(id: string, embedding?: number[]): ConsolidationCandidate {
     return makeCand({ id }, embedding);

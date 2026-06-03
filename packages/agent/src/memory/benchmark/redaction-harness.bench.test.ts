@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated PRIVACY / REDACTION leak-rate harness (SUITE-05) -- measures whether
+ * Env-gated PRIVACY / REDACTION leak-rate harness -- measures whether
  * a planted SYNTHETIC secret/PII can reach Comis's RECALLED context, exercising
  * the SHIPPED redaction firewall -- NOT new security code:
  *   1. write-time `validateMemoryWrite` (the shipped block at the write boundary:
@@ -19,7 +19,7 @@
  * that the EXACT planted secret string is present (catches the PII -- email/phone
  * -- that is NOT secret-shaped but is still a planted-value leak).
  *
- * THE ABLATION (RESEARCH §SUITE-05 -- the evidence the mitigations drive leaks
+ * THE ABLATION (the evidence the mitigations drive leaks
  * down): every haystack is recalled into TWO stores -- mitigations ON (the
  * write-time block applied at ingest + the recall-time scrub applied to the
  * recalled context) and mitigations OFF (every doc ingested verbatim, no scrub).
@@ -31,7 +31,7 @@
  * (`0 <= leakRate <= 100`, `validTotal === total - invalid`) plus the ON<=OFF
  * ablation and the secret-omission gate.
  *
- * CRITICAL (threat T-99-05-01): the committed `redaction-report.json` records
+ * CRITICAL (the secret-omission threat): the committed `redaction-report.json` records
  * ONLY the aggregate leak-rate + counts -- NEVER a `plantedSecrets` string, NEVER
  * a leaked snippet. The report is built via `buildSuiteReport` (which structurally
  * carries only numeric AccuracyResult fields) and the gated body asserts the
@@ -47,19 +47,19 @@
  * qa-answer-prompt.ts) import ONLY @comis/core types (or nothing). Mirrors the
  * blessed precedent retrieval-harness.bench.test.ts / poisoning-harness.bench.test.ts.
  *
- * DUPLICATED INGEST WIRING (intentional, RESEARCH Anti-Pattern): makeBenchConfig /
+ * DUPLICATED INGEST WIRING (intentional, a documented anti-pattern): makeBenchConfig /
  * BENCH_SESSION_KEY / resolveReportDir are DUPLICATED from the sibling harnesses
  * rather than factored into a shared non-`.test.ts` helper -- a shared helper
  * importing @comis/memory WOULD trip the cut. The harnesses are independent gates.
  *
  * SECURITY:
  * - Both bench stores are fresh `mkdtempSync` tmp DBs (NEVER ~/.comis), `tenantId:
- *   "default"` / `agentId:"bench"` -- isolated from any live agent (T-99-05-03).
+ *   "default"` / `agentId:"bench"` -- isolated from any live agent.
  *   Closed after the run.
  * - The planted secrets are SYNTHETIC / obviously-fake (`sk-FAKE…` family, a
- *   `*.example.test` reserved-domain email, an all-zero phone; T-99-05-02) -- a
+ *   `*.example.test` reserved-domain email, an all-zero phone) -- a
  *   leaked fixture discloses nothing real -- but the report STILL omits them.
- * - Content is ingested as memory VALUES only, never an object key (T-99-05-04);
+ * - Content is ingested as memory VALUES only, never an object key;
  *   scanForSecrets walks defensively.
  *
  * @module
@@ -84,11 +84,11 @@ import {
 } from "@comis/core";
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
 import { writeRegularFile } from "@comis/observability";
-// RELATIVE Wave-1 (99-01) constructed redaction haystack -- synthetic secrets, no corpus.
+// RELATIVE constructed redaction haystack -- synthetic secrets, no corpus.
 import { buildRedactionHaystack } from "./suite-scenario.js";
-// RELATIVE Wave-1 (99-01) secret-free per-tier report builder.
+// RELATIVE secret-free per-tier report builder.
 import { buildSuiteReport } from "./suite-report.js";
-// RELATIVE Task-1 (this plan) pure leak-rate scorer (takes boolean flags only).
+// RELATIVE pure leak-rate scorer (takes boolean flags only).
 import { scoreRedaction, type RedactionProbe } from "./redaction-scorer.js";
 // RELATIVE existing pure context formatter (the recalled-context rendering).
 import { formatAnswerContext } from "./qa-answer-prompt.js";
@@ -111,7 +111,7 @@ const LLAMA_MODEL_PATH = process.env.LLAMA_MODEL_PATH; // optional vector lane (
 const LLAMA_RERANKER_MODEL_PATH = process.env.LLAMA_RERANKER_MODEL_PATH; // optional rerank lift
 const COMIS_BENCH_DATA = process.env.COMIS_BENCH_DATA; // optional report-output base
 
-/** Fixed epoch (matches the Phase-88/89/99 siblings' neutral clock). */
+/** Fixed epoch (matches the sibling harnesses' neutral clock). */
 const BENCH_NOW = 1_700_000_000_000;
 /** The redaction tier's harness version stamp (recorded in the report). */
 const HARNESS_VERSION = "phase-99-v1";
@@ -142,7 +142,7 @@ const BENCH_SESSION_KEY: SessionKey = {
 /**
  * Resolve the report output directory (DUPLICATED from the sibling harnesses).
  * The write itself uses `writeRegularFile({ confinedBaseDir })`, so O_NOFOLLOW +
- * EXCL + confinement applies regardless of the base (T-99-05-01).
+ * EXCL + confinement applies regardless of the base.
  */
 function resolveReportDir(fallbackTmpDir: string): string {
   if (COMIS_BENCH_DATA !== undefined && COMIS_BENCH_DATA.length > 0) {
@@ -189,7 +189,7 @@ describe.skipIf(!COMIS_BENCH)("privacy/redaction leak-rate (gated)", () => {
   let reportJson = "";
 
   beforeAll(async () => {
-    // 1. HAYSTACK -- constructed (Wave 1); synthetic secrets/PII embedded in some
+    // 1. HAYSTACK -- constructed; synthetic secrets/PII embedded in some
     //    docs; no external corpus, no download. Each planted-secret-bearing doc is
     //    one probe.
     const haystack = buildRedactionHaystack();
@@ -341,7 +341,7 @@ describe.skipIf(!COMIS_BENCH)("privacy/redaction leak-rate (gated)", () => {
     await rerankerPort?.dispose?.();
     // 2h hook timeout: ingest + the LLM-free ON/OFF recall + leak detect for the
     // whole haystack runs HERE (the it body only scores + writes). The 2-min
-    // default trips on a non-trivial set (BUG-001) -- must match the it-body budget.
+    // default trips on a non-trivial set -- must match the it-body budget.
   }, 7_200_000);
 
   it(
@@ -355,7 +355,7 @@ describe.skipIf(!COMIS_BENCH)("privacy/redaction leak-rate (gated)", () => {
       // Each row's `overall` is 100 - leakRate (so a higher overall = SAFER, the
       // AccuracyResult convention); ONLY the aggregate numbers + counts are carried
       // -- buildSuiteReport structurally copies only the numeric AccuracyResult
-      // fields, so NO planted secret can reach the report (T-99-05-01).
+      // fields, so NO planted secret can reach the report.
       const onResult = {
         overall: 100 - scoreOn.leakRate,
         correct: scoreOn.validTotal - scoreOn.leakedCount,
@@ -385,7 +385,7 @@ describe.skipIf(!COMIS_BENCH)("privacy/redaction leak-rate (gated)", () => {
       );
       reportJson = JSON.stringify(report, null, 2);
 
-      // WRITE via the CONFINED writer (T-99-05-01) -- O_NOFOLLOW + EXCL + confinement.
+      // WRITE via the CONFINED writer -- O_NOFOLLOW + EXCL + confinement.
       const writeResult = writeRegularFile({
         path: join(reportDir, "redaction-report.json"),
         content: reportJson,
@@ -415,7 +415,7 @@ describe.skipIf(!COMIS_BENCH)("privacy/redaction leak-rate (gated)", () => {
       expect(scoreOn.validTotal).toBe(scoreOn.total - scoreOn.invalid);
       expect(scoreOff.validTotal).toBe(scoreOff.total - scoreOff.invalid);
 
-      // The report must carry NO secret substring (T-99-05-01) -- the ONLY allowed
+      // The report must carry NO secret substring -- the ONLY allowed
       // occurrence of these tokens in this file is inside this negation.
       expect(reportJson).not.toMatch(/apiKey|sk-|Bearer/);
       // SECOND, redaction-specific omission sweep: the report contains NONE of the
@@ -424,7 +424,7 @@ describe.skipIf(!COMIS_BENCH)("privacy/redaction leak-rate (gated)", () => {
         expect(reportJson.includes(secret), "report omits every planted secret").toBe(false);
       }
     },
-    // 2h `it` budget (BUG-001) -- consistent with the sibling harnesses; the heavy
+    // 2h `it` budget -- consistent with the sibling harnesses; the heavy
     // ingest+recall already ran in beforeAll.
     7_200_000,
   );

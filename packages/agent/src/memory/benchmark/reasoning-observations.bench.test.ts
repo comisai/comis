@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated KEYLESS reasoning-observations harness (REASON-05, Phase 101-06) --
+ * Env-gated KEYLESS reasoning-observations harness --
  * the FREE, deterministic, no-API-cost measurement of the two MECHANICAL claims of
- * the offline reasoning job (Plan 101-05): WRITE-correctness + DEFAULT-OFF
- * byte-identity. Mirrors the Phase-100 KG-05 keyless harness
+ * the offline reasoning job: WRITE-correctness + DEFAULT-OFF
+ * byte-identity. Mirrors the graph-spread keyless harness
  * (graph-spread-lane-contribution.bench.test.ts) including its honest-PARTIAL split.
  *
- * WHY THIS HARNESS EXISTS (the honest gap the Phase-101 gate must measure): the
+ * WHY THIS HARNESS EXISTS (the honest gap this gate must measure): the
  * shipped QA + retrieval + contradiction harnesses do NOT wire the reasoning
- * observations into recall (the SAME KG-05 structural gap, verified), so a costed
+ * observations into recall (the SAME graph-spread structural gap, verified), so a costed
  * QA cross-judge lift cannot be measured without a harness extension + a costed
  * reasoning pass over the corpus. Rather than guess a delta, this harness proves
  * the two claims that CAN be measured deterministically at $0:
@@ -21,25 +21,24 @@
  *      a poisoning attempt would land):
  *        - an INDUCTIVE observation is written at trustLevel <= learned with
  *          observationKind="inductive" -- an all-`system` cluster STILL yields
- *          `learned`, NEVER `system` (REASON-03, T-101-05-01);
- *        - a DEDUCTIVE knowledge-update is current-truth via the real upsertTriple
- *          (REASON-02), and -- for the trust-first case -- an OLDER higher-trust
+ *          `learned`, NEVER `system`;
+ *        - a DEDUCTIVE knowledge-update is current-truth via the real upsertTriple,
+ *          and -- for the trust-first case -- an OLDER higher-trust
  *          incumbent SURVIVES a NEWER lower-trust deductive claim (anti-poisoning).
  *
  *   2. DEFAULT-OFF byte-identity (the no-regression proof): with config.enabled=false
  *      the injected reason() seam is invoked 0 times AND the row count (observations +
  *      triples) is UNCHANGED. Because the SHIPPING default ships the reasoning job OFF
- *      (memoryReasoning is `.optional()` + default-OFF, 101-02), this is the
- *      byte-identity-to-Phase-98 proof by construction: no recall path changes when
+ *      (memoryReasoning is `.optional()` + default-OFF), this is the
+ *      byte-identity proof by construction: no recall path changes when
  *      the job is off.
  *
- * HONESTLY DEFERRED (the costed item -- VERDICT: PARTIAL, FOLLOW-UP-style): the QA
+ * HONESTLY DEFERRED (the costed item, only partially measurable here): the QA
  * cross-judge multi-session accuracy lift from the reasoning observations. The
  * shipped QA harness does not wire the reasoning observations into recall, and a
  * KG-ON QA cross-judge needs the QA harness extended + a costed reasoning pass over
  * the corpus (the offline reason seam needs a costed model). That is an OPERATOR
- * COSTED RE-RUN, not a number this keyless gate may quote. See the manifest's
- * GATE-REPORT.md and run-provenance.json.
+ * COSTED RE-RUN, not a number this keyless gate may quote.
  *
  * THIS IS THE PRODUCTION CODE PATH, NOT A MOCK:
  *   - the job = `runMemoryReasoning(deps)` (bare @comis/agent production job),
@@ -50,7 +49,7 @@
  * The only thing the harness injects is the `reason` seam -- a DETERMINISTIC fixed
  * function (no provider call, no key) so the test is reproducible + LLM-free.
  *
- * KEYLESS (T-89-03 family): no model, no API key, no provider call, no cost. The
+ * KEYLESS: no model, no API key, no provider call, no cost. The
  * injected reason() seam returns fixed typed candidates.
  *
  * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import
@@ -107,7 +106,7 @@ const benchClock = { now: () => BENCH_NOW };
 
 /** The bench store config (FTS-only base, dims=4 -- the surprisal gate degrades to
  *  the full pool since the test-model leaves rows un-vectorized; that degrade path
- *  is itself part of the production job, RED-proven in 101-05). */
+ *  is itself part of the production job, RED-proven). */
 function makeBenchConfig(dbPath: string): MemoryConfig {
   return {
     dbPath,
@@ -150,7 +149,7 @@ function seedEntry(overrides: Partial<MemoryEntry>): MemoryEntry {
   };
 }
 
-describe.skipIf(!COMIS_BENCH)("reasoning observations WRITE-correctness (REASON-05, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("reasoning observations WRITE-correctness (keyless gated)", () => {
   // Captured in beforeAll: the structural witnesses the assertions + the report read.
   let inductiveWritten = false;
   let inductiveTrust = "";
@@ -223,7 +222,7 @@ describe.skipIf(!COMIS_BENCH)("reasoning observations WRITE-correctness (REASON-
       )
       .get() as { n: number };
 
-    // The DEDUCTIVE knowledge-update is current-truth (REASON-02).
+    // The DEDUCTIVE knowledge-update is current-truth.
     const ctA = await tripleStore.currentTruth({ tenantId: BENCH_TENANT, agentId: BENCH_AGENT });
     deductiveCurrentObjects = ctA.ok
       ? ctA.value.filter((t) => t.subject === "alice" && t.predicate === "prefers").map((t) => t.object)
@@ -317,13 +316,13 @@ describe.skipIf(!COMIS_BENCH)("reasoning observations WRITE-correctness (REASON-
   it("writes an INDUCTIVE observation at trust 'learned' (NEVER 'system') with observationKind='inductive'", () => {
     expect(inductiveWritten, "an inductive observation was written").toBe(true);
     expect(inductiveKind, "the written observation is inductive").toBe("inductive");
-    // The binding constraint (REASON-03, T-101-05-01): an all-`system` cluster yields
+    // The binding constraint: an all-`system` cluster yields
     // `learned`, NEVER `system`. Hard-assert the exact value.
     expect(inductiveTrust, "inductive trust is HARD-capped at learned").toBe("learned");
     expect(inductiveTrustIsLearned).toBe(true);
   });
 
-  it("writes a DEDUCTIVE knowledge-update as current-truth via the real upsertTriple (REASON-02)", () => {
+  it("writes a DEDUCTIVE knowledge-update as current-truth via the real upsertTriple", () => {
     expect(deductiveCurrentObjects, "the deductive S/P/O is current-truth").toContain("short replies");
   });
 
@@ -343,9 +342,9 @@ describe.skipIf(!COMIS_BENCH)("reasoning observations WRITE-correctness (REASON-
  * DEFAULT-OFF byte-identity (the no-regression proof). With config.enabled=false the
  * job is a TRUE no-op: the injected reason() seam is invoked 0 times AND the row
  * count (observations + triples) is unchanged. Because the SHIPPING default ships the
- * reasoning job OFF, this is the byte-identity-to-Phase-98 proof by construction.
+ * reasoning job OFF, this is the byte-identity proof by construction.
  */
-describe.skipIf(!COMIS_BENCH)("reasoning observations DEFAULT-OFF byte-identity (REASON-05, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("reasoning observations DEFAULT-OFF byte-identity (keyless gated)", () => {
   let reasonCallCount = 0;
   let memoriesBefore = 0;
   let memoriesAfter = 0;

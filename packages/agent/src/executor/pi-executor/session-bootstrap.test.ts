@@ -147,8 +147,8 @@ describe("bootstrapSession", () => {
     expect(holder.published).toHaveLength(0);
   });
 
-  it("clears the holder on a SEP-off turn so a prior SEP-on turn's plan does not leak (T-74-05)", async () => {
-    // T-74-05 stale-plan leak: a SEP-on turn publishes ref A into the holder
+  it("clears the holder on a SEP-off turn so a prior SEP-on turn's plan does not leak", async () => {
+    // Stale-plan leak: a SEP-on turn publishes ref A into the holder
     // (and SEP populates it). A LATER SEP-off turn on the SAME holder must
     // de-publish — otherwise getCurrentPlan() still projects turn A's plan
     // during the SEP-off turn. Pre-fix bootstrapSession only guards publish()

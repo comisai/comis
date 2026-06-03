@@ -379,7 +379,7 @@ describe("oauthHealthCheck — TLS preflight", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Env-mode skip (WR-02)
+// Env-mode skip
 // ---------------------------------------------------------------------------
 
 describe("oauthHealthCheck — env-mode skip", () => {

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * terminal-workspace -- the per-session jail workspace allocator (Phase-122 gap 2,
- * P3 functional). Extracted from `terminal-session-registry.ts` so that file stays
- * under the 800-line architecture cap.
+ * terminal-workspace -- the per-session jail workspace allocator. Extracted from
+ * `terminal-session-registry.ts` so that file stays under the 800-line architecture cap.
  *
  * THE GAP IT CLOSES. The terminal worker spawns the driven child INSIDE a bwrap jail
  * with `--chdir <cwd>` under `--uid 65534` (nobody). The create frame must therefore
@@ -12,7 +11,7 @@
  * `cat` failed to spawn → session lost), and which at `filesystem:workspace` would bind
  * HOME (far too broad). This allocator gives each session a throwaway directory the
  * jail actually needs to function; the FULL origin-keyed per-session resource lifecycle
- * is P4/123, this is just the minimum the jail requires.
+ * is a later concern — this is just the minimum the jail requires.
  *
  * WHY WORLD-RWX (0o777). The dir is bind-mounted RW into the jail and the child runs as
  * the net-new uid 65534, NOT the daemon uid that created the dir. The `mkdtemp` default

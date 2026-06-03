@@ -43,7 +43,7 @@ const ACTION_REGISTRY = new Map<string, ActionClassification>([
   ["log.read", "read"],
 
   // -------------------------------------------------------------------------
-  // Read operations (v2.0 tool actions)
+  // Read operations (tool actions)
   // -------------------------------------------------------------------------
   ["tool.execute", "read"],
   ["cron.list", "read"],
@@ -83,7 +83,7 @@ const ACTION_REGISTRY = new Map<string, ActionClassification>([
   ["skill.execute", "mutate"],
 
   // -------------------------------------------------------------------------
-  // Mutate operations (v2.0 tool actions)
+  // Mutate operations (tool actions)
   // -------------------------------------------------------------------------
   ["message.reply", "mutate"],
   ["message.react", "mutate"],
@@ -110,12 +110,12 @@ const ACTION_REGISTRY = new Map<string, ActionClassification>([
   ["system.exec", "destructive"],
 
   // -------------------------------------------------------------------------
-  // Mutate operations (v2.0 — reversible scheduling)
+  // Mutate operations (reversible scheduling)
   // -------------------------------------------------------------------------
   ["cron.add", "mutate"],
 
   // -------------------------------------------------------------------------
-  // Destructive operations (v2.0 tool actions)
+  // Destructive operations (tool actions)
   // -------------------------------------------------------------------------
   ["cron.remove", "destructive"],
   ["message.delete", "destructive"],

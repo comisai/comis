@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Generic per-tier benchmark suite report builder (Phase 99, Plan 99-01) -- the
- * single manifest shape every Wave-2 Tier-3 + external + BEAM harness writes to
- * disk via `writeRegularFile`, so a Comis suite number is reproducible across
- * changes and comparable per-ability.
+ * Generic per-tier benchmark suite report builder -- the single manifest shape
+ * every Tier-3 + external + BEAM harness writes to disk via `writeRegularFile`,
+ * so a Comis suite number is reproducible across changes and comparable
+ * per-ability.
  *
- * WHY A SIBLING OF qa-report.ts (99-RESEARCH.md Pitfall 4): the shipped
+ * WHY A SIBLING OF qa-report.ts: the shipped
  * `BenchmarkReport.benchmark` is a CLOSED union (`"longmemeval" | "locomo" |
  * "combined"`), frozen by the J1 secret-omission tests. The new tiers
  * (`poisoning`, `redaction`, `trust-contradiction`, `recall-learning`, `beam`,
@@ -17,7 +17,7 @@
  * object PURELY (no I/O, fully unit-testable); the `writeRegularFile` call lives
  * in the gated `.bench.test.ts`.
  *
- * SECURITY -- structural secret omission (T-99-01-01, ASVS V7, the qa-report.ts
+ * SECURITY -- structural secret omission (ASVS V7, the qa-report.ts
  * doctrine copied VERBATIM in style): the report is persisted via
  * writeRegularFile, OUTSIDE Pino's redaction safety-net, so the builder itself
  * must guarantee no credential ever reaches the file. It does so STRUCTURALLY:
@@ -31,7 +31,7 @@
  * output. (RED gate: suite-report.test.ts Test 3 asserts the serialized report
  * contains none of `/apiKey|sk-|Bearer|base_url/` with a secret-bearing config.)
  *
- * SECURITY -- prototype-pollution discipline (T-99-01-03, copied from
+ * SECURITY -- prototype-pollution discipline (copied from
  * qa-accuracy.ts): the `perCategory` keys originate from the UNTRUSTED dataset
  * `category` strings. The rebuilt map is a null-prototype object
  * (`Object.create(null)`) with literal-keyed `{ correct, total, invalid,
@@ -106,7 +106,7 @@ function pickCategory(c: CategoryAccuracy): CategoryAccuracy {
  * Copies only the numeric scalars + a freshly-materialized null-prototype
  * `perCategory` map with literal-keyed numeric buckets -- so neither an off-contract
  * secret-bearing field on the input result NOR a `__proto__`/`constructor` category
- * key can reach the output (T-99-01-01 + T-99-01-03, the qa-report.ts + qa-accuracy.ts
+ * key can reach the output (the qa-report.ts + qa-accuracy.ts
  * doctrine). Mirrors qa-report.ts's `pickCost`/`pickLatency` style.
  */
 function pickAccuracy(r: AccuracyResult): AccuracyResult {
@@ -122,7 +122,7 @@ function pickAccuracy(r: AccuracyResult): AccuracyResult {
     // `CategoryAccuracy` (no defensive `undefined` guard needed -- that branch
     // would be unreachable). Literal-keyed write of a freshly-rebuilt numeric
     // bucket (no input spread), so a `__proto__`/`constructor` key stays an
-    // ordinary own data property (T-99-01-03).
+    // ordinary own data property.
     perCategory[key] = pickCategory(r.perCategory[key]);
   }
   return {

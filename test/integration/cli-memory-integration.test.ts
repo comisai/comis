@@ -6,10 +6,10 @@
  * running daemon. Each test verifies the correct RPC method is called, the
  * response is a valid JSON-RPC shape, and the daemon returns structured data.
  *
- *   INTEG-MEM-01: Memory Search Extended
- *   INTEG-MEM-02: Memory Inspect by ID
- *   INTEG-MEM-03: Memory Stats (Inspect without ID)
- *   INTEG-MEM-04: Memory Clear via Config Set
+ *   - Memory Search Extended
+ *   - Memory Inspect by ID
+ *   - Memory Stats (Inspect without ID)
+ *   - Memory Clear via Config Set
  *
  * Uses the daemon harness for programmatic daemon startup/teardown.
  */
@@ -58,10 +58,10 @@ describe("CLI Memory Commands Integration (real daemon)", () => {
   }, 30_000);
 
   // ---------------------------------------------------------------------------
-  // INTEG-MEM-01 -- Memory Search Extended
+  // Memory Search Extended
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-MEM-01: Memory Search Extended", () => {
+  describe("Memory Search Extended", () => {
     it("memory.search with query and limit returns result", async () => {
       const response = (await sendJsonRpc(ws, "memory.search", { query: "test query", limit: 5 }, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -111,10 +111,10 @@ describe("CLI Memory Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-MEM-02 -- Memory Inspect by ID
+  // Memory Inspect by ID
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-MEM-02: Memory Inspect by ID", () => {
+  describe("Memory Inspect by ID", () => {
     it("memory.inspect with nonexistent id returns valid JSON-RPC", async () => {
       const response = (await sendJsonRpc(ws, "memory.inspect", { id: "nonexistent-id-12345" }, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -144,10 +144,10 @@ describe("CLI Memory Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-MEM-03 -- Memory Stats (Inspect without ID)
+  // Memory Stats (Inspect without ID)
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-MEM-03: Memory Stats (Inspect without ID)", () => {
+  describe("Memory Stats (Inspect without ID)", () => {
     it("memory.inspect with empty params returns valid JSON-RPC response", async () => {
       const response = (await sendJsonRpc(ws, "memory.inspect", {}, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -180,10 +180,10 @@ describe("CLI Memory Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-MEM-04 -- Memory Clear via Config Set
+  // Memory Clear via Config Set
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-MEM-04: Memory Clear via Config Set", () => {
+  describe("Memory Clear via Config Set", () => {
     it("config.set for memory clear returns valid JSON-RPC response", async () => {
       const response = (await sendJsonRpc(ws, "config.set", { section: "memory", key: "clear", value: "sessions" }, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 

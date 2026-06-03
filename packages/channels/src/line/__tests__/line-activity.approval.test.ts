@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LINE Quick-Reply approval-chip tests (APV-02 LINE half; §7.7 / §17.3 / CHAN-08).
+ * LINE Quick-Reply approval-chip tests (LINE half; §7.7 / §17.3).
  *
- * Phase 73 lands the deferred CHAN-08 affordance: a `kind:"approval"` frame causes
- * LINE's send-only AppendOnly renderer to carry Quick-Reply chips (the `buttons`
- * param) whose callback data is the signed §6.4.2 wire string
- * `v1.<choice>.<shortId>.<hmac>` (LINE Quick-Reply postback carries the signed
- * callback). The chips are built via `buildApprovalButtons(event, signCallbackData)`
- * over the renderer-injected `SignCallbackData` (73-06 seam); the renderer reaches
- * the core HMAC primitive through it and never imports `@comis/orchestrator`.
+ * A `kind:"approval"` frame causes LINE's send-only AppendOnly renderer to carry
+ * Quick-Reply chips (the `buttons` param) whose callback data is the signed §6.4.2
+ * wire string `v1.<choice>.<shortId>.<hmac>` (LINE Quick-Reply postback carries the
+ * signed callback). The chips are built via `buildApprovalButtons(event,
+ * signCallbackData)` over the renderer-injected `SignCallbackData`; the renderer
+ * reaches the core HMAC primitive through it and never imports `@comis/orchestrator`.
  *
  * The frame stays redacted — chip labels/styles come from the choice hints, never
- * raw params (T-73-17). A non-approval frame stays send-only (no chips), preserving
- * the pre-73 AppendOnly behavior.
+ * raw params. A non-approval frame stays send-only (no chips), preserving the
+ * earlier AppendOnly behavior.
  */
 import { describe, it, expect } from "vitest";
 import type { ActivityRenderFrame, ActivityEvent, ApprovalCorrelation } from "@comis/core";
@@ -69,7 +68,7 @@ function firstSend(fake: ReturnType<typeof createFakeLineAdapter>): Extract<Fake
   return fake.recorded.calls.find((c): c is Extract<FakeLineCall, { op: "send" }> => c.op === "send");
 }
 
-describe("LINE Quick-Reply approval chips (signed callback data — APV-02)", () => {
+describe("LINE Quick-Reply approval chips (signed callback data)", () => {
   it("paints a kind:'approval' frame's send with Quick-Reply chips whose callback_data is the signed wire string", async () => {
     const fake = createFakeLineAdapter();
     const r = createLineActivityRenderer(fake, "chat-1", { signCallbackData: sign });
@@ -129,7 +128,7 @@ describe("LINE Quick-Reply approval chips (signed callback data — APV-02)", ()
     await r.apply(plain);
 
     const send = firstSend(fake);
-    // [Rule 1 — bug fix, quick-260528-nsv] Non-approval tool event renders
+    // Non-approval tool event renders
     // with the per-step running 🔧 marker; the no-chips invariant (this
     // test's load-bearing point — no Quick Reply chips on non-approval
     // frames) is unchanged.

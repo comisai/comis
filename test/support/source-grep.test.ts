@@ -110,7 +110,7 @@ describe("findInSourceFiles", () => {
   });
 });
 
-describe("findInSourceFiles -- hardening (ARCH-BASE-04)", () => {
+describe("findInSourceFiles -- hardening", () => {
   it("clones caller-supplied global regex per file scan (no lastIndex leak)", () => {
     const re = /needle/g;
     const result = findInSourceFiles({

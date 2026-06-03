@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * APV-08 removal assertion (no-backward-compat).
+ * Approval-notifier removal assertion (no-backward-compat).
  *
  * The old `approval-notifier.ts` was a SECOND, racing approval-text path:
  * it subscribed to `approval:requested` directly and sent chat text,
- * duplicating the prompt the signed activity-renderer path (73-08/09/10)
- * now owns on every channel. Phase 73 hard-deletes it — no shim, no alias,
- * no migration (AGENTS.md §2.9; mirrors the file-absent + no-alias idiom of
+ * duplicating the prompt the signed activity-renderer path now owns on every
+ * channel. It is hard-deleted — no shim, no alias, no migration (AGENTS.md
+ * §2.9; mirrors the file-absent + no-alias idiom of
  * `test/architecture/no-backward-compat.test.ts`).
  *
  * This test pins the deletion so the notifier cannot return as a stray
- * re-export or as leftover daemon wiring (threat T-73-33 / T-73-34). It
- * asserts three things:
+ * re-export or as leftover daemon wiring. It asserts three things:
  *
  *   1. `approval-notifier.ts` and its `.test.ts` no longer exist on disk.
  *   2. The `@comis/channels` barrel (`packages/channels/src/index.ts`)
@@ -41,17 +40,17 @@ function repoPath(...segments: string[]): string {
   return resolve(REPO_ROOT, ...segments);
 }
 
-describe("approval-notifier-removed (APV-08)", () => {
+describe("approval-notifier-removed", () => {
   it("approval-notifier.ts and approval-notifier.test.ts no longer exist on disk", () => {
     expect(
       existsSync(repoPath("packages/channels/src/shared/approval-notifier.ts")),
-      "packages/channels/src/shared/approval-notifier.ts must be deleted (APV-08, no-backward-compat)",
+      "packages/channels/src/shared/approval-notifier.ts must be deleted (no-backward-compat)",
     ).toBe(false);
     expect(
       existsSync(
         repoPath("packages/channels/src/shared/approval-notifier.test.ts"),
       ),
-      "packages/channels/src/shared/approval-notifier.test.ts must be deleted (APV-08, no-backward-compat)",
+      "packages/channels/src/shared/approval-notifier.test.ts must be deleted (no-backward-compat)",
     ).toBe(false);
   });
 
@@ -95,7 +94,7 @@ describe("approval-notifier-removed (APV-08)", () => {
     }
     expect(
       offenders,
-      `Daemon composition root must not wire the deleted approval notifier (APV-08). Offending lines:\n${offenders.join("\n")}`,
+      `Daemon composition root must not wire the deleted approval notifier. Offending lines:\n${offenders.join("\n")}`,
     ).toEqual([]);
   });
 });

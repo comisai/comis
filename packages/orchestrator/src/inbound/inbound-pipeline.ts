@@ -22,8 +22,8 @@ import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent"
 // Relative path used because orchestrator cannot import its own published name.
 import type { InteractiveCallbackRouter } from "../approval/index.js";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
-// WIRE-03: orchestrator imports ONLY the @comis/core activity port + ctx type
-// (never the observability impl — TURN-03 hexagonal boundary). The
+// The orchestrator imports ONLY the @comis/core activity port + ctx type
+// (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
 import type { ActivityStreamPort, TurnActivityContext } from "@comis/core";
 import type { ActivityTurnCoordinator } from "../execution/activity-turn-coordinator.js";
@@ -105,13 +105,13 @@ export interface InboundPipelineDeps {
     resolveApproval(requestId: string, approved: boolean, approvedBy: string, reason?: string): void;
     pending(): Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }>;
     getRequest(requestId: string): { requestId: string; sessionKey: string } | undefined;
-    /** Resolve a minted 12-char shortId to its pending request (APV-04). Gate-internal; channels never call this. */
+    /** Resolve a minted 12-char shortId to its pending request. Gate-internal; channels never call this. */
     getRequestByShortId(shortId: string): { requestId: string; shortId: string; sessionKey: string; action: string; toolName: string } | undefined;
     /** Pending requests scoped to a session (the plain-text/button resolution source). */
     pendingForSession(sessionKey: string): Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }>;
   };
   /**
-   * Optional server-side interactive-callback router (73-04). When present, an inbound
+   * Optional server-side interactive-callback router. When present, an inbound
    * `NormalizedMessage` carrying `metadata.isButtonCallback === true` is intercepted and
    * forwarded to `router.route()` (the verifier) BEFORE slash-command handling — the gate
    * is never called directly from the inbound button path. Injected by daemon wiring;
@@ -122,9 +122,9 @@ export interface InboundPipelineDeps {
   handleSlashCommand?: (text: string, sessionKey: SessionKey, agentId: string) => Promise<{ handled: boolean; response?: string; directives?: Record<string, unknown>; cleanedText?: string } | undefined>;
   /** Per-agent enforceFinalTag config lookup. Returns boolean or undefined if agent not found. */
   getEnforceFinalTag?: (agentId: string) => boolean | undefined;
-  /** WIRE-03: see ChannelManagerDeps. */
+  /** See ChannelManagerDeps. */
   activityStreamPort?: ActivityStreamPort;
-  /** WIRE-03: see ChannelManagerDeps. */
+  /** See ChannelManagerDeps. */
   coordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
   /** Optional allowFrom sender filter lookup. Returns allowed sender IDs for a channel type. Empty array = allow all. */
   getAllowFrom?: (channelType: string) => string[];

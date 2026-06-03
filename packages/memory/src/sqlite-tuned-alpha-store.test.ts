@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteTunedAlphaStore` — the SOLE @comis/memory adapter
- * for the `TunedAlphaStore` port (Phase 111, Track H2 — LEARN-03). It owns ALL the
+ * for the `TunedAlphaStore` port. It owns ALL the
  * per-(tenant, agent) tuned-alpha SQL over the additive `tuned_alpha` table.
  *
  * The harness constructs a real `SqliteMemoryAdapter` over an in-memory DB (so
  * `initSchema` runs — the `tuned_alpha` table is created on boot) and gets
  * `adapter.getDb()` (mirrors the usefulness/user-representation store tests).
  *
- * ## The load-bearing security boundary (LEARN-03, the §5.2 invariant)
+ * ## The load-bearing security boundary (the §5.2 invariant)
  *
  * Comis runs many agents and many tenants in ONE DB. Every adapter statement —
  * the UPSERT, the SELECT — filters/keys on `(tenant_id, agent_id)`. A tuned vector
@@ -21,7 +21,7 @@
  * The `tuned_alpha` table carries ONLY the 4 tunable boost alphas + `updated_at` —
  * NO trust-weight column. The adapter source contains no `trust` token (Test 6,
  * grep-0) — the bandit can never move the trust weight; trust stays config-sourced
- * at the apply site (111-03).
+ * at the apply site.
  *
  * @module
  */
@@ -218,7 +218,7 @@ describe("createSqliteTunedAlphaStore", () => {
   });
 
   // =====================================================================
-  // Scope isolation (T-111-04) — the load-bearing 2-way security boundary
+  // Scope isolation — the load-bearing 2-way security boundary
   // =====================================================================
 
   describe("(tenant, agent) scope isolation", () => {

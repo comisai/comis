@@ -132,7 +132,7 @@ export interface AgentsResult {
   trajectoryRegistry: import("@comis/observability").SessionTrajectoryHandleRegistry;
   /**
    * Per-agent ExecutionPlanHolder reference (typed as the read-only port).
-   * WS-D Phase 78: surfaced so daemon.ts can thread the DEFAULT agent's
+   * Surfaced so daemon.ts can thread the DEFAULT agent's
    * holder into ChannelsDeps.executionPlanPort. Same reference flows into
    * PiExecutorDeps.executionPlanHolder + AcpServerDeps.executionPlanPort
    * (Pitfall 1: a parallel holder constructed at the chat path would always
@@ -185,37 +185,37 @@ export async function setupAgents(deps: {
   /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
    *  rerank). Threaded into each per-agent createPiExecutor like memoryPort. */
   rerankerPort?: import("@comis/core").RerankerPort;
-  /** Phase 92: model-present probe result from setup-memory; forwarded into each
+  /** Model-present probe result from setup-memory; forwarded into each
    *  SingleAgentDeps so the per-agent effective rerank precedence consults the SAME
    *  value as the build gate (Pitfall 4 — one source). */
   rerankerModelPresent?: boolean;
-  /** Entity-associative store (Phase 83). Threaded into each per-agent createPiExecutor
+  /** Entity-associative store. Threaded into each per-agent createPiExecutor
    *  like memoryPort (the recall read path). Built in setup-memory on the shared db. */
   entityStore?: import("@comis/core").MemoryEntityStore;
-  /** Temporal-spread store (Phase 95, LANES-02). Threaded into each per-agent createPiExecutor
+  /** Temporal-spread store. Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
   temporalStore?: import("@comis/core").MemoryTemporalStore;
-  /** Causal store (Phase 96, EXTRACT-03). Threaded into each per-agent createPiExecutor
+  /** Causal store. Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall 5th causal lane read path). Built in setup-memory on the shared db. */
   causalStore?: import("@comis/core").MemoryCausalStore;
-  /** Triple store (Phase 100, KG-01). Threaded into each per-agent createPiExecutor like
+  /** Triple store. Threaded into each per-agent createPiExecutor like
    *  entityStore (the recall 6th graph-spread lane read path). Built in setup-memory on the shared db. */
   tripleStore?: import("@comis/core").TripleStorePort;
-  /** Embedding read store (Phase 102, IQ-01). Threaded into each per-agent createPiExecutor like
+  /** Embedding read store. Threaded into each per-agent createPiExecutor like
    *  entityStore (the recall MMR diversity re-rank's scoped embedding read). Built in setup-memory on the shared db. */
   embeddingStore?: import("@comis/core").MemoryEmbeddingStore;
-  /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
+  /** Usefulness store. Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall usefulness read path). Built in setup-memory on the shared db. */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
-  /** Per-user representation store (Phase 107, USER-03 — Track E1). Threaded into each per-agent
+  /** Per-user representation store. Threaded into each per-agent
    *  createPiExecutor like entityStore (the recall LLM-free `<user_profile>` injection read path).
    *  Built in setup-memory on the shared db. */
   userRepresentationStore?: import("@comis/core").UserRepresentationStore;
-  /** Directional relationship store (Phase 108, SOCIAL-02/03 — Track E2). Threaded into each per-agent
+  /** Directional relationship store. Threaded into each per-agent
    *  createPiExecutor like userRepresentationStore (the recall LLM-free `<channel_relationships>`
    *  injection read path). Built in setup-memory on the shared db. */
   relationshipStore?: import("@comis/core").RelationshipStore;
-  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2). Threaded into each per-agent createPiExecutor
+  /** Tuned-alpha store. Threaded into each per-agent createPiExecutor
    *  like relationshipStore (the recall buildScoringAlphas tuned-vector read path). Built in
    *  setup-memory on the shared db. */
   tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
@@ -337,7 +337,7 @@ export async function setupAgents(deps: {
   // mutated in lockstep by hot-add/hot-remove.
   const toolCapabilityPorts = new Map<string, ToolCapabilityPort>();
   // Per-agent ExecutionPlanHolder reference map (typed as the read-only port).
-  // WS-D Phase 78: surfaced so daemon.ts can thread the DEFAULT agent's holder
+  // Surfaced so daemon.ts can thread the DEFAULT agent's holder
   // into ChannelsDeps.executionPlanPort. Same reference across ACP + chat
   // (Pitfall 1 single-shared-holder invariant).
   const executionPlanPorts = new Map<string, import("@comis/core").ExecutionPlanPort>();
@@ -486,7 +486,7 @@ export async function setupAgents(deps: {
     // Session-scoped trajectory recorder registry — threaded into every
     // per-agent executor so the same registry is shared across agents.
     trajectoryRegistry,
-    // DAG-05: single shared pending-switch carrier. Built ONCE here and reused
+    // Single shared pending-switch carrier. Built ONCE here and reused
     // for every setupSingleAgent call (incl. config-reload re-invocations with
     // the SAME deps object), so a contextEngine.version switch recorded at the
     // rebuild seam survives until the DAG engine consumes it at the next reconcile.
@@ -494,7 +494,7 @@ export async function setupAgents(deps: {
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
-    // Phase 92 (CR-01): pass the RAW (pre-Zod-default) rerank signal from the
+    // Pass the RAW (pre-Zod-default) rerank signal from the
     // daemon-wide map so the per-agent effective-rerank precedence sees genuine
     // unset (undefined) vs explicit-off (false). `agentConfig` here is the PARSED
     // config — its rag.rerank.enabled is always a concrete boolean and would erase
@@ -576,7 +576,7 @@ export async function setupAgents(deps: {
     // `closeAll()` on this in the shutdown chain — see the trajectory
     // sidecar drain step in daemon shutdown wiring.
     trajectoryRegistry,
-    // WS-D Phase 78: per-agent shared ExecutionPlanHolder reference. The
+    // Per-agent shared ExecutionPlanHolder reference. The
     // daemon threads the DEFAULT agent's holder into ChannelsDeps so the
     // chat plan-stream reads from the SAME object SEP publishes into.
     executionPlanPorts,

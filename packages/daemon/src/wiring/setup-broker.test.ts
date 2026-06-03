@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for setupBroker — INTEG-01 (T-01-1..T-01-5) and INTEG-04 (T-04-1..T-04-6).
+ * Tests for setupBroker — construction/startup suite and in-process E2E suite.
  *
- * INTEG-01: Proves construct + start (TCP + unix socket), shutdown (port + socket
- * unlinked), fail-closed 403 on unbound host.
+ * Construction/startup suite: Proves construct + start (TCP + unix socket),
+ * shutdown (port + socket unlinked), fail-closed 403 on unbound host.
  *
- * INTEG-04: In-process daemon-driven broker-path E2E — real SecretManager holding
+ * In-process E2E suite: daemon-driven broker-path E2E — real SecretManager holding
  * "test-key", real TypedEventBus, real clock/timers. Drives an HTTP CONNECT client
  * through the broker to a makeUpstreamFixture upstream; asserts:
  *   - upstream receives Authorization: Bearer test-key (real key, not placeholder)
  *   - broker:session_opened, broker:request, broker:injected emitted on real bus
  *   - broker:injected payload does NOT contain the real key (non-leakage)
- *   - forged token → 407, zero upstream bytes (fail-closed T-04-6)
+ *   - forged token → 407, zero upstream bytes (fail-closed)
  *
- * NOTE: INTEG-04 uses createMitmBroker directly (without caManager) so the broker
+ * NOTE: the E2E suite uses createMitmBroker directly (without caManager) so the broker
  * does NOT perform TLS termination on the CONNECT tunnel. This is valid because the
  * plan explicitly allows constructing the broker "as the daemon would" — the
  * key difference is real SecretManager + real TypedEventBus. The TLS layer is
- * separately tested in Phase 3 tests. The E2E value here is: real key → upstream,
+ * separately tested in the TLS-termination tests. The E2E value here is: real key → upstream,
  * real events on real bus, fail-closed on forged token.
  *
  * reflect-metadata MUST be the very first import — createNodeCaManager
@@ -100,7 +100,7 @@ async function connectThroughProxy(
 // Suite
 // ---------------------------------------------------------------------------
 
-describe("setupBroker (INTEG-01 T-01-1..T-01-5)", () => {
+describe("setupBroker — construction and startup", () => {
   const tmpDirs: string[] = [];
   const handles: BrokerHandle[] = [];
 
@@ -116,9 +116,9 @@ describe("setupBroker (INTEG-01 T-01-1..T-01-5)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // T-01-1: setupBroker with minimal valid deps → returns BrokerHandle without throw
+  // setupBroker with minimal valid deps → returns BrokerHandle without throw
   // -------------------------------------------------------------------------
-  it("T-01-1: setupBroker constructs without throwing and returns a BrokerHandle", async () => {
+  it("setupBroker constructs without throwing and returns a BrokerHandle", async () => {
     const dir = mkdtempSync(join(tmpdir(), "broker-t01-1-"));
     tmpDirs.push(dir);
 
@@ -132,9 +132,9 @@ describe("setupBroker (INTEG-01 T-01-1..T-01-5)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // T-01-2: broker.start() → tcpPort > 0; net.createConnection(tcpPort) connects
+  // broker.start() → tcpPort > 0; net.createConnection(tcpPort) connects
   // -------------------------------------------------------------------------
-  it("T-01-2: broker starts listening on TCP; tcpPort > 0 and port accepts connections", async () => {
+  it("broker starts listening on TCP; tcpPort > 0 and port accepts connections", async () => {
     const dir = mkdtempSync(join(tmpdir(), "broker-t01-2-"));
     tmpDirs.push(dir);
 
@@ -162,9 +162,9 @@ describe("setupBroker (INTEG-01 T-01-1..T-01-5)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // T-01-3: unix socket exists at socketPath with mode 0o600 after setupBroker
+  // unix socket exists at socketPath with mode 0o600 after setupBroker
   // -------------------------------------------------------------------------
-  it("T-01-3: unix socket at socketPath has mode 0o600", async () => {
+  it("unix socket at socketPath has mode 0o600", async () => {
     const dir = mkdtempSync(join(tmpdir(), "broker-t01-3-"));
     tmpDirs.push(dir);
     const socketPath = join(dir, "broker.sock");
@@ -178,9 +178,9 @@ describe("setupBroker (INTEG-01 T-01-1..T-01-5)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // T-01-4: stop() closes TCP port and unlinks socket file; no throw
+  // stop() closes TCP port and unlinks socket file; no throw
   // -------------------------------------------------------------------------
-  it("T-01-4: stop() closes TCP port and unlinks socket file", async () => {
+  it("stop() closes TCP port and unlinks socket file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "broker-t01-4-"));
     tmpDirs.push(dir);
     const socketPath = join(dir, "broker.sock");
@@ -216,12 +216,12 @@ describe("setupBroker (INTEG-01 T-01-1..T-01-5)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // T-01-5: broker with empty bindings → 403 on inner HTTP request for unbound host
+  // broker with empty bindings → 403 on inner HTTP request for unbound host
   //
   // The CONNECT response is 200 (auth gate passed), but the broker fails closed
   // with 403 on the INNER HTTP request when no binding matches the host.
   // -------------------------------------------------------------------------
-  it("T-01-5: broker with empty bindings fails closed with broker:denied (no_binding) on unbound host", async () => {
+  it("broker with empty bindings fails closed with broker:denied (no_binding) on unbound host", async () => {
     const dir = mkdtempSync(join(tmpdir(), "broker-t01-5-"));
     tmpDirs.push(dir);
 
@@ -264,7 +264,7 @@ describe("setupBroker (INTEG-01 T-01-1..T-01-5)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// INTEG-04 helpers (duplicated from mitm-broker.test.ts — trivial 20-line helper)
+// E2E helpers (duplicated from mitm-broker.test.ts — trivial 20-line helper)
 // ---------------------------------------------------------------------------
 
 /**
@@ -330,16 +330,16 @@ function captureEvents(
 }
 
 // ---------------------------------------------------------------------------
-// INTEG-04: In-process daemon-driven broker-path E2E (T-04-1..T-04-6)
+// In-process daemon-driven broker-path E2E
 //
 // Uses createMitmBroker directly (without caManager) so the broker does NOT
 // perform TLS termination on the CONNECT tunnel. This allows plain-HTTP test
 // fixtures. The E2E value: real SecretManager + real TypedEventBus + real
 // injection path → upstream receives real key; broker:* events on real bus.
-// TLS termination is separately tested in Phase 3 (mitm-broker.test.ts).
+// TLS termination is separately tested in mitm-broker.test.ts.
 // ---------------------------------------------------------------------------
 
-describe("setupBroker (INTEG-04 T-04-1..T-04-6) — in-process daemon-driven broker-path E2E", () => {
+describe("setupBroker — in-process daemon-driven broker-path E2E", () => {
   const TEST_KEY = "test-key";
   const TEST_SECRET_REF = "test-key-ref";
   const FIXTURE_HOST = "fixture.local";
@@ -400,9 +400,9 @@ describe("setupBroker (INTEG-04 T-04-1..T-04-6) — in-process daemon-driven bro
   });
 
   // -------------------------------------------------------------------------
-  // T-04-1: upstream receives Authorization: Bearer test-key (real key injected)
+  // upstream receives Authorization: Bearer test-key (real key injected)
   // -------------------------------------------------------------------------
-  it("T-04-1: upstream receives Authorization: Bearer <real key> (not placeholder)", async () => {
+  it("upstream receives Authorization: Bearer <real key> (not placeholder)", async () => {
     const { proxyToken } = sessionMgr.issueToken("integ04-agent");
 
     const { statusCode, socket } = await connectThroughProxy(
@@ -423,9 +423,9 @@ describe("setupBroker (INTEG-04 T-04-1..T-04-6) — in-process daemon-driven bro
   });
 
   // -------------------------------------------------------------------------
-  // T-04-2: broker:session_opened emitted on real eventBus after CONNECT
+  // broker:session_opened emitted on real eventBus after CONNECT
   // -------------------------------------------------------------------------
-  it("T-04-2: broker:session_opened emitted on real eventBus when session token consumed", async () => {
+  it("broker:session_opened emitted on real eventBus when session token consumed", async () => {
     const allEvents = captureEvents(realEventBus, ["broker:session_opened"]);
     const { proxyToken } = sessionMgr.issueToken("integ04-agent");
 
@@ -444,9 +444,9 @@ describe("setupBroker (INTEG-04 T-04-1..T-04-6) — in-process daemon-driven bro
   });
 
   // -------------------------------------------------------------------------
-  // T-04-3: broker:request emitted >= 1 time per proxied request
+  // broker:request emitted >= 1 time per proxied request
   // -------------------------------------------------------------------------
-  it("T-04-3: broker:request emitted at least once per proxied request", async () => {
+  it("broker:request emitted at least once per proxied request", async () => {
     const allEvents = captureEvents(realEventBus, ["broker:request"]);
     const { proxyToken } = sessionMgr.issueToken("integ04-agent");
 
@@ -467,9 +467,9 @@ describe("setupBroker (INTEG-04 T-04-1..T-04-6) — in-process daemon-driven bro
   });
 
   // -------------------------------------------------------------------------
-  // T-04-4: broker:injected emitted with ruleKind field present
+  // broker:injected emitted with ruleKind field present
   // -------------------------------------------------------------------------
-  it("T-04-4: broker:injected emitted with ruleKind field present after injection", async () => {
+  it("broker:injected emitted with ruleKind field present after injection", async () => {
     const allEvents = captureEvents(realEventBus, ["broker:injected"]);
     const { proxyToken } = sessionMgr.issueToken("integ04-agent");
 
@@ -495,9 +495,9 @@ describe("setupBroker (INTEG-04 T-04-1..T-04-6) — in-process daemon-driven bro
   });
 
   // -------------------------------------------------------------------------
-  // T-04-5: broker:injected event payload does NOT contain the real key (non-leakage)
+  // broker:injected event payload does NOT contain the real key (non-leakage)
   // -------------------------------------------------------------------------
-  it("T-04-5: JSON.stringify of all emitted events does not contain the real key (non-leakage)", async () => {
+  it("JSON.stringify of all emitted events does not contain the real key (non-leakage)", async () => {
     const allEvents = captureEvents(realEventBus, [
       "broker:session_opened",
       "broker:request",
@@ -525,9 +525,9 @@ describe("setupBroker (INTEG-04 T-04-1..T-04-6) — in-process daemon-driven bro
   });
 
   // -------------------------------------------------------------------------
-  // T-04-6: Forged token → 407, receivedHeaders.length === 0 (fail-closed)
+  // Forged token → 407, receivedHeaders.length === 0 (fail-closed)
   // -------------------------------------------------------------------------
-  it("T-04-6: forged proxy token produces 407 and zero upstream bytes (fail-closed)", async () => {
+  it("forged proxy token produces 407 and zero upstream bytes (fail-closed)", async () => {
     // Use a token that was never issued by the session manager
     const forgedToken = "A".repeat(64);
 
@@ -547,14 +547,14 @@ describe("setupBroker (INTEG-04 T-04-1..T-04-6) — in-process daemon-driven bro
 });
 
 // ---------------------------------------------------------------------------
-// 03-04 — broker resolves newly upserted secretRef per-request (REQ-18)
+// broker resolves newly upserted secretRef per-request
 // ---------------------------------------------------------------------------
 // Verifies the shared-Map invariant: after mutableHandle.upsert(key, value),
 // the broker's per-request secretManager.get() resolves the new value without
 // any daemon restart. This is the load-bearing "additive no-restart" assertion
 // for the broker credential-injection path.
 
-describe("03-04 — broker resolves newly upserted secretRef per-request without restart (REQ-18)", () => {
+describe("broker resolves newly upserted secretRef per-request without restart", () => {
   const FIXTURE_HOST_03 = "broker-resolve-fixture.local";
   let upstream03: Awaited<ReturnType<typeof makeUpstreamFixture>>;
   let brokerPort03: number;

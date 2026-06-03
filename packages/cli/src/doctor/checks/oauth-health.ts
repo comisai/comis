@@ -117,7 +117,7 @@ async function checkProfiles(
     ];
   }
 
-  // WR-02: env mode has no OAuth credential store — credentials are supplied
+  // env mode has no OAuth credential store — credentials are supplied
   // via environment variables at runtime. No profiles to read; skip cleanly.
   if (storage === "env") {
     return [
