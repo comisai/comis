@@ -58,6 +58,13 @@ import { isFsyncDisabledByPermissionModel } from "@comis/shared";
 
 import type { TerminalReplyFrame, TerminalRequestFrame } from "./terminal-ipc.js";
 import { encodeKeyChord } from "./terminal-key-grammar.js";
+import {
+  runSettle,
+  SETTLE_DEFAULT_IDLE_MS,
+  type SettleDeps,
+  type SettleParams,
+  type SettleResult,
+} from "./terminal-settle.js";
 
 // ---------------------------------------------------------------------------
 // Injected dependency contracts
@@ -192,6 +199,11 @@ interface SendResult {
   cursor: { x: number; y: number };
 }
 
+/** The `resize` reply payload (spec §5: `{ ok }`). */
+interface ResizeResult {
+  ok: boolean;
+}
+
 /** A closure-local per-session record (NOT module-global). */
 interface SessionState {
   backend: WorkerBackend;
@@ -266,6 +278,20 @@ const defaultFsPort: WorkerFsPort = {
 
 /** UUID (8-4-4-4-12 hex) shape — matches `RequestContextSchema.traceId` (`z.guid()`). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ---------------------------------------------------------------------------
+// Bracketed-paste delimiters (spec §5 send_text bracketedPaste)
+// ---------------------------------------------------------------------------
+
+/**
+ * The DECSET 2004 bracketed-paste START marker. With `bracketedPaste:true` the
+ * worker wraps the text in {@link BRACKETED_PASTE_START}…{@link BRACKETED_PASTE_END}
+ * so a paste-aware program treats the bytes as DATA (a literal paste), not as
+ * typed commands — opt-in containment of what a pasted blob can trigger (T-120-10).
+ */
+const BRACKETED_PASTE_START = "\x1b[200~";
+/** The DECSET 2004 bracketed-paste END marker. */
+const BRACKETED_PASTE_END = "\x1b[201~";
 
 /**
  * Sanitize the inbound wire `traceId` before it becomes the ALS context (LR-01).
@@ -354,6 +380,31 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       return;
     }
     state.pipe?.stdin?.write(bytes);
+  }
+
+  /**
+   * Build the {@link SettleDeps} over a session — the injected timer ports + this
+   * session's ring/liveness getters + its closure-local listener sets — and run
+   * the bounded settle (Plan 02). The heart of every "act then return the SETTLED
+   * snapshot" handler (send_text/send_key) and the explicit `wait`. `params`
+   * passes straight through to {@link runSettle}.
+   */
+  function settleSession(state: SessionState, params: SettleParams): Promise<SettleResult> {
+    const settleDeps: SettleDeps = {
+      setTimer,
+      clearTimer,
+      getRing: () => state.ring,
+      isAlive: () => state.alive,
+      onRingChange: (cb) => {
+        state.ringListeners.add(cb);
+        return () => state.ringListeners.delete(cb);
+      },
+      onExit: (cb) => {
+        state.exitListeners.add(cb);
+        return () => state.exitListeners.delete(cb);
+      },
+    };
+    return runSettle(settleDeps, params);
   }
 
   /**
@@ -482,8 +533,69 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     return { screen: state.ring, cursor: { x: 0, y: 0 } };
   }
 
+  /**
+   * Handle a `send_text` frame (TR-04). Writes the text (bracketed-paste-wrapped
+   * when asked), settles, and — on `submit` — writes `\r` as a SEPARATE write
+   * AFTER the settle resolves (text → settle → Enter; NEVER coalesced, so a
+   * program always consumes/echoes the line before it sees Enter). Returns the
+   * post-action SETTLED `{screen,cursor}`.
+   */
+  async function handleSendText(frame: TerminalRequestFrame): Promise<SendResult> {
+    const startedAt = nowMs();
+    const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
+    const state = sessions.get(sessionId);
+    if (state === undefined) return goneSnapshot();
+
+    const text = typeof frame.params["text"] === "string" ? frame.params["text"] : "";
+    const submit = frame.params["submit"] === true;
+    const bracketedPaste = frame.params["bracketedPaste"] === true;
+
+    const payload = bracketedPaste
+      ? `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}`
+      : text;
+    writeToBackend(state, payload);
+
+    // Settle so the program has consumed/echoed the text. On submit the settle
+    // SEPARATES the text from the Enter byte (TR-04); without submit it still
+    // settles so the returned snapshot is the post-action one.
+    await settleSession(state, { forIdleMs: SETTLE_DEFAULT_IDLE_MS });
+    if (submit) {
+      writeToBackend(state, "\r");
+    }
+
+    logInteraction(sessionId, "send_text", startedAt, {
+      submit,
+      bracketedPaste,
+      bytes: payload.length,
+    });
+    return { screen: state.ring, cursor: { x: 0, y: 0 } };
+  }
+
+  /**
+   * Handle a `resize` frame (TR-03). Resizes the PTY winsize (pty backend) and
+   * records the ring geometry on the session (P1 records cols/rows; the real
+   * @xterm grid resize is P2/121). The degraded pipe backend has no winsize —
+   * geometry is recorded for P2. Replies `{ ok }`.
+   */
+  function handleResize(frame: TerminalRequestFrame): ResizeResult {
+    const startedAt = nowMs();
+    const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
+    const state = sessions.get(sessionId);
+    if (state === undefined) return { ok: false };
+
+    const cols = typeof frame.params["cols"] === "number" ? frame.params["cols"] : state.cols;
+    const rows = typeof frame.params["rows"] === "number" ? frame.params["rows"] : state.rows;
+
+    state.pty?.resize(cols, rows); // pty backend; the pipe backend has no winsize
+    state.cols = cols;
+    state.rows = rows;
+
+    logInteraction(sessionId, "resize", startedAt, { cols, rows });
+    return { ok: true };
+  }
+
   /** Dispatch a decoded request frame to its method handler. */
-  function dispatch(frame: TerminalRequestFrame): TerminalReplyFrame {
+  async function dispatch(frame: TerminalRequestFrame): Promise<TerminalReplyFrame> {
     try {
       let result: unknown;
       switch (frame.method) {
@@ -495,6 +607,13 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
           break;
         case "send_key":
           result = handleSendKey(frame);
+          break;
+        case "send_text":
+          // ASYNC: send_text awaits the settle that separates text from submit.
+          result = await handleSendText(frame);
+          break;
+        case "resize":
+          result = handleResize(frame);
           break;
         default:
           return {
