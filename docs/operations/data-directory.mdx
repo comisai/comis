@@ -19,7 +19,13 @@ Here's everything Comis keeps on disk — and why.
 ├── config.local.yaml        # optional local overrides (not committed)
 ├── .env                     # secret overrides (LLM keys, tokens)
 ├── memory.db                # SQLite — conversations, memory, sessions
-├── secrets.db               # SQLite — AES-256-GCM encrypted secrets (optional)
+├── secrets.db               # SQLite — AES-256-GCM encrypted secrets (encrypted mode)
+├── auth-profiles.json       # OAuth profiles — file mode only (0o600)
+├── mcp-tokens/              # MCP OAuth tokens — file mode only (per-server JSON)
+│   └── <server-name>.json
+├── secrets.json             # secret store — file mode only (0o600)
+├── .daemon.lock             # exclusive lock held while daemon is running
+├── broker.sock              # Unix socket for credential broker (when active)
 ├── ecosystem.config.js      # pm2 process definition (created by pm2 setup)
 ├── logs/
 │   └── daemon.log           # rotating structured log (pino-roll)
@@ -34,7 +40,14 @@ Here's everything Comis keeps on disk — and why.
 ```
 
 <Note>
-Some entries only appear under specific conditions. `secrets.db` is created only when `SECRETS_MASTER_KEY` is set. `ecosystem.config.js` is created only by `comis pm2 setup`. Named workspaces like `workspace-myagent/` appear only when you define more than one agent.
+Some entries only appear under specific conditions.
+
+- `secrets.db` — created only when `SECRETS_MASTER_KEY` is set and `security.storage: encrypted` (the default).
+- `auth-profiles.json`, `mcp-tokens/`, `secrets.json` — only present when `security.storage: file`. In `encrypted` mode, OAuth profiles and secrets live in `secrets.db` tables instead.
+- `.daemon.lock` — present only while the daemon is running. Safe to delete when the daemon is stopped (it will be recreated on the next start).
+- `broker.sock` — present only when the credential broker is active (`executor.broker.enabled: true` in `config.yaml`). Ephemeral — deleted and recreated on each daemon start.
+- `ecosystem.config.js` — created only by `comis pm2 setup`.
+- Named workspaces like `workspace-myagent/` — appear only when you define more than one agent.
 </Note>
 
 ## File-by-file reference
@@ -190,6 +203,62 @@ Append-only JSONL of announcement-delivery failures that exhausted in-process re
 
 **Written by:** the announcement delivery subsystem.
 **Safe to delete?** Yes. Pending re-deliveries are dropped; entries auto-expire after one hour anyway.
+
+---
+
+### `.daemon.lock`
+
+The daemon acquires this exclusive lock (`O_EXCL`) at startup to prevent two daemon processes from running against the same data directory simultaneously. If the file is present when the daemon starts, it attempts stale-lock recovery (opens the file, checks whether the recorded PID is still running, and removes the stale lock if not).
+
+**Written by:** the daemon at startup.
+**Safe to delete?** Yes — but ONLY when you are certain the daemon is stopped. Deleting this file while the daemon is running will break the lock invariant and may allow a second daemon instance to start.
+
+To check if the lock is stale:
+
+```bash
+cat ~/.comis/.daemon.lock    # shows the PID that holds the lock
+ps -p <PID>                  # check if that PID is running
+```
+
+---
+
+### `auth-profiles.json` _(file mode only)_
+
+Stores OAuth profiles (access and refresh tokens) when `security.storage: file` is configured. Each profile is a JSON entry identified by provider and email. The file is written atomically (tmp then rename) with mode `0o600`.
+
+**Written by:** `comis auth login` and the daemon's OAuth refresh path.
+**Safe to delete?** Deleting this file removes all stored OAuth credentials — you will need to re-run `comis auth login` for each provider. Do not delete while the daemon is running.
+**Not present when:** `security.storage: encrypted` (the default) — OAuth profiles are stored in the `oauth_profiles` table inside `secrets.db` instead.
+
+---
+
+### `mcp-tokens/` _(file mode only)_
+
+A directory holding per-MCP-server OAuth token JSON files when `security.storage: file` is configured. Each file is named after the MCP server identifier. These are the access tokens issued during `comis mcp login`.
+
+**Written by:** `comis mcp login` and the daemon's MCP OAuth refresh path.
+**Safe to delete?** Deleting the directory (or individual files) clears stored MCP OAuth tokens for those servers — you will need to re-run `comis mcp login`. Do not delete while the daemon is running.
+**Not present when:** `security.storage: encrypted` — MCP tokens are stored in the `mcp_credentials` table inside `secrets.db` instead.
+
+---
+
+### `secrets.json` _(file mode only)_
+
+The plaintext secret store when `security.storage: file` is configured. Contains named secret key-value pairs (for example, `ANTHROPIC_API_KEY`). Mode `0o600`. Written atomically.
+
+**Written by:** `comis secrets set` and the daemon's secrets RPC path.
+**Safe to delete?** Deleting this file removes all stored named secrets — every agent that depends on those secrets will fail to make API calls until the secrets are re-added. Do not delete while the daemon is running.
+**Not present when:** `security.storage: encrypted` (the default) — named secrets are stored in the `secrets` table inside `secrets.db` instead.
+
+---
+
+### `broker.sock`
+
+A Unix domain socket created by the credential broker at daemon startup when the broker is active. Agents connect to this socket to get ephemeral single-use bearer tokens injected into their outbound HTTP requests, so the raw API key never enters the agent namespace.
+
+**Written by:** the daemon at startup (when `executor.broker` is configured).
+**Safe to delete?** The socket is ephemeral — deleted and recreated on each daemon start. If you see a stale `broker.sock` after a crash, you can delete it safely before restarting.
+**Not present when:** `executor.broker` is not configured or the broker is disabled.
 
 ## Backing up
 
