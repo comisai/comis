@@ -30,6 +30,7 @@ import {
   type TerminalSessionRegistryDeps,
   type FakeWorkerChild,
 } from "./terminal-session-registry.js";
+import type { TerminalScope } from "./allowlist-matcher.js";
 import {
   encodeFrame,
   createFrameDecoder,
@@ -402,6 +403,60 @@ describe("createTerminalSessionRegistry — TR-14 create threads a scrollback de
     // The const is the single source the create tool defaults to (Task 2). It is
     // the value Plan 01 hard-coded worker-side, now sourced from the registry.
     expect(DEFAULT_SCROLLBACK).toBe(1000);
+  });
+});
+
+// ===========================================================================
+// 122-01 Task 2 — scope (SEC-02) + workspace/cwd ride the create frame to the
+// worker (so 122-06 can call buildScopeArgs(scope, workspace, cwd) jail-side).
+// ===========================================================================
+
+describe("createTerminalSessionRegistry — SEC-02 scope rides the create frame", () => {
+  it("carries the entry's declared scope onto the create frame's params verbatim", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const scope: TerminalScope = {
+      filesystem: "listed-paths",
+      paths: ["/srv/data"],
+      network: "listed-hosts",
+      hosts: ["api.example.com"],
+      credentialHome: "include",
+      uid: "dedicated",
+    };
+
+    await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      scope,
+    });
+
+    const createFrame = fake.requestFrames.find((f) => f.method === "create");
+    expect(createFrame).toBeDefined();
+    // The worker's handleCreate reads p["scope"] for the 122-06 jail composer.
+    expect(createFrame?.params["scope"]).toEqual(scope);
+  });
+
+  it("carries workspace + cwd onto the create frame (the worker needs them to build the jail binds in 122-06)", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      workspace: "/work/agent-1",
+      cwd: "/work/agent-1/project",
+    });
+
+    const createFrame = fake.requestFrames.find((f) => f.method === "create");
+    expect(createFrame).toBeDefined();
+    expect(createFrame?.params["workspace"]).toBe("/work/agent-1");
+    expect(createFrame?.params["cwd"]).toBe("/work/agent-1/project");
   });
 });
 

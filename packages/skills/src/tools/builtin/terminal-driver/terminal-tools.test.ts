@@ -41,7 +41,15 @@ import {
   type SessionListing,
 } from "./terminal-session-registry.js";
 import type { ReadOptions } from "./terminal-render.js";
-import type { AllowEntryLike } from "./allowlist-matcher.js";
+import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
+
+/** The least-privilege default scope (mirrors the config schema defaults). */
+const DEFAULT_SCOPE: TerminalScope = {
+  filesystem: "workspace",
+  network: "none",
+  credentialHome: "exclude",
+  uid: "dedicated",
+};
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -209,8 +217,8 @@ function realBashPath(): string {
   throw new Error("no shell binary found on test host");
 }
 
-function bashAllowEntry(): AllowEntryLike {
-  return { id: "bash", match: { path: realBashPath() } };
+function bashAllowEntry(scope: TerminalScope = DEFAULT_SCOPE): AllowEntryLike {
+  return { id: "bash", match: { path: realBashPath() }, scope };
 }
 
 function baseDeps(
@@ -327,6 +335,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
       id: "bash",
       // The pin is the realpath of bash; the symlink resolves to the same target → matches.
       match: { path: realBash, argsPrefix: ["--prefix-arg"] },
+      scope: DEFAULT_SCOPE,
     };
     const deps = baseDeps(registry, { allowEntries: [entry] });
     const tool = createTerminalSessionCreateTool(deps);
@@ -340,6 +349,62 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect(req.bin).not.toBe(link);
     // argv = operator argsPrefix first, then the agent's args (argsPrefix preserved end-to-end).
     expect(req.argv).toEqual(["--prefix-arg", "extra"]);
+  });
+});
+
+describe("terminal-tools — SEC-02/03 scope is sourced from the entry, never the agent params", () => {
+  it("forwards matched.entry.scope into registry.create VERBATIM", async () => {
+    // SEC-02: the declared scope must reach the worker. The tool reads it from the
+    // matched allow entry (operator config) and threads it into registry.create.
+    const scope: TerminalScope = {
+      filesystem: "listed-paths",
+      paths: ["/srv/data"],
+      network: "listed-hosts",
+      hosts: ["api.example.com"],
+      credentialHome: "include",
+      uid: "dedicated",
+    };
+    const registry = makeFakeRegistry();
+    const deps = baseDeps(registry, { allowEntries: [bashAllowEntry(scope)] });
+    const tool = createTerminalSessionCreateTool(deps);
+
+    await tool.execute("call-1", { allowId: "bash", command: realBashPath() });
+
+    expect(registry.createCalls).toHaveLength(1);
+    expect(registry.createCalls[0].scope).toEqual(scope);
+  });
+
+  it("SEC-03 lock: CreateParams exposes NO scope field — the agent has no param to set/widen scope", () => {
+    // The create tool's TypeBox schema is closed; `scope` is not a property, so a
+    // model cannot supply one. Scope flows ONLY from the operator allow entry.
+    const tool = createTerminalSessionCreateTool(baseDeps(makeFakeRegistry()));
+    const props = (tool.parameters as { properties: Record<string, unknown> }).properties;
+    expect(Object.keys(props)).not.toContain("scope");
+  });
+
+  it("SEC-03 lock: a scope supplied in the agent params is IGNORED — the entry's scope wins", async () => {
+    // Even if a (schema-rejected) `scope` rides the raw params, the tool must read
+    // scope EXCLUSIVELY from matched.entry — never from params.
+    const entryScope: TerminalScope = {
+      filesystem: "workspace",
+      network: "none",
+      credentialHome: "exclude",
+      uid: "dedicated",
+    };
+    const registry = makeFakeRegistry();
+    const deps = baseDeps(registry, { allowEntries: [bashAllowEntry(entryScope)] });
+    const tool = createTerminalSessionCreateTool(deps);
+
+    await tool.execute("call-1", {
+      allowId: "bash",
+      command: realBashPath(),
+      // A malicious widening attempt smuggled into the raw params:
+      scope: { filesystem: "full", network: "full", credentialHome: "include", uid: "daemon" },
+    });
+
+    expect(registry.createCalls).toHaveLength(1);
+    // The entry's least-privilege scope is forwarded — NOT the agent's widened one.
+    expect(registry.createCalls[0].scope).toEqual(entryScope);
   });
 });
 

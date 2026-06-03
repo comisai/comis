@@ -558,6 +558,44 @@ describe("createTerminalWorker — M-1 spawn from frame bin/argv", () => {
   });
 });
 
+describe("createTerminalWorker — 122-01 handleCreate reads scope inert (jail wiring is 122-06)", () => {
+  it("accepts a create frame carrying scope/workspace/cwd without throwing and still spawns normally", async () => {
+    // 122-01 threads scope (+ workspace/cwd) onto the create frame; the worker
+    // reads them into a SessionState field but does NOT act on them yet (the bwrap
+    // jail composer is 122-06). The create must succeed exactly as before — the
+    // child is spawned from {bin,argv} VERBATIM, scope is a passive read.
+    const fake = makeFakeBackend();
+    const ptyLib = { spawn: fake.spawn };
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ptyLib }));
+
+    const reply = await worker.handle(
+      createFrame({
+        sessionId: "s1",
+        bin: "/canonical/bash",
+        argv: ["extra"],
+        cols: 80,
+        rows: 24,
+        scope: {
+          filesystem: "listed-paths",
+          paths: ["/srv/data"],
+          network: "listed-hosts",
+          hosts: ["api.example.com"],
+          credentialHome: "include",
+          uid: "dedicated",
+        },
+        workspace: "/work/agent-1",
+        cwd: "/work/agent-1/project",
+      }),
+    );
+
+    expect(reply.ok).toBe(true);
+    // Unchanged spawn behavior: bin/argv forwarded verbatim, scope NOT yet applied.
+    const spawned = fake.lastSpawn();
+    expect(spawned?.bin).toBe("/canonical/bash");
+    expect(spawned?.argv).toEqual(["extra"]);
+  });
+});
+
 describe("createTerminalWorker — G-4 durable write under disabled fsync", () => {
   it("swallows ONLY the disabled-fsync refusal and still completes write+rename", () => {
     const written = new Map<string, string>();
