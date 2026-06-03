@@ -122,3 +122,14 @@ export {
   type FrameHistory,
   type Classification,
 } from "./terminal-classifier.js";
+
+// P5 124-04 (spec §4.5/§4.6, SEC-12): the pure safe-only auto-answer policy. The woken
+// turn (124-09) calls decideAutoAnswer on a settled prompt — a safe-pattern match sends
+// a canned keystroke via the P4 send-guards; everything else (incl. auth/destructive/
+// approval, escalate-always) escalates with no keystroke. Operator-dialable, never
+// model-dialable; pure + infra-free (only @comis/core's scrubSecretsFromText).
+export {
+  decideAutoAnswer,
+  type AutoAnswerMode,
+  type AutoAnswerDecision,
+} from "./terminal-auto-answer.js";
