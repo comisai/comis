@@ -14,9 +14,10 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { realpathSync, mkdtempSync, symlinkSync } from "node:fs";
+import { realpathSync, mkdtempSync, symlinkSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   createTerminalSessionCreateTool,
@@ -28,6 +29,11 @@ import {
   createTerminalSessionResizeTool,
   createTerminalSessionWaitTool,
   type TerminalToolDeps,
+  type TerminalEventBus,
+  type TerminalInputNeededEvent,
+  type TerminalStuckEvent,
+  type TerminalEscalatedEvent,
+  type TerminalAutoAnsweredEvent,
 } from "./terminal-tools.js";
 import {
   DEFAULT_SCROLLBACK,
@@ -1581,5 +1587,153 @@ describe("terminal-tools — WR-02/WR-03 audit-on-cap-breach + outcome tag", () 
     expect(JSON.stringify(logger.logs)).not.toContain(PLANTED_SECRET);
     // … and the raw secret is NOT anywhere on the bus.
     expect(JSON.stringify(eventBus.events)).not.toContain(PLANTED_SECRET);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 124 P5 (124-02) — site 2 of the 3-site closed-event plumbing: widen the
+// skills-side structural TerminalEventBus with the four attention/audit emit
+// overloads (terminal:input_needed / terminal:stuck / terminal:escalated /
+// terminal:auto_answered) so the downstream emitters (124-05/07/09) typecheck.
+//
+// `TerminalEventBus` is a CLOSED structural interface — an emit for an
+// undeclared event fails to compile (RESEARCH Pitfall 4). vitest transpiles via
+// esbuild (types stripped) so a bare overload is not a runtime-observable RED;
+// this block therefore SOURCE-INTROSPECTS terminal-tools.ts (the genuinely-RED
+// layer) for the four overload lines, then exercises a capturing fake against a
+// strongly-typed TerminalEventBus to prove the overloads resolve. The new event
+// interfaces live in the terminal-events-attention.ts sibling (terminal-tools.ts
+// is at the 800-line cap) and are redaction-safe BY CONSTRUCTION — Object.keys
+// proves no text/keys/screen/payload field can ride an emit even by mistake.
+// ---------------------------------------------------------------------------
+describe("TerminalEventBus — P5 attention/audit overloads (124-02 site 2)", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  it("terminal-tools.ts widens TerminalEventBus with the four P5 emit overloads (source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./terminal-tools.ts"), "utf8");
+    expect(src, "terminal:input_needed overload must exist").toMatch(
+      /emit\(event:\s*"terminal:input_needed"/,
+    );
+    expect(src, "terminal:stuck overload must exist").toMatch(/emit\(event:\s*"terminal:stuck"/);
+    expect(src, "terminal:escalated overload must exist").toMatch(
+      /emit\(event:\s*"terminal:escalated"/,
+    );
+    expect(src, "terminal:auto_answered overload must exist").toMatch(
+      /emit\(event:\s*"terminal:auto_answered"/,
+    );
+  });
+
+  it("a capturing fake accepts each P5 emit against the strongly-typed TerminalEventBus", () => {
+    // The fake is typed as the REAL TerminalEventBus — if an overload were
+    // missing, one of these emits would fail to typecheck (the closed-union
+    // proof; esbuild strips it but `tsc` over the package build catches it).
+    const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    const bus: TerminalEventBus = {
+      emit: (event: string, payload: Record<string, unknown>) => {
+        events.push({ event, payload });
+        return undefined;
+      },
+    } as unknown as TerminalEventBus;
+
+    const inputNeeded: TerminalInputNeededEvent = {
+      sessionId: "s1",
+      agentId: "a1",
+      state: "awaiting-input",
+      reason: "settled_cursor_parked",
+      timestamp: 1,
+    };
+    const stuck: TerminalStuckEvent = {
+      sessionId: "s1",
+      agentId: "a1",
+      noProgressMs: 30_000,
+      timestamp: 2,
+    };
+    const escalated: TerminalEscalatedEvent = {
+      sessionId: "s1",
+      agentId: "a1",
+      reason: "destructive",
+      timestamp: 3,
+    };
+    const autoAnswered: TerminalAutoAnsweredEvent = {
+      sessionId: "s1",
+      agentId: "a1",
+      matchedPatternIndex: 2,
+      keystrokeCount: 1,
+      timestamp: 4,
+    };
+
+    bus.emit("terminal:input_needed", inputNeeded);
+    bus.emit("terminal:stuck", stuck);
+    bus.emit("terminal:escalated", escalated);
+    bus.emit("terminal:auto_answered", autoAnswered);
+
+    expect(events.map((e) => e.event)).toEqual([
+      "terminal:input_needed",
+      "terminal:stuck",
+      "terminal:escalated",
+      "terminal:auto_answered",
+    ]);
+  });
+
+  it("the four P5 event interfaces are redaction-safe by construction — no text/keys/screen/payload field", () => {
+    const inputNeeded: TerminalInputNeededEvent = {
+      sessionId: "s",
+      agentId: "a",
+      state: "stuck",
+      reason: "r",
+      timestamp: 0,
+    };
+    expect(Object.keys(inputNeeded).sort()).toEqual([
+      "agentId",
+      "reason",
+      "sessionId",
+      "state",
+      "timestamp",
+    ]);
+
+    const stuck: TerminalStuckEvent = { sessionId: "s", agentId: "a", noProgressMs: 0, timestamp: 0 };
+    expect(Object.keys(stuck).sort()).toEqual(["agentId", "noProgressMs", "sessionId", "timestamp"]);
+
+    const escalated: TerminalEscalatedEvent = {
+      sessionId: "s",
+      agentId: "a",
+      reason: "no_safe_match",
+      timestamp: 0,
+    };
+    expect(Object.keys(escalated).sort()).toEqual(["agentId", "reason", "sessionId", "timestamp"]);
+
+    const autoAnswered: TerminalAutoAnsweredEvent = {
+      sessionId: "s",
+      agentId: "a",
+      matchedPatternIndex: 0,
+      keystrokeCount: 0,
+      timestamp: 0,
+    };
+    expect(Object.keys(autoAnswered).sort()).toEqual([
+      "agentId",
+      "keystrokeCount",
+      "matchedPatternIndex",
+      "sessionId",
+      "timestamp",
+    ]);
+
+    // Source guard on the sibling decl file: none of the four interface blocks
+    // may carry a raw text/keys/screen/payload field (T-124-03). RED on pre-patch
+    // (the sibling file does not exist yet).
+    const attnSrc = readFileSync(resolve(here, "./terminal-events-attention.ts"), "utf8");
+    for (const iface of [
+      "TerminalInputNeededEvent",
+      "TerminalStuckEvent",
+      "TerminalEscalatedEvent",
+      "TerminalAutoAnsweredEvent",
+    ]) {
+      const match = attnSrc.match(new RegExp(`interface ${iface}\\s*\\{[\\s\\S]*?\\n\\}`));
+      expect(match, `${iface} must be declared`).toBeTruthy();
+      const block = match![0];
+      expect(block, `${iface}: no raw text field`).not.toMatch(/^\s*text[?]?:/m);
+      expect(block, `${iface}: no raw keys field`).not.toMatch(/^\s*keys[?]?:/m);
+      expect(block, `${iface}: no screen field`).not.toMatch(/^\s*screen[?]?:/m);
+      expect(block, `${iface}: no payload field`).not.toMatch(/^\s*payload[?]?:/m);
+    }
   });
 });
