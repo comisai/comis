@@ -238,6 +238,96 @@ describe("runSettle — EXIT", () => {
   });
 });
 
+describe("runSettle — CONDITION ARMING (idle is opt-in, exit always terminal) [TR-05 fix]", () => {
+  // The VPS real-PTY bug (terminal-{interaction-roundtrip,worker-entry}.linux):
+  // `wait({forExit:true})` armed the idle debounce unconditionally, so a quiet
+  // output window fired the idle timer (~idleMs) and pre-empted the slightly-later
+  // exit event — the wait reported `idle` when the program actually EXITED. The
+  // macOS degraded-pipe backend never exposed the exit-vs-idle race. These cases
+  // pin the correct opt-in arming under the deterministic fake clock.
+
+  it("forExit-only (idle NOT requested): crossing the would-be idle window does NOT settle; exit then settles reason 'exit'", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("running\n");
+    let settled = false;
+    const p = runSettle(makeDeps(sched, source), { forExit: true }).then((r) => {
+      settled = true;
+      return r;
+    });
+
+    // A chunk lands (this is exactly what would (re)arm the idle debounce), then
+    // the ring goes quiet for FAR longer than any default idle window. With idle
+    // armed (the bug) this resolves 'idle'; with idle opt-in it must NOT settle.
+    source.write("partial output");
+    sched.advance(SETTLE_DEFAULT_IDLE_MS * 4);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // The program actually exits → the wait settles 'exit' (never pre-empted).
+    source.exit();
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "exit" });
+  });
+
+  it("forText-only (idle NOT requested): a quiet window does NOT pre-empt with idle; the text still resolves 'text'", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("starting\n");
+    let settled = false;
+    const p = runSettle(makeDeps(sched, source), { forText: "ready>" }).then((r) => {
+      settled = true;
+      return r;
+    });
+
+    // Noise that is NOT the target lands, then the ring goes quiet past the
+    // would-be idle window. With idle armed (the latent same bug) this resolves
+    // 'idle' before the text ever arrives; with idle opt-in it must NOT settle.
+    source.write("still working...");
+    sched.advance(SETTLE_DEFAULT_IDLE_MS * 4);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // The target text finally appears → resolves 'text', not 'idle'.
+    source.write("ready> ");
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "text" });
+  });
+
+  it("forExit + forIdleMs: idle IS armed (explicit) — a quiet window settles 'idle' before any exit", async () => {
+    // The contract is opt-in, not exit-suppresses-idle: when the caller DOES ask
+    // for idle alongside exit, the idle debounce remains live (the post-action
+    // send_text quiesce relies on this exact shape).
+    const sched = makeScheduler();
+    const source = makeSource("running\n");
+    const p = runSettle(makeDeps(sched, source), { forExit: true, forIdleMs: 100 });
+
+    sched.advance(100); // quiet for the explicit idle window, no exit yet
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "idle" });
+  });
+
+  it("no condition at all ({}): idle is the sensible DEFAULT — a quiet window settles 'idle'", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("boot\n");
+    const p = runSettle(makeDeps(sched, source), {});
+
+    sched.advance(SETTLE_DEFAULT_IDLE_MS);
+    const result = await p;
+    expect(result.reason).toBe("idle");
+    expect(result.isComplete).toBe(true);
+  });
+
+  it("forText-only still settles 'exit' if the session exits before the text appears (exit is always terminal)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("starting\n");
+    const p = runSettle(makeDeps(sched, source), { forText: "neverappears" });
+
+    sched.advance(10);
+    source.exit();
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "exit" });
+  });
+});
+
 describe("runSettle — TIMEOUT (load-bearing isComplete:false)", () => {
   it("resolves matched:false, isComplete:false, reason:'timeout' when never idle (does not throw, does not hang)", async () => {
     const sched = makeScheduler();
