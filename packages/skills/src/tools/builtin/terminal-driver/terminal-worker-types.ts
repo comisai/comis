@@ -97,6 +97,10 @@ export interface SessionState {
   lastClassifiedSnapshot?: EmulatorSnapshot;
   /** Epoch ms of the last observed PROGRESS (classified screen changed) — the OPS-04 stuck-by-progress signal; `noProgressMs = nowMs - lastProgressMs`. Stamped by the classify glue against the worker's injected clock. */
   lastProgressMs?: number;
+  /** Per-session interaction count (124-06): incremented at the single `logInteraction` chokepoint (every send_text / send_key / wait / resize). Surfaced by the `status` frame as the spec §5 `interactions` perception. */
+  interactions: number;
+  /** The PTY exit code when the backend reported one (124-06): captured on the pty `onExit` payload; surfaced by the `status` frame as the spec §5 `exitCode`. Absent on the pipe close/error path (no code) and while alive. */
+  exitCode?: number;
   /** Settle ring-grow subscribers (`SettleDeps.onRingChange`), closure-local; `appendRing` notifies these. */
   ringListeners: Set<() => void>;
   /** Settle exit subscribers (onExit half); the pipe close/error + live pty exit notify these. */

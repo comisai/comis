@@ -29,10 +29,14 @@
  * @module
  */
 
-import { classifyFrame, type Classification } from "./terminal-classifier.js";
+import { classifyFrame, isCursorParked, type Classification } from "./terminal-classifier.js";
 import { diffSnapshot, type EmulatorSnapshot } from "./terminal-render.js";
 import type { AttentionEmitter } from "./terminal-attention-emitter.js";
 import type { SessionState } from "./terminal-worker-types.js";
+import type { WorkerStatusPerception } from "./terminal-status-view.js";
+// Re-export so the worker (terminal-worker-entry) types `handleStatus` from the SAME
+// import as `statusReplyFromState` (one import line; the shape's home stays the leaf).
+export type { WorkerStatusPerception } from "./terminal-status-view.js";
 
 /** Explicit dependencies for {@link observeSettledFrame} — closure locals the worker passes (no module-global state, no hidden clock). */
 export interface ObserveSettledFrameArgs {
@@ -103,4 +107,74 @@ export async function observeSettledFrame(args: ObserveSettledFrameArgs): Promis
 
   // Edge-triggered fd3 emit (the emitter writes only on a state transition).
   emitter.observe(classification, { noProgressMs });
+}
+
+/** Explicit dependencies for {@link statusReplyFromState} — a read-only query, so (unlike {@link ObserveSettledFrameArgs}) it takes NO emitter. */
+export interface StatusReplyArgs {
+  /** The closure-local per-session record — its emulator, the diff anchors, the counters. */
+  state: SessionState;
+  /** The settle verdict for the current view (`true` for the point-in-time status snapshot; a mid-stream cursor is unparked ⇒ `working`). */
+  settled: boolean;
+  /** The worker's injected clock (epoch ms) — the SOLE clock source; the classifier reads none. */
+  nowMs: () => number;
+  /** The operator stuck threshold in ms (`worker.stuckMs`, OPS-04). */
+  stuckMs: number;
+  /** Optional operator prompt cues (reinforce the cursor-parked gate only; never override structure). */
+  hintPatterns?: readonly string[];
+}
+
+/**
+ * Build the `status`-frame reply for a session — the classifier stays SINGLE-HOMED
+ * in the worker (RESEARCH Open Q2; no daemon-side grid duplication). A point-in-time
+ * query, NOT a settle: it awaits the pending @xterm parse (so the snapshot reflects
+ * every emitted byte, exactly like `handleRead`), runs the pure `classifyFrame` over
+ * the CURRENT grid + the diff vs the previously-classified frame + the per-session
+ * progress clock, and returns the structural perception subset.
+ *
+ * It does NOT mutate `state.lastClassifiedSnapshot` / `state.lastProgressMs`: those
+ * are the attention emitter's edge-trigger anchors (124-05) — a read-only status
+ * query must never perturb the transition detection. A degraded ring-only session
+ * (no emulator) reports `working` with an empty diff (the safe direction). Never throws.
+ *
+ * @param args - The session record + the settle verdict + the injected clock + stuckMs.
+ */
+export async function statusReplyFromState(args: StatusReplyArgs): Promise<WorkerStatusPerception> {
+  const { state, settled, nowMs, stuckMs, hintPatterns } = args;
+
+  await state.writeFlush;
+  const snapshot: EmulatorSnapshot | undefined = state.emu?.snapshot();
+
+  // No emulator (degraded ring-only) ⇒ no grid to classify. Report the live liveness
+  // (exited if the backend died, else working) with an empty diff — the safe direction.
+  if (snapshot === undefined) {
+    return {
+      state: state.alive ? "working" : "exited",
+      cursorParked: false,
+      screenDiffEmpty: true,
+      interactions: state.interactions,
+      ...(state.exitCode !== undefined ? { exitCode: state.exitCode } : {}),
+    };
+  }
+
+  // Read-only diff vs the previously-classified frame WITHOUT advancing the anchor
+  // (the attention emitter owns that field). The progress window is computed from the
+  // emitter's last progress stamp; a status query never restamps it.
+  const isFirst = state.lastClassifiedSnapshot === undefined;
+  const diff = diffSnapshot(state.lastClassifiedSnapshot, snapshot);
+  const screenDiffEmpty = isFirst ? true : !diff.changed;
+  const noProgressMs = state.lastProgressMs === undefined ? 0 : nowMs() - state.lastProgressMs;
+
+  const classification: Classification = classifyFrame(
+    { alive: state.alive, settled, diffEmpty: screenDiffEmpty, snapshot, hintPatterns },
+    { noProgressMs, stuckMs },
+  );
+  const cursorParked = isCursorParked(snapshot.cursor, snapshot.screen, snapshot.cols, snapshot.rows, hintPatterns);
+
+  return {
+    state: classification.state,
+    cursorParked,
+    screenDiffEmpty,
+    interactions: state.interactions,
+    ...(state.exitCode !== undefined ? { exitCode: state.exitCode } : {}),
+  };
 }

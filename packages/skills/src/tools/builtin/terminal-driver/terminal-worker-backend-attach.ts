@@ -60,8 +60,13 @@ export function appendRing(state: SessionState, chunk: string): void {
  * cannot double-dispose. `logger` is passed in (the worker's injected structural logger) so this
  * module stays infra-free.
  */
-export function markExited(state: SessionState, logger: WorkerLogger): void {
+export function markExited(state: SessionState, logger: WorkerLogger, exitCode?: number): void {
   state.alive = false;
+  // 124-06: capture the PTY exit code when the backend reported one (the pty `onExit`
+  // payload). The pipe close/error path passes none → `exitCode` stays undefined. The
+  // `status` frame surfaces it as the spec §5 `exitCode`. Recorded once; a 2nd signal
+  // (close AND error) does not clobber a captured code with undefined.
+  if (exitCode !== undefined) state.exitCode = exitCode;
   if (state.egress !== undefined) {
     const { egress } = state;
     state.egress = undefined; // dispose once, even if close+error both fire
@@ -128,11 +133,12 @@ export function attachBackend(args: AttachBackendArgs): void {
     // PTY backend — spawn the bwrap jail; the child rides after the composer's `--`.
     const handle = pty.spawn(plan.bin, plan.argv, { cols, rows, env: plan.env });
     handle.onData((d) => appendRing(state, d));
-    // Wire child exit -> markExited (the pty analog of the pipe close/error below;
-    // payload ignored). WITHOUT it a real node-pty child that exits never notifies
-    // an in-flight wait({forExit:true}) (the VPS real-PTY gate).
-    handle.onExit(() => {
-      markExited(state, logger);
+    // Wire child exit -> markExited (the pty analog of the pipe close/error below).
+    // WITHOUT it a real node-pty child that exits never notifies an in-flight
+    // wait({forExit:true}) (the VPS real-PTY gate). 124-06: the exit code rides
+    // through so the `status` frame can surface it (spec §5 `exitCode`).
+    handle.onExit((e) => {
+      markExited(state, logger, e?.exitCode);
     });
     state.pty = handle;
   } else {

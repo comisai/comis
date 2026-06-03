@@ -58,7 +58,7 @@ import { encodeKeyChord } from "./terminal-key-grammar.js";
 import { sanitizeTraceId, WORKER_TRUST_LEVEL } from "./terminal-worker-context.js";
 import { attachBackend } from "./terminal-worker-backend-attach.js";
 import { createAttentionEmitter } from "./terminal-attention-emitter.js";
-import { observeSettledFrame } from "./terminal-worker-classify.js";
+import { observeSettledFrame, statusReplyFromState, type WorkerStatusPerception } from "./terminal-worker-classify.js";
 // The worker's structural contracts the entry BODY references (deps/defaults/closures)
 // type-imported from the neutral leaf terminal-worker-types.ts (124-01 cycle break).
 // FakePtyLike is no longer referenced in the body (its consumers PtyModuleLike +
@@ -433,6 +433,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       rows,
       ring: "",
       alive: true,
+      interactions: 0,
       ringListeners: new Set(),
       exitListeners: new Set(),
       scope,
@@ -538,13 +539,20 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     return { screen: "", cursor: { x: 0, y: 0 } };
   }
 
-  /** §2.7: one bounded INFO line per interaction handler (method + durationMs). */
+  /**
+   * §2.7: one bounded INFO line per interaction handler (method + durationMs). ALSO
+   * the single chokepoint that advances the per-session interaction counter (124-06):
+   * every send_text / send_key / wait / resize lands here (read/status are read-only
+   * and do NOT call this), so `interactions` increments in exactly one place.
+   */
   function logInteraction(
     sessionId: string,
     method: string,
     startedAt: number,
     extra: Record<string, unknown> = {},
   ): void {
+    const state = sessions.get(sessionId);
+    if (state !== undefined) state.interactions += 1;
     logger.info(
       { sessionId, method, durationMs: nowMs() - startedAt, step: "interaction", ...extra },
       "terminal interaction",
@@ -666,6 +674,19 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     };
   }
 
+  /**
+   * Handle a `status` frame (124-06, spec §5; TR-11 perception) — the classifier
+   * stays SINGLE-HOMED in the worker (RESEARCH Open Q2). Delegates to the read-only
+   * {@link statusReplyFromState} (it classifies the CURRENT grid; see its doc). An
+   * absent session is gone → `exited`. `settled:true` (a point-in-time snapshot).
+   */
+  async function handleStatus(frame: TerminalRequestFrame): Promise<WorkerStatusPerception> {
+    const state = sessions.get(String(frame.params["sessionId"] ?? frame.sessionId));
+    // Absent session → gone (`exited`, the safe direction). Else classify the live grid.
+    if (state === undefined) return { state: "exited", cursorParked: false, screenDiffEmpty: true, interactions: 0 };
+    return statusReplyFromState({ state, settled: true, nowMs, stuckMs });
+  }
+
   /** Dispatch a decoded request frame to its method handler. */
   async function dispatch(frame: TerminalRequestFrame): Promise<TerminalReplyFrame> {
     try {
@@ -688,6 +709,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
           break;
         case "wait":
           result = await handleWait(frame); // awaits the bounded settle
+          break;
+        case "status":
+          result = await handleStatus(frame); // awaits the pending emulator write-parse; classifies the current grid
           break;
         default:
           return {

@@ -43,6 +43,12 @@ import {
   type TerminalRequestFrame,
 } from "./terminal-ipc.js";
 import type { ReadOptions, SnapshotDiff } from "./terminal-render.js";
+import {
+  notFoundStatus,
+  composeStatusView,
+  type TerminalStatusView,
+  type WorkerStatusPerception,
+} from "./terminal-status-view.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
@@ -195,6 +201,11 @@ export interface SendResult {
   cursor: { x: number; y: number };
 }
 
+// The §5 `status` view + its pure composition live in the leaf `terminal-status-view.ts`
+// (extracted to keep this file under the 800-line cap). Re-export the view type (imported
+// above) so the registry's public surface is unchanged.
+export type { TerminalStatusView };
+
 /** The settle snapshot returned by `wait` (spec §5) — `{matched,isComplete,reason}` + the view subset. */
 export interface WaitResult {
   matched: boolean;
@@ -225,6 +236,8 @@ export interface TerminalSessionRegistry {
   create(req: CreateRequest, owner: SessionOwner): Promise<CreateResult>;
   /** Round-trip a `read` (TR-02/14 opts + Plan-03 diff). Owner-scoped: absent/cross-owner → not-found view (alive false), never the other owner's bytes. */
   read(sessionId: string, owner: SessionOwner, opts?: ReadOptions): Promise<TerminalView>;
+  /** Round-trip a `status` (124-06, spec §5) — the worker's classifier perception composed with `handle.lastActivity`. Owner-scoped (T-124-15): absent/cross-owner/killed → the not-found minimal view (`exited`, not parked) WITHOUT a round-trip, never the other owner's state. The classifier stays single-homed in the worker. */
+  status(sessionId: string, owner: SessionOwner): Promise<TerminalStatusView>;
   /** Forward `send_text` (TR-03) → `{screen,cursor}`. Owner-scoped (defense-in-depth): absent/cross-owner/not-running/wedged → `{screen:"",cursor:{0,0}}`; never hangs. */
   sendText(
     sessionId: string,
@@ -544,6 +557,25 @@ export function createTerminalSessionRegistry(
     return reply.result as TerminalView;
   }
 
+  async function status(sessionId: string, owner: SessionOwner): Promise<TerminalStatusView> {
+    const handle = ownedHandle(sessionId, owner);
+    // Owner-scoped (T-124-15): a cross-owner / absent / not-running session degrades
+    // to the not-found view WITHOUT round-tripping a `status` frame — a probe with a
+    // guessed sessionId never reaches the worker and never sees another owner's state.
+    if (handle === undefined || handle.status !== "running") {
+      return notFoundStatus(handle);
+    }
+    const reply = await request(sessionId, "status", { sessionId });
+    handle.lastActivity = nowMs();
+    // A wedged worker (MR-01 reply timeout) degrades to the not-found view, never hangs.
+    if (!reply.ok || reply.result === undefined) {
+      return notFoundStatus(handle);
+    }
+    // The classifier state stays single-homed in the worker; compose it with the
+    // daemon-side lastActivity (the leaf helper folds the two — keeps this file lean).
+    return composeStatusView(reply.result as WorkerStatusPerception, handle);
+  }
+
   /**
    * Defensively extract the `{screen,cursor}` subset from a worker reply.result
    * (T-120-09: read the fields rather than trusting the shape blindly — a
@@ -738,5 +770,5 @@ export function createTerminalSessionRegistry(
     }
   }
 
-  return { create, read, sendText, sendKey, resize, wait, get, list, kill, evict, size, cleanup };
+  return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, size, cleanup };
 }
