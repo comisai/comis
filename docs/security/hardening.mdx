@@ -260,6 +260,10 @@ These items provide additional hardening for environments with strict security r
     <Warning>
     This is a restrictive setting. Test thoroughly before enabling in production -- some features may need additional paths or hosts. The default is `security.permission.enableNodePermissions: false`.
     </Warning>
+
+    <Warning>
+    Enabling `enableNodePermissions: true` also disables the fd-based fs API family (`fsync`, `fchmod`, `fchown`) at the Node.js level. Under `--permission`, encrypted-mode credential file writes are **best-effort durability** (fsync is skipped) and trace/session file permissions (fchmod) are best-effort. Comis guards all call sites via `isFsyncDisabledByPermissionModel`, so the daemon will not crash, but power loss between write and rename could leave a corrupt credential file. This behavior is Linux-only (production systemd deploys). See [Node Permissions -- fd-API disablement](/reference/node-permissions) for full detail.
+    </Warning>
   </Step>
 
   <Step title="Set up CORS restrictions">
@@ -410,6 +414,10 @@ Review the output carefully. Each finding includes:
 <Info>
 Security hardening is not a one-time task. Re-run `comis doctor` periodically, especially after configuration changes or upgrades. New versions may introduce additional security checks.
 </Info>
+
+## Output Guard for Agent File Writes
+
+Comis can scan file writes for secret-shaped values and warn or block before a live API key is committed to disk in cleartext. Configure `security.writeSecretGuard` (default: `warn`) -- see [Secrets -- Output Guard for Secret Egress](/security/secrets#output-guard-for-secret-egress) for configuration options and tradeoffs.
 
 ## Related
 
