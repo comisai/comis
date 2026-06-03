@@ -29,16 +29,18 @@ import {
   createTerminalSessionWaitTool,
   type TerminalToolDeps,
 } from "./terminal-tools.js";
-import type {
-  TerminalSessionRegistry,
-  CreateRequest,
-  CreateResult,
-  TerminalView,
-  SendResult,
-  WaitResult,
-  SessionHandle,
-  SessionListing,
+import {
+  DEFAULT_SCROLLBACK,
+  type TerminalSessionRegistry,
+  type CreateRequest,
+  type CreateResult,
+  type TerminalView,
+  type SendResult,
+  type WaitResult,
+  type SessionHandle,
+  type SessionListing,
 } from "./terminal-session-registry.js";
+import type { ReadOptions } from "./terminal-render.js";
 import type { AllowEntryLike } from "./allowlist-matcher.js";
 
 // ---------------------------------------------------------------------------
@@ -106,6 +108,8 @@ interface WaitCall {
 interface FakeRegistry extends TerminalSessionRegistry {
   createCalls: CreateRequest[];
   readCalls: string[];
+  /** The `opts` arg each `read` was called with (121-04 — the render-param forwarding). */
+  readOptsCalls: Array<ReadOptions | undefined>;
   killCalls: string[];
   sendTextCalls: SendTextCall[];
   sendKeyCalls: SendKeyCall[];
@@ -115,7 +119,7 @@ interface FakeRegistry extends TerminalSessionRegistry {
 
 function makeFakeRegistry(overrides?: {
   createImpl?: (req: CreateRequest) => Promise<CreateResult>;
-  readImpl?: (id: string) => Promise<TerminalView>;
+  readImpl?: (id: string, opts?: ReadOptions) => Promise<TerminalView>;
   sendTextImpl?: (id: string, args: SendTextCall["args"]) => Promise<SendResult>;
   sendKeyImpl?: (id: string, args: SendKeyCall["args"]) => Promise<SendResult>;
   resizeImpl?: (id: string, args: ResizeCall["args"]) => Promise<{ ok: boolean }>;
@@ -125,6 +129,7 @@ function makeFakeRegistry(overrides?: {
 }): FakeRegistry {
   const createCalls: CreateRequest[] = [];
   const readCalls: string[] = [];
+  const readOptsCalls: Array<ReadOptions | undefined> = [];
   const killCalls: string[] = [];
   const sendTextCalls: SendTextCall[] = [];
   const sendKeyCalls: SendKeyCall[] = [];
@@ -136,6 +141,7 @@ function makeFakeRegistry(overrides?: {
   return {
     createCalls,
     readCalls,
+    readOptsCalls,
     killCalls,
     sendTextCalls,
     sendKeyCalls,
@@ -146,9 +152,10 @@ function makeFakeRegistry(overrides?: {
       if (overrides?.createImpl) return overrides.createImpl(req);
       return { sessionId: "sess-1", allowId: req.allowId, cols: req.cols, rows: req.rows };
     },
-    async read(id: string): Promise<TerminalView> {
+    async read(id: string, opts?: ReadOptions): Promise<TerminalView> {
       readCalls.push(id);
-      if (overrides?.readImpl) return overrides.readImpl(id);
+      readOptsCalls.push(opts);
+      if (overrides?.readImpl) return overrides.readImpl(id, opts);
       return { screen: "hello", cursor: { x: 0, y: 0 }, cols: 120, rows: 40, alt: false, alive: true };
     },
     async sendText(id: string, args: SendTextCall["args"]): Promise<SendResult> {
@@ -391,6 +398,73 @@ describe("terminal-tools — read / list / kill delegation", () => {
     const rows = result.details as SessionListing[];
     expect(rows).toHaveLength(1);
     expect(rows[0].sessionId).toBe("sess-9");
+  });
+});
+
+// ===========================================================================
+// 121-04 Task 2 — the read tool forwards {format,scrollback,includeAltBuffer}
+// (closing the 119-04 schema-only gap) + surfaces the diff; the create tool
+// passes a non-agent-dialable scrollback into the CreateRequest.
+// ===========================================================================
+
+describe("terminal-tools — read forwards format/scrollback/includeAltBuffer (TR-02/14)", () => {
+  it("passes the explicit {format,scrollback,includeAltBuffer} params to registry.read", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+
+    await tool.execute("call-1", {
+      sessionId: "sess-1",
+      format: "ansi",
+      scrollback: 25,
+      includeAltBuffer: false,
+    });
+
+    expect(registry.readCalls).toEqual(["sess-1"]);
+    // The 119-04 schema params now reach registry.read (the gap this plan closes).
+    expect(registry.readOptsCalls).toHaveLength(1);
+    expect(registry.readOptsCalls[0]).toEqual({ format: "ansi", scrollback: 25, includeAltBuffer: false });
+  });
+
+  it("applies the spec §5 defaults (format=text, scrollback=0, includeAltBuffer=true) when params are absent", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+
+    await tool.execute("call-1", { sessionId: "sess-1" });
+
+    expect(registry.readOptsCalls[0]).toEqual({ format: "text", scrollback: 0, includeAltBuffer: true });
+  });
+
+  it("surfaces the registry's diff on the jsonResult payload (TR-14 screen-diff reaches the agent)", async () => {
+    const registry = makeFakeRegistry({
+      readImpl: async () => ({
+        screen: "grid",
+        cursor: { x: 0, y: 0 },
+        cols: 80,
+        rows: 24,
+        alt: false,
+        alive: true,
+        diff: { changed: true, firstChangedRow: 2, lastChangedRow: 5 },
+      }),
+    });
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+
+    const result = await tool.execute("call-1", { sessionId: "sess-1" });
+    const view = result.details as TerminalView;
+    expect(view.diff).toEqual({ changed: true, firstChangedRow: 2, lastChangedRow: 5 });
+  });
+});
+
+describe("terminal-tools — create passes a non-agent-dialable scrollback (TR-14)", () => {
+  it("builds a CreateRequest carrying scrollback=DEFAULT_SCROLLBACK (sourced from a const, not an agent param)", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry));
+
+    await tool.execute("call-1", { allowId: "bash", command: realBashPath() });
+
+    expect(registry.createCalls).toHaveLength(1);
+    // The agent cannot dial the emulator's retained depth; the create tool sources
+    // it from DEFAULT_SCROLLBACK (operator config later — never an agent knob).
+    expect(registry.createCalls[0].scrollback).toBe(DEFAULT_SCROLLBACK);
   });
 });
 
