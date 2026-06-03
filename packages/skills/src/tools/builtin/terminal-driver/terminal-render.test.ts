@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from "vitest";
 
-import { createSessionEmulator } from "./terminal-render.js";
+import { createSessionEmulator, diffSnapshot } from "./terminal-render.js";
 
 describe("createSessionEmulator — construct + plain grid (TR-02)", () => {
   it("renders written text into the grid and reports cols/rows/alt", async () => {
@@ -180,6 +180,87 @@ describe("createSessionEmulator — scrollback perception beyond the viewport (T
     expect(viewportOnly).not.toContain(label(1));
     // The latest lines ARE visible (the bottom of the buffer).
     expect(viewportOnly).toContain(label(12));
+    emu.dispose();
+  });
+});
+
+// ===========================================================================
+// Plan 121-03: hasContentBelowFold() (the "more content below the fold ⇒ NOT
+// settled" rendering signal) + diffSnapshot() (the per-read screen-diff). TR-14.
+// ===========================================================================
+
+describe("createSessionEmulator — hasContentBelowFold (TR-14)", () => {
+  it("returns true when the viewport is scrolled UP so content sits below the fold", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 5, scrollback: 1000 });
+    // 10 CRLF lines auto-scroll the viewport to the bottom; then scroll UP so
+    // content is now BELOW the displayed viewport.
+    for (let i = 1; i <= 10; i++) await emu.write(`L${i}\r\n`);
+    emu.term.scrollToLine(0); // display the top — content is below the fold now
+
+    expect(emu.hasContentBelowFold()).toBe(true);
+    emu.dispose();
+  });
+
+  it("returns false at the bottom (nothing below the viewport)", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 5, scrollback: 1000 });
+    for (let i = 1; i <= 10; i++) await emu.write(`L${i}\r\n`);
+    // Viewport auto-scrolled to the bottom after writing — nothing below.
+    expect(emu.hasContentBelowFold()).toBe(false);
+    emu.dispose();
+  });
+
+  it("returns false for a short output that fits the viewport (no scroll)", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 5, scrollback: 1000 });
+    await emu.write("one\r\ntwo\r\n"); // 2 lines, fits the 5-row viewport
+    expect(emu.hasContentBelowFold()).toBe(false);
+    emu.dispose();
+  });
+
+  it("returns false on the alternate buffer (alt apps own the full screen, no scrollback below)", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 5, scrollback: 1000 });
+    await emu.write("\x1b[?1049h"); // enter alt
+    await emu.write("ALT-DRAW");
+    expect(emu.hasContentBelowFold()).toBe(false);
+    emu.dispose();
+  });
+});
+
+describe("createSessionEmulator — diffSnapshot (the per-read screen-diff, TR-14)", () => {
+  it("changed:true when a write alters a row, with the changed-row range covering it", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
+    const a = emu.snapshot();
+    await emu.write("NEW");
+    const b = emu.snapshot();
+
+    const diff = diffSnapshot(a, b);
+    expect(diff.changed).toBe(true);
+    // "NEW" landed on row 0 (the home row) — the changed range includes it.
+    expect(diff.firstChangedRow).toBeLessThanOrEqual(0);
+    expect(diff.lastChangedRow).toBeGreaterThanOrEqual(0);
+    emu.dispose();
+  });
+
+  it("changed:false when nothing changed between two snapshots", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
+    await emu.write("stable");
+    const a = emu.snapshot();
+    const b = emu.snapshot(); // no write between
+    const diff = diffSnapshot(a, b);
+
+    expect(diff.changed).toBe(false);
+    expect(diff.firstChangedRow).toBe(-1);
+    expect(diff.lastChangedRow).toBe(-1);
+    emu.dispose();
+  });
+
+  it("prev===undefined ⇒ changed:true (the first read), full range", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
+    await emu.write("first");
+    const b = emu.snapshot();
+    const diff = diffSnapshot(undefined, b);
+
+    expect(diff.changed).toBe(true);
+    expect(diff.firstChangedRow).toBe(0);
     emu.dispose();
   });
 });
