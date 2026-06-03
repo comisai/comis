@@ -200,20 +200,32 @@ describe("classifyFrame — never throws (typed result, pure)", () => {
 // ---------------------------------------------------------------------------
 
 describe("isCursorParked — parked at/near the last non-blank prompt row", () => {
-  it("WR-04: a ≤2-row content screen does NOT park on the bare line-has-text leg (the structural row gate is a no-op there)", () => {
-    // lastNonBlankRow=0 → the row gate accepts every cursor row, so the structural
-    // "cursor below all content" discriminator means nothing. Without a positive
-    // operator hint the verdict must be NOT parked (the safe direction — `working`),
-    // never the weaker bare line-has-text heuristic.
-    const screen = ["$ "].concat(Array.from({ length: ROWS - 1 }, () => "")).join("\n");
-    expect(isCursorParked({ x: 2, y: 0 }, screen, COLS, ROWS)).toBe(false);
+  it("WR-04: on a short screen a cursor ABOVE the last content row (content below = thinking-pause) does NOT park without a hint", () => {
+    // lastNonBlankRow=1, so the lower-bound `cursor.y < 1 - PARK_ROW_TOLERANCE(1) = 0`
+    // rejection is VACUOUS — a cursor on row 0 with content rendered BELOW it on row 1
+    // (the mid-generation/thinking-pause shape) escapes the structural rejection and
+    // would spuriously park. Without a positive operator hint the verdict must be NOT
+    // parked (the safe direction — `working`).
+    const lines = ["streaming line zero", "more output rendered below the cursor"];
+    const screen = lines.join("\n");
+    expect(isCursorParked({ x: 5, y: 0 }, screen, COLS, ROWS)).toBe(false);
   });
 
-  it("WR-04: a ≤2-row content screen DOES park when an operator hintPattern positively matches the cursor line", () => {
-    // The operator opted into this exact prompt cue, so a tiny screen may still park —
-    // the guard only removes the bare line-has-text leg, not an operator-allowlisted cue.
-    const screen = ["$ proceed? "].concat(Array.from({ length: ROWS - 1 }, () => "")).join("\n");
-    expect(isCursorParked({ x: 11, y: 0 }, screen, COLS, ROWS, ["proceed?"])).toBe(true);
+  it("WR-04: a cursor genuinely AT the bottom of a tiny prompt still parks (the no-op guard does not over-block real short prompts)", () => {
+    // lastNonBlankRow=1, cursor ON row 1 (the prompt line) — no content below it, so it
+    // is a real parked prompt, NOT the no-op hole. Must still park without a hint.
+    const lines = ["boot output line", "Do you trust this? (y/n) "];
+    const screen = lines.join("\n");
+    expect(isCursorParked({ x: 25, y: 1 }, screen, COLS, ROWS)).toBe(true);
+  });
+
+  it("WR-04: a short screen's above-content cursor DOES park when an operator hintPattern positively matches that line", () => {
+    // The operator opted into this exact cue, so even the vacuous-lower-bound regime
+    // parks when the hint matches the cursor line — the guard only removes the bare
+    // line-has-text leg for an above-content cursor, not an allowlisted cue.
+    const lines = ["proceed? (y/n)", "rendered below"];
+    const screen = lines.join("\n");
+    expect(isCursorParked({ x: 5, y: 0 }, screen, COLS, ROWS, ["proceed?"])).toBe(true);
   });
 
   it("parked: cursor on the last non-blank row (a multi-line prompt block at the bottom)", () => {

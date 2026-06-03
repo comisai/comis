@@ -140,9 +140,11 @@ export interface Classification {
  *     `hintPattern` matches that line, AND
  *   - the cursor column is plausible (at or just past the cursor line's content —
  *     where one would type, not stranded far out in blank space), AND
- *   - on a ≤2-row content screen (`lastNonBlankRow <= PARK_ROW_TOLERANCE`, where the
- *     row gate is structurally a no-op) an operator `hintPattern` POSITIVELY matches the
- *     cursor line — the bare line-has-text leg alone is insufficient there (WR-04).
+ *   - on a short screen where the lower-bound thinking-pause check is vacuous
+ *     (`lastNonBlankRow <= PARK_ROW_TOLERANCE`), a cursor sitting ABOVE the last
+ *     non-blank row (content still below it) parks ONLY if an operator `hintPattern`
+ *     matches — closing the no-op hole where a tiny mid-generation frame would
+ *     otherwise spuriously park (WR-04). A cursor genuinely at the bottom row is fine.
  *
  * `hintPatterns` can only REINFORCE the line-has-text leg; they cannot satisfy the
  * row/column structure on their own, so a fake mid-screen "(y/n)" is rejected.
@@ -189,16 +191,19 @@ export function isCursorParked(
   const lineHasText = cursorLine.trim().length > 0;
   const hintMatches = hintPatterns.some((p) => p.length > 0 && cursorLine.includes(p));
 
-  // WR-04: when the rendered content is ≤ PARK_ROW_TOLERANCE+1 rows tall
-  // (`lastNonBlankRow <= PARK_ROW_TOLERANCE`), the row gate above accepts EVERY cursor
-  // row — the "cursor at the bottom of content, not mid-generation" discriminator is a
-  // no-op, so the bare line-has-text leg alone is not enough signal to park. Lean on a
-  // positive operator hint instead: a tiny screen parks ONLY when an allowlisted cue
-  // matches the cursor line, else it stays not-parked (the safe direction — `working`).
-  // A short streaming frame mid-generation can therefore never spuriously read as a
-  // prompt, while the auth/menu cases the operator opted into are preserved.
-  const tooShortForStructure = lastNonBlankRow <= PARK_ROW_TOLERANCE;
-  if (tooShortForStructure && !hintMatches) return false;
+  // WR-04: the lower-bound "cursor mid-screen ABOVE content" rejection above is
+  // VACUOUS on a short screen — when `lastNonBlankRow <= PARK_ROW_TOLERANCE` the
+  // threshold `lastNonBlankRow - PARK_ROW_TOLERANCE` is ≤ 0, so a cursor sitting
+  // ABOVE the last non-blank row (the thinking-pause shape: content still rendered
+  // BELOW the cursor) escapes rejection and would spuriously park. Apply a tighter
+  // lower bound in that regime: a cursor strictly above the last non-blank row must
+  // POSITIVELY match an operator hint to park; otherwise it stays not-parked (the
+  // safe direction → working). A cursor genuinely AT the bottom of a 1- or 2-row
+  // prompt (cursor.y === lastNonBlankRow, no content below) is unaffected — that is a
+  // real prompt, not the no-op hole.
+  const lowerBoundVacuous = lastNonBlankRow <= PARK_ROW_TOLERANCE;
+  const cursorAboveContent = cursor.y < lastNonBlankRow;
+  if (lowerBoundVacuous && cursorAboveContent && !hintMatches) return false;
 
   // The cursor's line must carry prompt text (or match an operator cue). A blank
   // cursor line with no hint is not an input position.
