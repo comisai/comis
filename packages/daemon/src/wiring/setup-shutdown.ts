@@ -119,12 +119,10 @@ export interface ShutdownDeps {
   /** Data directory for restart continuation file (optional). */
   dataDir?: string;
   /**
-   * Boot-resolved data directory (COMIS_DATA_DIR ?? ~/.comis) where the D14
-   * singleton lock was acquired. MUST be the same path acquireDataDirLock
-   * received at boot — `dataDir` above is the config-resolved value, which
-   * diverges whenever COMIS_DATA_DIR is set (resolveConfigPaths defaults an
-   * empty config.dataDir to ~/.comis without consulting the env var), and
-   * releasing there leaks the real lock. Falls back to `dataDir` when unset.
+   * Boot-resolved data dir (COMIS_DATA_DIR ?? ~/.comis) where the D14 lock
+   * was acquired — `dataDir` above is config-resolved and diverges whenever
+   * COMIS_DATA_DIR is set; releasing there leaks the real lock. Falls back
+   * to `dataDir` when unset.
    */
   lockDataDir?: string;
   /** Restart continuation tracker for capturing active sessions before shutdown (optional). */
@@ -672,13 +670,11 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       // Context pipeline collector dispose (already disposed above via observability block;
       // kept as explicit step for documentation; the ?. guard makes double-call safe)
 
-      // Release data-dir singleton lock (D14) — after stores close, before db.
-      // Released at the BOOT dataDir (lockDataDir), where acquire happened —
-      // NOT the config-resolved dataDir, which diverges under COMIS_DATA_DIR.
-      {
-        const lockDir = lockDataDir ?? dataDir;
-        if (lockDir) { releaseDataDirLock(lockDir); }
-      }
+      // Release data-dir singleton lock (D14) — after stores close, before
+      // db. At the BOOT dataDir (lockDataDir) where acquire happened, NOT the
+      // config-resolved dataDir, which diverges under COMIS_DATA_DIR.
+      const lockDir = lockDataDir ?? dataDir;
+      if (lockDir) { releaseDataDirLock(lockDir); }
 
       // DB close is ALWAYS last -- no withStepTimeout (must complete or the outer 30s hard timeout handles it)
       {
