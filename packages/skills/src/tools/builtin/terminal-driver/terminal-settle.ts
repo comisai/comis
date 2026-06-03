@@ -138,6 +138,10 @@ export interface SettleResult {
 export function runSettle(deps: SettleDeps, params: SettleParams): Promise<SettleResult> {
   const cap = Math.min(params.timeoutMs ?? SETTLE_MAX_TIMEOUT_MS, SETTLE_MAX_TIMEOUT_MS);
   const idleMs = params.forIdleMs ?? SETTLE_DEFAULT_IDLE_MS;
+  // N CONSECUTIVE quiet idle windows before idle resolves (spec §4.3). Floored at
+  // 1 (the single-window 120-02 default); a non-finite/<1 request collapses to 1.
+  // Only the idle path consults it — exit/text/timeout are UNCHANGED.
+  const stableWindows = Math.max(1, Math.floor(params.stableWindows ?? 1) || 1);
   const { forText } = params;
 
   // The wait conditions are OPT-IN (spec §5). The idle debounce is armed IFF the
@@ -155,6 +159,11 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
   return new Promise<SettleResult>((resolve) => {
     let done = false;
     let idleTimer: unknown;
+    // The consecutive-quiet-window counter (closure-local — no module-global
+    // state). Incremented each time a settleable idle window elapses; RESET to 0
+    // on any ring change (the windows must be CONSECUTIVE). Idle resolves only when
+    // it reaches `stableWindows`.
+    let stableCount = 0;
     // eslint-disable-next-line prefer-const -- read by settle() on the fast-path early-returns (forText/dead-session) BEFORE its single conditional assignment at the timeout schedule below; `const` would TDZ-throw on those paths.
     let overallTimer: unknown;
     const unsubs: Array<() => void> = [];
@@ -184,6 +193,14 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
      * idle: a still-rendering frame is never marked idle. The gate can only delay
      * an idle-settle (bounded by the overall timeout), never force one — exit/text
      * /timeout are unaffected.
+     *
+     * Adaptive N-stable-window (spec §4.3): a settleable idle window does not
+     * resolve immediately — it INCREMENTS the consecutive-quiet count and re-arms
+     * until the count reaches `stableWindows` (default 1 ⇒ the unchanged
+     * single-window behavior). The count is RESET to 0 by any ring change (see the
+     * onRingChange handler), so only UNINTERRUPTED quiet resolves idle — an AI CLI
+     * burst part-way through cannot be mistaken for a settled prompt. A below-fold
+     * window neither counts nor resolves (it re-arms, leaving the count untouched).
      */
     function restartIdle(): void {
       if (!idleArmed) return;
@@ -193,7 +210,12 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
           restartIdle(); // content below the fold ⇒ keep waiting, don't settle idle
           return;
         }
-        settle({ matched: true, isComplete: true, reason: "idle" });
+        stableCount += 1;
+        if (stableCount >= stableWindows) {
+          settle({ matched: true, isComplete: true, reason: "idle" });
+          return;
+        }
+        restartIdle(); // not enough consecutive quiet windows yet ⇒ keep waiting
       }, idleMs);
     }
 
@@ -213,14 +235,16 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
       settle({ matched: false, isComplete: false, reason: "timeout" });
     }, cap);
 
-    // Ring-change: a forText hit resolves text immediately; otherwise (re)start
-    // the idle debounce so quiet for idleMs resolves idle.
+    // Ring-change: a forText hit resolves text immediately; otherwise RESET the
+    // consecutive-quiet count (the windows must be uninterrupted, spec §4.3) and
+    // (re)start the idle debounce so quiet for idleMs resolves idle.
     unsubs.push(
       deps.onRingChange(() => {
         if (forText !== undefined && deps.getRing().includes(forText)) {
           settle({ matched: true, isComplete: true, reason: "text" });
           return;
         }
+        stableCount = 0;
         restartIdle();
       }),
     );
