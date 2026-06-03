@@ -19,12 +19,12 @@
  * @module
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
-import { wireTerminalTools, mapAllowEntry } from "./setup-terminal-tools.js";
+import { wireTerminalTools, mapAllowEntry, buildTerminalSharedDeps } from "./setup-terminal-tools.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import type { TerminalSessionRegistry } from "@comis/skills/tools";
-import type { TerminalAllowEntry } from "@comis/core";
+import type { TerminalAllowEntry, EgressControlPort } from "@comis/core";
 
 type ToolLike = { name: string; execute: (id: string, params: object) => Promise<unknown> };
 
@@ -222,6 +222,52 @@ describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-0
 
     const mappedUnset = mapAllowEntry(configEntry(LEAST_PRIVILEGE));
     expect(mappedUnset.approveOnCreate).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// 122-05 Task 3 — thread the EgressControlPort impl + the resolved bwrapPath
+// through TerminalWiringDeps -> the worker path (so 122-06 can compose them for
+// network:listed-hosts). The live relay-as-init EXECUTION is VPS-only (122-07);
+// here we assert the PORT + the bwrapPath are carried through the seam.
+// ===========================================================================
+
+describe("wireTerminalTools — threads egressControl + bwrapPath toward the worker (SEC-07)", () => {
+  function makeEgressDeps() {
+    const egressControl: EgressControlPort = {
+      materialize: vi.fn(async (hosts: string[]) => ({
+        socketPath: `/tmp/egress-${hosts.length}.sock`,
+        dispose: vi.fn(async () => {}),
+      })),
+    };
+    return {
+      dataDir: "/tmp/comis-terminal-egress-test",
+      skillsLogger: createMockLogger(),
+      eventBus: { emit: () => true },
+      sandboxProvider: {} as never,
+      egressControl,
+      bwrapPath: "/usr/bin/bwrap",
+    };
+  }
+
+  it("accepts egressControl + bwrapPath on TerminalWiringDeps and wires nine tools (no throw)", () => {
+    const tools: ToolLike[] = [];
+    const registries = new Map<string, TerminalSessionRegistry>();
+    // The deps interface must accept the two new fields (compile-time + runtime).
+    wireTerminalTools(tools as never, registries, "agent-a", makeEgressDeps());
+    expect(tools).toHaveLength(9);
+  });
+
+  it("buildTerminalSharedDeps carries the EgressControlPort instance + bwrapPath through to the worker path", () => {
+    const deps = makeEgressDeps();
+    const registries = new Map<string, TerminalSessionRegistry>();
+    // The shared-deps builder is the single seam where the port + bwrapPath flow
+    // toward the registry/worker. Assert the SAME instances thread through (so the
+    // worker, 122-06, can call materialize for listed-hosts + pass bwrapPath to
+    // buildScopeArgs).
+    const shared = buildTerminalSharedDeps(registries, "agent-a", deps);
+    expect(shared.egressControl).toBe(deps.egressControl);
+    expect(shared.bwrapPath).toBe("/usr/bin/bwrap");
   });
 });
 
