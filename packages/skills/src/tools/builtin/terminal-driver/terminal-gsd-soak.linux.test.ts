@@ -245,7 +245,10 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
           : ["proceed? (y/n)"];
         const loopGuard = createLoopGuard({ nowMs: () => Date.now() });
 
-        const created = await registry.create({ allowId: "gsd-milestone", command: bin, cols: 100, rows: 30 }, subagentOwner);
+        const created = await registry.create(
+          { allowId: entry.id, bin: entry.match.path, argv: entry.match.argsPrefix ?? [], scope: entry.scope, cols: 100, rows: 30 },
+          subagentOwner,
+        );
         const { sessionId } = created;
         expect(sessionId.length).toBeGreaterThan(0);
 

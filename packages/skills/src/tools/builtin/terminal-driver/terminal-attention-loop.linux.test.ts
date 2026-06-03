@@ -292,7 +292,14 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
       const loopGuard = createLoopGuard({ nowMs: () => Date.now() });
 
       const created = await registry.create(
-        { allowId: "gsd-dialog", command: shell, cols: 100, rows: 30 },
+        {
+          allowId: entry.id,
+          bin: entry.match.path,
+          argv: entry.match.argsPrefix ?? [],
+          scope: entry.scope,
+          cols: 100,
+          rows: 30,
+        },
         owner,
       );
       const { sessionId } = created;
@@ -463,7 +470,10 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
       // Create MAX+2 concurrently — past the ceiling. The bound must hold.
       const created: string[] = [];
       for (let i = 0; i < MAX + 2; i++) {
-        const c = await registry.create({ allowId: "sleeper", command: shell, cols: 80, rows: 24 }, owner);
+        const c = await registry.create(
+          { allowId: entry.id, bin: entry.match.path, argv: entry.match.argsPrefix ?? [], scope: entry.scope, cols: 80, rows: 24 },
+          owner,
+        );
         created.push(c.sessionId);
       }
 
