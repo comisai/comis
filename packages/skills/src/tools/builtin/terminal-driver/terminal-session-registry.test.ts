@@ -460,6 +460,59 @@ describe("createTerminalSessionRegistry — SEC-02 scope rides the create frame"
   });
 });
 
+// ===========================================================================
+// 122-06 Task 2 — the registry is the seam that threads the daemon-resolved
+// bwrapPath toward the worker. bwrapPath is a STRING, so it rides the create
+// frame (like scope/workspace/cwd) for the eventual worker-main to read; the
+// live egressControl port is a daemon->worker-main concern (not frame-serialized).
+// ===========================================================================
+
+describe("createTerminalSessionRegistry — 122-06 bwrapPath rides the create frame (SEC-16 seam)", () => {
+  it("forwards the daemon-resolved bwrapPath onto the create frame's params", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { bwrapPath: "/usr/bin/bwrap" }),
+    );
+
+    await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
+      workspace: "/work/agent-1",
+      cwd: "/work/agent-1",
+    });
+
+    const createFrame = fake.requestFrames.find((f) => f.method === "create");
+    expect(createFrame).toBeDefined();
+    // The worker's fail-closed branch reads bwrapPath; the registry threads it.
+    expect(createFrame?.params["bwrapPath"]).toBe("/usr/bin/bwrap");
+  });
+
+  it("omits bwrapPath (undefined) on the frame when no provider resolved one (fail-closed downstream)", async () => {
+    const fake = makeFakeWorker();
+    // No bwrapPath dep — the worker fail-closes (SEC-16) when it reads undefined.
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
+      workspace: "/work/agent-1",
+      cwd: "/work/agent-1",
+    });
+
+    const createFrame = fake.requestFrames.find((f) => f.method === "create");
+    expect(createFrame).toBeDefined();
+    expect(createFrame?.params["bwrapPath"]).toBeUndefined();
+  });
+});
+
 describe("createTerminalSessionRegistry — no module-global state", () => {
   it("two registries have isolated session maps", async () => {
     const r1 = createTerminalSessionRegistry(baseDeps(() => makeFakeWorker().child));
