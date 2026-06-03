@@ -23,6 +23,14 @@ export interface TerminalEvents {
     sessionId: string;
     agentId: string;
     state: "created" | "running" | "exited" | "lost";
+    /**
+     * DUAL MEANING by `state` (code-review IN-01): on `created` it is the create
+     * OPERATION duration (`doneAt - start` of the spawn); on `lost` (the reaper/cap
+     * eviction transition) it is the session's TOTAL wall-clock LIFETIME at eviction
+     * (`nowMs - startedAt`, the same value as the companion `terminal:session_evicted`).
+     * A consumer correlating `durationMs` across transitions must branch on `state` —
+     * it is NOT a single uniform metric.
+     */
     durationMs: number;
     timestamp: number;
   };
