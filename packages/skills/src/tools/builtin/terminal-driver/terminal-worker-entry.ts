@@ -204,6 +204,21 @@ interface ResizeResult {
   ok: boolean;
 }
 
+/**
+ * The `wait` reply payload (spec §5 / TR-05): the settle outcome plus the
+ * post-settle `{screen,cursor}`. `isComplete` is the LOAD-BEARING signal — it
+ * flows through from {@link runSettle} VERBATIM (never coerced) so a timeout's
+ * `false` survives (the turn ends; the P5 attention model RESUMES it, never
+ * finalizes a live session).
+ */
+interface WaitResult {
+  matched: boolean;
+  isComplete: boolean;
+  reason: SettleResult["reason"];
+  screen: string;
+  cursor: { x: number; y: number };
+}
+
 /** A closure-local per-session record (NOT module-global). */
 interface SessionState {
   backend: WorkerBackend;
@@ -594,6 +609,42 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     return { ok: true };
   }
 
+  /**
+   * Handle a `wait` frame (TR-05) — the explicit, parameterized settle. Runs the
+   * bounded {@link runSettle} against the session's ring/liveness and replies
+   * `{matched,isComplete,reason,screen,cursor}`. An absent session is effectively
+   * gone (reason `exit`, not-complete). CRITICAL: `isComplete` is passed through
+   * from {@link runSettle} VERBATIM — it is `false` on a timeout (the worker
+   * never holds the frame open; the turn ends and is resumed by the P5 attention
+   * model). It is NEVER hard-coded to `true`.
+   */
+  async function handleWait(frame: TerminalRequestFrame): Promise<WaitResult> {
+    const startedAt = nowMs();
+    const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
+    const state = sessions.get(sessionId);
+    if (state === undefined) {
+      // A missing session is effectively gone — the honest not-complete shape.
+      return { matched: false, isComplete: false, reason: "exit", screen: "", cursor: { x: 0, y: 0 } };
+    }
+
+    const params: SettleParams = {
+      forIdleMs: typeof frame.params["forIdleMs"] === "number" ? frame.params["forIdleMs"] : undefined,
+      forText: typeof frame.params["forText"] === "string" ? frame.params["forText"] : undefined,
+      forExit: frame.params["forExit"] === true ? true : undefined,
+      timeoutMs: typeof frame.params["timeoutMs"] === "number" ? frame.params["timeoutMs"] : undefined,
+    };
+    const r = await settleSession(state, params);
+
+    logInteraction(sessionId, "wait", startedAt, { reason: r.reason, isComplete: r.isComplete });
+    return {
+      matched: r.matched,
+      isComplete: r.isComplete, // VERBATIM from runSettle — false on timeout.
+      reason: r.reason,
+      screen: state.ring,
+      cursor: { x: 0, y: 0 },
+    };
+  }
+
   /** Dispatch a decoded request frame to its method handler. */
   async function dispatch(frame: TerminalRequestFrame): Promise<TerminalReplyFrame> {
     try {
@@ -614,6 +665,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
           break;
         case "resize":
           result = handleResize(frame);
+          break;
+        case "wait":
+          // ASYNC: wait awaits the bounded settle (idle/text/exit/timeout).
+          result = await handleWait(frame);
           break;
         default:
           return {
