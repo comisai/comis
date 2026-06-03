@@ -1,0 +1,248 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * The pure terminal state classifier (spec §4.3, the #1 milestone de-risk).
+ *
+ * `classifyFrame(frame, history)` labels a SETTLED frame
+ * `working | awaiting-input | exited | stuck` deterministically, from the render
+ * snapshot (grid + REAL cursor) + a caller-supplied progress history. It is the
+ * perception the worker (124-05/06) drives and the `session_status` tool surfaces.
+ *
+ * The §4.3 decision tree (in priority order):
+ *   1. `!alive`            → `exited`         (PTY exit — nothing more can render)
+ *   2. `!settled`          → `working`        (output still flowing / cursor advancing)
+ *   3. settled + diff∅ + CURSOR PARKED        → `awaiting-input`  (a real prompt)
+ *   4. settled + no-progress > stuckMs        → `stuck`           (by PROGRESS, OPS-04)
+ *   5. else                → `working`        (settled but cursor NOT parked = a
+ *                                              thinking/tool-use pause)
+ *
+ * The LOAD-BEARING gate (spec §4.3 risk table, severity HIGH): {@link isCursorParked}.
+ * During generation an AI CLI renders output mid-screen — the cursor is NOT in the
+ * input box, so a thinking/tool-use pause is read as `working`, NEVER as
+ * `awaiting-input`. A false `awaiting-input` would wake a turn that fires a spurious
+ * keystroke into a still-generating CLI. The classifier therefore biases to the SAFE
+ * direction: when in doubt (settled but unparked), it stays `working`. The structural
+ * gate (cursor position relative to the rendered content) is primary; the optional
+ * operator `hintPatterns` are a positive REINFORCEMENT only — they never OVERRIDE the
+ * structure, so a prompt-injecting CLI cannot render a fake "(y/n)" mid-screen and be
+ * read as a prompt (T-124-06).
+ *
+ * Architecture invariants (binding — AGENTS.md / 124 house style, mirrors
+ * `terminal-caps.ts`):
+ *   - PURE: a free function, NOT a factory. NO clock/timer reads (the debounce
+ *     timing lives in the settle the worker drives; the classifier receives an
+ *     already-`settled` flag + a caller-computed `noProgressMs`). NO module-global
+ *     mutable state.
+ *   - NEVER throws: returns a typed {@link Classification}; the worker/tool layer
+ *     acts on it. A degenerate frame yields a `working` default (the safe direction).
+ *   - Infra-free: value-imports ONLY node builtins + (type-only) `EmulatorSnapshot`
+ *     from `terminal-render.js` — no platform runtime packages, no observability
+ *     egress, no raw timer (the globals + infra-runtime-scope architecture gates).
+ *
+ * Determinism: a pure function of its inputs ⇒ the Task-3 fixture corpus pins it
+ * (a `claude` version bump that shifts a render is caught as a failing corpus case,
+ * spec §10.4).
+ *
+ * @module
+ */
+
+import type { EmulatorSnapshot } from "./terminal-render.js";
+
+// ---------------------------------------------------------------------------
+// Tunables (the structural cursor-parked gate)
+// ---------------------------------------------------------------------------
+
+/**
+ * How many rows ABOVE the last non-blank row the cursor may sit and still count as
+ * "parked at the prompt". `1` admits a compact multi-line prompt/menu block (the
+ * cursor on a `❯ 1. Yes` affordance line with one more option rendered below it)
+ * while REJECTING a thinking pause whose cursor sits two+ rows above streaming
+ * output. Larger would let a mid-generation cursor masquerade as a prompt — the
+ * exact #1 de-risk — so it is deliberately tight.
+ */
+const PARK_ROW_TOLERANCE = 1;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/** The four mutually-exclusive session states (spec §4.3). */
+export type ClassifierState = "working" | "awaiting-input" | "exited" | "stuck";
+
+/**
+ * The frame the classifier reads — composes the render {@link EmulatorSnapshot}
+ * (grid + real cursor) with the worker-computed settle/diff signals. The worker
+ * builds this each settled frame; the classifier never touches the emulator or a
+ * clock directly.
+ */
+export interface ClassifierFrame {
+  /** Whether the backend (PTY/pipe/tmux) is still alive. `false` ⇒ `exited`. */
+  alive: boolean;
+  /**
+   * Whether the output has SETTLED (the adaptive N-stable-window settle resolved
+   * idle; see `terminal-settle.ts`). `false` ⇒ `working` (output still flowing).
+   */
+  settled: boolean;
+  /**
+   * Whether the screen-diff vs the previous read is empty (nothing changed). A
+   * prerequisite for `awaiting-input` — a changing screen is `working`. From
+   * `diffSnapshot(prev, next).changed === false`.
+   */
+  diffEmpty: boolean;
+  /** The rendered grid + REAL cursor the cursor-parked gate reads. */
+  snapshot: EmulatorSnapshot;
+  /**
+   * OPTIONAL operator-configured prompt cues (e.g. `"❯"`, `"(y/n)"`). A positive
+   * REINFORCEMENT for the parked gate only — never a hardcoded or screen-derived
+   * trust signal, and never enough to OVERRIDE the structural cursor-position test
+   * (T-124-06). Absent ⇒ the gate is purely structural.
+   */
+  hintPatterns?: readonly string[];
+}
+
+/**
+ * The progress history the caller supplies (the classifier is pure — it does NOT
+ * read a clock). `noProgressMs` is how long the screen has shown no progress
+ * (output/cursor/diff), measured by the worker against its injected clock; `stuckMs`
+ * is the operator's stuck threshold (OPS-04). Stuck is by PROGRESS, never elapsed
+ * wall-clock of the session.
+ */
+export interface FrameHistory {
+  /** Milliseconds since the last observed progress (output/cursor/diff change). */
+  noProgressMs: number;
+  /** The operator stuck threshold in ms (`worker.stuckMs`). */
+  stuckMs: number;
+}
+
+/** The classifier verdict — a typed discriminant; the worker/tool layer acts on it. */
+export interface Classification {
+  /** The labelled state. */
+  state: ClassifierState;
+  /** Confidence in the label (`high` for the structural certainties, `medium` for the heuristics). */
+  confidence: "high" | "medium";
+  /** A stable machine-readable reason tag (for logs/events; never screen text). */
+  reason: string;
+}
+
+// ---------------------------------------------------------------------------
+// The load-bearing cursor-parked predicate
+// ---------------------------------------------------------------------------
+
+/**
+ * Is the cursor PARKED at a plausible input position? — the #1-de-risk gate.
+ *
+ * Parked iff ALL hold:
+ *   - the screen has at least one non-blank row (there is content to prompt at), AND
+ *   - the cursor sits at or just above the LAST non-blank row
+ *     (`cursor.y >= lastNonBlankRow - PARK_ROW_TOLERANCE`) — i.e. at the bottom of
+ *     the rendered content where a prompt lives, NOT mid-screen with output streaming
+ *     below it (the thinking-pause shape), AND
+ *   - the cursor's own line is non-blank (a prompt has text), OR an operator
+ *     `hintPattern` matches that line, AND
+ *   - the cursor column is plausible (at or just past the cursor line's content —
+ *     where one would type, not stranded far out in blank space).
+ *
+ * `hintPatterns` can only REINFORCE the line-has-text leg; they cannot satisfy the
+ * row/column structure on their own, so a fake mid-screen "(y/n)" is rejected.
+ *
+ * Pure + total: any out-of-range cursor or empty grid yields `false` (the safe
+ * direction — not parked ⇒ never `awaiting-input`). Never throws.
+ *
+ * @param cursor - The real `{x,y}` cursor (0-based; `EmulatorSnapshot.cursor`).
+ * @param screen - The rendered grid text (newline-separated rows).
+ * @param _cols - The grid width (reserved; the predicate keys on content + cursor).
+ * @param _rows - The grid height (reserved).
+ * @param hintPatterns - Optional operator prompt cues (reinforcement only).
+ * @returns `true` iff the cursor is parked at a plausible prompt position.
+ */
+export function isCursorParked(
+  cursor: { x: number; y: number },
+  screen: string,
+  _cols: number,
+  _rows: number,
+  hintPatterns: readonly string[] = [],
+): boolean {
+  const lines = screen.split("\n");
+
+  // The last row with any non-whitespace content — the bottom of the rendered text.
+  let lastNonBlankRow = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if ((lines[i] ?? "").trim().length > 0) {
+      lastNonBlankRow = i;
+      break;
+    }
+  }
+  // No content at all ⇒ nothing to park at (the safe direction).
+  if (lastNonBlankRow < 0) return false;
+
+  // Cursor must be at/near the BOTTOM of the content, not mid-screen above output
+  // still rendering below it (the thinking-pause shape). This is the load-bearing
+  // structural test; `PARK_ROW_TOLERANCE` is deliberately tight (admits a compact
+  // multi-line menu, rejects a generation cursor).
+  if (cursor.y < lastNonBlankRow - PARK_ROW_TOLERANCE) return false;
+  // A cursor below all content (past the grid's rendered rows) is also not a prompt.
+  if (cursor.y > lastNonBlankRow + PARK_ROW_TOLERANCE) return false;
+
+  const cursorLine = lines[cursor.y] ?? "";
+  const lineHasText = cursorLine.trim().length > 0;
+  const hintMatches = hintPatterns.some((p) => p.length > 0 && cursorLine.includes(p));
+
+  // The cursor's line must carry prompt text (or match an operator cue). A blank
+  // cursor line with no hint is not an input position.
+  if (!lineHasText && !hintMatches) return false;
+
+  // Plausible column: at or just past the cursor line's content (where one types).
+  // One column of slack admits the cursor resting immediately after the prompt text.
+  if (cursor.x < 0 || cursor.x > cursorLine.length + 1) return false;
+
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// The classifier (the §4.3 decision tree)
+// ---------------------------------------------------------------------------
+
+/**
+ * Classify a frame into `working | awaiting-input | exited | stuck` per the spec
+ * §4.3 decision tree. Pure, total, never throws — biases to the SAFE direction
+ * (`working`) whenever the prompt structure is not unambiguous.
+ *
+ * @param frame - The settle/diff signals + the render snapshot.
+ * @param history - The caller-computed progress history (no clock read inside).
+ * @returns The typed {@link Classification}.
+ */
+export function classifyFrame(frame: ClassifierFrame, history: FrameHistory): Classification {
+  // 1. PTY exit — terminal; nothing more can render.
+  if (!frame.alive) {
+    return { state: "exited", confidence: "high", reason: "pty_exit" };
+  }
+
+  // 2. Output still flowing — not yet settled ⇒ working (the settle owns the
+  //    adaptive N-stable-window timing; an unsettled frame is never a prompt).
+  if (!frame.settled) {
+    return { state: "working", confidence: "high", reason: "unsettled_output" };
+  }
+
+  // 3. Settled. The cursor-parked gate (the #1 de-risk): a real prompt is settled +
+  //    diff∅ + the cursor parked at a plausible input position. Anything less stays
+  //    working (a thinking/tool-use pause has the cursor mid-screen, not parked).
+  const parked = isCursorParked(
+    frame.snapshot.cursor,
+    frame.snapshot.screen,
+    frame.snapshot.cols,
+    frame.snapshot.rows,
+    frame.hintPatterns,
+  );
+  if (frame.diffEmpty && parked) {
+    return { state: "awaiting-input", confidence: "high", reason: "settled_cursor_parked" };
+  }
+
+  // 4. Settled, no prompt affordance, AND no progress past the stuck window ⇒ stuck
+  //    (by PROGRESS, OPS-04 — never by elapsed session wall-clock).
+  if (history.noProgressMs > history.stuckMs) {
+    return { state: "stuck", confidence: "medium", reason: "no_progress" };
+  }
+
+  // 5. Settled but the cursor is NOT parked (still in the generation region) ⇒ a
+  //    thinking/tool-use pause. THE de-risk: this is working, NEVER awaiting-input.
+  return { state: "working", confidence: "medium", reason: "settled_cursor_unparked" };
+}

@@ -109,3 +109,16 @@ export {
   type TerminalWorker,
   type TerminalWorkerDeps,
 } from "./terminal-worker-entry.js";
+
+// P5 124-03 (spec §4.3, the #1 de-risk): the pure state classifier + the
+// load-bearing cursor-parked gate. The worker (124-05/06) drives classifyFrame each
+// settled frame; the session_status tool surfaces its state. Pure + infra-free + no
+// raw clock — value-imports only node builtins + the render snapshot type.
+export {
+  classifyFrame,
+  isCursorParked,
+  type ClassifierState,
+  type ClassifierFrame,
+  type FrameHistory,
+  type Classification,
+} from "./terminal-classifier.js";
