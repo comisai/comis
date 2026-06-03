@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The four implemented terminal-driver AgentTool factories (spec §5):
- * `terminal_session_create` / `_read` / `_list` / `_kill`.
+ * The eight implemented terminal-driver AgentTool factories (spec §5):
+ * `terminal_session_create` / `_read` / `_list` / `_kill` (P0, 119-04) and the
+ * four P1 interaction tools `_send_text` / `_send_key` / `_resize` / `_wait`
+ * (this plan). (`terminal_session_status` is the lone remaining stub →
+ * `terminal-tools-stubs.ts`, Phase 124.)
  *
  * `create` is the gate that composes the whole P0 substrate:
  *   1. ALLOWLIST GATE (SEC-01): `matchAllowEntry(command, allowEntries)` — a
@@ -21,7 +24,12 @@
  *      emits `terminal:session_state`; a spawn failure logs WARN + `hint` +
  *      `errorKind` + emits `terminal:spawn_failed`, then rethrows.
  *
- * `read` / `list` / `kill` are thin delegations to the injected registry.
+ * `read` / `list` / `kill` and the four interaction tools (`send_text` /
+ * `send_key` / `resize` / `wait`) are thin delegations to the injected registry —
+ * they operate on an ALREADY-GATED session (create enforced SEC-01/SEC-16), so
+ * they do NOT re-run the allowlist gate and never touch `detectProvider` (the
+ * read/list/kill precedent). The registry's forwarding methods (120-03) carry the
+ * post-action settled snapshot back; `wait`'s `isComplete:false` survives verbatim.
  *
  * Architecture: this module is daemon-side but lives in `@comis/skills`, so it
  * takes an INJECTED structural logger + event bus (never `getLogger` from
@@ -41,6 +49,8 @@ import type { SandboxProvider } from "../sandbox/types.js";
 import type {
   TerminalSessionRegistry,
   TerminalView,
+  SendResult,
+  WaitResult,
   SessionListing,
 } from "./terminal-session-registry.js";
 
@@ -147,6 +157,35 @@ const KillParams = Type.Object({
   signal: Type.Optional(Type.String({ description: "Signal to send (default SIGTERM)" })),
 });
 
+// The four interaction-tool schemas (spec §5 — relocated from the stubs file when
+// these tools became real). The surface is unchanged; only the behaviour landed.
+
+const SendTextParams = Type.Object({
+  sessionId: Type.String({ description: "Session to send text to" }),
+  text: Type.String({ description: "Text to type into the session" }),
+  submit: Type.Optional(Type.Boolean({ description: "Press Enter after the text (default false)" })),
+  bracketedPaste: Type.Optional(Type.Boolean({ description: "Wrap the text in a bracketed paste (default false)" })),
+});
+
+const SendKeyParams = Type.Object({
+  sessionId: Type.String({ description: "Session to send keys to" }),
+  keys: Type.Array(Type.String(), { description: 'Key chords, e.g. ["C-c"], ["Up","Enter"], ["S-Tab"]' }),
+});
+
+const WaitParams = Type.Object({
+  sessionId: Type.String({ description: "Session to wait on" }),
+  forIdleMs: Type.Optional(Type.Integer({ description: "Settle when idle for this many ms" })),
+  forText: Type.Optional(Type.String({ description: "Settle when this text appears on screen" })),
+  forExit: Type.Optional(Type.Boolean({ description: "Settle when the session exits" })),
+  timeoutMs: Type.Optional(Type.Integer({ description: "Bounded in-turn settle timeout (default 15000, capped)" })),
+});
+
+const ResizeParams = Type.Object({
+  sessionId: Type.String({ description: "Session to resize" }),
+  cols: Type.Integer({ description: "New column count" }),
+  rows: Type.Integer({ description: "New row count" }),
+});
+
 // ---------------------------------------------------------------------------
 // Param readers (typed, local — params arrive as Record<string,unknown>)
 // ---------------------------------------------------------------------------
@@ -164,6 +203,18 @@ function readInt(p: Record<string, unknown>, key: string, fallback: number): num
 function readStringArray(p: Record<string, unknown>, key: string): string[] {
   const v = p[key];
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+/** Read an optional boolean param — `undefined` when absent or not a boolean. */
+function readBool(p: Record<string, unknown>, key: string): boolean | undefined {
+  const v = p[key];
+  return typeof v === "boolean" ? v : undefined;
+}
+
+/** Read an optional integer param — `undefined` when absent or not a finite number. */
+function readOptInt(p: Record<string, unknown>, key: string): number | undefined {
+  const v = p[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,6 +383,138 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
       await deps.registry.kill(sessionId);
       deps.logger.info({ toolName: "terminal_session_kill", sessionId, step: "kill" }, "terminal session killed");
       return jsonResult(exitCode === undefined ? { ok: true } : { ok: true, exitCode });
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Interaction tools (send_text / send_key / resize / wait) — TR-03/04/05.
+//
+// Each is a thin delegation to the matching registry forwarding method (120-03),
+// which forwards a frame to the worker handler (120-04) and resolves the
+// post-action settled snapshot. These tools do NOT re-gate the allowlist (the
+// session was gated at create) and never touch detectProvider — exactly the
+// read/list/kill posture. They take the full TerminalToolDeps so the daemon hands
+// one sharedDeps to all eight implemented tools.
+// ---------------------------------------------------------------------------
+
+/**
+ * `terminal_session_send_text` — type `text` into the session; with `submit` the
+ * worker settles then writes `\r` (a settle separates text from Enter, TR-04);
+ * with `bracketedPaste` the text is paste-wrapped. Returns the post-action
+ * `{screen,cursor}`.
+ */
+export function createTerminalSessionSendTextTool(deps: TerminalToolDeps): AgentTool<typeof SendTextParams> {
+  return {
+    name: "terminal_session_send_text",
+    label: "Terminal: send text",
+    description: "Type text into a terminal session (optionally submit with Enter after a settle).",
+    parameters: SendTextParams,
+
+    async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+      const sessionId = readString(params, "sessionId") ?? "";
+      const text = readString(params, "text") ?? "";
+      const submit = readBool(params, "submit");
+      const bracketedPaste = readBool(params, "bracketedPaste");
+      const start = deps.nowMs();
+      const out: SendResult = await deps.registry.sendText(sessionId, { text, submit, bracketedPaste });
+      deps.logger.info(
+        { toolName: "terminal_session_send_text", sessionId, durationMs: deps.nowMs() - start, step: "send_text" },
+        "terminal session text sent",
+      );
+      return jsonResult(out);
+    },
+  };
+}
+
+/**
+ * `terminal_session_send_key` — send named key chords (`["C-c"]`, `["Up","Enter"]`,
+ * `["S-Tab"]`); the worker encodes each to its exact xterm bytes (an unknown key is
+ * rejected at the worker, nothing written). Returns the post-action `{screen,cursor}`.
+ */
+export function createTerminalSessionSendKeyTool(deps: TerminalToolDeps): AgentTool<typeof SendKeyParams> {
+  return {
+    name: "terminal_session_send_key",
+    label: "Terminal: send key",
+    description: "Send named key chords (e.g. C-c, Up, S-Tab) to a terminal session.",
+    parameters: SendKeyParams,
+
+    async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+      const sessionId = readString(params, "sessionId") ?? "";
+      const keys = readStringArray(params, "keys");
+      const start = deps.nowMs();
+      const out: SendResult = await deps.registry.sendKey(sessionId, { keys });
+      deps.logger.info(
+        { toolName: "terminal_session_send_key", sessionId, durationMs: deps.nowMs() - start, step: "send_key" },
+        "terminal session keys sent",
+      );
+      return jsonResult(out);
+    },
+  };
+}
+
+/**
+ * `terminal_session_resize` — resize the session geometry (PTY winsize + the ring
+ * geometry); the registry also updates the handle's `cols`/`rows` so `list()`/`read`
+ * stay coherent. Returns `{ ok }`.
+ */
+export function createTerminalSessionResizeTool(deps: TerminalToolDeps): AgentTool<typeof ResizeParams> {
+  return {
+    name: "terminal_session_resize",
+    label: "Terminal: resize",
+    description: "Resize a terminal session (columns + rows).",
+    parameters: ResizeParams,
+
+    async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+      const sessionId = readString(params, "sessionId") ?? "";
+      // cols/rows are required by the schema; the readers fall back defensively.
+      const cols = readInt(params, "cols", 0);
+      const rows = readInt(params, "rows", 0);
+      const start = deps.nowMs();
+      const out = await deps.registry.resize(sessionId, { cols, rows });
+      deps.logger.info(
+        { toolName: "terminal_session_resize", sessionId, durationMs: deps.nowMs() - start, step: "resize" },
+        "terminal session resized",
+      );
+      return jsonResult(out);
+    },
+  };
+}
+
+/**
+ * `terminal_session_wait` — a bounded in-turn settle on idle/text/exit (TR-05).
+ * Returns `{matched,isComplete,reason,screen,cursor}` VERBATIM from the registry —
+ * on timeout the load-bearing `isComplete:false` survives (the P5 attention model
+ * resumes the turn). This tool is read-only (it observes a settle; it writes
+ * nothing), so it logs DEBUG. It NEVER coerces `isComplete`.
+ */
+export function createTerminalSessionWaitTool(deps: TerminalToolDeps): AgentTool<typeof WaitParams> {
+  return {
+    name: "terminal_session_wait",
+    label: "Terminal: wait",
+    description: "Wait for a terminal session to settle (idle, a text match, or exit); bounded by a timeout.",
+    parameters: WaitParams,
+
+    async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+      const sessionId = readString(params, "sessionId") ?? "";
+      const forIdleMs = readOptInt(params, "forIdleMs");
+      const forText = readString(params, "forText");
+      const forExit = readBool(params, "forExit");
+      const timeoutMs = readOptInt(params, "timeoutMs");
+      const start = deps.nowMs();
+      const out: WaitResult = await deps.registry.wait(sessionId, { forIdleMs, forText, forExit, timeoutMs });
+      deps.logger.debug(
+        {
+          toolName: "terminal_session_wait",
+          sessionId,
+          durationMs: deps.nowMs() - start,
+          reason: out.reason,
+          isComplete: out.isComplete,
+          step: "wait",
+        },
+        "terminal session settle resolved",
+      );
+      return jsonResult(out);
     },
   };
 }
