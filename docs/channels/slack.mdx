@@ -6,12 +6,15 @@ icon: "slack"
 
 import Prereqs from '/snippets/prereqs.mdx';
 import SecretWarning from '/snippets/secret-warning.mdx';
+import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 Connect your Comis agent to Slack workspaces. Slack supports threads, reactions,
 buttons, rich formatting (mrkdwn), file attachments up to 1 GB, and
 live-streaming responses. Choose between **Socket Mode** (simpler, no public URL
 needed -- uses a WebSocket from `@slack/bolt`) or **HTTP Mode** (for production
 behind a reverse proxy with HMAC-SHA256 signed event subscriptions).
+
+<NonTechnicalNote />
 
 ## Prerequisites
 

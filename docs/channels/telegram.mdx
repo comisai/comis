@@ -6,11 +6,14 @@ icon: "telegram"
 
 import Prereqs from '/snippets/prereqs.mdx';
 import SecretWarning from '/snippets/secret-warning.mdx';
+import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 Connect your Comis agent to Telegram groups, channels, forum topics, and private chats.
 Telegram supports reactions, inline buttons, HTML formatting, file attachments
 up to 50 MB, and live-streaming responses that update in real time as your
 agent thinks.
+
+<NonTechnicalNote />
 
 ## Prerequisites
 
@@ -226,16 +229,24 @@ history context but does **not** activate the agent. This is the
     Leave `allowFrom: []` (or omit it) to allow all users.
   </Step>
 
-  <Step title="Restart the daemon and test">
+  <Step title="Restart the daemon and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
     ```bash
-    pnpm build && pm2 flush && pm2 restart comis
-    sleep 5 && pm2 logs comis --lines 10 --nostream
+    comis daemon stop && comis daemon start
     ```
 
-    In the group, send a fresh `@<your_bot_username> hello` (when typing
-    `@`, tap the suggestion popup so Telegram parses it as a mention
-    entity — typing the text alone is not enough). The bot should reply
-    within seconds.
+    Check the logs for a successful connection:
+
+    ```bash
+    comis daemon logs
+    ```
+
+    Look for a line containing **"Telegram adapter connected"** or
+    **"channel-telegram activated"**. In the group, send a fresh
+    `@<your_bot_username> hello` (when typing `@`, tap the suggestion popup
+    so Telegram parses it as a mention entity — typing the text alone is not
+    enough). The bot should reply within seconds.
   </Step>
 </Steps>
 
