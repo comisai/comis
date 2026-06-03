@@ -1,0 +1,8 @@
+# Golden-frame fixtures hold RAW terminal byte streams + their serialized goldens
+# (control sequences, CR/LF embedded in the data). They MUST be stored verbatim —
+# any EOL normalization (core.autocrlf) would corrupt the bytes so a fresh checkout
+# no longer matches what the emulator produces at test time (the §11 golden-frame
+# guard reads them latin1 and asserts byte-equality). Treat as binary: no EOL
+# conversion, no text diff munging.
+*.stream.txt -text
+*.golden.txt -text

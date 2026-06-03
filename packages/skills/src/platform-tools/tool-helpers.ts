@@ -28,7 +28,10 @@ export type ToolErrorCode =
   | "missing_param"
   | "permission_denied"
   | "not_found"
-  | "conflict";
+  | "conflict"
+  /** Tool surface is registered but its implementation is not available yet
+   *  (stub tools reject with this — e.g. terminal_session_* tools landing across phases). */
+  | "not_implemented";
 
 /**
  * Options for throwToolError formatting.

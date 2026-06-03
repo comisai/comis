@@ -65,7 +65,10 @@ import {
   type FileStateTracker,
   type ProcessRegistry,
   type MediaPersistenceService,
+  type TerminalSessionRegistry,
 } from "@comis/skills/tools";
+// Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
+import { wireTerminalTools, buildTerminalEgressDeps } from "./setup-terminal-tools.js";
 
 // Descriptor registry on the `./platform-tools` subpath. Replaces the
 // prior inline 38-call enumeration of `createXTool(agentRpc, ...)`
@@ -243,6 +246,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
   /** Per-agent ProcessRegistry instances for background process lifecycle management. */
   const processRegistries = new Map<string, ProcessRegistry>();
+
+  /** Per-agent TerminalSessionRegistry instances (v2.11); closure-local, lazily built. */
+  const terminalRegistries = new Map<string, TerminalSessionRegistry>();
+
+  const terminalEgress = buildTerminalEgressDeps(skillsLogger, sandboxProvider); // SEC-07 (122-05): built ONCE, injected per-agent
 
   /** Agents we've already logged the no-sandbox WARN for. Per-agent assembly
    * runs on every session/heartbeat/cron tick; without this guard the WARN
@@ -602,6 +610,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
       // Apply patch tool -- always included, gated by tool policy
       tools.push(createApplyPatchTool(workspaceDirs.get(agentId) ?? defaultWorkspaceDir, effectiveSharedPaths, skillsLogger));
+
+      // Terminal driver (v2.11): per-agent registry + nine never-export tools (empty allow-set fail-closes); SEC-07 egress (122-05) via ...terminalEgress. P4 NOTE (TR-06/OPS-06): the reaper deps (workerCaps + timers + the shared caps) are intentionally NOT passed yet — inert reaper, correct while the allow-set is empty; thread them alongside the allow-set (P5/124) or the reaper ships disabled (see setup-terminal-tools.ts buildTerminalSharedDeps).
+      wireTerminalTools(tools, terminalRegistries, agentId, { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress });
 
       return tools;
     };

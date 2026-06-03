@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve, dirname } from "node:path";
 import {
   jsonResult,
   imageResult,
@@ -25,6 +28,8 @@ vi.mock("@comis/core", async (importOriginal) => {
     safePath: (base: string, ...segments: string[]) => base + "/" + segments.join("/"),
   };
 });
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 describe("jsonResult", () => {
   it("produces correct content array with pretty-printed JSON", () => {
@@ -258,7 +263,25 @@ describe("throwToolError", () => {
     ).toThrow('[invalid_value] Invalid level: "root". Valid values: admin, user, guest.');
   });
 
-  it("produces correct prefix for all 6 error codes", () => {
+  it("formats not_implemented as [not_implemented] (Open Q1 — stub-tool reject code)", () => {
+    // Open Q1: the closed ToolErrorCode union had no fit for stub tools; this
+    // is the deliberate one-member extension the stub terminal tools reject with.
+    //
+    // vitest strips types via esbuild and `tsc` excludes *.test.ts, so passing a
+    // bare "not_implemented" string to throwToolError is not a runtime-observable
+    // RED on its own (the formatter is type-agnostic). Source-introspect the
+    // union so this FAILS on pre-patch code where the member is absent.
+    const src = readFileSync(resolve(here, "./tool-helpers.ts"), "utf8");
+    const match = src.match(/export type ToolErrorCode =([\s\S]*?);/);
+    expect(match, "ToolErrorCode union must exist").toBeTruthy();
+    expect(match![1], "union must include not_implemented").toMatch(/\|\s*"not_implemented"/);
+
+    expect(() =>
+      throwToolError("not_implemented", "terminal_session_wait is not available until Phase 124"),
+    ).toThrow("[not_implemented] terminal_session_wait is not available until Phase 124");
+  });
+
+  it("produces correct prefix for all 7 error codes", () => {
     const codes = [
       "invalid_action",
       "invalid_value",
@@ -266,6 +289,7 @@ describe("throwToolError", () => {
       "permission_denied",
       "not_found",
       "conflict",
+      "not_implemented",
     ] as const;
 
     for (const code of codes) {

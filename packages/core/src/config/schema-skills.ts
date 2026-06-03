@@ -149,6 +149,109 @@ export const SkillsConfigSchema = z.strictObject({
     watchDebounceMs: z.number().int().min(100).max(5000).default(400),
   });
 
+/**
+ * One allowlist entry for the interactive terminal driver (spec §6).
+ *
+ * `z.strictObject` at EVERY level: unknown/typo'd keys throw at config load
+ * rather than being silently dropped, so an operator-declared restriction is
+ * always actually parsed (OPS-02). The `allow` list is operator config only —
+ * never agent-extensible. The whole spec §6 shape is modelled now even though
+ * the P0 worker consumes only a subset (`match` + `scope`); later phases
+ * consume the rest and OPS-02 requires the full allow-set to round-trip.
+ *
+ * `~/.comis` is NOT represented here — it is an always-on, non-configurable
+ * carve-out (§3.4), deliberately not an operator-dialable field.
+ */
+const TerminalAllowEntrySchema = z.strictObject({
+  /** Stable entry id the agent passes to terminal_session_create as `allowId`. */
+  id: z.string().min(1),
+  /** Canonical-binary match (§3.2): operator absolute path, optional argv-prefix + content hash pin. */
+  match: z.strictObject({
+    path: z.string(),
+    argsPrefix: z.array(z.string()).optional(),
+    hash: z.string().optional(),
+  }),
+  /** Least-privilege sandbox scope materialized per session (full matrix is Phase 122). */
+  scope: z.strictObject({
+    filesystem: z.enum(["workspace", "listed-paths", "home", "full"]).default("workspace"),
+    paths: z.array(z.string()).optional(),
+    network: z.enum(["none", "listed-hosts", "full"]).default("none"),
+    hosts: z.array(z.string()).optional(),
+    credentialHome: z.enum(["exclude", "include"]).default("exclude"),
+    uid: z.enum(["dedicated", "daemon"]).default("dedicated"),
+  }),
+  /** Auto-answer policy for safe interaction prompts (§4.5). */
+  autoAnswer: z.enum(["none", "safe-only", "all"]).default("safe-only"),
+  /** Optional safe-pattern allowlist feeding the interaction classifier (§4.5). */
+  hintPatterns: z.array(z.string()).optional(),
+  /** Explicit operator risk acknowledgement — `acknowledgedRisk` must be literal true. */
+  consent: z.strictObject({
+    acknowledgedRisk: z.literal(true),
+    acknowledgedAt: z.string(),
+  }),
+  /** Per-entry resource caps (all optional). */
+  limits: z
+    .strictObject({
+      maxSessions: z.number().int().optional(),
+      maxRequestsPerSession: z.number().int().optional(),
+      wallClockMs: z.number().int().optional(),
+      maxInteractions: z.number().int().optional(),
+    })
+    .optional(),
+  /** Require operator approval at session_create for this entry. */
+  approveOnCreate: z.boolean().optional(),
+  /** PTY backend; tmux is required for long-run mode (§4.6). */
+  backend: z.enum(["spawn", "tmux"]).optional(),
+  /** Optional hardening tier (§3.9). */
+  hardening: z.enum(["none", "broker-decoy"]).default("none"),
+  /** Broker-decoy binding (only meaningful when hardening = "broker-decoy"). */
+  brokerDecoy: z
+    .strictObject({
+      bindingHostPaths: z.array(z.string()),
+      tokenSource: z.enum(["operator", "comis-oauth"]),
+      decoyPath: z.string(),
+    })
+    .optional(),
+});
+
+/**
+ * Closed configuration schema for the interactive terminal driver (spec §6).
+ *
+ * Operator-dialable, never agent-dialable. Closed by construction (every level
+ * is `z.strictObject`) so unknown/typo'd keys are rejected at config load
+ * (OPS-02) — the gate against a believed-but-unparsed restriction.
+ */
+export const TerminalDriverConfigSchema = z.strictObject({
+  enabled: z.boolean(),
+  worker: z.strictObject({
+    maxSessions: z.number().int(),
+    idleTtlMs: z.number().int(),
+    ringBytes: z.number().int(),
+    stuckMs: z.number().int(),
+    maxConcurrentAttentionTurns: z.number().int(),
+  }),
+  defaults: z.strictObject({
+    cols: z.number().int(),
+    rows: z.number().int(),
+    scrollback: z.number().int(),
+  }),
+  allow: z.array(TerminalAllowEntrySchema).default([]),
+  redactSecrets: z.boolean(),
+  audit: z.strictObject({ enabled: z.boolean() }),
+});
+
+/** Inferred terminal driver configuration type. */
+export type TerminalDriverConfig = z.infer<typeof TerminalDriverConfigSchema>;
+
+/**
+ * A single parsed terminal allow entry (spec §6 / SEC-01-03). The daemon wiring
+ * (`setup-terminal-tools.ts:mapAllowEntry`) maps this onto the skills-side
+ * `AllowEntryLike`, threading `{id, match, scope}` so the operator-declared scope
+ * reaches the worker (SEC-02). Scope sub-fields are already default-applied by the
+ * schema (least-privilege), so the mapping is a pure passthrough.
+ */
+export type TerminalAllowEntry = TerminalDriverConfig["allow"][number];
+
 /** Inferred skills configuration type. */
 export type SkillsConfig = z.infer<typeof SkillsConfigSchema>;
 

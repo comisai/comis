@@ -3,6 +3,7 @@ import type { MessagingEvents } from "./events-messaging.js";
 import type { AgentEvents } from "./events-agent.js";
 import type { ChannelEvents } from "./events-channel.js";
 import type { InfraEvents } from "./events-infra.js";
+import type { TerminalEvents } from "./events-terminal.js";
 
 /**
  * EventMap: Central type registry for all system events.
@@ -12,5 +13,11 @@ import type { InfraEvents } from "./events-infra.js";
  * - AgentEvents: skill, tool, model, audit, observability (token/latency)
  * - ChannelEvents: channel, queue, streaming, typing, autoreply, sendpolicy, debounce, priority, retry, ack
  * - InfraEvents: config, plugin, hook, browser, auth, device, diagnostic, media, scheduler, system, metrics
+ * - TerminalEvents: interactive terminal-driver session lifecycle (session_state, spawn_failed)
  */
-export interface EventMap extends MessagingEvents, AgentEvents, ChannelEvents, InfraEvents {}
+export interface EventMap
+  extends MessagingEvents,
+    AgentEvents,
+    ChannelEvents,
+    InfraEvents,
+    TerminalEvents {}

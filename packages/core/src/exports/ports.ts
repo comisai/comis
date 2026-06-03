@@ -150,4 +150,6 @@ export type {
   TimerPort,
   TimerHandle,
   CaManagerPort,
+  EgressControlPort,
+  EgressMaterialization,
 } from "../ports/index.js";

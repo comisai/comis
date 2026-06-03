@@ -691,6 +691,16 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("slack_action",    { mcpExportPolicy: "never-export" });
   // Cost-bearing synthesis (1).
   registerToolMetadata("tts_synthesize", { mcpExportPolicy: "never-export" });
+  // Terminal driver (9) — never-export (SEC-08); inside Comis's trust boundary, NOT an MCP-exported surface.
+  registerToolMetadata("terminal_session_create",    { mcpExportPolicy: "never-export" });
+  registerToolMetadata("terminal_session_list",      { mcpExportPolicy: "never-export" });
+  registerToolMetadata("terminal_session_read",      { mcpExportPolicy: "never-export" });
+  registerToolMetadata("terminal_session_send_text", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("terminal_session_send_key",  { mcpExportPolicy: "never-export" });
+  registerToolMetadata("terminal_session_wait",      { mcpExportPolicy: "never-export" });
+  registerToolMetadata("terminal_session_status",    { mcpExportPolicy: "never-export" });
+  registerToolMetadata("terminal_session_resize",    { mcpExportPolicy: "never-export" });
+  registerToolMetadata("terminal_session_kill",      { mcpExportPolicy: "never-export" });
 
   // =========================================================================
   // Failure Detectors (UX-03, §16.10/§16.11)

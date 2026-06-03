@@ -40,12 +40,47 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 // ===========================================================================
 
 describe("tool-metadata-registry -- registry count", () => {
-  it("registers exactly 51 unique tools (registry count assertion)", () => {
-    // 51 = 50 prior tools + providers_manage (added alongside the
-    // tool-entry schema metadata). providers_manage already existed as a
-    // tool file but was not previously surfaced in the metadata registry.
+  it("registers exactly 60 unique tools (registry count assertion)", () => {
+    // 60 = 51 prior tools + the nine terminal_session_* names registered
+    // never-export (SEC-08). 51 = 50 prior + providers_manage (added alongside
+    // the tool-entry schema metadata; it pre-existed as a tool file but was not
+    // previously surfaced in the metadata registry).
     const all = getAllToolMetadata();
-    expect(all.size).toBe(51);
+    expect(all.size).toBe(60);
+  });
+});
+
+// ===========================================================================
+// Terminal driver — all nine tools never-export (SEC-08)
+// ===========================================================================
+
+describe("tool-metadata-registry -- terminal driver never-export (SEC-08)", () => {
+  // The canonical nine (spec §5). All MUST be never-export: they live inside
+  // Comis's trust boundary and must never reach the MCP-exported set, even the
+  // six that land as stubs in later phases. The mcp-export-policy.test.ts AST
+  // gate additionally requires every registered name to carry an explicit policy.
+  const TERMINAL_TOOLS = [
+    "terminal_session_create",
+    "terminal_session_list",
+    "terminal_session_read",
+    "terminal_session_send_text",
+    "terminal_session_send_key",
+    "terminal_session_wait",
+    "terminal_session_status",
+    "terminal_session_resize",
+    "terminal_session_kill",
+  ] as const;
+
+  it.each(TERMINAL_TOOLS)("%s resolves to mcpExportPolicy 'never-export'", (name) => {
+    const meta = getToolMetadata(name);
+    expect(meta, `${name} must be registered`).toBeDefined();
+    expect(meta!.mcpExportPolicy).toBe("never-export");
+  });
+
+  it("registers exactly nine terminal_session_* names", () => {
+    const all = getAllToolMetadata();
+    const terminalNames = [...all.keys()].filter((k) => k.startsWith("terminal_session_"));
+    expect(terminalNames.sort()).toEqual([...TERMINAL_TOOLS].sort());
   });
 });
 

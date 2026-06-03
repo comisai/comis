@@ -49,6 +49,8 @@
     "@modelcontextprotocol/sdk": "1.29.0",
     "@mozilla/readability": "0.6.0",
     "@napi-rs/canvas": "0.1.100",
+    "@xterm/addon-serialize": "0.14.0",
+    "@xterm/headless": "6.0.0",
     "typebox": "1.1.37",
     "chardet": "2.1.1",
     "chokidar": "5.0.0",
@@ -67,6 +69,9 @@
     "undici": "8.1.0",
     "yaml": "2.8.4",
     "zod": "4.4.3"
+  },
+  "optionalDependencies": {
+    "node-pty": "1.1.0"
   },
   "devDependencies": {
     "typescript": "5.9.3",

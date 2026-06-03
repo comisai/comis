@@ -176,6 +176,7 @@ export type {
   AgentToAgentConfig,
   CredentialStorageMode,
   SkillsConfig,
+  TerminalAllowEntry,
   DaemonConfig,
   LoggingConfig,
   TracingDefaults,

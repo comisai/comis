@@ -117,6 +117,36 @@ vi.mock("@comis/skills/tools", () => ({
   createFileStateTracker: mockCreateFileStateTracker,
   sanitizeImageForApi: mockSanitizeImageForApi,
   createMediaPersistenceService: mockCreateMediaPersistenceService,
+  // Terminal-driver (v2.11) wiring deps consumed by setup-terminal-tools.ts.
+  createTerminalSessionRegistry: vi.fn(() => ({
+    create: vi.fn(),
+    read: vi.fn(),
+    get: vi.fn(),
+    list: vi.fn(() => []),
+    kill: vi.fn(),
+    size: vi.fn(() => 0),
+    cleanup: vi.fn(),
+  })),
+  buildProductionSpawnWorker: vi.fn(() => vi.fn()),
+  detectSandboxProvider: vi.fn(() => ({})),
+  createTerminalSessionCreateTool: vi.fn(() => ({ name: "terminal_session_create", execute: vi.fn() })),
+  createTerminalSessionReadTool: vi.fn(() => ({ name: "terminal_session_read", execute: vi.fn() })),
+  createTerminalSessionListTool: vi.fn(() => ({ name: "terminal_session_list", execute: vi.fn() })),
+  createTerminalSessionKillTool: vi.fn(() => ({ name: "terminal_session_kill", execute: vi.fn() })),
+  createTerminalSessionSendTextTool: vi.fn(() => ({ name: "terminal_session_send_text", execute: vi.fn() })),
+  createTerminalSessionSendKeyTool: vi.fn(() => ({ name: "terminal_session_send_key", execute: vi.fn() })),
+  createTerminalSessionWaitTool: vi.fn(() => ({ name: "terminal_session_wait", execute: vi.fn() })),
+  createTerminalSessionStatusTool: vi.fn(() => ({ name: "terminal_session_status", execute: vi.fn() })),
+  createTerminalSessionResizeTool: vi.fn(() => ({ name: "terminal_session_resize", execute: vi.fn() })),
+  // P4 OPS-03/06: the per-session caps factory the terminal wiring constructs ONCE per
+  // agent (buildTerminalSharedDeps). Returns a SessionCaps-shaped no-op double here.
+  createSessionCaps: vi.fn(() => ({
+    startSession: vi.fn(),
+    consumeRequest: vi.fn(() => undefined),
+    consumeInteraction: vi.fn(() => undefined),
+    checkWallClock: vi.fn(() => undefined),
+    forget: vi.fn(),
+  })),
 }));
 
 // `createPlatformToolRegistry` mock returns descriptors that delegate back
