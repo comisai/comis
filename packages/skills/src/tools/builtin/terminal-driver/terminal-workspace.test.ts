@@ -84,6 +84,9 @@ function baseDeps(
   return { spawnWorker, logger: makeLogger(), nowMs: () => 1_700_000_000_000, ...over };
 }
 
+/** Single owner threaded through these registry calls (create/kill are owner-scoped — 123-03). */
+const OWNER = { agentId: "a", sessionKey: "s" };
+
 describe("allocateSessionWorkspace — a real per-session jail workspace (gap 2)", () => {
   it("creates a real directory that exists and is keyed to the session id", () => {
     const sessionId = "11111111-2222-3333-4444-555555555555";
@@ -127,7 +130,7 @@ describe("createTerminalSessionRegistry — threads a real per-session workspace
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
 
-    await registry.create({ allowId: "cat", bin: "/bin/cat", argv: [], cols: 80, rows: 24 });
+    await registry.create({ allowId: "cat", bin: "/bin/cat", argv: [], cols: 80, rows: 24 }, OWNER);
 
     const createFrame = fake.requestFrames.find((f) => f.method === "create");
     expect(createFrame).toBeDefined();
@@ -156,12 +159,12 @@ describe("createTerminalSessionRegistry — threads a real per-session workspace
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
     const createFrame = fake.requestFrames.find((f) => f.method === "create");
     const allocated = createFrame?.params["workspace"] as string;
     expect(existsSync(allocated)).toBe(true);
 
-    await registry.kill(sessionId);
+    await registry.kill(sessionId, OWNER);
 
     // The killed session's real workspace dir is removed off disk (best-effort rm).
     expect(existsSync(allocated)).toBe(false);

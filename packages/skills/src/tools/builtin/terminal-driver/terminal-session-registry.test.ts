@@ -11,7 +11,7 @@
  *   - OPS-01: a child `error` → sessions flip to `lost`, the handle clears, the
  *     registry stays usable; a child `close(1)` → `exited` with exitCode 1.
  *   - lazy re-spawn: after the handle clears, the next `create` re-spawns.
- *   - H-1: `registry.read(id)` round-trips a read frame to the worker and
+ *   - H-1: `registry.read(id, OWNER)` round-trips a read frame to the worker and
  *     returns `{screen,cursor,cols,rows,alt,alive}` (the 119-04 round-trip shape).
  *   - M-1: `create` forwards buildDirectSpawn's `{bin,argv}` to the worker
  *     VERBATIM (no re-canonicalization in the registry).
@@ -111,6 +111,14 @@ function baseDeps(
   };
 }
 
+/**
+ * The single owner threaded through the P0–P3 tests (123-03 made create/list/
+ * read/get/kill/send* owner-scoped — required arg, NO return-all fallback). These
+ * tests are a single-origin world, so they all use one `(agentId, sessionKey)`.
+ * The multi-owner invisibility/isolation tests below use their own owners.
+ */
+const OWNER = { agentId: "a", sessionKey: "s" };
+
 describe("createTerminalSessionRegistry — OPS-01 crash isolation", () => {
   it("flips a session to 'lost' on child error, clears the handle, and stays usable", async () => {
     const fake = makeFakeWorker();
@@ -122,11 +130,11 @@ describe("createTerminalSessionRegistry — OPS-01 crash isolation", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
     fake.emitError();
 
-    expect(registry.get(sessionId)?.status).toBe("lost");
+    expect(registry.get(sessionId, OWNER)?.status).toBe("lost");
     // The registry object does NOT throw and stays usable.
     expect(() => registry.size()).not.toThrow();
     expect(registry.size()).toBe(1);
@@ -142,12 +150,12 @@ describe("createTerminalSessionRegistry — OPS-01 crash isolation", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
     fake.emitClose(1);
 
-    expect(registry.get(sessionId)?.status).toBe("exited");
-    expect(registry.get(sessionId)?.exitCode).toBe(1);
+    expect(registry.get(sessionId, OWNER)?.status).toBe("exited");
+    expect(registry.get(sessionId, OWNER)?.exitCode).toBe(1);
   });
 });
 
@@ -156,8 +164,8 @@ describe("createTerminalSessionRegistry — lazy re-spawn", () => {
     const spawnWorker = vi.fn(() => makeFakeWorker().child);
     const registry = createTerminalSessionRegistry(baseDeps(spawnWorker));
 
-    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 });
-    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 });
+    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
 
     // Two creates against a live worker → spawned ONCE (the worker is reused).
     expect(spawnWorker).toHaveBeenCalledTimes(1);
@@ -171,14 +179,14 @@ describe("createTerminalSessionRegistry — lazy re-spawn", () => {
     });
     const registry = createTerminalSessionRegistry(baseDeps(spawnWorker));
 
-    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 });
+    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
     expect(spawnWorker).toHaveBeenCalledTimes(1);
 
     // Crash the live worker → handle clears.
     current?.emitClose(1);
 
     // Next create must re-spawn the worker (daemon stayed up across the crash).
-    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 });
+    await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
     expect(spawnWorker).toHaveBeenCalledTimes(2);
   });
 });
@@ -194,18 +202,18 @@ describe("createTerminalSessionRegistry — kill drops from list", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
     const b = await registry.create({
       allowId: "bash",
       bin: "/bin/bash",
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    await registry.kill(a.sessionId);
+    await registry.kill(a.sessionId, OWNER);
 
-    const ids = registry.list().map((s) => s.sessionId);
+    const ids = registry.list(OWNER).map((s) => s.sessionId);
     expect(ids).not.toContain(a.sessionId);
     expect(ids).toContain(b.sessionId);
   });
@@ -237,9 +245,9 @@ describe("createTerminalSessionRegistry — H-1 read round-trip", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const view = await registry.read(sessionId);
+    const view = await registry.read(sessionId, OWNER);
     expect(view).toEqual({
       screen: "hi",
       cursor: { x: 0, y: 0 },
@@ -262,7 +270,7 @@ describe("createTerminalSessionRegistry — M-1 create forwards bin/argv verbati
       argv: ["--prefix", "x"],
       cols: 100,
       rows: 40,
-    });
+    }, OWNER);
 
     const createFrame = fake.requestFrames.find((f) => f.method === "create");
     expect(createFrame).toBeDefined();
@@ -297,9 +305,9 @@ describe("createTerminalSessionRegistry — TR-02/14 read forwards the render op
       cols: 80,
       rows: 24,
       scrollback: 1000,
-    });
+    }, OWNER);
 
-    await registry.read(sessionId, { format: "ansi", scrollback: 10, includeAltBuffer: false });
+    await registry.read(sessionId, OWNER, { format: "ansi", scrollback: 10, includeAltBuffer: false });
 
     // The read frame must carry the render opts (Plan 02's handleRead reads them).
     const readFrame = fake.requestFrames.find((f) => f.method === "read");
@@ -330,9 +338,9 @@ describe("createTerminalSessionRegistry — TR-02/14 read forwards the render op
       cols: 80,
       rows: 24,
       scrollback: 1000,
-    });
+    }, OWNER);
 
-    const view = await registry.read(sessionId);
+    const view = await registry.read(sessionId, OWNER);
     expect(view.screen).toBe("y");
 
     const readFrame = fake.requestFrames.find((f) => f.method === "read");
@@ -371,9 +379,9 @@ describe("createTerminalSessionRegistry — TR-02/14 read forwards the render op
       cols: 80,
       rows: 24,
       scrollback: 1000,
-    });
+    }, OWNER);
 
-    const view = await registry.read(sessionId);
+    const view = await registry.read(sessionId, OWNER);
     // The diff Plan 03 produced rides the view through to the tool layer.
     expect(view.diff).toEqual({ changed: true, firstChangedRow: 1, lastChangedRow: 3 });
   });
@@ -391,7 +399,7 @@ describe("createTerminalSessionRegistry — TR-14 create threads a scrollback de
       cols: 80,
       rows: 24,
       scrollback: 5000,
-    });
+    }, OWNER);
 
     const createFrame = fake.requestFrames.find((f) => f.method === "create");
     expect(createFrame).toBeDefined();
@@ -431,7 +439,7 @@ describe("createTerminalSessionRegistry — SEC-02 scope rides the create frame"
       cols: 80,
       rows: 24,
       scope,
-    });
+    }, OWNER);
 
     const createFrame = fake.requestFrames.find((f) => f.method === "create");
     expect(createFrame).toBeDefined();
@@ -451,7 +459,7 @@ describe("createTerminalSessionRegistry — SEC-02 scope rides the create frame"
       rows: 24,
       workspace: "/work/agent-1",
       cwd: "/work/agent-1/project",
-    });
+    }, OWNER);
 
     const createFrame = fake.requestFrames.find((f) => f.method === "create");
     expect(createFrame).toBeDefined();
@@ -483,7 +491,7 @@ describe("createTerminalSessionRegistry — 122-06 bwrapPath rides the create fr
       scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
       workspace: "/work/agent-1",
       cwd: "/work/agent-1",
-    });
+    }, OWNER);
 
     const createFrame = fake.requestFrames.find((f) => f.method === "create");
     expect(createFrame).toBeDefined();
@@ -505,7 +513,7 @@ describe("createTerminalSessionRegistry — 122-06 bwrapPath rides the create fr
       scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
       workspace: "/work/agent-1",
       cwd: "/work/agent-1",
-    });
+    }, OWNER);
 
     const createFrame = fake.requestFrames.find((f) => f.method === "create");
     expect(createFrame).toBeDefined();
@@ -518,7 +526,7 @@ describe("createTerminalSessionRegistry — no module-global state", () => {
     const r1 = createTerminalSessionRegistry(baseDeps(() => makeFakeWorker().child));
     const r2 = createTerminalSessionRegistry(baseDeps(() => makeFakeWorker().child));
 
-    await r1.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 });
+    await r1.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
 
     expect(r1.size()).toBe(1);
     expect(r2.size()).toBe(0);
@@ -569,7 +577,7 @@ describe("createTerminalSessionRegistry — HR-02 malformed-frame on stdout does
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
     // A length-prefixed frame whose body is NOT valid JSON ("{" then garbage):
     // JSON.parse throws INSIDE the stdout 'data' listener. Pre-patch this is an
@@ -582,7 +590,7 @@ describe("createTerminalSessionRegistry — HR-02 malformed-frame on stdout does
     expect(() => fake.emitRaw(Buffer.concat([prefix, garbageBody]))).not.toThrow();
 
     // The corrupt worker is dropped: the running session flips to 'lost'.
-    expect(registry.get(sessionId)?.status).toBe("lost");
+    expect(registry.get(sessionId, OWNER)?.status).toBe("lost");
     // A WARN with a closed-union errorKind ('validation' — the frame failed
     // structural decode) was logged for the corrupt frame.
     const warn = logger.warn.mock.calls.find(
@@ -602,11 +610,11 @@ describe("createTerminalSessionRegistry — HR-02 malformed-frame on stdout does
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
     // The framer throws FrameTooLargeError on this prefix; the handler must swallow it.
     expect(() => fake.emitOversizedPrefix()).not.toThrow();
-    expect(registry.get(sessionId)?.status).toBe("lost");
+    expect(registry.get(sessionId, OWNER)?.status).toBe("lost");
     expect(logger.warn).toHaveBeenCalled();
   });
 });
@@ -639,16 +647,16 @@ describe("createTerminalSessionRegistry — HR-03 worker create failure is surfa
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
     // Let the queued microtask reply land.
     await new Promise((r) => setImmediate(r));
 
     // The handle reflects the failure — NOT a perpetual alive:true.
-    expect(registry.get(sessionId)?.status).toBe("lost");
+    expect(registry.get(sessionId, OWNER)?.status).toBe("lost");
     // list() and read() agree the session is not alive.
-    expect(registry.list().find((s) => s.sessionId === sessionId)?.alive).toBe(false);
-    const view = await registry.read(sessionId);
+    expect(registry.list(OWNER).find((s) => s.sessionId === sessionId)?.alive).toBe(false);
+    const view = await registry.read(sessionId, OWNER);
     expect(view.alive).toBe(false);
     // OPS-07: the spawn-failure hook fired with the session id + the worker error.
     expect(spawnFailures).toHaveLength(1);
@@ -677,10 +685,10 @@ describe("createTerminalSessionRegistry — HR-03 worker create failure is surfa
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
     await new Promise((r) => setImmediate(r));
 
-    expect(registry.get(sessionId)?.status).toBe("running");
+    expect(registry.get(sessionId, OWNER)?.status).toBe("running");
     expect(spawnFailures).toHaveLength(0);
   });
 });
@@ -715,9 +723,9 @@ describe("createTerminalSessionRegistry — MR-01 request() reply timeout (wedge
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const readPromise = registry.read(sessionId);
+    const readPromise = registry.read(sessionId, OWNER);
     // The read registered a timeout with the configured duration.
     expect(setTimer).toHaveBeenCalled();
     expect(scheduledMs).toBe(1234);
@@ -754,8 +762,8 @@ describe("createTerminalSessionRegistry — MR-01 request() reply timeout (wedge
       argv: [],
       cols: 80,
       rows: 24,
-    });
-    const view = await registry.read(sessionId);
+    }, OWNER);
+    const view = await registry.read(sessionId, OWNER);
     expect(view.screen).toBe("ok");
     // The reply arrived → the timeout was cancelled (clearTimer called for the read key).
     expect(clearTimer).toHaveBeenCalled();
@@ -780,9 +788,9 @@ describe("createTerminalSessionRegistry — LR-02 clearWorker preserves waiter i
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const readPromise = registry.read(sessionId); // parks a (sessionId,requestId) waiter
+    const readPromise = registry.read(sessionId, OWNER); // parks a (sessionId,requestId) waiter
     fake.emitClose(1); // clearWorker flushes the parked waiter
 
     const view = await readPromise;
@@ -834,9 +842,9 @@ describe("createTerminalSessionRegistry — TR-03 sendText forwarding", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const out = await registry.sendText(sessionId, { text: "hello", submit: false, bracketedPaste: false });
+    const out = await registry.sendText(sessionId, OWNER, { text: "hello", submit: false, bracketedPaste: false });
 
     // The forwarded frame carries the send_text method + the full param set.
     const frame = fake.requestFrames.find((f) => f.method === "send_text");
@@ -871,12 +879,12 @@ describe("createTerminalSessionRegistry — TR-03 sendText forwarding", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
-    const created = registry.get(sessionId)?.lastActivity;
+    }, OWNER);
+    const created = registry.get(sessionId, OWNER)?.lastActivity;
     expect(created).toBeDefined();
 
-    await registry.sendText(sessionId, { text: "x" });
-    const after = registry.get(sessionId)?.lastActivity;
+    await registry.sendText(sessionId, OWNER, { text: "x" });
+    const after = registry.get(sessionId, OWNER)?.lastActivity;
     expect(after).toBeGreaterThan(created as number);
   });
 
@@ -902,9 +910,9 @@ describe("createTerminalSessionRegistry — TR-03 sendText forwarding", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const p = registry.sendText(sessionId, { text: "hi" });
+    const p = registry.sendText(sessionId, OWNER, { text: "hi" });
     firedCb?.(); // simulate the reply-timeout expiry
     const out = await p;
     expect(out).toEqual({ screen: "", cursor: { x: 0, y: 0 } });
@@ -913,7 +921,7 @@ describe("createTerminalSessionRegistry — TR-03 sendText forwarding", () => {
   it("degrades to the {screen:'',cursor:0,0} shape for an absent session (no throw)", async () => {
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
-    const out = await registry.sendText("no-such-session", { text: "hi" });
+    const out = await registry.sendText("no-such-session", OWNER, { text: "hi" });
     expect(out).toEqual({ screen: "", cursor: { x: 0, y: 0 } });
   });
 });
@@ -938,9 +946,9 @@ describe("createTerminalSessionRegistry — TR-03 sendKey forwarding", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const out = await registry.sendKey(sessionId, { keys: ["C-c"] });
+    const out = await registry.sendKey(sessionId, OWNER, { keys: ["C-c"] });
 
     const frame = fake.requestFrames.find((f) => f.method === "send_key");
     expect(frame).toBeDefined();
@@ -971,9 +979,9 @@ describe("createTerminalSessionRegistry — TR-03 sendKey forwarding", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const p = registry.sendKey(sessionId, { keys: ["Up"] });
+    const p = registry.sendKey(sessionId, OWNER, { keys: ["Up"] });
     firedCb?.();
     const out = await p;
     expect(out).toEqual({ screen: "", cursor: { x: 0, y: 0 } });
@@ -999,9 +1007,9 @@ describe("createTerminalSessionRegistry — TR-03 resize forwarding", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const out = await registry.resize(sessionId, { cols: 100, rows: 30 });
+    const out = await registry.resize(sessionId, OWNER, { cols: 100, rows: 30 });
 
     const frame = fake.requestFrames.find((f) => f.method === "resize");
     expect(frame).toBeDefined();
@@ -1011,14 +1019,14 @@ describe("createTerminalSessionRegistry — TR-03 resize forwarding", () => {
 
     expect(out).toEqual({ ok: true });
     // TR-03: the snapshot stays coherent — list()/get() reflect the new geometry.
-    expect(registry.get(sessionId)?.cols).toBe(100);
-    expect(registry.get(sessionId)?.rows).toBe(30);
+    expect(registry.get(sessionId, OWNER)?.cols).toBe(100);
+    expect(registry.get(sessionId, OWNER)?.rows).toBe(30);
   });
 
   it("returns {ok:false} for an absent session (no throw)", async () => {
     const fake = makeFakeWorker();
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
-    const out = await registry.resize("no-such-session", { cols: 100, rows: 30 });
+    const out = await registry.resize("no-such-session", OWNER, { cols: 100, rows: 30 });
     expect(out).toEqual({ ok: false });
   });
 });
@@ -1043,9 +1051,9 @@ describe("createTerminalSessionRegistry — TR-03 wait forwarding", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const out = await registry.wait(sessionId, { forIdleMs: 120, timeoutMs: 5000 });
+    const out = await registry.wait(sessionId, OWNER, { forIdleMs: 120, timeoutMs: 5000 });
 
     const frame = fake.requestFrames.find((f) => f.method === "wait");
     expect(frame).toBeDefined();
@@ -1081,9 +1089,9 @@ describe("createTerminalSessionRegistry — TR-03 wait forwarding", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const out = await registry.wait(sessionId, { forIdleMs: 120 });
+    const out = await registry.wait(sessionId, OWNER, { forIdleMs: 120 });
     // isComplete:false MUST survive the forward — a flip to true strands the agent.
     expect(out.isComplete).toBe(false);
     expect(out.matched).toBe(false);
@@ -1112,9 +1120,9 @@ describe("createTerminalSessionRegistry — TR-03 wait forwarding", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const p = registry.wait(sessionId, { forIdleMs: 120 });
+    const p = registry.wait(sessionId, OWNER, { forIdleMs: 120 });
     firedCb?.(); // simulate the MR-01 reply-timeout expiry → ok:false
     const out = await p;
     expect(out).toEqual({
@@ -1148,9 +1156,9 @@ describe("createTerminalSessionRegistry — TR-03 wait forwarding", () => {
       argv: [],
       cols: 80,
       rows: 24,
-    });
+    }, OWNER);
 
-    const out = await registry.wait(sessionId, {});
+    const out = await registry.wait(sessionId, OWNER, {});
     expect(out.isComplete).toBe(false);
   });
 });
@@ -1168,9 +1176,6 @@ describe("createTerminalSessionRegistry — TR-03 wait forwarding", () => {
 // runtime. The 3-session isolation (TR-09) is proven via a fake worker keying
 // each read reply to the frame's sessionId.
 // ===========================================================================
-
-/** A shared owner for the single-owner isolation tests (TR-09). */
-const OWNER = { agentId: "a", sessionKey: "s" };
 
 /**
  * A fake worker whose `read` reply screen is keyed to the frame's sessionId, so

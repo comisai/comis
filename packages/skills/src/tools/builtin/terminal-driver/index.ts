@@ -45,6 +45,7 @@ export {
   type SessionHandle,
   type SessionListing,
   type SessionStatus,
+  type SessionOwner,
 } from "./terminal-session-registry.js";
 
 // The production worker-spawn posture helper (extracted from the registry to keep it

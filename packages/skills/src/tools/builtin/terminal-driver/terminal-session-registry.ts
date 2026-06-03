@@ -45,6 +45,9 @@ import {
 import type { ReadOptions, SnapshotDiff } from "./terminal-render.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
+import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
+
+export type { SessionOwner } from "./terminal-session-owner.js";
 
 /**
  * The per-session emulator scrollback depth (TR-14) — the SINGLE source the create
@@ -161,6 +164,8 @@ export interface SessionHandle {
   exitCode?: number;
   /** The registry-allocated per-session jail workspace dir (gap 2), removed best-effort on kill so the throwaway dir does not leak. Set ONLY when the registry allocated it (a caller-supplied workspace is the caller's to clean). */
   workspace?: string;
+  /** The origin that owns this session — `(agentId, sessionKey)` (TR-13/TR-09). Stamped at `create`; `list`/`read`/`get`/`kill`/`send*` filter on it (two subagents are mutually invisible). */
+  owner: SessionOwner;
 }
 
 /** A `create` request — the daemon passes buildDirectSpawn's `{bin,argv}` (M-1). */
@@ -237,50 +242,39 @@ export interface SessionListing {
   lastActivity: number;
 }
 
-/** The registry's public surface. */
+/**
+ * The registry's public surface. Every session-scoped method takes a REQUIRED
+ * `owner` `(agentId, sessionKey)` — NO return-all-when-omitted fallback
+ * (no-backward-compat; AGENTS.md §2.9). An owner mismatch is treated EXACTLY as
+ * not-found (TR-13/TR-09): the caller sees the empty/degraded view, never another
+ * owner's session. `size`/`cleanup` are owner-agnostic (lifecycle, not visibility).
+ */
 export interface TerminalSessionRegistry {
-  create(req: CreateRequest): Promise<CreateResult>;
-  /**
-   * Round-trip a `read` frame and resolve the rendered view. `opts` (TR-02/14)
-   * forwards `{format,scrollback,includeAltBuffer}` into the frame; the reply's
-   * `diff` (Plan 03 screen-diff) rides back on the view. A bare `read(sessionId)`
-   * forwards no render opts (the worker applies its defaults).
-   */
-  read(sessionId: string, opts?: ReadOptions): Promise<TerminalView>;
-  /**
-   * Forward a `send_text` frame (TR-03) and resolve the post-action
-   * `{screen,cursor}` subset. Degrades to `{screen:"",cursor:{0,0}}` for an
-   * absent session or a wedged worker (the MR-01 timeout reply) — never hangs.
-   */
+  create(req: CreateRequest, owner: SessionOwner): Promise<CreateResult>;
+  /** Round-trip a `read` (TR-02/14 opts + Plan-03 diff). Owner-scoped: absent/cross-owner → not-found view (alive false), never the other owner's bytes. */
+  read(sessionId: string, owner: SessionOwner, opts?: ReadOptions): Promise<TerminalView>;
+  /** Forward `send_text` (TR-03) → `{screen,cursor}`. Owner-scoped (defense-in-depth): absent/cross-owner/not-running/wedged → `{screen:"",cursor:{0,0}}`; never hangs. */
   sendText(
     sessionId: string,
+    owner: SessionOwner,
     args: { text: string; submit?: boolean; bracketedPaste?: boolean },
   ): Promise<SendResult>;
-  /**
-   * Forward a `send_key` frame (TR-03) and resolve the post-action
-   * `{screen,cursor}` subset. Same degrade-on-timeout/absent contract as
-   * {@link sendText}.
-   */
-  sendKey(sessionId: string, args: { keys: string[] }): Promise<SendResult>;
-  /**
-   * Forward a `resize` frame (TR-03) and resolve `{ok}`. On success also updates
-   * the handle's `cols`/`rows` so a subsequent `list()`/`get()` reflects the new
-   * geometry (the snapshot stays coherent). Absent session → `{ok:false}`.
-   */
-  resize(sessionId: string, args: { cols: number; rows: number }): Promise<{ ok: boolean }>;
-  /**
-   * Forward a `wait` frame (TR-03) and resolve the settle snapshot
-   * `{matched,isComplete,reason,screen,cursor}`. The worker's `isComplete:false`
-   * survives the forward verbatim; a wedged worker (the MR-01 reply timeout)
-   * still yields the honest not-complete shape — never `isComplete:true`, never a hang.
-   */
+  /** Forward `send_key` (TR-03) → `{screen,cursor}`. Same owner-scoped degrade contract as {@link sendText}. */
+  sendKey(sessionId: string, owner: SessionOwner, args: { keys: string[] }): Promise<SendResult>;
+  /** Forward `resize` (TR-03) → `{ok}` (also updates handle geometry on success). Owner-scoped: absent/cross-owner → `{ok:false}`. */
+  resize(sessionId: string, owner: SessionOwner, args: { cols: number; rows: number }): Promise<{ ok: boolean }>;
+  /** Forward `wait` (TR-03) → settle snapshot. Owner-scoped: absent/cross-owner/wedged → honest not-complete (never `isComplete:true`); worker `isComplete:false` survives verbatim; never hangs. */
   wait(
     sessionId: string,
+    owner: SessionOwner,
     args: { forIdleMs?: number; forText?: string; forExit?: boolean; timeoutMs?: number },
   ): Promise<WaitResult>;
-  get(sessionId: string): SessionHandle | undefined;
-  list(): SessionListing[];
-  kill(sessionId: string): Promise<void>;
+  /** The handle iff it exists AND is owned by `owner`; else `undefined` (TR-13). */
+  get(sessionId: string, owner: SessionOwner): SessionHandle | undefined;
+  /** Only the sessions owned by `owner` (TR-13 owner-scoped visibility). */
+  list(owner: SessionOwner): SessionListing[];
+  /** Terminate a session — a no-op if it is absent OR not owned by `owner` (TR-13). */
+  kill(sessionId: string, owner: SessionOwner): Promise<void>;
   size(): number;
   cleanup(): Promise<void>;
 }
@@ -517,7 +511,7 @@ export function createTerminalSessionRegistry(
     });
   }
 
-  async function create(req: CreateRequest): Promise<CreateResult> {
+  async function create(req: CreateRequest, owner: SessionOwner): Promise<CreateResult> {
     const child = ensureWorker();
     const sessionId = generateSessionId();
 
@@ -535,6 +529,10 @@ export function createTerminalSessionRegistry(
       rows: req.rows,
       lastActivity: nowMs(),
       workspace: ownedWorkspace,
+      // TR-13: stamp the origin so list/read/get/kill/send* are owner-scoped. The
+      // owner rides the HANDLE only — NEVER the worker frame (the worker is
+      // owner-agnostic; ownership is a daemon-side authorization concern).
+      owner,
     };
     sessions.set(sessionId, handle);
 
@@ -585,8 +583,18 @@ export function createTerminalSessionRegistry(
     return { sessionId, allowId: req.allowId, cols: req.cols, rows: req.rows };
   }
 
-  async function read(sessionId: string, opts?: ReadOptions): Promise<TerminalView> {
+  /**
+   * The handle ONLY when it exists AND is owned by `owner` (TR-13). An owner
+   * mismatch returns `undefined` — the SAME as a missing session — so every
+   * owner-scoped method treats a cross-owner ref EXACTLY as not-found (no leak).
+   */
+  function ownedHandle(sessionId: string, owner: SessionOwner): SessionHandle | undefined {
     const handle = sessions.get(sessionId);
+    return handle !== undefined && sameOwner(handle.owner, owner) ? handle : undefined;
+  }
+
+  async function read(sessionId: string, owner: SessionOwner, opts?: ReadOptions): Promise<TerminalView> {
+    const handle = ownedHandle(sessionId, owner);
     if (handle === undefined || handle.status !== "running") {
       // Not found / not alive — a minimal view the 119-04 tool layer maps (no diff).
       return {
@@ -638,9 +646,10 @@ export function createTerminalSessionRegistry(
 
   async function sendText(
     sessionId: string,
+    owner: SessionOwner,
     args: { text: string; submit?: boolean; bracketedPaste?: boolean },
   ): Promise<SendResult> {
-    const handle = sessions.get(sessionId);
+    const handle = ownedHandle(sessionId, owner);
     if (handle === undefined || handle.status !== "running") {
       return { screen: "", cursor: { x: 0, y: 0 } };
     }
@@ -653,8 +662,8 @@ export function createTerminalSessionRegistry(
     return mapSendReply(handle, reply);
   }
 
-  async function sendKey(sessionId: string, args: { keys: string[] }): Promise<SendResult> {
-    const handle = sessions.get(sessionId);
+  async function sendKey(sessionId: string, owner: SessionOwner, args: { keys: string[] }): Promise<SendResult> {
+    const handle = ownedHandle(sessionId, owner);
     if (handle === undefined || handle.status !== "running") {
       return { screen: "", cursor: { x: 0, y: 0 } };
     }
@@ -664,9 +673,10 @@ export function createTerminalSessionRegistry(
 
   async function resize(
     sessionId: string,
+    owner: SessionOwner,
     args: { cols: number; rows: number },
   ): Promise<{ ok: boolean }> {
-    const handle = sessions.get(sessionId);
+    const handle = ownedHandle(sessionId, owner);
     if (handle === undefined || handle.status !== "running") {
       return { ok: false };
     }
@@ -694,9 +704,10 @@ export function createTerminalSessionRegistry(
 
   async function wait(
     sessionId: string,
+    owner: SessionOwner,
     args: { forIdleMs?: number; forText?: string; forExit?: boolean; timeoutMs?: number },
   ): Promise<WaitResult> {
-    const handle = sessions.get(sessionId);
+    const handle = ownedHandle(sessionId, owner);
     if (handle === undefined || handle.status !== "running") {
       return degradedWait();
     }
@@ -727,34 +738,45 @@ export function createTerminalSessionRegistry(
     };
   }
 
-  function get(sessionId: string): SessionHandle | undefined {
-    return sessions.get(sessionId);
+  function get(sessionId: string, owner: SessionOwner): SessionHandle | undefined {
+    return ownedHandle(sessionId, owner);
   }
 
-  function list(): SessionListing[] {
-    return Array.from(sessions.values()).map((s) => ({
-      sessionId: s.sessionId,
-      allowId: s.allowId,
-      command: s.command,
-      alive: s.status === "running",
-      lastActivity: s.lastActivity,
-    }));
+  function list(owner: SessionOwner): SessionListing[] {
+    return Array.from(sessions.values())
+      .filter((s) => sameOwner(s.owner, owner)) // TR-13: owner-scoped visibility
+      .map((s) => ({
+        sessionId: s.sessionId,
+        allowId: s.allowId,
+        command: s.command,
+        alive: s.status === "running",
+        lastActivity: s.lastActivity,
+      }));
   }
 
-  async function kill(sessionId: string): Promise<void> {
-    const handle = sessions.get(sessionId);
-    if (handle === undefined) return;
+  /**
+   * Drop a session WITHOUT an owner check — the shared end-of-life path: fire the
+   * kill frame (if running), delete the handle (TR-01), and best-effort rm the
+   * registry-allocated workspace (gap 2; the single workspace-removal site, never
+   * throws). `kill` gates this on ownership; `cleanup` calls it for every session.
+   */
+  function evictInternal(handle: SessionHandle): void {
+    const { sessionId } = handle;
     if (worker !== undefined && handle.status === "running") {
-      // Fire the kill frame (fire-and-forget): the session is dropped locally
-      // regardless of the worker's reply, so `list()` no longer contains it.
+      // Fire-and-forget: the session is dropped locally regardless of the reply.
       send(sessionId, "kill", { sessionId });
     }
-    // Drop the killed session so `list()` no longer contains it (supports TR-01).
     sessions.delete(sessionId);
-    // gap 2: best-effort rm the per-session jail workspace we allocated (no leak; never
-    // throws — the kill path completes). Set only when the registry allocated it.
     if (handle.workspace !== undefined) cleanupSessionWorkspace(handle.workspace);
     logger.info({ sessionId }, "terminal session killed");
+  }
+
+  async function kill(sessionId: string, owner: SessionOwner): Promise<void> {
+    // TR-13: a no-op if absent OR not owned by the caller (a subagent cannot
+    // terminate a sibling subagent's session). Owner mismatch == not-found.
+    const handle = ownedHandle(sessionId, owner);
+    if (handle === undefined) return;
+    evictInternal(handle);
   }
 
   function size(): number {
@@ -762,8 +784,10 @@ export function createTerminalSessionRegistry(
   }
 
   async function cleanup(): Promise<void> {
-    for (const sessionId of Array.from(sessions.keys())) {
-      await kill(sessionId);
+    // Owner-AGNOSTIC: tears down the WHOLE per-agent registry, dropping every
+    // session regardless of owner (the per-agent worker is shared across owners).
+    for (const handle of Array.from(sessions.values())) {
+      evictInternal(handle);
     }
     if (worker !== undefined) {
       worker.kill("SIGTERM");
