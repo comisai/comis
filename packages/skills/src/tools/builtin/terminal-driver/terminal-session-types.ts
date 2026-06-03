@@ -37,6 +37,11 @@ export interface RegistryLogger {
   error(obj: Record<string, unknown>, msg: string): void;
 }
 
+/** A readable stdio stream slot — the structural `on("data")` surface the registry reads. */
+export interface WorkerStdioStream {
+  on(event: "data", cb: (chunk: Buffer) => void): void;
+}
+
 /**
  * The structural shape of the spawned worker child — a subset of
  * `ChildProcess`. The registry writes request frames to `stdin`, reads reply
@@ -46,6 +51,14 @@ export interface FakeWorkerChild {
   pid?: number;
   stdin: { write(chunk: Buffer): boolean } | null;
   stdout: { on(event: "data", cb: (chunk: Buffer) => void): void } | null;
+  /**
+   * The 4-fd stdio array (`["pipe","pipe","pipe","pipe"]`, terminal-worker-launch.ts):
+   * fd0=stdin, fd1=stdout, fd2=stderr, fd3=the events PUSH channel (124-05). The
+   * supervisor reads `stdio[3]` for `TerminalEventFrame`s (the no-poll attention seam,
+   * TR-11). Optional + per-slot-nullable so a fake worker without fd3 (or stderr) is valid
+   * — the reader is optional-chained.
+   */
+  stdio?: ReadonlyArray<WorkerStdioStream | null | undefined>;
   on(event: string, cb: (arg?: unknown) => void): FakeWorkerChild;
   kill(signal?: string): void;
 }

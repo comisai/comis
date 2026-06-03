@@ -38,6 +38,7 @@ import {
 
 import {
   encodeFrame,
+  type TerminalEventFrame,
   type TerminalReplyFrame,
   type TerminalRequestFrame,
 } from "./terminal-ipc.js";
@@ -117,6 +118,15 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   requestTimeoutMs?: number;
   /** Called when the worker reports a failed backend spawn via an `ok:false` create reply (HR-03/OPS-07); the daemon binds this to emit `terminal:spawn_failed`. The session is already `lost` before this fires. Injected (not a value-imported bus) so the registry stays infra-decoupled. */
   onSpawnFailed?: (info: SpawnFailureInfo) => void;
+  /**
+   * Called for each decoded {@link TerminalEventFrame} the worker pushes on fd3 (the
+   * no-poll attention channel, 124-05/TR-11) — the seam the daemon (124-09) binds to
+   * RE-PUBLISH onto its TypedEventBus (adding `agentId`/`timestamp` the worker is
+   * agnostic to). Mirrors {@link onSpawnFailed}: daemon-bound, injected (NOT a
+   * value-imported bus) so the registry stays infra-decoupled. The fd3 reader's HR-02
+   * guard runs BEFORE this — a corrupt frame drops the worker and never reaches the hook.
+   */
+  onTerminalEvent?: (frame: TerminalEventFrame) => void;
   /** Schedule a one-shot timer for the MR-01 reply timeout. Default `systemSetTimeout` from `@comis/core` (the sanctioned indirection — no raw `setTimeout` global); the production default `.unref()`s it so a pending timeout never holds the loop open. */
   setTimer?: (cb: () => void, ms: number) => unknown;
   /** Cancel a `setTimer` handle (default: `systemClearTimeout`). */
@@ -340,10 +350,11 @@ export function createTerminalSessionRegistry(
 
     // OPS-01 crash-isolation listeners (the HR-02-guarded stdout decoder + error + close)
     // moved to terminal-worker-supervisor.ts (124-01) so this file keeps headroom under the
-    // 800-line cap before the P5 fd3 reader lands (124-05 wires it onto child.stdio?.[3]
-    // there). The closure locals the block used ride in as explicit params; behavior is
-    // byte-for-byte identical (the HR-02 try/catch that keeps a corrupt frame from crashing
-    // the daemon moved intact).
+    // 800-line cap. 124-05 (TR-11): the supervisor ALSO installs the guarded fd3 events-push
+    // reader on child.stdio?.[3], dispatching each decoded TerminalEventFrame to the daemon-
+    // injected onTerminalEvent hook (the no-poll attention seam). The closure locals + the
+    // hook ride in as explicit params; the stdout HR-02 try/catch (corrupt frame never
+    // crashes the daemon) is byte-for-byte identical and the fd3 reader copies it.
     wireWorkerSupervision({
       child,
       pending,
@@ -351,6 +362,7 @@ export function createTerminalSessionRegistry(
       logger,
       markRunningSessionsLost,
       clearWorker,
+      onTerminalEvent: deps.onTerminalEvent,
     });
 
     return child;
