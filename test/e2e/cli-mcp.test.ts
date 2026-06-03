@@ -140,8 +140,12 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
 
   beforeAll(async () => {
     // Set BEFORE boot so the config's `${COMIS_GATEWAY_TOKEN}` ref resolves at
-    // load. COMIS_* is not in the daemon's SENSITIVE_PREFIXES, so it survives
-    // the post-boot env-scrub and is still present for the Criterion-5 restart.
+    // load. NOTE: this var does NOT survive boot — while COMIS_* is absent from the
+    // stage-1 SENSITIVE_PREFIXES scrub, the daemon's STAGE-2 scrub deletes every
+    // config-referenced SecretRef name (`container.platformSecretNames`) from
+    // process.env after parse, and this config carries `secret: "${COMIS_GATEWAY_TOKEN}"`.
+    // So the Criterion-5 in-process restart RE-SETS it before re-boot (a real process
+    // restart's service manager / setup wizard re-provides the env identically).
     priorGatewayToken = process.env["COMIS_GATEWAY_TOKEN"];
     process.env["COMIS_GATEWAY_TOKEN"] = GATEWAY_TOKEN_SECRET;
     tmpDir = mkdtempSync(join(tmpdir(), "cli-mcp-e2e-"));
@@ -383,6 +387,14 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
   it("Criterion 5: after a daemon restart, the persisted server auto-reconnects (mcp list shows it)", async () => {
     // Tear down the running daemon (releases the double-start guard + port).
     await handle.cleanup();
+
+    // Re-provide COMIS_GATEWAY_TOKEN: boot-1's stage-2 SecretRef scrub
+    // (container.platformSecretNames) deleted it from process.env, so the
+    // config's `${COMIS_GATEWAY_TOKEN}` ref would otherwise fail to resolve on
+    // re-boot ("Missing env var COMIS_GATEWAY_TOKEN"). A real daemon restart is a
+    // fresh process whose service manager / setup wizard supplies the env again;
+    // this in-process restart mimics that.
+    process.env["COMIS_GATEWAY_TOKEN"] = GATEWAY_TOKEN_SECRET;
 
     // Re-boot against the SAME config file. setup-mcp.ts auto-connects every
     // enabled entry in integrations.mcp.servers at boot, so the persisted
