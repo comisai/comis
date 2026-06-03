@@ -24,7 +24,7 @@ import { describe, it, expect } from "vitest";
 import { wireTerminalTools, mapAllowEntry } from "./setup-terminal-tools.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import type { TerminalSessionRegistry } from "@comis/skills/tools";
-import { TerminalDriverConfigSchema, type TerminalAllowEntry } from "@comis/core";
+import type { TerminalAllowEntry } from "@comis/core";
 
 type ToolLike = { name: string; execute: (id: string, params: object) => Promise<unknown> };
 
@@ -141,34 +141,40 @@ describe("wireTerminalTools — daemon composition root", () => {
 // (mapAllowEntries(config.allow)) threads scope automatically — no silent drop.
 // ===========================================================================
 
-/** Parse a single allow entry through the closed schema (so defaults are applied). */
-function parsedEntry(over: Record<string, unknown> = {}): TerminalAllowEntry {
-  const cfg = TerminalDriverConfigSchema.parse({
-    enabled: true,
-    worker: { maxSessions: 4, idleTtlMs: 1000, ringBytes: 1024, stuckMs: 1000, maxConcurrentAttentionTurns: 1 },
-    defaults: { cols: 120, rows: 40, scrollback: 1000 },
-    allow: [
-      {
-        id: "bash",
-        match: { path: "/bin/bash" },
-        // `scope` is a required object whose SUB-FIELDS default (least-privilege);
-        // pass an empty object so the schema applies workspace/none/exclude/dedicated
-        // unless a test overrides it.
-        scope: {},
-        consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-03T00:00:00Z" },
-        ...over,
-      },
-    ],
-    redactSecrets: true,
-    audit: { enabled: false },
-  });
-  return cfg.allow[0];
+/**
+ * Build a single PARSED allow entry (a `TerminalAllowEntry` — what `mapAllowEntry`
+ * receives at runtime, AFTER the config schema has parsed + default-applied it). The
+ * scope here is already fully materialized (the schema's `.default(...)` semantics
+ * are owned + tested by core's `schema-skills.test.ts`); these tests assert the
+ * daemon-boundary MAPPING preserves whatever scope arrives, not the defaulting.
+ */
+function configEntry(scope: TerminalAllowEntry["scope"]): TerminalAllowEntry {
+  return {
+    id: "bash",
+    match: { path: "/bin/bash" },
+    scope,
+    autoAnswer: "safe-only",
+    consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-03T00:00:00Z" },
+    hardening: "none",
+  };
 }
+
+/** The least-privilege scope the schema materializes when sub-fields are omitted. */
+const LEAST_PRIVILEGE: TerminalAllowEntry["scope"] = {
+  filesystem: "workspace",
+  network: "none",
+  credentialHome: "exclude",
+  uid: "dedicated",
+};
 
 describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-02/03)", () => {
   it("copies {id, match, scope} — a config scope.filesystem:'home' survives the map (NOT dropped)", () => {
-    const entry = parsedEntry({
-      scope: { filesystem: "home", network: "listed-hosts", hosts: ["api.example.com"], credentialHome: "include", uid: "daemon" },
+    const entry = configEntry({
+      filesystem: "home",
+      network: "listed-hosts",
+      hosts: ["api.example.com"],
+      credentialHome: "include",
+      uid: "daemon",
     });
     const mapped = mapAllowEntry(entry);
 
@@ -182,12 +188,11 @@ describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-0
     expect(mapped.scope.uid).toBe("daemon");
   });
 
-  it("an entry omitting scope sub-fields maps the schema's least-privilege defaults", () => {
-    // The config schema applies .default(...) at every scope sub-field, so an entry
-    // with an empty scope object already arrives least-privilege; the map is a
-    // passthrough that must preserve those defaults (workspace/none/exclude/dedicated).
-    const entry = parsedEntry(); // no scope override → schema defaults
-    const mapped = mapAllowEntry(entry);
+  it("preserves the least-privilege scope through the map (the safe default survives)", () => {
+    // The config schema already default-applies least-privilege (workspace/none/
+    // exclude/dedicated — core owns + tests that). The daemon mapping must carry it
+    // through UNCHANGED — never re-default or widen it (SEC-03).
+    const mapped = mapAllowEntry(configEntry(LEAST_PRIVILEGE));
 
     expect(mapped.scope.filesystem).toBe("workspace");
     expect(mapped.scope.network).toBe("none");
@@ -199,7 +204,7 @@ describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-0
     // Structural proof the mapping yields the exact AllowEntryLike contract the
     // skills matcher consumes ({id, match, scope}) — so a later config-plumbing step
     // can do allowEntries = config.allow.map(mapAllowEntry) and scope flows.
-    const mapped = mapAllowEntry(parsedEntry());
+    const mapped = mapAllowEntry(configEntry(LEAST_PRIVILEGE));
     expect(Object.keys(mapped).sort()).toEqual(["id", "match", "scope"]);
   });
 });
