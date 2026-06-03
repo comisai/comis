@@ -40,7 +40,8 @@
 import * as net from "node:net";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 
 import type { EgressControlPort, EgressMaterialization } from "@comis/core";
 
@@ -122,7 +123,9 @@ function handleClient(
     if (!allow.has(target.host)) {
       // DENY — 403, no upstream dial (no SSRF, no exfil to a non-listed host).
       logger.warn(
-        { toolName: "terminal_egress_proxy", hint: "egress denied (host not in allowlist)", errorKind: "permission" },
+        // `auth` (closed ErrorKind union): a host-not-in-allowlist CONNECT is an
+        // authorization denial — the allowlist is the operator's egress policy.
+        { toolName: "terminal_egress_proxy", hint: "egress denied (host not in allowlist)", errorKind: "auth" as const },
         "egress CONNECT blocked",
       );
       client.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
@@ -174,8 +177,8 @@ export function createTerminalEgressProxy(
   deps: TerminalEgressProxyDeps,
 ): EgressControlPort {
   const dial = deps.dialUpstream ?? ((host: string, port: number) => net.connect(port, host));
-  const socketDir = deps.socketDir ?? process.env.TMPDIR ?? "/tmp";
-  const genId = deps.genId ?? (() => randomBytes(8).toString("hex"));
+  const socketDir = deps.socketDir ?? tmpdir();
+  const genId = deps.genId ?? (() => randomUUID());
 
   return {
     async materialize(hosts: string[]): Promise<EgressMaterialization> {

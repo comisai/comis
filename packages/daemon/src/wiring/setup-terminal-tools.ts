@@ -30,7 +30,9 @@
  */
 
 import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
 import type { ComisLogger } from "@comis/infra";
+import { createTerminalEgressProxy } from "./terminal-egress-proxy.js";
 // The daemon does not depend on the pi SDK directly — it references the tool
 // array type via @comis/skills' PlatformToolProvider (= () => AgentTool[]), the
 // same way setup-tools.ts types its `tools` array.
@@ -197,6 +199,45 @@ function getOrCreateTerminalRegistry(
  * forwarding methods (120-03) — they do not re-gate the allowlist (the session was
  * gated at create). Mirrors how exec/process/apply-patch join the same array.
  */
+/**
+ * The net-new SEC-07 egress dimensions, constructed ONCE at the composition root
+ * (not per-agent): the host-side no-secret allowlist proxy (the
+ * {@link EgressControlPort} impl) + the resolved `bwrap` binary path.
+ */
+export interface TerminalEgressDeps {
+  /** The host-side allowlist egress proxy (materializes `listed-hosts` per session). */
+  readonly egressControl: EgressControlPort;
+  /** The resolved bwrap path (Linux + provider==bwrap), else undefined (fail-closed downstream). */
+  readonly bwrapPath: string | undefined;
+}
+
+/**
+ * Construct the SEC-07 egress dependencies ONCE for the daemon (the composition
+ * root), to inject into every agent's terminal wiring. The proxy materializes
+ * `listed-hosts` egress on demand (per session) in 122-06; constructing the port
+ * once avoids re-standing-up a server factory per agent/per create. `bwrapPath` is
+ * resolved only when the provider IS bwrap (Linux) — matching
+ * `BwrapProvider.available()`'s `which bwrap` so the terminal scope composer
+ * (122-06 `buildScopeArgs`) binds the SAME binary the exec sandbox uses; on
+ * macOS/no-sandbox it stays undefined (the create gate already fail-closes there).
+ */
+export function buildTerminalEgressDeps(
+  logger: ComisLogger,
+  sandboxProvider: SandboxProvider | undefined,
+): TerminalEgressDeps {
+  const egressControl = createTerminalEgressProxy({ logger });
+  let bwrapPath: string | undefined;
+  if (sandboxProvider?.name === "bwrap") {
+    try {
+      // eslint-disable-next-line no-restricted-syntax -- one-shot bwrap path resolve at daemon startup
+      bwrapPath = execFileSync("which", ["bwrap"], { encoding: "utf8" }).trim();
+    } catch {
+      bwrapPath = undefined; // provider reported bwrap but PATH lost it — fail-closed downstream
+    }
+  }
+  return { egressControl, bwrapPath };
+}
+
 /**
  * Build the shared deps object the nine terminal tools receive — the SINGLE seam
  * where the per-agent registry, the operator allow-set, the cached sandbox
