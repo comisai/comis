@@ -731,6 +731,53 @@ describe("terminal-tools — resize delegation", () => {
     expect(info?.obj.durationMs).toBeTypeOf("number");
     expect(info?.obj.toolName).toBe("terminal_session_resize");
   });
+
+  // IN-02 (code-review 123): resize must reject non-positive (and absurd) geometry
+  // with a typed validation error BEFORE forwarding to the emulator/PTY — an agent
+  // must not be able to drive cols=0 / rows=-1 (or an absurd dimension) into the
+  // worker's Terminal({cols,rows}) / PTY winsize. RED on pre-patch: readInt(...,0)
+  // forwards the unvalidated geometry, so registry.resize is called with cols:0.
+  it("IN-02: cols=0 is REJECTED (invalid_value) and registry.resize is NOT called", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionResizeTool(baseDeps(registry));
+
+    await expect(tool.execute("call-1", { sessionId: "s1", cols: 0, rows: 24 })).rejects.toThrow(
+      /\[invalid_value\]/,
+    );
+    expect(registry.resizeCalls).toHaveLength(0);
+  });
+
+  it("IN-02: rows=-1 is REJECTED (invalid_value) and registry.resize is NOT called", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionResizeTool(baseDeps(registry));
+
+    await expect(tool.execute("call-1", { sessionId: "s1", cols: 80, rows: -1 })).rejects.toThrow(
+      /\[invalid_value\]/,
+    );
+    expect(registry.resizeCalls).toHaveLength(0);
+  });
+
+  it("IN-02: a non-integer / absurdly large dimension is REJECTED before the forward", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionResizeTool(baseDeps(registry));
+
+    await expect(tool.execute("call-1", { sessionId: "s1", cols: 1.5, rows: 24 })).rejects.toThrow(
+      /\[invalid_value\]/,
+    );
+    await expect(tool.execute("call-2", { sessionId: "s1", cols: 80, rows: 1_000_000 })).rejects.toThrow(
+      /\[invalid_value\]/,
+    );
+    expect(registry.resizeCalls).toHaveLength(0);
+  });
+
+  it("IN-02: a valid in-range geometry still forwards normally", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionResizeTool(baseDeps(registry));
+
+    const res = await tool.execute("call-1", { sessionId: "s1", cols: 200, rows: 50 });
+    expect(res.details).toEqual({ ok: true });
+    expect(registry.resizeCalls[0]).toEqual({ sessionId: "s1", args: { cols: 200, rows: 50 } });
+  });
 });
 
 describe("terminal-tools — wait delegation", () => {
