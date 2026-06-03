@@ -109,7 +109,7 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
   // constraint self-documenting and turns a future infra-import regression into a
   // targeted, legible failure (not a needle in the 1,290-file global haystack).
   // ---------------------------------------------------------------------------
-  it("terminal scope/egress files (scope-args, env-scrub, egress-relay) value-import zero @comis/infra (SEC-07 boundary)", () => {
+  it("terminal scope/egress files (scope-args, env-scrub, egress-relay, spawn-plan) value-import zero @comis/infra (SEC-07 boundary)", () => {
     const TERMINAL_EGRESS_DIR = resolve(
       PACKAGES_ROOT,
       "skills/src/tools/builtin/terminal-driver",
@@ -118,6 +118,10 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       "terminal-scope-args.ts",
       "terminal-env-scrub.ts",
       "terminal-egress-relay.ts",
+      // 122-06: the worker-side scope-jail composition seam. Imports only the
+      // EgressControlPort/EgressMaterialization TYPES from @comis/core + the sibling
+      // skills composers + node builtins — never @comis/infra (worker ↛ infra).
+      "terminal-spawn-plan.ts",
     ] as const;
 
     const { violations, checkedFiles } = findForbiddenImports({
@@ -127,8 +131,8 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       valueImportsOnly: true,
     });
 
-    // Scope the assertion to exactly the three named files (the directory holds
-    // ~20 terminal-driver modules; this guard is about the egress boundary).
+    // Scope the assertion to exactly the named files (the directory holds ~20
+    // terminal-driver modules; this guard is about the scope/egress boundary).
     const namedViolations = violations.filter((v) =>
       NAMED_FILES.some((f) => v.file.endsWith(`/${f}`)),
     );
@@ -137,7 +141,7 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       namedViolations,
       formatViolations({
         description:
-          "The terminal scope/egress files (terminal-scope-args.ts, terminal-env-scrub.ts, terminal-egress-relay.ts) MUST NOT value-import @comis/infra — they depend only on the EgressControlPort type in @comis/core + node builtins (SEC-07 trust boundary; worker ↛ infra).",
+          "The terminal scope/egress files (terminal-scope-args.ts, terminal-env-scrub.ts, terminal-egress-relay.ts, terminal-spawn-plan.ts) MUST NOT value-import @comis/infra — they depend only on the EgressControlPort type in @comis/core + node builtins (SEC-07 trust boundary; worker ↛ infra).",
         violations: namedViolations.map((v) => ({
           file: v.file,
           line: v.line,
