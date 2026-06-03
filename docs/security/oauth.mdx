@@ -48,8 +48,8 @@ OAuth profiles are stored on disk in one of two backends, selected via the
 
 | Backend | Path | Algorithm | Hot-reload |
 |---------|------|-----------|------------|
-| `file` (default) | `~/.comis/auth-profiles.json` | Plaintext JSON, mode `0o600` | Yes -- chokidar 100ms debounce |
-| `encrypted` | `oauth_profiles` table inside `secrets.db` (same SQLite database as the encrypted secrets store) | AES-256-GCM with HKDF-SHA256 key derivation; per-row 12-byte IV and 16-byte auth tag | No -- SQLite WAL writes do not surface as `change` events |
+| `encrypted` (default) | `oauth_profiles` table inside `secrets.db` (same SQLite database as the encrypted secrets store) | AES-256-GCM with HKDF-SHA256 key derivation; per-row 12-byte IV and 16-byte auth tag | No -- SQLite WAL writes do not surface as `change` events |
+| `file` | `~/.comis/auth-profiles.json` | Plaintext JSON, mode `0o600` | Yes -- chokidar 100ms debounce |
 
 **File mode** writes atomically via `tmp -> fsync -> rename`. Cross-process
 refreshes coordinate through `proper-lockfile` -- a Comis daemon and a

@@ -14,15 +14,18 @@ The Workspace view lets you browse, edit, and manage an agent's workspace files 
 
 ## Backing RPC
 
-- `workspace.list(agentId, path?)` -- file tree
-- `workspace.read(agentId, filePath)` -- file content
-- `workspace.write(agentId, filePath, content)` -- save
-- `workspace.delete(agentId, filePath)` -- delete
-- `workspace.resetToDefault(agentId, filePath)` -- restore template content
-- `workspace.gitStatus(agentId)` -- branch, changed files
-- `workspace.gitDiff(agentId, filePath?)` -- diff
-- `workspace.gitCommit(agentId, message)` -- commit
-- `workspace.gitRestore(agentId, filePath)` -- discard local edits
+- `workspace.status(agentId)` -- overall workspace status (git init state, bootstrap state)
+- `workspace.init(agentId)` -- initialize the workspace git repository
+- `workspace.listDir(agentId, path?)` -- file tree
+- `workspace.readFile(agentId, filePath)` -- file content
+- `workspace.writeFile(agentId, filePath, content)` -- save
+- `workspace.deleteFile(agentId, filePath)` -- delete
+- `workspace.resetFile(agentId, filePath)` -- restore template content
+- `workspace.git.status(agentId)` -- branch, changed files
+- `workspace.git.log(agentId)` -- recent commit history
+- `workspace.git.diff(agentId, filePath?)` -- diff
+- `workspace.git.commit(agentId, message)` -- commit
+- `workspace.git.restore(agentId, filePath)` -- discard local edits
 
 ## What You See
 

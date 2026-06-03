@@ -6,7 +6,7 @@ icon: "file-code"
 
 **What this is for:** the single source of truth for everything you can put in `~/.comis/config.yaml`. **Who it's for:** anyone tuning agent behavior, wiring channels, hardening the gateway, or composing layered configs across environments.
 
-Comis uses a single `config.yaml` file (or multiple layered files) to configure every aspect of the system. The configuration contains 37 top-level sections with 54+ nested schemas defining agent behavior, channel adapters, security policies, gateway settings, and more. All schemas use Zod strict validation -- unknown keys are rejected at startup.
+Comis uses a single `config.yaml` file (or multiple layered files) to configure every aspect of the system. The configuration contains 41 top-level sections with 54+ nested schemas defining agent behavior, channel adapters, security policies, gateway settings, and more. All schemas use Zod strict validation -- unknown keys are rejected at startup.
 
 Config files are specified via the `COMIS_CONFIG_PATHS` environment variable (colon-separated, like the shell `PATH`). See the [Configuration Guide](/installation/configuration) for a step-by-step setup walkthrough.
 
@@ -153,7 +153,7 @@ The values shown are real (not placeholders). Save it as `~/.comis/config.yaml`,
 
 ## Quick Reference
 
-All 37 top-level configuration sections at a glance:
+All 41 top-level configuration sections at a glance:
 
 | Section | Type | Description |
 |---------|------|-------------|
@@ -172,6 +172,7 @@ All 37 top-level configuration sections at a glance:
 | `integrations` | `IntegrationsConfig` | External services (MCP, search, media) |
 | `monitoring` | `MonitoringConfig` | System health monitoring |
 | `observability` | `ObservabilityConfig` | Observability persistence (retention, snapshots) |
+| `diagnostics` | `DiagnosticsConfig` | Trajectory JSONL recording, config-audit log path, cache-trace enable/disable knobs |
 | `plugins` | `PluginsConfig` | Plugin system configuration |
 | `queue` | `QueueConfig` | Command queue and concurrency control |
 | `streaming` | `StreamingConfig` | Block streaming and delivery |
@@ -189,11 +190,14 @@ All 37 top-level configuration sections at a glance:
 | `responsePrefix` | `ResponsePrefixConfig` | Response prefix/suffix template |
 | `deliveryQueue` | `DeliveryQueueConfig` | Crash-safe outbound delivery queue |
 | `deliveryMirror` | `DeliveryMirrorConfig` | Session delivery mirroring and deduplication |
+| `outputRetention` | `OutputRetentionConfig` | Output retention housekeeper configuration -- per-class retention window in milliseconds |
 | `deliveryTiming` | `DeliveryTimingConfig` | Inter-block delivery pacing |
 | `coalescer` | `CoalescerConfig` | Block coalescer for streaming |
 | `senderTrustDisplay` | `SenderTrustDisplayConfig` | Sender identity display in envelope |
 | `documentation` | `DocumentationConfig` | Documentation links for system prompt |
 | `telegramFileRefGuard` | `TelegramFileRefGuardConfig` | Telegram file reference guard |
+| `tooling` | `ToolingConfig` | Tool-first capability layer -- MCP/skill hints, install-detour mode |
+| `executor` | `ExecutorConfig` | Credential-broker executor configuration (optional; omit unless using the broker) |
 
 ## Core Settings
 
@@ -206,7 +210,7 @@ Scalar fields at the root of the configuration.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `tenantId` | `string` | `"default"` | Tenant identifier for SaaS multi-tenancy. Used to scope memory and sessions. |
-| `logLevel` | `enum` | `"info"` | Global log level. Values: `trace`, `debug`, `info`, `warn`, `error`, `fatal`. |
+| `logLevel` | `enum` | `"debug"` | Global log level. Values: `trace`, `debug`, `info`, `warn`, `error`, `fatal`. |
 | `dataDir` | `string` | `""` (resolves to `~/.comis`) | Base data directory for all persistent storage. Empty string resolves to `~/.comis`. |
 | `agentDir` | `string` | `"~/.pi/agent"` | SDK agent directory for persistent settings. |
 
@@ -1117,7 +1121,6 @@ Command queue for session serialization and concurrency control.
 | `cleanupIdleMs` | `number` | `600000` | Idle lane garbage collection interval (10 min) |
 | `defaultMode` | `enum` | `"steer+followup"` | Default queue mode: `followup`, `collect`, `steer`, `steer+followup` |
 | `defaultDebounceMs` | `number` | `0` | Default debounce delay in ms |
-| `priorityEnabled` | `boolean` | `false` | Enable priority lane scheduling |
 
 **Default Overflow (queue.defaultOverflow)**
 
@@ -1150,27 +1153,6 @@ Ingress-layer message coalescing before queue entry.
 |-----|------|---------|-------------|
 | `maxFollowupRuns` | `number` | `3` | Max follow-up runs in a single chain |
 | `followupOnCompaction` | `boolean` | `true` | Trigger follow-up on compaction flush |
-
-**Priority Lanes (queue.priorityLanes)**
-
-Array of lane definitions. Default: `[{name: "high", concurrency: 3, priority: 2}, {name: "normal", concurrency: 5, priority: 1}, {name: "low", concurrency: 2, priority: 0}]`.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `name` | `string` | _(required)_ | Lane name (e.g., `"high"`, `"normal"`, `"low"`) |
-| `concurrency` | `number` | `3` | Concurrency limit for this lane |
-| `priority` | `number` | `0` | Scheduling priority (higher = higher priority) |
-| `agingPromotionMs` | `number` | `30000` | Age threshold in ms for promotion events (0 = disabled) |
-
-**Lane Assignment (queue.laneAssignment)**
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `defaultLane` | `string` | `"normal"` | Default lane for unmatched messages |
-| `dmLane` | `string` | `"high"` | Lane for DM messages |
-| `mentionLane` | `string` | `"normal"` | Lane for group mentions |
-| `followupLane` | `string` | `"normal"` | Lane for follow-up messages |
-| `scheduledLane` | `string` | `"low"` | Lane for scheduled/background tasks |
 
 <Info>See [Queue](/agents/queue) for queue behavior and session serialization details.</Info>
 

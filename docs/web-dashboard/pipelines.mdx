@@ -27,7 +27,7 @@ The canvas is a **custom Lit component (`ic-graph-canvas`) rendering SVG by hand
 - Auto-layout via a topological sort (Kahn's algorithm)
 - Graph validation against the same Zod schema the daemon uses
 
-Saves go through `graph.save`; runs through `graph.run(graphId, variables?)`; live updates through SSE events `graph:node:status` and `graph:progress`. Saved graphs are stored on disk so they survive restarts.
+Saves go through `graph.save`; runs through `graph.execute(graphId, variables?)`; live updates through SSE events `graph:node:status` and `graph:progress`. Saved graphs are stored on disk so they survive restarts.
 
 For the underlying domain model (node types, barrier modes, retry policy, context modes) see [Execution Graphs](/agents/execution-graphs).
 

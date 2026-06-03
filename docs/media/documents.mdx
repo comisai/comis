@@ -4,6 +4,8 @@ description: "How your agent reads PDFs, spreadsheets, code files, and other doc
 icon: "file-lines"
 ---
 
+import NonTechnicalNote from '/snippets/non-technical-note.mdx';
+
 **Can my agent read the PDF I attach?** Yes — by default. The same is true
 for spreadsheets, code files, plain text, JSON, YAML, and HTML. Scanned
 PDFs work too once you turn on the vision OCR fallback.
@@ -14,6 +16,8 @@ content so your agent can read and understand it. The default MIME whitelist
 covers 14 MIME types (12 file kinds), including scanned PDFs that need OCR.
 Your agent can then answer questions about the document, summarize it, or use
 the content in its responses.
+
+<NonTechnicalNote />
 
 Behind the scenes, Comis ships dedicated extractors per format
 (`packages/skills/src/integrations/document/`):

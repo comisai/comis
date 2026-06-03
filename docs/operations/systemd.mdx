@@ -180,6 +180,10 @@ Before setting up the systemd service, make sure you have:
     WantedBy=multi-user.target
     ```
 
+    <Note>
+    `--permission` also disables fd-based fs APIs (`fsync`, `fchmod`, `fchown`) at the daemon-process level. Credential file writes are best-effort durability (no fsync) and file permissions are best-effort. This is guarded at all call sites — the daemon will not crash — but the tradeoff is documented in [Node Permissions — Production fd-API Disablement](/reference/node-permissions#production-fd-api-disablement-linux).
+    </Note>
+
     Then reload systemd to pick up the new file:
 
     ```bash
@@ -262,6 +266,10 @@ the daemon can access:
 - `--allow-child-process` -- can spawn child processes (needed for some tools)
 
 This acts as a second layer of security, even if a vulnerability is exploited.
+
+<Note>
+See [Node Permissions — Production fd-API Disablement](/reference/node-permissions#production-fd-api-disablement-linux) for the impact of `--permission` on daemon-process fd-based APIs (`fsync`, `fchmod`, `fchown`).
+</Note>
 
 ### EnvironmentFile=-/etc/comis/env
 

@@ -54,7 +54,7 @@
         "tab": "Agents",
         "groups": [
           { "group": "Core", "pages": ["agents/index", "agents/lifecycle", "agents/identity", "agents/routing", "agents/slash-commands"] },
-          { "group": "Conversations", "pages": ["agents/sessions", "agents/subagent-lifecycle", "context-management", "agents/compaction", "agents/rag", "agents/queue"] },
+          { "group": "Conversations", "pages": ["agents/sessions", "agents/subagent-lifecycle", "agents/context-management", "agents/compaction", "agents/rag", "agents/queue"] },
           { "group": "Orchestration", "pages": ["agents/execution-graphs"] },
           { "group": "Memory", "pages": ["agents/memory", "agents/memory-config", "agents/search", "agents/embeddings", "agents/memory-benchmarks"] },
           { "group": "Advanced", "pages": ["agents/models", "agents/safety", "agents/resilience", "agents/cache"] }
@@ -66,7 +66,7 @@
           { "group": "Overview", "pages": ["skills/index", "skills/built-in-tools", "skills/platform-tools"] },
           { "group": "Custom Skills", "pages": ["skills/prompt-skills", "skills/examples"] },
           { "group": "Building", "pages": ["skills/manifest", "skills/security-scanning", "skills/tool-policy"] },
-          { "group": "Integrations", "pages": ["skills/mcp", "skills/tooling-layer"] }
+          { "group": "Integrations", "pages": ["skills/mcp", "skills/tooling-layer", "integrations/mcp-server"] }
         ]
       },
       {
@@ -96,7 +96,7 @@
       {
         "tab": "Operations",
         "groups": [
-          { "group": "Management", "pages": ["operations/index", "operations/daemon", "operations/logging", "operations/monitoring", "operations/observability", "operations/scheduler", "operations/web-ui", "operations/data-directory"] },
+          { "group": "Management", "pages": ["operations/index", "operations/daemon", "operations/logging", "operations/monitoring", "operations/observability", "operations/scheduler", "operations/web-ui", "operations/data-directory", "operations/trace-cli", "operations/incident-bundle"] },
           { "group": "Deployment", "pages": ["operations/systemd", "operations/docker", "operations/docker-hub", "operations/pm2", "operations/reverse-proxy"] },
           { "group": "Help", "pages": ["operations/troubleshooting", "operations/faq", "operations/proxy"] }
         ]
@@ -111,15 +111,15 @@
       {
         "tab": "Developer Guide",
         "groups": [
-          { "group": "Architecture", "pages": ["developer-guide/index", "developer-guide/architecture", "developer-guide/packages", "developer-guide/event-bus", "architecture/delivery-pipeline"] },
+          { "group": "Architecture", "pages": ["developer-guide/index", "developer-guide/architecture", "developer-guide/packages", "developer-guide/event-bus", "developer-guide/architecture/delivery-pipeline"] },
           { "group": "Extending", "pages": ["developer-guide/custom-adapters", "developer-guide/plugins", "developer-guide/custom-skills", "developer-guide/pipelines", "developer-guide/contributing"] }
         ]
       },
       {
         "tab": "Reference",
         "groups": [
-          { "group": "CLI", "pages": ["reference/cli"] },
-          { "group": "Configuration", "pages": ["reference/config-yaml", "reference/environment-variables", "reference/hot-reload", "reference/secret-manager", "configuration/delivery-queue"] },
+          { "group": "CLI", "pages": ["reference/index", "reference/cli"] },
+          { "group": "Configuration", "pages": ["reference/config-yaml", "reference/environment-variables", "reference/hot-reload", "reference/secret-manager", "reference/configuration/delivery-queue"] },
           { "group": "Security", "pages": ["reference/security-model", "reference/sandbox", "reference/safe-path", "reference/action-classifier", "reference/tool-security", "reference/node-permissions"] },
           { "group": "Gateway", "pages": ["reference/http-gateway", "reference/json-rpc", "reference/websocket", "reference/openai-api", "reference/webhooks", "reference/rate-limiting", "reference/acp-server"] }
         ]

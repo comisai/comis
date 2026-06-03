@@ -70,6 +70,38 @@ Overrides the bearer token the CLI sends when connecting to the daemon gateway. 
 export COMIS_GATEWAY_TOKEN="my-secret-token"
 ```
 
+### `COMIS_GATEWAY_HOST`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon |
+| **Format** | Hostname or IP address |
+| **Default** | Value of `gateway.host` in `config.yaml` |
+
+Overrides `gateway.host`. Applied via `buildGatewayEnvLayer()` at lower priority than `config.yaml`. Use `0.0.0.0` to bind all interfaces (e.g., Docker deployments).
+
+Source: `packages/core/src/config/env-layer.ts:27`
+
+```bash
+export COMIS_GATEWAY_HOST=0.0.0.0
+```
+
+### `COMIS_GATEWAY_PORT`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon |
+| **Format** | Integer 1–65535 |
+| **Default** | Value of `gateway.port` in `config.yaml` |
+
+Overrides `gateway.port`. Must be a valid integer 1–65535; non-numeric values are dropped silently.
+
+Source: `packages/core/src/config/env-layer.ts:28`
+
+```bash
+export COMIS_GATEWAY_PORT=4766
+```
+
 ### `COMIS_GATEWAY_PASSWORD`
 
 | Property | Value |
@@ -115,20 +147,6 @@ Overrides the log file path that the `comis daemon logs` command reads from when
 export COMIS_LOG_PATH="/var/log/comis/daemon.log"
 ```
 
-### `COMIS_LOG_LEVEL`
-
-| Property | Value |
-|----------|-------|
-| **Used by** | Daemon |
-| **Format** | `trace` \| `debug` \| `info` \| `warn` \| `error` \| `fatal` |
-| **Default** | `info` (or value of `logLevel` in config) |
-
-Overrides the daemon's Pino log level for the current process. Useful when you want a one-off DEBUG dump without editing config and restarting cleanly. The configured `logLevel` in `config.yaml` takes precedence in normal startup; this variable is meant for ad-hoc troubleshooting.
-
-```bash
-COMIS_LOG_LEVEL=debug pm2 restart comis
-```
-
 ### `COMIS_OFFLINE`
 
 | Property | Value |
@@ -142,6 +160,66 @@ When set to `1`, disables outbound network calls to fetch optional tooling at st
 ```bash
 export COMIS_OFFLINE=1
 ```
+
+### `COMIS_TRAJECTORY_DIR`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon |
+| **Format** | Absolute directory path |
+| **Default** | Value of `observability.trajectory.dirOverride` in `config.yaml` |
+
+Overrides `observability.trajectory.dirOverride`. Relocates runtime trajectory JSONL files to a custom directory. Empty or whitespace values are dropped silently.
+
+Source: `packages/core/src/config/env-layer.ts:30`
+
+```bash
+export COMIS_TRAJECTORY_DIR=/var/log/comis/traces
+```
+
+### `COMIS_DISABLE_RECALL_TRACE`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon |
+| **Format** | `1` to disable, unset to use config |
+| **Default** | (unset) |
+
+Set to `1` to hard-disable the recall trace recorder regardless of `config.yaml`. Secondary escape hatch alongside `diagnostics.recallTrace.enabled: false`.
+
+Source: `packages/observability/src/recall-trace/runtime.ts:304`
+
+```bash
+export COMIS_DISABLE_RECALL_TRACE=1
+```
+
+### `COMIS_CONFIG_AUDIT_LOG`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon |
+| **Format** | Absolute file path |
+| **Default** | `~/.comis/logs/config-audit.jsonl` |
+
+Overrides the full file path of the config-audit JSONL log.
+
+Source: `packages/observability/src/config-audit/log-path.ts:22`
+
+```bash
+export COMIS_CONFIG_AUDIT_LOG=/var/log/comis/config-audit.jsonl
+```
+
+### `COMIS_BROKER_TOKEN`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Exec tool (daemon-spawned subprocess) |
+| **Format** | Opaque bearer token string |
+| **Default** | (set internally by the daemon per-command) |
+
+**Internal use only.** A single-use proxy token injected into the `exec` tool's spawn environment by the daemon's broker-activation wiring. Consumed by the credential broker via `Proxy-Authorization: Bearer`. Set internally by the daemon per-command — operators do not set this variable directly. Documented here so operators diagnosing broker 407 errors can understand where the token originates.
+
+Source: `packages/daemon/src/wiring/setup-broker-activation.ts:79`
 
 ## Secret Variables
 

@@ -6,7 +6,7 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis ships **50+ leaf commands grouped into 20 command groups** (verified against `packages/cli/src/cli.ts` at version 1.0.42). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
+Comis ships **23 command groups** (verified against `packages/cli/src/cli.ts`). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
 
 <Snippet file="invocation-modes.mdx" />
 
@@ -225,6 +225,39 @@ comis auth status --provider openai-codex
 <Tip>
 Errors from any `auth` subcommand are classified into 6 categories — see [OAuth concepts → Error classification](/security/oauth#error-classification). The CLI prints both `userMessage` and an actionable `hint` (e.g., `Re-authenticate with: comis auth login --provider openai-codex`).
 </Tip>
+
+---
+
+### `comis cache`
+
+Inspect aggregated token-usage cache statistics stored in the durable `obs_token_usage` SQLite database. Dispatches the `obs.cacheStats.window` RPC.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `cache stats` | Display aggregated cache statistics for a time window |
+
+#### `comis cache stats` flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--since <window>` | string | `24h` | Window start: `1h`, `24h`, `7d`, `30d`, or any `Nh`/`Nd`/`Nw`/`Nm`/`Ny` |
+| `--until <iso>` | string | now | Window end (ISO-8601) |
+| `--agent <agentId>` | string | — | Filter results by agent ID |
+| `--provider <provider>` | string | — | Filter results by provider name |
+| `--format <format>` | `table` \| `json` \| `markdown` | `table` | Output format |
+
+```bash
+# Show cache stats for the last 24 hours (default)
+comis cache stats
+
+# Show stats for the last 7 days, filtered by provider
+comis cache stats --since 7d --provider anthropic
+
+# Machine-readable output
+comis cache stats --format json
+```
 
 ---
 
@@ -789,6 +822,47 @@ comis models set my-agent claude-sonnet-4-5-20250929
 
 ---
 
+### `comis mcp`
+
+Manage Model Context Protocol (MCP) server connections. Connect, disconnect, probe, and authenticate MCP servers; inspect their exposed tools and capabilities.
+
+All subcommands accept `--token <token>` to override `COMIS_GATEWAY_TOKEN`.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `mcp list` | List all MCP server connections (name, transport, status, tool count). `--format table\|json` |
+| `mcp status <name>` | Show detailed status for one server: tools, capabilities, serverInfo. `--format table\|json` |
+| `mcp test <name>` | Probe an MCP server configuration without persisting it. Flags: `--transport stdio\|sse\|http`, `--command`, `--args`, `--url` |
+| `mcp connect <name>` | Connect (or re-configure) an MCP server. Flags: `--transport`, `--command`, `--args`, `--url`, `--header`, `--format` |
+| `mcp disconnect <name>` | Disconnect an MCP server |
+| `mcp reconnect <name>` | Reconnect an MCP server |
+| `mcp login <name>` | Initiate OAuth device-code flow for an MCP server |
+| `mcp logout <name>` | Clear stored OAuth tokens for an MCP server |
+
+```bash
+# List all connected MCP servers
+comis mcp list
+
+# Inspect tools and capabilities for a specific server
+comis mcp status my-server --format json
+
+# Test a server config without persisting it
+comis mcp test my-server --transport stdio --command "npx" --args "-y,my-mcp-server"
+
+# Connect an MCP server
+comis mcp connect my-server --transport stdio --command "npx" --args "-y,my-mcp-server"
+
+# Initiate OAuth for an MCP server
+comis mcp login my-server
+
+# Disconnect an MCP server
+comis mcp disconnect my-server
+```
+
+---
+
 ### `comis providers`
 
 Provider management commands. Like `comis models`, the provider list is sourced live from the pi-ai SDK catalog (`getProviders()` via the `models.list_providers` RPC), with local fallback when the daemon isn't running.
@@ -1074,6 +1148,49 @@ No flags. Requires an interactive terminal (TTY).
 ```bash
 # Launch Signal setup wizard
 comis signal-setup
+```
+
+---
+
+### `comis trace`
+
+Search, tail, and export agent execution traces. Traces capture the inbound message pipeline and are stored in the durable trace store. Backed by `ObsTraceSearchContract`, `ObsTraceTailContract`, and `ObsTraceExportContract`.
+
+Primarily flag-driven; use `--chat` with `--tail` to stream live events.
+
+#### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--message-id <uuid>` | Search trace rows by inbound message ID |
+| `--trace-id <uuid>` | Search trace rows by trace ID |
+| `--chat <chatId>` | Filter or tail trace events by chat ID |
+| `--tail` | Stream events live (requires `--chat`; polls ~1 s) |
+| `--since <duration>` | Time window, e.g., `10m`, `1h` |
+| `--where <filter>` | Filter expression, e.g., `error` |
+| `--json` | Machine-readable JSON output |
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `trace export <sessionId>` | Export a session bundle and print the output path. `--json` for machine-readable output |
+
+```bash
+# Search traces by message ID
+comis trace --message-id 550e8400-e29b-41d4-a716-446655440000
+
+# Search traces by trace ID
+comis trace --trace-id 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+
+# Tail live trace events for a chat
+comis trace --chat my-chat-id --tail
+
+# Search recent errors
+comis trace --since 1h --where error --json
+
+# Export a session bundle
+comis trace export my-session-id
 ```
 
 ---

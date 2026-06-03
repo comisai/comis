@@ -15,10 +15,9 @@ finishes responding to one message before moving on to the next in the same
 conversation. However, multiple conversations can run at the same time (up to
 `maxConcurrentSessions`, which defaults to 10).
 
-When `queue.priorityEnabled` is set to `true` (default `false`), Comis assigns
-each message to a priority lane (high/normal/low) so DMs and mentions get
-processed ahead of background work. With the default disabled setting, all
-messages share a single global concurrency gate.
+All messages share a single global concurrency gate — multiple conversations
+can run in parallel (up to `maxConcurrentSessions`), but within each conversation
+messages are processed in arrival order.
 
 ## Debouncing
 
@@ -106,9 +105,6 @@ The queue is a per-session lane on top of a global concurrency gate.
   responds to message 3 before message 2.
 - **Global concurrency** -- Up to `maxConcurrentSessions` lanes can be
   draining at once. Additional lanes wait for a slot.
-- **Priority lanes** -- When `queue.priorityEnabled` is on, each session lane
-  is tagged `high` / `normal` / `low`. Higher-priority lanes get scheduling
-  preference at the global gate.
 - **Backpressure** -- When a lane reaches `maxDepth`, the configured overflow
   policy (`drop-new`, `drop-old`, or `summarize`) decides which message to
   shed. Drops fire a `queue:overflow` event so observability dashboards can
@@ -116,12 +112,12 @@ The queue is a per-session lane on top of a global concurrency gate.
 - **Debouncing** -- The optional debounce buffer coalesces a burst of short
   messages into one envelope before the lane sees it.
 
-The implementation lives in `packages/agent/src/queue/`. Key files:
+The implementation lives in `packages/orchestrator/src/queue/`. Key files:
 
 | File | Purpose |
 |------|---------|
 | `command-queue.ts` | The session-lane queue itself |
-| `priority-scheduler.ts` | Multi-lane scheduling with priorities |
+| `lane.ts` | Per-session lane state (concurrency=1 serialized execution) |
 | `overflow.ts` | The three overflow policies |
 | `debounce-buffer.ts` | Pre-queue coalescing of rapid messages |
 | `coalescer.ts` | The `summarize` overflow strategy |
