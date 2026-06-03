@@ -343,9 +343,21 @@ export function buildTerminalSharedDeps(
   // double-forget). Prefer a composition-root-supplied instance (deps.caps) if present;
   // otherwise construct from the matched single-entry limits (single-entry-per-agent is
   // the forcing use case). The allow-set is EMPTY today, so the limits are undefined (no
-  // caps tripped) — when the allow-set is populated, the per-entry limits feed
-  // createSessionCaps and the operator's maxRequestsPerSession/maxInteractions/wallClockMs
-  // become live with zero further wiring change.
+  // caps tripped).
+  //
+  // WIRING TO MAKE P4 LIVE (lands with the allow-set/attention work, P5/Phase 124 —
+  // deliberately OUT of Phase 123 scope, RESEARCH Open Q3). Two distinct pieces, do NOT
+  // conflate them:
+  //   1. PER-SESSION caps (consumeRequest/consumeInteraction/checkWallClock): become live
+  //      once the allow-set is POPULATED — `allowEntries[0].limits` then feeds
+  //      createSessionCaps below. No further wiring beyond populating the allow-set.
+  //   2. The REAPER (idle-TTL / wall-clock-age / max-sessions overflow): additionally
+  //      requires `workerCaps` (+ the shared `caps` and `timers` TimerPort) to be threaded
+  //      at the `wireTerminalTools` call site (setup-tools.ts) — without them
+  //      `wireRegistryReaper` never composes a reaper (it needs `timers !== undefined &&
+  //      maxSessions > 0`, terminal-reaper.ts). The live caller does NOT pass these today,
+  //      so the reaper is intentionally inert. Threading them now would run the reaper over
+  //      an empty registry — out of scope until the allow-set lands.
   const entryLimits = allowEntries[0]?.limits;
   const caps: SessionCaps = deps.caps ?? createSessionCaps(entryLimits, systemNowMs);
 

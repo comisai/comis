@@ -612,6 +612,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       tools.push(createApplyPatchTool(workspaceDirs.get(agentId) ?? defaultWorkspaceDir, effectiveSharedPaths, skillsLogger));
 
       // Terminal driver (v2.11): per-agent registry + nine never-export tools (empty allow-set fail-closes); SEC-07 egress (122-05) via ...terminalEgress.
+      // P4 NOTE (TR-06/OPS-06): the reaper deps (`workerCaps` + `timers` + the shared `caps`)
+      // are intentionally NOT passed yet — without them `wireRegistryReaper` composes no
+      // reaper, so idle-TTL / wall-clock-age / max-sessions eviction stays inert. That is
+      // correct while the allow-set is empty (no sessions to reap); they MUST be threaded
+      // here alongside populating the allow-set (P5/Phase 124) or the session-footprint
+      // reaper ships silently disabled. See setup-terminal-tools.ts buildTerminalSharedDeps.
       wireTerminalTools(tools, terminalRegistries, agentId, { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress });
 
       return tools;
