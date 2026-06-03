@@ -1146,10 +1146,16 @@ function makeRecordingEmulator(): {
   resizes: Array<[number, number]>;
   disposes: number;
   lastConstruct: () => { cols: number; rows: number; scrollback: number } | undefined;
+  /** Toggle the (canned) hasContentBelowFold() return for the settle-gate test. */
+  setBelowFold: (v: boolean) => void;
+  /** Override the (canned) snapshot().screen for the diff test. */
+  setScreen: (s: string) => void;
 } {
   const writes: string[] = [];
   const resizes: Array<[number, number]> = [];
   let disposes = 0;
+  let belowFold = false;
+  let screen = "CANNED";
   let lastOpts: { cols: number; rows: number; scrollback: number } | undefined;
   return {
     writes,
@@ -1158,6 +1164,12 @@ function makeRecordingEmulator(): {
       return disposes;
     },
     lastConstruct: () => lastOpts,
+    setBelowFold: (v: boolean) => {
+      belowFold = v;
+    },
+    setScreen: (s: string) => {
+      screen = s;
+    },
     createEmulator: (opts: { cols: number; rows: number; scrollback: number }) => {
       lastOpts = opts;
       let curCols = opts.cols;
@@ -1170,7 +1182,7 @@ function makeRecordingEmulator(): {
           return Promise.resolve();
         },
         snapshot: () => ({
-          screen: "CANNED",
+          screen,
           cursor: { x: 7, y: 2 },
           cols: curCols,
           rows: curRows,
@@ -1181,6 +1193,7 @@ function makeRecordingEmulator(): {
           curCols = cols;
           curRows = rows;
         },
+        hasContentBelowFold: () => belowFold,
         dispose: () => {
           disposes++;
         },
@@ -1380,5 +1393,116 @@ describe("createTerminalWorker — 121-02 read threads format/scrollback + await
 
     expect(view.screen).toContain("immediate");
     expect(view.cursor.x).toBe(9); // "immediate" is 9 chars — the real cursor after the awaited parse
+  });
+});
+
+// ===========================================================================
+// Plan 121-03: the per-session lastSnapshot screen-diff on read + the settle
+// gated on !hasContentBelowFold() (the "more content below ⇒ NOT settled" rule).
+// ===========================================================================
+
+describe("createTerminalWorker — 121-03 read returns a screen-diff + keeps lastSnapshot (TR-14)", () => {
+  it("first read changed:true; a change -> changed:true; no change -> changed:false", async () => {
+    const rec = makeRecordingBackend();
+    const recEmu = makeRecordingEmulator();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), createEmulator: recEmu.createEmulator }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    // First read: no prior snapshot -> changed:true.
+    recEmu.setScreen("line A");
+    const first = (await worker.handle(readFrame())).result as { diff: { changed: boolean } };
+    expect(first.diff.changed).toBe(true);
+
+    // The grid changes -> the next read diffs changed:true.
+    recEmu.setScreen("line B");
+    const second = (await worker.handle(readFrame())).result as {
+      diff: { changed: boolean; firstChangedRow: number };
+    };
+    expect(second.diff.changed).toBe(true);
+
+    // No change between reads -> changed:false (lastSnapshot matched).
+    const third = (await worker.handle(readFrame())).result as { diff: { changed: boolean } };
+    expect(third.diff.changed).toBe(false);
+  });
+});
+
+describe("createTerminalWorker — 121-03 settle gated on !hasContentBelowFold (TR-14, load-bearing)", () => {
+  it("a wait over a below-fold frame does NOT resolve idle; it settles once below-fold flips false", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const recEmu = makeRecordingEmulator();
+    recEmu.setBelowFold(true); // content remains below the fold -> NOT settleable
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        createEmulator: recEmu.createEmulator,
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    // A pending-detector: race the wait against a synchronous sentinel so a
+    // resolved wait is detectable AFTER draining microtasks (a thorough drain so
+    // a RED state — no gate — that resolved idle at the first advance is caught).
+    const PENDING = Symbol("pending");
+    const waitP = worker.handle(waitFrame({ forIdleMs: 50 }));
+    const drain = async (): Promise<void> => {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    };
+    const raced = (): Promise<typeof PENDING | { result: { reason: string } }> =>
+      Promise.race([waitP, Promise.resolve(PENDING)]) as Promise<
+        typeof PENDING | { result: { reason: string } }
+      >;
+
+    await drain(); // let the handler reach `await settleSession(...)` (timer armed)
+
+    // Advance past the idle window: the idle timer fires but isSettleable() is
+    // false (content below the fold) -> it must RE-ARM, NOT resolve idle.
+    sched.advance(50);
+    await drain();
+    expect(await raced()).toBe(PENDING); // RED: a missing gate resolves idle here
+
+    // Still below the fold after another window -> still pending.
+    sched.advance(50);
+    await drain();
+    expect(await raced()).toBe(PENDING);
+
+    // Content scrolls into view: below-fold flips false; a ring change re-arms the
+    // idle debounce, and the next quiet window resolves idle.
+    recEmu.setBelowFold(false);
+    rec.emit("x"); // ring change re-arms idle
+    await drain();
+    sched.advance(50);
+    const r = (await waitP).result as { reason: string; isComplete: boolean };
+    expect(r.reason).toBe("idle");
+    expect(r.isComplete).toBe(true);
+  });
+
+  it("no regression: below-fold false settles idle as the 120-02 settle does", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const recEmu = makeRecordingEmulator();
+    recEmu.setBelowFold(false); // nothing below the fold -> the gate is a no-op
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        createEmulator: recEmu.createEmulator,
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emit("boot\n");
+
+    const p = worker.handle(waitFrame({ forIdleMs: 50 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    sched.advance(50); // a quiet idle window -> resolves idle exactly as before
+    const r = (await p).result as { reason: string; isComplete: boolean };
+    expect(r.reason).toBe("idle");
+    expect(r.isComplete).toBe(true);
   });
 });
