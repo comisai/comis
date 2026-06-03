@@ -468,6 +468,15 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       // PTY backend — spawn from the frame's bin/argv (no re-canonicalization).
       const handle = pty.spawn(bin, argv, { cols, rows, env: envSnapshot() });
       handle.onData((d) => appendRing(state, d));
+      // Wire the child exit -> markExited, the pty analog of the pipe backend's
+      // close/error below. node-pty's onExit fires {exitCode,signal} when the
+      // child exits; we ignore the payload (markExited only flips liveness +
+      // notifies the settle's exit subscribers). WITHOUT this, a real node-pty
+      // child that exits never notifies an in-flight wait({forExit:true}), which
+      // then runs to timeout instead of settling "exit" (the VPS real-PTY gate).
+      handle.onExit(() => {
+        markExited(state);
+      });
       state.pty = handle;
     } else {
       // Pipe backend (degraded) — mirror exec-background.ts stdio wiring.
