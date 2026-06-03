@@ -162,13 +162,16 @@ function pushNetwork(args: string[], input: ScopeArgsInput): void {
  * Build the bwrap argv for a {@link TerminalScope}, in the canonical order:
  *
  *   [bwrapPath, ...systemRO(--ro-bind p p), --proc, --dev, --dev-bind /dev/pts,
- *    --tmpfs /tmp, <FS binds>, <credentialHome ro-bind>, <network>, <uid>,
- *    --unshare-all, --die-with-parent, --new-session, --chdir <cwd>,
+ *    --tmpfs /tmp, <FS binds>, <credentialHome ro-bind>, <uid>,
+ *    --unshare-all, <network>, --die-with-parent, --new-session, --chdir <cwd>,
  *    <CARVE-OUT --tmpfs <dataDir>>, --]
  *
  * `--unshare-all` already supplies `--unshare-pid` + `--unshare-user` + ipc/uts/
  * cgroup — no separate `--unshare-pid`. `--new-session` is emitted
- * explicitly for the controlling tty.
+ * explicitly for the controlling tty. The `<network>` refinement comes AFTER
+ * `--unshare-all` — bwrap mutates its unshare set per flag IN ARG ORDER, so a
+ * `--share-net` emitted before the unshare-all would be re-clobbered and the
+ * jail would get NO network even at `network:"full"` (the live-VPS T5 bug).
  */
 export function buildScopeArgs(input: ScopeArgsInput): string[] {
   const args: string[] = [input.bwrapPath];
@@ -190,9 +193,6 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
     args.push("--ro-bind", claudeDir, claudeDir);
   }
 
-  // -- Network (the scope.network dimension) --
-  pushNetwork(args, input);
-
   // -- uid: a net-new uid != the daemon at the default (dedicated) --
   if (input.scope.uid === "dedicated" && input.dedicatedUid !== undefined) {
     args.push("--uid", String(input.dedicatedUid.uid));
@@ -201,6 +201,17 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
 
   // -- Isolation flags (--unshare-all => --unshare-pid/--unshare-user + ipc/uts/cgroup) --
   args.push("--unshare-all");
+
+  // -- Network (the scope.network dimension) — MUST come AFTER --unshare-all --
+  //    bwrap processes namespace flags SEQUENTIALLY (each mutates the unshare set in
+  //    arg order), so a `--share-net` emitted BEFORE `--unshare-all` is re-clobbered
+  //    by the later unshare-all and the jail gets NO network even at network:"full"
+  //    (proven live on the VPS: curl 000 vs 404 by flag order alone). Emitting the
+  //    network refinement after the namespace base makes `--share-net` retain the
+  //    host netns; the `none`/`listed-hosts` `--unshare-net` is order-insensitive
+  //    (unshare twice = unshare) but rides here for one coherent rule.
+  pushNetwork(args, input);
+
   args.push("--die-with-parent");
   args.push("--new-session"); // controlling tty
 

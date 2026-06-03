@@ -137,6 +137,12 @@ describe("buildScopeArgs — network dimension (the transport seam)", () => {
     const args = buildScopeArgs(makeInput({ scope: makeScope({ network: "full" }) }));
     expect(args).toContain("--share-net");
     expect(args).not.toContain("--unshare-net");
+    // VPS bug (live T5 drive): bwrap processes namespace flags SEQUENTIALLY — each
+    // flag mutates the unshare set in arg order, so `--share-net` BEFORE
+    // `--unshare-all` is re-clobbered by the later unshare-all and the jail gets NO
+    // network even at scope network:"full" (proven on the VPS by flag order alone:
+    // curl 000 vs 404). The share refinement must come AFTER the namespace base.
+    expect(args.indexOf("--share-net")).toBeGreaterThan(args.indexOf("--unshare-all"));
   });
 
   // VPS bug: the in-jail relay-as-init script itself must be RO-bound into
