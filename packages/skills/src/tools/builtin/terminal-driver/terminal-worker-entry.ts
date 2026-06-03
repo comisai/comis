@@ -46,10 +46,18 @@ import {
   closeSync as fsCloseSync,
 } from "node:fs";
 
-import { systemNowMs, systemEnvSnapshot, runWithContext } from "@comis/core";
+import {
+  systemNowMs,
+  systemEnvSnapshot,
+  runWithContext,
+  systemSetTimeout,
+  systemClearTimeout,
+  type SystemTimeoutHandle,
+} from "@comis/core";
 import { isFsyncDisabledByPermissionModel } from "@comis/shared";
 
 import type { TerminalReplyFrame, TerminalRequestFrame } from "./terminal-ipc.js";
+import { encodeKeyChord } from "./terminal-key-grammar.js";
 
 // ---------------------------------------------------------------------------
 // Injected dependency contracts
@@ -132,6 +140,17 @@ export interface TerminalWorkerDeps {
   envSnapshot?: () => NodeJS.ProcessEnv;
   /** Durable-fs ops. Default: `node:fs` sync ops. */
   fs?: WorkerFsPort;
+  /**
+   * Schedule a one-shot timer. Default (production): wraps `systemSetTimeout`
+   * from `@comis/core` (the sanctioned timer indirection — no raw `setTimeout`
+   * global) and `.unref()`s the handle so a pending in-worker settle timer never
+   * holds the event loop open. Returns an opaque handle for `clearTimer`. The
+   * settle engine (Plan 02) routes EVERY timer through this — mirrors the
+   * registry's MR-01 port shape.
+   */
+  setTimer?: (cb: () => void, ms: number) => unknown;
+  /** Cancel a `setTimer` handle (default: `systemClearTimeout`). */
+  clearTimer?: (handle: unknown) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +182,16 @@ interface ReadResult {
   alive: boolean;
 }
 
+/**
+ * The post-action snapshot a mutating interaction handler (send_text/send_key)
+ * returns (TR-03): the SETTLED `{screen,cursor}` subset. `cursor` stays `{0,0}`
+ * until the real emulator cursor lands (P2/121).
+ */
+interface SendResult {
+  screen: string;
+  cursor: { x: number; y: number };
+}
+
 /** A closure-local per-session record (NOT module-global). */
 interface SessionState {
   backend: WorkerBackend;
@@ -173,6 +202,17 @@ interface SessionState {
   alive: boolean;
   pty?: FakePtyLike;
   pipe?: PipeChildLike;
+  /**
+   * Settle subscribers notified when this session's ring grows (the
+   * `onRingChange` half of {@link SettleDeps}). Closure-local per session — NOT
+   * module-global. `appendRing` notifies these.
+   */
+  ringListeners: Set<() => void>;
+  /**
+   * Settle subscribers notified when this session's backend exits (the `onExit`
+   * half). The pipe `close`/`error` and (live) pty exit notify these.
+   */
+  exitListeners: Set<() => void>;
 }
 
 /** The worker's public surface — `handle` dispatches a frame; `writeDurable` persists state. */
@@ -275,10 +315,45 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   const spawnPipe = deps.spawnPipe ?? defaultSpawnPipe;
   const fs = deps.fs ?? defaultFsPort;
   const { logger } = deps;
+  // The sanctioned timer indirection (no raw setTimeout global). The production
+  // default `.unref()`s the handle so a pending in-worker settle timer never
+  // holds the event loop open — mirrors the registry's MR-01 port shape.
+  const setTimer =
+    deps.setTimer ??
+    ((cb: () => void, ms: number): SystemTimeoutHandle => {
+      const h = systemSetTimeout(cb, ms);
+      h.unref();
+      return h;
+    });
+  const clearTimer =
+    deps.clearTimer ?? ((handle: unknown) => systemClearTimeout(handle as SystemTimeoutHandle));
 
-  /** Append a chunk to a session's stdout ring. */
+  /**
+   * Append a chunk to a session's stdout ring and notify the settle's
+   * ring-change subscribers (the `onRingChange` half of {@link SettleDeps}) so a
+   * pending `wait`/settle sees the new bytes.
+   */
   function appendRing(state: SessionState, chunk: string): void {
     state.ring += chunk;
+    for (const cb of state.ringListeners) cb();
+  }
+
+  /**
+   * Flip a session to not-alive and notify the settle's exit subscribers (the
+   * `onExit` half) so a pending `wait`/settle resolves `exit`.
+   */
+  function markExited(state: SessionState): void {
+    state.alive = false;
+    for (const cb of state.exitListeners) cb();
+  }
+
+  /** Resolve the backend write sink: pty.write for the pty backend, else pipe.stdin.write. */
+  function writeToBackend(state: SessionState, bytes: string): void {
+    if (state.pty !== undefined) {
+      state.pty.write(bytes);
+      return;
+    }
+    state.pipe?.stdin?.write(bytes);
   }
 
   /**
@@ -302,6 +377,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       rows,
       ring: "",
       alive: true,
+      ringListeners: new Set(),
+      exitListeners: new Set(),
     };
 
     let pty: PtyModuleLike | undefined;
@@ -326,10 +403,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       const child = spawnPipe(bin, argv, { env: envSnapshot() });
       child.stdout?.on("data", (chunk: Buffer) => appendRing(state, chunk.toString("utf8")));
       child.on("close", () => {
-        state.alive = false;
+        markExited(state);
       });
       child.on("error", () => {
-        state.alive = false;
+        markExited(state);
       });
       state.pipe = child;
     }
@@ -363,6 +440,48 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     };
   }
 
+  /** The not-alive minimal `{screen,cursor}` for an absent/gone session. */
+  function goneSnapshot(): SendResult {
+    return { screen: "", cursor: { x: 0, y: 0 } };
+  }
+
+  /** §2.7: one bounded INFO line per interaction handler (method + durationMs). */
+  function logInteraction(
+    sessionId: string,
+    method: string,
+    startedAt: number,
+    extra: Record<string, unknown> = {},
+  ): void {
+    logger.info(
+      { sessionId, method, durationMs: nowMs() - startedAt, step: "interaction", ...extra },
+      "terminal interaction",
+    );
+  }
+
+  /**
+   * Handle a `send_key` frame (TR-04). Encodes the chord via the named-key
+   * grammar (Plan 01) and writes the EXACT bytes to the backend ONCE. An unknown
+   * key name makes `encodeKeyChord` throw `invalid_value`; the throw is caught and
+   * surfaced as a frame-level error with NOTHING written (T-120-01b). Returns the
+   * post-action `{screen,cursor}` ring view.
+   */
+  function handleSendKey(frame: TerminalRequestFrame): SendResult {
+    const startedAt = nowMs();
+    const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
+    const state = sessions.get(sessionId);
+    if (state === undefined) return goneSnapshot();
+
+    const keys = Array.isArray(frame.params["keys"]) ? (frame.params["keys"] as string[]) : [];
+    // encodeKeyChord throws invalid_value on an unknown key — let it propagate to
+    // dispatch's catch, which returns ok:false. Crucially, the write is AFTER the
+    // encode, so a throw means NOTHING is written (the keystroke-injection guard).
+    const bytes = encodeKeyChord(keys);
+    writeToBackend(state, bytes);
+
+    logInteraction(sessionId, "send_key", startedAt, { keyCount: keys.length });
+    return { screen: state.ring, cursor: { x: 0, y: 0 } };
+  }
+
   /** Dispatch a decoded request frame to its method handler. */
   function dispatch(frame: TerminalRequestFrame): TerminalReplyFrame {
     try {
@@ -373,6 +492,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
           break;
         case "read":
           result = handleRead(frame);
+          break;
+        case "send_key":
+          result = handleSendKey(frame);
           break;
         default:
           return {
