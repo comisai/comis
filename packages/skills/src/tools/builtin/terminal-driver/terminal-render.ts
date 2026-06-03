@@ -14,6 +14,14 @@
  * worker stays under the 800-line architecture cap — the heavy @xterm
  * integration lives here.
  *
+ * Render formats (§2.4, TR-02): `snapshot({format})` returns the plain grid
+ * (`text`, default), the ansi-with-SGR serialization (`ansi` via the
+ * SerializeAddon's `serialize()`), or an HTML fragment (`html` via
+ * `serializeAsHTML()`). `snapshot({scrollback:N})` includes the N retained rows
+ * ABOVE the viewport (TR-14 perception beyond the fold). Per §11 the
+ * addon-serialize dep is pinned (0.14.0) + golden-frame tested (Plan 05) against
+ * churn.
+ *
  * §2.4 flush primitive: `@xterm`'s `term.write(data, cb)` is ASYNC-PARSED — the
  * callback fires once the chunk is fully parsed into the buffer. `write` here
  * returns a Promise that resolves on that callback, so the worker can `await`
@@ -29,6 +37,7 @@
  * @module
  */
 
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { Terminal } from "@xterm/headless";
 
 // ---------------------------------------------------------------------------
@@ -48,6 +57,22 @@ export interface SessionEmulatorOptions {
    * `scrollback:N` perception; Plan 04 makes the depth config-driven.
    */
   scrollback: number;
+}
+
+/** The render format for `snapshot().screen` (spec §2.4 / §5 `read` formats). */
+export type RenderFormat = "text" | "ansi" | "html";
+
+/**
+ * Options for {@link SessionEmulator.snapshot}. `format` selects the `screen`
+ * encoding (plain grid / ansi-with-SGR / html); `scrollback` is how many retained
+ * rows ABOVE the viewport to include (TR-14 perception beyond the fold). Both
+ * default to the viewport-only plain grid.
+ */
+export interface SnapshotOptions {
+  /** `text` (plain grid, default) | `ansi` (SGR via serialize) | `html` (serializeAsHTML). */
+  format?: RenderFormat;
+  /** Retained rows above the viewport to include; `0` (default) = viewport only. */
+  scrollback?: number;
 }
 
 /**
@@ -80,8 +105,12 @@ export interface SessionEmulator {
    * before serializing a settled frame.
    */
   write(data: string): Promise<void>;
-  /** Build the current grid snapshot (real cursor + real alt). */
-  snapshot(): EmulatorSnapshot;
+  /**
+   * Build the current grid snapshot (real cursor + real alt). `opts.format`
+   * selects the `screen` encoding (text/ansi/html via the SerializeAddon);
+   * `opts.scrollback` includes off-screen rows above the viewport (TR-14).
+   */
+  snapshot(opts?: SnapshotOptions): EmulatorSnapshot;
   /** Resize the grid; reflows the buffer. */
   resize(cols: number, rows: number): void;
   /** Dispose the underlying Terminal once; a second call is a no-op. */
@@ -113,20 +142,50 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
     allowProposedApi: true,
   });
 
+  // The SerializeAddon backs the `ansi`/`html` formats (Plan 02). Loaded once at
+  // construction; `serialize()`/`serializeAsHTML()` read the buffer on demand.
+  // Pinned 0.14.0 + golden-frame tested (Plan 05) against addon churn (§11).
+  const serializeAddon = new SerializeAddon();
+  term.loadAddon(serializeAddon);
+
   let disposed = false;
 
   /**
-   * Read the visible viewport as plain text. For each viewport row read
-   * `getLine(baseY + y)?.translateToString(true)` so the viewport is read
-   * correctly even when scrollback has accumulated (the viewport top is `baseY`).
+   * Read the grid as plain text. The viewport rows are
+   * `getLine(baseY + y)?.translateToString(true)` for `y` in `0..rows-1` (read
+   * via `baseY` so the viewport is correct even when scrollback has accumulated).
+   * When `scrollback > 0`, the off-screen rows ABOVE the viewport
+   * (`max(0, baseY - scrollback) .. baseY - 1`) are prepended (TR-14 perception).
    */
-  function readViewport(): string {
+  function readText(scrollback: number): string {
     const buf = term.buffer.active;
     const lines: string[] = [];
+    if (scrollback > 0) {
+      const from = Math.max(0, buf.baseY - scrollback);
+      for (let i = from; i < buf.baseY; i++) {
+        lines.push(buf.getLine(i)?.translateToString(true) ?? "");
+      }
+    }
     for (let y = 0; y < term.rows; y++) {
       lines.push(buf.getLine(buf.baseY + y)?.translateToString(true) ?? "");
     }
     return lines.join("\n");
+  }
+
+  /**
+   * Encode the `screen` for the requested format. `ansi` → `serialize()` (SGR
+   * preserved); `html` → `serializeAsHTML()`; `text` → the plain grid. The
+   * SerializeAddon's `scrollback` option includes off-screen rows for ansi/html
+   * (both call shapes are valid — `serializeAsHTML` options are `Partial<>`).
+   */
+  function renderScreen(format: RenderFormat, scrollback: number): string {
+    if (format === "ansi") {
+      return serializeAddon.serialize(scrollback > 0 ? { scrollback } : {});
+    }
+    if (format === "html") {
+      return serializeAddon.serializeAsHTML(scrollback > 0 ? { scrollback } : {});
+    }
+    return readText(scrollback);
   }
 
   return {
@@ -141,10 +200,12 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
       });
     },
 
-    snapshot(): EmulatorSnapshot {
+    snapshot(opts?: SnapshotOptions): EmulatorSnapshot {
       const buf = term.buffer.active;
+      const format = opts?.format ?? "text";
+      const scrollback = opts?.scrollback ?? 0;
       return {
-        screen: readViewport(),
+        screen: renderScreen(format, scrollback),
         cursor: { x: buf.cursorX, y: buf.cursorY },
         cols: term.cols,
         rows: term.rows,
