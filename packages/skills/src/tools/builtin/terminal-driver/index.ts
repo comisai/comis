@@ -112,7 +112,29 @@ export {
   defaultLoadPty,
   type TerminalWorker,
   type TerminalWorkerDeps,
+  type TmuxBackendLike,
 } from "./terminal-worker-entry.js";
+
+// P5 124-08 (OPS-05, spec §4.6): the tmux worker backend — the THIRD loadBackend option
+// (node-pty | pipe | tmux) for milestone-length runs. tmux owns the PTY in a
+// DETERMINISTICALLY-named session (comis-<sessionId>) so the server outlives the worker and
+// a restart RE-ATTACHES (has-session → read the existing pane) rather than re-creating
+// (RESEARCH Pitfall 6). The daemon (124-09) binds the resolved tmux path + has-session probe
+// + runTmux into the loadTmux seam. Pure command builders + the FakePtyLike-shaped factory;
+// infra-free (only node:child_process). The live survival test is Linux-gated.
+export {
+  createTmuxBackend,
+  defaultRunTmux,
+  tmuxSessionName,
+  buildTmuxSpawnArgv,
+  buildTmuxHasSessionArgv,
+  buildTmuxKillArgv,
+  buildTmuxSendKeysArgv,
+  buildTmuxCaptureArgv,
+  buildTmuxResizeArgv,
+  type TmuxChild,
+  type TmuxBackendDeps,
+} from "./terminal-tmux-backend.js";
 
 // P5 124-03 (spec §4.3, the #1 de-risk): the pure state classifier + the
 // load-bearing cursor-parked gate. The worker (124-05/06) drives classifyFrame each

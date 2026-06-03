@@ -30,6 +30,7 @@ import type { EgressMaterialization } from "@comis/core";
 import type { EmulatorSnapshot, SessionEmulator } from "./terminal-render.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 import type { AttentionEmitter } from "./terminal-attention-emitter.js";
+import type { SettleResult } from "./terminal-settle.js";
 
 /** Structural logger — the minimal `{info,debug,warn,error}` surface; NOT `@comis/infra`'s `getLogger` (the worker never value-imports infra); the daemon injects the real logger. */
 export interface WorkerLogger {
@@ -67,8 +68,35 @@ export interface PipeChildLike {
   kill(signal?: string): void;
 }
 
-/** Which backend a session is driven by — `degraded` is the pipe fallback (TR-08). */
-export type WorkerBackend = "pty" | "degraded";
+/**
+ * Which backend a session is driven by:
+ *   - `pty`      — node-pty (the default, full TUI);
+ *   - `tmux`     — the named-session backend required for milestone-length runs
+ *                  (OPS-05): the tmux server outlives the worker so a restart
+ *                  RE-ATTACHES by the deterministic `comis-<id>` name (124-08);
+ *   - `degraded` — the pipe fallback (TR-08), when node-pty is unavailable.
+ */
+export type WorkerBackend = "pty" | "tmux" | "degraded";
+
+/**
+ * The tmux-backend LOADER seam — the third option behind the same backend interface as
+ * `loadPty` (124-08, OPS-05). The daemon binds the session-agnostic deps (the resolved
+ * tmux path, the `has-session` probe, the `runTmux` spawner) and hands the worker this
+ * factory; the worker calls it per session with the composed plan command + geometry and
+ * gets back a {@link FakePtyLike} handle (onData→ring, onExit→markExited, write/resize/kill
+ * over the named session). Structural (not the concrete `createTmuxBackend`) so the worker
+ * stays decoupled from the tmux module + the daemon-injected probe/runner.
+ */
+export interface TmuxBackendLike {
+  spawn(args: {
+    sessionId: string;
+    bin: string;
+    argv: readonly string[];
+    cols: number;
+    rows: number;
+    env: NodeJS.ProcessEnv;
+  }): FakePtyLike;
+}
 
 /**
  * A closure-local per-session record (NOT module-global). Exported as a worker-internal
@@ -124,4 +152,45 @@ export interface SessionState {
    * cleaned up (no leak). Absent for `none`/`full`.
    */
   egress?: EgressMaterialization;
+}
+
+// ---------------------------------------------------------------------------
+// Frame result shapes — the worker's per-method reply payloads. Pure types; moved
+// here from terminal-worker-entry.ts (124-08) so that file keeps headroom under the
+// 800-line architecture cap once the tmux backend seam plumbing lands. Intra-module
+// (the entry's handlers return them); NOT re-exported by the barrel.
+// ---------------------------------------------------------------------------
+
+/** The create-frame reply payload. */
+export interface CreateResult {
+  sessionId: string;
+  backend: WorkerBackend;
+  cols: number;
+  rows: number;
+}
+
+/** Post-action snapshot a mutating handler (send_text/send_key) returns (TR-03): the SETTLED `{screen,cursor}` subset; `cursor` stays `{0,0}` until the real cursor lands (P2/121). */
+export interface SendResult {
+  screen: string;
+  cursor: { x: number; y: number };
+}
+
+/** The `resize` reply payload (spec §5: `{ ok }`). */
+export interface ResizeResult {
+  ok: boolean;
+}
+
+/**
+ * The `wait` reply payload (spec §5 / TR-05): the settle outcome plus the
+ * post-settle `{screen,cursor}`. `isComplete` is the LOAD-BEARING signal — it
+ * flows through from `runSettle` VERBATIM (never coerced) so a timeout's `false`
+ * survives (the turn ends; the P5 attention model RESUMES it, never finalizes a
+ * live session).
+ */
+export interface WaitResult {
+  matched: boolean;
+  isComplete: boolean;
+  reason: SettleResult["reason"];
+  screen: string;
+  cursor: { x: number; y: number };
 }

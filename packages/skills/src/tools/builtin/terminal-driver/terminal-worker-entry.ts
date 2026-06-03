@@ -67,6 +67,7 @@ import type {
   PipeChildLike,
   PtyModuleLike,
   SessionState,
+  TmuxBackendLike,
   WorkerBackend,
   WorkerLogger,
 } from "./terminal-worker-types.js";
@@ -121,18 +122,19 @@ export interface WorkerFsPort {
 }
 
 /** Worker dependencies — all injectable for unit tests; production defaults provided. */
-// @optional-field-count: 14 optional fields — TerminalWorkerDeps is the worker's
-// dependency-injection contract: EVERY optional is a genuinely-conditional injectable
-// port (loadPty/spawnPipe/nowMs/envSnapshot/fs/setTimer/clearTimer/createEmulator/
-// buildScopeArgs/scrubChildEnv/buildEgressRelayLaunch/egressControl/writeFd3/stuckMs) that
-// carries a production default in the factory and is overridden ONLY by a test or the daemon
-// composition root. Tightening any to required would force every call site (and every unit
-// test) to fabricate a value for a port it does not exercise. This is the "(a) genuinely
-// conditional" classification, not a cluster-split candidate — the contract is cohesive
-// (one worker, one deps bag). 124-05 added writeFd3 + stuckMs (the no-poll attention ports).
+// @optional-field-count: 15 optional fields — TerminalWorkerDeps is the worker's
+// dependency-injection contract: EVERY optional is a genuinely-conditional injectable port
+// (spawnPipe/loadTmux/nowMs/envSnapshot/fs/setTimer/clearTimer/createEmulator/buildScopeArgs/
+// scrubChildEnv/buildEgressRelayLaunch/egressControl/writeFd3/stuckMs/bwrapPath) with a
+// factory default (or daemon-injected), overridden ONLY by a test or the composition root.
+// Tightening any to required would force every call site to fabricate a port it never
+// exercises. The "(a) genuinely conditional" classification, not a cluster-split — one
+// cohesive worker deps bag. 124-05 added writeFd3+stuckMs; 124-08 added loadTmux (OPS-05).
 export interface TerminalWorkerDeps {
   /** Load node-pty. Default: a guarded `createRequire` load in a try — NEVER a top-level static import (crashes module load on a no-prebuild host); a throw → the pipe backend (TR-08). */
   loadPty: () => PtyModuleLike;
+  /** 124-08 (OPS-05): the tmux named-session backend loader — the 3rd option behind the same FakePtyLike seam as node-pty | pipe. Used ONLY when a create frame requests `backend:"tmux"`; the daemon binds it (resolved tmux path + has-session probe + runTmux). Absent ⇒ a tmux request falls back to pty/pipe. */
+  loadTmux?: TmuxBackendLike;
   /** Spawn the pipe-backend child. Default: `child_process.spawn` with stdio pipes. */
   spawnPipe?: (
     bin: string,
@@ -181,60 +183,28 @@ export interface TerminalWorkerDeps {
 }
 
 // ---------------------------------------------------------------------------
-// Frame result shapes
+// Frame result shapes + the worker's structural contracts
 // ---------------------------------------------------------------------------
 //
-// WorkerBackend moved to the neutral leaf terminal-worker-types.ts (124-01,
-// closure of the backend-attach cycle break — SessionState references it);
-// type-imported above and re-exported below so the public surface is unchanged.
-
-/** The create-frame reply payload. */
-interface CreateResult {
-  sessionId: string;
-  backend: WorkerBackend;
-  cols: number;
-  rows: number;
-}
-
-/** Post-action snapshot a mutating handler (send_text/send_key) returns (TR-03): the SETTLED `{screen,cursor}` subset; `cursor` stays `{0,0}` until the real cursor lands (P2/121). */
-interface SendResult {
-  screen: string;
-  cursor: { x: number; y: number };
-}
-
-/** The `resize` reply payload (spec §5: `{ ok }`). */
-interface ResizeResult {
-  ok: boolean;
-}
-
-/**
- * The `wait` reply payload (spec §5 / TR-05): the settle outcome plus the
- * post-settle `{screen,cursor}`. `isComplete` is the LOAD-BEARING signal — it
- * flows through from {@link runSettle} VERBATIM (never coerced) so a timeout's
- * `false` survives (the turn ends; the P5 attention model RESUMES it, never
- * finalizes a live session).
- */
-interface WaitResult {
-  matched: boolean;
-  isComplete: boolean;
-  reason: SettleResult["reason"];
-  screen: string;
-  cursor: { x: number; y: number };
-}
-
-// SessionState (the closure-local per-session record the backend-attach sibling types its
-// `state` against) moved to the neutral leaf terminal-worker-types.ts (124-01) — see the
-// re-export below. It is NOT re-exported by the barrel (purely intra-module).
-//
-// The worker's structural contracts (WorkerLogger, FakePtyLike, PtyModuleLike,
-// PipeChildLike, WorkerBackend, SessionState) RE-EXPORTED from the neutral leaf
-// terminal-worker-types.ts (124-01) so every existing `from "./terminal-worker-entry.js"`
+// WorkerBackend + SessionState + the four per-method reply shapes (CreateResult /
+// SendResult / ResizeResult / WaitResult) live in the neutral leaf
+// terminal-worker-types.ts (the reply shapes moved there in 124-08 to keep this file
+// under the 800-line cap once the tmux seam landed). Type-imported here for the handler
+// bodies + RE-EXPORTED below so every existing `from "./terminal-worker-entry.js"`
 // importer (the worker tests, the render-live harness) keeps working — type-only, no churn.
+import type {
+  CreateResult,
+  ResizeResult,
+  SendResult,
+  WaitResult,
+} from "./terminal-worker-types.js";
+
 export type {
   FakePtyLike,
   PipeChildLike,
   PtyModuleLike,
   SessionState,
+  TmuxBackendLike,
   WorkerBackend,
   WorkerLogger,
 } from "./terminal-worker-types.js";
@@ -484,6 +454,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // wire-onData/onExit / pipe-close-error block, lifted into a sibling so this file
     // keeps headroom under the 800-line cap (124-01). appendRing/markExited moved with it
     // (their only callers were those stream handlers); the rest ride in as explicit params.
+    // 124-08 (OPS-05): only an explicit create-frame `backend:"tmux"` (allow-entry,
+    // daemon-threaded in 124-09) + a wired `loadTmux` diverges to the tmux survival
+    // backend; everything else takes the node-pty → pipe path (attachBackend decides).
+    const requestedBackend: WorkerBackend | undefined = p["backend"] === "tmux" ? "tmux" : undefined;
     attachBackend({
       plan: { bin: plan.bin, argv: plan.argv, env: plan.env },
       cols,
@@ -492,6 +466,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       loadPty: deps.loadPty,
       spawnPipe,
       logger,
+      requestedBackend,
+      loadTmux: deps.loadTmux,
+      sessionId,
     });
 
     // (The session was registered synchronously above so concurrent frames find it.)

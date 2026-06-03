@@ -394,6 +394,85 @@ describe("createTerminalWorker — TR-08 backend selection", () => {
     expect((reply.result as { backend: string }).backend).toBe("pty");
     expect(fake.spawn).toHaveBeenCalledTimes(1);
   });
+
+  // 124-08 (OPS-05): the THIRD backend selection — a create frame requesting
+  // backend:"tmux" with a wired loadTmux selects the tmux named-session backend (the
+  // survival path), and the tmux handle satisfies the SAME FakePtyLike seam (onData→ring).
+  it("selects the tmux backend and reports backend tmux when backend:tmux is requested + loadTmux is wired", async () => {
+    let onData: ((d: string) => void) | undefined;
+    let receivedArgs: { sessionId: string; bin: string; argv: readonly string[] } | undefined;
+    const tmuxSpawn = vi.fn(
+      (spawnArgs: { sessionId: string; bin: string; argv: readonly string[]; cols: number; rows: number }) => {
+        // The loader receives the per-session COMPOSED plan command — record it for the
+        // post-call assertions (asserting inside the fake would, on mismatch, throw into
+        // dispatch and surface as a generic ok:false rather than a legible diff).
+        receivedArgs = { sessionId: spawnArgs.sessionId, bin: spawnArgs.bin, argv: spawnArgs.argv };
+        const handle: FakePtyLike = {
+          pid: 7373,
+          onData: (cb: (d: string) => void) => {
+            onData = cb;
+          },
+          onExit: vi.fn(),
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+        };
+        return handle;
+      },
+    );
+
+    const worker = createTerminalWorker(
+      baseDeps({
+        // A throwing loadPty proves the tmux branch does NOT touch node-pty.
+        loadPty: () => {
+          throw new Error("loadPty must not be called on the tmux path");
+        },
+        loadTmux: { spawn: tmuxSpawn },
+      }),
+    );
+
+    const reply = await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24, backend: "tmux" }),
+    );
+
+    expect(reply.ok).toBe(true);
+    expect((reply.result as { backend: string }).backend).toBe("tmux");
+    expect(tmuxSpawn).toHaveBeenCalledTimes(1);
+    // The loader received the per-session sessionId (the survival name derives from it) and
+    // the COMPOSED plan command: bwrap is the outer bin (the jail), the driven /bin/bash
+    // rides inside plan.argv after the bwrap `--` — i.e. tmux drives the bwrap-jailed child
+    // (no unjailed path; the jail is still present, 124-08 nesting note).
+    expect(receivedArgs?.sessionId).toBe("s1");
+    expect(receivedArgs?.bin).toBe("/usr/bin/bwrap");
+    expect(receivedArgs?.argv).toContain("/bin/bash");
+
+    // The tmux handle feeds the ring through the SAME seam — emit a chunk + read it back.
+    onData?.("tmux-pane-out\n");
+    await flushEmulator();
+    const read = await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-read-tmux",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "s1" },
+    });
+    expect((read.result as { screen: string }).screen).toContain("tmux-pane-out");
+  });
+
+  // 124-08: a backend:"tmux" request with NO loadTmux wired must NOT crash — it falls back
+  // to the node-pty path (a worker built without the tmux loader cannot drive tmux).
+  it("falls back to pty when backend:tmux is requested but loadTmux is absent (no crash)", async () => {
+    const fake = makeFakeBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: fake.spawn }) }));
+
+    const reply = await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24, backend: "tmux" }),
+    );
+
+    expect(reply.ok).toBe(true);
+    expect((reply.result as { backend: string }).backend).toBe("pty");
+    expect(fake.spawn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("createTerminalWorker — OPS-07 ALS traceId re-establishment", () => {

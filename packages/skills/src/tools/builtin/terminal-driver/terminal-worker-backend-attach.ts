@@ -28,6 +28,8 @@ import type {
   PipeChildLike,
   PtyModuleLike,
   SessionState,
+  TmuxBackendLike,
+  WorkerBackend,
   WorkerLogger,
 } from "./terminal-worker-types.js";
 
@@ -100,6 +102,22 @@ export interface AttachBackendArgs {
   ) => PipeChildLike;
   /** Structural worker logger (the worker's injected logger) — threaded to {@link markExited}. */
   logger: WorkerLogger;
+  /**
+   * 124-08 (OPS-05): the requested backend off the create frame. `"tmux"` selects the
+   * tmux named-session backend (survival) WHEN {@link loadTmux} is wired; absent/`"pty"`
+   * falls to the existing node-pty → pipe path. The daemon threads this from the
+   * allow-entry `backend` field (124-09); until then it is `undefined` (default pty/pipe).
+   */
+  requestedBackend?: WorkerBackend;
+  /**
+   * 124-08 (OPS-05): the tmux-backend loader (the worker's injected `deps.loadTmux`). The
+   * 3rd option behind the same {@link FakePtyLike} seam as node-pty | pipe. Used ONLY when
+   * the create frame requests `backend:"tmux"`; absent ⇒ the request silently falls back to
+   * the pty/pipe path (a worker built without the tmux loader cannot drive a tmux session).
+   */
+  loadTmux?: TmuxBackendLike;
+  /** The worker sessionId — the tmux backend derives its DETERMINISTIC `comis-<id>` name from it (survival). */
+  sessionId: string;
 }
 
 /**
@@ -115,7 +133,30 @@ export interface AttachBackendArgs {
  *     set `state.pipe`.
  */
 export function attachBackend(args: AttachBackendArgs): void {
-  const { plan, cols, rows, state, loadPty, spawnPipe, logger } = args;
+  const { plan, cols, rows, state, loadPty, spawnPipe, logger, requestedBackend, loadTmux, sessionId } = args;
+
+  // 124-08 (OPS-05): the tmux named-session backend — selected ONLY when the create frame
+  // requested it AND the worker was built with the tmux loader. The handle is FakePtyLike-
+  // shaped, so it wires EXACTLY like the pty branch (onData→ring, onExit→markExited, set
+  // state.pty so writeToBackend uses it) — one seam, no worker-entry branching. The driven
+  // plan command + geometry ride into the loader; the loader owns has-session-then-attach.
+  if (requestedBackend === "tmux" && loadTmux !== undefined) {
+    const handle = loadTmux.spawn({
+      sessionId,
+      bin: plan.bin,
+      argv: plan.argv,
+      cols,
+      rows,
+      env: plan.env,
+    });
+    handle.onData((d) => appendRing(state, d));
+    handle.onExit((e) => {
+      markExited(state, logger, e?.exitCode);
+    });
+    state.pty = handle;
+    state.backend = "tmux";
+    return;
+  }
 
   let pty: PtyModuleLike | undefined;
   try {
