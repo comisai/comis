@@ -52,7 +52,7 @@ import {
 import { jsonResult, throwToolError } from "../../../platform-tools/tool-helpers.js";
 import { matchAllowEntry, buildDirectSpawn, type AllowEntryLike } from "./allowlist-matcher.js";
 import type { SessionCaps } from "./terminal-caps.js";
-import { enforceSendCapsThenAudit } from "./terminal-send-guards.js";
+import { enforceSendCapsThenAudit, readDimension } from "./terminal-send-guards.js";
 import type { SandboxProvider } from "../sandbox/types.js";
 import {
   DEFAULT_SCROLLBACK,
@@ -710,9 +710,12 @@ export function createTerminalSessionResizeTool(deps: TerminalToolDeps): AgentTo
       const owner = resolveOwner(deps);
       // abort ends the call, NOT the session (TR-10) — never registry.kill here.
       if (signal?.aborted) return jsonResult({ ok: false });
-      // cols/rows are required by the schema; the readers fall back defensively.
-      const cols = readInt(params, "cols", 0);
-      const rows = readInt(params, "rows", 0);
+      // IN-02: cols/rows are schema-typed integers, but VALIDATE the value range here
+      // (1..MAX_DIMENSION) and reject a degenerate geometry (0/negative/non-integer/
+      // absurd) with a typed invalid_value BEFORE forwarding to the emulator/PTY — the
+      // tool must not push a bad winsize into the worker (an aborted call returned above).
+      const cols = readDimension(params, "cols");
+      const rows = readDimension(params, "rows");
       const start = deps.nowMs();
       const out = await deps.registry.resize(sessionId, owner, { cols, rows });
       deps.logger.info(

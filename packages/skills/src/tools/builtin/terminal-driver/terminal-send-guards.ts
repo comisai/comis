@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The send-path guards for `terminal_session_send_text` / `_send_key` (SEC-10,
- * OPS-03, OPS-06) — extracted from `terminal-tools.ts` so that file stays under the
- * 800-line architecture cap (RESEARCH Pitfall 5; the same discipline that produced
+ * OPS-03, OPS-06) PLUS the resize geometry validator ({@link readDimension}, IN-02)
+ * — extracted from `terminal-tools.ts` so that file stays under the 800-line
+ * architecture cap (RESEARCH Pitfall 5; the same discipline that produced
  * `terminal-worker-launch.ts` / `terminal-workspace.ts` / `terminal-reaper.ts`).
  *
  * The two send tools call {@link enforceSendCapsThenAudit} (which composes the two
@@ -195,4 +196,31 @@ export async function enforceSendCapsThenAudit(
     throw err;
   }
   auditKeystroke(deps, sessionId, toolName, kind, payload, "attempted");
+}
+
+/**
+ * The upper bound on a terminal dimension (IN-02). A real terminal is never this
+ * wide/tall; the cap blocks an agent from inflating the worker's emulator buffer /
+ * PTY winsize with an absurd value. The schema types cols/rows as integers; this is
+ * the value-range guard the schema does not express.
+ */
+export const MAX_TERMINAL_DIMENSION = 10_000;
+
+/**
+ * Read + VALIDATE a terminal dimension (cols/rows) from agent params (IN-02). The
+ * geometry is not a trust boundary, but the tool layer must not forward a degenerate
+ * value (0/negative/non-integer/absurd) into the worker's `Terminal({cols,rows})` /
+ * PTY winsize. Throws a typed `invalid_value` (never returns on a bad value) so the
+ * resize tool rejects BEFORE the registry forward. Lives here (not terminal-tools.ts)
+ * to keep that file under the 800-line architecture cap.
+ */
+export function readDimension(p: Record<string, unknown>, key: string): number {
+  const v = p[key];
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > MAX_TERMINAL_DIMENSION) {
+    throwToolError("invalid_value", `Invalid ${key}: must be an integer in 1..${MAX_TERMINAL_DIMENSION}.`, {
+      param: key,
+      hint: `pass a positive ${key} no larger than ${MAX_TERMINAL_DIMENSION}`,
+    });
+  }
+  return v;
 }
