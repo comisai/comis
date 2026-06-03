@@ -53,9 +53,10 @@ import {
   type TerminalSessionRegistry,
   type TerminalEventBus,
   type AllowEntryLike,
+  type TerminalScope,
   type SandboxProvider,
 } from "@comis/skills/tools";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, type TerminalAllowEntry } from "@comis/core";
 
 /** Dependencies the terminal-driver wiring needs from the composition root. */
 export interface TerminalWiringDeps {
@@ -74,6 +75,30 @@ export interface TerminalWiringDeps {
    * runtime ⇒ create fail-closes (the fail-closed posture is unchanged).
    */
   readonly sandboxProvider: SandboxProvider | undefined;
+}
+
+/**
+ * Map a parsed config `TerminalAllowEntry` onto the skills-side `AllowEntryLike`
+ * (SEC-02/03) — the SINGLE site config scope becomes an `AllowEntryLike`.
+ *
+ * Copies `{ id, match, scope }`: the operator-declared scope is carried verbatim so
+ * it threads on to the create frame (RESEARCH Pitfall 4 — scope must NOT be dropped
+ * at the daemon boundary). The config schema already applied the least-privilege
+ * `.default(...)` to every scope sub-field, so this is a pure passthrough — no
+ * defaulting / widening here (scope is operator-only, never agent-dialable). When
+ * the config-plumbing step lands it does `config.allow.map(mapAllowEntry)` and scope
+ * flows automatically; until then the wired allow-set stays empty (fail-closed).
+ *
+ * The `scope` cast is structural-identity: the config `scope` strictObject and the
+ * skills `TerminalScope` are the same closed union (the latter hand-mirrors the
+ * former); the daemon bridges the two package types at this composition seam.
+ */
+export function mapAllowEntry(entry: TerminalAllowEntry): AllowEntryLike {
+  return {
+    id: entry.id,
+    match: entry.match,
+    scope: entry.scope as TerminalScope,
+  };
 }
 
 /**
@@ -149,6 +174,8 @@ export function wireTerminalTools(
 
   // SEC-01 trust source: the operator allow-set. Empty until the config is
   // threaded into PerAgentConfig (a later step) — so every create fail-closes.
+  // When that lands it becomes `config.allow.map(mapAllowEntry)`, so the per-entry
+  // scope (SEC-02) rides along via the single mapping site above (no silent drop).
   const allowEntries: AllowEntryLike[] = [];
 
   const sharedDeps = {
