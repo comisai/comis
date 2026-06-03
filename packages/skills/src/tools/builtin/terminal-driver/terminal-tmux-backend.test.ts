@@ -30,6 +30,7 @@ import {
   buildTmuxCaptureArgv,
   buildTmuxResizeArgv,
   createTmuxBackend,
+  defaultRunTmux,
   type TmuxChild,
   type TmuxBackendDeps,
 } from "./terminal-tmux-backend.js";
@@ -93,6 +94,16 @@ function makeFakeTmux(over: { hasSession?: boolean } = {}): {
     },
   };
 }
+
+describe("terminal-tmux-backend — defaultRunTmux argv invariant (IN-02)", () => {
+  it("throws an ACTIONABLE error on an empty argv instead of spawning undefined", () => {
+    // Every buildTmux*Argv puts tmuxPath first, so production never passes []. A future
+    // empty-argv caller bug must fail with a legible message naming the function +
+    // invariant, not the opaque node `The "file" argument must be of type string` from
+    // childSpawn(undefined, …) the bare `bin!` non-null assertion would have produced.
+    expect(() => defaultRunTmux([], { PATH: "/usr/bin" } as NodeJS.ProcessEnv)).toThrow(/defaultRunTmux: empty argv/);
+  });
+});
 
 describe("terminal-tmux-backend — deterministic session name (OPS-05 survival)", () => {
   it("derives a STABLE, recoverable session name comis-<sessionId> (never a random/UUID name)", () => {

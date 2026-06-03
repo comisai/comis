@@ -241,10 +241,22 @@ export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike {
  * The production tmux command runner: `child_process.spawn` with stdio pipes (mirrors
  * the pipe backend's `defaultSpawnPipe`). Exported so the daemon (when wiring the tmux
  * backend) can build the injected {@link TmuxBackendDeps.runTmux}; tests inject a fake.
+ *
+ * IN-02: the first argv element is always `tmuxPath` (every `buildTmux*Argv` puts it
+ * first), but the previous bare `bin!` non-null assertion left that invariant implicit —
+ * an empty argv (a future caller bug) would call `childSpawn(undefined, …)` and surface
+ * the opaque node `The "file" argument must be of type string` error. Guard it explicitly
+ * so a programming error fails with an actionable message naming the function.
+ * @allow-throw: programming-error boundary guard — an empty argv is a caller bug, not a
+ * recoverable runtime condition; this throw is the actionable analogue of the implicit
+ * `bin!` assertion it replaces, raised at the same synchronous spawn boundary.
  */
 export function defaultRunTmux(argv: string[], env: NodeJS.ProcessEnv): TmuxChild {
   const [bin, ...rest] = argv;
-  return childSpawn(bin!, rest, {
+  if (bin === undefined) {
+    throw new Error("defaultRunTmux: empty argv (expected tmuxPath as the first element)");
+  }
+  return childSpawn(bin, rest, {
     env,
     stdio: ["pipe", "pipe", "pipe"],
   }) as unknown as TmuxChild;
