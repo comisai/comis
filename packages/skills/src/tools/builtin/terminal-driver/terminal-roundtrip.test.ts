@@ -23,6 +23,9 @@
 
 import { describe, it, expect } from "vitest";
 import { realpathSync } from "node:fs";
+import { spawn as childSpawn } from "node:child_process";
+
+import type { PipeChildLike } from "./terminal-worker-entry.js";
 
 import {
   createTerminalSessionCreateTool,
@@ -69,29 +72,63 @@ function realShell(): string {
  * pushes the encoded replies back through the registered stdout `data` callback.
  * This replaces the OS pipe so the full daemon-side path runs on macOS.
  */
+/**
+ * macOS jail-unwrapping pipe spawner (122-06): the worker now spawns
+ * `bwrap [scopeArgs] -- bin ...argv` for BOTH backends. There is no real bwrap on
+ * the macOS author box, so this in-process bridge UNWRAPS the jail — it spawns the
+ * child that appears AFTER the `--` separator directly. This keeps the deterministic
+ * macOS daemon-path round-trip alive; the LIVE bwrap jail enforcement (bwrap as
+ * arg0, the scope matrix, the real child INSIDE the namespaces) is the VPS-gated
+ * `.linux.test.ts` sibling (+ 122-07). The bwrap argv composition itself is unit-
+ * asserted on macOS in terminal-worker-entry.test.ts (recording pty.spawn).
+ */
+function unwrapBwrapSpawn(
+  wrappedBin: string,
+  wrappedArgv: string[],
+  opts: { env: NodeJS.ProcessEnv },
+): PipeChildLike {
+  const sep = wrappedArgv.indexOf("--");
+  const childBin = sep >= 0 ? wrappedArgv[sep + 1] : wrappedBin;
+  const childArgv = sep >= 0 ? wrappedArgv.slice(sep + 2) : wrappedArgv;
+  return childSpawn(childBin, childArgv, {
+    env: opts.env,
+    stdio: ["pipe", "pipe", "pipe"],
+  }) as unknown as PipeChildLike;
+}
+
 function makeBridgedWorkerChild(): FakeWorkerChild {
-  // A real worker with the pipe backend forced (this box's node-pty can't spawn).
+  // A real worker with the pipe backend forced (this box's node-pty can't spawn) +
+  // a resolved bwrapPath (so the SEC-16 fail-closed branch passes) + the macOS
+  // jail-unwrapping spawnPipe (the real bwrap jail is the VPS .linux sibling).
   const worker = createTerminalWorker({
     loadPty: () => {
       throw new Error("node-pty forced unavailable on this host (degraded pipe backend)");
     },
+    spawnPipe: unwrapBwrapSpawn,
+    bwrapPath: "/usr/bin/bwrap",
     logger: noopLogger,
   });
 
   const decoder = createFrameDecoder();
   let onStdout: ((chunk: Buffer) => void) | undefined;
   const stdinDecoder = decoder;
+  // The serialization queue — frames are handled in arrival order (a real worker's
+  // sequential frame loop), so create's async 122-06 composition finishes (and the
+  // backend attaches) before a subsequent read/kill frame runs.
+  let frameQueue: Promise<void> = Promise.resolve();
 
   const child: FakeWorkerChild = {
     pid: 4242,
     stdin: {
       write(chunk: Buffer): boolean {
-        // Decode any complete request frames and dispatch them to the worker.
+        // Decode complete request frames and dispatch them to the worker IN ORDER.
         for (const frame of stdinDecoder.push(chunk)) {
-          void worker.handle(frame as TerminalRequestFrame).then((reply) => {
+          frameQueue = frameQueue.then(async () => {
+            const reply = await worker.handle(frame as TerminalRequestFrame);
             onStdout?.(encodeFrame(reply));
           });
         }
+        void frameQueue;
         return true;
       },
     },

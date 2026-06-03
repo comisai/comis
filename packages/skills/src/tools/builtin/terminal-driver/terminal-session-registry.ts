@@ -33,6 +33,7 @@ import {
   systemSetTimeout,
   systemClearTimeout,
   type SystemTimeoutHandle,
+  type EgressControlPort,
 } from "@comis/core";
 
 import {
@@ -90,11 +91,10 @@ export interface SpawnFailureInfo {
 }
 
 /**
- * Default reply timeout (MR-01): a `request()` (read/kill round-trip) that gets
- * no correlated reply within this window settles to a typed timeout rather than
- * hanging the caller forever + leaking the pending resolver. A wedged-but-alive
- * worker emits no `close`/`error`, so without this bound nothing ever unparks
- * the waiter. 30s is generous for a screen read; the daemon can override via
+ * Default reply timeout (MR-01): a `request()` (read/kill round-trip) with no
+ * correlated reply in this window settles to a typed timeout instead of hanging
+ * the caller + leaking the resolver (a wedged-but-alive worker emits no
+ * close/error). 30s is generous for a screen read; the daemon overrides via
  * `requestTimeoutMs` (config-derived, e.g. `worker.stuckMs`).
  */
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -127,14 +127,17 @@ export interface TerminalSessionRegistryDeps {
   onSpawnFailed?: (info: SpawnFailureInfo) => void;
   /**
    * Schedule a one-shot timer for the MR-01 reply timeout. Default:
-   * `systemSetTimeout` from `@comis/core` (the sanctioned timer indirection — no
-   * raw `setTimeout` global). Returns an opaque handle for `clearTimer`. The
-   * production default `.unref()`s the handle so a pending timeout never holds
-   * the event loop open on shutdown.
+   * `systemSetTimeout` from `@comis/core` (the sanctioned timer indirection — no raw
+   * `setTimeout` global); returns an opaque handle for `clearTimer`. The production
+   * default `.unref()`s it so a pending timeout never holds the loop open on shutdown.
    */
   setTimer?: (cb: () => void, ms: number) => unknown;
   /** Cancel a `setTimer` handle (default: `systemClearTimeout`). */
   clearTimer?: (handle: unknown) => void;
+  /** Daemon-resolved bwrap path (SEC-16 seam, 122-06): a STRING, forwarded onto the create frame for the worker's fail-closed branch (undefined ⇒ the worker rejects). */
+  bwrapPath?: string;
+  /** Daemon-injected no-secret egress port (SEC-07, 122-05) — the daemon->worker-main seam for `listed-hosts`; a live `net` server, so (unlike bwrapPath) NOT frame-serialized. Type-only from @comis/core. */
+  egressControl?: EgressControlPort;
 }
 
 // ---------------------------------------------------------------------------
@@ -361,9 +364,9 @@ export function createTerminalSessionRegistry(
     deps.clearTimer ?? ((handle: unknown) => systemClearTimeout(handle as SystemTimeoutHandle));
 
   /**
-   * Split a `${sessionId}:${requestId}` pending key back into its parts. Both
-   * halves are UUIDs (no embedded `:`), so the FIRST `:` is the unambiguous
-   * separator — used to reconstruct waiter identity on flush (LR-02).
+   * Split a `${sessionId}:${requestId}` pending key into its parts. Both halves are
+   * UUIDs (no embedded `:`), so the FIRST `:` is the unambiguous separator — used to
+   * reconstruct waiter identity on flush (LR-02).
    */
   function splitPendingKey(key: string): { sessionId: string; requestId: string } {
     const idx = key.indexOf(":");
@@ -374,11 +377,10 @@ export function createTerminalSessionRegistry(
 
   /**
    * Clear the worker handle and flush its pending waiters (on crash / close).
-   *
    * LR-02: each synthetic termination reply carries the waiter's REAL
-   * `(sessionId,requestId)` reconstructed from its pending key — NOT blanked
-   * empty strings — so an identity-keyed caller cannot mis-handle the reply. A
-   * per-waiter DEBUG records the flush (the §2.7-observable state transition).
+   * `(sessionId,requestId)` reconstructed from its pending key (NOT blanked empty
+   * strings) so an identity-keyed caller cannot mis-handle it; a per-waiter DEBUG
+   * records the flush (the §2.7-observable state transition).
    */
   function clearWorker(): void {
     worker = undefined;
@@ -564,13 +566,12 @@ export function createTerminalSessionRegistry(
     sessions.set(sessionId, handle);
 
     // M-1: forward the daemon-canonical {bin,argv} VERBATIM (buildDirectSpawn,
-    // 119-02, is the SOLE canonicalization site; argsPrefix preserved end-to-end).
-    // The create frame is fired WITHOUT blocking the turn, but we register an ASYNC
-    // create-reply waiter (HR-03): if the worker's backend spawn fails the worker
-    // replies `ok:false`, flipping the session to `lost` (so `list`/`read` agree
-    // `alive:false`) and firing the OPS-07 `onSpawnFailed` hook — otherwise the
-    // failure was silently dropped and the handle stayed `running` forever. The
-    // turn is NOT held — the waiter resolves out-of-band (non-blocking contract).
+    // 119-02, the SOLE canonicalization site; argsPrefix preserved end-to-end). The
+    // create frame is fired WITHOUT blocking the turn, but we register an ASYNC
+    // create-reply waiter (HR-03): a failed worker backend spawn replies `ok:false`,
+    // flipping the session to `lost` (so list/read agree `alive:false`) + firing the
+    // OPS-07 `onSpawnFailed` hook (else the failure is silently dropped, the handle
+    // stuck `running`). The turn is NOT held — the waiter resolves out-of-band.
     const createFrame = buildRequestFrame(sessionId, "create", {
       sessionId,
       bin: req.bin,
@@ -585,6 +586,9 @@ export function createTerminalSessionRegistry(
       scope: req.scope,
       workspace: req.workspace,
       cwd: req.cwd,
+      // SEC-16 (122-06): the daemon-resolved bwrap path rides the frame so the
+      // worker's fail-closed branch reads it (undefined ⇒ no spawn, session lost).
+      bwrapPath: deps.bwrapPath,
     });
     pending.set(`${sessionId}:${createFrame.requestId}`, (reply) => {
       if (reply.ok) return; // backend spawned — leave the session running.

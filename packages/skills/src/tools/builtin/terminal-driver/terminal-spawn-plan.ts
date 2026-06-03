@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: SEC-16 fail-closed control flow — JailUnavailableError signals "no jail can be materialized" (no bwrapPath / no listed-hosts egress port); the worker's dispatch boundary catches it and maps it to an ok:false create reply (the registry flips the session lost). Never an unjailed fallback.
 /**
  * buildSpawnPlan -- the 122-06 scope-jail COMPOSITION seam, extracted out of the
  * worker so `terminal-worker-entry.ts` stays under the 800-line architecture cap.
@@ -35,10 +36,9 @@
  */
 
 import { homedir } from "node:os";
-import { join as pathJoin } from "node:path";
 import { existsSync } from "node:fs";
 
-import type { EgressControlPort, EgressMaterialization } from "@comis/core";
+import { safePath, type EgressControlPort, type EgressMaterialization } from "@comis/core";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
 import {
@@ -264,7 +264,7 @@ export async function planSpawnFromCreateFrame(
       workspace,
       cwd: params.cwd ?? workspace,
       home,
-      dataDir: pathJoin(home, ".comis"),
+      dataDir: safePath(home, ".comis"),
       systemRoPaths: SYSTEM_RO_PATHS.filter((sp) => existsSync(sp)),
       env,
     },

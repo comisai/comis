@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: the worker IS the frame error-mapping boundary — `dispatch` wraps every handler in a try/catch that maps a thrown error to an `ok:false` reply (the registry's HR-03 path). The sole `throw` is `handleCreate` re-raising a SEC-16 fail-closed JailUnavailableError (after dropping the half-registered session) so it reaches that boundary; never an unjailed fallback.
 /**
  * The supervised Terminal Worker entry (spec §2.1/§2.2/§2.3).
  *
@@ -338,9 +339,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   };
 
   /**
-   * Append a chunk to the session ring (the RAW settle feed + degraded view) AND
-   * feed it into the @xterm emulator (the rendered-`read` source of truth), then
-   * notify the settle's ring-change subscribers. The emu write is chained onto
+   * Append a chunk to the session ring (RAW settle feed + degraded view) AND feed it
+   * into the @xterm emulator (the rendered-`read` source of truth), then notify the
+   * settle's ring-change subscribers. The emu write chains onto
    * {@link SessionState.writeFlush} (serialized, @xterm-PARSE-backed) so `handleRead`
    * awaits it before serializing a settled frame.
    */
@@ -351,10 +352,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Flip a session to not-alive and notify the settle's exit subscribers (onExit
-   * half) so a pending `wait`/settle resolves `exit`. ALSO disposes the
-   * `listed-hosts` egress materialization ONCE (socket cleanup, 122-06) — guarded
-   * by nulling the handle so a second exit signal (close AND error) does not double-dispose.
+   * Flip a session to not-alive + notify the settle's exit subscribers (onExit half)
+   * so a pending `wait`/settle resolves `exit`. ALSO disposes the `listed-hosts`
+   * egress materialization ONCE (socket cleanup, 122-06) — nulling the handle first
+   * so a second exit signal (close AND error) cannot double-dispose.
    */
   function markExited(state: SessionState): void {
     state.alive = false;
@@ -381,10 +382,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Build the {@link SettleDeps} over a session (injected timer ports + this
-   * session's ring/liveness getters + closure-local listener sets) and run the
-   * bounded settle (Plan 02) — the heart of every act-then-return-SETTLED handler
-   * (send_text/send_key) + the explicit `wait`. `params` passes through to {@link runSettle}.
+   * Build the {@link SettleDeps} over a session (injected timer ports + ring/liveness
+   * getters + closure-local listener sets) and run the bounded settle (Plan 02) — the
+   * heart of every act-then-return-SETTLED handler + the explicit `wait`. `params`
+   * passes through to {@link runSettle}.
    */
   function settleSession(state: SessionState, params: SettleParams): Promise<SettleResult> {
     const settleDeps: SettleDeps = {
@@ -400,10 +401,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
         state.exitListeners.add(cb);
         return () => state.exitListeners.delete(cb);
       },
-      // TR-14: a frame with content below the visible viewport is NOT settleable —
-      // the settle's idle path RE-ARMS instead of resolving idle (more content
-      // below ⇒ keep waiting). The gate can only SUPPRESS an idle-settle, never
-      // force one (exit/text/timeout unaffected).
+      // TR-14: content below the viewport is NOT settleable — the idle path RE-ARMS
+      // (more below ⇒ keep waiting). The gate only SUPPRESSES an idle-settle, never
+      // forces one (exit/text/timeout unaffected).
       isSettleable: () => !(state.emu?.hasContentBelowFold() ?? false),
     };
     return runSettle(settleDeps, params);
@@ -411,16 +411,13 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
   /**
    * Handle a `create` frame. Materializes the entry's `scope` into a bwrap jail
-   * (122-06) and spawns `bwrap [scope args] -- bin argv` — the worker holds the PTY
-   * master, bwrap + the driven child run INSIDE the jail. The frame's `{bin,argv}`
-   * ride VERBATIM after the composer's `--` (M-1 — the worker does NOT re-resolve
-   * the path; buildDirectSpawn is the SOLE path-resolution site). BOTH backends
-   * (node-pty + the degraded pipe) are wrapped — there is no unjailed path.
-   *
-   * SEC-16 fail-closed: when no provider resolved a `bwrapPath` (or a
-   * `listed-hosts` scope has no egress port), {@link planSpawnFromCreateFrame}
-   * throws — this propagates to dispatch's catch as an `ok:false` reply (the registry flips the
-   * session `lost`). NOTHING is spawned on that path.
+   * (122-06) and spawns `bwrap [scope args] -- bin argv` (the worker holds the PTY
+   * master; bwrap + the driven child run INSIDE). The frame's `{bin,argv}` ride
+   * VERBATIM after the composer's `--` (M-1 — no re-resolution; buildDirectSpawn is
+   * the SOLE path-resolution site). BOTH backends are wrapped (no unjailed path).
+   * SEC-16 fail-closed: no `bwrapPath` (or a `listed-hosts` scope with no egress
+   * port) ⇒ {@link planSpawnFromCreateFrame} throws ⇒ dispatch replies `ok:false`
+   * (the registry flips the session `lost`) and NOTHING spawns.
    */
   async function handleCreate(frame: TerminalRequestFrame): Promise<CreateResult> {
     const startedAt = nowMs();
@@ -430,12 +427,12 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const argv = Array.isArray(p["argv"]) ? (p["argv"] as string[]) : [];
     const cols = typeof p["cols"] === "number" ? p["cols"] : 80;
     const rows = typeof p["rows"] === "number" ? p["rows"] : 24;
-    // 121-04: the create frame now carries the per-session scrollback ceiling
-    // (the registry sources it from DEFAULT_SCROLLBACK / config — NOT agent input).
-    // Fall back to the worker's SCROLLBACK_DEFAULT only when the frame omits it.
+    // 121-04: the create frame carries the per-session scrollback ceiling (registry-
+    // sourced from DEFAULT_SCROLLBACK / config, NOT agent input); fall back to
+    // SCROLLBACK_DEFAULT only when the frame omits it.
     const scrollback = typeof p["scrollback"] === "number" ? p["scrollback"] : SCROLLBACK_DEFAULT;
-    // 122-06: the operator scope (SEC-02) + its workspace/cwd jail companions
-    // (122-01 threaded them onto the frame). Least-privilege default when absent.
+    // 122-06: the operator scope (SEC-02) + its workspace/cwd jail companions (122-01
+    // threaded them onto the frame). Least-privilege default when absent.
     const scope = (p["scope"] as TerminalScope | undefined) ?? LEAST_PRIVILEGE_SCOPE;
     const workspace = typeof p["workspace"] === "string" ? p["workspace"] : undefined;
     const cwd = typeof p["cwd"] === "string" ? p["cwd"] : undefined;
@@ -458,17 +455,29 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // scrollback from the create frame (DEFAULT_SCROLLBACK / config, never agent input).
     state.emu = createEmulator({ cols, rows, scrollback });
 
-    // 122-06: compose the bwrap-wrapping spawn (the host-side jail companions +
-    // SYSTEM_RO_PATHS filtering happen in planSpawnFromCreateFrame so the worker
-    // stays fs/os-read-free). THROWS (SEC-16) when fail-closed (no bwrapPath / no
-    // egress port) — dispatch turns that into an ok:false reply and NOTHING is
-    // spawned. Computed BEFORE selecting a backend so a fail-closed create never
-    // even touches loadPty/spawnPipe.
-    const plan = await planSpawnFromCreateFrame(
-      { bin, argv, scope, workspace, cwd },
-      envSnapshot(),
-      spawnComposers,
-    );
+    // Register the session SYNCHRONOUSLY (before the async spawn-plan await) so a
+    // read/resize/wait frame arriving mid-composition finds it; the backend attaches
+    // after the plan (pre-122-06 create was sync — the egress materialize made it async).
+    sessions.set(sessionId, state);
+
+    // 122-06: compose the bwrap-wrapping spawn (host-side jail companions +
+    // SYSTEM_RO_PATHS filtering live in planSpawnFromCreateFrame so the worker stays
+    // fs/os-read-free). THROWS (SEC-16) when fail-closed (no bwrapPath / no egress
+    // port) — caught to DROP the session + re-throw so dispatch replies ok:false (the
+    // registry flips it lost); NOTHING spawns. The frame's bwrapPath (registry-threaded
+    // from the daemon) overrides the factory default.
+    const frameBwrapPath = typeof p["bwrapPath"] === "string" ? p["bwrapPath"] : spawnComposers.bwrapPath;
+    let plan;
+    try {
+      plan = await planSpawnFromCreateFrame(
+        { bin, argv, scope, workspace, cwd },
+        envSnapshot(),
+        { ...spawnComposers, bwrapPath: frameBwrapPath },
+      );
+    } catch (err) {
+      sessions.delete(sessionId); // fail-closed: no backend attaches; surface ok:false
+      throw err;
+    }
     state.egress = plan.egress; // disposed on teardown (markExited)
 
     let pty: PtyModuleLike | undefined;
@@ -487,10 +496,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       // PTY backend — spawn the bwrap jail; the child rides after the composer's `--`.
       const handle = pty.spawn(plan.bin, plan.argv, { cols, rows, env: plan.env });
       handle.onData((d) => appendRing(state, d));
-      // Wire the child exit -> markExited (the pty analog of the pipe backend's
-      // close/error below; payload ignored — markExited flips liveness + notifies
-      // the settle's exit subscribers). WITHOUT this, a real node-pty child that
-      // exits never notifies an in-flight wait({forExit:true}) (the VPS real-PTY gate).
+      // Wire child exit -> markExited (the pty analog of the pipe close/error below;
+      // payload ignored). WITHOUT it a real node-pty child that exits never notifies
+      // an in-flight wait({forExit:true}) (the VPS real-PTY gate).
       handle.onExit(() => {
         markExited(state);
       });
@@ -508,7 +516,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       state.pipe = child;
     }
 
-    sessions.set(sessionId, state);
+    // (The session was registered synchronously above so concurrent frames find it.)
     logger.info(
       { sessionId, backend: state.backend, durationMs: nowMs() - startedAt },
       "terminal session created",
@@ -579,9 +587,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     if (state === undefined) return goneSnapshot();
 
     const keys = Array.isArray(frame.params["keys"]) ? (frame.params["keys"] as string[]) : [];
-    // encodeKeyChord throws invalid_value on an unknown key — let it propagate to
-    // dispatch's catch, which returns ok:false. Crucially, the write is AFTER the
-    // encode, so a throw means NOTHING is written (the keystroke-injection guard).
+    // encodeKeyChord throws invalid_value on an unknown key → dispatch's catch (write
+    // is AFTER encode, so a throw writes NOTHING — the keystroke-injection guard).
     const bytes = encodeKeyChord(keys);
     writeToBackend(state, bytes);
 
@@ -610,9 +617,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       : text;
     writeToBackend(state, payload);
 
-    // Settle so the program has consumed/echoed the text. On submit the settle
-    // SEPARATES the text from the Enter byte (TR-04); without submit it still
-    // settles so the returned snapshot is the post-action one.
+    // Settle so the program consumed/echoed the text; on submit the settle SEPARATES
+    // the text from the Enter byte (TR-04), else it still settles for the post-action snapshot.
     await settleSession(state, { forIdleMs: SETTLE_DEFAULT_IDLE_MS });
     if (submit) {
       writeToBackend(state, "\r");
@@ -689,27 +695,22 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       let result: unknown;
       switch (frame.method) {
         case "create":
-          // ASYNC: create awaits the scope-jail composition (egress materialize
-          // for listed-hosts); a fail-closed throw becomes an ok:false reply.
-          result = await handleCreate(frame);
+          result = await handleCreate(frame); // awaits the scope-jail composition; fail-closed throw → ok:false
           break;
         case "read":
-          // ASYNC: read awaits the pending emulator write-parse before serializing.
-          result = await handleRead(frame);
+          result = await handleRead(frame); // awaits the pending emulator write-parse
           break;
         case "send_key":
           result = handleSendKey(frame);
           break;
         case "send_text":
-          // ASYNC: send_text awaits the settle that separates text from submit.
-          result = await handleSendText(frame);
+          result = await handleSendText(frame); // awaits the text↔submit settle
           break;
         case "resize":
           result = handleResize(frame);
           break;
         case "wait":
-          // ASYNC: wait awaits the bounded settle (idle/text/exit/timeout).
-          result = await handleWait(frame);
+          result = await handleWait(frame); // awaits the bounded settle
           break;
         default:
           return {
@@ -735,11 +736,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Persist durable worker state via write→rename, swallowing ONLY the
-   * disabled-fsync refusal under `--permission` (G-4). A genuine I/O error
-   * (EIO/ENOSPC/EBADF) re-throws so real disk problems are not masked; the fsync is
-   * best-effort over an already-completed write+rename (skipping it only widens the
-   * power-failure window, never loses data).
+   * Persist durable worker state via write→rename, swallowing ONLY the disabled-fsync
+   * refusal under `--permission` (G-4). A genuine I/O error (EIO/ENOSPC/EBADF)
+   * re-throws (real disk problems are not masked); the fsync is best-effort over an
+   * already-completed write+rename (skipping it only widens the power-failure window).
    */
   function writeDurable(path: string, data: string): void {
     const tmp = `${path}.tmp`;

@@ -36,6 +36,9 @@
 
 import { describe, it, expect } from "vitest";
 import { realpathSync } from "node:fs";
+import { spawn as childSpawn } from "node:child_process";
+
+import type { PipeChildLike } from "./terminal-worker-entry.js";
 
 import {
   createTerminalSessionCreateTool,
@@ -103,12 +106,35 @@ function makeFastTimer(): {
  * registered stdout `data` callback. Replaces the OS pipe so the full daemon-side
  * interaction path runs deterministically on macOS.
  */
+/**
+ * macOS jail-unwrapping pipe spawner (122-06): the worker spawns
+ * `bwrap [scopeArgs] -- bin ...argv`; with no real bwrap on macOS this bridge spawns
+ * the child AFTER the `--` directly so the deterministic macOS interaction round-trip
+ * survives. The LIVE bwrap jail is the VPS `.linux.test.ts` sibling (+ 122-07); the
+ * argv composition is unit-asserted on macOS in terminal-worker-entry.test.ts.
+ */
+function unwrapBwrapSpawn(
+  wrappedBin: string,
+  wrappedArgv: string[],
+  opts: { env: NodeJS.ProcessEnv },
+): PipeChildLike {
+  const sep = wrappedArgv.indexOf("--");
+  const childBin = sep >= 0 ? wrappedArgv[sep + 1] : wrappedBin;
+  const childArgv = sep >= 0 ? wrappedArgv.slice(sep + 2) : wrappedArgv;
+  return childSpawn(childBin, childArgv, {
+    env: opts.env,
+    stdio: ["pipe", "pipe", "pipe"],
+  }) as unknown as PipeChildLike;
+}
+
 function makeBridgedWorkerChild(): FakeWorkerChild {
   const timer = makeFastTimer();
   const worker = createTerminalWorker({
     loadPty: () => {
       throw new Error("node-pty forced unavailable on this host (degraded pipe backend)");
     },
+    spawnPipe: unwrapBwrapSpawn,
+    bwrapPath: "/usr/bin/bwrap",
     logger: noopLogger,
     setTimer: timer.setTimer,
     clearTimer: timer.clearTimer,
@@ -116,16 +142,25 @@ function makeBridgedWorkerChild(): FakeWorkerChild {
 
   const decoder = createFrameDecoder();
   let onStdout: ((chunk: Buffer) => void) | undefined;
+  // The serialization queue — each decoded frame chains onto it (in-order handling).
+  let frameQueue: Promise<void> = Promise.resolve();
 
   const child: FakeWorkerChild = {
     pid: 5252,
     stdin: {
       write(chunk: Buffer): boolean {
+        // Serialize frame handling (chain onto frameQueue) to mirror a real worker's
+        // SEQUENTIAL frame loop: create's async handler (the 122-06 scope-jail
+        // composition) must complete + attach the backend before the next frame
+        // (send_text/resize/wait) runs — otherwise a concurrent send writes to a
+        // not-yet-attached backend and is dropped.
         for (const frame of decoder.push(chunk)) {
-          void worker.handle(frame as TerminalRequestFrame).then((reply) => {
+          frameQueue = frameQueue.then(async () => {
+            const reply = await worker.handle(frame as TerminalRequestFrame);
             onStdout?.(encodeFrame(reply));
           });
         }
+        void frameQueue;
         return true;
       },
     },
