@@ -37,10 +37,19 @@ export interface TerminalEvents {
   };
 
   /**
-   * Keystroke audit signal (SEC-10): one event per send_text/send_key. Carries a
-   * redaction-SAFE summary ONLY — the count of redactions + the post-redaction byte
-   * length, NEVER the raw keystroke text/keys (the REDACTED payload rides the
-   * structured LOG, never the bus — see terminal-tools.ts keystroke_audit step).
+   * Keystroke audit signal (SEC-10): one event per send_text/send_key INVOCATION.
+   * Carries a redaction-SAFE summary ONLY — the count of redactions + the
+   * post-redaction byte length + the typed `outcome`, NEVER the raw keystroke
+   * text/keys (the REDACTED payload rides the structured LOG, never the bus — see
+   * terminal-tools.ts keystroke_audit step).
+   *
+   * ATTEMPT signal, not a delivery signal (code-review WR-03): this fires for EVERY
+   * invocation — including a send REJECTED on a cap breach (`outcome:"rejected"`,
+   * nothing typed) — so the audit trail records what the agent TRIED to type, not
+   * only what reached a terminal. `sessionId` is the caller-asserted target; it is
+   * NOT proof of ownership (a cross-owner / absent send degrades to a no-op in the
+   * registry yet still emits this event with the asserted id). Do NOT count these
+   * as bytes-on-the-wire.
    */
   "terminal:keystroke": {
     sessionId: string;
@@ -50,6 +59,13 @@ export interface TerminalEvents {
     redactions: number;
     /** Byte length of the post-redaction payload — a size signal, not the content. */
     byteLength: number;
+    /**
+     * The attempt outcome (closed enum): `attempted` = the send passed the caps and
+     * was forwarded to the registry; `rejected` = a per-session cap breach
+     * (rate REJECT or interaction/wall-clock EVICT) blocked the forward. Lets a
+     * consumer separate forwarded attempts from capped ones without leaking text.
+     */
+    outcome: "attempted" | "rejected";
     timestamp: number;
   };
 

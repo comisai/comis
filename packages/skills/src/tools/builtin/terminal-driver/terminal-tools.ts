@@ -52,7 +52,7 @@ import {
 import { jsonResult, throwToolError } from "../../../platform-tools/tool-helpers.js";
 import { matchAllowEntry, buildDirectSpawn, type AllowEntryLike } from "./allowlist-matcher.js";
 import type { SessionCaps } from "./terminal-caps.js";
-import { enforceSendCaps, auditKeystroke } from "./terminal-send-guards.js";
+import { enforceSendCapsThenAudit } from "./terminal-send-guards.js";
 import type { SandboxProvider } from "../sandbox/types.js";
 import {
   DEFAULT_SCROLLBACK,
@@ -106,10 +106,12 @@ export interface TerminalEvictedEvent {
 /**
  * The SEC-10 keystroke-audit event payload (mirrors core
  * `TerminalEvents["terminal:keystroke"]`, 123-01). REDACTION-SAFE BY CONSTRUCTION:
- * it carries the counts/ids (`redactions`, `byteLength`) ONLY — there is NO
- * `text`/`keys`/`payload` field, so an emit site cannot leak a keystroke on the bus
- * even by mistake (T-123-13). The scrubSecretsFromText-REDACTED payload rides the
- * structured LOG only; the bus event is the redaction-safe summary.
+ * it carries the counts/ids (`redactions`, `byteLength`) + the typed `outcome` ONLY
+ * — there is NO `text`/`keys`/`payload` field, so an emit site cannot leak a
+ * keystroke on the bus even by mistake (T-123-13). The scrubSecretsFromText-REDACTED
+ * payload rides the structured LOG only; the bus event is the redaction-safe summary.
+ * `outcome` is an ATTEMPT tag (WR-03): `attempted` = forwarded, `rejected` = blocked
+ * by a cap breach — never proof of delivery; `sessionId` is caller-asserted.
  */
 export interface TerminalKeystrokeEvent {
   sessionId: string;
@@ -117,6 +119,7 @@ export interface TerminalKeystrokeEvent {
   kind: "text" | "key";
   redactions: number;
   byteLength: number;
+  outcome: "attempted" | "rejected";
   timestamp: number;
 }
 
@@ -627,13 +630,14 @@ export function createTerminalSessionSendTextTool(deps: TerminalToolDeps): Agent
       const text = readString(params, "text") ?? "";
       const submit = readBool(params, "submit");
       const bracketedPaste = readBool(params, "bracketedPaste");
-      // OPS-03/OPS-06: enforce the per-session caps BEFORE the registry forward — a
+      // OPS-03/OPS-06 + SEC-10 (WR-02/WR-03): enforce the per-session caps, THEN audit
+      // EVERY invocation tagged with its outcome — BEFORE the registry forward. A
       // maxRequestsPerSession breach REJECTS (session survives); a maxInteractions /
-      // wallClockMs breach EVICTS via registry.evict then rejects (throws on any breach).
-      await enforceSendCaps(deps, sessionId, owner, "terminal_session_send_text");
-      // SEC-10: audit EVERY keystroke — the scrubSecretsFromText-redacted payload to the
-      // LOG, a redaction-safe summary to the bus (never the raw text).
-      auditKeystroke(deps, sessionId, "terminal_session_send_text", "text", text);
+      // wallClockMs breach EVICTS via registry.evict; either way the attempt is audited
+      // (outcome:"rejected") and the rejection re-propagates (the forward is skipped).
+      // No breach → audit outcome:"attempted", then forward. The redacted payload rides
+      // the LOG only; the bus event carries counts/ids + the outcome (never the raw text).
+      await enforceSendCapsThenAudit(deps, sessionId, owner, "terminal_session_send_text", "text", text);
       const start = deps.nowMs();
       const out: SendResult = await deps.registry.sendText(sessionId, owner, { text, submit, bracketedPaste });
       deps.logger.info(
@@ -668,11 +672,11 @@ export function createTerminalSessionSendKeyTool(deps: TerminalToolDeps): AgentT
       // abort ends the call, NOT the session (TR-10) — never registry.kill here.
       if (signal?.aborted) return jsonResult(ABORTED_SEND);
       const keys = readStringArray(params, "keys");
-      // OPS-03/OPS-06: same EVICT-vs-REJECT cap check as send_text (throws on any breach).
-      await enforceSendCaps(deps, sessionId, owner, "terminal_session_send_key");
-      // SEC-10: audit EVERY send. Keys are generally non-secret key chords, but EVERY
-      // send is audited — join + scrub for consistency (a redacted key string to the LOG).
-      auditKeystroke(deps, sessionId, "terminal_session_send_key", "key", keys.join(" "));
+      // OPS-03/OPS-06 + SEC-10 (WR-02/WR-03): same enforce-then-audit-EVERY-invocation
+      // order as send_text. Keys are generally non-secret chords, but EVERY send is
+      // audited (join + scrub for consistency) — including a cap-rejected one
+      // (outcome:"rejected"); a clean pass audits outcome:"attempted" then forwards.
+      await enforceSendCapsThenAudit(deps, sessionId, owner, "terminal_session_send_key", "key", keys.join(" "));
       const start = deps.nowMs();
       const out: SendResult = await deps.registry.sendKey(sessionId, owner, { keys });
       deps.logger.info(
