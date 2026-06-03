@@ -42,6 +42,8 @@ import {
   type SessionOwner,
 } from "./terminal-session-registry.js";
 import type { ReadOptions } from "./terminal-render.js";
+import { createSessionCaps, type SessionCaps, type SessionLimits } from "./terminal-caps.js";
+import type { EvictReason } from "./terminal-reaper.js";
 import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
 
 /** The least-privilege default scope (mirrors the config schema defaults). */
@@ -126,6 +128,8 @@ interface FakeRegistry extends TerminalSessionRegistry {
   waitCalls: WaitCall[];
   /** 123-03: the owner each owner-scoped method was called with (TR-13 — proves the tool threaded the origin). */
   capturedOwners: Array<{ method: string; owner: SessionOwner }>;
+  /** 123-05 (OPS-06): the EVICT calls the send_* tool drove on a maxInteractions/wall_clock cap breach. */
+  evictCalls: Array<{ sessionId: string; owner: SessionOwner; reason: EvictReason }>;
 }
 
 function makeFakeRegistry(overrides?: {
@@ -147,6 +151,7 @@ function makeFakeRegistry(overrides?: {
   const resizeCalls: ResizeCall[] = [];
   const waitCalls: WaitCall[] = [];
   const capturedOwners: Array<{ method: string; owner: SessionOwner }> = [];
+  const evictCalls: Array<{ sessionId: string; owner: SessionOwner; reason: EvictReason }> = [];
   const handles = overrides?.handles ?? new Map<string, SessionHandle>();
   let listing = overrides?.listing ?? [];
 
@@ -160,6 +165,7 @@ function makeFakeRegistry(overrides?: {
     resizeCalls,
     waitCalls,
     capturedOwners,
+    evictCalls,
     // 123-03: every session-scoped method gained a required owner arg. The fake
     // records the OWNER each tool derived (capturedOwners) so tests can assert the
     // tool threaded `(agentId, sessionKey)` from tryGetContext()/deps.agentId.
@@ -213,6 +219,14 @@ function makeFakeRegistry(overrides?: {
       capturedOwners.push({ method: "kill", owner });
       listing = listing.filter((s) => s.sessionId !== id);
     },
+    // 123-05 (OPS-06): the public owner-scoped eviction entry (Plan 04) the send_* tool
+    // layer drives on a maxInteractions/wall_clock cap breach. Records the (id, owner,
+    // reason) so a test can assert the EVICT was routed (and with the right reason),
+    // and that it is NOT driven on a maxRequestsPerSession breach (REJECT-only).
+    async evict(id: string, owner: SessionOwner, reason: EvictReason): Promise<void> {
+      evictCalls.push({ sessionId: id, owner, reason });
+      listing = listing.filter((s) => s.sessionId !== id);
+    },
     size(): number {
       return handles.size;
     },
@@ -253,7 +267,46 @@ function baseDeps(
     eventBus,
     nowMs: () => 1000,
     agentId: "agent-1",
+    // 123-05 (OPS-03/06): the per-session caps. Default = the real createSessionCaps
+    // with NO limits (a pure pass-through — every send is audited but never
+    // rejected/evicted), so the existing P0-P4 delegation tests are unaffected. A
+    // cap test injects createSessionCaps(limits, now) (or a spy double).
+    caps: createSessionCaps(undefined, () => 1000),
     ...overrides,
+  };
+}
+
+/**
+ * 123-05: a SessionCaps SPY double so a cap test can both inject a fixed breach and
+ * assert the tool's evict-vs-reject routing — in particular that `forget` is NOT
+ * called by the tool on the evict branch (the registry onCapForget owns that).
+ * `consume*`/`checkWallClock` default to the real createSessionCaps logic over the
+ * given limits, but each is a vi.fn spy so the test can override + assert.
+ */
+function makeCapsSpy(limits: SessionLimits | undefined, now: () => number): SessionCaps & {
+  startSessionSpy: ReturnType<typeof vi.fn>;
+  consumeRequestSpy: ReturnType<typeof vi.fn>;
+  consumeInteractionSpy: ReturnType<typeof vi.fn>;
+  checkWallClockSpy: ReturnType<typeof vi.fn>;
+  forgetSpy: ReturnType<typeof vi.fn>;
+} {
+  const real = createSessionCaps(limits, now);
+  const startSessionSpy = vi.fn((id: string) => real.startSession(id));
+  const consumeRequestSpy = vi.fn((id: string) => real.consumeRequest(id));
+  const consumeInteractionSpy = vi.fn((id: string) => real.consumeInteraction(id));
+  const checkWallClockSpy = vi.fn((id: string) => real.checkWallClock(id));
+  const forgetSpy = vi.fn((id: string) => real.forget(id));
+  return {
+    startSession: startSessionSpy,
+    consumeRequest: consumeRequestSpy,
+    consumeInteraction: consumeInteractionSpy,
+    checkWallClock: checkWallClockSpy,
+    forget: forgetSpy,
+    startSessionSpy,
+    consumeRequestSpy,
+    consumeInteractionSpy,
+    checkWallClockSpy,
+    forgetSpy,
   };
 }
 
@@ -1164,5 +1217,219 @@ describe("terminal-tools — TR-10 abort ends the call, NOT the session (session
     expect(registry.sendKeySpy).not.toHaveBeenCalled();
     expect(registry.killSpy).not.toHaveBeenCalled();
     expect(registry.get(sessionId, NO_CTX_OWNER)?.status).toBe("running");
+  });
+});
+
+// ===========================================================================
+// 123-05 (P4) — SEC-10 keystroke audit + OPS-03/OPS-06 cap enforcement.
+//
+//   - SEC-10 (Tests 1-3): EVERY send_text/send_key emits a keystroke audit — a
+//     structured LOG (step keystroke_audit) carrying the sessionId + the
+//     scrubSecretsFromText-REDACTED payload (NEVER the raw text/keys) + a
+//     terminal:keystroke bus EVENT carrying ONLY the redaction-safe summary
+//     (redactions count + byteLength; NO text/keys/payload on the event).
+//   - OPS-03 (Test 4): a maxRequestsPerSession breach REJECTS the call
+//     (permission_denied) before the registry forward; the session SURVIVES
+//     (registry.evict NOT called — a rate cap leaves the session usable).
+//   - OPS-06 (Tests 5-6): a maxInteractions / wallClockMs breach EVICTS the
+//     session via registry.evict(sessionId, owner, reason) THEN rejects; the
+//     tool does NOT call caps.forget on the evict branch (the registry's
+//     onCapForget owns that — no double-forget).
+//   - Test 7: undefined limits → never rejected/evicted, but still audited.
+//   - Test 8: the explicit kill TOOL path KEEPS its direct caps.forget.
+//
+// RED on pre-patch: send_text/send_key emit no keystroke audit, do not read
+// deps.caps, and never call registry.evict; TerminalToolDeps has no caps field.
+// ===========================================================================
+
+/**
+ * A secret-shaped token (the read-tool SEC-15 corpus shape, terminal-tools.test.ts
+ * SEC-15 block) that scrubSecretsFromText MUST redact. The keystroke-audit tests
+ * assert this NEVER appears verbatim in any log and NEVER appears at all on the
+ * bus event — only the [REDACTED] marker reaches the log.
+ */
+const PLANTED_SECRET = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
+
+describe("terminal-tools — SEC-10 keystroke audit (redacted log + redaction-safe event)", () => {
+  it("Test 1: send_text redacts the payload in the keystroke_audit LOG — the raw secret is absent from every log obj", async () => {
+    const registry = makeFakeRegistry();
+    const logger = makeCapturingLogger();
+    const deps = baseDeps(registry, { logger });
+    const tool = createTerminalSessionSendTextTool(deps);
+
+    await tool.execute("call-1", { sessionId: "s1", text: `export KEY=${PLANTED_SECRET}` });
+
+    const audit = logger.logs.find((l) => l.obj.step === "keystroke_audit");
+    expect(audit).toBeDefined();
+    expect(audit?.obj.sessionId).toBe("s1");
+    // the redacted payload carries the [REDACTED] marker, NOT the raw token …
+    expect(String(audit?.obj.redactedText)).toContain("[REDACTED]");
+    expect(String(audit?.obj.redactedText)).not.toContain(PLANTED_SECRET);
+    expect(audit?.obj.redactions).toBeGreaterThanOrEqual(1);
+    // … and the raw secret is absent from EVERY captured log obj (no leak anywhere).
+    const everyLog = JSON.stringify(logger.logs);
+    expect(everyLog).not.toContain(PLANTED_SECRET);
+  });
+
+  it("Test 2: the terminal:keystroke EVENT is redaction-safe — counts/ids only, no text/keys/payload, no raw secret", async () => {
+    const registry = makeFakeRegistry();
+    const eventBus = makeCapturingBus();
+    const deps = baseDeps(registry, { eventBus });
+    const tool = createTerminalSessionSendTextTool(deps);
+
+    await tool.execute("call-1", { sessionId: "s1", text: `token ${PLANTED_SECRET}` });
+
+    const ev = eventBus.events.find((e) => e.event === "terminal:keystroke");
+    expect(ev).toBeDefined();
+    expect(ev?.payload.kind).toBe("text");
+    expect(ev?.payload.sessionId).toBe("s1");
+    expect(ev?.payload.agentId).toBe("agent-1");
+    expect(ev?.payload.redactions).toBeGreaterThanOrEqual(1);
+    expect(ev?.payload.byteLength).toBeTypeOf("number");
+    // The event carries NO raw/redacted payload field — counts/ids only (T-123-13).
+    const keys = Object.keys(ev?.payload ?? {});
+    expect(keys).not.toContain("text");
+    expect(keys).not.toContain("keys");
+    expect(keys).not.toContain("payload");
+    expect(keys).not.toContain("redactedText");
+    // the raw secret is NOT anywhere on the bus.
+    expect(JSON.stringify(eventBus.events)).not.toContain(PLANTED_SECRET);
+  });
+
+  it("Test 3: send_key is audited too — a terminal:keystroke event kind=key + a keystroke_audit log (EVERY send, SEC-10)", async () => {
+    const registry = makeFakeRegistry();
+    const logger = makeCapturingLogger();
+    const eventBus = makeCapturingBus();
+    const deps = baseDeps(registry, { logger, eventBus });
+    const tool = createTerminalSessionSendKeyTool(deps);
+
+    await tool.execute("call-1", { sessionId: "s1", keys: ["C-c"] });
+
+    const ev = eventBus.events.find((e) => e.event === "terminal:keystroke");
+    expect(ev).toBeDefined();
+    expect(ev?.payload.kind).toBe("key");
+    expect(ev?.payload.sessionId).toBe("s1");
+    expect(ev?.payload.byteLength).toBeTypeOf("number");
+    // keys are generally non-secret, but EVERY send is audited (SEC-10).
+    const audit = logger.logs.find((l) => l.obj.step === "keystroke_audit");
+    expect(audit).toBeDefined();
+    expect(audit?.obj.sessionId).toBe("s1");
+    // no payload field on the event (counts/ids only).
+    expect(Object.keys(ev?.payload ?? {})).not.toContain("keys");
+  });
+
+  it("Test 7: undefined limits → many sends never rejected/evicted, but the audit still fires every time", async () => {
+    const registry = makeFakeRegistry();
+    const eventBus = makeCapturingBus();
+    // baseDeps wires createSessionCaps(undefined, …) — a no-limit pass-through.
+    const deps = baseDeps(registry, { eventBus });
+    const tool = createTerminalSessionSendTextTool(deps);
+
+    for (let i = 0; i < 5; i++) {
+      await tool.execute(`c${i}`, { sessionId: "s1", text: `line ${i}` });
+    }
+    // all 5 forwarded (never rejected) …
+    expect(registry.sendTextCalls).toHaveLength(5);
+    // … never evicted …
+    expect(registry.evictCalls).toHaveLength(0);
+    // … and audited every time.
+    expect(eventBus.events.filter((e) => e.event === "terminal:keystroke")).toHaveLength(5);
+  });
+});
+
+describe("terminal-tools — OPS-03/OPS-06 cap enforcement (EVICT-vs-REJECT split)", () => {
+  it("Test 4: maxRequestsPerSession=1 → 2nd send_text is REJECTED (permission_denied); session SURVIVES (no evict); registry.sendText not called on the breach", async () => {
+    const registry = makeFakeRegistry();
+    const logger = makeCapturingLogger();
+    const caps = createSessionCaps({ maxRequestsPerSession: 1 }, () => 1000);
+    const tool = createTerminalSessionSendTextTool(baseDeps(registry, { logger, caps }));
+
+    // 1st send ok (consumes the single request allowance).
+    await tool.execute("c1", { sessionId: "s1", text: "first" });
+    expect(registry.sendTextCalls).toHaveLength(1);
+
+    // 2nd send breaches maxRequestsPerSession → REJECT.
+    await expect(tool.execute("c2", { sessionId: "s1", text: "second" })).rejects.toThrow(/\[permission_denied\]/);
+    // the registry forward was SKIPPED on the breaching call (still 1) …
+    expect(registry.sendTextCalls).toHaveLength(1);
+    // … the session is NOT evicted (a rate cap leaves the session usable) …
+    expect(registry.evictCalls).toHaveLength(0);
+    // … and a WARN with errorKind resource fired.
+    const warn = logger.logs.find((l) => l.level === "warn" && l.obj.errorKind === "resource");
+    expect(warn).toBeDefined();
+  });
+
+  it("Test 5: maxInteractions=1 → 2nd send_key EVICTS via registry.evict(sessionId, owner, 'max_interactions') THEN rejects; sendKey not forwarded; tool does NOT call caps.forget", async () => {
+    const registry = makeFakeRegistry();
+    const logger = makeCapturingLogger();
+    const caps = makeCapsSpy({ maxInteractions: 1 }, () => 1000);
+    const tool = createTerminalSessionSendKeyTool(baseDeps(registry, { logger, caps }));
+
+    // 1st send ok (consumes the single interaction allowance).
+    await tool.execute("k1", { sessionId: "s1", keys: ["a"] });
+    expect(registry.sendKeyCalls).toHaveLength(1);
+
+    // 2nd send breaches maxInteractions → EVICT + reject.
+    await expect(tool.execute("k2", { sessionId: "s1", keys: ["b"] })).rejects.toThrow(/\[permission_denied\]/);
+    // registry.evict driven exactly once with the right (id, owner, reason) …
+    expect(registry.evictCalls).toHaveLength(1);
+    expect(registry.evictCalls[0].sessionId).toBe("s1");
+    expect(registry.evictCalls[0].reason).toBe("max_interactions");
+    expect(registry.evictCalls[0].owner).toEqual(NO_CTX_OWNER);
+    // … the breaching sendKey was NOT forwarded (still 1) …
+    expect(registry.sendKeyCalls).toHaveLength(1);
+    // … a WARN with errorKind resource fired …
+    expect(logger.logs.find((l) => l.level === "warn" && l.obj.errorKind === "resource")).toBeDefined();
+    // … and the tool did NOT call caps.forget on the evict branch (the registry
+    // onCapForget forgets the cap state — no double-forget).
+    expect(caps.forgetSpy).not.toHaveBeenCalled();
+  });
+
+  it("Test 6: wallClockMs breach → send_text EVICTS via registry.evict reason 'wall_clock' THEN rejects", async () => {
+    const registry = makeFakeRegistry();
+    const logger = makeCapturingLogger();
+    // A clock that jumps past the wall-clock budget after the session is anchored:
+    // startSession anchors at t=1000; the send reads t=99999 (> 1000+5 budget).
+    let t = 1000;
+    const caps = makeCapsSpy({ wallClockMs: 5 }, () => t);
+    const deps = baseDeps(registry, { logger, caps });
+    const tool = createTerminalSessionSendTextTool(deps);
+
+    // anchor the session's wall-clock start at t=1000 …
+    caps.startSession("s1");
+    // … then time advances WELL past the 5ms budget.
+    t = 99_999;
+
+    await expect(tool.execute("c1", { sessionId: "s1", text: "x" })).rejects.toThrow(/\[permission_denied\]/);
+    expect(registry.evictCalls).toHaveLength(1);
+    expect(registry.evictCalls[0].reason).toBe("wall_clock");
+    // the over-budget send was NOT forwarded.
+    expect(registry.sendTextCalls).toHaveLength(0);
+    // the tool did NOT directly forget (onCapForget owns the cap-state drop).
+    expect(caps.forgetSpy).not.toHaveBeenCalled();
+  });
+
+  it("Test 8: the explicit kill TOOL path calls caps.forget(sessionId) directly (the explicit kill keeps its direct forget)", async () => {
+    const registry = makeFakeRegistry({
+      listing: [{ sessionId: "s1", allowId: "bash", command: "/bin/bash", alive: true, lastActivity: 1 }],
+    });
+    const caps = makeCapsSpy(undefined, () => 1000);
+    const killTool = createTerminalSessionKillTool(baseDeps(registry, { caps }));
+
+    await killTool.execute("call-1", { sessionId: "s1" });
+
+    // the explicit kill forgets the cap state directly (complements the reap-path onCapForget).
+    expect(caps.forgetSpy).toHaveBeenCalledWith("s1");
+    expect(registry.killCalls).toEqual(["s1"]);
+  });
+
+  it("create success calls caps.startSession(sessionId) so the wall-clock anchor is captured", async () => {
+    const registry = makeFakeRegistry();
+    const caps = makeCapsSpy(undefined, () => 1000);
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, { caps }));
+
+    await tool.execute("call-1", { allowId: "bash", command: realBashPath() });
+
+    expect(caps.startSessionSpy).toHaveBeenCalledWith("sess-1");
   });
 });
