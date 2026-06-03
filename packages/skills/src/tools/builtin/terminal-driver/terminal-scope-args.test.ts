@@ -55,6 +55,14 @@ function indexOfPair(args: string[], flag: string, src: string): number {
   return -1;
 }
 
+/** Index of the LAST `flag src` pair (the position of `flag`), or -1. */
+function lastIndexOfPair(args: string[], flag: string, src: string): number {
+  for (let i = args.length - 2; i >= 0; i--) {
+    if (args[i] === flag && args[i + 1] === src) return i;
+  }
+  return -1;
+}
+
 describe("buildScopeArgs — least-privilege default scope (SEC-02)", () => {
   it("default scope emits workspace bind, --unshare-net (no socket), no ~/.claude bind, --uid, isolation flags", () => {
     const args = buildScopeArgs(makeInput());
@@ -154,5 +162,55 @@ describe("buildScopeArgs — uid dimension (SEC-02)", () => {
   });
 });
 
-// NOTE: the always-on ~/.comis carve-out (SEC-13) bind-order tests are added in
-// Task 2's RED (terminal-scope-args.test.ts, "carve-out" describe block).
+describe("buildScopeArgs — the always-on ~/.comis carve-out (SEC-13)", () => {
+  const FS_VALUES: TerminalScope["filesystem"][] = ["workspace", "listed-paths", "home", "full"];
+
+  it.each(FS_VALUES)("emits the --tmpfs <dataDir> carve-out for filesystem:%s (non-configurable)", (fs) => {
+    const args = buildScopeArgs(
+      makeInput({ scope: makeScope({ filesystem: fs, paths: fs === "listed-paths" ? ["/data"] : undefined }) }),
+    );
+    expect(indexOfPair(args, "--tmpfs", "/home/u/.comis")).toBeGreaterThanOrEqual(0);
+  });
+
+  it("targets the injected dataDir, not a hardcoded ~/.comis string", () => {
+    const args = buildScopeArgs(makeInput({ dataDir: "/var/lib/comis-data" }));
+    expect(indexOfPair(args, "--tmpfs", "/var/lib/comis-data")).toBeGreaterThanOrEqual(0);
+    expect(args).not.toContain("/home/u/.comis");
+  });
+
+  it("the carve-out is the LAST mount before the -- terminator", () => {
+    const args = buildScopeArgs(makeInput());
+    const carveOut = lastIndexOfPair(args, "--tmpfs", "/home/u/.comis");
+    const terminator = args.lastIndexOf("--");
+    expect(carveOut).toBeGreaterThanOrEqual(0);
+    // the carve-out tmpfs + its arg sit immediately before "--"
+    expect(carveOut + 2).toBe(terminator);
+  });
+
+  it("SEC-13 flagship: at filesystem:full the carve-out index is AFTER the broad host bind", () => {
+    const args = buildScopeArgs(makeInput({ scope: makeScope({ filesystem: "full" }) }));
+    // the full host bind (--bind / / or --bind <home> <home>) WOULD expose <home>/.comis
+    const rootBind = indexOfPair(args, "--bind", "/");
+    const homeBind = indexOfPair(args, "--bind", "/home/u");
+    const hostBind = Math.max(rootBind, homeBind);
+    expect(hostBind).toBeGreaterThanOrEqual(0);
+    const carveOut = lastIndexOfPair(args, "--tmpfs", "/home/u/.comis");
+    // later mount wins: the carve-out must come AFTER the host bind
+    expect(carveOut).toBeGreaterThan(hostBind);
+  });
+
+  it("filesystem:full re-emits --proc/--dev/--tmpfs /tmp AFTER the broad host bind, carve-out still last", () => {
+    const args = buildScopeArgs(makeInput({ scope: makeScope({ filesystem: "full" }) }));
+    const rootBind = indexOfPair(args, "--bind", "/");
+    const homeBind = indexOfPair(args, "--bind", "/home/u");
+    const hostBind = Math.max(rootBind, homeBind);
+    expect(hostBind).toBeGreaterThanOrEqual(0);
+    // the special filesystems are re-mounted AFTER the broad host bind so it cannot clobber them
+    expect(lastIndexOfPair(args, "--proc", "/proc")).toBeGreaterThan(hostBind);
+    expect(lastIndexOfPair(args, "--dev", "/dev")).toBeGreaterThan(hostBind);
+    expect(lastIndexOfPair(args, "--tmpfs", "/tmp")).toBeGreaterThan(hostBind);
+    // and the carve-out is STILL the last mount
+    const carveOut = lastIndexOfPair(args, "--tmpfs", "/home/u/.comis");
+    expect(carveOut + 2).toBe(args.lastIndexOf("--"));
+  });
+});
