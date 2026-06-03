@@ -84,11 +84,16 @@ export interface WorkerLogger {
 
 /**
  * The structural shape of a node-pty session handle (a subset of `IPty`). The
- * worker wires `onData` into the per-session ring and forwards write/resize/kill.
+ * worker wires `onData` into the per-session ring, `onExit` into the liveness
+ * flip (markExited — the pty analog of the pipe backend's `close`/`error`), and
+ * forwards write/resize/kill. node-pty's real `IPty.onExit` is an event whose
+ * listener receives `{exitCode, signal}`; the structural subset here mirrors that
+ * call shape (the worker ignores the payload — it only needs the exit signal).
  */
 export interface FakePtyLike {
   pid: number;
   onData(cb: (data: string) => void): void;
+  onExit(cb: (e: { exitCode: number; signal?: number }) => void): void;
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;

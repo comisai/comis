@@ -47,15 +47,19 @@ function makeLogger() {
 }
 
 /**
- * A minimal stub PTY backend: exposes the node-pty `spawn` → `{onData,...}`
- * surface the worker wires. The test drives stdout by calling `emit(chunk)`.
+ * A minimal stub PTY backend: exposes the node-pty `spawn` → `{onData,onExit,...}`
+ * surface the worker wires. The test drives stdout by calling `emit(chunk)` and
+ * the backend exit by calling `emitExit()` (the live node-pty `onExit` analog —
+ * mirrors the pipe stub's `close()`).
  */
 function makeFakeBackend(): {
   spawn: ReturnType<typeof vi.fn>;
   emit: (chunk: string) => void;
+  emitExit: (e?: { exitCode: number; signal?: number }) => void;
   lastSpawn: () => { bin: string; argv: string[] } | undefined;
 } {
   let onData: ((d: string) => void) | undefined;
+  let onExit: ((e: { exitCode: number; signal?: number }) => void) | undefined;
   let lastBin: string | undefined;
   let lastArgv: string[] | undefined;
   const spawn = vi.fn((bin: string, argv: string[]) => {
@@ -66,6 +70,9 @@ function makeFakeBackend(): {
       onData: (cb: (d: string) => void) => {
         onData = cb;
       },
+      onExit: (cb: (e: { exitCode: number; signal?: number }) => void) => {
+        onExit = cb;
+      },
       write: vi.fn(),
       resize: vi.fn(),
       kill: vi.fn(),
@@ -75,6 +82,7 @@ function makeFakeBackend(): {
   return {
     spawn,
     emit: (chunk: string) => onData?.(chunk),
+    emitExit: (e: { exitCode: number; signal?: number } = { exitCode: 0 }) => onExit?.(e),
     lastSpawn: () =>
       lastBin === undefined || lastArgv === undefined
         ? undefined
@@ -136,15 +144,20 @@ function makeRecordingBackend(): {
   writes: string[];
   resizes: Array<[number, number]>;
   emit: (chunk: string) => void;
+  emitExit: (e?: { exitCode: number; signal?: number }) => void;
 } {
   const writes: string[] = [];
   const resizes: Array<[number, number]> = [];
   let onData: ((d: string) => void) | undefined;
+  let onExit: ((e: { exitCode: number; signal?: number }) => void) | undefined;
   const spawn = vi.fn(() => {
     const handle: FakePtyLike = {
       pid: 5252,
       onData: (cb: (d: string) => void) => {
         onData = cb;
+      },
+      onExit: (cb: (e: { exitCode: number; signal?: number }) => void) => {
+        onExit = cb;
       },
       write: (data: string) => {
         writes.push(data);
@@ -161,6 +174,7 @@ function makeRecordingBackend(): {
     writes,
     resizes,
     emit: (chunk: string) => onData?.(chunk),
+    emitExit: (e: { exitCode: number; signal?: number } = { exitCode: 0 }) => onExit?.(e),
   };
 }
 
@@ -986,6 +1000,56 @@ describe("createTerminalWorker — TR-05 wait (settle -> {matched,isComplete,rea
 
     const r = reply.result as { matched: boolean; isComplete: boolean; reason: string };
     expect(r).toMatchObject({ matched: true, isComplete: true, reason: "exit" });
+  });
+
+  it("wait EXIT on the PTY backend: a node-pty onExit resolves reason:'exit' (not timeout) — the VPS real-PTY gate", async () => {
+    // REGRESSION (RED-first): the PTY (node-pty) backend MUST wire `handle.onExit`
+    // → markExited the same way the pipe backend wires `close`/`error`. Without it,
+    // a real node-pty child that exits never notifies the in-flight settle's onExit
+    // subscription, so `wait({forExit:true})` runs to TIMEOUT (reason "timeout")
+    // instead of settling "exit". macOS uses the degraded pipe backend in-harness
+    // (which DID wire close), masking this; the VPS real-PTY gate
+    // (`terminal-worker-entry.linux.test.ts:132`,
+    // `terminal-interaction-roundtrip.linux.test.ts:161`) caught it. This injects a
+    // fake PTY so the bug reproduces deterministically on macOS.
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+      }),
+    );
+    const created = await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/cat", argv: [], cols: 80, rows: 24 }),
+    );
+    expect((created.result as { backend: string }).backend).toBe("pty"); // the PTY backend, not degraded
+
+    const p = worker.handle(waitFrame({ forExit: true, forIdleMs: 5_000, timeoutMs: 10_000 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    // The live node-pty child exits — must fire markExited and resolve the settle
+    // "exit" WITHOUT advancing the overall timeout clock.
+    rec.emitExit({ exitCode: 0 });
+    const reply = await p;
+
+    const r = reply.result as { matched: boolean; isComplete: boolean; reason: string };
+    expect(r).toMatchObject({ matched: true, isComplete: true, reason: "exit" });
+
+    // A subsequent read confirms the PTY exit flipped the session not-alive
+    // (markExited set state.alive=false), same as the pipe backend's close.
+    const read = await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-read-after-exit",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "s1" },
+    });
+    expect((read.result as { alive: boolean }).alive).toBe(false);
+
+    // No timer leaked (the settle cleaned up the overall-timeout timer on exit).
+    expect(sched.liveTimerCount()).toBe(0);
   });
 
   it("wait TIMEOUT (load-bearing): a ring that never quiets resolves { matched:false, isComplete:false, reason:'timeout' }", async () => {
