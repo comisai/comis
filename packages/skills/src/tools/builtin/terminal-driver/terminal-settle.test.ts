@@ -504,3 +504,176 @@ describe("runSettle — isSettleable gate (TR-14 below-the-fold re-arm)", () => 
     expect(result).toEqual({ matched: true, isComplete: true, reason: "exit" });
   });
 });
+
+// ===========================================================================
+// Plan 124-03: the ADAPTIVE N-CONSECUTIVE-STABLE-WINDOWS debounce (spec §4.3,
+// the #1-de-risk substrate). The 120ms single-window settle is far too short for
+// an AI CLI that pauses for SECONDS mid-generation: a sub-idleMs burst gap would
+// falsely resolve idle and let the P5 classifier read a thinking pause as a
+// prompt. `stableWindows: N` makes idle resolve only after N CONSECUTIVE quiet
+// windows — a ring-change mid-count RE-ARMS (resets the count to 0). It is
+// SAFE-direction only: more windows can DELAY settle (bounded by timeoutMs), never
+// falsely declare it settled; exit/text/timeout paths are UNCHANGED.
+// ===========================================================================
+
+describe("runSettle — adaptive N-stable-window debounce (stableWindows, spec §4.3)", () => {
+  it("with stableWindows:3, a byte before the 3rd window RE-ARMS — idle resolves only after 3 CONSECUTIVE quiet windows", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("thinking\n");
+    let settled = false;
+    const p = runSettle(makeDeps(sched, source), { forIdleMs: 100, stableWindows: 3 }).then(
+      (r) => {
+        settled = true;
+        return r;
+      },
+    );
+
+    // Window 1 quiet (count → 1). Not enough — 3 are required.
+    sched.advance(100);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // Window 2 quiet (count → 2). Still not enough.
+    sched.advance(100);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // A burst byte lands mid-sequence: the consecutive-quiet count RESETS to 0
+    // (an AI CLI emitting another token of generation). The next quiet window is
+    // window 1 of a FRESH count of 3, not the 3rd.
+    source.write("more tokens");
+
+    // One quiet window AFTER the reset (count → 1). With a naive single-window or
+    // a non-resetting counter this would resolve; the consecutive rule must NOT.
+    sched.advance(100);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // Window 2 of the fresh count (count → 2). Still waiting.
+    sched.advance(100);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // Window 3 of the fresh count (count → 3) — now it resolves idle.
+    sched.advance(100);
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "idle" });
+  });
+
+  it("stableWindows omitted preserves the EXACT single-window behavior (regression guard)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("boot\n");
+    // No stableWindows → default 1 → ONE quiet window resolves idle (120-02 shape).
+    const p = runSettle(makeDeps(sched, source), { forIdleMs: 100 });
+    sched.advance(100);
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "idle" });
+  });
+
+  it("stableWindows:1 is identical to omitting it (one quiet window resolves idle)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("boot\n");
+    const p = runSettle(makeDeps(sched, source), { forIdleMs: 100, stableWindows: 1 });
+    sched.advance(100);
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "idle" });
+  });
+
+  it("the overall timeout still BOUNDS a multi-window settle: N windows DELAY but never exceed timeoutMs (load-bearing isComplete:false)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("");
+    // stableWindows:10 × 100ms idle would need ~1000ms of CONSECUTIVE quiet, but a
+    // byte every 100ms keeps resetting the count so idle never completes — the
+    // overall 600ms cap must fire first with the load-bearing isComplete:false.
+    let threw = false;
+    const p = runSettle(makeDeps(sched, source), {
+      forIdleMs: 100,
+      stableWindows: 10,
+      timeoutMs: 600,
+    }).catch(() => {
+      threw = true;
+      return undefined;
+    });
+
+    // A byte just before each idle window elapses → the count never reaches 10.
+    for (let t = 0; t < 600; t += 100) {
+      sched.advance(99);
+      source.write("x");
+      sched.advance(1);
+    }
+    // Cross the overall cap.
+    sched.advance(100);
+
+    const result = await p;
+    expect(threw).toBe(false);
+    expect(result).toEqual({ matched: false, isComplete: false, reason: "timeout" });
+    expect(result?.isComplete).toBe(false);
+  });
+
+  it("exit resolves IMMEDIATELY regardless of stableWindows (an in-progress window count is abandoned)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("running\n");
+    const p = runSettle(makeDeps(sched, source), {
+      forExit: true,
+      forIdleMs: 100,
+      stableWindows: 5,
+    });
+
+    // Bank a couple of quiet windows (count climbing toward 5)...
+    sched.advance(100);
+    sched.advance(100);
+    // ...then the program exits — exit is always terminal, no need to reach 5.
+    source.exit();
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "exit" });
+  });
+
+  it("text resolves IMMEDIATELY regardless of stableWindows (the count never gates a forText hit)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("starting\n");
+    const p = runSettle(makeDeps(sched, source), {
+      forText: "ready>",
+      forIdleMs: 100,
+      stableWindows: 5,
+    });
+
+    sched.advance(50);
+    source.write("ready> ");
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "text" });
+  });
+
+  it("stableWindows composes with isSettleable: a below-fold window does NOT count toward N (re-arm, no increment)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("boot\n");
+    let settleable = false; // below the fold → not settleable
+    let settled = false;
+    const p = runSettle(makeDeps(sched, source, { isSettleable: () => settleable }), {
+      forIdleMs: 100,
+      stableWindows: 2,
+    }).then((r) => {
+      settled = true;
+      return r;
+    });
+
+    // Two idle windows fire while below the fold — they RE-ARM and must NOT count
+    // toward the 2 required quiet windows (a still-rendering frame is not "stable").
+    sched.advance(100);
+    sched.advance(100);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // Content scrolls into view; a ring-change re-arms; now two CONSECUTIVE
+    // settleable windows are needed.
+    settleable = true;
+    source.write("x"); // re-arm with a fresh count
+
+    sched.advance(100); // settleable window 1 (count → 1)
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    sched.advance(100); // settleable window 2 (count → 2) → resolves idle
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "idle" });
+  });
+});

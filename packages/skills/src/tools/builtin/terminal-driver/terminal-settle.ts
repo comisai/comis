@@ -95,6 +95,17 @@ export interface SettleParams {
    * pre-empt the requested exit/text condition (TR-05).
    */
   forIdleMs?: number;
+  /**
+   * The number of CONSECUTIVE quiet idle windows the ring must stay unchanged for
+   * before the idle condition resolves (spec §4.3). Defaults to `1` — the
+   * single-window 120-02 behavior. A value `> 1` is the adaptive debounce for an
+   * AI CLI that emits in bursts with sub-`idleMs` gaps mid-generation: a ring
+   * change part-way through the sequence RE-ARMS and RESETS the count, so idle
+   * resolves only after N windows of UNINTERRUPTED quiet. SAFE-direction only —
+   * more windows can DELAY an idle-settle (bounded by `timeoutMs`), never falsely
+   * declare it settled; exit/text/timeout are UNCHANGED.
+   */
+  stableWindows?: number;
   /** Resolve `text` when this substring appears in the ring. */
   forText?: string;
   /** Honor an exit as a settle reason (an exit always terminates a settle regardless). */
