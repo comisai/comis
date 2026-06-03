@@ -41,6 +41,7 @@ import {
   type CreateRequest,
   type CreateResult,
   type TerminalView,
+  type TerminalStatusView,
   type SendResult,
   type WaitResult,
   type SessionHandle,
@@ -127,6 +128,8 @@ interface FakeRegistry extends TerminalSessionRegistry {
   readCalls: string[];
   /** The `opts` arg each `read` was called with (121-04 — the render-param forwarding). */
   readOptsCalls: Array<ReadOptions | undefined>;
+  /** 124-06: the sessionIds each `status` round-trip was called with. */
+  statusCalls: string[];
   killCalls: string[];
   sendTextCalls: SendTextCall[];
   sendKeyCalls: SendKeyCall[];
@@ -141,6 +144,7 @@ interface FakeRegistry extends TerminalSessionRegistry {
 function makeFakeRegistry(overrides?: {
   createImpl?: (req: CreateRequest) => Promise<CreateResult>;
   readImpl?: (id: string, opts?: ReadOptions) => Promise<TerminalView>;
+  statusImpl?: (id: string) => Promise<TerminalStatusView>;
   sendTextImpl?: (id: string, args: SendTextCall["args"]) => Promise<SendResult>;
   sendKeyImpl?: (id: string, args: SendKeyCall["args"]) => Promise<SendResult>;
   resizeImpl?: (id: string, args: ResizeCall["args"]) => Promise<{ ok: boolean }>;
@@ -151,6 +155,7 @@ function makeFakeRegistry(overrides?: {
   const createCalls: CreateRequest[] = [];
   const readCalls: string[] = [];
   const readOptsCalls: Array<ReadOptions | undefined> = [];
+  const statusCalls: string[] = [];
   const killCalls: string[] = [];
   const sendTextCalls: SendTextCall[] = [];
   const sendKeyCalls: SendKeyCall[] = [];
@@ -165,6 +170,7 @@ function makeFakeRegistry(overrides?: {
     createCalls,
     readCalls,
     readOptsCalls,
+    statusCalls,
     killCalls,
     sendTextCalls,
     sendKeyCalls,
@@ -187,6 +193,13 @@ function makeFakeRegistry(overrides?: {
       capturedOwners.push({ method: "read", owner });
       if (overrides?.readImpl) return overrides.readImpl(id, opts);
       return { screen: "hello", cursor: { x: 0, y: 0 }, cols: 120, rows: 40, alt: false, alive: true };
+    },
+    // 124-06: the owner-scoped status round-trip (the new tool delegates to this).
+    async status(id: string, owner: SessionOwner): Promise<TerminalStatusView> {
+      statusCalls.push(id);
+      capturedOwners.push({ method: "status", owner });
+      if (overrides?.statusImpl) return overrides.statusImpl(id);
+      return { state: "working", lastActivity: 1000, interactions: 0, cursorParked: false, screenDiffEmpty: true };
     },
     async sendText(id: string, owner: SessionOwner, args: SendTextCall["args"]): Promise<SendResult> {
       sendTextCalls.push({ sessionId: id, args });

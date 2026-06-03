@@ -30,8 +30,12 @@ export {
   type TerminalEvictedEvent,
 } from "./terminal-tools.js";
 
-// The lone remaining stub tool (registered, never-export, rejects not_implemented → Phase 124).
+// 124-06: terminal_session_status is now a REAL, classifier-backed, owner-scoped tool
+// (the lone P0 not_implemented stub is closed). Its body lives in terminal-status-tool.ts;
+// terminal-tools-stubs.ts re-exports it so this import path is unchanged. Still never-export
+// (the tool-metadata-registry entry is unchanged — default-deny preserved).
 export { createTerminalSessionStatusTool } from "./terminal-tools-stubs.js";
+export type { TerminalStatusView } from "./terminal-session-registry.js";
 
 // The daemon-side session registry.
 export {

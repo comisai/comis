@@ -413,7 +413,7 @@ export function wireTerminalTools(
     createTerminalSessionSendTextTool(sharedDeps),
     createTerminalSessionSendKeyTool(sharedDeps),
     createTerminalSessionWaitTool(sharedDeps),
-    createTerminalSessionStatusTool(),
+    createTerminalSessionStatusTool(sharedDeps), // 124-06: the stub is now a deps-taking, classifier-backed tool
     createTerminalSessionResizeTool(sharedDeps),
   );
 }

@@ -13,8 +13,9 @@
  * IMPLEMENTED factories the wiring constructs with `sharedDeps` (they receive the
  * per-agent registry), so they no longer reject `not_implemented` — they delegate
  * to the registry (which, with no live session, degrades to a resolved gone-shape,
- * never a throw). `status` is the LONE remaining stub that still rejects
- * `not_implemented`.
+ * never a throw). Phase 124-06 promotes `status` too — it is now a real,
+ * classifier-backed, owner-scoped tool wired with `sharedDeps`, so the terminal-driver
+ * subsystem has no remaining deferred-reject tool.
  *
  * @module
  */
@@ -125,14 +126,22 @@ describe("wireTerminalTools — daemon composition root", () => {
     expect(result.details).toHaveProperty("cursor");
   });
 
-  it("status is the LONE remaining stub — it still rejects not_implemented (Phase 124)", async () => {
+  it("status is IMPLEMENTED (124-06): it delegates to the per-agent registry and RESOLVES the not-found status view for an absent session (no not_implemented throw)", async () => {
     const tools: ToolLike[] = [];
     const registries = new Map<string, TerminalSessionRegistry>();
     wireTerminalTools(tools as never, registries, "agent-a", makeDeps());
 
     const status = tools.find((t) => t.name === "terminal_session_status");
     expect(status).toBeDefined();
-    await expect(status!.execute("call-1", { sessionId: "s" })).rejects.toThrow(/\[not_implemented\]/);
+    // 124-06: status is a real, classifier-backed, owner-scoped tool wired with
+    // sharedDeps. With an empty allow-set + no live session, registry.status degrades
+    // to the not-found view (owner-scoped, never another owner's state) — it RESOLVES,
+    // it does NOT throw not_implemented (a no-arg stub could not reach the registry).
+    const result = (await status!.execute("call-1", { sessionId: "no-such-session" })) as {
+      details: { state: string; cursorParked: boolean };
+    };
+    expect(result.details).toHaveProperty("state");
+    expect(result.details.cursorParked).toBe(false);
   });
 });
 

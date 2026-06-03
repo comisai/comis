@@ -76,6 +76,13 @@ export type WorkerBackend = "pty" | "degraded";
  * `terminal-worker-backend-attach.ts`) can type the `state` it feeds; it is NOT a
  * public-surface contract (not re-exported by the barrel) — purely intra-module.
  */
+// @optional-field-count: 13 optional fields — SessionState is the worker's per-session
+// record: EVERY optional is a genuinely-conditional per-session datum that is present
+// only on a specific path (pty XOR pipe handle; emu/writeFlush/lastSnapshot once the
+// emulator is built; emitter/lastClassifiedSnapshot/lastProgressMs once attention is
+// wired; scope/workspace/cwd/egress from the create frame; exitCode only after a pty
+// exit). Promoting any to required would falsely claim a datum exists before its path
+// runs. This is the "(a) genuinely conditional" classification, not a cluster-split.
 export interface SessionState {
   backend: WorkerBackend;
   cols: number;

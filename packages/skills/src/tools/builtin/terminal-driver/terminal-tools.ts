@@ -311,7 +311,7 @@ function readOptInt(p: Record<string, unknown>, key: string): number | undefined
  * (each subagent `channelId` is `"sub-agent:<uuid>"`, session-key.ts:78-79), so a
  * subagent sees ONLY its own sessions and siblings are mutually invisible.
  */
-function resolveOwner(deps: TerminalToolDeps): SessionOwner {
+export function resolveOwner(deps: TerminalToolDeps): SessionOwner {
   const ctx = tryGetContext();
   return { agentId: ctx?.userId ?? deps.agentId, sessionKey: ctx?.sessionKey ?? "" };
 }
