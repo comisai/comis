@@ -17,11 +17,11 @@ export interface MemorySearchOptions {
   tags?: string[];
   /** Filter by agent ID (when provided, only return memories created by this agent) */
   agentId?: string;
-  /** Read-side NL temporal-range filter (IQ-03). Epoch ms; ANDed onto the ALREADY-scoped
+  /** Read-side NL temporal-range filter. Epoch ms; ANDed onto the ALREADY-scoped
    *  query (tenant_id = ? AND agent_id = ? AND occurred_at BETWEEN ? AND ?) — it can only
    *  NARROW, never widen scope (§5.2). Absent → no range filter (recall unchanged). Both
    *  `search` and `searchLanes` carry MemorySearchOptions, so this threads to both with no
-   *  signature change; the SQLite WHERE clause is added in 102-03 (hybrid-search.ts). */
+   *  signature change; the SQLite WHERE clause is added in hybrid-search.ts. */
   occurredAtRange?: { start: number; end: number };
 }
 
@@ -68,7 +68,7 @@ export interface MemoryPort {
   ): Promise<Result<MemorySearchResult[], Error>>;
 
   /**
-   * OPTIONAL (LANES-01): search returning the FTS-ranked and vector-ranked
+   * OPTIONAL: search returning the FTS-ranked and vector-ranked
    * candidate lists SEPARATELY — the un-fused split.
    *
    * Where {@link search} fuses the FTS + vector lanes INTERNALLY (RRF, weights

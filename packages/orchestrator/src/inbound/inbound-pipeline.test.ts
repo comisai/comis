@@ -229,7 +229,7 @@ function makeMockApprovalGate(
     resolveApproval: vi.fn(),
     pending: vi.fn(() => pendingRequests),
     getRequest: vi.fn((id: string) => pendingRequests.find((r) => r.requestId === id)),
-    // APV-04 read helpers (73-02) — the inbound shortId slash path + button router source.
+    // Read helpers — the inbound shortId slash path + button router source.
     getRequestByShortId: vi.fn((sid: string) => pendingRequests.find((r) => r.shortId === sid)),
     pendingForSession: vi.fn((sk: string) => pendingRequests.filter((r) => r.sessionKey === sk)),
   };
@@ -358,7 +358,7 @@ describe("/approve and /deny command interception", () => {
   // prefix" warning and bail without resolving so the operator cannot
   // silently approve the wrong request when prefixes collide.
   // -----------------------------------------------------------------------
-  it("/approve <requestId-prefix> matches NO shortId and resolves nothing (APV-09: chat speaks shortId only)", async () => {
+  it("/approve <requestId-prefix> matches NO shortId and resolves nothing (chat speaks shortId only)", async () => {
     const reqA = {
       requestId: "ambig0001-aaaa-bbbb-cccc-111111111111",
       shortId: "AMBIG001aaaa",
@@ -404,7 +404,7 @@ describe("/approve and /deny command interception", () => {
     expect(executorFn).not.toHaveBeenCalled();
   });
 
-  it("/deny <requestId-prefix> matches NO shortId and resolves nothing (APV-09)", async () => {
+  it("/deny <requestId-prefix> matches NO shortId and resolves nothing", async () => {
     const reqA = {
       requestId: "denyamb01-aaaa-bbbb-cccc-333333333333",
       shortId: "DENYAMB1cccc",
@@ -601,7 +601,7 @@ describe("/approve and /deny command interception", () => {
       "chat-1",
       expect.stringContaining("SHORTtwo2222"),
     );
-    // ...and never the full requestId nor its 8-char prefix (APV-09).
+    // ...and never the full requestId nor its 8-char prefix.
     const sentText = vi.mocked(adapter.sendMessage).mock.calls
       .map((c) => String(c[1]))
       .join("\n");

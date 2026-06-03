@@ -38,7 +38,7 @@ export type { AuditEvent, CreateAuditEventParams } from "./audit.js";
 // Log sanitizer
 export { sanitizeLogString } from "./log-sanitizer.js";
 
-// Bounded redaction primitive (activity transparency — SEC-01/02/03)
+// Bounded redaction primitive (activity transparency)
 export { redactValue, REDACT_LIMITS } from "./redact-value.js";
 export type {
   RedactedValue,
@@ -74,7 +74,7 @@ export type { MemoryWriteValidationResult } from "./memory-write-validator.js";
 // Canary tokens
 export { generateCanaryToken, detectCanaryLeakage } from "./canary-token.js";
 
-// Signed interactive-approval callbacks (APV-05 / SEC-06)
+// Signed interactive-approval callbacks
 export {
   signCallbackData,
   verifyCallbackData,
@@ -205,8 +205,8 @@ export type { AuditFinding, AuditSeverity, AuditOptions } from "./secrets-audit.
 export type { ScrubResult } from "./secret-egress-guard.js";
 export { mightContainSecret, scrubSecretsFromText } from "./secret-egress-guard.js";
 
-// Provider-catalog: host-matching, injection engine, presets (Phase 1 — INJECT-01..04)
-// WR-05: RequestFinalizer and StaticHeader added to make them reachable via @comis/core
+// Provider-catalog: host-matching, injection engine, presets
+// RequestFinalizer and StaticHeader added to make them reachable via @comis/core
 export type { HostPattern, InjectionRule, RequestFinalizer, StaticHeader, HostRule, BrokerBinding, ProviderPreset, PresetLibrary } from "./provider-catalog/index.js";
 export { normalizeHost, hostRuleMatches, pathAllowed, resolveBinding, applyInjections, expandPreset, PRESETS } from "./provider-catalog/index.js";
 export type { InjectionInput } from "./provider-catalog/index.js";

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cross-judge spread fold (Phase 104, Plan 104-01, PROVE-02) -- the per-category
+ * Cross-judge spread fold -- the per-category
  * inter-judge |A-B| survival computation that decides whether a headline number
  * is "stable" (safe to drive a decision).
  *
- * THE MOAT (.planning/MEMORY_BENCHMARK_CREDIBILITY.md): credibility = cross-judge
+ * THE MOAT: credibility = cross-judge
  * >=2 + a published spread. A result is trusted ONLY if it survives -- i.e. the
  * two judges agree within tolerance on that category. This module replaces the
  * hand-authored arithmetic in
@@ -20,9 +20,9 @@
  * PURE (no Result, no throws, no I/O, no clock, no env -- AGENTS.md 2.1 pure-fn
  * carve-out, the same one qa-accuracy.ts uses). No randomness.
  *
- * SECURITY -- structural secret omission (T-104-01-01, ASVS V7, the
+ * SECURITY -- structural secret omission (ASVS V7, the
  * suite-report.ts:112-136 / qa-report.ts doctrine copied in style): the spread
- * output is written to a committed file via `writeRegularFile` (in 104-04),
+ * output is written to a committed file via `writeRegularFile`,
  * OUTSIDE Pino's redaction safety-net, so this fold must guarantee no credential
  * ever reaches the file. It does so STRUCTURALLY, defending BOTH the value and
  * the key surface: (1) each {@link CategorySpread}'s judge values are
@@ -30,8 +30,8 @@
  * as-is, so a secret-shaped STRING value hung off an input map (`apiKey`,
  * `base_url`, an `authorization: Bearer ...`) has no path to the output (it
  * coerces to a number, never a leaked string); (2) a category whose value is NOT
- * a finite number -- from EITHER judge (the A-guard and the SYMMETRIC B-guard,
- * IN-03) -- is DROPPED entirely (`Number.isFinite`) -- so a secret-shaped KEY
+ * a finite number -- from EITHER judge (the A-guard and the SYMMETRIC B-guard)
+ * -- is DROPPED entirely (`Number.isFinite`) -- so a secret-shaped KEY
  * whose value is a non-numeric secret string (e.g. `apiKey: "sk-..."` hung at the
  * category level on either map) never emits a `category` entry carrying that key,
  * and no degenerate `{ judgeB: NaN }` row (which `JSON.stringify`s to a misleading
@@ -39,7 +39,7 @@
  * is always a finite number, so this drops only off-contract pollution, never a
  * real category.
  *
- * SECURITY -- prototype-pollution discipline (T-104-01-02, copied from
+ * SECURITY -- prototype-pollution discipline (copied from
  * qa-accuracy.ts:135): the category keys originate from the UNTRUSTED dataset
  * `question_type` strings + judge manifests. The intermediate per-category map
  * in {@link computeSpreadFromResults} is a null-prototype object
@@ -96,7 +96,7 @@ export interface CategorySpread {
  * Iterates `Object.keys(perCategoryA)`; for each category, judge B's value falls
  * back to judge A's when the category is ABSENT in B -- yielding an explicit
  * spread of 0 (survives), never a crash on a missing category. A category is
- * DROPPED when EITHER judge's value is non-finite (IN-03: the symmetric guards),
+ * DROPPED when EITHER judge's value is non-finite (the symmetric guards),
  * so the output carries only real, comparable categories.
  *
  * SECURITY: each output {@link CategorySpread} is rebuilt from numerically
@@ -123,7 +123,7 @@ export function computeCrossJudgeSpread(
     // Numeric coercion (never a string copy): a secret-shaped string value hung
     // off an input map coerces to NaN here and can never leak as a string.
     const a = Number(perCategoryA[category]);
-    // SECURITY (T-104-01-01): drop any category whose value is NOT a finite
+    // SECURITY: drop any category whose value is NOT a finite
     // number. A real per-category accuracy is always finite; a secret-shaped
     // KEY (e.g. `apiKey: "sk-..."` hung at the category level) coerces to NaN
     // here and is structurally omitted, so its key never leaks into a `category`.
@@ -131,7 +131,7 @@ export function computeCrossJudgeSpread(
     // missing-in-B -> use A as the explicit fallback (spread 0), never crash.
     const rawB = category in perCategoryB ? perCategoryB[category] : perCategoryA[category];
     const b = Number(rawB);
-    // SECURITY (T-104-01-01, IN-03): SYMMETRIC with the A-guard above. A garbage
+    // SECURITY: SYMMETRIC with the A-guard above. A garbage
     // judge-B value (a secret-shaped string hung on the B map coerces to NaN) is
     // "no comparable judge-B value for this category" -- DROP the category rather
     // than emit a kept { judgeB: NaN, spread: NaN, survives: false } row. That
@@ -168,7 +168,7 @@ export function computeCrossJudgeSpread(
  * (`Object.create(null)`) with literal-keyed writes of the numeric `accuracy`
  * scalar only -- so neither a `__proto__`/`constructor` category key nor an
  * off-contract secret-bearing field on the input result/bucket can reach the
- * downstream fold or the output (T-104-01-01 + T-104-01-02).
+ * downstream fold or the output.
  *
  * @param a judge A's accuracy result
  * @param b judge B's accuracy result

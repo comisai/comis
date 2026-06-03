@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeTelegramAdapter — a deterministic, clock-free `ChannelPort` test double
- * for the Telegram EditPlace renderer (CHAN-02 / CHAN-05; §18.1 "fake adapter
+ * for the Telegram EditPlace renderer (§18.1 "fake adapter
  * records every method call").
  *
  * Mirrors `createFakeEchoAdapter` (the Wave-1 template) but:
@@ -96,7 +96,7 @@ export function createFakeTelegramAdapter(channelId = "chat-1"): FakeTelegramAda
       const injected = takeInjectedError(adapter);
       if (injected) return err(injected);
       const id = `tg-msg-${messageCounter++}`;
-      // The approval inline keyboard (Phase 73 native UI) rides on `buttons` —
+      // The approval inline keyboard (native UI) rides on `buttons` —
       // recorded ONLY when present so the button-less golden fixtures stay
       // byte-stable.
       recorded.calls.push({

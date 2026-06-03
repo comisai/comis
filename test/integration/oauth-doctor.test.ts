@@ -143,7 +143,7 @@ function writeTempConfig(dataDir: string): string {
   // packages/cli/src/doctor/checks/oauth-health.ts — these tests exercise
   // the file-backed code path.) AppConfigSchema defaults the rest, including
   // `agents` → `{ default: PerAgentConfigSchema.parse({}) }`.
-  // (v1.5: the legacy `oauth.storage` key was removed — a config using it now
+  // (The legacy `oauth.storage` key was removed — a config using it now
   // fails boot with a [MIGRATION_ERROR]; `security.storage` is the unified switch.)
   writeFileSync(
     yamlPath,

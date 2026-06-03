@@ -68,7 +68,7 @@ export interface GatewayRouteDeps {
   workspaceDirs: Map<string, string>;
   /** Default workspace directory (resolved from workspaceDirs). */
   defaultWorkspaceDir?: string;
-  /** Interactive-callback wiring (73-10): the single-use email approval-token map
+  /** Interactive-callback wiring: the single-use email approval-token map
    *  + resolver. When present, the `ALL /approve/:token` route is mounted. */
   interactiveCallbackWiring?: import("./setup-interactive-callback.js").InteractiveCallbackWiring;
 }
@@ -101,7 +101,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
   } = deps;
 
   // -------------------------------------------------------------------------
-  // Email approval-token route (73-10, APV-10 / SEC-06)
+  // Email approval-token route
   // -------------------------------------------------------------------------
   // Single-use, 5-min, revoke-on-first-touch GET handler for the signed email
   // approval link. Mounted at `ALL /approve/:token` so a mail-client preview

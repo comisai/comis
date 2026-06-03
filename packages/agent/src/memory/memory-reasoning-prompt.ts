@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The two reasoning specialist prompts (DEDUCTIVE + INDUCTIVE) + their lenient,
- * total parsers (Phase 101 — REASON-02/03/04).
+ * total parsers.
  *
  * Mirrors `memory-consolidation-prompt.ts` (the prompt + lenient-total-parser
- * pattern). Split out of the reasoning job (101-05) so the verbose prompts + the
+ * pattern). Split out of the reasoning job so the verbose prompts + the
  * cleanest defined-I/O unit (string → typed value) get no-mock RED→GREEN coverage
  * and the job file stays under the 800-line cap.
  *
  * Two specialist LLM contracts, both with the SAME anti-laundering invariant: the
  * model has NO trust field and NO supersede field. Trust is computed in CODE
- * (the job caps deductive at source-trust, floors inductive at ≤ learned —
- * REASON-02/03); supersession is the trust-first KG's concern (`upsertTriple`),
+ * (the job caps deductive at source-trust, floors inductive at ≤ learned);
+ * supersession is the trust-first KG's concern (`upsertTriple`),
  * never the model's. Any `trustLevel`/`supersededIds` the model emits anyway is
  * STRIPPED by the lenient `z.object` (unknown keys dropped, NOT rejected), so it
  * can never influence the stored knowledge or observation.
  *
- *   - DEDUCTIVE (REASON-02): "connect evidence" → a `{ subject, predicate, object,
+ *   - DEDUCTIVE: "connect evidence" → a `{ subject, predicate, object,
  *     confidence? }` S/P/O candidate (the shipped TripleCandidate shape,
  *     triple-extraction-job.ts). The job writes it via the trust-first
  *     `upsertTriple`.
- *   - INDUCTIVE (REASON-03): "identify a behavioral tendency" → a `{ content,
+ *   - INDUCTIVE: "identify a behavioral tendency" → a `{ content,
  *     patternType?, confidence? }` pattern. `patternType` is the Honcho-derived
  *     CLOSED enum — it MUST stay identical to `MemoryEntry.patternType`
  *     (memory-entry.ts) so the parser never accepts a value the domain rejects.
@@ -35,7 +35,7 @@ import { z } from "zod";
 // ---------------------------------------------------------------------------
 
 /**
- * The DEDUCTIVE reasoning system prompt (REASON-02). Each call receives ONE
+ * The DEDUCTIVE reasoning system prompt. Each call receives ONE
  * homogeneous evidence cluster (a single trust level + tag scope — the caller
  * partitions via `groupByTrustAndTagScope`); the model connects the evidence into
  * a single S/P/O fact. It explicitly does NOT choose a trust level and does NOT
@@ -59,7 +59,7 @@ Do NOT include a trust level. Do NOT mark anything as superseded or deleted.
 Output the single fact only. No markdown fences, no commentary.`;
 
 /**
- * The INDUCTIVE reasoning system prompt (REASON-03). Each call receives ONE
+ * The INDUCTIVE reasoning system prompt. Each call receives ONE
  * homogeneous evidence cluster; the model identifies a single behavioral
  * tendency. It explicitly does NOT choose a trust level (the job floors inductive
  * observations at ≤ learned in CODE) and does NOT mark anything superseded.

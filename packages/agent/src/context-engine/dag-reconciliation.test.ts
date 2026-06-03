@@ -471,10 +471,10 @@ describe("installDagIngestionHook", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DAG-05: context:mode_switched emission at the reconcile seam
+// context:mode_switched emission at the reconcile seam
 // ---------------------------------------------------------------------------
 
-describe("context:mode_switched emission (DAG-05)", () => {
+describe("context:mode_switched emission", () => {
   /** Builds a DAG engine over the live :memory: store with a mock eventBus and
    *  a controllable consumePendingModeSwitch stub. The model getter reports a
    *  non-reasoning model so the thinking-block cleaner layer is skipped. */
@@ -537,7 +537,7 @@ describe("context:mode_switched emission (DAG-05)", () => {
     expect(typeof payload.durationMs).toBe("number");
     expect(typeof payload.timestamp).toBe("number");
 
-    // T-85-11: payload is identifiers + counts + durations only — NO message text.
+    // Payload is identifiers + counts + durations only — NO message text.
     const allowed = new Set([
       "from", "to", "conversationId", "agentId", "sessionKey",
       "fullImport", "importedCount", "durationMs", "timestamp",

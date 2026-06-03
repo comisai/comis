@@ -3,7 +3,7 @@ import { z } from "zod";
 import { BrokerBindingConfigSchema } from "./schema-broker.js";
 
 /**
- * Executor credential-broker configuration schema (INTEG-02 / WIRE-02).
+ * Executor credential-broker configuration schema.
  *
  * `ExecutorBrokerConfigSchema` describes the broker listening address and
  * named credential bindings. `ExecutorConfigSchema` is the top-level wrapper
@@ -11,7 +11,7 @@ import { BrokerBindingConfigSchema } from "./schema-broker.js";
  * an `executor:` block is accepted by Zod strict mode.
  *
  * Both use `z.strictObject` — unknown keys in operator YAML are rejected at
- * parse time (T-08-01-01 mitigation).
+ * parse time.
  *
  * @module schema-executor
  */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * UNGATED unit tests for the pure MemoryAgentBench loader (SUITE-08).
+ * UNGATED unit tests for the pure MemoryAgentBench loader.
  *
  * TIER: default CI / fast unit tier (no model, no dataset download, no store).
  * Runs over the tiny vendored neutral-placeholder fixture in __fixtures__/.
@@ -9,7 +9,7 @@
  * accurate-retrieval, test-time-learning, long-range, conflict-resolution. The
  * loader emits `{ docs, questions[], abilityType }`; each question carries
  * `abilityType` as its `category` so the existing aggregateAccuracy harness
- * scores per-ability (the Conflict-Resolution split being the SUITE-08 headline).
+ * scores per-ability (the Conflict-Resolution split being the headline).
  */
 
 import { describe, it, expect } from "vitest";
@@ -40,7 +40,7 @@ function item(ability: string, extra: Record<string, unknown> = {}): Record<stri
   };
 }
 
-describe("loadMemoryAgentBench (conflict-resolution: the SUITE-08 headline split)", () => {
+describe("loadMemoryAgentBench (conflict-resolution: the headline split)", () => {
   it("parses the vendored conflict-resolution fixture into docs + questions + abilityType", () => {
     const parsed = loadMemoryAgentBench(RAW);
     expect(parsed.ok).toBe(true);

@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Neighbor test for the in-jail relay-as-init launcher builder
- * (`buildEgressRelayLaunch`, worker-side, PORT-typed, SEC-07).
+ * (`buildEgressRelayLaunch`, worker-side, PORT-typed).
  *
  * `buildEgressRelayLaunch` is a PURE constructor: given the host socket path +
- * the in-jail relay port, it returns the pieces the worker (122-06) needs to
+ * the in-jail relay port, it returns the pieces the worker needs to
  * spawn the driven child UNDER the relay — the relay-as-init wrapper argv (bring
  * `lo` up as userns-root -> TCP->unix bridge on 127.0.0.1:<port> -> drop to the
  * net-new uid -> exec the child) AND the `HTTPS_PROXY`/`HTTP_PROXY` env addition
  * pointing the child's TCP-proxy client at the in-jail relay. It runs NOTHING (no
  * netns, no spawn) — so it is fully macOS-testable. The LIVE bridge + uid-drop is
- * VPS-only (122-07).
+ * VPS-only.
  *
  * It imports `EgressControlPort` as a TYPE from @comis/core and NEVER value-imports
- * @comis/infra (the architecture test from Task 1 names this file; this file adds a
+ * @comis/infra (the architecture test names this file; this file adds a
  * focused source grep as a second, local guard).
  *
  * @module
@@ -28,7 +28,7 @@ import {
   RELAY_INIT_SCRIPT_URL,
 } from "./terminal-egress-relay.js";
 
-describe("buildEgressRelayLaunch — in-jail relay-as-init launcher builder (SEC-07)", () => {
+describe("buildEgressRelayLaunch — in-jail relay-as-init launcher builder", () => {
   it("returns the HTTPS_PROXY/HTTP_PROXY env pointing the child at the in-jail relay port", () => {
     const out = buildEgressRelayLaunch({ socketPath: "/tmp/e.sock", relayPort: 18080 });
     expect(out.proxyEnv.HTTPS_PROXY).toBe("http://127.0.0.1:18080");
@@ -53,11 +53,11 @@ describe("buildEgressRelayLaunch — in-jail relay-as-init launcher builder (SEC
   });
 
   it("relayArgv invokes the RUNNABLE relay-init script via process.execPath, ending with `--` before the child", () => {
-    // 122-fix: the relayArgv is no longer a bare sentinel name — it is the real
+    // The relayArgv is no longer a bare sentinel name — it is the real
     // in-jail launch: `node <relay-init script> --socket <sock> --port <port> --`,
     // so the worker can append `bin ...childArgv` after the `--` and the kernel
-    // brings up the relay-as-init for real (the 118 G-3 transport). This was the
-    // SEC-07 production gap: the launcher pointed at a script that did not exist.
+    // brings up the relay-as-init for real. This was a production gap: the
+    // launcher pointed at a script that did not exist.
     const out = buildEgressRelayLaunch({ socketPath: "/tmp/sess.sock", relayPort: 18080 });
     // arg0 is the Node runtime (the script is run as a subprocess).
     expect(out.relayArgv[0]).toBe(process.execPath);
@@ -73,7 +73,7 @@ describe("buildEgressRelayLaunch — in-jail relay-as-init launcher builder (SEC
 
   it("points at a relay-init script that is a RUNNABLE compiled .js existing on disk (not the .ts source)", () => {
     // The launcher runs `process.execPath <RELAY_INIT_SCRIPT_URL>` as a real
-    // subprocess in the jail (the 118 G-3 transport). Node cannot exec a `.ts`, so the
+    // subprocess in the jail. Node cannot exec a `.ts`, so the
     // URL MUST resolve to the COMPILED `.js` that exists on disk — in BOTH contexts:
     //   - production: the worker runs from `dist/`, so `import.meta.url` is the dist
     //     `.js` and the sibling `egress-relay-init.js` is right there.

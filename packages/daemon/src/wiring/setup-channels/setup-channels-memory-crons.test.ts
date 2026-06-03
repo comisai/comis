@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Behavioral tests for the extracted LLM-backed memory-cron sentinel handlers
- * (`__MEMORY_CONSOLIDATION__` + `__MEMORY_REASONING__`), Phase 84 + Phase 101.
+ * (`__MEMORY_CONSOLIDATION__` + `__MEMORY_REASONING__`).
  *
  * These mirror the assertions in setup-channels-credentials.test.ts (which drives
  * the handlers through registerCronEventListeners end-to-end); here they exercise
@@ -89,7 +89,7 @@ function makeCtx(overrides: {
     relationshipStore: { upsert: vi.fn(), read: vi.fn() } as any,
     memoryApi: memoryApi as any,
     memoryLifecycleStore: (overrides.memoryLifecycleStore ?? {
-      // The DORMANT default: scanned some rows, mutated NONE (the 112-03 scaffold).
+      // The DORMANT default: scanned some rows, mutated NONE (the scaffold).
       runLifecycleSweep: vi.fn(async () => ({ ok: true as const, value: { scanned: 3, promoted: 0, demoted: 0, evicted: 0 } })),
     }) as any,
   };
@@ -178,14 +178,14 @@ describe("handleMemoryCronSentinel", () => {
 });
 
 // ---------------------------------------------------------------------------
-// __SOCIAL_MODELING__ sentinel (Phase 108, SOCIAL-01/02/03 — the offline
-// directional relationship builder). The gate is STRICTER than the 107
+// __SOCIAL_MODELING__ sentinel (the offline
+// directional relationship builder). The gate is STRICTER than the per-user
 // representation cron: it requires BOTH enabled AND a recorded privacy-review
-// sign-off (SOCIAL-03). The write-side resolves channelId per source from the
-// session key and SKIPS NULL-session-key sources (SOCIAL-02 / Pitfall 1).
+// sign-off. The write-side resolves channelId per source from the
+// session key and SKIPS NULL-session-key sources.
 // ---------------------------------------------------------------------------
 
-describe("handleMemoryCronSentinel __SOCIAL_MODELING__ (Phase 108)", () => {
+describe("handleMemoryCronSentinel __SOCIAL_MODELING__", () => {
   // A formatted session key {tenant}:{user}:{channelId} — parseFormattedSessionKey
   // recovers channelId from this on the write side.
   const sk = (channelId: string, userId = "user_a") => `tenant-a:${userId}:${channelId}`;
@@ -200,8 +200,8 @@ describe("handleMemoryCronSentinel __SOCIAL_MODELING__ (Phase 108)", () => {
     expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
   });
 
-  it("short-circuits ok and runs NOTHING when enabled but NO privacy-review sign-off (the SOCIAL-03 gate)", async () => {
-    // The knob alone does NOT activate — a recorded sign-off is required (SOCIAL-03).
+  it("short-circuits ok and runs NOTHING when enabled but NO privacy-review sign-off (the sign-off gate)", async () => {
+    // The knob alone does NOT activate — a recorded sign-off is required.
     const ctx = makeCtx({
       agents: { "agent-1": { name: "Agent 1", provider: "anthropic", socialModeling: { enabled: true } } },
       apiKey: "test-key",
@@ -242,7 +242,7 @@ describe("handleMemoryCronSentinel __SOCIAL_MODELING__ (Phase 108)", () => {
   });
 
   it("SKIPS a NULL-session-key source (0 build invocations for a NULL-only set — never bucketed under undefined)", async () => {
-    // SOCIAL-02 / Pitfall 1: a source whose channelId cannot be resolved is SKIPPED + counted,
+    // A source whose channelId cannot be resolved is SKIPPED + counted,
     // NEVER bucketed under an empty/undefined channel.
     const ctx = makeCtx({
       agents: { "agent-1": { name: "Agent 1", provider: "anthropic", socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" } } },
@@ -274,14 +274,14 @@ describe("handleMemoryCronSentinel __SOCIAL_MODELING__ (Phase 108)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// __MEMORY_LIFECYCLE__ sentinel (Phase 112, FORGET-02 — Track C — the DORMANT
+// __MEMORY_LIFECYCLE__ sentinel (the DORMANT
 // lifecycle sweep). UNLIKE the consolidation/reasoning/user-rep/social sentinels
 // it is KEYLESS (no resolveOperationModel, no secretManager, no build() seam —
 // like the __ONLINE_TUNING__ bandit). It re-checks memoryLifecycle.enabled
 // (defence-in-depth) and short-circuits ok when off; when on it invokes
-// runLifecycleSweep — which is DORMANT (evicts/demotes/promotes 0 rows, 112-03).
+// runLifecycleSweep — which is DORMANT (evicts/demotes/promotes 0 rows).
 // ---------------------------------------------------------------------------
-describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__ (Phase 112)", () => {
+describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
   it("short-circuits ok and runs NOTHING when memoryLifecycle is disabled (the opt-in gate)", async () => {
     const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 0, promoted: 0, demoted: 0, evicted: 0 } }));
     const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1" } }, memoryLifecycleStore: { runLifecycleSweep: sweep } });

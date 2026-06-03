@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for the daemon-injected query-time dialectic synthesis seam
- * (Phase 109 — DIAL-01, the ONE allowed query-time LLM surface).
+ * (the ONE allowed query-time LLM surface).
  *
  * createDialecticSeam wraps a cheap resolved model + the agent-internal
  * DIALECTIC_PROMPT/parser into the `synthesize(question, groundingText)` seam the daemon's
- * memory.ask handler (Plan 03) calls. The LLM is MOCKED here (determinism — no API key, no
+ * memory.ask handler calls. The LLM is MOCKED here (determinism — no API key, no
  * provider call): completeSimple returns canned text, getModel a stub. The seam mirrors
  * createUserRepresentationSeam: ONE bounded call, abort-timer-cleared-in-finally, NON-FATAL
  * (any throw/abort/malformed/model-resolution failure degrades to { abstain: true } and

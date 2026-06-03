@@ -42,8 +42,8 @@ import {
 } from "./setup-gateway-admin.js";
 
 /**
- * WR-03 (§17.8 security sign-off): non-secret section allowlist for the
- * `getConfig` RPC. Exactly the scalar/projected fields the safe default object
+ * Non-secret section allowlist for the `getConfig` RPC (§17.8 security
+ * sign-off). Exactly the scalar/projected fields the safe default object
  * emits — sections carrying credentials (`agents` auth/model profiles,
  * `security.secrets`, `channels` tokens, `providers` keys, raw `gateway.tokens`)
  * are intentionally absent and never returned verbatim.
@@ -427,7 +427,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       return { stats: stats as unknown as Record<string, unknown> };
     },
     getConfig: async (params) => {
-      // WR-03 (§17.8 sign-off): a non-secret section ALLOWLIST is enforced.
+      // A non-secret section ALLOWLIST is enforced (§17.8 sign-off).
       // The prior top-level-key passthrough returned ANY requested section
       // verbatim — including `agents` (per-provider auth/model profiles) and
       // `security.secrets` — a real secret-egress path. Only the
@@ -460,7 +460,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       return safeDefault;
     },
     // Non-secret projections for the dashboard's GET /api/agents and
-    // /api/channels — WR-03 dropped `agents`/`channels` from getConfig's
+    // /api/channels — `agents`/`channels` were dropped from getConfig's
     // allowlist, so these (not getConfig) are the REST source. See
     // non-secret-projections.ts: id/name/provider/model + name/enabled only.
     listAgentSummaries: () => agentSummaries(container.config.agents),
@@ -546,7 +546,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       // If session reset command succeeded, try LLM greeting
       if (result.handled && (parsed.command === "new" || parsed.command === "reset") && greetingGenerator) {
         const greetingAgentConfig = agents[params.agentId ?? defaultAgentId] ?? agents[defaultAgentId];
-        // Interactivity signal (UX-04, spec §12): a concrete channel surface
+        // Interactivity signal (spec §12): a concrete channel surface
         // (Discord/Telegram/…) is interactive; the bare "gateway" sentinel
         // (the headless RPC default applied when no channelId is supplied —
         // see `sk` above) marks the non-interactive/onboarding-limited path.

@@ -3,16 +3,16 @@ import { describe, it, expect } from "vitest";
 import { normalizeEntityKey, nameSimilarity } from "./entity-resolver.js";
 
 // =====================================================================
-// normalizeEntityKey — Unicode-correct canonical-key folding (ENT-05)
+// normalizeEntityKey — Unicode-correct canonical-key folding
 //
-// The criterion's exact examples. SQLite lower() is ASCII-only (RESEARCH
-// Pitfall 3), so dedup is done against this TS-computed key. These assertions
-// pin the Turkish-İ / accent / Cyrillic / CJK behavior a reviewer questions.
+// The criterion's exact examples. SQLite lower() is ASCII-only, so dedup is
+// done against this TS-computed key. These assertions pin the
+// Turkish-İ / accent / Cyrillic / CJK behavior a reviewer questions.
 // =====================================================================
 
 describe("normalizeEntityKey — Unicode canonical-key folding", () => {
   it("folds the Turkish-İ ISTANBUL variants to one canonical key 'istanbul'", () => {
-    // The headline ENT-05 case: dotted-İ (Turkish) and ASCII I must collapse
+    // The headline case: dotted-İ (Turkish) and ASCII I must collapse
     // to the SAME key, so "İSTANBUL" and "istanbul" are one entity, not two.
     expect(normalizeEntityKey("İSTANBUL")).toBe("istanbul");
     expect(normalizeEntityKey("İstanbul")).toBe("istanbul");
@@ -51,8 +51,8 @@ describe("normalizeEntityKey — Unicode canonical-key folding", () => {
     expect(normalizeEntityKey(key)).toBe(key);
   });
 
-  it("folds two coreference-resolved name variants onto ONE canonical key (EXTRACT-01 dedup fold)", () => {
-    // EXTRACT-01: coreference supplies cleaner entities[].name strings ("she"/"my boss" -> "Alice").
+  it("folds two coreference-resolved name variants onto ONE canonical key (dedup fold)", () => {
+    // Coreference supplies cleaner entities[].name strings ("she"/"my boss" -> "Alice").
     // Even if the model emits slightly different surface forms before settling on a canonical
     // spelling, they must fold to the SAME (tenant, agent, canonical_key) row — the exact-key
     // reuse short-circuit at sqlite-memory-entity-store.ts:165-172. No downstream change makes
@@ -68,9 +68,9 @@ describe("normalizeEntityKey — Unicode canonical-key folding", () => {
 });
 
 // =====================================================================
-// nameSimilarity — deterministic Dice-bigram fuzzy scorer (ENT-05 fuzzy)
+// nameSimilarity — deterministic Dice-bigram fuzzy scorer
 //
-// Used by the Plan-02 resolver at threshold 0.6 to reuse an existing entity
+// Used by the resolver at threshold 0.6 to reuse an existing entity
 // for a near-duplicate (typo) mention. Identical normalized keys short-circuit
 // to 1.0. The scorer is pure + deterministic (no Math.random / Date.now).
 // =====================================================================

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * approval-render helpers (APV-02 / APV-03 render side, §6.4 / §7.7).
+ * approval-render helpers (render side, §6.4 / §7.7).
  *
  * The render path is text-only today; these helpers are the shared foundation
- * every per-channel approval UI (73-08/09/10) builds on:
+ * every per-channel approval UI builds on:
  *
  *   - `buildApprovalButtons(event, sign)` turns a `kind:"approval"` event's
  *     redacted `ApprovalCorrelation` (`shortId` + `choices`) into signed
@@ -30,7 +30,7 @@ import { buildApprovalButtons, buildApprovalText } from "./approval-render.js";
 /** Fixed 32-byte-ish test secret — the value is irrelevant; determinism is. */
 const TEST_SECRET = "test-signing-secret-do-not-use-in-prod";
 
-/** The injected signer the renderer receives at the composition root (73-10). */
+/** The injected signer the renderer receives at the composition root. */
 const sign: SignCallbackData = (choice, shortId) =>
   signCallbackData(TEST_SECRET, choice, shortId);
 
@@ -145,7 +145,7 @@ describe("buildApprovalButtons", () => {
 
   it("never signs over user text — only (choice, shortId) reach the signer", () => {
     // The signer is called with the choice id + shortId ONLY. A spy proves no
-    // raw param / label is forwarded (T-73-17: no raw params in the approval UI).
+    // raw param / label is forwarded (no raw params in the approval UI).
     const seen: Array<{ choice: string; shortId: string }> = [];
     const spySign: SignCallbackData = (choice, shortId) => {
       seen.push({ choice, shortId });

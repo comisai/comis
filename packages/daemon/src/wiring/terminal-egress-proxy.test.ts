@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Neighbor test for the host-side no-secret allowlist CONNECT proxy
- * (`createTerminalEgressProxy`, the {@link EgressControlPort} impl, SEC-07).
+ * (`createTerminalEgressProxy`, the {@link EgressControlPort} impl).
  *
- * The proxy is the Phase-118-proven host-side allowlist gate (allowlisted host ->
+ * The proxy is the proven host-side allowlist gate (allowlisted host ->
  * 200 + forward; non-listed -> 403, no upstream dial). It listens on a unix
  * socket — so the allowlist DECISION is fully macOS-testable over a plain unix
  * socket WITHOUT netns: we connect a client to the materialized socket, write a
@@ -11,7 +11,7 @@
  * for an allowlisted host and NOT called for a non-listed host, (b) the 403
  * response on deny, (c) no secret is injected into the stream, (d) dispose()
  * unlinks the socket + closes the server. The LIVE relay-as-init (lo up + netns)
- * is VPS-only (122-07), not exercised here.
+ * is VPS-only, not exercised here.
  *
  * @module
  */
@@ -52,7 +52,7 @@ function connectAndSendConnect(
   });
 }
 
-describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT proxy (SEC-07)", () => {
+describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT proxy", () => {
   const live: EgressMaterialization[] = [];
 
   afterEach(async () => {

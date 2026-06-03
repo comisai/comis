@@ -5,25 +5,25 @@
  * This is the ONLY sanctioned path from raw tool `params` to user-visible
  * activity text (AGENT-TRANSPARENCY-SPEC §10.1/§10.2). It lives in
  * `core/security` — NOT `core/activity` and NOT `observability` — because the
- * pure template engine (`core/activity/template-engine.ts`, plan 70-04) must
+ * pure template engine (`core/activity/template-engine.ts`) must
  * call it and `core` cannot import `observability`.
  *
- * Guarantees (the SEC-01/02/03 keystone):
- *   - SEC-01 (no secrets): values under the 9 Pino redact keys become
+ * Guarantees (the redaction keystone):
+ *   - No secrets: values under the 9 Pino redact keys become
  *     `<redacted>`; values matching a secret SHAPE (sk_*, ghp_*, AKIA*, JWT
  *     triples, provider tokens) become `<redacted>` even under a benign key.
- *   - SEC-02 (no absolute paths): `$HOME`/home roots compact to `~`; other
+ *   - No absolute paths: `$HOME`/home roots compact to `~`; other
  *     system-absolute paths compact to their last 2 segments (compacted, NOT
  *     stripped — preserving the intended `~/.comis/...` UX). IP / hostname /
  *     MAC masked.
- *   - SEC-03 (no PII): email / phone / credit-card / SSN shapes masked.
+ *   - No PII: email / phone / credit-card / SSN shapes masked.
  *
  * The replacement token is the lowercase-angle `<redacted>` — deliberately
  * distinct from the log sanitizer's bracketed-uppercase token (Pitfall 5).
  *
  * It is PURE: no `eval`, no `Function`, no dynamic require, no logger, no I/O,
  * no input mutation. It NEVER throws. The observability layer reads
- * `redactionsApplied` post-call and emits the OBS-03 WARN; this primitive does
+ * `redactionsApplied` post-call and emits the redaction WARN; this primitive does
  * not log.
  *
  * Bounds (§10.1): recursive descent is capped at depth ≤ 4, keys ≤ 16 per
@@ -53,7 +53,7 @@ import {
   URL_PASSWORD,
   AWS_SECRET_KEY,
 } from "./injection-patterns.js";
-// Re-exported so the WR-06 containment guard can compare the activity shape list
+// Re-exported so the containment guard can compare the activity shape list
 // against the log sanitizer's credential list from a single import site.
 import { CREDENTIAL_LOG_PATTERNS } from "./patterns/credential-log.js";
 
@@ -89,7 +89,7 @@ export type RedactLimits = typeof REDACT_LIMITS;
  *
  * Closed union — never widened to `string` (AGENTS.md §2.8). The PII / bound
  * variants mirror AGENT-TRANSPARENCY-SPEC §10.1 lines 1171-1182 exactly;
- * `network_identifier` extends it for the SEC-02 IP/hostname/MAC masks.
+ * `network_identifier` extends it for the IP/hostname/MAC masks.
  */
 export type RedactionReason =
   | "secret_key"
@@ -138,7 +138,7 @@ export interface RedactOptions {
 /**
  * The 9 secret KEYS (case-insensitive) — mirrors the CLAUDE.md "Pino
  * auto-redacts" taxonomy. A value under any of these is fully replaced
- * regardless of its content (SEC-01, key-based).
+ * regardless of its content (key-based).
  */
 const SECRET_KEYS: ReadonlySet<string> = new Set([
   "apikey",
@@ -160,8 +160,8 @@ const SECRET_KEYS: ReadonlySet<string> = new Set([
  * MUST stay a superset of the log sanitizer's `CREDENTIAL_LOG_PATTERNS`
  * (re-exported below) — a credential shape covered by the log sanitizer but
  * missing here would survive verbatim into a user-visible activity label under
- * a benign key (CR-01). The `WR-06` test in `redact-value.test.ts` enforces the
- * containment by pattern `.source`.
+ * a benign key. The containment test in `redact-value.test.ts` enforces it
+ * by pattern `.source`.
  *
  * Exported for that containment guard test only — not part of the public API
  * surface (this is an internal detection constant).
@@ -180,7 +180,7 @@ export const SECRET_SHAPE_PATTERNS: readonly RegExp[] = [
   TELEGRAM_BOT_TOKEN,
   DISCORD_BOT_TOKEN,
   HEX_SECRET_LONG,
-  // CR-01: the three shapes the log sanitizer (CREDENTIAL_LOG_PATTERNS) covers
+  // The three shapes the log sanitizer (CREDENTIAL_LOG_PATTERNS) covers
   // but the activity redactor previously omitted. Without these, a secret-shaped
   // value under a benign allowlisted key (url/cmd/note) reached the rendered
   // label verbatim. BEARER_TOKEN_LOG and AWS_SECRET_KEY are simple-match
@@ -209,7 +209,7 @@ const MAC_RE = /\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b/g;
 // two-segment filenames like `config.yaml` / `bar.ts` (those are paths/leaves,
 // not hosts). Run AFTER email/IP so those more-specific shapes win first.
 //
-// nsv-hotfix: `(?<!\/\/)` negative-lookbehind exempts URL hosts (preceded by
+// `(?<!\/\/)` negative-lookbehind exempts URL hosts (preceded by
 // the scheme's two slashes) from this mask. Per SPEC §8.4, public URL hosts are
 // information the user expects to see — `tavily.com/search` renders verbatim —
 // not internal infrastructure leakage. Standalone hostnames not inside a URL
@@ -245,7 +245,7 @@ function applyShape(
 }
 
 /**
- * Compact absolute filesystem paths within `s` (SEC-02). `$HOME` roots become
+ * Compact absolute filesystem paths within `s`. `$HOME` roots become
  * `~`; other system-absolute paths (`/var/...`, `/tmp/...`, `/etc/...`) compact
  * to their last 2 segments. Compaction PRESERVES trailing segments — it does
  * not strip — so `~/.comis/config.yaml` survives. Uses literal `replaceAll`
@@ -263,7 +263,7 @@ function compactPaths(s: string, homeDir: string | undefined, sink: RedactionRec
 
   // 2. Remaining system-absolute paths → last 2 segments.
   //    Match a leading-slash path of ≥ 2 segments; keep only the final two.
-  //    SEC-02 URL-scheme guard (quick-260528-nsv): the leading `/` must not be
+  //    URL-scheme guard: the leading `/` must not be
   //    preceded by `:` or `/`. The `:` half is obvious (first slash of `://`);
   //    the `/` half blocks the SECOND slash of `://` — without it, the matcher
   //    would still anchor at the second slash and treat `//host/path/...` as a
@@ -299,7 +299,7 @@ function compactPaths(s: string, homeDir: string | undefined, sink: RedactionRec
  *
  * Defense-in-depth: this runs AFTER the secret-shape pass, so URL_PASSWORD
  * still strips embedded credentials in `https://user:pw@host/...` before the
- * URL is ever stashed (CR-01).
+ * URL is ever stashed.
  *
  * Idempotent: running twice on the same input yields the same output (the
  * restored URL exactly equals the stashed URL, and the placeholders aren't
@@ -328,8 +328,8 @@ function withUrlsProtected(input: string, fn: (s: string) => string): string {
  * (hosts + paths) survive verbatim per SPEC §8.4:
  *   (1) secret-shape pass (sk_*, ghp_*, AKIA*, JWT, provider tokens). Runs
  *       FIRST so URL-embedded credentials (`https://user:pw@host`) are
- *       URL_PASSWORD-masked BEFORE the URL guard stashes the URL — CR-01
- *       defense-in-depth is preserved.
+ *       URL_PASSWORD-masked BEFORE the URL guard stashes the URL — the
+ *       defense-in-depth ordering is preserved.
  *   (2) absolute-path compaction. Has its own URL-scheme `(?<![:/])` guard.
  *   (3)+(4)+(5) URL-aware pre-pass wraps the remaining network + PII matcher
  *       passes (IPV4/MAC/HOSTNAME + EMAIL/CC/SSN/PHONE). URL hosts AND URL

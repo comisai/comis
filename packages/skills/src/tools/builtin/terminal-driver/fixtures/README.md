@@ -18,7 +18,7 @@ experimental, so a future bump could silently change the serialization. The
 golden-frame test replays each committed `*.stream.txt` byte stream through a
 fresh `createSessionEmulator` and asserts `snapshot({format:'ansi'}).screen`
 equals the committed `*.golden.txt`. A serialization change — **or** a tampered
-stream — surfaces loudly as a `serialize() !== golden` failure (T-121-13), never
+stream — surfaces loudly as a `serialize() !== golden` failure, never
 silently.
 
 The replay is **platform-independent**: `@xterm/headless` is pure-JS, so the same
@@ -36,8 +36,8 @@ on a real PTY (the VPS), but the golden assertion is host-independent.
 
 The synthetic fixtures are small (~100–130 bytes), deterministic, and
 human-reviewable in a diff. The `vim` fixture is recorded on the VPS (this repo's
-macOS author box's node-pty cannot `posix_spawnp` in-harness — the 119/120
-precedent) and committed (kept to a few KB).
+macOS author box's node-pty cannot `posix_spawnp` in-harness) and committed (kept
+to a few KB).
 
 ## Regenerating fixtures + goldens — `scripts/record-fixture.mjs`
 
@@ -54,7 +54,7 @@ node record-fixture.mjs --synthetic altscreen --out ../fixtures/altscreen.stream
 
 The synthetic byte strings are literal constants in `record-fixture.mjs` — edit
 them there (never hand-type raw escapes into the `.txt`) so the fixtures stay
-regenerable + reviewable (T-121-13).
+regenerable + reviewable.
 
 ### 2. Record a real TUI stream (VPS only — needs node-pty + a real PTY)
 
@@ -67,9 +67,9 @@ node record-fixture.mjs vim --args "-u NONE -N" \
 
 `vim -u NONE -N` (no host vimrc) + a scripted deterministic edit ⇒ the captured
 bytes contain only the fixed test content + vim's own chrome — **no host paths,
-no env, no secrets** (T-121-14). Review the fixture in the commit diff before
+no env, no secrets**. Review the fixture in the commit diff before
 landing. **Fallback:** if `vim` is unavailable, record `top`/`htop` instead (any
-real alt-screen TUI satisfies TR-02's "recorded vim/top" intent) — note which here.
+real alt-screen TUI satisfies the "recorded vim/top" intent) — note which here.
 
 ### 3. (Re)generate a golden from a stream (replay → serialize)
 

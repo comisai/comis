@@ -258,15 +258,15 @@ export {
 export type { CacheTraceBridgedEventName } from "./cache-trace/event-bus-bridge.js";
 
 // ---------------------------------------------------------------------------
-// Recall-trace surface (86-01; OBS-01/OBS-02).
+// Recall-trace surface.
 // ---------------------------------------------------------------------------
 //
 // A daemon-wide JSONL recorder — ONE rich record per recall — and its
 // schema-versioned closed-union envelope. A near-verbatim sibling of the
 // cache-trace surface, but with NO opt-in raw-content slot: every payload is
-// routed through sanitizeForPersistence (the OBS-02 chokepoint). Consumed by
-// @comis/agent's createMemoryRecall (Plan 03) and the daemon's recall-trace
-// admin RPC (Plan 05). Stays a leaf — imports only @comis/core + in-package
+// routed through sanitizeForPersistence (the redaction chokepoint). Consumed by
+// @comis/agent's createMemoryRecall and the daemon's recall-trace
+// admin RPC. Stays a leaf — imports only @comis/core + in-package
 // substrate.
 
 export {
@@ -289,13 +289,13 @@ export { createRecallTrace } from "./recall-trace/runtime.js";
 export type { RecallTrace, RecallTraceInit } from "./recall-trace/runtime.js";
 
 // ---------------------------------------------------------------------------
-// Recall-counters surface (86-01; OBS-07).
+// Recall-counters surface.
 // ---------------------------------------------------------------------------
 //
 // A lightweight in-process counter registry (a process-lifetime gauge that
 // resets on restart) for lane usage, rerank-fallback rate, consolidation
 // throughput, and recall hit-rate. Fed by a daemon-wired `memory:*` bus
-// subscriber (Plan 05) and read by `comis memory stats`. Pure — no clock, no
+// subscriber and read by `comis memory stats`. Pure — no clock, no
 // I/O, no module-global state; stays a leaf.
 
 export { createRecallCounters } from "./recall-counters/registry.js";
@@ -466,14 +466,14 @@ export {
 } from "./health-aggregator/error-kind-map.js";
 
 // ---------------------------------------------------------------------------
-// Activity substrate surface (70-08; STRAT-07..11, OBS-01/02/03).
+// Activity substrate surface.
 // ---------------------------------------------------------------------------
 //
 // The canonical, redacted `ActivityEvent` source behind the core
-// `ActivityStreamPort`. The daemon composition root (70-10, WIRE-01)
+// `ActivityStreamPort`. The daemon composition root
 // constructs `createActivityStream(...)` in setup-observability.ts and injects
 // the returned `ActivityStream` as the orchestrator-facing port. Imports only
-// @comis/core (the boundary the 70-10 guard test locks — observability never
+// @comis/core (the boundary the guard test locks — observability never
 // imports @comis/channels).
 
 export { createActivityStream } from "./activity/activity-stream.js";
@@ -484,22 +484,22 @@ export type {
   ActivityCounters,
 } from "./activity/activity-stream.js";
 
-// The pure, one-pass, idempotent activity-label display-shortener (UX-02,
-// spec §8.4). Consumes already-redacted / already-path-compacted strings from
+// The pure, one-pass, idempotent activity-label display-shortener
+// (spec §8.4). Consumes already-redacted / already-path-compacted strings from
 // redactValue — it shortens URLs, ISO timestamps, and long mcp_ tool names
 // only, never re-redacting or re-compacting paths.
 export { compressLabel } from "./activity/label-compressor.js";
 
-// Deterministic OpenClaw-style shell command summarizer (STRAT-09, spec §6.3 /
+// Deterministic OpenClaw-style shell command summarizer (spec §6.3 /
 // §13.1). Pure, self-redacting (redactValue at shell-label-parser.ts:53),
 // length-capped at 120. Consumed by the exec/process builtin tools' transform
-// hook (Phase 78 WS-A) — the top-level barrel re-export keeps the import path
+// hook — the top-level barrel re-export keeps the import path
 // flat: `import { parseShellCommand } from "@comis/observability"`.
 export { parseShellCommand } from "./activity/shell-label-parser.js";
 
 // SEP plan-stream — derives PlanUpdate events from sep:plan_extracted + the
-// live ExecutionPlanPort (STRAT-11, spec §16.7). Consumed by the daemon
-// composition root (Phase 78 WS-D / setup-channels-runtime.ts) to wire the
+// live ExecutionPlanPort (spec §16.7). Consumed by the daemon
+// composition root (setup-channels-runtime.ts) to wire the
 // chat ActivityTurnCoordinator with a per-agent plan-state subscription.
 export { createPlanStream } from "./activity/plan-stream.js";
 export type {

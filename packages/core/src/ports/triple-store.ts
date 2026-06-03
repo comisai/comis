@@ -4,7 +4,7 @@ import type { MemorySearchResult } from "./memory.js";
 
 /**
  * TripleStorePort: the SEGREGATED hexagonal boundary for the trust-first
- * bi-temporal knowledge graph (Phase 100, Track F — KG-01..04). A triple is an
+ * bi-temporal knowledge graph. A triple is an
  * S/P/O assertion carrying four bi-temporal timestamps + an occurred range + a
  * trust level; the store keeps a non-destructive history (many superseded
  * versions of a (subject, predicate) coexist) and a single CURRENT truth per
@@ -30,8 +30,8 @@ import type { MemorySearchResult } from "./memory.js";
  */
 
 /**
- * The isolation boundary for every triple operation (T-100-01-01, the §5.2 /
- * ENT-03 pattern). Every adapter statement — INSERT, UPDATE, SELECT, AND the
+ * The isolation boundary for every triple operation (the §5.2 entity-scoping
+ * pattern). Every adapter statement — INSERT, UPDATE, SELECT, AND the
  * recursive-CTE walk's JOIN — filters on `(tenantId, agentId)`. This is a
  * load-bearing SECURITY scope in a multi-agent DB, not a nicety: a triple
  * written under one (tenant, agent) must NEVER be returned for another scope by
@@ -55,13 +55,13 @@ export interface TripleScope {
 /**
  * The Comis trust ladder, reused verbatim (the `memories.trust_level` CHECK set
  * and the `score.ts` trustWeight order: system 1.0 > learned 0.5 > external
- * 0.0). The invalidation comparison (KG-02) ranks on exactly this ladder — trust
+ * 0.0). The invalidation comparison ranks on exactly this ladder — trust
  * is a HARD boundary there, never a soft weight.
  */
 export type TripleTrust = "system" | "learned" | "external";
 
 /**
- * A bi-temporal S/P/O assertion to write (KG-01). Subject/predicate/object are
+ * A bi-temporal S/P/O assertion to write. Subject/predicate/object are
  * conversation-derived (untrusted) text — DATA, never SQL; the adapter binds
  * every value as a `?` parameter.
  */
@@ -72,7 +72,7 @@ export interface TripleInput {
   predicate: string;
   /** The triple object (the value / counterpart). */
   object: string;
-  /** Trust on the Comis ladder — drives the trust-first invalidation (KG-02). */
+  /** Trust on the Comis ladder — drives the trust-first invalidation. */
   trust: TripleTrust;
   /** Valid-time start: epoch ms when the fact became true in the world. */
   tValidStart: number;
@@ -88,7 +88,7 @@ export interface TripleInput {
 
 export interface TripleStorePort {
   /**
-   * WRITE PATH (KG-02). Upsert an S/P/O assertion with trust-first
+   * WRITE PATH. Upsert an S/P/O assertion with trust-first
    * single-current-truth invalidation: a contradiction (same tenant+agent+
    * subject+predicate, DIFFERENT object, incumbent current-truth) soft-closes the
    * LOWER-trust row (`t_valid_end`/`expired_at` set); equal-trust ties break by
@@ -97,20 +97,20 @@ export interface TripleStorePort {
    * and surfaced as a conflict). NEVER deletes — raw facts are retained for as-of
    * history. Deterministic, one synchronous transaction.
    *
-   * NOTE (Plan 100-01 skeleton): this first cut is INSERT-ONLY (always writes a
+   * NOTE (skeleton): this first cut is INSERT-ONLY (always writes a
    * current-truth row, no contradiction handling). The trust-first invalidation
-   * transaction is implemented in Plan 100-02.
+   * transaction is implemented in a later cut.
    */
   upsertTriple(triple: TripleInput, scope: TripleScope): Promise<Result<void, Error>>;
 
   /**
-   * READ PATH (KG-03). As-of time-travel in TWO temporal axes (the
+   * READ PATH. As-of time-travel in TWO temporal axes (the
    * bi-temporal pair). `mode` selects which clock the instant `t` indexes; both
    * are scoped to (tenant, agent) and hydrate the rows back as `TripleInput`:
    *
    * - `"valid"` (DEFAULT) — VALID-TIME: "what was BELIEVED true at instant `t`":
    *   `t_valid_start <= t AND (t_valid_end IS NULL OR t_valid_end > t)`. (A 2-arg
-   *   call is byte-identical to Plan-01 valid-time behaviour — the valid-time
+   *   call is byte-identical to the original valid-time behaviour — the valid-time
    *   callers are unbroken.)
    * - `"txn"` — TXN/RECORD-TIME: "what the system had RECORDED as of `t`":
    *   `t_ingested <= t AND (expired_at IS NULL OR expired_at > t)`. Answers a
@@ -129,10 +129,10 @@ export interface TripleStorePort {
   ): Promise<Result<TripleInput[], Error>>;
 
   /**
-   * READ PATH (KG-03). The DEFAULT-RECALL current-truth read: only the rows
+   * READ PATH. The DEFAULT-RECALL current-truth read: only the rows
    * believed NOW — `t_valid_end IS NULL` — scoped to (tenant, agent), capped by
    * `cap` (a sane default bound). This DEFAULT-FILTERS expired/invalidated edges
-   * (superseded losers AND recorded-but-not-believed rows, which the KG-02 write
+   * (superseded losers AND recorded-but-not-believed rows, which the write
    * path soft-closes / records already-closed) OUT of normal recall — the fix for
    * Graphiti's opt-in-filter stale-fact leak, where the default search path
    * leaks expired edges unless a filter is explicitly requested. As-of history is
@@ -145,7 +145,7 @@ export interface TripleStorePort {
   ): Promise<Result<TripleInput[], Error>>;
 
   /**
-   * READ PATH (KG-04). Bounded recursive-CTE neighbourhood spread from the seed
+   * READ PATH. Bounded recursive-CTE neighbourhood spread from the seed
    * subjects over current-truth forward edges (subject → object,
    * `t_valid_end IS NULL`), scoped to (tenant, agent), hydrated as
    * `MemorySearchResult[]` so it fuses directly into the existing weighted RRF.
@@ -154,8 +154,8 @@ export interface TripleStorePort {
    * Returns an empty array when there are no seeds or no edges (the no-op that
    * leaves RRF ranking byte-identical).
    *
-   * NOTE (Plan 100-01 skeleton): this first cut returns `[]`. The bounded
-   * recursive-CTE spread is implemented in Plan 100-04.
+   * NOTE (skeleton): this first cut returns `[]`. The bounded
+   * recursive-CTE spread is implemented in a later cut.
    */
   spreadLane(
     seedSubjects: string[],

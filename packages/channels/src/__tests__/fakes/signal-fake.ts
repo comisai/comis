@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeSignalAdapter — a deterministic, clock-free `ChannelPort` test double for
- * the Signal DeleteAndRepost renderer (CHAN-06 / CHAN-11; §18.1 "fake adapter
+ * the Signal DeleteAndRepost renderer (§18.1 "fake adapter
  * records every method call").
  *
- * Mirrors `createFakeTelegramAdapter` (the Phase-71 template) but for the
+ * Mirrors `createFakeTelegramAdapter` (the canonical template) but for the
  * DeleteAndRepost shape:
  *   - mints `sig-msg-N` ids (Signal's determinism source for byte-stable
  *     fixtures — Pitfall 2; clock-free, no wall-time call that would flap),

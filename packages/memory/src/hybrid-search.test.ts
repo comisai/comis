@@ -626,7 +626,7 @@ describe("RRF score normalization", () => {
   });
 });
 
-// ── occurredAtRange filter (IQ-03b) ──────────────────────────────────
+// ── occurredAtRange filter ───────────────────────────────────────────
 //
 // The read-side NL temporal-range filter ANDs `occurred_at BETWEEN ? AND ?`
 // onto the ALREADY-scoped post-fusion WHERE (bound params; never widens scope —
@@ -634,7 +634,7 @@ describe("RRF score normalization", () => {
 // (no event time ⇒ not in any range). RED on the pre-patch hybridSearch (it
 // ignores the range field entirely).
 
-describe("hybridSearch occurredAtRange (IQ-03b)", () => {
+describe("hybridSearch occurredAtRange", () => {
   let db: Database.Database;
   const DAY = 86_400_000;
   const T0 = 100 * DAY;
@@ -675,7 +675,7 @@ describe("hybridSearch occurredAtRange (IQ-03b)", () => {
     expect(ids).not.toContain("untimed"); // NULL ⇒ not in any range
   });
 
-  it("the range ANDs onto the (tenant_id, agent_id) scope — never widens it (T-102-03-02)", () => {
+  it("the range ANDs onto the (tenant_id, agent_id) scope — never widens it", () => {
     // Two agents, both with an in-window row at the SAME occurred_at.
     insertMemory(db, "mine", "shared cat token", {
       tenantId: "default",

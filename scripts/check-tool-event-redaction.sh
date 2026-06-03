@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# CI grep gate — emit-site redaction lock (AGENT-TRANSPARENCY-SPEC §16.1, EVT-08).
+# CI grep gate — emit-site redaction lock (AGENT-TRANSPARENCY-SPEC §16.1).
 #
-# THE durable regression lock for SEC-01/02/03 at the producer boundary. Every
+# THE durable regression lock for tool-param redaction at the producer boundary. Every
 # `eventBus.emit("tool:executed", …)` / `eventBus.emit("tool:started", …)` site
 # under `packages/*/src/` that forwards a `params` field MUST also call
 # `redactValue(...)` in the SAME file — so raw tool params (secrets, message
@@ -13,7 +13,7 @@
 # tool:timeout declaration has no params field).
 #
 # A NEW or refactored emit site that forwards raw params without a same-file
-# redaction call re-opens the documented `tool-audit.ts:77` leak (T-70-06-02);
+# redaction call re-opens the documented `tool-audit.ts:77` leak;
 # this gate fails CI on exactly that.
 #
 # Usage:

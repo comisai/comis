@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the local ACP bounded queue (ACP-02, spec §5.1 line 717).
+ * RED test for the local ACP bounded queue (spec §5.1 line 717).
  *
  * Fails on pre-patch code: `./acp-bounded-queue.js` does not exist yet.
  *
@@ -8,7 +8,7 @@
  * (cannot import `@comis/observability` from gateway — boundary, see
  * `packages/gateway/package.json` deps = core + shared only). The one delta
  * from the observability queue is the default capacity: 256 for the ACP
- * renderer (observability defaults to 64), per success criterion #2.
+ * renderer (observability defaults to 64).
  *
  * Behavior under test:
  *   - default capacity 256; pushing 260 items keeps the newest 256 and
@@ -29,7 +29,7 @@ function makeItem(seq: number): Item {
   return { seq };
 }
 
-describe("createAcpBoundedQueue (ACP-02 / spec §5.1 line 717)", () => {
+describe("createAcpBoundedQueue (spec §5.1 line 717)", () => {
   it("defaults to capacity 256 and FIFO-drops the oldest items past 256", () => {
     const queue = createAcpBoundedQueue<Item>();
     for (let seq = 0; seq < 260; seq++) {

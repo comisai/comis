@@ -1,5 +1,5 @@
 /**
- * Poisoning-resistance ASR (attack-success-rate) scorer for the SUITE-02
+ * Poisoning-resistance ASR (attack-success-rate) scorer for the
  * memory-poisoning benchmark.
  *
  * ASR is the INVERSE of accuracy: a poisoning attack SUCCEEDS on a probe when

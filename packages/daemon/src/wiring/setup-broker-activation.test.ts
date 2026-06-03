@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * INTEG-03 activation seam tests: brokerContext on ToolsDeps + conditional
+ * Activation seam tests: brokerContext on ToolsDeps + conditional
  * wiring into createExecTool (network: broker-only, secureCredentialHome, brokerSpawnEnv).
  *
  * RED phase: ToolsDeps.brokerContext does not exist yet — tests fail to compile.
  * GREEN phase: add brokerContext to ToolsDeps + conditional wiring in assembleToolsForAgent.
  *
- * Tests T-03-1..T-03-6 cover:
- *   T-03-1: sandboxCfg.network.mode === "broker-only" when brokerContext present
- *   T-03-2: brokerSpawnEnv.HTTPS_PROXY contains broker tcpPort when brokerContext present
- *   T-03-3: brokerSpawnEnv.placeholders contains the placeholder mapping
- *   T-03-4: real secret absent from spawn env; COMIS_BROKER_TOKEN present (security invariant)
- *   T-03-5: brokerContext undefined → sandboxCfg.network undefined, no brokerSpawnEnv
- *   T-03-6: brokerContext undefined → HTTPS_PROXY, NODE_EXTRA_CA_CERTS, COMIS_BROKER_TOKEN absent
+ * Tests cover:
+ *   - sandboxCfg.network.mode === "broker-only" when brokerContext present
+ *   - brokerSpawnEnv.HTTPS_PROXY contains broker tcpPort when brokerContext present
+ *   - brokerSpawnEnv.placeholders contains the placeholder mapping
+ *   - real secret absent from spawn env; COMIS_BROKER_TOKEN present (security invariant)
+ *   - brokerContext undefined → sandboxCfg.network undefined, no brokerSpawnEnv
+ *   - brokerContext undefined → HTTPS_PROXY, NODE_EXTRA_CA_CERTS, COMIS_BROKER_TOKEN absent
  *
  * Separate file from setup-tools.test.ts (which is at 1705 lines, near cap).
  * @module
@@ -96,7 +96,7 @@ vi.mock("@comis/skills/tools", () => ({
   createFileStateTracker: mockCreateFileStateTracker,
   sanitizeImageForApi: mockSanitizeImageForApi,
   createMediaPersistenceService: mockCreateMediaPersistenceService,
-  // Terminal-driver (v2.11) wiring deps consumed by setup-terminal-tools.ts.
+  // Terminal-driver wiring deps consumed by setup-terminal-tools.ts.
   createTerminalSessionRegistry: vi.fn(() => ({
     create: vi.fn(),
     read: vi.fn(),
@@ -117,7 +117,7 @@ vi.mock("@comis/skills/tools", () => ({
   createTerminalSessionWaitTool: vi.fn(() => ({ name: "terminal_session_wait", execute: vi.fn() })),
   createTerminalSessionStatusTool: vi.fn(() => ({ name: "terminal_session_status", execute: vi.fn() })),
   createTerminalSessionResizeTool: vi.fn(() => ({ name: "terminal_session_resize", execute: vi.fn() })),
-  // P4 OPS-03/06: the per-session caps factory the terminal wiring constructs ONCE per agent.
+  // The per-session caps factory the terminal wiring constructs ONCE per agent.
   createSessionCaps: vi.fn(() => ({
     startSession: vi.fn(),
     consumeRequest: vi.fn(() => undefined),
@@ -255,7 +255,7 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
   };
 }
 
-/** Canonical brokerContext fixture for T-03-1..T-03-4. */
+/** Canonical brokerContext fixture for the broker-present tests. */
 function createBrokerContext(): BrokerContextDeps {
   return {
     tcpPort: 9999,
@@ -266,7 +266,7 @@ function createBrokerContext(): BrokerContextDeps {
   };
 }
 
-/** Fake SandboxProvider so sandboxCfg is constructed (T-03-1 needs network field). */
+/** Fake SandboxProvider so sandboxCfg is constructed (the broker-present test needs the network field). */
 function createFakeSandboxProvider() {
   return {
     name: "fake-sandbox",
@@ -305,7 +305,7 @@ async function assembleAndCapture(agentId: string, deps: ToolsDeps): Promise<Rec
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("INTEG-03 — brokerContext activation seam (T-03-1..T-03-6)", () => {
+describe("brokerContext activation seam", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedExecToolDeps.length = 0;
@@ -325,8 +325,8 @@ describe("INTEG-03 — brokerContext activation seam (T-03-1..T-03-6)", () => {
     capturedExecToolDeps.length = 0;
   });
 
-  // T-03-1: sandboxCfg.network.mode === "broker-only" and secureCredentialHome === true
-  it("T-03-1: brokerContext present → createExecTool receives sandboxConfig with network.mode === 'broker-only' and secureCredentialHome === true", async () => {
+  // sandboxCfg.network.mode === "broker-only" and secureCredentialHome === true
+  it("brokerContext present → createExecTool receives sandboxConfig with network.mode === 'broker-only' and secureCredentialHome === true", async () => {
     const brokerCtx = createBrokerContext();
     // sandboxProvider must be present so sandboxCfg is constructed (guards: enabled === "always" && sandboxProvider)
     const deps = createMinimalDeps({ brokerContext: brokerCtx, sandboxProvider: createFakeSandboxProvider() as any });
@@ -345,8 +345,8 @@ describe("INTEG-03 — brokerContext activation seam (T-03-1..T-03-6)", () => {
     expect(sandboxConfig.secureCredentialHome).toBe(true);
   });
 
-  // T-03-2: brokerSpawnEnv.HTTPS_PROXY contains the broker tcpPort; HTTP_PROXY absent (WR-01)
-  it("T-03-2: brokerContext present → brokerSpawnEnv.HTTPS_PROXY contains tcpPort (9999); HTTP_PROXY absent (broker is CONNECT-only)", async () => {
+  // brokerSpawnEnv.HTTPS_PROXY contains the broker tcpPort; HTTP_PROXY absent
+  it("brokerContext present → brokerSpawnEnv.HTTPS_PROXY contains tcpPort (9999); HTTP_PROXY absent (broker is CONNECT-only)", async () => {
     const brokerCtx = createBrokerContext();
     const deps = createMinimalDeps({ brokerContext: brokerCtx });
 
@@ -362,8 +362,8 @@ describe("INTEG-03 — brokerContext activation seam (T-03-1..T-03-6)", () => {
     expect(brokerSpawnEnv.NODE_EXTRA_CA_CERTS).toBe("/tmp/broker-ca.pem");
   });
 
-  // T-03-3: brokerSpawnEnv.placeholders contains the placeholder mapping
-  it("T-03-3: brokerContext present → brokerSpawnEnv.placeholders contains { ANTHROPIC_API_KEY: 'comis-broker-placeholder' }", async () => {
+  // brokerSpawnEnv.placeholders contains the placeholder mapping
+  it("brokerContext present → brokerSpawnEnv.placeholders contains { ANTHROPIC_API_KEY: 'comis-broker-placeholder' }", async () => {
     const brokerCtx = createBrokerContext();
     const deps = createMinimalDeps({ brokerContext: brokerCtx });
 
@@ -377,8 +377,8 @@ describe("INTEG-03 — brokerContext activation seam (T-03-1..T-03-6)", () => {
     });
   });
 
-  // T-03-4: security invariant — real secret absent; COMIS_BROKER_TOKEN present
-  it("T-03-4: brokerContext present → real secret value absent from spawn env; COMIS_BROKER_TOKEN present (security invariant)", async () => {
+  // security invariant — real secret absent; COMIS_BROKER_TOKEN present
+  it("brokerContext present → real secret value absent from spawn env; COMIS_BROKER_TOKEN present (security invariant)", async () => {
     const fakeMgr = createFakeSessionManager();
     const brokerCtx: BrokerContextDeps = {
       tcpPort: 9999,
@@ -405,8 +405,8 @@ describe("INTEG-03 — brokerContext activation seam (T-03-1..T-03-6)", () => {
     expect(envJson).not.toContain("real-test-secret");
   });
 
-  // T-03-5: brokerContext undefined → sandboxCfg.network is undefined; no brokerSpawnEnv
-  it("T-03-5: brokerContext undefined → sandboxCfg.network undefined; createExecTool receives no brokerSpawnEnv", async () => {
+  // brokerContext undefined → sandboxCfg.network is undefined; no brokerSpawnEnv
+  it("brokerContext undefined → sandboxCfg.network undefined; createExecTool receives no brokerSpawnEnv", async () => {
     const deps = createMinimalDeps({ brokerContext: undefined });
 
     const execDeps = await assembleAndCapture("agent-1", deps);
@@ -426,8 +426,8 @@ describe("INTEG-03 — brokerContext activation seam (T-03-1..T-03-6)", () => {
     expect(execDeps.brokerSpawnEnv).toBeUndefined();
   });
 
-  // T-03-6: brokerContext undefined → no HTTPS_PROXY, NODE_EXTRA_CA_CERTS, COMIS_BROKER_TOKEN
-  it("T-03-6: brokerContext undefined → HTTPS_PROXY, NODE_EXTRA_CA_CERTS, COMIS_BROKER_TOKEN absent from all exec deps (no-regression)", async () => {
+  // brokerContext undefined → no HTTPS_PROXY, NODE_EXTRA_CA_CERTS, COMIS_BROKER_TOKEN
+  it("brokerContext undefined → HTTPS_PROXY, NODE_EXTRA_CA_CERTS, COMIS_BROKER_TOKEN absent from all exec deps (no-regression)", async () => {
     const deps = createMinimalDeps({ brokerContext: undefined });
 
     const execDeps = await assembleAndCapture("agent-1", deps);

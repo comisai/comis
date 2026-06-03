@@ -172,12 +172,12 @@ describe("Agent Identity: REST API and RPC Config", () => {
 
   describe("RPC Agent Config (Non-LLM)", () => {
     it(
-      "config.get does not egress the agents section (WR-03)",
+      "config.get does not egress the agents section",
       async () => {
-        // WR-03: config.get({section:"agents"}) no longer returns agent configs;
+        // config.get({section:"agents"}) no longer returns agent configs;
         // it returns only the safe default { tenantId, logLevel, gateway }. Agent
         // names like "PrimaryIdentityAgent" were previously asserted here but are
-        // no longer RPC-observable via config.get post-WR-03 (use agents.get /
+        // no longer RPC-observable via config.get (use agents.get /
         // agents.list / the REST /api/agents endpoint instead).
         let ws: WebSocket | undefined;
         try {

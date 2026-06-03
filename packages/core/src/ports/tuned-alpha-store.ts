@@ -3,10 +3,10 @@ import type { Result } from "@comis/shared";
 
 /**
  * TunedAlphaStore: the SEGREGATED hexagonal boundary for the per-(tenant, agent)
- * LEARNED ranking weights (Phase 111, Track H2 — LEARN-03). A tuned row is a
+ * LEARNED ranking weights. A tuned row is a
  * 4-tuple of the recency/temporal/proof/usefulness boost alphas, updated OFFLINE
- * by the LLM-free deterministic bandit (111-04) from the accrued FEED signal and
- * read DETERMINISTICALLY at the recall apply site (111-03) to overlay the static
+ * by the LLM-free deterministic bandit from the accrued feedback signal and
+ * read DETERMINISTICALLY at the recall apply site to overlay the static
  * `rag.scoring` config alphas.
  *
  * This is a NEW port — like MemoryUsefulnessStore / UserRepresentationStore /
@@ -14,7 +14,7 @@ import type { Result } from "@comis/shared";
  * `MemoryPort` (store/search/delete). New capabilities arrive as their own
  * segregated port. The sole adapter is in @comis/memory (it owns the `db` handle
  * and runs all SQL over the additive `tuned_alpha` table, keyed
- * `(tenant_id, agent_id)` — 111-02); the agent-side apply path (the deterministic
+ * `(tenant_id, agent_id)`); the agent-side apply path (the deterministic
  * overlay) and the offline update job consume this port TYPE from @comis/core —
  * they cannot import @comis/memory (the agent↛memory build cut). No new authority
  * is granted beyond a scoped write/read within the caller's own (tenant, agent).
@@ -29,12 +29,12 @@ import type { Result } from "@comis/shared";
  */
 
 /**
- * The 4 TUNABLE alphas (LEARN-03). The FIFTH `ScoringAlphas` boost weight (the
+ * The 4 TUNABLE alphas. The FIFTH `ScoringAlphas` boost weight (the
  * trust-level weight) is STRUCTURALLY ABSENT here — trust is frozen under tuning
- * (the OD2 ship-gate, Pitfall 1); it is sourced ONLY from static config at the
- * apply site (buildScoringAlphas, 111-03). The store table likewise has no fifth
- * (trust-weight) column (111-02). This 4-tuple is NON-NEGOTIABLE (REQUIREMENTS
- * "Out of Scope: a bandit that can move the trust weight"): a bandit must never
+ * (the ship-gate); it is sourced ONLY from static config at the
+ * apply site (buildScoringAlphas). The store table likewise has no fifth
+ * (trust-weight) column. This 4-tuple is NON-NEGOTIABLE (out of scope: a bandit
+ * that can move the trust weight): a bandit must never
  * be able to move the trust weight, so it cannot even be NAMED on the type the
  * bandit reads and writes — its literal field name is therefore deliberately
  * never written in this file (the grep-0 trust-freeze belt, asserted in
@@ -45,16 +45,16 @@ import type { Result } from "@comis/shared";
 export interface TunedAlphaVector {
   /** Recency boost weight (live via createdAt) — tunable. */
   recencyAlpha: number;
-  /** Event-time proximity boost weight (TEMP-05) — tunable. */
+  /** Event-time proximity boost weight — tunable. */
   temporalAlpha: number;
-  /** Proof boost weight (CONS-08) — tunable. */
+  /** Proof boost weight — tunable. */
   proofAlpha: number;
-  /** Usefulness boost weight (FEED-03; bounded used-rate) — tunable. */
+  /** Usefulness boost weight (bounded used-rate) — tunable. */
   usefulnessAlpha: number;
 }
 
 /**
- * The isolation boundary for every tuned-alpha operation (LEARN-03). Every
+ * The isolation boundary for every tuned-alpha operation. Every
  * statement in the sole adapter filters on `(tenantId, agentId)` and the table
  * PRIMARY KEY keys on `(tenant_id, agent_id)` — this is a load-bearing SECURITY
  * scope in a multi-agent DB, not a nicety: a tuned vector written under one
@@ -77,31 +77,30 @@ export interface TunedAlphaScope {
 
 export interface TunedAlphaStore {
   /**
-   * WRITE PATH (LEARN-03). Upsert the tuned alpha vector for the caller's
+   * WRITE PATH. Upsert the tuned alpha vector for the caller's
    * (tenant, agent) scope. The adapter binds every value as a `?` parameter and
    * is idempotent (INSERT ... ON CONFLICT DO UPDATE — one row per scope); the
    * `updated_at` timestamp comes from `scope.now`. Called ONLY by the offline
    * update job (the bandit) — never on the recall hot path.
    *
-   * NOTE (Plan 111-01): this is the type contract only. The SQLite adapter is
-   * implemented in Plan 111-02; the offline bandit job that produces vectors
-   * lands in Plan 111-04.
+   * NOTE: this is the type contract only. The SQLite adapter and the offline
+   * bandit job that produces vectors land in later cuts.
    */
   upsert(vector: TunedAlphaVector, scope: TunedAlphaScope): Promise<Result<void, Error>>;
 
   /**
-   * READ PATH (LEARN-03). The deterministic apply-site read: the tuned alpha
+   * READ PATH. The deterministic apply-site read: the tuned alpha
    * vector for the caller's (tenant, agent) scope ONLY. Takes
    * `Omit<TunedAlphaScope, "now">` — no clock is needed to read (mirror
    * UserRepresentationStore.read). Returns `undefined` when no tuned row exists
    * for `(tenant, agent)` — the apply site then falls back to the static config
-   * alphas (the default-OFF byte-identity no-op, Pitfall 3). This is the
-   * deterministic, LLM-free read the overlay (Plan 111-03) consumes — the recall
+   * alphas (the default-OFF byte-identity no-op). This is the
+   * deterministic, LLM-free read the overlay consumes — the recall
    * hot path stays deterministic + LLM-free (the milestone's #1 binding
    * constraint).
    *
-   * NOTE (Plan 111-01): this is the type contract only; the scoped SELECT is
-   * implemented in Plan 111-02.
+   * NOTE: this is the type contract only; the scoped SELECT is
+   * implemented in a later cut.
    */
   read(scope: Omit<TunedAlphaScope, "now">): Promise<Result<TunedAlphaVector | undefined, Error>>;
 }

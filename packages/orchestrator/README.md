@@ -1,6 +1,6 @@
 # @comis/orchestrator
 
-Inbound message orchestration, execution coordination, and cross-session messaging for the [Comis](https://github.com/comisai/comis) platform. Extracted from `@comis/agent` and `@comis/channels` in the v2.0 architecture redesign so that channels remain transport-only and agent remains executor-only.
+Inbound message orchestration, execution coordination, and cross-session messaging for the [Comis](https://github.com/comisai/comis) platform. Extracted from `@comis/agent` and `@comis/channels` in the architecture redesign so that channels remain transport-only and agent remains executor-only.
 
 ## What's Inside
 

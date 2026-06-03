@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED tests for checkStorageModeConsistency (REQ-09).
+ * RED tests for checkStorageModeConsistency.
  *
  * These tests fail with "Cannot find module './setup-storage-mismatch-warn.js'"
- * until Plan 02 creates the implementation. That failure IS the correct RED state.
+ * until the implementation is created. That failure IS the correct RED state.
  *
  * Test coverage:
  *   Group A — Encrypted mode active: probe file-side for stranded files

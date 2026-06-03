@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the ACP approval bridge (ACP-04, spec §6.4 / §16.8 / §19.6 M6).
+ * RED test for the ACP approval bridge (spec §6.4 / §16.8 / §19.6).
  *
  * Fails on pre-patch code: `./acp-approval-bridge.js` does not exist.
  *
@@ -8,19 +8,19 @@
  *   - A `kind:"approval"` ActivityEvent with a 3-choice `approval` block
  *     (`approve`/`deny`/`details`) triggers EXACTLY ONE
  *     `connection.requestPermission(...)` call on the retained per-session
- *     connection (the emission ACP-04 mandates).
+ *     connection (the single emission the bridge mandates).
  *   - The `options` array carries one entry per choice with `optionId ===
  *     choice.id`, `name === choice.defaultLabel`, and `kind` mapped
  *     (`approve→"allow_once"`, `deny→"reject_once"`, `details→"allow_once"`).
  *   - `requestPermission` targets `sessionId ===
  *     parseFormattedSessionKey(sessionKey).peerId` and `toolCall.toolCallId ===`
  *     the event's `toolCallId` (or `activityId` fallback).
- *   - §19.6 M6 SECURITY: the `toolCall` carries NO `rawInput`/`rawOutput`, and
+ *   - §19.6 SECURITY: the `toolCall` carries NO `rawInput`/`rawOutput`, and
  *     `JSON.stringify(req)` contains no injected raw-param sentinel (the source
  *     ApprovalCorrelation deliberately has no full request id — only `shortId`).
  *   - The SDK outcome (`{ outcome:"selected", optionId:"approve" }`) is READ and
  *     LOGGED via the injected logger — the bridge does not throw and does NOT
- *     route into a (non-existent) approval gate this phase (emit-and-log).
+ *     route into a (non-existent) approval gate (emit-and-log).
  *   - When `getConnection(sessionId)` returns undefined the bridge no-ops.
  *   - A non-approval event (`kind:"tool"`) is ignored (no `requestPermission`).
  */
@@ -53,14 +53,14 @@ const ACP_SESSION_KEY = formatSessionKey({
 /**
  * A sentinel we sweep the serialized request for. ApprovalCorrelation has no
  * field that could carry it (only shortId/choices), so it must never appear —
- * the assertion proves the bridge invents no raw-param surface (§19.6 M6).
+ * the assertion proves the bridge invents no raw-param surface (§19.6).
  */
 const RAW_PARAM_SENTINEL = "RAW_SECRET_xyz789";
 
 /**
  * Hand-built fake AgentSideConnection (AGENTS.md §2.5 — only the members the
  * SUT touches). `requestPermission` resolves to the "selected" outcome and
- * captures every request for the options/M6 assertions.
+ * captures every request for the options/security assertions.
  */
 function makeFakeConnection(): {
   connection: AgentSideConnection;
@@ -206,7 +206,7 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
-describe("createAcpApprovalBridge (ACP-04 — kind:'approval' ActivityEvent → SDK requestPermission)", () => {
+describe("createAcpApprovalBridge (kind:'approval' ActivityEvent → SDK requestPermission)", () => {
   it("invokes requestPermission exactly once for a single kind:approval event", async () => {
     const { connection } = makeFakeConnection();
     const stream = makeFakeStreamPort();
@@ -277,7 +277,7 @@ describe("createAcpApprovalBridge (ACP-04 — kind:'approval' ActivityEvent → 
     );
   });
 
-  it("never sets rawInput/rawOutput or leaks a raw-param sentinel in the request (§19.6 M6)", async () => {
+  it("never sets rawInput/rawOutput or leaks a raw-param sentinel in the request (§19.6)", async () => {
     const { connection, requests } = makeFakeConnection();
     const stream = makeFakeStreamPort();
     const bridge = createAcpApprovalBridge({
@@ -372,7 +372,7 @@ describe("createAcpApprovalBridge (ACP-04 — kind:'approval' ActivityEvent → 
     expect(stream.unsubscribeCalls()).toBe(1);
   });
 
-  it("logs a rejected requestPermission and still serves a later approval (no chain poisoning, WR-01)", async () => {
+  it("logs a rejected requestPermission and still serves a later approval (no chain poisoning)", async () => {
     // A connection whose FIRST requestPermission rejects (IDE disconnects
     // mid-turn) then succeeds. Pre-fix: the rejected promise poisons the
     // `chain` so every later approval's `.then` callback never runs — the

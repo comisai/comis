@@ -105,8 +105,8 @@ export function buildSpawnCommand(
       readOnlyPaths: allReadOnlyPaths,
       cwd,
       tempDir,
-      // CR-02: forward network + secureCredentialHome from ExecSandboxConfig to
-      // SandboxOptions (EGRESS-01/02). Undefined = open/unsecured (no regression).
+      // Forward network + secureCredentialHome from ExecSandboxConfig to
+      // SandboxOptions. Undefined = open/unsecured (no regression).
       network: sandboxConfig.network,
       secureCredentialHome: sandboxConfig.secureCredentialHome,
     });
@@ -318,7 +318,7 @@ function buildInstallDetourEventPayload(
 } {
   const ctx = tryGetContext();
   return {
-    // WR-03: RequestContext has no `agentId` field — `userId` is the agent
+    // RequestContext has no `agentId` field — `userId` is the agent
     // identity (matches evaluateInstallDetourGate's approval-gate precedent
     // below). sessionKey is a separate formatted key and must not shadow it.
     agentId: ctx?.userId ?? "unknown",
@@ -485,12 +485,12 @@ export const VENV_SEED_LOCK_DIR = ".seed-lock";
  * Install seed packages into the workspace venv on first creation. Idempotent:
  * skips if `.seed-done` exists; no-op on empty packages.
  *
- * WR-01 concurrency: two callers passing existsSync would both spawn pip
+ * Concurrency: two callers passing existsSync would both spawn pip
  * (wasted CPU + risk on write-locked FS). The mkdir lock serializes; the
  * finally{} releases on success AND pip-failure so transient errors do not
  * wedge the venv.
  *
- * T-01-09-01: packages come from operator config validated by Zod; spawned
+ * Packages come from operator config validated by Zod; spawned
  * via explicit array args (no shell string injection).
  */
 export function ensureWarmVenvSeed(
@@ -553,7 +553,7 @@ export function buildExecEnv(deps: {
   resolvedSecretEnv?: Record<string, string>;
   sandboxConfig?: ExecSandboxConfig;
   logger?: ToolLogger;
-  /** Broker proxy env — driven-CLI spawn only; merged LAST (EGRESS-03). */
+  /** Broker proxy env — driven-CLI spawn only; merged LAST. */
   brokerSpawnEnv?: {
     HTTPS_PROXY: string;
     /** HTTP_PROXY intentionally omitted — broker is CONNECT-only (HTTPS). */
@@ -589,7 +589,7 @@ export function buildExecEnv(deps: {
     ...(resolvedSecretEnv ?? {}),
   };
   const finalEnv = sandboxConfig?.sandbox.wrapEnv?.(env as Record<string, string>, workspacePath) ?? env;
-  // Broker env LAST — driven-CLI spawns only (EGRESS-03). HTTP_PROXY optional (broker is CONNECT-only).
+  // Broker env LAST — driven-CLI spawns only. HTTP_PROXY optional (broker is CONNECT-only).
   if (deps.brokerSpawnEnv) {
     const { HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, placeholders } = deps.brokerSpawnEnv;
     Object.assign(finalEnv, { HTTPS_PROXY, NODE_EXTRA_CA_CERTS, ...placeholders });

@@ -42,7 +42,7 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 describe("tool-metadata-registry -- registry count", () => {
   it("registers exactly 60 unique tools (registry count assertion)", () => {
     // 60 = 51 prior tools + the nine terminal_session_* names registered
-    // never-export (SEC-08). 51 = 50 prior + providers_manage (added alongside
+    // never-export. 51 = 50 prior + providers_manage (added alongside
     // the tool-entry schema metadata; it pre-existed as a tool file but was not
     // previously surfaced in the metadata registry).
     const all = getAllToolMetadata();
@@ -51,10 +51,10 @@ describe("tool-metadata-registry -- registry count", () => {
 });
 
 // ===========================================================================
-// Terminal driver — all nine tools never-export (SEC-08)
+// Terminal driver — all nine tools never-export
 // ===========================================================================
 
-describe("tool-metadata-registry -- terminal driver never-export (SEC-08)", () => {
+describe("tool-metadata-registry -- terminal driver never-export", () => {
   // The canonical nine (spec §5). All MUST be never-export: they live inside
   // Comis's trust boundary and must never reach the MCP-exported set, even the
   // six that land as stubs in later phases. The mcp-export-policy.test.ts AST
@@ -777,7 +777,7 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
     });
   });
 
-  // R11.1 follow-up — bridge-layer gate must accept the `auth` field that
+  // Bridge-layer gate must accept the `auth` field that
   // the Type.Optional schema in mcp-manage-tool.ts:62 advertises and that
   // the tool-guide instructs agents to use for OAuth-required MCP servers
   // (commit 907014f). Without "auth" in validKeys the schema-validator
@@ -858,7 +858,7 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
 // ===========================================================================
 
 // ===========================================================================
-// Failure Detectors (UX-03, §16.10/§16.11)
+// Failure Detectors (§16.10/§16.11)
 //
 // Per-tool failureDetector bodies registered (via spread-merge) on
 // web_search + web_fetch. They are consulted in pi-event-bridge.ts BEFORE
@@ -966,7 +966,7 @@ describe("tool-metadata-registry -- failure detectors", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Purity / no-throw (T-75-03-04): malformed results must not crash.
+  // Purity / no-throw: malformed results must not crash.
   // -------------------------------------------------------------------------
 
   it("both detectors are pure and never throw on malformed results", () => {

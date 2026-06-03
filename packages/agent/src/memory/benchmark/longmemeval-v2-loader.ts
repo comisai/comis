@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure LongMemEval-V2 dataset loader (SUITE-08 — the academic-core HEADLINE
- * loader).
+ * Pure LongMemEval-V2 dataset loader (the academic-core HEADLINE loader).
  *
  * LongMemEval-V2 (HuggingFace `LongMemEval`, the v2 / `_s` split; upstream
  * github.com/xiaowu0162/LongMemEval) shares the v1 fixture family — each
@@ -17,9 +16,9 @@
  * without coupling the two files.
  *
  * The full LongMemEval-V2 corpus is OPERATOR-PLACED under `$COMIS_BENCH_DATA`
- * (documented in Plan 08's DATASETS.md) and is NEVER committed — only the tiny
+ * (documented in DATASETS.md) and is NEVER committed — only the tiny
  * neutral-placeholder fixture in `__fixtures__/longmemeval-v2-sample.json` ships
- * with the repo (licensing + leak hygiene, T-99-07-05).
+ * with the repo (licensing + leak hygiene).
  *
  * Like v1, it STRIPS the per-turn `has_answer` eval-leak flag before emitting any
  * document content, and records `answer_session_ids` per question so the
@@ -32,13 +31,12 @@
  *
  * SECURITY (ASVS V5): the dataset JSON is UNTRUSTED external input. Every field
  * is read defensively (type-guarded before access) and a structural mismatch
- * returns `err`, never throws (T-99-07). Outputs are built with LITERAL keys only
+ * returns `err`, never throws. Outputs are built with LITERAL keys only
  * (`stripHasAnswer` never indexes a write by a dataset-supplied key) so an
- * attacker-shaped `__proto__`/`constructor` session id cannot pollute
- * (T-99-07-01). No `eval` / `Function` — dataset content is only ever
- * `JSON.stringify`'d into an opaque `content` string, never interpreted
- * (T-99-07-04 / AGENTS.md §2.2). The anchored, bounded date regex is ReDoS-safe
- * (T-99-07-02).
+ * attacker-shaped `__proto__`/`constructor` session id cannot pollute. No `eval`
+ * / `Function` — dataset content is only ever `JSON.stringify`'d into an opaque
+ * `content` string, never interpreted (AGENTS.md §2.2). The anchored, bounded
+ * date regex is ReDoS-safe.
  *
  * @module
  */
@@ -71,7 +69,7 @@ export interface LongMemEvalV2Parsed {
    * separate channels: `category` (the LongMemEval `question_type`, used to
    * select the per-category judge rubric) and `answer` (the gold answer the
    * judge grades against). Both ride HERE on the question-list channel ONLY —
-   * never in `docs[].content` (the anti-leak invariant, T-99-07-03): the gold is
+   * never in `docs[].content` (the anti-leak invariant): the gold is
    * read directly by the judge and is never ingested into the store.
    */
   questions: Array<{ questionId: string; query: string; category: string; answer: string }>;
@@ -81,8 +79,8 @@ export interface LongMemEvalV2Parsed {
 
 /**
  * Drop `has_answer` (and any other non-`{role,content}` label key) from each
- * turn before serialize. NEVER serialize `has_answer` (the anti-leak invariant,
- * T-99-07-03).
+ * turn before serialize. NEVER serialize `has_answer` (the anti-leak
+ * invariant).
  *
  * Builds each output with LITERAL keys only — a dataset-supplied key is never
  * used to index a write, so `__proto__`/`constructor` cannot pollute.
@@ -109,7 +107,7 @@ function daysInUtcMonth(year: number, monthIdx: number): number {
  * Parse the LongMemEval `"YYYY/MM/DD (Day) HH:MM"` date form to epoch ms.
  *
  * Anchored, bounded regex (`^...$`, fixed-width classes, no nested quantifiers)
- * -> linear-time, no ReDoS (T-99-07-02). Builds the epoch with `Date.UTC(...)`
+ * -> linear-time, no ReDoS. Builds the epoch with `Date.UTC(...)`
  * (a static-method call, NOT a flagged global). Returns `err` (no throw) when the
  * regex does not match OR a component is out of range: `Date.UTC` silently ROLLS
  * OVER out-of-range-but-numeric components, so every component is range-checked
@@ -235,7 +233,7 @@ export function loadLongMemEvalV2(raw: unknown): Result<LongMemEvalV2Parsed, Err
 }
 
 /**
- * Load a FULL LongMemEval-V2 dataset (SUITE-08, full-set half). The operator-placed
+ * Load a FULL LongMemEval-V2 dataset (full-set half). The operator-placed
  * file is an ARRAY of question items; a single item object is also accepted
  * (back-compat with the vendored single-item fixture). Each item is parsed by
  * {@link loadLongMemEvalV2}.

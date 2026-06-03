@@ -33,14 +33,14 @@ describe("InfraEvents payload structure", () => {
   });
 
   // -------------------------------------------------------------------------
-  // v2.5 Agent Transparency — approval:requested shortId/traceId (EVT-05)
+  // Agent Transparency — approval:requested shortId/traceId
   //
   // §4.2 / §6.4.1: the gate mints a short, renderer-safe id and emits it on
-  // approval:requested. shortId is REQUIRED (M0 test, spec §17.1); traceId is
+  // approval:requested. shortId is REQUIRED (spec §17.1); traceId is
   // optional because restorePending() preserves shortId but may omit traceId.
-  // The SOLE emit site (approval-gate.ts) that supplies shortId lands in plan
-  // 70-12 — this plan only declares the required field. These cases fail to
-  // compile on the pre-patch type (shortId absent) — RED proof.
+  // The SOLE emit site (approval-gate.ts) supplies shortId — this schema only
+  // declares the required field. These cases fail to compile on the pre-patch
+  // type (shortId absent) — RED proof.
   // -------------------------------------------------------------------------
 
   it("approval:requested requires shortId and accepts an optional traceId", () => {
@@ -477,7 +477,7 @@ describe("InfraEvents payload structure", () => {
     expect(received.statusCode).toBe(413);
   });
 
-  it('broker:denied delivers "ws_upgrade_not_supported" reason with statusCode 501 (EGRESS-04)', () => {
+  it('broker:denied delivers "ws_upgrade_not_supported" reason with statusCode 501', () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     // Compile-time assertion: the literal "ws_upgrade_not_supported" must be

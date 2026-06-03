@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * APV-07 signing-secret lifecycle + interactive-callback composition seam.
+ * Signing-secret lifecycle + interactive-callback composition seam.
  *
  * The 32-byte `activity.interactiveCallbackSigningSecret` is the keystone of every
  * signed channel callback: the renderers sign `callback_data` with it (via the
@@ -17,7 +17,7 @@
  *     time-bounded). A corrupted/wrong-key store (getDecrypted error) also falls
  *     back to a fresh in-memory secret rather than crashing boot.
  *
- * The secret value NEVER appears in a log line (T-73-31); only a boolean
+ * The secret value NEVER appears in a log line; only a boolean
  * "generated vs read" + the source is logged. The secret name is on the
  * `platformSecretNames` deny surface (see `INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME`
  * in `@comis/core`) so user-facing secret-ref tools can never resolve it.
@@ -25,7 +25,7 @@
  * `bindSignCallbackData` turns the resolved secret into the `SignCallbackData`
  * closure the channel renderers consume (delegating to `@comis/core`'s
  * `signCallbackData`) — the secret is closure-captured and never crosses into the
- * channels package (Pitfall 5 / T-73-16).
+ * channels package as a value.
  *
  * @module
  */
@@ -85,7 +85,7 @@ export function resolveInteractiveCallbackSigningSecret(
   }
 
   const existing = secretStore.getDecrypted(INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME);
-  // WR-03: treat an EMPTY string the same as absent. HMAC accepts an empty key, so a
+  // Treat an EMPTY string the same as absent. HMAC accepts an empty key, so a
   // degenerate/hand-edited store row decrypting to "" would not break verification —
   // it would collapse the keyspace to a publicly-computable constant (empty key),
   // making every callback forgeable. Reject it so the regenerate-and-persist path runs.
@@ -150,7 +150,7 @@ export function resolveInteractiveCallbackSigningSecret(
 /**
  * Bind a resolved signing secret into the `SignCallbackData` closure the channel
  * renderers consume. The secret is closure-captured here at the composition root
- * and never passed into the channels package as a value (Pitfall 5 / T-73-16).
+ * and never passed into the channels package as a value.
  */
 export function bindSignCallbackData(secret: string): SignCallbackData {
   return (choice, shortId) => signCallbackData(secret, choice, shortId);
@@ -163,7 +163,7 @@ function gatewayBaseUrl(gateway: AppConfig["gateway"]): string {
 }
 
 /**
- * The interactive-callback composition-root bundle (73-10). Threaded from the
+ * The interactive-callback composition-root bundle. Threaded from the
  * daemon into the channel renderers + the gateway route:
  *   - `signCallbackData` → button-capable renderers (Telegram/Discord/Slack/LINE).
  *   - `mintApprovalLink` → the Email DigestOnly renderer (single-use link).
@@ -180,8 +180,8 @@ export interface InteractiveCallbackWiring {
 }
 
 /**
- * Build the full interactive-callback wiring at the daemon composition root
- * (APV-07 / APV-10 / SEC-06). Resolves the signing secret (store or in-memory
+ * Build the full interactive-callback wiring at the daemon composition root.
+ * Resolves the signing secret (store or in-memory
  * fallback), binds the renderer signer, constructs the InteractiveCallbackRouter
  * over the SAME gate + secret + clock, and produces the Email single-use link
  * minter + the gateway-route `resolveApproval` that consumes a minted token.

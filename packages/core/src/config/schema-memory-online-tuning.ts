@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Offline online-tuning (learning-to-rank bandit) configuration schema
- * (Phase 111 — LEARN-03, Track H2).
+ * Offline online-tuning (learning-to-rank bandit) configuration schema.
  *
  * The CRON knob for the OFFLINE, DETERMINISTIC, LLM-FREE tuned-alpha bandit. OFF
  * by default — enabling it is a deliberate operator choice, NOT a default behavior
@@ -21,7 +20,7 @@
  * Mirrors {@link MemoryUsefulnessJudgeConfigSchema}'s cost-gate cron shape; kept
  * deliberately small — the bandit's only INPUT bound is the candidate-id set it
  * scores (`maxSourceMemories`); the clamp + the per-run STEP are pure-math constants
- * in `computeTunedAlphas` (111-01), NOT operator knobs (a tunable step/clamp would
+ * in `computeTunedAlphas`, NOT operator knobs (a tunable step/clamp would
  * be a footgun that could overturn trust-first). It is a `z.strictObject`, so a
  * stray field (e.g. a smuggled trust knob, or the judge's `maxSourceChars`) is
  * REJECTED at parse — the bandit's surface is structurally minimal.
@@ -33,7 +32,7 @@ import { z } from "zod";
 
 /**
  * MemoryOnlineTuningConfigSchema: Zod schema for the per-agent OFFLINE tuned-alpha
- * bandit cron (Phase 111, Track H2 — LEARN-03).
+ * bandit cron.
  *
  * Fields:
  * - enabled: opt-in (default false — a behavior gate, NOT back-compat). The bandit
@@ -48,8 +47,8 @@ import { z } from "zod";
  *   full history (the same DoS-bound intent as the judge's read axis).
  */
 export const MemoryOnlineTuningConfigSchema = z.strictObject({
-  /** Enable the periodic OFFLINE tuned-alpha bandit for this agent. Default: true (v1 opt-out
-   *  posture, v2.9 increment 2). Keyless/deterministic, but in the operator-facing cost-feature
+  /** Enable the periodic OFFLINE tuned-alpha bandit for this agent. Default: true (opt-out
+   *  posture). Keyless/deterministic, but in the operator-facing cost-feature
    *  set — force-disabled when `memory.costFeatures.enabled: false` for a single off-switch. */
   enabled: z.boolean().default(true),
   /** Cron schedule for bandit runs. Default: daily at 08:00 UTC (AFTER the judge's 07:00). */

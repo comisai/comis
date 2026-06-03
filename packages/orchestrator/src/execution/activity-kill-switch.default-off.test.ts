@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * activity-kill-switch.default-off.test — WIRE-07 fail-closed default.
+ * activity-kill-switch.default-off.test — fail-closed default.
  *
  * The rollout-barrier safety property: a rendererKey with NO entry in the
  * `activity.channels` map is treated as disabled. The schema defaults
@@ -137,10 +137,10 @@ function makeKillSwitchDeps(backing: KillSwitchValue, renderer: RecordingRendere
 }
 
 // ---------------------------------------------------------------------------
-// WIRE-07 — fail-closed default (missing channels entry = disabled)
+// Fail-closed default (missing channels entry = disabled)
 // ---------------------------------------------------------------------------
 
-describe("createActivityTurnCoordinator — WIRE-07 fail-closed default", () => {
+describe("createActivityTurnCoordinator — fail-closed default", () => {
   it("suppresses renderer.apply when the renderer has no channels entry (fail-closed)", () => {
     const renderer = makeRenderer();
     const applySpy = vi.spyOn(renderer, "apply");

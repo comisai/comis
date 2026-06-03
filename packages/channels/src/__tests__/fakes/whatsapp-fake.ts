@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeWhatsAppAdapter — a deterministic, clock-free `ChannelPort` test double for
- * the WhatsApp windowed EditPlace renderer (CHAN-04 / CHAN-05; §18.1 "fake adapter
+ * the WhatsApp windowed EditPlace renderer (§18.1 "fake adapter
  * records every method call").
  *
- * Mirrors `createFakeTelegramAdapter` (the 71-02 canonical fake) but:
+ * Mirrors `createFakeTelegramAdapter` (the canonical fake) but:
  *   - mints `wa-msg-N` ids (WhatsApp's determinism source for byte-stable
  *     fixtures — Pitfall 2), and
  *   - exposes a baileys-shaped error-injection seam. baileys surfaces an

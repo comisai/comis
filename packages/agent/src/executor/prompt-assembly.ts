@@ -226,7 +226,7 @@ export function buildRecallTrace(
   cfg: { enabled?: boolean; filePath?: string; maxFileBytes?: number } | undefined,
   agentId: string,
   sessionId: string,
-  // WR-02: resolve the recorder's containment base from the SAME data-dir
+  // Resolve the recorder's containment base from the SAME data-dir
   // source the memory.recall_trace reader uses (handler: `deps.dataDir ??
   // ~/.comis`). Hardcoding os.homedir()/.comis made the writer and reader point
   // at different files under a non-default COMIS_DATA_DIR, so the diagnostic
@@ -234,7 +234,7 @@ export function buildRecallTrace(
   // available there; mirrors how cacheTrace forwards `config.dataDir` as its
   // confinedBaseDir).
   dataDir?: string,
-  // WR-01: thread the REAL scope into the recorder envelope so on-disk records
+  // Thread the REAL scope into the recorder envelope so on-disk records
   // carry the authoritative `sessionKey` + `tenantId`. Production wiring used to
   // pass NO envelope, so records had neither field — the handler's session
   // selector (rec.sessionKey) and tenant scope-filter (rec.tenantId) were dead
@@ -272,31 +272,31 @@ export interface PromptAssemblyParams {
     workspaceDir: string;
     /** Daemon data dir (COMIS_DATA_DIR / config.dataDir). Forwarded so the
      *  recall-trace recorder resolves its containment base from the SAME source
-     *  the memory.recall_trace reader uses (WR-02). Absent ⇒ ~/.comis. */
+     *  the memory.recall_trace reader uses. Absent ⇒ ~/.comis. */
     dataDir?: string;
     memoryPort?: MemoryPort;
     /** Optional cross-encoder reranker + timers for createMemoryRecall (default-OFF). */
     reranker?: import("@comis/core").RerankerPort;
-    /** Optional entity-associative store for createMemoryRecall's entity lane (ENT-02;
-     *  default-OFF via config.rag.entityLane). TYPE-only (the agent↛memory build cut). */
+    /** Optional entity-associative store for createMemoryRecall's entity lane
+     *  (default-OFF via config.rag.entityLane). TYPE-only (the agent↛memory build cut). */
     entityStore?: import("@comis/core").MemoryEntityStore;
-    /** Optional temporal-spread store for createMemoryRecall's 4th lane (LANES-02;
-     *  default-OFF via config.rag.lanes.temporal). TYPE-only (the agent↛memory build cut). */
+    /** Optional temporal-spread store for createMemoryRecall's 4th lane
+     *  (default-OFF via config.rag.lanes.temporal). TYPE-only (the agent↛memory build cut). */
     temporalStore?: import("@comis/core").MemoryTemporalStore;
-    /** Optional causal store for createMemoryRecall's 5th lane (EXTRACT-03;
-     *  default-OFF via config.rag.lanes.causal). TYPE-only (the agent↛memory build cut). */
+    /** Optional causal store for createMemoryRecall's 5th lane
+     *  (default-OFF via config.rag.lanes.causal). TYPE-only (the agent↛memory build cut). */
     causalStore?: import("@comis/core").MemoryCausalStore;
-    /** Optional triple store for createMemoryRecall's 6th graph-spread lane (KG-01/04;
-     *  default-OFF via config.rag.lanes.graphSpread). TYPE-only (the agent↛memory build cut). */
+    /** Optional triple store for createMemoryRecall's 6th graph-spread lane
+     *  (default-OFF via config.rag.lanes.graphSpread). TYPE-only (the agent↛memory build cut). */
     tripleStore?: import("@comis/core").TripleStorePort;
-    /** Optional embedding read store for createMemoryRecall's MMR diversity re-rank (IQ-01;
-     *  default-OFF via config.rag.mmr). TYPE-only (the agent↛memory build cut). */
+    /** Optional embedding read store for createMemoryRecall's MMR diversity re-rank
+     *  (default-OFF via config.rag.mmr). TYPE-only (the agent↛memory build cut). */
     embeddingStore?: import("@comis/core").MemoryEmbeddingStore;
-    /** Optional usefulness store for createMemoryRecall's usefulness read (FEED-03;
-     *  default-OFF via config.rag.feedback). TYPE-only (the agent↛memory build cut). */
+    /** Optional usefulness store for createMemoryRecall's usefulness read
+     *  (default-OFF via config.rag.feedback). TYPE-only (the agent↛memory build cut). */
     usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
-    /** Optional learned-alpha store for the deterministic apply overlay (LEARN-03;
-     *  default-OFF via config.rag.onlineTuning). Gated read → buildScoringAlphas overlays
+    /** Optional learned-alpha store for the deterministic apply overlay
+     *  (default-OFF via config.rag.onlineTuning). Gated read → buildScoringAlphas overlays
      *  the four non-trust weights; absent / off / no-row ⇒ no read, the static
      *  config.rag.scoring alphas pass unchanged (byte-identical recall, the cost gate).
      *  The read is a pure deterministic store.read scoped to (tenantId, agentId) — NO
@@ -304,13 +304,13 @@ export interface PromptAssemblyParams {
      *  TYPE-only (the agent↛memory build cut). */
     tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
     /** Optional per-user profile store for the LLM-free standing-block injection
-     *  (USER-03; default-OFF). Absent ⇒ no read, no push, byte-identical prompt
+     *  (default-OFF). Absent ⇒ no read, no push, byte-identical prompt
      *  (the cost gate). The agent receives the port TYPE only — the agent↛memory
      *  build cut. The read is a deterministic store.read + a pure formatter; NO
      *  model call crosses onto the recall hot path (the milestone's #1 constraint). */
     userRepresentationStore?: import("@comis/core").UserRepresentationStore;
     /** Optional channel-relationship store for the LLM-free directional standing-block
-     *  injection (SOCIAL-02 read side; default-OFF, gated on the SOCIAL-03 sign-off).
+     *  injection (read side; default-OFF, gated on the privacy-review sign-off).
      *  Absent ⇒ no read, no push, byte-identical prompt (the cost gate). The agent
      *  receives the port TYPE only — the agent↛memory build cut. The read is a
      *  deterministic store.read scoped to channelId = sessionKey.channelId + a pure
@@ -341,12 +341,12 @@ export interface PromptAssemblyParams {
     /** Event bus for sender:trust_resolved audit events. */
     eventBus?: TypedEventBus;
     /**
-     * Recall-trace writer configuration (Phase 86 / OBS-01/02). Forwarded from
+     * Recall-trace writer configuration. Forwarded from
      * AppConfig.diagnostics.recallTrace by daemon wiring (mirrors cacheTraceConfig).
      * When omitted or `enabled: false`, the recall-trace recorder is null
      * (createRecallTrace returns null), so createMemoryRecall captures nothing and
      * behaves exactly as before — recall-trace is OPT-IN (default-off). The recorder
-     * has NO raw-content slot; every payload is full-sanitized before disk (OBS-02).
+     * has NO raw-content slot; every payload is full-sanitized before disk.
      */
     recallTraceConfig?: {
       readonly enabled?: boolean;
@@ -539,7 +539,7 @@ export interface ExecutionPromptResult {
   dynamicPreamble: string;
   /** Top-1 RAG memory for inline injection adjacent to user message. */
   inlineMemory?: string;
-  /** Recalled memories (id + content) for FEED-01 turn-end attribution. Content is
+  /** Recalled memories (id + content) for turn-end attribution. Content is
    *  used IN-PROCESS by the overlap heuristic at postExecution and is NEVER
    *  logged/emitted — only the resulting ids cross the bus. Rides the RESULT object
    *  (like inlineMemory), NOT assemblerParams, so the cache-fence invariant holds. */
@@ -749,10 +749,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // 3. RAG recall via createMemoryRecall + hybrid memory injector (non-fatal).
   // `memorySections` = prompt content (retrieved sections + §7.3 guidance block when
   // present); the `retrieved*` accumulators are telemetry truth — retrieved memory
-  // only, excluding the fixed guidance block (WR-02).
+  // only, excluding the fixed guidance block.
   let memorySections: string[] = [];
   let inlineMemory: string | undefined;
-  // FEED-01: id + content of the recalled memories, surfaced on the result so the
+  // id + content of the recalled memories, surfaced on the result so the
   // turn-end hook (executor-post-execution.ts) can attribute used-vs-ignored from
   // the agent response. Stays in-process — only ids/counts ever leave the agent.
   let recalledMemories: ReadonlyArray<{ id: string; content: string }> | undefined;
@@ -761,14 +761,14 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   if (deps.memoryPort && config.rag?.enabled && !params.skipRag) {
     const ragStart = deps.clock.now();
     try {
-      // Recall-trace recorder (OBS-01/02), null-when-disabled (default-off). Constructed
+      // Recall-trace recorder, null-when-disabled (default-off). Constructed
       // per assembly but shares a daemon-wide queued writer by path (the recorder's
       // registry contract), so recordRecall is fire-and-forget — no per-recall
       // flushAndClose (that would tear down the shared writer; mirrors the cacheTrace
       // daemon-wide lifecycle). `eventBus` is the already-in-scope bus (used for
       // memory:injected below) — threading both here keeps memory:recalled/reranked at
       // the canonical one-per-recall site inside createMemoryRecall.
-      // WR-01: pass the authoritative scope envelope so on-disk records carry
+      // Pass the authoritative scope envelope so on-disk records carry
       // `sessionKey` (the formatted key the CLI's recall-trace <session> selector
       // compares against) AND `tenantId` (the read-side cross-tenant filter).
       // tenantId comes from the per-agent config tenant, falling back to the
@@ -781,21 +781,21 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         deps.dataDir,
         { sessionKey: recallTraceSessionKey, tenantId: deps.tenantId ?? sessionKey.tenantId },
       );
-      // Single recall orchestrator (RANK-07): search->fuse->rerank->score->trust-filter
-      // ->dedup. Rerank opt-in/default-OFF -> fusion order (RANK-01/03/08). Non-fatal.
-      // FEED-03: the recall-utility feedback toggle. The `rag.feedback` schema field lands in
-      // Plan 93-04, so read it through a structural widening that compiles against today's
-      // strict RagConfig (optional-chaining → off when absent; correct once 93-04 adds it).
+      // Single recall orchestrator: search->fuse->rerank->score->trust-filter
+      // ->dedup. Rerank opt-in/default-OFF -> fusion order. Non-fatal.
+      // The recall-utility feedback toggle: the `rag.feedback` schema field is added
+      // later, so read it through a structural widening that compiles against today's
+      // strict RagConfig (optional-chaining → off when absent; correct once the field exists).
       // The boost MAGNITUDE is the single canonical `rag.scoring.usefulnessAlpha` (passed via
       // `scoring` below) — there is NO alpha on `feedback`.
       const ragFeedback = (config.rag as typeof config.rag & { feedback?: { enabled: boolean } })
         .feedback;
-      // LEARN-03: the deterministic apply overlay. Read the learned alpha vector
+      // The deterministic apply overlay. Read the learned alpha vector
       // GATED on config.rag.onlineTuning.enabled AND a present store dep, then overlay
       // the four non-trust alphas via buildScoringAlphas (trust STILL from config.rag.scoring
-      // — belt #2). The `onlineTuning` field lands on the schema in 111-04, so it is read
+      // — belt #2). The `onlineTuning` field is added to the schema later, so it is read
       // through a structural widening that compiles against today's strict RagConfig (the
-      // same posture as `feedback` above). Default-OFF byte-identity (Pitfall 3): with the
+      // same posture as `feedback` above). Default-OFF byte-identity: with the
       // knob off OR no store dep OR no learned row, `tunedVector` stays undefined → the
       // store is NEVER read and buildScoringAlphas returns config.rag.scoring unchanged. The
       // read is PURE + non-fatal: a read failure → undefined → byte-identical fallback. NO
@@ -832,22 +832,22 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           minScore: config.rag.minScore,
           includeTrustLevels: config.rag.includeTrustLevels,
           rerank: config.rag.rerank,
-          // LEARN-03: the deterministic apply overlay (PURE — no clock, no LLM, no
+          // The deterministic apply overlay (PURE — no clock, no LLM, no
           // randomness). tunedVector present (tuning ON + a learned row) → the four
           // non-trust alphas come from it, trustAlpha STILL from config (belt #2).
           // tunedVector undefined (default-OFF) → config.rag.scoring unchanged.
           scoring: buildScoringAlphas(config.rag.scoring, tunedVector),
           lanes: config.rag.lanes,
           entityLane: config.rag.entityLane,
-          // IQ-01 MMR diversity re-rank + IQ-02/03 query understanding. Both are
-          // fully-defaulted RagConfig fields (102-01: .strictObject + .default() on every
+          // MMR diversity re-rank + query understanding. Both are
+          // fully-defaulted RagConfig fields (.strictObject + .default() on every
           // field), so they pass DIRECTLY — no optional-chaining / structural widening like
           // `feedback` above (which predates its config landing). Default-OFF ⇒ recall is
           // byte-identical until an operator opts in (rag.mmr.enabled / rag.queryUnderstanding.*).
           mmr: config.rag.mmr,
           queryUnderstanding: config.rag.queryUnderstanding,
-          // FORGET-01: the FadeMem per-type decay gate. A fully-defaulted RagConfig field
-          // (112-01: .strictObject + .default()), so it passes DIRECTLY — same as mmr/
+          // The FadeMem per-type decay gate. A fully-defaulted RagConfig field
+          // (.strictObject + .default()), so it passes DIRECTLY — same as mmr/
           // queryUnderstanding, no optional-chaining / structural widening. Default-OFF ⇒
           // score.ts forces forgetFactor to exactly 1.0 ⇒ byte-identical recall until an
           // operator opts in (rag.forget.enabled); the neutral byte-identity holds even when on.
@@ -860,7 +860,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       if (recalled.ok && recalled.value.length > 0) {
         // Hybrid split: top-1 inline with user message, rest in dynamic preamble.
         const ranked = recalled.value;
-        // FEED-01: capture id + content for turn-end attribution (in-process only).
+        // Capture id + content for turn-end attribution (in-process only).
         recalledMemories = ranked.map((r) => ({ id: r.entry.id, content: r.entry.content }));
         const injector = createHybridMemoryInjector({
           onSuspiciousContent: deps.onSuspiciousContent,
@@ -868,7 +868,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         const injection = injector.split(ranked, config.rag.maxContextChars);
 
         inlineMemory = injection.inlineMemory;
-        // WR-02: own the array — `injection.systemPromptSections` is what telemetry
+        // Own the array — `injection.systemPromptSections` is what telemetry
         // reads, so pushing the guidance block into an alias of it would inflate
         // retrieved-memory metrics. Snapshot RETRIEVED-only char + RAG-hit counts
         // BEFORE the push so charsInjected/ragHits stay consistent with hitCount.
@@ -876,9 +876,9 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         retrievedSectionsChars = memorySections.reduce((sum, s) => sum + s.length, 0);
         retrievedRagHits = memorySections.length + (inlineMemory ? 1 : 0);
 
-        // Read-time contradiction guidance (TEMP-02/03/04): inject the §7.3 block when
+        // Read-time contradiction guidance: inject the §7.3 block when
         // >=2 surfaced memories are co-retrieved for the same query. Pure formatter; no
-        // deletion, no content echo. Phase 83 tightens the >=2 gate with entity overlap.
+        // deletion, no content echo. The >=2 gate is tightened with entity overlap.
         // FIXED guidance text, NOT a retrieved memory — excluded from telemetry above.
         const temporalGuidance = buildTemporalGuidanceBlock(ranked);
         if (temporalGuidance) memorySections.push(temporalGuidance);
@@ -890,7 +890,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // the emit is swallowed via try/catch so it never aborts assembly.
         if (deps.eventBus) {
           try {
-            // WR-02: retrieved memory only (inline + retrieved sections), never
+            // Retrieved memory only (inline + retrieved sections), never
             // the guidance block — keeps charsInjected consistent with hitCount.
             const charsInjected = (injection.inlineMemory?.length ?? 0) + retrievedSectionsChars;
             const trustTags = Array.from(new Set(ranked.map((r) => r.entry.trustLevel)));
@@ -921,14 +921,14 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     }
   }
 
-  // USER-03 STANDING BLOCK (HR-01): the LLM-free per-user-profile block is a DURABLE
+  // USER-PROFILE STANDING BLOCK: the LLM-free per-user-profile block is a DURABLE
   // standing block ("what we know about this user"), NOT a per-recall-conditional one.
-  // It is injected on its OWN gate — `config.memoryUserRepresentation.enabled` (the
-  // 107-05 knob) AND the optional store dep — INDEPENDENT of whether RAG ran, whether
+  // It is injected on its OWN gate — `config.memoryUserRepresentation.enabled`
+  // AND the optional store dep — INDEPENDENT of whether RAG ran, whether
   // recall hit, and independent of `rag.enabled`. This is why it lives OUTSIDE the
   // `if (deps.memoryPort && config.rag?.enabled ...)` recall block above: nesting it
   // there silently dropped the profile on every zero-recall turn (greetings/off-topic/
-  // sparse store) and gave RAG-off deployments ZERO injection (HR-01).
+  // sparse store) and gave RAG-off deployments ZERO injection.
   //
   // Default-OFF byte-identity (the cost gate): with the knob off OR no store dep,
   // read() is NEVER called and the prompt is byte-identical. When ON, a DETERMINISTIC
@@ -963,25 +963,26 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     }
   }
 
-  // SOCIAL-02/03 STANDING BLOCK: the LLM-free channel-relationship block is a DURABLE
-  // standing block ("how participants in this channel relate"), the directional analog
-  // of the USER-03 block above. It is injected on its OWN dual gate — the SOCIAL-03
+  // CHANNEL-RELATIONSHIP STANDING BLOCK: the LLM-free channel-relationship block is a
+  // DURABLE standing block ("how participants in this channel relate"), the directional
+  // analog of the user-profile block above. It is injected on its OWN dual gate — the
   // sign-off (`config.socialModeling.enabled && config.socialModeling.privacyReviewSignedOffBy`,
-  // the 108-05 knob + a RECORDED privacy-review sign-off) AND the optional store dep —
+  // the knob + a RECORDED privacy-review sign-off) AND the optional store dep —
   // INDEPENDENT of whether RAG ran, whether recall hit, and independent of `rag.enabled`
-  // (the HR-01 lesson: a standing block must not be nested in the recall-hit branch).
+  // (the lesson from the user-profile block: a standing block must not be nested in the
+  // recall-hit branch).
   //
-  // The SOCIAL-03 gate is the headline read-side proof: the knob alone does NOT
+  // The sign-off gate is the headline read-side proof: the knob alone does NOT
   // activate — a non-empty `privacyReviewSignedOffBy` is required. With the gate
   // closed (off OR no sign-off) OR no store dep, read() is NEVER called and the prompt
   // is byte-identical (the cost gate + the privacy gate). When open, a DETERMINISTIC
-  // store.read scoped to channelId = sessionKey.channelId (the SOCIAL-02 read-side
+  // store.read scoped to channelId = sessionKey.channelId (the read-side
   // boundary — the per-channel privacy axis) + the pure buildRelationshipBlock
   // formatter (NO model call — the recall hot path stays LLM-free). The formatter
   // returns null on an empty channel ⇒ nothing pushed ⇒ byte-identity. Non-fatal: a
   // read err is swallowed so the agent proceeds without the block. The relationship
   // content was redaction-checked + validateMemoryWrite-clean + high-trust at WRITE
-  // time (Plan 108-02/03).
+  // time.
   if (
     config.socialModeling?.enabled && config.socialModeling?.privacyReviewSignedOffBy &&
     deps.relationshipStore
@@ -1273,7 +1274,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // memoryInjection reflects RETRIEVED memory only (inline + retrieved
         // sections). The predicate gates on injected content (memorySections
         // includes the §7.3 guidance block); the COUNTS use the retrieved-only
-        // accumulators (WR-02) so they never tally the fixed guidance text. The
+        // accumulators so they never tally the fixed guidance text. The
         // `?? 0` on inlineMemory.length is load-bearing for the sections-only
         // branch (the outer predicate can be true with inlineMemory undefined).
         memoryInjection: (inlineMemory !== undefined || memorySections.length > 0)

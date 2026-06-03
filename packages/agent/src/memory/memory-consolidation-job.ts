@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Memory consolidation job handler (Phase 84 — CONS-01/02/04/06/07).
+ * Memory consolidation job handler.
  *
- * Runs as a background cron (wired in the daemon, Plan 05). Reads raw
+ * Runs as a background cron (wired in the daemon). Reads raw
  * not-yet-consolidated candidates from the segregated
  * {@link MemoryConsolidationStore} (a `consolidated_at IS NULL` STATE predicate
  * — never a time cursor, RESEARCH Pitfall 1), clusters near-duplicates, merges
  * each homogeneous sub-cluster via a cheap-model LLM call (MERGE-only contract),
  * and applies each consolidation ATOMICALLY through the store port.
  *
- * Security posture (this is the security-critical plan, design §9):
- * - Trust is computed in CODE (`minTrust`, the ceiling — CONS-02), NEVER chosen
+ * Security posture (this is the security-critical path, design §9):
+ * - Trust is computed in CODE (`minTrust`, the ceiling), NEVER chosen
  *   by the LLM. Consolidating lower-trust sources can never mint a higher-trust
  *   observation. The LLM contract has no trust field; any it smuggles is dropped
  *   by the parser.
  * - A single LLM call NEVER mixes trust levels or tag scopes
- *   (`groupByTrustAndTagScope` partitions first — CONS-06, anti-trust-laundering).
+ *   (`groupByTrustAndTagScope` partitions first — anti-trust-laundering).
  * - `external` sources are excluded by default (`consolidateExternal:false`).
  * - Merged content runs through `validateMemoryWrite` (defense-in-depth on
  *   LLM-produced text, AGENTS.md §2.2): `critical` → skip; `warn` → trust
  *   downgraded to "external"; `clean` → the code-computed ceiling.
  * - Deterministic dedup pre-check (sorted source-id hash primary + content
- *   similarity secondary — CONS-04) prevents re-run double-create.
+ *   similarity secondary) prevents re-run double-create.
  * - The run is BOUNDED (maxCandidatesPerRun / maxClustersPerRun /
- *   maxConsolidationTokens — CONS-07) and emits a MINIMAL `memory:consolidated`
- *   event (Phase 86 owns the rich observability surface).
+ *   maxConsolidationTokens) and emits a MINIMAL `memory:consolidated`
+ *   event (the rich observability surface lives elsewhere).
  *
  * The agent consumes the store as a TYPE from `@comis/core` (the agent↛memory
  * build cut); the daemon injects the concrete memory-package adapter. NO
@@ -66,7 +66,7 @@ export interface MemoryConsolidationDeps {
   config: MemoryConsolidationConfig;
   /**
    * The SEGREGATED consolidation store (port TYPE from `@comis/core`). The
-   * concrete adapter lives in the memory package; the daemon (Plan 05) injects
+   * concrete adapter lives in the memory package; the daemon injects
    * it. The agent cannot import that package (the agent↛memory build cut).
    */
   consolidationStore: MemoryConsolidationStore;
@@ -98,8 +98,8 @@ const LLM_TIMEOUT_MS = 120_000;
 const DEDUP_OBSERVATION_LIMIT = 200;
 
 /**
- * Per-member content cap (chars) fed into the merge prompt (WR-03 / CONS-07,
- * threat T-84-02). `maxConsolidationTokens` bounds only the LLM OUTPUT; the
+ * Per-member content cap (chars) fed into the merge prompt — a
+ * prompt-size DoS guard. `maxConsolidationTokens` bounds only the LLM OUTPUT; the
  * INPUT was previously unbounded — every member's full `content` was
  * concatenated (`MemoryEntrySchema.content` is `z.string().min(1)`, no max), so
  * `maxClusterSize` members of arbitrary length could build an arbitrarily large
@@ -155,7 +155,7 @@ function maxOccurredAt(cluster: MemoryEntry[]): number {
 /**
  * Build the user-message text fed to the merge LLM call for one sub-cluster.
  * Each member's content is sliced to {@link MAX_MEMORY_CHARS} so the INPUT
- * prompt is bounded (WR-03 / CONS-07) — not just the output (`maxTokens`).
+ * prompt is bounded — not just the output (`maxTokens`).
  */
 function buildClusterPrompt(cluster: MemoryEntry[]): string {
   let text = "Memories to merge:\n\n";
@@ -173,10 +173,10 @@ function buildClusterPrompt(cluster: MemoryEntry[]): string {
  * Run one consolidation pass for a single agent.
  *
  * Reads candidates → clusters → partitions into homogeneous sub-clusters
- * (CONS-06) → for each (bounded by `maxClustersPerRun`): compute the trust
- * ceiling (CONS-02), gate `external` (CONS-02), dedup pre-check (CONS-04),
+ * → for each (bounded by `maxClustersPerRun`): compute the trust
+ * ceiling, gate `external`, dedup pre-check,
  * (mocked-in-test) LLM merge, `validateMemoryWrite`, then `applyConsolidation`
- * atomically (CONS-03 — the store owns the transaction). Emits a minimal
+ * atomically (the store owns the transaction). Emits a minimal
  * `memory:consolidated` event. Non-fatal posture (mirrors `runMemoryReview`): a
  * bad LLM parse / a failed cluster → WARN + continue; the run returns `ok` even
  * with 0 observations. Only an inability to READ candidates is fatal.
@@ -211,7 +211,7 @@ export async function runMemoryConsolidation(
     return ok(undefined);
   }
 
-  // OBS-03 (the last degradation gap): a candidate arrives with
+  // The last degradation gap: a candidate arrives with
   // `embedding === undefined` when sqlite-vec is unavailable (the adapter's
   // LEFT JOIN found no vec row). The clusterer then SILENTLY degrades that
   // candidate to entity/FTS overlap. Surface a queryable, operator-facing
@@ -233,8 +233,8 @@ export async function runMemoryConsolidation(
     );
   }
 
-  // 2. Greedy clustering, then 3. partition into homogeneous sub-clusters
-  // (CONS-06). Singletons carry nothing to merge → dropped (left for a future
+  // 2. Greedy clustering, then 3. partition into homogeneous sub-clusters.
+  // Singletons carry nothing to merge → dropped (left for a future
   // run; SAFE because selection is a state predicate, not a cursor).
   const clusters = clusterByEntityThenEmbedding(candidates, {
     similarityThreshold: config.similarityThreshold,
@@ -244,7 +244,7 @@ export async function runMemoryConsolidation(
     .flatMap((c) => groupByTrustAndTagScope(c))
     .filter((c) => c.length >= 2);
 
-  // OBS-05 CLUSTER stage: report the funnel (candidates → clusters →
+  // CLUSTER stage: report the funnel (candidates → clusters →
   // mergeable sub-clusters). O(1)/run → INFO.
   logger.info(
     {
@@ -258,7 +258,7 @@ export async function runMemoryConsolidation(
     "consolidation clustered",
   );
 
-  // 4. Existing observations for the deterministic dedup pre-check (CONS-04).
+  // 4. Existing observations for the deterministic dedup pre-check.
   // A read failure is NON-FATAL: degrade to "no known duplicates" (we may
   // re-create, but the next run's predicate re-converges). Log + continue.
   let existing: MemoryEntry[] = [];
@@ -294,15 +294,15 @@ export async function runMemoryConsolidation(
   let clustersProcessed = 0;
   let observationsCreated = 0;
   let dedupHits = 0;
-  // FOLD-01: corroborating clusters folded into an existing observation (proof
+  // Corroborating clusters folded into an existing observation (proof
   // accrual) instead of creating a second one. Counts only (the event field).
   let foldsApplied = 0;
 
   for (const cluster of subClusters) {
-    // CONS-02: the trust CEILING — computed in CODE, never the LLM.
+    // The trust CEILING — computed in CODE, never the LLM.
     const trust = minTrust(cluster);
 
-    // CONS-02: external excluded by default (no observation, no LLM call/spend).
+    // External excluded by default (no observation, no LLM call/spend).
     // A skip here consumes NO budget (it never reaches the LLM).
     if (trust === "external" && !config.consolidateExternal) {
       logger.debug({ agentId, step: "consolidate" }, "Skipping external-trust cluster (consolidateExternal=false)");
@@ -311,12 +311,12 @@ export async function runMemoryConsolidation(
 
     const sourceIds = cluster.map((e) => e.id);
 
-    // CONS-04 PRIMARY dedup: identical source set → an equivalent observation
+    // PRIMARY dedup: identical source set → an equivalent observation
     // already exists. Skip (leave sources consolidated_at IS NULL; the existing
     // observation already covers them — the next run re-hits this dedup, no
     // double-create). This keeps the port at exactly 3 methods (no markOnly).
     //
-    // WR-02: this dedup check (and the external gate above) runs BEFORE the
+    // This dedup check (and the external gate above) runs BEFORE the
     // maxClustersPerRun budget gate, because a dedup hit needs NO LLM call and
     // does NO merge work — it must NOT consume the per-run cluster budget.
     // Counting dedup skips against the budget let a churny steady state (many
@@ -330,9 +330,9 @@ export async function runMemoryConsolidation(
       continue;
     }
 
-    // CONS-07 bound — gate ONLY clusters that will actually do merge work (reach
+    // Per-run cluster bound — gate ONLY clusters that will actually do merge work (reach
     // the LLM + apply). Incrementing here (after the eligibility + primary-dedup
-    // skips) is the WR-02 fix: the budget funds real merges, never skipped work.
+    // skips) ensures the budget funds real merges, never skipped work.
     if (clustersProcessed >= config.maxClustersPerRun) break;
     clustersProcessed++;
 
@@ -362,13 +362,13 @@ export async function runMemoryConsolidation(
     // for the created observation's `createdAt`.
     const now = clock.now();
 
-    // FOLD-01 — the fold-vs-create decision (the converted SECONDARY content
+    // The fold-vs-create decision (the converted SECONDARY content
     // dedup). A DIFFERENT source set expressing the SAME fact as a PRIOR-RUN
-    // observation of the SAME trust level: instead of skipping (Phase-84) or
+    // observation of the SAME trust level: instead of skipping or
     // creating a duplicate, FOLD the truly-new sources into that observation so
     // proof accrues across runs. We match ONLY same-trust prior observations
     // (`priorObservations`, never same-run mints): cross-trust content collapse
-    // would launder trust / violate the scope separation (CONS-06) — a
+    // would launder trust / violate the scope separation — a
     // cross-trust corroboration falls through to CREATE a distinct observation.
     // Same-run exact-source re-hits are already caught by the PRIMARY source-id
     // key above (so a fully-folded source set is idempotent by construction).
@@ -428,7 +428,7 @@ export async function runMemoryConsolidation(
       logger.debug({ agentId, step: "consolidate" }, "Folded corroboration into existing observation");
       continue;
     }
-    // else: fall through to the UNCHANGED Phase-84 CREATE path below.
+    // else: fall through to the UNCHANGED CREATE path below.
 
     // Defense-in-depth on the LLM-produced text (AGENTS.md §2.2): scan BEFORE
     // store. `critical` → skip; `warn` → downgrade trust toward external (never
@@ -468,7 +468,7 @@ export async function runMemoryConsolidation(
       sourceType: "conversation",
     };
 
-    // 6. Apply atomically (CONS-03 — the store owns the transaction). Non-fatal:
+    // 6. Apply atomically (the store owns the transaction). Non-fatal:
     // a rejecting/erroring store WARNs + continues; sources stay
     // consolidated_at IS NULL and are retried next run (idempotent).
     const applied = await fromPromise(
@@ -493,7 +493,7 @@ export async function runMemoryConsolidation(
     existingKeys.add(key);
   }
 
-  // OBS-05 APPLY stage: report what the merge/apply loop produced. O(1)/run →
+  // APPLY stage: report what the merge/apply loop produced. O(1)/run →
   // INFO (per-cluster skip/dedup detail stays DEBUG via the step:"consolidate"
   // lines above).
   logger.info(
@@ -527,7 +527,7 @@ export async function runMemoryConsolidation(
  * Merge one homogeneous sub-cluster via a cheap-model LLM call. Returns the raw
  * response text, or `undefined` on any failure (model resolution, abort/timeout,
  * thrown call) — the caller treats `undefined` as a non-fatal skip (mirrors the
- * review-job posture). Bounded by `config.maxConsolidationTokens` (CONS-07).
+ * review-job posture). Bounded by `config.maxConsolidationTokens`.
  */
 async function mergeCluster(
   deps: MemoryConsolidationDeps,

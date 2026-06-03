@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Slack EditPlace renderer tests (CHAN-03, CHAN-05; §18.2 EditPlace rows).
+ * Slack EditPlace renderer tests (§18.2 EditPlace rows).
  *
  * The single net-new piece of logic is `classifySlackError` — it reads the
  * STRUCTURAL Slack-Bolt error field `e.data.error` (and `e.cause?.data?.error`),
  * distinct from grammy's `error_code` and discord's `.code`. It NEVER parses the
  * generic "Failed to…" string. `makeSlackRenderActions` maps each ChannelPort
- * call through it; `createSlackActivityRenderer` wires the Phase-70
+ * call through it; `createSlackActivityRenderer` wires the
  * `createEditPlaceRenderer` (no duplicated state machine).
  *
- * `chat.delete` on success (CHAN-03's required delete-on-success op) fires after
+ * `chat.delete` on success (the required delete-on-success op) fires after
  * `deliveredAtMs` — proven by the delete-on-success test.
  *
- * S8 approval (Phase 73 / 73-08): the renderer now paints signed Block Kit
+ * S8 approval: the renderer now paints signed Block Kit
  * `actions` (each element's callback value = the §6.4.2 wire string) and opens a
- * thread (thread_ts) for a subagent expand. The Phase-71 negative assertion is
+ * thread (thread_ts) for a subagent expand. The earlier negative assertion is
  * FLIPPED to a positive one (`buildApprovalButtons`/`signCallbackData` present);
  * the behavioural proof lives in slack-activity.approval.test.ts /
  * slack-activity.subagent.test.ts.
@@ -259,12 +259,12 @@ describe("createSlackActivityRenderer (EditPlace wiring + chat.delete on success
   });
 });
 
-// --- Task 2: S8 Block Kit approval UI (Phase 73 — signed callback wiring) -----
+// --- Task 2: S8 Block Kit approval UI (signed callback wiring) ---------------
 
-describe("Slack Block Kit approval UI (signed callback wiring — Phase 73)", () => {
-  it("FLIPPED (§17.3): the renderer NOW wires the signed Block Kit approval UI (Phase 73 owns resolution)", () => {
-    // Phase 71 forbade callback_data/signing in this file (the Block Kit actions
-    // were a deferral shell). Phase 73 (73-08) makes Slack paint signed Block Kit
+describe("Slack Block Kit approval UI (signed callback wiring)", () => {
+  it("FLIPPED (§17.3): the renderer NOW wires the signed Block Kit approval UI", () => {
+    // An earlier revision forbade callback_data/signing in this file (the Block
+    // Kit actions were a deferral shell). Slack now paints signed Block Kit
     // action elements: the renderer references `buildApprovalButtons` and threads
     // the injected `signCallbackData` through to each action's callback value —
     // see slack-activity.approval.test.ts for the behavioural proof.
@@ -305,10 +305,10 @@ async function runScenario(
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
   const fake = createFakeSlackAdapter();
-  // Phase 78 reconciliation (option ii — plan §530): omit `clock` so the §8.5
-  // "(running N s)" elapsed fallback is skipped and committed fixtures stay
-  // byte-stable. Strategy-level tests in edit-place.test.ts inject a clock and
-  // assert the elapsed text — that is the live-production wiring contract.
+  // Omit `clock` so the §8.5 "(running N s)" elapsed fallback is skipped and
+  // committed fixtures stay byte-stable. Strategy-level tests in
+  // edit-place.test.ts inject a clock and assert the elapsed text — that is the
+  // live-production wiring contract.
   const r = createSlackActivityRenderer(fake, "chat-1", { timer });
 
   for (const f of frames) {

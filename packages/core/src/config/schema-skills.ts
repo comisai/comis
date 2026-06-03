@@ -123,10 +123,10 @@ const ToolDiscoverySchema = z.strictObject({
  *
  * `z.strictObject` at EVERY level: unknown/typo'd keys throw at config load
  * rather than being silently dropped, so an operator-declared restriction is
- * always actually parsed (OPS-02). The `allow` list is operator config only —
+ * always actually parsed. The `allow` list is operator config only —
  * never agent-extensible. The whole spec §6 shape is modelled now even though
- * the P0 worker consumes only a subset (`match` + `scope`); later phases
- * consume the rest and OPS-02 requires the full allow-set to round-trip.
+ * the initial worker consumes only a subset (`match` + `scope`); later work
+ * consumes the rest, and the full allow-set must round-trip.
  *
  * `~/.comis` is NOT represented here — it is an always-on, non-configurable
  * carve-out (§3.4), deliberately not an operator-dialable field.
@@ -140,7 +140,7 @@ const TerminalAllowEntrySchema = z.strictObject({
     argsPrefix: z.array(z.string()).optional(),
     hash: z.string().optional(),
   }),
-  /** Least-privilege sandbox scope materialized per session (full matrix is Phase 122). */
+  /** Least-privilege sandbox scope materialized per session (the full matrix lands later). */
   scope: z.strictObject({
     filesystem: z.enum(["workspace", "listed-paths", "home", "full"]).default("workspace"),
     paths: z.array(z.string()).optional(),
@@ -187,8 +187,8 @@ const TerminalAllowEntrySchema = z.strictObject({
  * Closed configuration schema for the interactive terminal driver (spec §6).
  *
  * Operator-dialable, never agent-dialable. Closed by construction (every level
- * is `z.strictObject`) so unknown/typo'd keys are rejected at config load
- * (OPS-02) — the gate against a believed-but-unparsed restriction.
+ * is `z.strictObject`) so unknown/typo'd keys are rejected at config load —
+ * the gate against a believed-but-unparsed restriction.
  */
 export const TerminalDriverConfigSchema = z.strictObject({
   enabled: z.boolean(),
@@ -223,10 +223,10 @@ export const TerminalDriverConfigSchema = z.strictObject({
 export type TerminalDriverConfig = z.infer<typeof TerminalDriverConfigSchema>;
 
 /**
- * A single parsed terminal allow entry (spec §6 / SEC-01-03). The daemon wiring
+ * A single parsed terminal allow entry (spec §6). The daemon wiring
  * (`setup-terminal-tools.ts:mapAllowEntry`) maps this onto the skills-side
  * `AllowEntryLike`, threading `{id, match, scope}` so the operator-declared scope
- * reaches the worker (SEC-02). Scope sub-fields are already default-applied by the
+ * reaches the worker. Scope sub-fields are already default-applied by the
  * schema (least-privilege), so the mapping is a pure passthrough.
  */
 export type TerminalAllowEntry = TerminalDriverConfig["allow"][number];

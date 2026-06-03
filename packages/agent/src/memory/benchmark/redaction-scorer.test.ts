@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit test for the pure privacy/redaction leak-rate scorer (SUITE-05, Plan
- * 99-05, Task 1). RED first: pins leak-rate = leaked / validTotal * 100, where a
+ * Unit test for the pure privacy/redaction leak-rate scorer. RED first: pins
+ * leak-rate = leaked / validTotal * 100, where a
  * probe is `leaked` when a planted SYNTHETIC secret reached the recalled context.
  * Invalid probes are excluded from the denominator (the qa-accuracy doctrine).
  *
@@ -11,7 +11,7 @@
  * or emit a planted secret. This test deliberately constructs probes with NO
  * secret-shaped strings to lock that contract in.
  *
- * LOWER leak-rate is better (0 = nothing leaked). This is the SUITE-05 metric the
+ * LOWER leak-rate is better (0 = nothing leaked). This is the metric the
  * gated harness reports; freeze it.
  */
 

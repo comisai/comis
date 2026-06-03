@@ -7,10 +7,10 @@
  * + gateway.status + config.get), admin config methods (config.read, config.schema),
  * and verifies JSON-RPC 2.0 response shapes.
  *
- *   INTEG-STAT-01: Daemon status and connectivity check
- *   INTEG-STAT-02: Status command multi-section assembly
- *   INTEG-STAT-03: Admin config.read RPC round-trip
- *   INTEG-STAT-04: Admin config.schema RPC round-trip
+ *   - Daemon status and connectivity check
+ *   - Status command multi-section assembly
+ *   - Admin config.read RPC round-trip
+ *   - Admin config.schema RPC round-trip
  *
  * Uses the daemon harness for programmatic daemon startup/teardown.
  */
@@ -58,10 +58,10 @@ describe("CLI Status & Admin Commands Integration (real daemon)", () => {
   }, 30_000);
 
   // ---------------------------------------------------------------------------
-  // INTEG-STAT-01 -- Daemon Status
+  // Daemon Status
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-STAT-01: Daemon Status", () => {
+  describe("Daemon Status", () => {
     it("daemon.status returns a valid JSON-RPC response (result or Method not found)", async () => {
       const response = (await sendJsonRpc(ws, "daemon.status", {}, 1, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -91,10 +91,10 @@ describe("CLI Status & Admin Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-STAT-02 -- Status Command Multi-Section Assembly
+  // Status Command Multi-Section Assembly
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-STAT-02: Status Command Multi-Section Assembly", () => {
+  describe("Status Command Multi-Section Assembly", () => {
     it("assembles all 4 RPC calls the status command makes", async () => {
       // The CLI status command calls these 4 methods sequentially
       const daemonResponse = (await sendJsonRpc(ws, "daemon.status", {}, 10, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
@@ -140,10 +140,10 @@ describe("CLI Status & Admin Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-STAT-03 -- Admin Config Read
+  // Admin Config Read
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-STAT-03: Admin Config Read", () => {
+  describe("Admin Config Read", () => {
     it("config.read with no params returns full config and sections list", async () => {
       const response = (await sendJsonRpc(ws, "config.read", {}, 20, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -182,10 +182,10 @@ describe("CLI Status & Admin Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-STAT-04 -- Admin Config Schema
+  // Admin Config Schema
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-STAT-04: Admin Config Schema", () => {
+  describe("Admin Config Schema", () => {
     it("config.schema with no params returns full schema info", async () => {
       const response = (await sendJsonRpc(ws, "config.schema", {}, 30, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 

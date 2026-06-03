@@ -30,7 +30,7 @@ describe("setup-channels-runtime", () => {
     // surface, the literal stops type-checking.
     //
     // exportSessionBundle: DI seam for the /export-trajectory slash command.
-    // channelCredentialMap: REQ-13 (WR-04) targeted-reconnect injection seam
+    // channelCredentialMap: targeted-reconnect injection seam
     //   (overrides the auto-built map; production uses auto-build from config).
     const witness: Record<keyof ChannelManagerBuildDeps, true> = {
       container: true,
@@ -47,7 +47,7 @@ describe("setup-channels-runtime", () => {
       timers: true,
       signCallbackData: true,
       mintApprovalLink: true,
-      // CR-01: the InteractiveCallbackRouter (verifier) threaded into
+      // The InteractiveCallbackRouter (verifier) threaded into
       // createChannelManager so the inbound button-callback intercept fires.
       interactiveCallbackRouter: true,
       preprocessMessageCallback: true,
@@ -69,7 +69,7 @@ describe("setup-channels-runtime", () => {
       costTrackers: true,
       cronExecutionTrackers: true,
       exportSessionBundle: true,
-      // REQ-13 (WR-04): credential→channelType override map (auto-built from config
+      // credential→channelType override map (auto-built from config
       // when absent; tests inject a known map to assert the production path is active).
       channelCredentialMap: true,
     };
@@ -81,7 +81,7 @@ describe("setup-channels-runtime", () => {
       channelManager: true,
       lifecycleReactors: true,
       commandQueue: true,
-      // WIRE-02: per-channelId activity renderer factory map (built BEFORE the
+      // per-channelId activity renderer factory map (built BEFORE the
       // manager so coordinatorFactory can close over it — returned to the registry
       // for the ChannelsResult activity-counters scrape).
       activityRenderers: true,
@@ -89,7 +89,7 @@ describe("setup-channels-runtime", () => {
     expect(Object.keys(witness).length).toBe(4);
   });
 
-  it("REQ-13 WR-04: channelCredentialMap is built from enabled channels and passed to createChannelManager", () => {
+  it("channelCredentialMap is built from enabled channels and passed to createChannelManager", () => {
     // This test verifies the production wiring invariant: when channels are
     // configured as enabled, buildAndStartChannelManager auto-builds a non-empty
     // channelCredentialMap and passes it to createChannelManager — so the
@@ -99,7 +99,7 @@ describe("setup-channels-runtime", () => {
     // on ChannelManagerBuildDeps (a deps injection point means production wiring
     // sets it), and the auto-build logic maps the standard channel env-var names
     // to their channelType strings. The behavioral end-to-end (secret:changed →
-    // stop+start) is covered by channel-manager.test.ts REQ-13 tests.
+    // stop+start) is covered by the channel-manager.test.ts reconnect tests.
     const buildDepsKeys = new Set<keyof ChannelManagerBuildDeps>(["channelCredentialMap"]);
     expect(buildDepsKeys.has("channelCredentialMap")).toBe(true);
 

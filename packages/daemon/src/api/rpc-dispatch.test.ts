@@ -477,10 +477,10 @@ describe("createRpcDispatch", () => {
   });
 
   // -----------------------------------------------------------------------
-  // CR-01: auth.set failure MUST NOT log raw access/refresh tokens
+  // auth.set failure MUST NOT log raw access/refresh tokens
   // -----------------------------------------------------------------------
 
-  it("CR-01: auth.set handler error — dispatcher must NOT emit raw bearer or refresh token in log payload", async () => {
+  it("auth.set handler error — dispatcher must NOT emit raw bearer or refresh token in log payload", async () => {
     // The dispatcher error log path includes `params` on the log object.
     // For auth.set, params carries { access: "<bearer>", refresh: "<token>" }.
     // Before the fix, these bare field names were absent from CREDENTIAL_KEYS

@@ -65,8 +65,8 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("bwrap secure profile — network mode + credential home gating (EGRESS-01/02/03)", () => {
-  it("default profile (no network field) → --share-net present, --unshare-net absent (EGRESS-03 regression guard)", () => {
+describe("bwrap secure profile — network mode + credential home gating", () => {
+  it("default profile (no network field) → --share-net present, --unshare-net absent (regression guard)", () => {
     vi.mocked(existsSync).mockReturnValue(false);
 
     const provider = createAvailableProvider();
@@ -76,7 +76,7 @@ describe("bwrap secure profile — network mode + credential home gating (EGRESS
     expect(args).not.toContain("--unshare-net");
   });
 
-  it("broker-only profile emits --unshare-net, not --share-net (EGRESS-01)", () => {
+  it("broker-only profile emits --unshare-net, not --share-net", () => {
     vi.mocked(existsSync).mockReturnValue(false);
 
     const provider = createAvailableProvider();
@@ -90,7 +90,7 @@ describe("bwrap secure profile — network mode + credential home gating (EGRESS
     expect(args).not.toContain("--share-net");
   });
 
-  it("broker-only profile → --bind triple for brokerSocketPath (EGRESS-01 socket bind)", () => {
+  it("broker-only profile → --bind triple for brokerSocketPath (socket bind)", () => {
     vi.mocked(existsSync).mockReturnValue(false);
 
     const provider = createAvailableProvider();
@@ -105,7 +105,7 @@ describe("bwrap secure profile — network mode + credential home gating (EGRESS
     ).toBe(true);
   });
 
-  it("secureCredentialHome:true → ~/.claude absent from args (EGRESS-02)", () => {
+  it("secureCredentialHome:true → ~/.claude absent from args", () => {
     // existsSync returns true for all paths to exercise the "path exists but is gated" path
     vi.mocked(existsSync).mockReturnValue(true);
 
@@ -116,7 +116,7 @@ describe("bwrap secure profile — network mode + credential home gating (EGRESS
     expect(args).not.toContain("/home/testuser/.claude");
   });
 
-  it("secureCredentialHome:true → ~/.claude.json absent from args (EGRESS-02 Pitfall 2 guard)", () => {
+  it("secureCredentialHome:true → ~/.claude.json absent from args (dotfile guard)", () => {
     // existsSync returns true for all paths
     vi.mocked(existsSync).mockReturnValue(true);
 
@@ -127,7 +127,7 @@ describe("bwrap secure profile — network mode + credential home gating (EGRESS
     expect(args).not.toContain("/home/testuser/.claude.json");
   });
 
-  it("secureCredentialHome:true → ~/.local/share/claude absent from args (EGRESS-02)", () => {
+  it("secureCredentialHome:true → ~/.local/share/claude absent from args", () => {
     // existsSync returns true for all paths
     vi.mocked(existsSync).mockReturnValue(true);
 
@@ -138,7 +138,7 @@ describe("bwrap secure profile — network mode + credential home gating (EGRESS
     expect(args).not.toContain("/home/testuser/.local/share/claude");
   });
 
-  it("secureCredentialHome:true → ~/.local/share parent NOT RW-bound OR masked with tmpfs at claude subpath (CR-01 parent-bind bypass)", () => {
+  it("secureCredentialHome:true → ~/.local/share parent NOT RW-bound OR masked with tmpfs at claude subpath (parent-bind bypass)", () => {
     // existsSync returns true for ALL paths (worst-case: ~/.local/share/claude exists on disk)
     vi.mocked(existsSync).mockReturnValue(true);
 

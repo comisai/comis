@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Deterministic recall@k / MRR scorer for the LongMemEval-style eval harness
- * (EVAL-01) — the reranked-vs-fusion recall-LIFT measurement substrate.
+ * — the reranked-vs-fusion recall-LIFT measurement substrate.
  *
  * PURE MATH (no Result, no throws, no I/O — AGENTS.md §2.1 carve-out for pure
  * functions). recall@k and MRR are standard, deterministic IR metrics; the
  * scorer runs a ranking function over labeled fixtures and macro-averages.
  * The harness compares a BASELINE ranker (caller-provided — typically the
  * fusion-only order via `fuse(...)` in recall-eval.test.ts) against a RERANKED
- * ranker and reports the recall@1 / MRR lift — the EVAL-01 number that proves
+ * ranker and reports the recall@1 / MRR lift — the number that proves
  * the cross-encoder delivers a measurable recall gain over fusion-only.
  *
  * ARCHITECTURE CUT (architecture.test.ts "agent -> memory"): this production
@@ -17,9 +17,9 @@
  * recall-eval.test.ts, which MAY import the reranker adapter (the .test.ts
  * suffix is excluded from the cut).
  *
- * EXTENSIBILITY (scored per phase): scoreRanking/compareRankings accept any
- * EvalQuery[] — Phase 81 passes the "temporal" group, Phase 83 the "entity"
- * group, re-scoring without restructuring.
+ * EXTENSIBILITY: scoreRanking/compareRankings accept any
+ * EvalQuery[] — e.g. the "temporal" group or the "entity"
+ * group — re-scoring without restructuring.
  *
  * Metric definitions:
  *   recall@k = |relevant ∩ first-k(rankedIds)| / |relevant|       (per query)
@@ -137,7 +137,7 @@ export function scoreRanking(
   };
 }
 
-/** The reranked-vs-baseline lift report — the EVAL-01 measurable-gain figure. */
+/** The reranked-vs-baseline lift report — the measurable-gain figure. */
 export interface LiftReport {
   /** Metrics for the baseline ranker (fusion-only). */
   baseline: RankingMetrics;
@@ -156,7 +156,7 @@ export interface LiftReport {
  * The baseline ranker is the one the CALLER passes as `baselineFn` (typically
  * the fusion-only order via `fuse([{ results: candidates, weight: 1 }])` in the
  * harness); `rerankedFn` is the cross-encoder ordering. A positive
- * `recallAt1Lift` is the measurable EVAL-01 gain; a zero lift means reranking
+ * `recallAt1Lift` is the measurable gain; a zero lift means reranking
  * did not regress recall on the labeled set.
  */
 export function compareRankings(

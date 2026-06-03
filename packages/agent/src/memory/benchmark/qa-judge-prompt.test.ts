@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * UNGATED unit tests for the pure per-category judge-prompt builder (BENCH-03).
+ * UNGATED unit tests for the pure per-category judge-prompt builder.
  *
  * TIER: default CI / fast unit tier (no model, no store, no dataset download).
  * Imports `qa-judge-prompt.ts` so the module is never a 0%-coverage file under
@@ -93,7 +93,7 @@ describe("buildJudgePrompt (uniform tail + the untrusted slots)", () => {
   });
 });
 
-describe("buildJudgePrompt (prompt-injection ordering — Pitfall 3 / T-89-01-03)", () => {
+describe("buildJudgePrompt (prompt-injection ordering — Pitfall 3)", () => {
   it("places the rubric BEFORE every untrusted slot", () => {
     // Use injection-shaped untrusted values so a regression that puts the slots
     // first would be caught: the rubric MARKER must precede all three.

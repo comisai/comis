@@ -3,16 +3,16 @@
  * Smoke test for `gateway/src/acp/index.ts` public barrel.
  *
  * Asserts the public export surface matches the source-of-truth — catches
- * silent export deletion / shadowing (T-74-21: a deleted/shadowed bridge
- * factory would break composition-root wiring undetected).
+ * silent export deletion / shadowing (a deleted/shadowed bridge factory would
+ * break composition-root wiring undetected).
  *
  * The live source-of-truth exports 7 value functions:
  *   - `createAcpAgent`, `startAcpServer` (from `acp-server.ts`)
  *   - `createAcpSessionMap` (from `acp-session-map.ts`)
- *   - `createAcpBoundedQueue` (from `acp-bounded-queue.ts`, ACP-02)
- *   - `createAcpActivityBridge` (from `acp-activity-bridge.ts`, ACP-02/05)
- *   - `createAcpPlanBridge` (from `acp-plan-bridge.ts`, ACP-03)
- *   - `createAcpApprovalBridge` (from `acp-approval-bridge.ts`, ACP-04)
+ *   - `createAcpBoundedQueue` (from `acp-bounded-queue.ts`)
+ *   - `createAcpActivityBridge` (from `acp-activity-bridge.ts`)
+ *   - `createAcpPlanBridge` (from `acp-plan-bridge.ts`)
+ *   - `createAcpApprovalBridge` (from `acp-approval-bridge.ts`)
  *
  * Non-function value exports (`DEFAULT_ACP_QUEUE_CAPACITY`) and type-only
  * exports (`AcpServerDeps`, `AcpAgentHandle`, `AcpSessionMap`, `AcpSessionKey`,
@@ -40,19 +40,19 @@ describe("gateway/src/acp/index — barrel exports smoke contract", () => {
     expect(typeof acp.createAcpSessionMap).toBe("function");
   });
 
-  it("exports createAcpBoundedQueue as a function (ACP-02 local queue)", () => {
+  it("exports createAcpBoundedQueue as a function (local queue)", () => {
     expect(typeof acp.createAcpBoundedQueue).toBe("function");
   });
 
-  it("exports createAcpActivityBridge as a function (ACP-02/05 activity bridge)", () => {
+  it("exports createAcpActivityBridge as a function (activity bridge)", () => {
     expect(typeof acp.createAcpActivityBridge).toBe("function");
   });
 
-  it("exports createAcpPlanBridge as a function (ACP-03 SEP plan bridge)", () => {
+  it("exports createAcpPlanBridge as a function (SEP plan bridge)", () => {
     expect(typeof acp.createAcpPlanBridge).toBe("function");
   });
 
-  it("exports createAcpApprovalBridge as a function (ACP-04 approval bridge)", () => {
+  it("exports createAcpApprovalBridge as a function (approval bridge)", () => {
     expect(typeof acp.createAcpApprovalBridge).toBe("function");
   });
 

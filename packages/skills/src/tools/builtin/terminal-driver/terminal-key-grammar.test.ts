@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the pure named-key grammar (spec §5 send_key, TR-04).
+ * Unit tests for the pure named-key grammar (spec §5 send_key).
  *
  * RED-first: `terminal-key-grammar.ts` does not exist when this file is first
  * committed — the import fails, every case is RED. The production module then
@@ -116,7 +116,7 @@ describe("terminal-key-grammar — bare printable passthrough", () => {
   });
 });
 
-describe("terminal-key-grammar — unknown key rejection (T-120-01)", () => {
+describe("terminal-key-grammar — unknown key rejection", () => {
   it("throws invalid_value for an unknown key name (never a silent no-op)", () => {
     expect(() => encodeNamedKey("Frobnicate")).toThrow(/invalid_value/);
   });

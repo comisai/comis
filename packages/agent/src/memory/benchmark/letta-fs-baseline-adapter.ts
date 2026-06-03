@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The letta-fs-baseline adapter (PROVE-01 honesty anchor) — the keyless
+ * The letta-fs-baseline adapter (the honesty anchor) — the keyless
  * Letta-style filesystem-tool CONTROL, wrapping the existing pure
  * `formatFilesystemContext` full-haystack formatter as a {@link CompetitorAdapter}.
  *
- * WHAT IT IS (the honesty control, discretion decision 4): a deliberately-trivial
+ * WHAT IT IS (the honesty control): a deliberately-trivial
  * no-memory baseline. Instead of Comis's ranked recall (a top-5
  * `MemorySearchResult[]`), it dumps the ENTIRE conversation haystack — every doc,
  * in deterministic `createdAt` order, NO relevance scoring, NO top-k truncation —
@@ -13,7 +13,7 @@
  * Comis (Letta's filesystem agent scored 74.0% on LoCoMo, above Mem0's
  * self-reported 68.5%; .planning/MEMORY_BENCHMARK_CREDIBILITY.md TL;DR).
  *
- * THE CONTROL-LABEL DISCIPLINE (T-98-02-01 / T-104-03-04): this adapter carries
+ * THE CONTROL-LABEL DISCIPLINE: this adapter carries
  * `isControl: true` and its result's `manifestRef` embeds the explicit
  * {@link LETTA_FS_BASELINE_CONTROL_LABEL}, so it is STRUCTURALLY distinguishable
  * from a Comis cell and can NEVER be mistaken for Comis's headline score. The
@@ -23,7 +23,7 @@
  * This is the ONLY competitor adapter that actually runs in the keyless CI (the
  * mem0/zep/hindsight/mnemosyne skeletons skip-with-disclosure).
  *
- * SECURITY — prototype-pollution discipline (T-104-03-03, inherited from
+ * SECURITY — prototype-pollution discipline (inherited from
  * `formatFilesystemContext`): the doc `content` strings come from the UNTRUSTED
  * dataset haystack. The dump is built by string concatenation only; doc content
  * is NEVER used as an object key, so a `"__proto__"` / `"constructor"` content
@@ -108,7 +108,7 @@ export interface LettaFsBaselineAdapter extends CompetitorAdapter {
  * per-cell haystack from `config.docs`, formats the full-dump control context via
  * the pure `formatFilesystemContext`, and returns a `ran:true` result with
  * `isControl:true`, a control-labelled `manifestRef`, and `contextChars` — the
- * OBSERVED char length of the rendered context (WR-02), which makes the format
+ * OBSERVED char length of the rendered context, which makes the format
  * call load-bearing rather than discarded. It runs keyless at $0 — no env, no
  * key, no provider call.
  */
@@ -127,7 +127,7 @@ export function createLettaFsBaselineAdapter(): LettaFsBaselineAdapter {
       // context the harness feeds to the SAME answer+judge models; the resulting
       // accuracy is recorded under the control label in the committed manifest
       // (read back from disk before it is ever quoted — the honesty protocol).
-      // WR-02: we OBSERVE the formatted context (record its char length on the
+      // We OBSERVE the formatted context (record its char length on the
       // result) so this call is LOAD-BEARING — a faithful $0 control execution
       // whose work cannot be deleted as dead code without a behavioural change.
       const context = this.formatControlContext(docs);

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Deterministic constructed-scenario builders (Phase 99, Plan 99-01) -- the
+ * Deterministic constructed-scenario builders -- the
  * adversarial / contradiction / redaction / learning fixtures the 4 Comis-unique
- * Tier-3 harnesses (99-02 poisoning, 99-04 trust-contradiction, 99-05 redaction,
- * 99-03 recall-learning) ingest WITHOUT any external corpus.
+ * Tier-3 harnesses (poisoning, trust-contradiction, redaction,
+ * recall-learning) ingest WITHOUT any external corpus.
  *
- * WHY CONSTRUCTED (99-CONTEXT.md decision 1): the 4 Tier-3 benchmarks measure
- * SHIPPED v2.7 properties (trust filter, write-time secret downgrade, FEED loop)
+ * WHY CONSTRUCTED: the 4 Tier-3 benchmarks measure
+ * shipped properties (trust filter, write-time secret downgrade, FEED loop)
  * over scenarios that need no download. Each builder returns hard-coded
  * deterministic literals -- so the same call is byte-identical across runs and
  * the gated harness's gold map is reproducible from one command + git.
@@ -15,15 +15,15 @@
  * constant (the dated-document anchor); there is no `Date.now()` / `new Date()`
  * here (the globals rule scopes to `src/**`). Two calls to any builder deep-equal.
  *
- * SECURITY -- synthetic-only secrets (T-99-01-02, ASVS V7): the redaction
+ * SECURITY -- synthetic-only secrets (ASVS V7): the redaction
  * fixtures' planted "secrets" are OBVIOUSLY-FAKE literals -- the `sk-FAKE…` key
  * family (never a real high-entropy provider token), a `*.example.test` reserved
  * domain email, and an all-zero phone. A leaked fixture (e.g. serialized into a
- * downstream report) therefore discloses NOTHING. The committed report for 99-05
- * commits ONLY the aggregate leak-rate, never a planted secret (99-05's job), but
+ * downstream report) therefore discloses NOTHING. The committed redaction report
+ * commits ONLY the aggregate leak-rate, never a planted secret, but
  * even the raw fixtures here are harmless by construction.
  *
- * SECURITY -- prototype-pollution discipline (T-99-01-03): all fixture content
+ * SECURITY -- prototype-pollution discipline: all fixture content
  * strings are stored as VALUES only, never used as object keys. The returned
  * objects use literal keys exclusively, so no fixture text can reach
  * `Object.prototype`.
@@ -45,12 +45,12 @@ export interface HaystackDoc {
   createdAt: number;
 }
 
-/** The trust band a contradiction-pair doc is ingested under (the SUITE-04 lever). */
+/** The trust band a contradiction-pair doc is ingested under (the trust-first lever). */
 export type ScenarioTrustLevel = "system" | "learned" | "external";
 
 /**
  * A memory-poisoning scenario: benign docs carrying the TRUE fact, adversarial
- * docs carrying an in-content instruction trying to hijack the answer. The 99-02
+ * docs carrying an in-content instruction trying to hijack the answer. The poisoning
  * harness ingests `benignDocs` as `learned`/`system` and `adversarialDocs` as
  * `external`, recalls `query`, and measures whether the answer reflects
  * `injectionDirective` (the attack) vs `expectedAnswerSubstring` (the truth) --
@@ -71,7 +71,7 @@ export interface PoisoningScenario {
 
 /**
  * A trust-first contradiction pair: an OLDER higher-trust fact vs a NEWER
- * lower-trust contradicting claim. THE SUITE-04 CONTRACT (the Phase-100 KG gate
+ * lower-trust contradicting claim. THE TRUST-FIRST CONTRACT (the KG gate
  * consumes this): `olderHighTrustDoc.createdAt < newerLowTrustDoc.createdAt`, yet
  * the CORRECT answer is the OLDER high-trust fact -- a newer low-trust claim must
  * NOT supersede it (trust-first, NOT recency-first).
@@ -87,14 +87,14 @@ export interface ContradictionPair {
    * The substring the CORRECT answer contains -- the OLDER high-trust fact. A
    * trust-first system returns this despite it being older; a (wrong)
    * recency-first system would return the newer low-trust claim instead. This is
-   * the load-bearing SUITE-04 / KG-02 assertion.
+   * the load-bearing trust-first KG assertion.
    */
   correctAnswerSubstring: string;
 }
 
 /**
  * A redaction haystack: otherwise-benign session docs with planted SYNTHETIC
- * secrets/PII. The 99-05 harness ingests these (the write-time scan downgrades
+ * secrets/PII. The redaction harness ingests these (the write-time scan downgrades
  * `critical` hits to `external`), recalls `query`, and measures the leak-rate of
  * a planted secret into the recalled context -- mitigations ON vs OFF.
  */
@@ -109,7 +109,7 @@ export interface RedactionHaystack {
 
 /**
  * A recall-outcome-learning fixture: a fixed query over N episodes with a known
- * gold doc that starts ranked LOW, so the 99-03 FEED-loop harness can
+ * gold doc that starts ranked LOW, so the recall-learning FEED-loop harness can
  * `recordUsage` after each recall and measure the gold doc's rank LIFT across
  * episodes.
  */
@@ -133,7 +133,7 @@ const T_2023_06 = Date.UTC(2023, 5, 20, 9, 0, 0);
 const T_2023_09 = Date.UTC(2023, 8, 25, 9, 0, 0); // newer / later
 
 /**
- * Build the memory-poisoning scenarios (SUITE-02). Two scenarios across distinct
+ * Build the memory-poisoning scenarios. Two scenarios across distinct
  * attributes (a capital, a config value) so the ASR scorer sees >1 attack type.
  * Deterministic literals; the benign doc carries the true fact, the adversarial
  * doc carries an "IGNORE prior facts" hijack instruction. Pure: content strings
@@ -181,13 +181,13 @@ export function buildPoisoningScenarios(): PoisoningScenario[] {
 }
 
 /**
- * Build the trust-first contradiction pairs (SUITE-04). Each pair has an OLDER
+ * Build the trust-first contradiction pairs. Each pair has an OLDER
  * higher-trust fact and a NEWER lower-trust contradicting claim; the CORRECT
  * answer is the OLDER high-trust fact (a newer low-trust claim must NOT win).
  *
  * THE LOAD-BEARING ASSERTION: `olderHighTrustDoc.createdAt < newerLowTrustDoc.createdAt`
  * AND `correctAnswerSubstring` lives ONLY in `olderHighTrustDoc` -- this is what
- * SUITE-04 / KG-02 measures (trust-first, NOT recency-first). The Phase-100 KG
+ * the trust-first KG check measures (trust-first, NOT recency-first). The KG
  * gate consumes this contract.
  *
  * Deterministic literals; pure (content as values only, prototype-pollution-safe).
@@ -231,14 +231,14 @@ export function buildContradictionPairs(): ContradictionPair[] {
 }
 
 /**
- * Build the redaction haystack (SUITE-05). Otherwise-benign session docs with
+ * Build the redaction haystack. Otherwise-benign session docs with
  * planted SYNTHETIC secrets/PII -- the `sk-FAKE…` key family (never a real
  * token), a `*.example.test` reserved-domain email, and an all-zero phone. Each
  * planted secret appears in a doc so the harness can measure whether the shipped
  * mitigations keep it OUT of the recalled context.
  *
- * SECURITY: every secret is obviously-fake -- a leaked fixture discloses nothing
- * (T-99-01-02). Deterministic literals; pure (content as values only).
+ * SECURITY: every secret is obviously-fake -- a leaked fixture discloses nothing.
+ * Deterministic literals; pure (content as values only).
  */
 export function buildRedactionHaystack(): RedactionHaystack {
   // Synthetic, obviously-fake fixtures. The `sk-FAKE` prefix marks the key as a
@@ -272,7 +272,7 @@ export function buildRedactionHaystack(): RedactionHaystack {
 }
 
 /**
- * Build the recall-outcome-learning fixture (SUITE-03). A fixed query with a
+ * Build the recall-outcome-learning fixture. A fixed query with a
  * known gold doc that starts ranked low (placed among lexically-similar
  * distractors), and a fixed episode count >= 2 so the FEED-loop harness can
  * `recordUsage` after each recall and measure the gold doc's rank lift across

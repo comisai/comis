@@ -122,7 +122,7 @@ import * as nodeOs from "node:os";
 import { formatSessionKey, type SpawnPacket, type MemorySearchResult } from "@comis/core";
 // Real (un-mocked) §7.3 guidance formatter — prompt-assembly pushes its block into
 // the prompt when >=2 memories are surfaced. It is FIXED guidance text, NOT a
-// retrieved memory, so it must NOT inflate retrieved-memory telemetry (WR-02):
+// retrieved memory, so it must NOT inflate retrieved-memory telemetry:
 // charsInjected / ragHits count retrieved memory only, never the guidance block.
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { createSpawnPacketBuilder } from "../spawn/spawn-packet-builder.js";
@@ -295,7 +295,7 @@ describe("assembleExecutionPrompt", () => {
     });
     const result = await assembleExecutionPrompt(params);
 
-    // recall is the single orchestrator (RANK-07); prompt-assembly no longer searches inline.
+    // recall is the single orchestrator; prompt-assembly no longer searches inline.
     expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
     expect(mockRecall).toHaveBeenCalledOnce();
     expect(mockCreateHybridMemoryInjector).toHaveBeenCalledOnce();
@@ -307,7 +307,7 @@ describe("assembleExecutionPrompt", () => {
     expect(result.dynamicPreamble).toContain("rag-section-1");
   });
 
-  it("threads deps.tripleStore into createMemoryRecall so the graph-spread lane has its store (KG-01/04)", async () => {
+  it("threads deps.tripleStore into createMemoryRecall so the graph-spread lane has its store", async () => {
     // Production-wiring regression guard for the LAST link of the chain:
     // PromptAssemblyParams.deps.tripleStore → createMemoryRecall's deps.tripleStore.
     // RED on pre-patch code: the createMemoryRecall call object listed
@@ -337,7 +337,7 @@ describe("assembleExecutionPrompt", () => {
     expect(recallDeps.tripleStore).toBe(tripleStore);
   });
 
-  it("threads deps.embeddingStore + config.rag.mmr/queryUnderstanding into createMemoryRecall so the MMR re-rank has its store and knobs (IQ-01)", async () => {
+  it("threads deps.embeddingStore + config.rag.mmr/queryUnderstanding into createMemoryRecall so the MMR re-rank has its store and knobs", async () => {
     // Production-wiring regression guard for the LAST link of the chain:
     // PromptAssemblyParams.deps.embeddingStore → createMemoryRecall's deps.embeddingStore,
     // and config.rag.mmr / config.rag.queryUnderstanding → createMemoryRecall's config.
@@ -346,7 +346,7 @@ describe("assembleExecutionPrompt", () => {
     // embeddingStore, and its config object omitted mmr + queryUnderstanding, so the
     // MMR slot gate (`deps.embeddingStore !== undefined && cfg.mmr?.enabled`) was always
     // false and the diversity re-rank never ran — a silent no-op even with the store
-    // injected and rag.mmr.enabled flipped on (the field-plumbing hazard, mirror 100-05).
+    // injected and rag.mmr.enabled flipped on (the field-plumbing hazard).
     const memoryPort = {
       search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
       store: vi.fn(),
@@ -387,21 +387,21 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // 4a-ter. LEARN-03: the deterministic apply overlay (buildScoringAlphas) at
+  // 4a-ter. The deterministic apply overlay (buildScoringAlphas) at
   // the recall `scoring:` arg, behind a gated tunedAlphaStore read.
-  //   - Default-OFF byte-identity (Pitfall 3): tuning off (or no store dep) ⇒
+  //   - Default-OFF byte-identity: tuning off (or no store dep) ⇒
   //     read() called 0 times AND the `scoring` arg is byte-identical to
   //     config.rag.scoring (the static alphas pass unchanged). The spy mirrors
-  //     the FEED default-off / MMR readEmbeddings=0 pattern.
+  //     the feedback default-off / MMR readEmbeddings=0 pattern.
   //   - Apply: tuning ON + a learned vector ⇒ the `scoring` arg carries the four
   //     tuned non-trust alphas; read() runs ONCE scoped to (tenant, agent).
-  //   - Belt #2 (the OD2 ship-gate): under tuning ON with ANY learned vector, the
+  //   - Belt #2 (the ship-gate): under tuning ON with ANY learned vector, the
   //     `scoring` arg's trust weight is byte-identical to config.rag.scoring's —
   //     the learned vector can never raise trust (the overlay sources it from
   //     config). The trust FILTER (memory-recall.ts:534-536) stays frozen — that
   //     file is UNTOUCHED by this plan (asserted via the git-diff verify gate).
   // -----------------------------------------------------------------
-  describe("LEARN-03 deterministic apply overlay (gated buildScoringAlphas at the recall scoring arg)", () => {
+  describe("deterministic apply overlay (gated buildScoringAlphas at the recall scoring arg)", () => {
     /** The static config alphas the overlay merges onto (the SOLE trust-weight source). */
     const CONFIG_SCORING = {
       recencyAlpha: 0.2,
@@ -468,7 +468,7 @@ describe("assembleExecutionPrompt", () => {
       return (mockCreateMemoryRecall.mock.calls[0][1] as { scoring: any }).scoring;
     }
 
-    it("Test 1 (default-OFF byte-identity, Pitfall 3): tuning OFF ⇒ read() 0 times AND scoring is byte-identical to config", async () => {
+    it("Test 1 (default-OFF byte-identity): tuning OFF ⇒ read() 0 times AND scoring is byte-identical to config", async () => {
       // The store is CONSTRUCTED (spy) and WIRED, but onlineTuning is OFF — the
       // gate must short-circuit BEFORE the read. FAILS on a pre-patch that reads
       // the store above the enabled gate (the MMR readEmbeddings=0 analog).
@@ -519,7 +519,7 @@ describe("assembleExecutionPrompt", () => {
       expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1" });
     });
 
-    it("Test 3 (belt #2 at the apply site — the OD2 RED): under tuning ON with ANY learned vector, scoring.trustAlpha is byte-identical to config", async () => {
+    it("Test 3 (belt #2 at the apply site): under tuning ON with ANY learned vector, scoring.trustAlpha is byte-identical to config", async () => {
       // Even a learned vector that (type-widened) smuggles a trust weight cannot move
       // the apply-site trust weight — the overlay sources it from config. FAILS if
       // trustAlpha is taken from the tuned vector.
@@ -550,7 +550,7 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // 4a-bis. USER-03: the LLM-free per-user-profile standing block.
+  // 4a-bis. The LLM-free per-user-profile standing block.
   // The profile is read (deterministically) + pushed onto memorySections
   // exactly like the temporal-guidance block. Its binding proof is
   // default-OFF byte-identity (the cost gate): with NO userRepresentationStore
@@ -558,10 +558,10 @@ describe("assembleExecutionPrompt", () => {
   // appears ONLY when the store returns rows, and the injection is LLM-free
   // (a store.read + the pure formatter — never a model call).
   // -----------------------------------------------------------------
-  describe("USER-03 per-user-profile injection (LLM-free standing block)", () => {
+  describe("per-user-profile injection (LLM-free standing block)", () => {
     /**
      * The standing-block config: the profile's OWN gate
-     * (`memoryUserRepresentation.enabled`) is ON. HR-01 fix — the profile push
+     * (`memoryUserRepresentation.enabled`) is ON. The profile push
      * site is gated on this knob + the store dep, INDEPENDENT of recall hits and
      * independent of `rag.enabled`. `rag.enabled` is left ON here only so the
      * recall path also runs (the prior tests asserted recall is still constructed
@@ -581,7 +581,7 @@ describe("assembleExecutionPrompt", () => {
     }
     /**
      * The standing-block config WITHOUT a recall hit: the profile knob is ON but
-     * `rag.enabled` is OFF (no recall, no recall hits). HR-01 — the durable
+     * `rag.enabled` is OFF (no recall, no recall hits). The durable
      * profile MUST still inject on a zero-recall turn. The push must NOT be nested
      * inside the recall-hit branch.
      */
@@ -734,8 +734,8 @@ describe("assembleExecutionPrompt", () => {
       expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
     });
 
-    it("HR-01 standing block: a populated profile injects on a ZERO-recall turn (recall returns ok([])) — the profile is NOT recall-conditional", async () => {
-      // RED-first (HR-01): the profile <user_profile> block was wrongly NESTED inside
+    it("standing block: a populated profile injects on a ZERO-recall turn (recall returns ok([])) — the profile is NOT recall-conditional", async () => {
+      // RED-first: the profile <user_profile> block was wrongly NESTED inside
       // the `recalled.value.length > 0` recall-hit branch, so it silently dropped on
       // every zero-recall turn (greetings/off-topic/sparse store). The durable per-user
       // profile is a STANDING block — it must inject whenever its OWN knob is on + the
@@ -775,8 +775,8 @@ describe("assembleExecutionPrompt", () => {
       expect(spy.reads(), "the standing-block read runs on a zero-recall turn").toBe(1);
     });
 
-    it("HR-01 standing block: injects with rag.enabled=false (no memoryPort recall path) — decoupled from the RAG knob", async () => {
-      // The other half of HR-01: the block was ALSO gated behind `rag.enabled` +
+    it("standing block: injects with rag.enabled=false (no memoryPort recall path) — decoupled from the RAG knob", async () => {
+      // The other half: the block was ALSO gated behind `rag.enabled` +
       // `deps.memoryPort` (the outer recall guard). An operator who enables
       // `memoryUserRepresentation` but runs `rag.enabled: false` got ZERO profile
       // injection (the offline builder wrote rows nothing ever read). The standing
@@ -806,8 +806,8 @@ describe("assembleExecutionPrompt", () => {
       expect(spy.reads(), "the standing-block read runs even with rag.enabled=false").toBe(1);
     });
 
-    it("HR-01 cost gate: knob OFF + store present + recall HIT ⇒ read() NEVER called and the prompt is byte-identical (the OWN-knob gate, not store-presence)", async () => {
-      // The HR-01 gate moved from store-presence-only to (knob && store). Prove the
+    it("cost gate: knob OFF + store present + recall HIT ⇒ read() NEVER called and the prompt is byte-identical (the OWN-knob gate, not store-presence)", async () => {
+      // The gate moved from store-presence-only to (knob && store). Prove the
       // knob is load-bearing — and that this is a true regression guard: wire the store
       // AND drive a recall HIT (so the OLD nested push site WOULD have run), but leave
       // `memoryUserRepresentation` OFF. The cost gate must hold: read() is NEVER called
@@ -868,7 +868,7 @@ describe("assembleExecutionPrompt", () => {
     });
 
     it("forward-presence: deps.userRepresentationStore reaches the read site with the prompt's own (tenant, agent, user) scope", async () => {
-      // The threading guard (Pitfall 1 — a dropped thread is a silent no-op). Mirror
+      // The threading guard (a dropped thread is a silent no-op). Mirror
       // the deps.tripleStore forward-presence test (lines 310-337): assert the dep the
       // caller passed is the one whose read() fires, scoped to THIS prompt's identity.
       const spy = makeSpyStore([
@@ -909,21 +909,21 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // 4a-ter. SOCIAL-02/03: the LLM-free channel-relationship standing block.
-  // The directional analog of the USER-03 block above (Phase 108, Plan 04).
+  // 4a-ter. The LLM-free channel-relationship standing block.
+  // The directional analog of the user-profile block above.
   // The channel's relationship edges are read (deterministically) + pushed onto
   // memorySections, exactly like the temporal-guidance / user-profile blocks.
   // Two binding proofs:
   //   - default-OFF byte-identity (the cost gate): with NO relationshipStore dep
   //     OR socialModeling off, the prompt is byte-identical AND read() is 0 times.
-  //   - SOCIAL-03 sign-off gate (the headline read-side proof): socialModeling.enabled
+  //   - sign-off gate (the headline read-side proof): socialModeling.enabled
   //     === true but NO privacyReviewSignedOffBy ⇒ STILL 0 reads + byte-identical (the
   //     knob alone does not activate — a recorded sign-off is required).
-  // The active path reads scoped to channelId = sessionKey.channelId (the SOCIAL-02
+  // The active path reads scoped to channelId = sessionKey.channelId (the
   // read-side boundary) and the injection is LLM-free (a store.read + the pure
   // formatter — never a model call).
   // -----------------------------------------------------------------
-  describe("SOCIAL-02/03 channel-relationship injection (LLM-free, sign-off gated)", () => {
+  describe("channel-relationship injection (LLM-free, sign-off gated)", () => {
     /** socialModeling ON + a recorded sign-off (the ACTIVE gate) + rag for parity. */
     function signedOffConfig() {
       return makeConfig({
@@ -937,7 +937,7 @@ describe("assembleExecutionPrompt", () => {
         },
       });
     }
-    /** socialModeling ON but NO sign-off (the SOCIAL-03 RED gate — knob alone). */
+    /** socialModeling ON but NO sign-off (the RED gate — knob alone). */
     function enabledNoSignOffConfig() {
       return makeConfig({
         socialModeling: { enabled: true },
@@ -1057,8 +1057,8 @@ describe("assembleExecutionPrompt", () => {
       expect(off.systemPrompt).toEqual(baseline.systemPrompt);
     });
 
-    it("SOCIAL-03 gate: enabled=true but NO privacyReviewSignedOffBy ⇒ 0 reads + byte-identical prompt (the headline sign-off RED)", async () => {
-      // THE HEADLINE SOCIAL-03 READ-SIDE PROOF: the knob is ON but there is NO recorded
+    it("sign-off gate: enabled=true but NO privacyReviewSignedOffBy ⇒ 0 reads + byte-identical prompt (the headline sign-off RED)", async () => {
+      // THE HEADLINE READ-SIDE PROOF: the knob is ON but there is NO recorded
       // sign-off. The store IS wired and recall HITS (so a store-presence-only or
       // enabled-only gate WOULD read and inject). The dual gate must hold: a recorded
       // privacyReviewSignedOffBy is REQUIRED — without it read() is NEVER called and the
@@ -1080,7 +1080,7 @@ describe("assembleExecutionPrompt", () => {
         }),
       );
 
-      expect(spy.reads(), "knob on but NO sign-off ⇒ read() NEVER called (SOCIAL-03)").toBe(0);
+      expect(spy.reads(), "knob on but NO sign-off ⇒ read() NEVER called").toBe(0);
       expect(noSignOff.dynamicPreamble).not.toContain("<channel_relationships>");
       expect(noSignOff.dynamicPreamble).toEqual(baseline.dynamicPreamble);
       expect(noSignOff.systemPrompt).toEqual(baseline.systemPrompt);
@@ -1137,7 +1137,7 @@ describe("assembleExecutionPrompt", () => {
       expect(result.dynamicPreamble).toContain("trusts on logistics");
       expect(spy.reads(), "the injection is a store.read (deterministic, LLM-free)").toBe(1);
 
-      // The SOCIAL-02 read-side boundary: the scope's channelId is the session's channel.
+      // The read-side boundary: the scope's channelId is the session's channel.
       const readMock = (spy.store as unknown as { read: ReturnType<typeof vi.fn> }).read;
       const scopeArg = readMock.mock.calls[0][0] as {
         tenantId: string;
@@ -1191,7 +1191,7 @@ describe("assembleExecutionPrompt", () => {
     expect(memoryEmit, "memory:injected emit must fire when injection produces content").toBeTruthy();
     const payload = memoryEmit![1];
     expect(payload.hitCount).toBe(2);
-    // WR-02: ranked.length === 2 -> the §7.3 guidance block IS injected into the
+    // ranked.length === 2 -> the §7.3 guidance block IS injected into the
     // prompt, but it is FIXED guidance text, NOT a retrieved memory. The
     // memory:injected telemetry must count retrieved memory ONLY (inline +
     // retrieved sections) and must NOT include the guidance-block length —
@@ -1514,7 +1514,7 @@ describe("assembleExecutionPrompt", () => {
     expect(parsed.memoryInjection.trustTags).toEqual([]);
   });
 
-  it("WR-02 SystemPromptReport.memoryInjection excludes the §7.3 guidance block from ragHits/charsInjected", async () => {
+  it("SystemPromptReport.memoryInjection excludes the §7.3 guidance block from ragHits/charsInjected", async () => {
     // >=2 surfaced memories -> the §7.3 temporal-guidance block IS pushed into
     // the prompt. The persisted report's ragHits/charsInjected must count the
     // RETRIEVED memory ONLY (the one inline + one section here), NOT the fixed
@@ -3974,9 +3974,9 @@ describe("computeFeatureFlagHash", () => {
   });
 });
 
-describe("buildRecallTrace -- data-dir agreement with the reader (WR-02)", () => {
+describe("buildRecallTrace -- data-dir agreement with the reader", () => {
   it("resolves the recorder base from the configured dataDir so writer and reader agree", () => {
-    // WR-02: the recorder used to hardcode os.homedir()/.comis as its base
+    // The recorder used to hardcode os.homedir()/.comis as its base
     // while the memory.recall_trace handler reads from the configured dataDir
     // (deps.dataDir ?? ~/.comis). Under a non-default COMIS_DATA_DIR the writer
     // and reader pointed at DIFFERENT files, so the diagnostic returned nothing.

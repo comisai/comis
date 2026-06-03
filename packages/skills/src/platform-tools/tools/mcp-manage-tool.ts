@@ -2,7 +2,7 @@
 // @allow-throw: connect action re-throws non-OAuth RPC errors at line 352; caught by the
 // skill executor tool-result boundary which formats all thrown errors as tool error responses.
 // Only the needs_oauth_login branch is caught and converted — all other errors propagate
-// unchanged per T-01-06-02 non-swallow invariant (Plan 06, R8.4'-01).
+// unchanged per the non-swallow invariant.
 /**
  * MCP server management tool: multi-action tool for MCP server lifecycle.
  *
@@ -21,7 +21,7 @@ import { readStringParam, throwToolError } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 
-// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name.
+// Activity label spec (§17.6). Descriptor name == emitted name.
 // Per-action overrides use the tool's REAL action enum
 // (list/status/connect/disconnect/reconnect — NOT the spec §6.1 example).
 registerActivityLabelSpec("mcp_manage", {
@@ -198,7 +198,7 @@ function coerceHeaders(p: Record<string, unknown>): unknown {
  * Mirrors the `coerceHeaders` pattern above, adapted for the auth enum
  * constraint (must be "headers" or "oauth" when present).
  *
- * Threat T-01-01-01: rejects any value not in ["headers","oauth"] via
+ * Rejects any value not in ["headers","oauth"] via
  * `throwToolError("invalid_value",...)` before any handler logic runs.
  *
  * - `raw === undefined`: return `undefined` (field was not supplied; caller
@@ -331,11 +331,11 @@ export function createMcpManageTool(
               _trustLevel: ctx.trustLevel,
             });
           } catch (err: unknown) {
-            // R8.4'-01: catch structured needs_oauth_login error from mcp-handlers
-            // (Plan 05) and surface an actionable hint instead of re-throwing a
+            // Catch the structured needs_oauth_login error from mcp-handlers
+            // and surface an actionable hint instead of re-throwing a
             // generic error that the agent cannot act on. Only catches errors where
             // .data.needs_oauth_login === true — all other errors are re-thrown
-            // unchanged (T-01-06-02 non-swallow invariant).
+            // unchanged (the non-swallow invariant).
             const errData =
               err instanceof Error
                 ? (err as unknown as {

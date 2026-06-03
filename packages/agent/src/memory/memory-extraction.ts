@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure, deterministic helpers for the structured memory-extraction job
- * (Phase 82 — EXTR-01/02/03/05). Extracted into this sibling of
+ * Pure, deterministic helpers for the structured memory-extraction job.
+ * Extracted into this sibling of
  * `memory-review-job.ts` so the verbose prompt + the cleanest defined-I/O
  * units (string/number → value) live apart from the job's I/O — keeping the
  * job file under the 800-line cap and giving these functions no-mock,
- * RED→GREEN unit coverage. Plan 03 wires these into `runMemoryReview`.
+ * RED→GREEN unit coverage. The job wires these into `runMemoryReview`.
  *
  * Contents:
  * - {@link STRUCTURED_PROMPT}: the Hindsight-style system prompt instructing the
  *   LLM to emit `{ memories: [{ content, occurredAt?(ISO), entities[], memoryType?, causes? }] }`,
- *   convert relative dates to absolute ISO 8601 (EXTR-02), always include the
- *   "user" entity (EXTR-04), emit explicit cause→effect `causes` (EXTRACT-03),
- *   apply ✅/❌ selectivity, and respond in the source language (EXTR-03).
+ *   convert relative dates to absolute ISO 8601, always include the
+ *   "user" entity, emit explicit cause→effect `causes`,
+ *   apply ✅/❌ selectivity, and respond in the source language.
  * - {@link parseExtractionResult}: a TOTAL parser — fence-strip + JSON.parse +
  *   `MemoryExtractionResultSchema.safeParse`. Returns `undefined` on ANY failure
- *   and NEVER throws (the EXTR-05 non-fatal contract at the parse boundary).
+ *   and NEVER throws (the non-fatal contract at the parse boundary).
  * - {@link resolveOccurredAt}: resolve an LLM-emitted ISO date to epoch ms against
- *   an INJECTED reference `nowMs` (EXTR-02). Sanity-bounded; `undefined` for
+ *   an INJECTED reference `nowMs`. Sanity-bounded; `undefined` for
  *   absent/unparseable/absurd values. Reads NO clock itself (no `Date.now()` /
  *   `new Date()` — uses the sanctioned `systemDateFrom` indirection only).
  *
@@ -41,9 +41,9 @@ const ONE_HUNDRED_YEARS_MS = 100 * 365 * ONE_DAY_MS;
  * The Hindsight-style structured-extraction system prompt (design §6.1).
  *
  * Instructs the LLM to emit the `{ memories: [...] }` envelope the parser
- * validates, convert ALL relative temporal expressions to absolute ISO 8601
- * (EXTR-02), always include the "user" entity (EXTR-04), apply ✅/❌ selectivity,
- * and RESPOND IN THE SAME LANGUAGE AS THE CONVERSATION (EXTR-03). Kept lean —
+ * validates, convert ALL relative temporal expressions to absolute ISO 8601,
+ * always include the "user" entity, apply ✅/❌ selectivity,
+ * and RESPOND IN THE SAME LANGUAGE AS THE CONVERSATION. Kept lean —
  * this constant is the reason the prompt lives in a sibling, not in the job.
  */
 export const STRUCTURED_PROMPT = `You analyze chat session histories and extract durable facts about the user.
@@ -81,15 +81,15 @@ No markdown fences, no commentary. If nothing qualifies: { "memories": [] }`;
 /**
  * Parse raw LLM text into a validated {@link MemoryExtractionResult}.
  *
- * TOTAL function — it NEVER throws (EXTR-05 non-fatal contract at the parse
+ * TOTAL function — it NEVER throws (the non-fatal contract at the parse
  * boundary): adversarial or malformed payloads return `undefined`, so a bad
- * payload cannot crash the caller (Plan 03 advances the watermark on
+ * payload cannot crash the caller (the job advances the watermark on
  * `undefined`). Steps:
  *   1. strip markdown code fences (same regex as the replaced flat parser),
  *   2. `JSON.parse` inside try/catch (parse error → `undefined`),
  *   3. `MemoryExtractionResultSchema.safeParse` (schema mismatch → `undefined`).
  *
- * The schema is LENIENT (Plan 01): a benign extra LLM key (e.g. `confidence`)
+ * The schema is LENIENT: a benign extra LLM key (e.g. `confidence`)
  * is stripped, not rejected, so a valid memory is never discarded over an
  * unrequested field. The OLD flat `[{content, session}]` array shape is rejected
  * (it is not the `{ memories: [...] }` envelope).
@@ -112,18 +112,18 @@ export function parseExtractionResult(text: string): MemoryExtractionResult | un
 
 /**
  * Resolve an LLM-emitted ISO 8601 date string to epoch ms, validated against
- * the INJECTED reference `nowMs` (EXTR-02). The caller (Plan 03) passes
+ * the INJECTED reference `nowMs`. The caller passes
  * `clock.now()` — this function reads NO clock itself and contains no
  * `Date.now()` / `new Date()` (it uses the sanctioned `systemDateFrom`
  * indirection for the known ISO value only).
  *
- * Returns `undefined` (→ `occurredAt` left absent, falling back to `createdAt`
- * per TEMP-01) when the date is:
+ * Returns `undefined` (→ `occurredAt` left absent, falling back to `createdAt`)
+ * when the date is:
  *   - absent,
  *   - unparseable (non-finite),
  *   - far-future (> now + 1 day — a likely parse artifact), or
  *   - absurd-past (> 100 years before now).
- * These bounds reject a poisoned date from steering temporal ranking (T-82-05).
+ * These bounds reject a poisoned date from steering temporal ranking.
  */
 export function resolveOccurredAt(iso: string | undefined, nowMs: number): number | undefined {
   if (!iso) return undefined;

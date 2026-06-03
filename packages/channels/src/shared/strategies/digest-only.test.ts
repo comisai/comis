@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DigestOnly strategy tests (STRAT-05, §7.3 row "DigestOnly").
+ * DigestOnly strategy tests (§7.3 row "DigestOnly").
  *
  * Used by Email (largest cap, end-of-turn only). On success NO message is sent
  * (the assistant reply IS the activity). On failure exactly one "[FAILED]"
@@ -144,8 +144,8 @@ describe("createDigestOnlyRenderer", () => {
     await r.finalize(failure);
 
     const digest = sent[0];
-    // UX-01 governs the header MARKER glyph, not the "  • " bullet layout of the
-    // trail body (U+2022 is theme-independent formatting). Assert the HEADER line
+    // The theme governs the header MARKER glyph, not the "  • " bullet layout of
+    // the trail body (U+2022 is theme-independent formatting). Assert the HEADER line
     // carries no non-ASCII codepoint (stricter than Extended_Pictographic) and
     // follows the resolved theme marker, not the hardcoded "[FAILED]".
     const header = digest.split("\n")[0];
@@ -166,7 +166,7 @@ describe("createDigestOnlyRenderer", () => {
     };
     await r.finalize(failure);
 
-    // Byte-for-byte parity with the pre-75 Phase-72 body: the header stays "[FAILED]".
+    // Byte-for-byte parity with the original body: the header stays "[FAILED]".
     expect(sent[0]).toContain("[FAILED] dependency");
   });
 });

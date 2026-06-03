@@ -3,7 +3,6 @@
  * Built-in provider presets for the credential-injection broker.
  *
  * Port of OneCLI `apps.rs` curated preset catalog (Apache-2.0).
- * Design reference: credential-broker-implementation-tdd-2026-05-29.md §6.2.
  *
  * Two presets are defined here (the initial ported set):
  *   - "anthropic": api.anthropic.com via x-api-key header, path-scoped to /v1/*
@@ -61,7 +60,7 @@ export const PRESETS: PresetLibrary = [
  * rules with the caller-supplied `secretRef`.
  *
  * Throws `Error("Unknown preset: <id>")` when no preset with the given id
- * is found — never returns a partial or default binding (T-04-01).
+ * is found — never returns a partial or default binding.
  *
  * @param id - Preset identifier (e.g. "anthropic", "finnhub")
  * @param secretRef - SecretManager key resolved per request

@@ -3,9 +3,9 @@
  * Log Verification Integration Tests
  *
  * Verifies:
- * - LOG-01: RPC debug trace logging (method, clientId, durationMs)
- * - LOG-02: Tool audit event logging (toolName, durationMs, success)
- * - LOG-03: Structured error logs with context (method, err, stack)
+ * - RPC debug trace logging (method, clientId, durationMs)
+ * - Tool audit event logging (toolName, durationMs, success)
+ * - Structured error logs with context (method, err, stack)
  *
  * @module
  */
@@ -63,10 +63,10 @@ describe("Log Verification", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // LOG-01: RPC Debug Trace Logging
+  // RPC Debug Trace Logging
   // -------------------------------------------------------------------------
 
-  describe("LOG-01: RPC Debug Trace Logging", () => {
+  describe("RPC Debug Trace Logging", () => {
     it("debug trace logs appear for RPC calls", async () => {
       let ws: WebSocket | undefined;
       try {
@@ -120,10 +120,10 @@ describe("Log Verification", () => {
   });
 
   // -------------------------------------------------------------------------
-  // LOG-02: Tool Audit Event Logging
+  // Tool Audit Event Logging
   // -------------------------------------------------------------------------
 
-  describe("LOG-02: Tool Audit Event Logging", () => {
+  describe("Tool Audit Event Logging", () => {
     it("tool:executed events are logged to structured output", async () => {
       // Access the event bus directly
       const eventBus = (handle.daemon as any).container.eventBus;
@@ -176,10 +176,10 @@ describe("Log Verification", () => {
   });
 
   // -------------------------------------------------------------------------
-  // LOG-03: Structured Error Logs
+  // Structured Error Logs
   // -------------------------------------------------------------------------
 
-  describe("LOG-03: Structured Error Logs", () => {
+  describe("Structured Error Logs", () => {
     it("RPC errors produce structured JSON logs with context", async () => {
       let ws: WebSocket | undefined;
       try {

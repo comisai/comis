@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Inbound-context validation for the Terminal Worker (LR-01).
+ * Inbound-context validation for the Terminal Worker.
  *
  * The worker re-establishes the originating `traceId` as its ALS context
- * (OPS-07) so its logs correlate to the originating turn — but the wire `traceId`
+ * so its logs correlate to the originating turn — but the wire `traceId`
  * is UNTRUSTED. This module owns the sanitize-not-trust policy + the
  * least-privilege trust level the worker context runs under. Extracted from the
  * worker entry so that file stays under the 800-line architecture cap; pure (no
@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * The least-privileged trust level the worker context runs under (LR-01).
+ * The least-privileged trust level the worker context runs under.
  *
  * The worker performs NO authorization decisions — it only spawns from the
  * already-gated `{bin,argv}` and renders read views. An unconditional
@@ -30,7 +30,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export const WORKER_TRUST_LEVEL = "guest" as const;
 
 /**
- * Sanitize the inbound wire `traceId` before it becomes the ALS context (LR-01).
+ * Sanitize the inbound wire `traceId` before it becomes the ALS context.
  *
  * `runWithContext` does NOT validate against `RequestContextSchema` (whose
  * `traceId` is `z.guid()`), so an arbitrary/attacker-chosen traceId off the wire

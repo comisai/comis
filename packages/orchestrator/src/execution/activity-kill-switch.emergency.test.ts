@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * activity-kill-switch.emergency.test — WIRE-07 emergency stop + hot-reload.
+ * activity-kill-switch.emergency.test — emergency stop + hot-reload.
  *
  * `agents.<id>.activity.emergencyDisabled:true` is the agent-wide emergency
  * stop (§22.2): it suppresses ALL activity rendering for the agent regardless
@@ -141,10 +141,10 @@ function makeKillSwitchDeps(backing: KillSwitchValue, renderer: RecordingRendere
 }
 
 // ---------------------------------------------------------------------------
-// WIRE-07 — emergency stop + hot-reload
+// Emergency stop + hot-reload
 // ---------------------------------------------------------------------------
 
-describe("createActivityTurnCoordinator — WIRE-07 emergency stop + hot-reload", () => {
+describe("createActivityTurnCoordinator — emergency stop + hot-reload", () => {
   it("suppresses renderer.apply for any renderer when emergencyDisabled is true", () => {
     const renderer = makeRenderer();
     const applySpy = vi.spyOn(renderer, "apply");

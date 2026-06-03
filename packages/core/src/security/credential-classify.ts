@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Header-credential classifier — the keystone's typed view of a single
- * `(headerName, value)` credential. Ships as part of the Phase 1 keystone;
- * consumed by the Phase 3 (CRED) credential-extraction lifecycle.
+ * `(headerName, value)` credential. Consumed by the credential-extraction
+ * lifecycle.
  *
  *   - "ref"           — a store-backed reference: an `${VAR}`/`$VAR`/`$${VAR}`
  *                       string (optionally scheme/quote-wrapped) OR a SecretRef

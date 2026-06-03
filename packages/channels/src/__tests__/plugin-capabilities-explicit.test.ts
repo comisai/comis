@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * STRAT-02 cross-plugin guard: every in-tree channel plugin declares the
+ * Cross-plugin guard: every in-tree channel plugin declares the
  * `typing` / `threads` / `buttons` capability flags EXPLICITLY.
  *
  * The `ChannelFeaturesSchema` defaults these three fields (`false`/`false`/
  * `"none"`) as a safety net for *future* plugins (§19.5). For the 10 in-tree
- * plugins, that default is a trap: `selectStrategy(caps)` (70-05) routes each
+ * plugins, that default is a trap: `selectStrategy(caps)` routes each
  * channel from these flags, so a plugin that silently inherits a default
  * (e.g. Slack defaulting `threads:false`, or Telegram defaulting
  * `buttons:"none"`) would mis-route to the wrong rendering strategy.
@@ -37,8 +37,8 @@ const SRC_ROOT = resolve(here, "..");
 /**
  * The §17.2 per-plugin capability values (spec lines 1797-1806) — the ground
  * truth this test pins. `dir` is the package sub-directory; the plugin file is
- * `<dir>/<dir>-plugin.ts`. The three asserted fields are the ones STRAT-01
- * (70-03) added to `ChannelFeaturesSchema`.
+ * `<dir>/<dir>-plugin.ts`. The three asserted fields are the ones added to
+ * `ChannelFeaturesSchema`.
  */
 interface ExpectedCaps {
   readonly dir: string;
@@ -60,7 +60,7 @@ const EXPECTED: readonly ExpectedCaps[] = [
   { dir: "email", typing: false, threads: false, buttons: "none" },
 ];
 
-/** The three STRAT-01 fields that MUST be declared (not defaulted) per plugin. */
+/** The three fields that MUST be declared (not defaulted) per plugin. */
 const REQUIRED_FIELDS = ["typing", "threads", "buttons"] as const;
 
 /**
@@ -145,7 +145,7 @@ describe("every in-tree channel plugin declares typing/threads/buttons explicitl
     }
     expect(
       missing,
-      `Plugins must declare typing/threads/buttons explicitly (STRAT-02), not rely on the schema default:\n${missing.join("\n")}`,
+      `Plugins must declare typing/threads/buttons explicitly, not rely on the schema default:\n${missing.join("\n")}`,
     ).toEqual([]);
   });
 

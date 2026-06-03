@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for buildRelationshipBlock — the PURE deterministic channel-relationship
- * formatter (SOCIAL-02 read side, Phase 108). The directional analog of
+ * formatter (read side). The directional analog of
  * buildUserRepresentationBlock (user-representation-block.ts): a pure function over
  * RelationshipEntry[] that returns a FIXED-shape system-prompt block string, or
  * `null` when there is nothing to inject (empty input → no block → the caller pushes
  * nothing → byte-identity).
  *
- * Load-bearing RED-first assertions (mirror the 107 block contract, Delta #10):
+ * Load-bearing RED-first assertions (mirror the user-profile block contract):
  * - empty → null (the no-edges gate; the caller pushes nothing → default-OFF byte-identity).
  * - edges → a deterministic block CONTAINING the fixed <channel_relationships> header +
  *   every edge's directional content (subject → about + content); BYTE-STABLE for a given
  *   input (call twice → toEqual) and INVARIANT to input ordering (a shuffled input → the
  *   byte-identical block).
  * - the byte-stability sort is (subjectUserId, aboutUserId, createdAt, id) — the relationship
- *   edge has NO group/entryType vocabulary (Delta #3 OMITs the enum), so there is no
- *   GROUP_ORDER: the single 4-key sort is the whole within-block order.
+ *   edge has NO group/entryType vocabulary (the enum is intentionally omitted), so there
+ *   is no GROUP_ORDER: the single 4-key sort is the whole within-block order.
  * - PURE: no store call, no clock, no model — the formatter takes ONLY the entries and
  *   returns string|null, so the same input always yields the same output (the LLM-free
  *   read-path constraint: this is a deterministic format, not a recall lane).

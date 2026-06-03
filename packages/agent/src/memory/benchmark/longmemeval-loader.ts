@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure LongMemEval dataset loader (BENCH-01, the parse half).
+ * Pure LongMemEval dataset loader (the parse half).
  *
  * Parses a LongMemEval question item (one `haystack_sessions[i]` -> one dated
  * document) and STRIPS the per-turn `has_answer` eval-leak flag before emitting
@@ -9,7 +9,7 @@
  *
  * PURE parser. Imports ONLY @comis/shared (Result) + Node stdlib types. The
  * agent->memory architecture cut (architecture-graph.test.ts:133) FORBIDS any
- * import of the memory package here — the gated harness (Plan 88-03, a
+ * import of the memory package here — the gated harness (a
  * `.test.ts`) is the only file that may import the memory adapter. This file
  * mirrors the discipline of recall-eval.ts:14-18.
  *
@@ -29,7 +29,7 @@ import { ok, err, type Result } from "@comis/shared";
 /**
  * One ingestable dated document (one per haystack session).
  *
- * IN-02: no per-doc `questionId` — the harness keys the gold side-map on
+ * No per-doc `questionId` — the harness keys the gold side-map on
  * `sessionId` and resolves question-level gold through `LongMemEvalParsed`'s
  * separate `questions[]` / `answerSessionIdsByQuestion` channel, so a per-doc
  * question id would be dead weight that overstates the contract.
@@ -49,10 +49,10 @@ export interface LongMemEvalParsed {
   /**
    * Question text under `query` (uniform with LocomoParsed.qa[].query) so the
    * harness reads `q.query` across BOTH datasets, PLUS the judge's two separate
-   * channels (BENCH-03): `category` (the LongMemEval `question_type`, used to
+   * channels: `category` (the LongMemEval `question_type`, used to
    * select the per-category judge rubric) and `answer` (the gold answer the
    * judge grades against). Both are carried HERE on the question-list channel
-   * ONLY — never in `docs[].content` (the anti-leak invariant, T-89-01-01): the
+   * ONLY — never in `docs[].content` (the anti-leak invariant): the
    * gold is read directly by the judge and is never ingested into the store.
    */
   questions: Array<{ questionId: string; query: string; category: string; answer: string }>;
@@ -62,7 +62,7 @@ export interface LongMemEvalParsed {
 
 /**
  * Drop `has_answer` (and any other non-`{role,content}` label key) from each
- * turn before serialize. NEVER serialize `has_answer` (Pitfall 1 / T-88-01-01).
+ * turn before serialize. NEVER serialize `has_answer`.
  *
  * Builds each output with LITERAL keys only — a dataset-supplied key is never
  * used to index a write, so `__proto__`/`constructor` cannot pollute.
@@ -89,13 +89,13 @@ function daysInUtcMonth(year: number, monthIdx: number): number {
  * Parse the LongMemEval `"YYYY/MM/DD (Day) HH:MM"` date form to epoch ms.
  *
  * Anchored, bounded regex (`^...$`, fixed-width classes, no nested quantifiers)
- * -> linear-time, no ReDoS (T-88-01-04). Builds the epoch with `Date.UTC(...)`
+ * -> linear-time, no ReDoS. Builds the epoch with `Date.UTC(...)`
  * (a static-method call, NOT a flagged global — the globals classifier flags
  * only `Date.now` among `Date.*` and `new Date(...)` as a NewExpression, neither
  * of which this uses; globals-classifier.ts:228-236).
  *
  * Returns `err` (no throw) when the regex does not match OR a component is out
- * of range (WR-01). The `\d{2}` classes accept 00-99, and `Date.UTC` silently
+ * of range. The `\d{2}` classes accept 00-99, and `Date.UTC` silently
  * ROLLS OVER out-of-range-but-numeric components (month 13 -> next year, day 99,
  * hour 99) — so the `Number.isNaN` guard alone is dead code for these inputs.
  * Every component is range-checked BEFORE `Date.UTC`, and the day is validated
@@ -160,7 +160,7 @@ export function loadLongMemEval(raw: unknown): Result<LongMemEvalParsed, Error> 
   if (typeof query !== "string" || query.length === 0) {
     return err(new Error("LongMemEval item missing question text"));
   }
-  // BENCH-03 judge channels — read defensively (ASVS V5; the loader is TOTAL
+  // Judge channels — read defensively (ASVS V5; the loader is TOTAL
   // over untrusted JSON and never throws on a missing/hostile field). The gold
   // `answer` guard is copied verbatim from locomo-loader.ts:260; `category`
   // (the `question_type`) gets a string type-guard with a literal "unknown"
@@ -220,7 +220,7 @@ export function loadLongMemEval(raw: unknown): Result<LongMemEvalParsed, Error> 
 }
 
 /**
- * Load a FULL LongMemEval dataset (BENCH-01, full-set half). The public file is an
+ * Load a FULL LongMemEval dataset (full-set half). The public file is an
  * ARRAY of question items; a single item object is also accepted (back-compat with
  * the vendored single-item fixture). Each item is parsed by {@link loadLongMemEval}.
  *

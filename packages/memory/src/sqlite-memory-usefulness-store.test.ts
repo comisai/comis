@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteMemoryUsefulnessStore` — the @comis/memory adapter
- * for the segregated `MemoryUsefulnessStore` port (Phase 93, FEED-02).
+ * for the segregated `MemoryUsefulnessStore` port.
  *
  * The harness constructs a real `SqliteMemoryAdapter` over an in-memory DB so
  * that `PRAGMA foreign_keys = ON` is set (via `openSqliteDatabase`) — a raw
  * `new Database(":memory:")` would have FKs OFF and the ON DELETE CASCADE on
- * `memory_usefulness.memory_id → memories(id)` would silently no-op (RESEARCH
- * Pitfall 1 / the entity-store harness). Memories are seeded via
+ * `memory_usefulness.memory_id → memories(id)` would silently no-op (the known
+ * in-memory-DB FK pitfall / the entity-store harness). Memories are seeded via
  * `adapter.store(...)` so the `memories(id)` rows exist for the FK + CASCADE.
  *
  * @module
@@ -49,7 +49,7 @@ function makeEntry(overrides: Partial<MemoryEntry>): MemoryEntry {
 
 const SCOPE_A = { tenantId: "tenant_a", agentId: "agent_a", now: 1_000 } as const;
 const READ_A = { tenantId: "tenant_a", agentId: "agent_a" } as const;
-// Phase 110 (LEARN-01): the per-intent write/read scope + read arg.
+// The per-intent write/read scope + read arg.
 const SCOPE_A_TEMPORAL = {
   tenantId: "tenant_a",
   agentId: "agent_a",
@@ -84,7 +84,7 @@ describe("createSqliteMemoryUsefulnessStore", () => {
   }
 
   /**
-   * Read the raw usefulness row by (memory id, intent) — the Phase-110 per-intent
+   * Read the raw usefulness row by (memory id, intent) — the per-intent
    * bucket lookup (scoped to tenant_a/agent_a). `intent=''` is the global bucket.
    */
   function rawRowIntent(
@@ -217,7 +217,7 @@ describe("createSqliteMemoryUsefulnessStore", () => {
   });
 
   // =====================================================================
-  // Cross-scope isolation (T-93-01) — the load-bearing security boundary
+  // Cross-scope isolation — the load-bearing security boundary
   // =====================================================================
 
   describe("cross-scope isolation (tenant + agent)", () => {
@@ -244,7 +244,7 @@ describe("createSqliteMemoryUsefulnessStore", () => {
   // FK CASCADE — deleting a memory drops its usefulness row (no orphan-sweep)
   // =====================================================================
 
-  describe("CASCADE on memory delete (T-93-02)", () => {
+  describe("CASCADE on memory delete", () => {
     it("deleting a memory CASCADE-deletes its usefulness row", async () => {
       const m1 = await seedMemory({ id: "m1" });
       await store.recordUsage([m1], [], SCOPE_A);
@@ -266,13 +266,13 @@ describe("createSqliteMemoryUsefulnessStore", () => {
   });
 
   // =====================================================================
-  // Phase 110 (LEARN-01): per-intent upsert — the NO-CLOBBER proof
-  // (Pitfall 3). A per-intent write touches ONLY its bucket; the global
+  // Per-intent upsert — the NO-CLOBBER proof.
+  // A per-intent write touches ONLY its bucket; the global
   // ('') row and other intents' rows are untouched on the SAME
   // (tenant, agent, memory).
   // =====================================================================
 
-  describe("per-intent upsert no-clobber (Phase 110, LEARN-01 / Pitfall 3)", () => {
+  describe("per-intent upsert no-clobber", () => {
     it("a per-intent write does NOT clobber the global ('') bucket on the same (tenant,agent,memory)", async () => {
       const m1 = await seedMemory({ id: "m1" });
 
@@ -333,13 +333,13 @@ describe("createSqliteMemoryUsefulnessStore", () => {
   });
 
   // =====================================================================
-  // Phase 110 (LEARN-01): per-intent read with global ('') fallback.
+  // Per-intent read with global ('') fallback.
   // readUsefulness({…, intent}) returns, per id: the per-intent row if
   // present, ELSE the global row if present, ELSE absent from the map.
-  // A read with NO intent → the global bucket only (byte-identical v2.8).
+  // A read with NO intent → the global bucket only (byte-identical to the prior behaviour).
   // =====================================================================
 
-  describe("per-intent read + global fallback (Phase 110, LEARN-01)", () => {
+  describe("per-intent read + global fallback", () => {
     it("returns the per-intent bucket when present, falls back to global per id, omits the absent id (the 3-id case)", async () => {
       const m1 = await seedMemory({ id: "m1" }); // ONLY a temporal row
       const m2 = await seedMemory({ id: "m2" }); // ONLY a global row
@@ -382,7 +382,7 @@ describe("createSqliteMemoryUsefulnessStore", () => {
       expect(res.value.get(m1)).toEqual({ usedCount: 1, ignoredCount: 0, lastUsefulAt: 2_000 });
     });
 
-    it("a read with NO intent returns the GLOBAL ('') bucket per id (degrade-to-global, byte-identical v2.8)", async () => {
+    it("a read with NO intent returns the GLOBAL ('') bucket per id (degrade-to-global, byte-identical to the prior behaviour)", async () => {
       const m1 = await seedMemory({ id: "m1" });
 
       // Global used=2 + a temporal row that must NOT leak into the no-intent read.
@@ -408,13 +408,13 @@ describe("createSqliteMemoryUsefulnessStore", () => {
   });
 
   // =====================================================================
-  // Phase 110 (LEARN-01): (tenant, agent, intent) isolation — intent is
+  // (tenant, agent, intent) isolation — intent is
   // an ADDITIONAL key, NEVER a relaxation of the (tenant, agent) filter.
   // A per-intent row under one (tenant, agent) is invisible to a read
   // under a DIFFERENT tenant/agent even with the SAME intent.
   // =====================================================================
 
-  describe("cross-scope isolation with intent (T-110-03)", () => {
+  describe("cross-scope isolation with intent", () => {
     it("a per-intent write under (tenant_a, agent_a, temporal) is invisible to a DIFFERENT agent (same intent)", async () => {
       const m1 = await seedMemory({ id: "m1" });
       await store.recordUsage([m1], [], SCOPE_A_TEMPORAL);

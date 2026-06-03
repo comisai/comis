@@ -123,10 +123,10 @@ describe("tool metadata -- coDiscoverWith", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ToolCapabilityMetadata tests (v1.1 capability layer)
+// ToolCapabilityMetadata tests (capability layer)
 // ---------------------------------------------------------------------------
 
-describe("tool metadata -- ToolCapabilityMetadata (v1.1)", () => {
+describe("tool metadata -- ToolCapabilityMetadata", () => {
   it("stores and retrieves a capability block", () => {
     registerToolMetadata("cap_test_basic", {
       capability: { cluster: "data-fetching-financial", summary: "X" },
@@ -292,7 +292,7 @@ describe("truncateContentBlocks", () => {
 });
 
 // ---------------------------------------------------------------------------
-// v2.5 Agent Transparency — ComisToolMetadata activity fields (EVT-09)
+// Agent Transparency — ComisToolMetadata activity fields
 //
 // §16.11: ComisToolMetadata gains `suppressActivity?: boolean` and
 // `failureDetector?: (result, isError) => boolean | { errorKind: ErrorKind }`.
@@ -301,7 +301,7 @@ describe("truncateContentBlocks", () => {
 // every existing metadata object still validates.
 // ---------------------------------------------------------------------------
 
-describe("ComisToolMetadata activity fields (EVT-09)", () => {
+describe("ComisToolMetadata activity fields", () => {
   it("accepts suppressActivity flag", () => {
     const meta: ComisToolMetadata = { suppressActivity: true };
     expect(meta.suppressActivity).toBe(true);

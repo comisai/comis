@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * buildScopeArgs — the TerminalScope -> bwrap argv composer (SEC-02/05/13).
+ * buildScopeArgs — the TerminalScope -> bwrap argv composer.
  *
  * Pure-function argv-assertion tests (the `bwrap-secure-profile.test.ts` idiom):
  * NO bwrap spawn — the full scope->argv matrix is macOS-testable by asserting the
  * emitted argv array. The real jail enforcement (does `cat ~/.comis` ENOENT at
- * filesystem:full?) is the VPS suite (122-07), which builds the argv via THIS
+ * filesystem:full?) is the VPS suite, which builds the argv via THIS
  * composer so the test proves the real mapping.
  */
 import { describe, it, expect } from "vitest";
@@ -63,7 +63,7 @@ function lastIndexOfPair(args: string[], flag: string, src: string): number {
   return -1;
 }
 
-describe("buildScopeArgs — least-privilege default scope (SEC-02)", () => {
+describe("buildScopeArgs — least-privilege default scope", () => {
   it("default scope emits workspace bind, --unshare-net (no socket), no ~/.claude bind, --uid, isolation flags", () => {
     const args = buildScopeArgs(makeInput());
 
@@ -104,7 +104,7 @@ describe("buildScopeArgs — least-privilege default scope (SEC-02)", () => {
   });
 });
 
-describe("buildScopeArgs — filesystem dimension (SEC-02)", () => {
+describe("buildScopeArgs — filesystem dimension", () => {
   it("listed-paths binds the workspace plus each scope.paths entry", () => {
     const args = buildScopeArgs(
       makeInput({ scope: makeScope({ filesystem: "listed-paths", paths: ["/data", "/opt/x"] }) }),
@@ -120,7 +120,7 @@ describe("buildScopeArgs — filesystem dimension (SEC-02)", () => {
   });
 });
 
-describe("buildScopeArgs — network dimension (SEC-02 / SEC-07 transport seam)", () => {
+describe("buildScopeArgs — network dimension (the transport seam)", () => {
   it("listed-hosts emits --unshare-net plus the relay socket bind, never --share-net", () => {
     const args = buildScopeArgs(
       makeInput({
@@ -139,7 +139,7 @@ describe("buildScopeArgs — network dimension (SEC-02 / SEC-07 transport seam)"
     expect(args).not.toContain("--unshare-net");
   });
 
-  // SEC-07 (VPS bug): the in-jail relay-as-init script itself must be RO-bound into
+  // VPS bug: the in-jail relay-as-init script itself must be RO-bound into
   // the jail. The worker spawns `bwrap [scope] -- node <relayInit> --socket … -- bin`,
   // so node inside the jail must be able to READ its own init script (the file exists
   // on the HOST but is not bound by default → `Cannot find module …/egress-relay-init.js`).
@@ -183,7 +183,7 @@ describe("buildScopeArgs — network dimension (SEC-02 / SEC-07 transport seam)"
   });
 });
 
-describe("buildScopeArgs — credentialHome dimension (SEC-05)", () => {
+describe("buildScopeArgs — credentialHome dimension", () => {
   it("include emits the ~/.claude ro-bind", () => {
     const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialHome: "include" }) }));
     expect(hasBind(args, "--ro-bind", "/home/u/.claude", "/home/u/.claude")).toBe(true);
@@ -195,7 +195,7 @@ describe("buildScopeArgs — credentialHome dimension (SEC-05)", () => {
   });
 });
 
-describe("buildScopeArgs — uid dimension (SEC-02)", () => {
+describe("buildScopeArgs — uid dimension", () => {
   it("daemon omits --uid and --gid entirely", () => {
     const args = buildScopeArgs(
       makeInput({ scope: makeScope({ uid: "daemon" }), dedicatedUid: undefined }),
@@ -205,7 +205,7 @@ describe("buildScopeArgs — uid dimension (SEC-02)", () => {
   });
 });
 
-describe("buildScopeArgs — the always-on ~/.comis carve-out (SEC-13)", () => {
+describe("buildScopeArgs — the always-on ~/.comis carve-out", () => {
   const FS_VALUES: TerminalScope["filesystem"][] = ["workspace", "listed-paths", "home", "full"];
 
   it.each(FS_VALUES)("emits the --tmpfs <dataDir> carve-out for filesystem:%s (non-configurable)", (fs) => {
@@ -230,7 +230,7 @@ describe("buildScopeArgs — the always-on ~/.comis carve-out (SEC-13)", () => {
     expect(carveOut + 2).toBe(terminator);
   });
 
-  it("SEC-13 flagship: at filesystem:full the carve-out index is AFTER the broad host bind", () => {
+  it("flagship: at filesystem:full the carve-out index is AFTER the broad host bind", () => {
     const args = buildScopeArgs(makeInput({ scope: makeScope({ filesystem: "full" }) }));
     // the full host bind (--bind / / or --bind <home> <home>) WOULD expose <home>/.comis
     const rootBind = indexOfPair(args, "--bind", "/");

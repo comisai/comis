@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the ACP plan-bridge (ACP-03, spec §16.7 / §16.8).
+ * RED test for the ACP plan-bridge (spec §16.7 / §16.8).
  *
  * Fails on pre-patch code: `./acp-plan-bridge.js` does not exist (mirrors
  * `packages/observability/src/activity/plan-stream.test.ts:5`).
@@ -11,12 +11,12 @@
  *     sessionUpdate: "plan", entries } })` whose entries map from
  *     `ExecutionPlan.steps` (priority:"medium"; SEP status → SDK PlanEntryStatus:
  *     pending→pending, in_progress→in_progress, done→completed).
- *   - SEP "skipped" maps to SDK "completed" (A1 — SDK has no "skipped") without
+ *   - SEP "skipped" maps to SDK "completed" (SDK has no "skipped") without
  *     dropping the entry (entries.length stays === steps.length).
  *   - On `tool:executed` WITH agentId+sessionKey the bridge re-reads the plan and
  *     re-emits the full entries list (checkbox transition after a step flips done).
  *   - On `tool:executed` WITHOUT agentId/sessionKey the bridge does NOT re-emit
- *     (Pitfall 6 — optional ids skipped).
+ *     (optional ids skipped).
  *   - When `getCurrentPlan()` is undefined OR `plan.active === false` it no-ops (§16.7).
  *   - No raw params: a serialized frame contains only content/priority/status per
  *     entry — no rawInput/rawOutput/params (§19.6 M6 carried to the plan frame).
@@ -49,7 +49,7 @@ function makePlanPort(plan: ReadonlyExecutionPlan | undefined): {
   };
 }
 
-/** Fake AgentSideConnection capturing the `plan` frames (PATTERNS.md Shared). */
+/** Fake AgentSideConnection capturing the `plan` frames. */
 function makeFakeConnection(): {
   conn: AgentSideConnection;
   frames: SessionNotification[];
@@ -81,7 +81,7 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
-describe("createAcpPlanBridge (ACP-03 / §16.7 — SEP plan → SDK Plan, no new tool)", () => {
+describe("createAcpPlanBridge (§16.7 — SEP plan → SDK Plan, no new tool)", () => {
   it("emits a 3-step SDK Plan frame from sep:plan_extracted with mapped statuses", async () => {
     const bus = new TypedEventBus();
     const { port } = makePlanPort({
@@ -121,11 +121,11 @@ describe("createAcpPlanBridge (ACP-03 / §16.7 — SEP plan → SDK Plan, no new
     expect(update.entries[0]).toEqual({
       content: "step one",
       priority: "medium",
-      status: "completed", // done → completed (Pitfall 1)
+      status: "completed", // done → completed
     });
     expect(update.entries[1].status).toBe("in_progress");
     expect(update.entries[2].status).toBe("pending");
-    // Every entry carries the constant medium priority (A2).
+    // Every entry carries the constant medium priority.
     for (const e of update.entries) expect(e.priority).toBe("medium");
 
     unsubscribe();
@@ -161,7 +161,7 @@ describe("createAcpPlanBridge (ACP-03 / §16.7 — SEP plan → SDK Plan, no new
       entries: Array<{ status: string }>;
     };
     expect(update.entries).toHaveLength(2); // skipped NOT dropped
-    expect(update.entries[0].status).toBe("completed"); // skipped → completed (A1)
+    expect(update.entries[0].status).toBe("completed"); // skipped → completed
     expect(update.entries[1].status).toBe("pending");
 
     unsubscribe();
@@ -215,7 +215,7 @@ describe("createAcpPlanBridge (ACP-03 / §16.7 — SEP plan → SDK Plan, no new
     unsubscribe();
   });
 
-  it("does NOT re-emit on tool:executed missing agentId/sessionKey (Pitfall 6)", async () => {
+  it("does NOT re-emit on tool:executed missing agentId/sessionKey", async () => {
     const bus = new TypedEventBus();
     const { port } = makePlanPort({
       active: true,
@@ -352,7 +352,7 @@ describe("createAcpPlanBridge (ACP-03 / §16.7 — SEP plan → SDK Plan, no new
     unsubscribe();
   });
 
-  it("logs a rejected plan sessionUpdate and stays a non-throwing emitter (no unhandled rejection, WR-01)", async () => {
+  it("logs a rejected plan sessionUpdate and stays a non-throwing emitter (no unhandled rejection)", async () => {
     // The plan bridge fires `void connection.sessionUpdate(...)` per emit.
     // Pre-fix: a rejected sessionUpdate (IDE disconnects mid-turn) surfaces as
     // an unhandled rejection because nothing catches the discarded promise.

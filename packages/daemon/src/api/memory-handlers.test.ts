@@ -672,7 +672,7 @@ describe("memory.store - write validation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 86 / OBS-06 — the 4 admin-gated, (tenant,agent)-scoped diagnostic
+// The 4 admin-gated, (tenant,agent)-scoped diagnostic
 // handlers: memory.recall_trace / .observations / .entities / .recall_stats.
 // ---------------------------------------------------------------------------
 
@@ -730,9 +730,9 @@ function makeDiagDeps(
   return { deps: base, listObservations, listEntities };
 }
 
-describe("createMemoryHandlers - OBS-06 diagnostics", () => {
+describe("createMemoryHandlers - diagnostics", () => {
   // -------------------------------------------------------------------------
-  // Admin gate (T-86-19) — every diagnostic rejects a non-admin caller FIRST.
+  // Admin gate — every diagnostic rejects a non-admin caller FIRST.
   // -------------------------------------------------------------------------
   describe("admin gate", () => {
     it("memory.recall_trace rejects a non-admin caller", async () => {
@@ -930,7 +930,7 @@ describe("createMemoryHandlers - OBS-06 diagnostics", () => {
     });
 
     it("returns records matching session_key against the recorder's sessionId field", async () => {
-      // WR-01: the PRODUCTION recorder ALWAYS writes `sessionId` and only writes
+      // The PRODUCTION recorder ALWAYS writes `sessionId` and only writes
       // `sessionKey` when an envelope is supplied. These fixtures use the
       // real-recorder shape (sessionId present), and the selector must match
       // session_key against it. The old fixtures hand-wrote `sessionKey` — a
@@ -970,8 +970,8 @@ describe("createMemoryHandlers - OBS-06 diagnostics", () => {
       expect(result.records[0]!.sessionKey).toBe("tenant-1:user:chan");
     });
 
-    it("matches by trace_id and caps at limit, returning the FIRST limit matches in order (WR-06 early-break)", async () => {
-      // WR-06: four matching records, limit 2 → the handler returns the FIRST
+    it("matches by trace_id and caps at limit, returning the FIRST limit matches in order (early-break)", async () => {
+      // Four matching records, limit 2 → the handler returns the FIRST
       // two in forward (chronological) order and early-BREAKS the scan (it no
       // longer walks the whole file with `continue`). Distinct seq values make
       // the forward-order + first-N identity observable.
@@ -998,7 +998,7 @@ describe("createMemoryHandlers - OBS-06 diagnostics", () => {
 
     it("scope-filters the artifact read by tenantId/agentId when records carry them", async () => {
       // Real-recorder shape: sessionId always present; sessionKey + tenantId
-      // present because the agent wired the envelope (WR-01). Same session, two
+      // present because the agent wired the envelope. Same session, two
       // tenants — the read-side cross-tenant filter excludes the foreign one.
       const dataDir = writeTraceFile([
         { ts: "t", sessionId: "sk-A", sessionKey: "sk-A", traceId: "t-A", agentId: "default", tenantId: "tenant-1" },
@@ -1038,7 +1038,7 @@ describe("createMemoryHandlers - OBS-06 diagnostics", () => {
 });
 
 // ---------------------------------------------------------------------------
-// memory.ask — the dialectic (Phase 109 — DIAL-01/02/03)
+// memory.ask — the dialectic
 //
 // The keystone handler: it runs the FULL createMemoryRecall (NOT memoryApi.search
 // — the documented trust-filter/redaction trap), abstains in CODE on empty recall
@@ -1106,7 +1106,7 @@ function makeRecall(results: MemorySearchResult[]): {
 }
 
 /** A dialecticSeam spy resolving to `parsed`; captures the (agentId, groundingText) it received.
- *  CR-04: the seam is invoked as `(agentId, question, groundingText)`. */
+ *  The seam is invoked as `(agentId, question, groundingText)`. */
 function makeSeam(parsed: DialecticParsed): {
   seam: (agentId: string, q: string, g: string) => Promise<DialecticParsed>;
   spy: ReturnType<typeof vi.fn>;
@@ -1264,7 +1264,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
   });
 
   it("Test 6b: a REAL createDialecticSeam with an unresolvable model degrades to abstain", async () => {
-    // Build the genuine Plan-02 seam (not a stub) with a model that cannot resolve, so the
+    // Build the genuine seam (not a stub) with a model that cannot resolve, so the
     // seam degrades non-fatally to { abstain: true } and the handler returns the sentinel.
     // This exercises the injected-seam contract end-to-end (createDialecticSeam shape).
     const seamDeps: DialecticSeamDeps = {
@@ -1281,7 +1281,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     const deps = makeDeps({
       logger: noopLogger,
       buildDialecticRecall: recall.build,
-      // CR-04: the handler's seam is the per-agent (agentId, q, g) wrapper; the agent-side
+      // The handler's seam is the per-agent (agentId, q, g) wrapper; the agent-side
       // createDialecticSeam is 2-arg, so adapt it (the wiring does this with the resolved agent).
       dialecticSeam: (_agentId, q, g) => realSeam(q, g),
     });
@@ -1329,7 +1329,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(serialized).not.toContain("SECRET-ANSWER-TEXT");
   });
 
-  it("Test 8 (CR-01): indirect prompt-injection in recalled content is NEUTRALIZED before the seam sees it", async () => {
+  it("Test 8: indirect prompt-injection in recalled content is NEUTRALIZED before the seam sees it", async () => {
     // A hostile EXTERNAL memory (e.g. an ingested email/web-fetch) carries injection
     // payloads. The grounding the seam receives MUST run them through sanitizeToolOutput
     // (the SAME neutralizer rag-retriever applies) so the INSTRUCTION_PATTERNS are
@@ -1366,7 +1366,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(grounding).toMatch(/UNTRUSTED_[a-f0-9]+/); // wrapExternalContent boundary present
   });
 
-  it("Test 8b (CR-01): legitimate (non-injection) content still survives sanitization", async () => {
+  it("Test 8b: legitimate (non-injection) content still survives sanitization", async () => {
     // The neutralizer must not corrupt benign content — grounding still works.
     const recall = makeRecall([memResult("id-ok", "The user's timezone is PST", "learned")]);
     const seam = makeSeam({ abstain: false, answer: "PST", citedIds: ["id-ok"] });
@@ -1388,7 +1388,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(result).toEqual({ answer: "PST", citations: ["id-ok"], abstained: false });
   });
 
-  it("Test 9 (CR-02): a huge caller-controlled limit is CLAMPED to the configured maxRecall", async () => {
+  it("Test 9: a huge caller-controlled limit is CLAMPED to the configured maxRecall", async () => {
     // 25 recalled items; the configured DoS bound is 3. A caller passing limit:100000
     // must NOT flood the synthesis prompt — the grounding fed to the seam is capped to 3.
     const many = Array.from({ length: 25 }, (_, i) =>
@@ -1417,7 +1417,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(idFences.length).toBe(3);
   });
 
-  it("Test 10 (CR-02): a negative limit is REJECTED at the contract boundary (no negative-slice path)", async () => {
+  it("Test 10: a negative limit is REJECTED at the contract boundary (no negative-slice path)", async () => {
     // limit:-5 on Array.slice(0, -5) silently drops the LAST 5 items — an unintended
     // truncation / data-leak shape. The tightened contract (z.number().int().positive())
     // REJECTS it at parse, so it can never reach the slice. The handler module is
@@ -1446,7 +1446,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(seam.spy).not.toHaveBeenCalled();
   });
 
-  it("Test 10b (CR-02): the handler clamp is non-negative defense-in-depth (a non-int limit falls back to the ceiling, never a negative slice)", async () => {
+  it("Test 10b: the handler clamp is non-negative defense-in-depth (a non-int limit falls back to the ceiling, never a negative slice)", async () => {
     // Defense-in-depth: even a `limit` that slips past the contract (e.g. a float) must fall
     // back to the configured ceiling in the handler clamp — never produce a 0/negative slice.
     const five = Array.from({ length: 5 }, (_, i) => memResult(`id-${i}`, `fact ${i}`, "learned"));
@@ -1471,7 +1471,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     ).rejects.toThrow();
   });
 
-  it("Test 10c (CR-02): with no limit, the grounding is capped to the configured maxRecall", async () => {
+  it("Test 10c: with no limit, the grounding is capped to the configured maxRecall", async () => {
     // The configured `dialectic.maxRecall` is the DEFAULT cap when the caller omits `limit`
     // (not the hardcoded fallback) — an operator lowering maxRecall to bound spend takes effect.
     const eight = Array.from({ length: 8 }, (_, i) => memResult(`id-${i}`, `fact ${i}`, "learned"));
@@ -1497,7 +1497,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // LEARN-02 (H3) — the dialectic's VALIDATED citations feed the SHIPPED FEED
+  // The dialectic's VALIDATED citations feed the SHIPPED usefulness-feedback
   // write path. On a grounded (!abstained) answer the handler emits the EXISTING
   // `memory:recall_used` event with `usedIds = result.citations` (⊆ recalled ids —
   // definitively used) and `ignoredIds = recalled ∖ citations`. The existing
@@ -1505,7 +1505,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
   // On abstain it emits NOTHING (no false "used" attribution). ids/counts ONLY.
   // -------------------------------------------------------------------------
 
-  it("Test 11 (LEARN-02): a grounded answer emits ONE memory:recall_used with usedIds=citations + ignoredIds=recalled∖citations", async () => {
+  it("Test 11: a grounded answer emits ONE memory:recall_used with usedIds=citations + ignoredIds=recalled∖citations", async () => {
     // Recalled set [m1, m2, m3]; the seam cites [m1, m3]. The emit must split the
     // recalled ids into used=[m1,m3] (the citations) and ignored=[m2] (the complement).
     const recall = makeRecall([
@@ -1560,7 +1560,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     for (const id of payload.usedIds) expect(recalledIds).toContain(id);
   });
 
-  it("Test 12 (LEARN-02): a bogus cited id never becomes a usedId (usedIds ⊆ recalled ids)", async () => {
+  it("Test 12: a bogus cited id never becomes a usedId (usedIds ⊆ recalled ids)", async () => {
     // The seam cites a real id + a forged one; assembleSynthesis drops the forged id
     // BEFORE the emit, so the emitted usedIds are exactly the validated citations.
     const recall = makeRecall([
@@ -1593,7 +1593,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     for (const id of payload.usedIds) expect(["m1", "m2"]).toContain(id);
   });
 
-  it("Test 13 (LEARN-02): on abstain the handler emits NO memory:recall_used (no false 'used' attribution)", async () => {
+  it("Test 13: on abstain the handler emits NO memory:recall_used (no false 'used' attribution)", async () => {
     // An abstained turn has no grounded, cited answer — emitting "used" would
     // inflate usefulness for memories that did not actually ground an answer (Pitfall 4).
     const recall = makeRecall([
@@ -1621,7 +1621,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(recallUsedEmits.length).toBe(0);
   });
 
-  it("Test 14 (LEARN-02): no eventBus ⇒ the handler does not throw and returns the result normally", async () => {
+  it("Test 14: no eventBus ⇒ the handler does not throw and returns the result normally", async () => {
     // deps.eventBus is undefined (the emit is guarded). The grounded answer must
     // still return normally — the FEED emit is a non-fatal side effect.
     const recall = makeRecall([memResult("m1", "fact one", "learned")]);
@@ -1643,7 +1643,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(result).toEqual({ answer: "grounded", citations: ["m1"], abstained: false });
   });
 
-  it("Test 15 (LEARN-02): the recall_used emit is ids/counts-only — never the question, recalled content, or answer", async () => {
+  it("Test 15: the recall_used emit is ids/counts-only — never the question, recalled content, or answer", async () => {
     // The FEED event carries no bodies (AGENTS.md §2.7). Serialize the emit payload
     // and assert no secret string leaks through it.
     const recall = makeRecall([memResult("m1", "SECRET-MEMORY-CONTENT", "learned")]);

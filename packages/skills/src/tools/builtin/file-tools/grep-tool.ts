@@ -20,9 +20,9 @@ import { readStringParam, readNumberParam, readBooleanParam } from "../../../pla
 import { truncateLine, GREP_MAX_LINE_WIDTH } from "../truncate.js";
 import { ensureTool } from "../tool-provisioner.js";
 
-// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
-// emitted name for builtins (grep-tool.ts:402 → `name: "grep"`). Two
-// detailKeys (`pattern` + `path`) — the multi-key shape mirrors
+// Activity label spec (SPEC §6.1). Descriptor name == emitted name for
+// builtins (grep-tool.ts:402 → `name: "grep"`). Two detailKeys (`pattern` +
+// `path`) — the multi-key shape mirrors
 // platform-tools/mcp-manage-tool.ts:23-33.
 registerActivityLabelSpec("grep", {
   semanticPhase: "tool",

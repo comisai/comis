@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: WR-03 exhaustiveness guard on networkMode union; unreachable at runtime, caught by TypeScript; equivalent to assertNever().
+// @allow-throw: exhaustiveness guard on networkMode union; unreachable at runtime, caught by TypeScript; equivalent to assertNever().
 /**
  * BwrapProvider -- Linux sandbox provider using Bubblewrap (bwrap).
  *
@@ -175,7 +175,7 @@ export class BwrapProvider implements SandboxProvider {
     // readOnlyPaths loop below so caller-supplied RO can't shadow these.
     // Mirror of systemd ReadWritePaths in comis.service.template.
     //
-    // EGRESS-02 (CR-01 fix): When secureCredentialHome is true, skip
+    // When secureCredentialHome is true, skip
     // ~/.local/share entirely — a RW bind over this parent directory would
     // expose any credential material living under it (e.g. a stray
     // ~/.local/share/<cli> auth dir) to the sandbox. Skipping the ~/.local/share
@@ -207,7 +207,7 @@ export class BwrapProvider implements SandboxProvider {
       const { brokerSocketPath } = opts.network as { mode: "broker-only"; brokerSocketPath: string };
       args.push("--bind", brokerSocketPath, brokerSocketPath);
     } else {
-      // WR-03: exhaustiveness guard — TypeScript will flag this if the
+      // exhaustiveness guard — TypeScript will flag this if the
       // SandboxOptions.network union gains a new member without updating here.
       const _exhaustive: never = networkMode;
       throw new Error(`Unhandled network mode: ${String(_exhaustive)}`);

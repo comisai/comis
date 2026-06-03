@@ -4,9 +4,9 @@
  *
  * Package-level integration tests verifying that the channel message pipeline
  * delivers messages in correct order across three scenarios:
- *   CHAN-01: Sequential delivery ordering
- *   CHAN-02: Coalesced collect-mode delivery with numbered delimiters
- *   CHAN-03: Interleaved multi-channel per-channel ordering
+ *   - Sequential delivery ordering
+ *   - Coalesced collect-mode delivery with numbered delimiters
+ *   - Interleaved multi-channel per-channel ordering
  *
  * These tests construct the pipeline directly (createChannelManager +
  * EchoChannelAdapter) with minimal mocked deps instead of starting a full
@@ -148,10 +148,10 @@ function makeMinimalDeps(
 }
 
 // ---------------------------------------------------------------------------
-// CHAN-01: Sequential message ordering
+// Sequential message ordering
 // ---------------------------------------------------------------------------
 
-describe("CHAN-01: Sequential message ordering", () => {
+describe("Sequential message ordering", () => {
   it("sends 5 sequential messages and receives responses in order", async () => {
     const adapter = new EchoChannelAdapter({ channelId: "echo-seq", channelType: "echo" });
     const deps = makeMinimalDeps([adapter]);
@@ -213,10 +213,10 @@ describe("CHAN-01: Sequential message ordering", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CHAN-02: Coalesced message delimiter ordering
+// Coalesced message delimiter ordering
 // ---------------------------------------------------------------------------
 
-describe("CHAN-02: Coalesced message delimiter ordering", () => {
+describe("Coalesced message delimiter ordering", () => {
   it("coalesceMessages produces [Message N]: delimiters in ascending order", () => {
     // Direct test of the coalescer function that the pipeline uses
     const messages = [
@@ -341,10 +341,10 @@ describe("CHAN-02: Coalesced message delimiter ordering", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CHAN-03: Interleaved multi-channel ordering
+// Interleaved multi-channel ordering
 // ---------------------------------------------------------------------------
 
-describe("CHAN-03: Interleaved multi-channel ordering", () => {
+describe("Interleaved multi-channel ordering", () => {
   it("messages from two channels maintain per-channel ordering under interleaving", async () => {
     // Use DISTINCT channelTypes to prevent session key collisions
     const adapterA = new EchoChannelAdapter({ channelId: "ch-a", channelType: "echo-a" });

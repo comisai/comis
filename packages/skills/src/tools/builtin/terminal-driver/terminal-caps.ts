@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-session usage caps for the terminal driver (spec §3.8 R1, §4.6; OPS-03, OPS-06).
+ * Per-session usage caps for the terminal driver (spec §3.8, §4.6).
  *
  * `createSessionCaps(limits, nowMs)` is a pure, fully-injected primitive that enforces
  * the per-entry operator caps from the closed config `limits`:
  *
- *   - `maxRequestsPerSession` (OPS-03 / R1) — the entitlement-misuse control: bound how
+ *   - `maxRequestsPerSession` — the entitlement-misuse control: bound how
  *     many `send_*` calls a single session may make. A breach is the typed discriminant
- *     `{ breach: "max_requests" }`; the tool layer (Plan 05) maps it to a typed
+ *     `{ breach: "max_requests" }`; the tool layer maps it to a typed
  *     `throwToolError` REJECT and the session SURVIVES (read/list/other sends still work).
- *   - `maxInteractions` (OPS-06) — the interaction budget. A breach
- *     (`{ breach: "max_interactions" }`) drives an EVICT at the send_* tool layer (Plan 05
- *     → `registry.evict(..., "max_interactions")`).
- *   - `wallClockMs` (OPS-06) — the wall-clock age budget. A breach
- *     (`{ breach: "wall_clock" }`) drives an EVICT (Plan 04 reaper sweep + the per-send
+ *   - `maxInteractions` — the interaction budget. A breach
+ *     (`{ breach: "max_interactions" }`) drives an EVICT at the send_* tool layer
+ *     (`registry.evict(..., "max_interactions")`).
+ *   - `wallClockMs` — the wall-clock age budget. A breach
+ *     (`{ breach: "wall_clock" }`) drives an EVICT (the reaper sweep + the per-send
  *     immediate guard route through the same eviction path).
  *
- * Design invariants (binding — AGENTS.md / 123-CONTEXT.md):
+ * Design invariants (binding — AGENTS.md):
  *   - NO module-global mutable state. ALL counters live in a CLOSURE-local
  *     `Map<sessionId, CapState>` created inside the factory — two `createSessionCaps`
  *     instances never share state, and two sessionIds never share a counter.
@@ -26,11 +26,11 @@
  *   - This module NEVER throws and NEVER evicts. It returns a cap-state decision; the
  *     tool/registry layer acts on it (REJECT vs EVICT per the EVICT-vs-REJECT split).
  *   - Dependency-light: node + `@comis/core` type-only imports at most — NEVER
- *     `@comis/infra` or `@comis/observability` (worker ↛ infra/observability; SEC-07).
+ *     `@comis/infra` or `@comis/observability` (worker ↛ infra/observability).
  *
  * The structural `SessionLimits` shape mirrors the closed config
  * `TerminalAllowEntrySchema.limits` (packages/core/src/config/schema-skills.ts) WITHOUT
- * importing zod or the config module — this is a Wave-1-independent pure primitive (like
+ * importing zod or the config module — this is a self-contained pure primitive (like
  * the allowlist matcher), so it takes the limits shape structurally.
  *
  * Analog: packages/agent/src/background/background-task-manager.ts (closure-local counter
@@ -45,33 +45,33 @@ export type CapBreach = "max_requests" | "max_interactions" | "wall_clock";
 /**
  * The per-entry limits shape this module enforces — a STRUCTURAL mirror of the closed
  * config `limits` (schema-skills.ts). All fields optional; an undefined field ⇒ no cap.
- * `maxSessions` is consumed by the reaper (Plan 04), not by the per-session caps.
+ * `maxSessions` is consumed by the reaper, not by the per-session caps.
  */
 export interface SessionLimits {
   maxSessions?: number;
-  /** OPS-03 / R1: max `send_*` requests per session (REJECT on breach; session survives). */
+  /** Max `send_*` requests per session (REJECT on breach; session survives). */
   maxRequestsPerSession?: number;
-  /** OPS-06: max wall-clock age in ms (EVICT on breach). */
+  /** Max wall-clock age in ms (EVICT on breach). */
   wallClockMs?: number;
-  /** OPS-06: max interactions per session (EVICT on breach). */
+  /** Max interactions per session (EVICT on breach). */
   maxInteractions?: number;
 }
 
 /** The injected wall-clock reader (epoch ms). Never a raw global. */
 export type NowMs = () => number;
 
-/** The cap primitive's surface — exactly what Plan 05 (tool layer) consumes. */
+/** The cap primitive's surface — exactly what the tool layer consumes. */
 export interface SessionCaps {
   /**
    * Capture the session's wall-clock start. Idempotent — a re-call does NOT re-anchor
    * `startedAtMs` (so a long-lived session cannot dodge the wall-clock cap by re-calling).
    */
   startSession(sessionId: string): void;
-  /** OPS-03: returns `{ breach: "max_requests" }` on the Nth+1 request; increments only on ok. */
+  /** Returns `{ breach: "max_requests" }` on the Nth+1 request; increments only on ok. */
   consumeRequest(sessionId: string): { breach: CapBreach } | undefined;
-  /** OPS-06: returns `{ breach: "max_interactions" }` on the Nth+1 interaction; increments only on ok. */
+  /** Returns `{ breach: "max_interactions" }` on the Nth+1 interaction; increments only on ok. */
   consumeInteraction(sessionId: string): { breach: CapBreach } | undefined;
-  /** OPS-06: returns `{ breach: "wall_clock" }` once `nowMs() - startedAtMs` EXCEEDS the cap. */
+  /** Returns `{ breach: "wall_clock" }` once `nowMs() - startedAtMs` EXCEEDS the cap. */
   checkWallClock(sessionId: string): { breach: CapBreach } | undefined;
   /** Clear a session's counters on kill/evict so the map never leaks and a re-used id is fresh. */
   forget(sessionId: string): void;

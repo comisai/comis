@@ -406,7 +406,7 @@ export function createAuthHandlers(
           profileId: params.profileId,
         },
       });
-      // WR-02: identity field must NOT embed accountId when email is absent.
+      // The identity field must NOT embed accountId when email is absent.
       // The residency rule (§6, auth-handlers.ts header) allows only
       // provider/profileId/redacted-email in log output. Using a non-
       // identifying sentinel keeps the log line informative without leaking

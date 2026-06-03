@@ -91,8 +91,8 @@ describe("bootstrap", () => {
     }
   });
 
-  it("derives rawAgentRerankEnabled preserving the genuine unset/true/false tri-state (RERANK-01)", () => {
-    // Phase 92 (CR-01): the parsed config.agents.<id>.rag.rerank.enabled is ALWAYS a
+  it("derives rawAgentRerankEnabled preserving the genuine unset/true/false tri-state", () => {
+    // The parsed config.agents.<id>.rag.rerank.enabled is ALWAYS a
     // concrete boolean (.default(false)), so the unset signal is erased there. The raw map
     // must be derived from the PRE-Zod merged config and keep `undefined` for an agent that
     // never set it — that is what lets the daemon distinguish auto-on (unset + model present)
@@ -131,11 +131,11 @@ describe("bootstrap", () => {
       expect(raw!.get("onAgent")).toBe(true);
       expect(raw!.get("offAgent")).toBe(false);
       // The PARSED config, by contrast, erased the unset agent's signal to a concrete boolean —
-      // the schema default. v2.9 increment 2 flips rag.rerank.enabled's default ON, so the
+      // the schema default. rag.rerank.enabled's default is ON, so the
       // unset agent parses to `true` (was `false` pre-flip); the raw map still carries `undefined`.
       expect(result.value.config.agents.unsetAgent!.rag.rerank.enabled).toBe(true);
       // Proving the raw map is NOT just a view of the parsed config: unset -> undefined,
-      // parsed -> true. That divergence is the whole point of CR-01's fix.
+      // parsed -> true. That divergence is the whole point of this fix.
       expect(raw!.get("unsetAgent")).not.toBe(result.value.config.agents.unsetAgent!.rag.rerank.enabled);
     }
   });
@@ -223,7 +223,7 @@ describe("bootstrap", () => {
     }
   });
 
-  it("includes the interactive-callback signing secret name on the platformSecretNames deny surface (APV-07 / T-73-31)", () => {
+  it("includes the interactive-callback signing secret name on the platformSecretNames deny surface", () => {
     const dir = makeTmpDir();
     const configPath = writeYaml(dir, "config.yaml", "tenantId: test\n");
 

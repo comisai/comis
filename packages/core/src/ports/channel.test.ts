@@ -4,7 +4,7 @@ import { ok, type Result } from "@comis/shared";
 import type { ChannelPort, SendMessageOptions } from "./channel.js";
 
 // ---------------------------------------------------------------------------
-// v2.5 Agent Transparency — editMessage rich-options widening (STRAT-06)
+// Agent Transparency — editMessage rich-options widening
 //
 // §16.11: ChannelPort.editMessage accepts an optional 4th `options?:
 // SendMessageOptions` arg so activity renderers can update inline keyboards /
@@ -27,7 +27,7 @@ function makeRichEditAdapter(): ChannelPort & { lastOptions?: SendMessageOptions
     async sendMessage(): Promise<Result<string, Error>> {
       return ok("msg-1");
     },
-    // 4th optional param exercised — this is the STRAT-06 surface.
+    // 4th optional param exercised — this is the rich-options surface.
     async editMessage(
       _channelId: string,
       _messageId: string,
@@ -47,7 +47,7 @@ function makeRichEditAdapter(): ChannelPort & { lastOptions?: SendMessageOptions
   return adapter;
 }
 
-describe("ChannelPort.editMessage rich options (STRAT-06)", () => {
+describe("ChannelPort.editMessage rich options", () => {
   it("accepts an adapter whose editMessage takes SendMessageOptions", () => {
     const adapter = makeRichEditAdapter();
     // Type-level: assigning to ChannelPort proves the widened signature is

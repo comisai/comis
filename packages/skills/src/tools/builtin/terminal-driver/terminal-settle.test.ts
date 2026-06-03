@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the settle engine (spec §5 wait, §4.3 attention model, TR-05).
+ * Unit tests for the settle engine (spec §5 wait, §4.3 attention model).
  *
  * RED-first: `terminal-settle.ts` does not exist when this file is first
  * committed — the import fails, every case is RED. The production module turns
@@ -12,7 +12,7 @@
  * idle/text/exit/timeout paths.
  *
  * The load-bearing assertion is the TIMEOUT shape: `isComplete === false`
- * (a false `true` would convince the P5 attention model the work is done and
+ * (a false `true` would convince the attention model the work is done and
  * abandon a live session) and that runSettle RESOLVES (never throws, never hangs).
  *
  * @module
@@ -240,7 +240,7 @@ describe("runSettle — EXIT", () => {
   });
 });
 
-describe("runSettle — CONDITION ARMING (idle is opt-in, exit always terminal) [TR-05 fix]", () => {
+describe("runSettle — CONDITION ARMING (idle is opt-in, exit always terminal)", () => {
   // The VPS real-PTY bug (terminal-{interaction-roundtrip,worker-entry}.linux):
   // `wait({forExit:true})` armed the idle debounce unconditionally, so a quiet
   // output window fired the idle timer (~idleMs) and pre-empted the slightly-later
@@ -354,7 +354,7 @@ describe("runSettle — TIMEOUT (load-bearing isComplete:false)", () => {
     const result = await p;
     expect(threw).toBe(false);
     expect(result).toEqual({ matched: false, isComplete: false, reason: "timeout" });
-    // EXPLICIT: a false `true` here would strand the agent (P5 finalizes a live session).
+    // EXPLICIT: a false `true` here would strand the agent (the attention model finalizes a live session).
     expect(result?.isComplete).toBe(false);
   });
 });
@@ -439,13 +439,13 @@ describe("runSettle — CLEANUP (no leaked timer/subscription)", () => {
 });
 
 // ===========================================================================
-// Plan 121-03: the OPTIONAL isSettleable gate (the "more content below the fold
-// ⇒ NOT settled" re-arm). The worker wires it to !hasContentBelowFold(); the
-// idle timer RE-ARMS instead of resolving idle while isSettleable() is false.
-// exit/text/timeout paths are UNCHANGED (load-bearing 120-02 semantics).
+// The OPTIONAL isSettleable gate (the "more content below the fold ⇒ NOT
+// settled" re-arm). The worker wires it to !hasContentBelowFold(); the idle
+// timer RE-ARMS instead of resolving idle while isSettleable() is false.
+// exit/text/timeout paths are UNCHANGED (the load-bearing settle semantics).
 // ===========================================================================
 
-describe("runSettle — isSettleable gate (TR-14 below-the-fold re-arm)", () => {
+describe("runSettle — isSettleable gate (below-the-fold re-arm)", () => {
   it("does NOT resolve idle while isSettleable() returns false; re-arms, then settles once true", async () => {
     const sched = makeScheduler();
     const source = makeSource("boot\n");

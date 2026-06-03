@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WIRE-02 (§17.7): build the per-channel activity renderers for the running
- * daemon. For each registered adapter, route its declared `ChannelCapability`
+ * Build the per-channel activity renderers for the running daemon (§17.7).
+ * For each registered adapter, route its declared `ChannelCapability`
  * to a rendering strategy via `selectStrategy(caps, channelType)` (@comis/core)
  * and construct the matching @comis/channels strategy.
  *
@@ -19,11 +19,11 @@
  *  - Echo→TestSink: needs no platform `ActivityRenderActions` (send/edit/delete).
  *  - EditPlace: Telegram/Discord/Slack/WhatsApp wrap `createEditPlaceRenderer`
  *    over a per-channel render-actions adapter + the injected `TimerPort`/
- *    `ClockPort` (Phase 71-02/03/04; factories barrel-exported in 71-05).
+ *    `ClockPort` (factories barrel-exported by their channel modules).
  *  - DeleteAndRepost (Signal), AppendOnly (iMessage/LINE), LinePerEvent (IRC),
- *    DigestOnly (Email): each wraps its Phase-70 strategy machine over a
- *    per-channel render-actions adapter (Phase 72-01..04; factories barrel-
- *    exported + dispatched here in 72-05). Deps differ per strategy and are
+ *    DigestOnly (Email): each wraps its strategy machine over a
+ *    per-channel render-actions adapter (factories barrel-exported and
+ *    dispatched here). Deps differ per strategy and are
  *    adapted to the uniform factory-map signature: DeleteAndRepost uses
  *    {timer, clock}, LinePerEvent uses {clock}, AppendOnly/DigestOnly use
  *    neither (they read only the fields they need from the passed deps).
@@ -36,7 +36,7 @@
  * add any config-toggle gate here; absence is intentional.
  *
  * The returned map feeds the orchestrator's per-turn `coordinatorFactory`
- * (ExecutionPipelineDeps, WIRE-03), keyed by channelType. Threading the
+ * (ExecutionPipelineDeps), keyed by channelType. Threading the
  * factory map through `coordinatorFactory`/execDeps so a live production turn
  * drives the EditPlace renderer is the documented follow-on.
  *
@@ -53,7 +53,7 @@ import type {
   TimerPort,
   ActivityStatusMarkers,
 } from "@comis/core";
-// (ActivityStatusMarkers also used in the per-call factory signature below — WR-04.)
+// (ActivityStatusMarkers also used in the per-call factory signature below.)
 import { selectStrategy } from "@comis/core";
 import {
   createTestSink,
@@ -73,7 +73,7 @@ import type { ComisLogger } from "@comis/infra";
 /** A per-channelId renderer factory. The render-actions adapter binds the
  *  concrete channelId at turn time (channelId is unknown at boot).
  *
- *  WR-04: the OPTIONAL second arg is the per-turn theme markers, resolved
+ *  The OPTIONAL second arg is the per-turn theme markers, resolved
  *  per-agent in the coordinatorFactory from `agents[ctx.agentId]?.activity?.theme`.
  *  When provided it OVERRIDES the boot-time default markers baked into the map at
  *  `buildActivityRenderers` time — so a non-default agent renders with ITS theme,
@@ -88,9 +88,9 @@ export type ActivityRendererFactory = (
  *  EditPlace machine debounces edits (TimerPort) and gates the delete on
  *  `outcome.delivery.deliveredAtMs` (ClockPort).
  *
- *  `signCallbackData` (73-10) is the secret-bound signer the button-capable
+ *  `signCallbackData` is the secret-bound signer the button-capable
  *  renderers (Telegram/Discord/Slack/LINE) consume to paint signed approval
- *  `callback_data`; `mintApprovalLink` (73-10) is the single-use approval-link
+ *  `callback_data`; `mintApprovalLink` is the single-use approval-link
  *  minter the Email DigestOnly renderer consumes (it has no buttons). Both are
  *  OPTIONAL: when absent (the signing secret / gateway token map not yet wired),
  *  the renderers degrade to button-/link-less prompts. A renderer reads only the
@@ -100,7 +100,7 @@ export interface ActivityRendererDeps {
   clock: ClockPort;
   signCallbackData?: SignCallbackData;
   mintApprovalLink?: MintApprovalLink;
-  /** Resolved theme status markers (UX-01) forwarded to closing-line strategies.
+  /** Resolved theme status markers forwarded to closing-line strategies.
    *  Resolved ONCE at the composition root from the default agent's
    *  `activity.theme`; omitted → default glyphs. */
   markers?: ActivityStatusMarkers;
@@ -152,7 +152,7 @@ const DELETE_AND_REPOST_RENDERER_FACTORIES: RendererFactoryMap<DeleteAndRepostCh
 
 /**
  * AppendOnly → iMessage AND LINE (no edit/delete, attachments, mid-range cap) —
- * a single strategy serving TWO channelTypes (Pitfall 6). Neither uses `deps`.
+ * a single strategy serving TWO channelTypes. Neither uses `deps`.
  */
 const APPEND_ONLY_RENDERER_FACTORIES: RendererFactoryMap<AppendOnlyChannel> = {
   imessage: createIMessageActivityRenderer,
@@ -188,7 +188,7 @@ function setFromFactoryMap<K extends string>(
   // the index yields `RendererFactory | undefined`, and the guard below is real.
   const make = (factories as Readonly<Partial<Record<string, RendererFactory>>>)[channelType];
   if (!make) return false;
-  // WR-04: per-call markers (per-agent theme, resolved at turn time) override the
+  // Per-call markers (per-agent theme, resolved at turn time) override the
   // boot-time default baked into `deps.markers`; omitted → the boot-time default.
   out.set(channelType, (channelId: string, markers?: ActivityStatusMarkers) =>
     make(adapter, channelId, markers ? { ...deps, markers } : deps),
@@ -241,7 +241,7 @@ export function buildActivityRenderers(
         // ACP renders its own structured `SessionUpdate` stream, not a
         // `ChannelActivityRenderer`, and carries no ChannelPlugin/capability so it
         // never reaches this loop today (the `caps` guard above `continue`s first).
-        // Wired in Phase 74 — explicit, reviewed no-renderer branch, NOT a silent
+        // This is an explicit, reviewed no-renderer branch, NOT a silent
         // fall-through (live stays false).
         break;
       default: {

@@ -22,6 +22,7 @@ pnpm build:clean                # clean && build — matches a fresh CI checkout
 pnpm test                       # unit tests (Vitest workspace) — watch mode (CI=true → run-once)
 pnpm test:coverage              # vitest run --coverage; floors are PER-PACKAGE (see vitest.config.ts)
 pnpm lint:security              # security ESLint rules
+pnpm docs:check                 # compile docs/**/*.mdx — catches MDX syntax errors the Mintlify deploy would reject
 pnpm cycles                     # madge dist-mode .d.ts circular-dep check
 pnpm cycles:refs                # tsc -b --dry packages/comis — project-reference cycle (TS6202) check
 pnpm validate                   # FULL local mirror of CI's deterministic gates (see below)
@@ -43,7 +44,7 @@ pnpm test:cleanup               # clean test artifacts
 
 Vitest aliases `@comis/*` → `packages/*/dist/index.js` for integration tests — use bare-package imports, never `../packages/*/src/*`. **Stale `dist/` silently masks `src/` changes**: if a test passes after editing only `src/`, you forgot `pnpm build`.
 
-Primary validation: **`pnpm validate`** = `build:clean && cycles && cycles:refs && lint:security && test:coverage`. This is the local mirror of CI's deterministic, cross-platform gates — run it before pushing. It deliberately uses **`build:clean`** (not incremental `build`) and **`test:coverage`** (not bare `test`) because those are exactly the gaps that let the #133 build-cycle + coverage cascade reach `main`: a stale `dist/` hides a workspace-dependency cycle, and the per-package coverage floors are CI-only unless coverage actually runs.
+Primary validation: **`pnpm validate`** = `docs:check && build:clean && cycles && cycles:refs && lint:security && test:coverage`. This is the local mirror of CI's deterministic, cross-platform gates — run it before pushing. It deliberately uses **`build:clean`** (not incremental `build`) and **`test:coverage`** (not bare `test`) because those are exactly the gaps that let the #133 build-cycle + coverage cascade reach `main`: a stale `dist/` hides a workspace-dependency cycle, and the per-package coverage floors are CI-only unless coverage actually runs. **`docs:check`** runs first (cheap, no build needed) and compiles every `docs/**/*.mdx` through the MDX compiler — the docs are otherwise outside every gate (build/cycles/lint/coverage all scope to `packages/*`), so a bare `<`/`{` in prose used to fail only server-side at the Mintlify deploy. It also runs as its own `ci.yml` step since the pre-push hook can be skipped with `--no-verify` (which the hook itself suggests for docs-only pushes).
 
 A **pre-push git hook** (`.githooks/pre-push`, auto-installed by the `prepare` script via `git config core.hooksPath .githooks`) runs `pnpm validate` and blocks the push on failure. Bypass a single push with `git push --no-verify`. The integration/E2E/tarball/audit tiers are NOT in the hook (they need Linux + ffmpeg/bubblewrap) — run `pnpm validate:full` on Linux or rely on CI.
 

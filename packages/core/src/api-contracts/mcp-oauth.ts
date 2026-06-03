@@ -25,7 +25,7 @@
  *     are returned so the operator forwards the port and opens the URL
  *     themselves (PKCE path).
  *   - `device_code_pending`  — RFC 8628 device-authorization grant dispatched
- *     (DEVAUTH-02 heuristic or `oauth.flow="device_code"` operator override);
+ *     (auto-detection heuristic or `oauth.flow="device_code"` operator override);
  *     `verificationUri` + `userCode` + `expiresIn` are returned for the agent
  *     to surface to the operator via the `message` tool. The daemon polls in
  *     a background task and reconnects via `onAuthorized` on success.

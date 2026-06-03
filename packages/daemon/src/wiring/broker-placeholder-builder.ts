@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Broker placeholder env-var builder (INTEG-03).
+ * Broker placeholder env-var builder.
  *
  * Extracted from daemon.ts so the function is unit-testable.
  * Builds the placeholder env-var map from broker binding config.
@@ -18,11 +18,11 @@ import type { ComisLogger } from "@comis/infra";
 const ENV_VAR_SHAPED_RE = /^[A-Z][A-Z0-9_]*$/;
 
 /**
- * Build the placeholder env-var mapping from binding config for INTEG-03.
+ * Build the placeholder env-var mapping from binding config.
  * Maps each binding's env var name (envVarName ?? secretRef) to the placeholder
  * string "comis-broker-placeholder".
  *
- * WR-02 guard: when envVarName is absent and secretRef does not match the env-var
+ * Guard: when envVarName is absent and secretRef does not match the env-var
  * naming convention (^[A-Z][A-Z0-9_]*$), a WARN is emitted. The placeholder will
  * land under the wrong env var name and the driven CLI will silently fail to find
  * its API key (→ 401 from the downstream API, not a clean 407 from the broker).

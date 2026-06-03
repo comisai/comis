@@ -31,9 +31,9 @@ export interface OAuthLoginConfig {
    *  `runDeviceFlow`'s discovery cascade when the resolved metadata lacks
    *  `device_authorization_endpoint` (Higgsfield reality 2026-05-28). Wins
    *  over the auto-resolved endpoint when both are present. See
-   *  `McpServerEntrySchema.oauth.deviceAuthorizationEndpoint` (plan 09-01). */
+   *  `McpServerEntrySchema.oauth.deviceAuthorizationEndpoint`. */
   readonly deviceAuthorizationEndpoint?: string;
-  /** DEVAUTH-02: per-server flow override that beats the headless heuristic.
+  /** Per-server flow override that beats the headless heuristic.
    *  `"device_code"` forces RFC 8628; `"auth_code"` forces PKCE+loopback.
    *  Absent ⇒ `runOauthLogin` chooses by the heuristic (headless ∧ device-
    *  code-advertised → device-flow). */

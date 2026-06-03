@@ -44,7 +44,7 @@ async function createElement(
   props?: Record<string, unknown>,
 ): Promise<IcSetupWizard> {
   const el = document.createElement("ic-setup-wizard") as IcSetupWizard;
-  // Post-Phase-44 the view delegates state to a controller instantiated when
+  // The view delegates state to a controller instantiated when
   // rpcClient is set. Tests that don't care about RPC still need a controller
   // to back state reads, so default to a minimal mock.
   if (!props || !("rpcClient" in props)) {
@@ -64,7 +64,7 @@ async function flush(el: IcSetupWizard): Promise<void> {
 }
 
 /**
- * Test-only state accessor. Post-Phase-44 the view delegates state to
+ * Test-only state accessor. The view delegates state to
  * `SetupWizardController`; `priv()` returns a getter/setter facade so
  * the existing test suite (which read/wrote `_wizardData`, `_currentStep`,
  * etc.) keeps reading from the controller snapshot and writing through

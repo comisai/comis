@@ -289,8 +289,8 @@ export interface PiEventBridgeDeps {
    */
   dataDir?: string;
   /**
-   * Operator home directory (`$HOME`) for SEC-02 `$HOME`→`~` path compaction at
-   * the tool-event emit sites (WR-05). When supplied, the redacted `params` on
+   * Operator home directory (`$HOME`) for `$HOME`→`~` path compaction at
+   * the tool-event emit sites. When supplied, the redacted `params` on
    * `tool:started` / `tool:executed` compact absolute home paths to `~` for ALL
    * bus consumers (delivery-tracer, trajectory writers, plan-stream) — not only
    * the activity renderer that re-redacts with its own injected homeDir. When
@@ -522,16 +522,16 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
           }
           // Stash the RAW args so the paired tool:executed emit can forward
-          // redacted params (EVT-01). Redaction happens at the emit, not here.
+          // redacted params. Redaction happens at the emit, not here.
           if (toolEvent.args !== undefined) {
             m.toolRawArgs.set(toolEvent.toolCallId, toolEvent.args);
           }
 
-          // EVT-02: thread redacted params + an `action` field onto tool:started.
+          // Thread redacted params + an `action` field onto tool:started.
           // redactValue is the only sanctioned path — secrets/PII/absolute paths
           // are masked BEFORE the emit crosses the bus. homeDir (when wired)
           // compacts $HOME→~ for all consumers, not just the re-redacting
-          // activity renderer (WR-05).
+          // activity renderer.
           const startedRedactedParams = redactValue(toolEvent.args, { homeDir: deps.homeDir }).value as
             | Record<string, unknown>
             | undefined;
@@ -594,14 +594,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
           }
 
-          // EVT-10 (§16.10): run the tool's failureDetector hook BEFORE the
+          // §16.10: run the tool's failureDetector hook BEFORE the
           // tool:executed emit, so observability never sees the raw result.
           // The detector is pure + synchronous; it lets a tool flag a
           // logically-failed result the SDK reported as success. A THROWING
           // detector is caught — the original success is preserved and a WARN
           // is logged with errorKind:"internal" (the result is never leaked).
-          // NOTE: this plan wires the hook SEAM; per-tool detector bodies are
-          // authored in Phase 75 / UX-03.
+          // NOTE: this wires the hook SEAM; per-tool detector bodies are
+          // authored separately.
           {
             const detector = getToolMetadata(endEvent.toolName)?.failureDetector;
             if (detector !== undefined) {
@@ -635,7 +635,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const sanitizedArgs = m.toolArgSnapshots.get(endEvent.toolCallId);
           m.toolArgSnapshots.delete(endEvent.toolCallId); // Cleanup regardless of success/failure
           // Retrieve + clear the raw args stashed at tool_execution_start; redact
-          // them into the tool:executed `params` field below (EVT-01).
+          // them into the tool:executed `params` field below.
           const rawArgsForParams = m.toolRawArgs.get(endEvent.toolCallId);
           m.toolRawArgs.delete(endEvent.toolCallId);
 
@@ -789,10 +789,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // Look up truncation metadata from stream wrapper registry
           const truncMeta = deps.getTruncationMeta?.(endEvent.toolCallId);
 
-          // EVT-01: forward redacted params (from the raw args stashed at
+          // Forward redacted params (from the raw args stashed at
           // tool_execution_start). redactValue masks secrets/PII/absolute paths
           // before the emit crosses the bus. homeDir (when wired) compacts
-          // $HOME→~ for all consumers, not just the activity renderer (WR-05).
+          // $HOME→~ for all consumers, not just the activity renderer.
           const executedRedactedParams = redactValue(rawArgsForParams, { homeDir: deps.homeDir }).value as
             | Record<string, unknown>
             | undefined;

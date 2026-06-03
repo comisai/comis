@@ -210,15 +210,15 @@ describe("@comis/core -- architecture invariants", () => {
             snippet: v.snippet,
           })),
           suggestedFix: `Remove the ${forbidden} import. The provider-catalog is pure-logic; it must not depend on infra or skills.`,
-          designRef: "INJECT-04 catalog purity requirement",
+          designRef: "catalog purity requirement",
         }),
       ).toEqual([]);
       expect(checkedFiles, "sanity: walked provider-catalog files").toBeGreaterThan(0);
     });
   }
 
-  it("provider-catalog tree does NOT call console.* or Date.now() in production source (IN-01)", () => {
-    // IN-01: provider-catalog is a pure deterministic module — no logging, no timestamps.
+  it("provider-catalog tree does NOT call console.* or Date.now() in production source", () => {
+    // provider-catalog is a pure deterministic module — no logging, no timestamps.
     // Guard against future changes that accidentally introduce console calls or Date.now().
     for (const needle of [/console\./, /Date\.now\b/] as const) {
       const result = findInSourceFiles({
@@ -228,7 +228,7 @@ describe("@comis/core -- architecture invariants", () => {
       });
       expect(
         result.matches,
-        `provider-catalog production source must not contain '${needle.source}' (pure-logic requirement — INJECT-04)`,
+        `provider-catalog production source must not contain '${needle.source}' (pure-logic requirement)`,
       ).toEqual([]);
     }
   });

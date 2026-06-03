@@ -128,7 +128,7 @@ describe("setupMcp", () => {
   // MUST be forwarded into createMcpClientManager. Without this, a daemon-wide override
   // is silently ignored for all startup-connected servers.
   // Note: keepaliveIntervalMs is no longer forwarded — transport-aware default
-  // is resolved at call time via resolveDefaultKeepaliveIntervalMs (MCPX-02).
+  // is resolved at call time via resolveDefaultKeepaliveIntervalMs.
   it("forwards global circuitBreakerThreshold/circuitBreakerCooldownMs into createMcpClientManager", async () => {
     mockGetAllConnections.mockReturnValue([]);
     await callSetupMcp({
@@ -826,14 +826,14 @@ describe("setupMcp", () => {
       expect(factoryArg).not.toHaveProperty("oauthDeps");
     });
 
-    // WR-02 wiring-level singleton test (R8.1/8.3):
+    // Wiring-level singleton test:
     // createPortBackedMcpTokenStore must be called exactly ONCE per setupMcp
     // invocation, regardless of how many times createTokenStore() is called on
     // the injected oauthDeps. On HEAD (before the singleton hoist), each
     // createTokenStore() call rebuilds a new wrapper — this test documents that
     // broken behavior (RED).
     //
-    // Contrast with mcp-client-keepalive.test.ts WR-02 test at :962 which
+    // Contrast with the mcp-client-keepalive.test.ts test at :962 which
     // asserts "createTokenStore called exactly once per tick" at the
     // McpClientManagerDeps unit level — that test is independent and
     // unchanged here.
@@ -972,7 +972,7 @@ describe("setupMcp", () => {
     });
 
     // ---------------------------------------------------------------------------
-    // WR-02: partial-config guard — one of secretsDb/secretsCrypto without the other
+    // Partial-config guard — one of secretsDb/secretsCrypto without the other
     // must throw, not silently disable OAuth (wiring defect detection)
     // ---------------------------------------------------------------------------
 

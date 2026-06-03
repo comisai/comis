@@ -2316,7 +2316,7 @@ describe("install-detour mode: observe", () => {
   }, 30_000);
 
   it("install-detour event payload populates agentId from ctx.userId, not ctx.sessionKey", async () => {
-    // WR-03 regression: buildInstallDetourEventPayload previously set
+    // Regression: buildInstallDetourEventPayload previously set
     // `agentId: ctx.sessionKey` — meaning downstream consumers (audit
     // aggregators, per-agent install-detour rate limits) would see a
     // formatted session key instead of an agent identifier. The two are
@@ -2350,8 +2350,8 @@ describe("install-detour mode: observe", () => {
     const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
     expect(installEvents).toHaveLength(1);
     // ctx.userId === "test-user", ctx.sessionKey === "test-session"
-    // BEFORE WR-03: agentId would be "test-session" (the bug).
-    // AFTER WR-03: agentId is "test-user".
+    // Before the fix: agentId would be "test-session" (the bug).
+    // After the fix: agentId is "test-user".
     expect(installEvents[0]!.payload.agentId).toBe("test-user");
     expect(installEvents[0]!.payload.sessionKey).toBe("test-session");
   }, 30_000);

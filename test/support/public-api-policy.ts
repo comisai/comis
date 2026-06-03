@@ -164,18 +164,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PendingUpdate",
       "GreetingGeneratorDeps",
       "MemoryReviewDeps",
-      // Consolidation job Deps (Phase 84-03). runMemoryConsolidation is consumed by the
-      // daemon (Plan 84-05, setup-channels-credentials __MEMORY_CONSOLIDATION__ sentinel),
+      // Consolidation job Deps. runMemoryConsolidation is consumed by the
+      // daemon (setup-channels-credentials __MEMORY_CONSOLIDATION__ sentinel),
       // but it is called with an inline object, so the named Deps SHAPE type has no
       // production consumer — baseline orphan (mirror MemoryReviewDeps).
       "MemoryConsolidationDeps",
-      // Offline triple-extraction job (Phase 100-05, Track F — KG-01, decision 6).
+      // Offline triple-extraction job.
       // runMemoryTripleExtraction is the offline writer; its daemon cron wiring is
-      // OPTIONAL in Plan 100-05 (the job is default-OFF and the benchmark in Plan
-      // 100-06 calls runMemoryTripleExtraction directly / seeds via tripleStore.upsertTriple).
+      // OPTIONAL (the job is default-OFF and the benchmark calls
+      // runMemoryTripleExtraction directly / seeds via tripleStore.upsertTriple).
       // Surfaced here AHEAD of that consumer — the factory-orphan dance (mirror
-      // runMemoryConsolidation @ 84-03 before its sentinel landed): this entry
-      // SHRINKS when Plan 100-06 (or a later cron-wiring plan) lands the consumer.
+      // runMemoryConsolidation before its sentinel landed): this entry
+      // SHRINKS when a cron-wiring plan lands the consumer.
       // The Deps/Config/Stats SHAPE types + the TripleCandidate extractor-output type
       // are referenced via inline objects only — baseline orphans (mirror MemoryConsolidationDeps).
       "runMemoryTripleExtraction",
@@ -183,15 +183,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryTripleExtractionConfig",
       "MemoryTripleExtractionStats",
       "TripleCandidate",
-      // Offline reasoning job (Phase 101, Track D — REASON-02/03/04). runMemoryReasoning
-      // is now CONSUMED by the daemon __MEMORY_REASONING__ sentinel dispatch (101-06),
+      // Offline reasoning job. runMemoryReasoning
+      // is now CONSUMED by the daemon __MEMORY_REASONING__ sentinel dispatch,
       // so it SHRANK out of this baseline (no longer an orphan). createReasoningSeam
-      // (101-06, the daemon-injected reason() seam factory) is likewise consumed by the
+      // (the daemon-injected reason() seam factory) is likewise consumed by the
       // dispatch — no entry needed. The Deps/Config/Stats/Result SHAPE types + the
       // ReasoningOutput seam-output type are referenced via inline objects only (the
       // dispatch + the gated bench construct them structurally / import them
       // same-package) — baseline orphans (mirror MemoryTripleExtractionDeps).
-      // ReasoningSeamDeps (101-06) is the createReasoningSeam input shape — the daemon
+      // ReasoningSeamDeps is the createReasoningSeam input shape — the daemon
       // calls it with an inline object, so the TYPE itself has no cross-package importer.
       "MemoryReasoningDeps",
       "MemoryReasoningConfig",
@@ -199,9 +199,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryReasoningResult",
       "ReasoningOutput",
       "ReasoningSeamDeps",
-      // Offline per-user representation builder (Phase 107, Track E1 — USER-02/04).
+      // Offline per-user representation builder.
       // runUserRepresentationBuild is now CONSUMED by the daemon __USER_REPRESENTATION__
-      // cron-sentinel dispatch (107-05), so it SHRANK out of this baseline (no longer an
+      // cron-sentinel dispatch, so it SHRANK out of this baseline (no longer an
       // orphan). createUserRepresentationSeam (the daemon-injected build() seam factory) is
       // consumed by the dispatch too. buildUserRepresentationPrompt + parseUserRepresentationOutput
       // are imported by createUserRepresentationSeam via the RELATIVE same-package path (the prompt
@@ -222,11 +222,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "UserRepresentationCandidate",
       "UserRepresentationBuildOutput",
       "UserRepresentationSeamDeps",
-      // Offline directional relationship builder (Phase 108, Track E2 — SOCIAL-01).
-      // SHRUNK @ 108-05: the offline-builder run-fn + the cheap-model seam-factory are now CONSUMED
+      // Offline directional relationship builder.
+      // SHRUNK: the offline-builder run-fn + the cheap-model seam-factory are now CONSUMED
       // by the daemon __SOCIAL_MODELING__ cron dispatch (setup-channels-memory-crons.ts), so they
       // were REMOVED from this list (the shrink — mirror the per-user-representation builder/seam
-      // shrink @ 107-05; allowlist-shrink enforces shrink-only). buildRelationshipPrompt +
+      // shrink; allowlist-shrink enforces shrink-only). buildRelationshipPrompt +
       // parseRelationshipOutput are imported by the seam via the RELATIVE same-package path (the
       // prompt stays agent-internal), so their @comis/agent index re-exports have no cross-package
       // importer — baseline orphans (mirror buildUserRepresentationPrompt above). The
@@ -244,27 +244,27 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RelationshipCandidate",
       "RelationshipBuildOutput",
       "RelationshipSeamDeps",
-      // Offline tuned-alpha bandit (Phase 111, Track H2 — LEARN-03). SHRUNK @ 111-04 Task 3:
+      // Offline tuned-alpha bandit. SHRUNK:
       // runOnlineTuning is now CONSUMED by the daemon __ONLINE_TUNING__ cron-sentinel dispatch
       // (setup-channels-memory-crons.ts), so it was REMOVED from this list (the interface-first
-      // cross-task seam shrink — the 107-05 / 108-05 builder-shrink precedent; allowlist-shrink
+      // cross-task seam shrink — the builder-shrink precedent; allowlist-shrink
       // enforces shrink-only). The Deps/Config/Stats/Result SHAPE types + the Baseline read-shape
       // are referenced via inline objects only (the dispatch constructs them structurally) —
       // baseline orphans (mirror MemoryUserRepresentationDeps). OnlineTuningFeedEntry IS imported
       // by the dispatch (the readUsefulness seam's Map value type) so it is NOT an orphan. The
       // PURE computeTunedAlphas + buildScoringAlphas are agent-INTERNAL (no public barrel export
-      // → no orphan churn, the 111-01/03 posture).
+      // → no orphan churn).
       "MemoryOnlineTuningDeps",
       "MemoryOnlineTuningConfig",
       "MemoryOnlineTuningStats",
       "MemoryOnlineTuningResult",
       "OnlineTuningBaselineAlphas",
-      // (Phase 109 DIAL-04: the createDialecticSeam / DialecticSeamDeps / DialecticParsed
-      //  ahead-of-consumer orphans were REMOVED here — Plan 04's setup-dialectic.ts now
+      // (The createDialecticSeam / DialecticSeamDeps / DialecticParsed
+      //  ahead-of-consumer orphans were REMOVED here — setup-dialectic.ts now
       //  NAME-imports all three in non-test daemon wiring [the seam factory build + the
       //  DialecticSeamDeps annotation + the DialecticParsed return type], so the
       //  public-export-consumers walker sees real consumers. Mirrors createUserRepresentationSeam
-      //  @ 107-04 → consumed @ 107-05.)
+      //  once it was consumed.)
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",
@@ -311,8 +311,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "wrapInEnvelope",
       "formatElapsed",
       "PiExecutorDeps",
-      // createExecutionPlanHolder + ExecutionPlanHolder (Phase 74, workstream D,
-      // ACP-03) are NO LONGER orphans: 74-07 wired the composition root. The
+      // createExecutionPlanHolder + ExecutionPlanHolder are NO LONGER
+      // orphans: the composition root is now wired. The
       // daemon's setup-acp-wiring.ts now imports createExecutionPlanHolder from
       // @comis/agent (and the ExecutionPlanHolder type) to build the one shared
       // holder threaded into both PiExecutorDeps.executionPlanHolder and the
@@ -389,8 +389,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createHybridMemoryInjector",
       "HybridMemoryInjector",
       "HybridMemoryInjection",
-      // Recall orchestrator (Phase 80). Consumed internally by prompt-assembly via a
-      // direct relative import; exported for the Phase-80/05 eval harness + external
+      // Recall orchestrator. Consumed internally by prompt-assembly via a
+      // direct relative import; exported for the eval harness + external
       // recall composition. Baseline orphan until the eval harness lands its consumer.
       "createMemoryRecall",
       "MemoryRecall",
@@ -509,17 +509,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "sweepResultFiles",
       "buildAnnouncementMessage",
       "deliverFailureNotification",
-      // buildRecallTrace (Phase 86 OBS-02 gap-closure): consumed by the
-      // recall-diagnostics-isolation integration test (the OBS-02 e2e
-      // redaction proof + OBS-08 cross-scope-leak negative drive the real
+      // buildRecallTrace: consumed by the
+      // recall-diagnostics-isolation integration test (the e2e
+      // redaction proof + the cross-scope-leak negative drive the real
       // recorder through the @comis/agent barrel — see
       // test/integration/security/recall-diagnostics-isolation.test.ts:61).
       // The public-export-consumers AST walker only scans packages/*/src/**
       // (NOT test/), so that cross-package consumer doesn't satisfy the gate.
       // The production consumer is intra-package (prompt-assembly.ts threads
       // the same envelope), which the walker skips as a self-import. Mirrors
-      // the createMemoryHandlers / MEMORY_DIAGNOSTIC_CONTRACTS precedent from
-      // Phase 86. Keep the barrel export — the integration test needs it via
+      // the createMemoryHandlers / MEMORY_DIAGNOSTIC_CONTRACTS precedent.
+      // Keep the barrel export — the integration test needs it via
       // the bare `@comis/agent` import.
       "buildRecallTrace",
     ])],
@@ -706,7 +706,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DiscordTextLikeChannel",
       "asThreadInfo",
       "DiscordThreadInfo",
-      // Activity-renderer surface re-exported in 71-05 so the daemon's
+      // Activity-renderer surface re-exported so the daemon's
       // buildActivityRenderers (setup-channels-activity-renderers.ts) can
       // construct the EditPlace renderers from the @comis/channels barrel.
       // The four per-channel factories (createTelegramActivityRenderer,
@@ -738,11 +738,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
-      // ── v2.10 Phase 115 (ACTIVATE — ACT-01) : capability default-activation ──
+      // ── capability default-activation ──
       // The default-activation framework: a declarative capability registry +
       // empty measured-winner set + pure resolver + frozen-trust invariant.
-      // Phase 114 (PROVE2) measured no winner, so the framework flips NOTHING
-      // (ACT-02 byte-identity) and its only consumers today are its own
+      // The prove-out measured no winner, so the framework flips NOTHING
+      // (byte-identity) and its only consumers today are its own
       // invariant tests (excluded from the consumer scan). The production
       // consumers land later: a future costed-winner phase records an
       // ActivationDecision (the ONLY place a default flips), and an operator
@@ -757,17 +757,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "CapabilityDescriptor",
       "ActivationDecision",
       "ResolvedCapabilityDefault",
-      // ── v2.5 Agent Transparency (Phase 73 — interactive approvals) ──
+      // ── Agent Transparency (interactive approvals) ──
       // ParsedCallback is the documented return shape of the public
-      // parseCallbackData (73-01). The orchestrator router consumes the
+      // parseCallbackData. The orchestrator router consumes the
       // function, not the type name (it destructures the value), so the type
       // has no production import. It is part of the signing API surface external
       // consumers of parseCallbackData rely on; tracked here.
       "ParsedCallback",
-      // ── v2.5 Agent Transparency (Phase 70 foundation) ──────────────
+      // ── Agent Transparency (foundation) ──────────────
       // Activity + redaction public surface shipped in the @comis/core
-      // barrel per ACT-12 (foundation phase). Consumers land in Phases
-      // 71-76: channel renderers wire chatProjection/acpProjection/
+      // barrel as the foundation. Consumers land later:
+      // channel renderers wire chatProjection/acpProjection/
       // coalesce/ActivityStrategy; the ACP bridge consumes acpProjection;
       // label specs register via registerActivityLabelSpec; the redaction
       // types/limits feed emit sites. redactValue itself already has
@@ -792,7 +792,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RegisteredLabelSpec",
       "ResolveLabelOptions",
       "registerActivityLabelSpec",
-      // hasRegisteredLabelSpec (Phase 76, LBL-03): the explicit-registration
+      // hasRegisteredLabelSpec: the explicit-registration
       // introspection primitive the transparency coverage gate
       // (packages/skills/src/__tests__/transparency-label-coverage.test.ts)
       // calls. resolveLabelSpec is total (always returns a humanized fallback)
@@ -801,7 +801,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // the consumer scan), so the public primitive has no in-repo production
       // import yet — tracked here. Shrink when a production caller lands.
       "hasRegisteredLabelSpec",
-      // ThemeName (Phase 75, UX-01): the activity-theme name union shipped on
+      // ThemeName: the activity-theme name union shipped on
       // the @comis/core barrel for the four bundled themes. Channel renderers
       // pass a theme through resolveLabelSpec options; the type name itself has
       // no in-repo value consumer yet — tracked here.
@@ -828,8 +828,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "TrustLevelSchema",
       "MemorySourceSchema",
       "MemoryEntrySchema",
-      // Structured-extraction (Phase 82, EXTR-01) + entity (Phase 83) domain
-      // types. MemoryEntity is the Phase-83 entity import target; the
+      // Structured-extraction + entity domain
+      // types. MemoryEntity is the entity import target; the
       // extraction LLM-output types describe the shape @comis/agent's
       // parseExtractionResult validates. These 6 (3 schemas + 3 inferred
       // types) are consumed intra-core (memory-entry.ts builds the
@@ -839,7 +839,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // (MemoryExtractionResultSchema + MemoryExtractionResult are NOT listed:
       // @comis/agent's parseExtractionResult imports both from @comis/core, so
       // they have a real cross-package consumer.) Mirrors the @comis/memory
-      // row-schema / Phase-80 reranker baseline-orphan precedent. Shrink each
+      // row-schema / reranker baseline-orphan precedent. Shrink each
       // as a real cross-package consumer lands.
       "ExtractedEntitySchema",
       "StructuredMemorySchema",
@@ -984,19 +984,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "resolveCodexStableSubject",
       "RewrittenOAuthError",
       "FileExtractionErrorKind",
-      // (Phase 112, FORGET-02 / Track C) MemoryLifecyclePort + MemoryLifecycleScope +
+      // MemoryLifecyclePort + MemoryLifecycleScope +
       // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
-      // ahead-of-consumer planned-orphans by plan 112-02 (REMOVE @ 112-03). REMOVED:
+      // ahead-of-consumer planned-orphans. REMOVED:
       // the sole @comis/memory lifecycle adapter `createSqliteMemoryLifecycleStore`
-      // (packages/memory/src/sqlite-memory-lifecycle-store.ts, 112-03) now name-imports
+      // (packages/memory/src/sqlite-memory-lifecycle-store.ts) now name-imports
       // all four from @comis/core BY TYPE in non-test src — they have a real
-      // cross-package consumer, so they are no longer orphans (the daemon cron in 112-04
-      // adds a second). Mirrors the TunedAlphaStore 111-01→111-02 shrink below.
-      // (Phase 111, LEARN-03 / Track H2) TunedAlphaStore + TunedAlphaScope +
-      // TunedAlphaVector were tracked here as ahead-of-consumer planned-orphans by
-      // plan 111-01 (REMOVE @ 111-02). REMOVED: the sole SQLite adapter
-      // `createSqliteTunedAlphaStore` (packages/memory/src/sqlite-tuned-alpha-store.ts,
-      // 111-02) now name-imports all three from @comis/core in non-test src — they
+      // cross-package consumer, so they are no longer orphans (the daemon cron
+      // adds a second). Mirrors the TunedAlphaStore shrink below.
+      // TunedAlphaStore + TunedAlphaScope +
+      // TunedAlphaVector were tracked here as ahead-of-consumer planned-orphans.
+      // REMOVED: the sole SQLite adapter
+      // `createSqliteTunedAlphaStore` (packages/memory/src/sqlite-tuned-alpha-store.ts)
+      // now name-imports all three from @comis/core in non-test src — they
       // have a real cross-package consumer, so they are no longer orphans.
       // RagConfig: surface-only export. The createRagRetriever factory in
       // packages/agent/src/rag/rag-retriever.ts was deleted; the canonical
@@ -1051,7 +1051,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "OutputGuardFinding",
       "OutputGuardResult",
       "createSecretManager",
-      // Phase 3 (P4a) shared-Map refactor. createSecretManagerWithMutableHandle
+      // Shared-Map refactor. createSecretManagerWithMutableHandle
       // is the daemon composition root factory (setup-secret-manager.ts + daemon.ts);
       // it returns { secretManager, mutableHandle } over ONE backing Map.
       // MutableSecretManager is the write-authority interface (upsert/remove);
@@ -1235,18 +1235,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "VerbosityOverrideSchema",
       "OutputRetentionConfigSchema",
       "MemoryReviewConfigSchema",
-      // Per-agent consolidation config schema (Phase 84-04). Wired into PerAgentConfig
-      // (schema-agent-runtime) WITHIN @comis/core; the daemon (Plan 84-05) consumes the
+      // Per-agent consolidation config schema. Wired into PerAgentConfig
+      // (schema-agent-runtime) WITHIN @comis/core; the daemon consumes the
       // INFERRED config TYPE, not the schema value. The schema value therefore has no
       // out-of-package consumer — baseline orphan (mirror MemoryReviewConfigSchema).
       "MemoryConsolidationConfigSchema",
-      // Per-agent reasoning config schema + type (Phase 101-02, REASON-04). Wired into
+      // Per-agent reasoning config schema + type. Wired into
       // PerAgentConfig (schema-agent-runtime) WITHIN @comis/core; the schema-runtime attach
       // is a self-import (the public-export-consumers gate skips same-package imports), so
       // both the schema value AND the inferred config TYPE are surfaced AHEAD of their
-      // cross-package consumers — the reasoning job reads MemoryReasoningConfig in 101-04/06
-      // (the factory-orphan dance, mirror MemoryConsolidationConfigSchema @ 84-04 +
-      // runMemoryTripleExtraction @ 100-05). Shrink when the 101-04/06 consumer lands.
+      // cross-package consumers — the reasoning job reads MemoryReasoningConfig
+      // (the factory-orphan dance, mirror MemoryConsolidationConfigSchema +
+      // runMemoryTripleExtraction). Shrink when the consumer lands.
       "MemoryReasoningConfigSchema",
       "MemoryReasoningConfig",
       "ProvidersConfigSchema",
@@ -1505,19 +1505,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // handler-factory files that share the MemoryApiDeps cluster slice):
       //   - memory-handlers.ts  (8 methods)
       //   - context-handlers.ts (7 methods)
-      // The 19 per-method contracts (8 memory + 4 OBS-06 diagnostics + 7
-      // context as of Phase 86 Plan 05) have in-repo consumers via both
+      // The 19 per-method contracts (8 memory + 4 diagnostics + 7
+      // context) have in-repo consumers via both
       // handler factories (imports + computed property keys). Only the
       // per-domain aggregator arrays MEMORY_CONTRACTS / MEMORY_DIAGNOSTIC_CONTRACTS
       // lack an external consumer (composed into API_CONTRACTS_ORDERED /
       // spread into MEMORY_CONTRACTS intra-package — the walker skips
-      // self-imports). MEMORY_DIAGNOSTIC_CONTRACTS is the Phase-86 OBS-06
+      // self-imports). MEMORY_DIAGNOSTIC_CONTRACTS is the
       // diagnostic group, now folded into MEMORY_CONTRACTS but still surfaced
       // on the public barrel for symmetry with the other domain arrays.
       "MEMORY_CONTRACTS",
       "MEMORY_DIAGNOSTIC_CONTRACTS",
-      // (Phase 109 Plan 03 CLOSED the memory.ask cross-wave seam: MemoryAskContract
-      // is now spread into MEMORY_CONTRACTS in the same diff that landed its daemon
+      // (The memory.ask cross-wave seam is now closed: MemoryAskContract
+      // is spread into MEMORY_CONTRACTS in the same diff that landed its daemon
       // handler in memory-handlers.ts — its in-repo consumer now exists — so it was
       // REMOVED from this ahead-of-consumer allowlist.)
       // Media + image-domain contracts (16 methods spanning 2
@@ -1730,23 +1730,23 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "computeReachableToolNames",
       "RequiredToolsUnreachableError",
       "UnreachableToolEntry",
-      // ── v2.6 Memory consolidation (Phase 84 — interface-first foundation) ──
+      // ── Memory consolidation (interface-first foundation) ──
       // The segregated MemoryConsolidationStore port + its DTOs are the
-      // contract the consolidation adapter (Plan 02, @comis/memory), job
-      // (Plan 03, @comis/agent), and daemon wiring (Plan 05) depend on
+      // contract the consolidation adapter (@comis/memory), job
+      // (@comis/agent), and daemon wiring depend on
       // existing first (the same interface-first pattern as MemoryEntityStore,
-      // whose own consumers landed across Phase 83's plans). Shipped on the
-      // @comis/core barrel now; the in-repo consumers land in Plans 02-05.
+      // whose own consumers landed across its plans). Shipped on the
+      // @comis/core barrel now; the in-repo consumers land later.
       // Shrink each entry as it gains a real consumer.
       "MemoryConsolidationStore",
       "ConsolidationCandidate",
       "ConsolidationPlan",
-      // Provider-catalog symbols added in Phase 2 (BROKER-01..03). The broker
+      // Provider-catalog symbols. The broker
       // in @comis/infra imports resolveBinding, applyInjections, normalizeHost,
       // BrokerBinding, InjectionRule, HostRule, InjectionInput — all consumed.
       // pathAllowed is exported for external callers that need to gate requests;
       // the broker uses resolveBinding (which calls pathAllowed internally).
-      // Broker wiring in the daemon composition root is Phase 3.
+      // Broker wiring in the daemon composition root lands later.
       "pathAllowed",
       // BrokerBindingConfigSchema: the Zod validator for a single executor.broker
       // binding entry. Operator-facing config schema; exported on the public
@@ -1758,30 +1758,30 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // schema-executor.ts registered schema, not by importing the Zod object
       // directly. Tracked here as a planned-orphan policy entry until a runtime
       // validation site outside @comis/core emerges (e.g. a CLI `broker validate`
-      // command or a broker health-check handler in Phase 9).
+      // command or a broker health-check handler).
       "BrokerBindingConfigSchema",
-      // Trust-first bi-temporal KG port (Phase 100-01, Track F — KG-01). The
+      // Trust-first bi-temporal KG port. The
       // TripleStorePort interface + TripleScope + TripleInput already have real
       // in-repo consumers (the @comis/memory adapter imports them by TYPE). The
       // TripleTrust ladder alias is referenced only INSIDE TripleInput.trust (a
       // field type, not a standalone import), so the export-graph walker counts
       // it as an orphan. It is part of the documented port API surface (callers
       // construct a TripleInput by naming the trust literal) — tracked here.
-      // Shrinks when the Plan-02 offline writer / Plan-04 lane reference it directly.
+      // Shrinks when the offline writer / lane reference it directly.
       "TripleTrust",
-      // Per-user representation port + prefix-type enum (Phase 107-01, Track E1 —
-      // USER-01). This is the FIRST plan of the phase (Wave 1): the type-only
+      // Per-user representation port + prefix-type enum.
+      // This is the first piece: the type-only
       // UserRepresentationStore port + the UserRepresentationType prefix-type enum
       // are the contract every later piece consumes — the SOLE @comis/memory
-      // adapter (Plan 02), the offline profile-builder (Plan 03), the LLM-free
-      // prompt-assembly injection (Plan 04), and the daemon wiring (Plan 05) all
+      // adapter, the offline profile-builder, the LLM-free
+      // prompt-assembly injection, and the daemon wiring all
       // import these from @comis/core BY TYPE (never @comis/memory — the agent↛
-      // memory build cut). No in-repo consumer exists yet (the adapter lands in
-      // Plan 02), so the export-graph walker counts them as orphans. They are the
-      // documented Phase-107 port API surface — tracked here as planned-orphans,
+      // memory build cut). No in-repo consumer exists yet (the adapter lands
+      // later), so the export-graph walker counts them as orphans. They are the
+      // documented port API surface — tracked here as planned-orphans,
       // mirror the TripleStorePort / MemoryEmbeddingStore ahead-of-consumer dance.
-      // Shrinks as Plan 02 (adapter, by TYPE) → Plan 03/04 (builder/injection) →
-      // Plan 05 (daemon wiring) reference each name directly.
+      // Shrinks as the adapter (by TYPE) → the builder/injection →
+      // the daemon wiring reference each name directly.
       "UserRepresentationStore",
       "UserRepresentationScope",
       // UserRepresentationTrust is referenced only INSIDE UserRepresentationInput.trust
@@ -1789,23 +1789,23 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "UserRepresentationTrust",
       "UserRepresentationEntry",
       "UserRepresentationInput",
-      // The prefix-type enum (value schema + inferred type). The builder (Plan 03)
+      // The prefix-type enum (value schema + inferred type). The builder
       // classifies entries with UserRepresentationTypeSchema; the port consumes the
       // inferred UserRepresentationType. Shrinks when those consumers land.
       "UserRepresentationTypeSchema",
       "UserRepresentationType",
-      // Directional relationship port (Phase 108-01, Track E2 — SOCIAL-01). This is
-      // the FIRST plan of the phase (Wave 1): the type-only RelationshipStore port
+      // Directional relationship port. This is
+      // the first piece: the type-only RelationshipStore port
       // carrying the directional (subjectUserId, aboutUserId) pair + the
       // (tenant, agent, channel) scope is the contract every later piece consumes —
-      // the SOLE @comis/memory adapter (Plan 02), the offline directional builder,
+      // the SOLE @comis/memory adapter, the offline directional builder,
       // the (optional) LLM-free injection, and the daemon wiring all import these
       // from @comis/core BY TYPE (never @comis/memory — the agent↛memory build cut).
-      // No in-repo consumer exists yet (the adapter lands in Plan 02), so the
+      // No in-repo consumer exists yet (the adapter lands later), so the
       // export-graph walker counts them as orphans. They are the documented
-      // Phase-108 port API surface — tracked here as planned-orphans, mirror the
+      // port API surface — tracked here as planned-orphans, mirror the
       // UserRepresentationStore / TripleStorePort ahead-of-consumer dance. Shrinks as
-      // Plan 02 (adapter, by TYPE) → the builder/injection → the daemon wiring
+      // the adapter (by TYPE) → the builder/injection → the daemon wiring
       // reference each name directly.
       "RelationshipStore",
       "RelationshipScope",
@@ -1876,7 +1876,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // test at test/integration/security/recall-diagnostics-isolation.test.ts
       // can drive the real admin-gated memory.observations / memory.entities /
       // memory.recall_stats / memory.recall_trace handlers against the REAL
-      // wired scoped stores (the OBS-08 cross-scope-leak negative + the EoP
+      // wired scoped stores (the cross-scope-leak negative + the EoP
       // admin-reject through the RPC layer). Same rationale as createMcpHandlers:
       // the test imports them statically from @comis/daemon, but the
       // public-export-consumers AST walker only scans packages/*/src/** (NOT
@@ -1945,7 +1945,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // + deps type. Re-exported so the auth-set-encrypted integration test
       // (test/integration/auth-set-encrypted.test.ts) can drive the real
       // admin-gated auth.set handler against a mock OAuthCredentialStorePort,
-      // proving the REQ-05 round-trip + residency invariant (no plaintext
+      // proving the round-trip + residency invariant (no plaintext
       // token bytes in responses / logs / audit) without spinning up a full
       // daemon. Same rationale as createContextHandlers + createMemoryHandlers:
       // public-export-consumers AST walker excludes test/** so this orphan
@@ -1965,7 +1965,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PENDING_FLOW_TIMEOUT_MS",
       "OAuthCallbackDeps",
       "PendingFlow",
-      // Email approval-token route (73-10). createApprovalTokenRoute +
+      // Email approval-token route. createApprovalTokenRoute +
       // insertPendingApprovalToken + PendingApprovalToken + ApprovalLinkChoice are
       // consumed by the daemon composition root (setup-interactive-callback.ts +
       // setup-gateway-routes.ts). APPROVAL_TOKEN_TIMEOUT_MS is exported for test
@@ -1973,18 +1973,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // route's deps shape (the daemon constructs it inline) — both tracked here.
       "APPROVAL_TOKEN_TIMEOUT_MS",
       "ApprovalTokenDeps",
-      // AcpServerDeps is NO LONGER an orphan: 74-07's daemon setup-acp-wiring.ts
+      // AcpServerDeps is NO LONGER an orphan: the daemon setup-acp-wiring.ts
       // imports the AcpServerDeps type from @comis/gateway to assemble the ACP
       // server deps (executionPlanPort + eventBus + activityStreamPort) — removed.
-      // createAcpAgent + startAcpServer remain baseline orphans: 74-07 wired the
-      // bridges + the executionPlanPort seam INSIDE startAcpServer and re-exported
-      // startAcpServer from the package index (IN-02), but no daemon/CLI site yet
+      // createAcpAgent + startAcpServer remain baseline orphans: the
+      // bridges + the executionPlanPort seam are wired INSIDE startAcpServer and
+      // startAcpServer is re-exported from the package index, but no daemon/CLI site yet
       // INVOKES startAcpServer (spawning the ACP subprocess entry point is a
-      // separate concern, out of ACP-01..05). They light up when that caller lands.
+      // separate concern). They light up when that caller lands.
       "createAcpAgent",
       "startAcpServer",
-      // ACP activity/plan/approval bridges + the local bounded queue (Phase 74,
-      // workstream D). After 74-07 these are CONSTRUCTED in-repo —
+      // ACP activity/plan/approval bridges + the local bounded queue.
+      // These are now CONSTRUCTED in-repo —
       // createAcpPlanBridge + createAcpActivityBridge + createAcpApprovalBridge in
       // acp-server.ts (startAcpServer / createAcpAgent), createAcpBoundedQueue in
       // acp-activity-bridge.ts — but ALL via RELATIVE (intra-gateway) imports. The
@@ -2026,7 +2026,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createSystemClock",
       "createSystemEnv",
       "createSystemTimers",
-      // Credential broker (Phase 2) — no in-repo consumer yet.
+      // Credential broker — no in-repo consumer yet.
       // The daemon composition root wires these in a future phase.
       "createSessionManager",
       "SessionManager",
@@ -2036,7 +2036,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createMitmBroker",
       "MitmBrokerPort",
       "MitmBrokerDeps",
-      // CA manager (Phase 3) — no in-repo consumer yet.
+      // CA manager — no in-repo consumer yet.
       // The daemon composition root wires caManager into the broker in a future phase.
       "createNodeCaManager",
       "NodeCaManagerDeps",
@@ -2059,48 +2059,48 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "EmbeddingProviderOptions",
       "createOpenAIEmbeddingProvider",
       "OpenAIEmbeddingProviderOptions",
-      // Reranker provider options type (Phase 80). createLocalRerankerProvider is
+      // Reranker provider options type. createLocalRerankerProvider is
       // consumed by the daemon (setup-memory); the options type is part of its public
       // API surface — baseline orphan until an external/test consumer references it.
       "LocalRerankerProviderOptions",
-      // Entity-associative recall store (Phase 83-02). createSqliteMemoryEntityStore
+      // Entity-associative recall store. createSqliteMemoryEntityStore
       // is the sole MemoryEntityStore adapter; the daemon composition root constructs
-      // it on the memory adapter's db handle in Plan 83-05 (setup-memory). Surfaced
+      // it on the memory adapter's db handle (setup-memory). Surfaced
       // here ahead of that wiring — baseline orphans until the daemon consumer lands.
       "createSqliteMemoryEntityStore",
       "MemoryEntityStoreDeps",
-      // Temporal-spread store (Phase 95-02, LANES-02). createSqliteMemoryTemporalStore is the
+      // Temporal-spread store. createSqliteMemoryTemporalStore is the
       // sole MemoryTemporalStore adapter; the daemon composition root constructs it on the
       // memory adapter's db handle (setup-memory) — so the FACTORY has a production consumer.
       // The constructor-deps SHAPE type is part of its public API but is referenced only via
       // inline objects — baseline orphan (mirror MemoryEntityStoreDeps / MemoryUsefulnessStoreDeps).
       "MemoryTemporalStoreDeps",
-      // Causal-edge store (Phase 96, EXTRACT-03). createSqliteMemoryCausalStore is the sole
+      // Causal-edge store. createSqliteMemoryCausalStore is the sole
       // MemoryCausalStore adapter; the daemon composition root constructs it on the memory
-      // adapter's db handle in Plan 96-03 (setup-memory) — so the FACTORY has a production
-      // consumer (the temporary 96-01 orphan entry was REMOVED here, the 95-02 factory-orphan
+      // adapter's db handle (setup-memory) — so the FACTORY has a production
+      // consumer (the temporary orphan entry was REMOVED here, the factory-orphan
       // dance). The constructor-deps SHAPE type is part of its public API but is referenced only
       // via inline objects — PERMANENT baseline orphan (mirror MemoryEntityStoreDeps /
       // MemoryTemporalStoreDeps).
       "MemoryCausalStoreDeps",
-      // Consolidation store (Phase 84-02). createSqliteMemoryConsolidationStore is the sole
+      // Consolidation store. createSqliteMemoryConsolidationStore is the sole
       // MemoryConsolidationStore adapter; the daemon composition root constructs it on the
-      // memory adapter's db handle in Plan 84-05 (setup-memory) — so the FACTORY has a
+      // memory adapter's db handle (setup-memory) — so the FACTORY has a
       // production consumer. The constructor-deps SHAPE type is part of its public API but
       // is referenced only via inline objects — baseline orphan (mirror MemoryEntityStoreDeps).
       "MemoryConsolidationStoreDeps",
-      // Recall-utility usefulness store (Phase 93-01, FEED-02). createSqliteMemoryUsefulnessStore
+      // Recall-utility usefulness store. createSqliteMemoryUsefulnessStore
       // is the sole MemoryUsefulnessStore adapter; the daemon composition root constructs it on
       // the memory adapter's db handle (setup-memory) — so the FACTORY has a production consumer.
       // The constructor-deps SHAPE type is part of its public API but is referenced only via
       // inline objects — baseline orphan (mirror MemoryEntityStoreDeps / MemoryConsolidationStoreDeps).
       "MemoryUsefulnessStoreDeps",
-      // Trust-first bi-temporal KG triple store (Phase 100-01, Track F — KG-01).
+      // Trust-first bi-temporal KG triple store.
       // createSqliteTripleStore NOW has a production consumer — the daemon
       // composition root constructs it on the memory adapter's db handle in
-      // setup-memory (Plan 100-05) — so its orphan entry was REMOVED here (the
-      // factory-orphan dance SHRANK on schedule, mirror createSqliteMemoryCausalStore
-      // @ 96-03). MemoryTripleStoreDeps is the constructor-deps SHAPE (referenced via
+      // setup-memory — so its orphan entry was REMOVED here (the
+      // factory-orphan dance SHRANK on schedule, mirror createSqliteMemoryCausalStore).
+      // MemoryTripleStoreDeps is the constructor-deps SHAPE (referenced via
       // inline objects only) — PERMANENT baseline orphan (mirror MemoryCausalStoreDeps).
       // MemoryTripleRowSchema is the row schema consumed by createRowMapper inside the
       // adapter (an intra-file value reference, not a cross-file import), so the
@@ -2108,10 +2108,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // *RowSchema entries).
       "MemoryTripleStoreDeps",
       "MemoryTripleRowSchema",
-      // Per-user representation store (Phase 107-02, Track E1 — USER-01).
-      // createSqliteUserRepresentationStore's daemon consumer LANDED in Plan 107-05
+      // Per-user representation store.
+      // createSqliteUserRepresentationStore's daemon consumer LANDED
       // (setup-memory.ts constructs the SOLE adapter on the shared db handle) — the
-      // factory-orphan SHRANK on schedule (mirror createSqliteTripleStore @ 100-05 /
+      // factory-orphan SHRANK on schedule (mirror createSqliteTripleStore /
       // the entry above); its entry is removed.
       // MemoryUserRepresentationStoreDeps is the constructor-deps SHAPE type
       // (referenced via inline objects only); UserRepresentationRowSchema is the row
@@ -2120,25 +2120,24 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MemoryTripleStoreDeps / MemoryTripleRowSchema).
       "MemoryUserRepresentationStoreDeps",
       "UserRepresentationRowSchema",
-      // Directional relationship store (Phase 108-02, Track E2 — SOCIAL-02).
-      // SHRUNK @ 108-05: the SOLE (tenant, agent, channel)-scoped directional-edge adapter factory is
+      // Directional relationship store.
+      // SHRUNK: the SOLE (tenant, agent, channel)-scoped directional-edge adapter factory is
       // now CONSUMED by its daemon composition-root consumer (setup-memory.ts constructs it on the
-      // shared db handle, mirror the per-user-representation adapter @ 107-05), so it was REMOVED from
+      // shared db handle, mirror the per-user-representation adapter), so it was REMOVED from
       // this list (the shrink-only allowlist-shrink.test.ts enforces this shrink — mirror the
-      // user-representation / triple-store adapter @ 100-05 shrink). MemoryRelationshipStoreDeps is
+      // user-representation / triple-store adapter shrink). MemoryRelationshipStoreDeps is
       // the constructor-deps SHAPE type (referenced via inline objects only); RelationshipRowSchema is
       // the row schema consumed by createRowMapper inside the adapter (an intra-file value reference,
       // not a cross-file import) — both PERMANENT baseline orphans (mirror
       // MemoryUserRepresentationStoreDeps / UserRepresentationRowSchema above).
       "MemoryRelationshipStoreDeps",
       "RelationshipRowSchema",
-      // Tuned-alpha store (Phase 111-02, Track H2 — LEARN-03). createSqliteTunedAlphaStore
+      // Tuned-alpha store. createSqliteTunedAlphaStore
       // is the SOLE TunedAlphaStore adapter (the per-(tenant, agent) tuned-4-alpha-vector
-      // upsert + scoped read; undefined-on-absent). SHRUNK @ 111-04: the daemon
-      // composition-root now CONSTRUCTS it on the shared db handle in setup-memory (this plan,
-      // Task 2 — the construction landed here rather than the originally-projected 111-05), so
+      // upsert + scoped read; undefined-on-absent). SHRUNK: the daemon
+      // composition-root now CONSTRUCTS it on the shared db handle in setup-memory, so
       // the transient factory-orphan was REMOVED from this list (the factory-orphan shrink —
-      // mirror createSqliteTripleStore @ 100-05 / the user-representation + relationship adapter
+      // mirror createSqliteTripleStore / the user-representation + relationship adapter
       // shrinks; allowlist-shrink enforces shrink-only). MemoryTunedAlphaStoreDeps is the
       // constructor-deps SHAPE type (referenced via inline objects only); TunedAlphaRowSchema
       // is the row schema consumed by createRowMapper inside the adapter (an intra-file value
@@ -2146,14 +2145,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MemoryRelationshipStoreDeps / RelationshipRowSchema above).
       "MemoryTunedAlphaStoreDeps",
       "TunedAlphaRowSchema",
-      // Memory-lifecycle store (Phase 112-03/04, Track C — FORGET-02).
+      // Memory-lifecycle store.
       // createSqliteMemoryLifecycleStore is the SOLE MemoryLifecyclePort adapter (the
       // (tenant, agent)-scoped DORMANT sweep over the `memories` table + its additive
       // marker columns — it computes strengths/tiers but evicts/demotes NOTHING). It was
-      // an ahead-of-consumer factory-orphan; SHRUNK @ 112-04 — the daemon composition root
+      // an ahead-of-consumer factory-orphan; SHRUNK — the daemon composition root
       // (setup-memory.ts) now CONSTRUCTS it on the shared db handle + the default-OFF KEYLESS
       // __MEMORY_LIFECYCLE__ cron sentinel (setup-channels) drives it, so it is no longer an
-      // orphan (the factory-orphan shrink, mirror createSqliteTunedAlphaStore @ 111-04 above;
+      // orphan (the factory-orphan shrink, mirror createSqliteTunedAlphaStore above;
       // allowlist-shrink enforces shrink-only). MemoryLifecycleStoreDeps + MemoryLifecyclePolicy
       // are the constructor-deps/policy SHAPE types (referenced via inline objects only — the
       // daemon calls the factory with an inline `{ db, logger }`); MemoryLifecycleRowSchema is
@@ -2163,12 +2162,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryLifecycleStoreDeps",
       "MemoryLifecyclePolicy",
       "MemoryLifecycleRowSchema",
-      // Scoped embedding-read store (Phase 102-03/05, IQ-01). createSqliteMemoryEmbeddingStore
+      // Scoped embedding-read store. createSqliteMemoryEmbeddingStore
       // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
       // vec_memories bulk read that hydrates the MMR diversity re-rank. Its daemon
-      // composition-root consumer LANDED in Plan 102-05 (setup-memory, the same db handle as
+      // composition-root consumer LANDED (setup-memory, the same db handle as
       // the temporal/causal/triple stores) — so the FACTORY orphan was REMOVED here (the
-      // factory-orphan dance SHRANK on schedule, mirror createSqliteTripleStore @ 100-05).
+      // factory-orphan dance SHRANK on schedule, mirror createSqliteTripleStore).
       // MemoryEmbeddingStoreDeps is the constructor-deps SHAPE (referenced via inline objects
       // only) — PERMANENT baseline orphan (mirror MemoryTripleStoreDeps /
       // MemoryConsolidationStoreDeps).
@@ -2226,30 +2225,30 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Public-row schemas + inferred types (5 × 2 = 10 entries):
       "MemoryRowSchema",
       "MemoryRowFromSchema",
-      // Entity-association row schemas (Phase 83-01). Consumed intra-package by
-      // sqlite-memory-entity-store.ts (Plan 83-02) via createRowMapper; surfaced
+      // Entity-association row schemas. Consumed intra-package by
+      // sqlite-memory-entity-store.ts via createRowMapper; surfaced
       // through `export *` so tracked here like the sibling row schemas (the
       // checker counts cross-package barrel consumers only).
       "MemoryEntityRowSchema",
       "EntityLaneRowSchema",
-      // Causal one-hop edge-lookup row schema (Phase 96-01, EXTRACT-03). Consumed
+      // Causal one-hop edge-lookup row schema. Consumed
       // intra-package by sqlite-memory-causal-store.ts via createRowMapper;
-      // barrel-surfaced through `export *` so tracked here like its Phase-83 siblings.
+      // barrel-surfaced through `export *` so tracked here like its entity-association siblings.
       "CausalLaneRowSchema",
-      // Graph-spread recursive-CTE node projection schema (Phase 100-04, KG-04).
+      // Graph-spread recursive-CTE node projection schema.
       // Consumed intra-package by sqlite-triple-store.ts (the spreadLane walk) via
       // createRowMapper; barrel-surfaced through `export *` so tracked here like the
       // MemoryTripleRowSchema / CausalLaneRowSchema siblings (the checker counts
       // cross-package barrel consumers only).
       "SpreadNodeRowSchema",
-      // Recall-utility usefulness row schema (Phase 93-01, FEED-02). Consumed
+      // Recall-utility usefulness row schema. Consumed
       // intra-package by sqlite-memory-usefulness-store.ts via createRowMapper;
       // barrel-surfaced through `export *` so tracked here like the sibling row
       // schemas (the checker counts cross-package barrel consumers only).
       "MemoryUsefulnessRowSchema",
-      // OBS-06 entity-graph diagnostic row schema (Phase 86 / listEntities).
+      // Entity-graph diagnostic row schema (listEntities).
       // Consumed intra-package by sqlite-memory-entity-store.ts via
-      // createRowMapper; barrel-surfaced like its Phase-83 siblings above.
+      // createRowMapper; barrel-surfaced like its entity-association siblings above.
       "EntityListRowSchema",
       "SessionRowSchema",
       "SessionRowFromSchema",
@@ -2329,15 +2328,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "IdProjectionRowFromSchema",
       "CountProjectionRowSchema",
       "CountProjectionRowFromSchema",
-      // File-backed SecretStore (Phase 02-01, REQ-03/REQ-10). createFileSecretStore is the sole
+      // File-backed SecretStore. createFileSecretStore is the sole
       // FileSecretStore adapter; the daemon composition root wires it via selectSecretStore
-      // in Plan 02-04 (bootstrapSecretsAndEnv). selectSecretStore and SelectedSecretStore are
+      // (bootstrapSecretsAndEnv). selectSecretStore and SelectedSecretStore are
       // the factory + discriminated-union type consumed by the daemon wiring. Baseline orphans
-      // until Plan 02-04 adds the daemon consumer.
+      // until the daemon consumer is added.
       "createFileSecretStore",
       "selectSecretStore",
       "SelectedSecretStore",
-      // SQLite-backed SecretStore (Phase 06, REQ-05). createSqliteSecretStore is the AES-256-GCM
+      // SQLite-backed SecretStore. createSqliteSecretStore is the AES-256-GCM
       // encrypted secret store adapter. The production daemon wires it via selectSecretStore
       // (via the encrypted path in bootstrapSecretsAndEnv); selectSecretStore is the caller.
       // Directly consumed by integration tests (secret-rotation-fail-closed.test.ts) for
@@ -2425,7 +2424,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createMemorySearchTool",
       "createMemoryGetTool",
       "createMemoryStoreTool",
-      // The dialectic tool (Phase 109 — DIAL-02). Barrel-exported from ./platform-tools
+      // The dialectic tool. Barrel-exported from ./platform-tools
       // alongside its sibling memory tools; consumed by the registry's memory_ask
       // conditional descriptor via the same-package ./tools import (invisible to the
       // public-export-consumers walker, which scans the public barrel), so it is a

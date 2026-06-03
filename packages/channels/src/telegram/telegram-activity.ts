@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram EditPlace activity renderer (CHAN-02; §7.2 / §18.2 row "EditPlace").
+ * Telegram EditPlace activity renderer (§7.2 / §18.2 row "EditPlace").
  *
  * This is the canonical reference the other 3 EditPlace channels (Discord,
  * Slack, WhatsApp) copy. It has three parts:
  *
- *   1. `classifyTelegramError` — the single net-new piece of logic in the phase.
+ *   1. `classifyTelegramError` — the single net-new piece of logic here.
  *      It reads STRUCTURAL `GrammyError` fields (`error_code`,
  *      `parameters.retry_after`, and `description` ONLY to disambiguate the
  *      message-not-found case) to choose one of the closed `ActivityRenderError`
  *      variants. It NEVER parses the generic "Failed to…" string the live
  *      adapter wraps the error in (D-Q1) — the adapter attaches the original
  *      GrammyError as `error.cause`, which the classifier reads structurally.
- *      SEC-05/§19.3: the `description` selects the variant only; it is never
+ *      §19.3: the `description` selects the variant only; it is never
  *      rendered or logged as activity text.
  *
  *   2. `makeTelegramRenderActions` — the `ActivityRenderActions` adapter. `send`
@@ -23,11 +23,11 @@
  *      `.error` through `classifyTelegramError`. All paths return `Result`;
  *      nothing throws across the boundary.
  *
- *   3. `createTelegramActivityRenderer` — wires the Phase-70
+ *   3. `createTelegramActivityRenderer` — wires the
  *      `createEditPlaceRenderer` (the debounce/edit/delete state machine). It
  *      does NOT re-implement any rendering logic.
  *
- * 429 backoff (CHAN-02, T-71-02-03): the channels package depends on `core` and
+ * 429 backoff: the channels package depends on `core` and
  * `shared` only — no observability substrate — so a shared bounded-queue helper
  * is unreachable here. The 429 buffer is a LOCAL fixed-cap latest-text slot with
  * a `retryAfterMs`-gated retry through the injected `TimerPort` (the retry handle
@@ -105,7 +105,7 @@ const MAX_RETRY_ATTEMPTS = 4;
  * Build the {@link ActivityRenderActions} for a Telegram chat. `send` carries the
  * silent effect; `edit`/`delete` guard the optional port methods and classify
  * platform errors structurally. When a `timer` is supplied, a `rate_limited`
- * edit schedules a single bounded retry of the LATEST text (CHAN-02).
+ * edit schedules a single bounded retry of the LATEST text.
  */
 export function makeTelegramRenderActions(
   adapter: ChannelPort,
@@ -180,7 +180,7 @@ export function makeTelegramRenderActions(
       if (text === undefined || id === undefined || editsDropped) return;
       void attemptEdit(id, text);
     }, retryAfterMs);
-    // Never hold the event loop open for a retry at shutdown (WR-02).
+    // Never hold the event loop open for a retry at shutdown.
     retryHandle.unref();
   }
 
@@ -189,7 +189,7 @@ export function makeTelegramRenderActions(
       // An approval placeholder carries the signed inline-keyboard buttons
       // (callback_data = v1.<choice>.<shortId>.<hmac>); the adapter maps them via
       // renderTelegramButtons. The silent effect is preserved. Resolution is
-      // owned by the Phase-73 InteractiveCallbackRouter, not this renderer.
+      // owned by the InteractiveCallbackRouter, not this renderer.
       const r = await adapter.sendMessage(channelId, text, {
         effects: ["silent"],
         ...(opts?.buttons !== undefined ? { buttons: opts.buttons } : {}),
@@ -213,9 +213,9 @@ export function makeTelegramRenderActions(
 }
 
 /**
- * Drop any over-budget callback button BEFORE it reaches the adapter (T-73-24).
+ * Drop any over-budget callback button BEFORE it reaches the adapter.
  *
- * `renderTelegramButtons` (73-05) is the adapter-side budget guard, but filtering
+ * `renderTelegramButtons` is the adapter-side budget guard, but filtering
  * here keeps the renderer's emitted rows honest: a >64-byte `callback_data` is
  * OMITTED (refuse-loud), never truncated — truncation would corrupt the signed
  * HMAC. The worst-case real signed payload is ~40 bytes, so this never fires in
@@ -231,14 +231,14 @@ function omitOverBudgetButtons(rows: RichButton[][]): RichButton[][] {
 }
 
 /**
- * Create the Telegram EditPlace activity renderer — wires the Phase-70
+ * Create the Telegram EditPlace activity renderer — wires the
  * {@link createEditPlaceRenderer} with the per-channel render-actions adapter.
  * The daemon composition root constructs this with its runtime `TimerPort` /
- * `ClockPort` and the chat id (WIRE-02).
+ * `ClockPort` and the chat id.
  *
- * `signCallbackData` is the secret-bound signer injected at the composition root
- * (73-10): the renderer CONSUMES it to build the signed inline keyboard and never
- * imports the orchestrator package (Pitfall 5 / T-73-16). When omitted, an
+ * `signCallbackData` is the secret-bound signer injected at the composition root:
+ * the renderer CONSUMES it to build the signed inline keyboard and never
+ * imports the orchestrator package (Pitfall 5). When omitted, an
  * approval frame degrades to a button-less text prompt.
  */
 export function createTelegramActivityRenderer(
@@ -254,7 +254,7 @@ export function createTelegramActivityRenderer(
     markers: deps.markers,
     // Approval frame → signed inline-keyboard rows (rendered to a grammY
     // InlineKeyboard by renderTelegramButtons in the adapter). Over-budget
-    // buttons are omitted here too (never truncated — T-73-24).
+    // buttons are omitted here too (never truncated).
     buildButtons:
       signCallbackData === undefined
         ? undefined

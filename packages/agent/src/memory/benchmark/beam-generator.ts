@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Deterministic seeded BEAM haystack generator (SUITE-01, Plan 99-06) — the
+ * Deterministic seeded BEAM haystack generator — the
  * synthetic long-context scale probe. Produces a reproducible ~N-token haystack of
  * filler docs with per-ability needles planted into it (a doc whose content uniquely
  * answers a generated query) plus a resolvable gold map.
@@ -19,7 +19,7 @@
  * mirrors filesystem-baseline.ts / suite-scenario.ts. The live ingest + recall +
  * scoring wiring lives in the gated beam-harness.bench.test.ts (the single cut escape).
  *
- * SECURITY — prototype-pollution discipline (T-99-06-04 sibling): all generated
+ * SECURITY — prototype-pollution discipline: all generated
  * content + ability names are VALUES only, never used as object keys for writes, so
  * no generated string can reach Object.prototype.
  *

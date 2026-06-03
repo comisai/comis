@@ -34,7 +34,7 @@ import { createEchoPlugin, createChannelRegistry } from "@comis/channels";
 import type { Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
-// Custom adapter factory (closure-based, not class -- per decision 102-02)
+// Custom adapter factory (closure-based, not class)
 // ---------------------------------------------------------------------------
 
 interface CustomAdapterOptions {
@@ -169,8 +169,8 @@ function createFullFeatureAdapter(options: CustomAdapterOptions): ChannelPort {
 describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
   // ── ChannelPort contract ─────────────────────────────────────────────
 
-  describe("ChannelPort contract (CADPT-01 through CADPT-04)", () => {
-    it("CADPT-01: custom adapter start() and stop() return ok Results and toggle running state", async () => {
+  describe("ChannelPort contract", () => {
+    it("custom adapter start() and stop() return ok Results and toggle running state", async () => {
       const adapter = createCustomAdapter({
         channelId: "test-01",
         channelType: "custom",
@@ -187,7 +187,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       expect(adapter.getStatus().connected).toBe(false);
     });
 
-    it("CADPT-02: all 10 ChannelPort methods exist and have correct signatures", () => {
+    it("all 10 ChannelPort methods exist and have correct signatures", () => {
       const adapter = createCustomAdapter({
         channelId: "test-02",
         channelType: "custom",
@@ -217,7 +217,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       expect(adapter.channelType).toBe("custom");
     });
 
-    it("CADPT-03: sendMessage returns ok(string) with message ID, sendAttachment returns ok(string)", async () => {
+    it("sendMessage returns ok(string) with message ID, sendAttachment returns ok(string)", async () => {
       const adapter = createCustomAdapter({
         channelId: "test-03",
         channelType: "custom",
@@ -250,7 +250,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       }
     });
 
-    it("CADPT-04: unsupported editMessage returns err(), unsupported reactToMessage returns err()", async () => {
+    it("unsupported editMessage returns err(), unsupported reactToMessage returns err()", async () => {
       const adapter = createCustomAdapter({
         channelId: "test-04",
         channelType: "custom",
@@ -282,8 +282,8 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
 
   // ── NormalizedMessage shape compliance ────────────────────────────────
 
-  describe("NormalizedMessage shape compliance (CADPT-05)", () => {
-    it("CADPT-05: onMessage handler receives NormalizedMessage-shaped objects", async () => {
+  describe("NormalizedMessage shape compliance", () => {
+    it("onMessage handler receives NormalizedMessage-shaped objects", async () => {
       const adapter = createCustomAdapter({
         channelId: "test-05",
         channelType: "custom-msg",
@@ -325,8 +325,8 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
 
   // ── Factory function pattern ──────────────────────────────────────────
 
-  describe("factory function pattern (CADPT-06, CADPT-07)", () => {
-    it("CADPT-06: createEchoPlugin() returns ChannelPluginPort with correct shape", () => {
+  describe("factory function pattern", () => {
+    it("createEchoPlugin() returns ChannelPluginPort with correct shape", () => {
       const plugin = createEchoPlugin();
 
       // Plugin identity
@@ -353,7 +353,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       expect(typeof plugin.deactivate).toBe("function");
     });
 
-    it("CADPT-07: createEchoPlugin() with custom options overrides channelId and channelType", () => {
+    it("createEchoPlugin() with custom options overrides channelId and channelType", () => {
       const plugin = createEchoPlugin({
         channelId: "my-echo",
         channelType: "echo-custom",
@@ -370,8 +370,8 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
 
   // ── ChannelCapabilitySchema validation ────────────────────────────────
 
-  describe("ChannelCapabilitySchema validation (CADPT-08 through CADPT-12)", () => {
-    it("CADPT-08: valid capabilities pass schema validation with all fields", () => {
+  describe("ChannelCapabilitySchema validation", () => {
+    it("valid capabilities pass schema validation with all fields", () => {
       // Current schema surface: features (5 flags) +
       // limits.maxMessageChars + optional replyToMetaKey. The removed
       // chatTypes/streaming/threading/extra-feature-flags would be
@@ -400,7 +400,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       expect(parsed.replyToMetaKey).toBe("ts");
     });
 
-    it("CADPT-09: capabilities with only required fields pass validation (defaults applied)", () => {
+    it("capabilities with only required fields pass validation (defaults applied)", () => {
       const minimal = {
         limits: { maxMessageChars: 2000 },
       };
@@ -415,7 +415,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       expect(parsed.features.attachments).toBe(false);
     });
 
-    it("CADPT-10: removed-field 'chatTypes' rejected by strictObject", () => {
+    it("removed-field 'chatTypes' rejected by strictObject", () => {
       // chatTypes was removed from the schema. strictObject must reject
       // it rather than silently accept legacy shapes.
       const invalid = {
@@ -428,7 +428,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       );
     });
 
-    it("CADPT-11: missing maxMessageChars rejects validation", () => {
+    it("missing maxMessageChars rejects validation", () => {
       const invalid = {
         limits: {},
       };
@@ -436,7 +436,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       expect(() => ChannelCapabilitySchema.parse(invalid)).toThrow();
     });
 
-    it("CADPT-12: extra unknown keys rejected by strictObject", () => {
+    it("extra unknown keys rejected by strictObject", () => {
       const withExtraKey = {
         limits: { maxMessageChars: 4096 },
         unknownField: true,
@@ -450,10 +450,10 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
 
   // ── ChannelPluginPort lifecycle ───────────────────────────────────────
 
-  describe("ChannelPluginPort lifecycle (CADPT-13 through CADPT-15)", () => {
+  describe("ChannelPluginPort lifecycle", () => {
     /**
      * Setup helper: creates fresh eventBus, pluginRegistry, and channelRegistry
-     * per test group. Uses real TypedEventBus instances per decision 107-01.
+     * per test group. Uses real TypedEventBus instances.
      */
     function setup() {
       const eventBus = new TypedEventBus();
@@ -522,7 +522,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       } as ChannelPluginPort & { _lifecycleLog: string[] };
     }
 
-    it("CADPT-13: register -> deactivate lifecycle executes in order", async () => {
+    it("register -> deactivate lifecycle executes in order", async () => {
       const { pluginRegistry, channelRegistry } = setup();
 
       const plugin = createCustomPlugin({ channelType: "custom-lifecycle" }) as ChannelPluginPort & {
@@ -544,7 +544,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       expect(plugin._lifecycleLog).toEqual(["register", "deactivate"]);
     });
 
-    it("CADPT-14: plugin hook registration via PluginRegistryApi.registerHook()", () => {
+    it("plugin hook registration via PluginRegistryApi.registerHook()", () => {
       const { pluginRegistry, channelRegistry } = setup();
 
       const hookHandler: HookHandlerMap["before_agent_start"] = (
@@ -576,7 +576,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       expect(registeredHook!.pluginId).toBe("plugin-custom-hooks");
     });
 
-    it("CADPT-15: duplicate channelType registration rejected by ChannelRegistry", () => {
+    it("duplicate channelType registration rejected by ChannelRegistry", () => {
       const { channelRegistry } = setup();
 
       const plugin1 = createCustomPlugin({

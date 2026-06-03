@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 108 (SOCIAL-02/03) gap-closure forward-presence test — drives the REAL
+ * Gap-closure forward-presence test — drives the REAL
  * `setupSingleAgent` boot path and asserts that `relationshipStore` from
  * `SingleAgentDeps` is actually forwarded into the `createPiExecutor(...)` deps
  * object literal.
  *
- * The field-plumbing lesson this file guards (the Phase-107 USER-03 BLOCKER,
- * reproduced for the new relationship sibling): a store can be threaded through
+ * The field-plumbing lesson this file guards (the earlier user-representation
+ * BLOCKER, reproduced for the new relationship sibling): a store can be threaded through
  * the TYPES (setup-agents-types.ts) and POPULATED in setup-agents-registry.ts,
  * yet the `createPiExecutor` construction site in setup-agents-runtime.ts (the
  * long sibling-stores line that already carries `userRepresentationStore`) can
  * still OMIT it — so in the live daemon `deps.relationshipStore` is always
- * `undefined` and the LLM-free `<channel_relationships>` standing block (108-04)
+ * `undefined` and the LLM-free `<channel_relationships>` standing block
  * is a silent no-op. The keyless bench passes (it constructs the adapter
  * directly) but a live daemon never injects/builds relationships (Pitfall 6).
  *
@@ -152,7 +152,7 @@ function makeDeps(container: AppContainer): SingleAgentDeps {
 
 // --- Test ------------------------------------------------------------------
 
-describe("setupSingleAgent forwards relationshipStore into createPiExecutor (SOCIAL-02/03 gap closure)", () => {
+describe("setupSingleAgent forwards relationshipStore into createPiExecutor (gap closure)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

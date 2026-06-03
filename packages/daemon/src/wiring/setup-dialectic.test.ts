@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 109 (DIAL-01/02) — the dialectic wiring + the field-plumbing forward-presence
+ * The dialectic wiring + the field-plumbing forward-presence
  * belt. `buildDialecticWiring` resolves the cheap "cron"/cheap operation model + the
  * provider apiKey BY NAME (never the value), builds the ONE query-time `createDialecticSeam`
  * + a per-agent `buildDialecticRecall` factory (the FULL `createMemoryRecall` over the
  * daemon's store set + the agent's RagConfig), and returns BOTH so `buildRpcDispatchDeps`
  * spreads them into the memory.ask handler deps.
  *
- * THE FIELD-PLUMBING LESSON (the carried 107-VERIFICATION blocker): a dep can be typed
- * (MemoryApiDeps.dialecticSeam?/buildDialecticRecall?, added in Plan 03) and the handler
+ * THE FIELD-PLUMBING LESSON: a dep can be typed
+ * (MemoryApiDeps.dialecticSeam?/buildDialecticRecall?) and the handler
  * can read it, yet the construction site can DROP it — a silent no-op (typed but never
  * populated). Test 4 is the forward-presence belt: it (a) drives the REAL
  * `buildDialecticWiring` and asserts it PRODUCES a functional seam + recall builder, and
@@ -79,10 +79,10 @@ function makeDeps(args: {
   key?: string | undefined;
   logger?: any;
   providers?: Record<string, { apiKeyName?: string }>;
-  /** The master cost-feature kill switch (v1 opt-out posture). Defaults to true (on). */
+  /** The master cost-feature kill switch (opt-out posture). Defaults to true (on). */
   costFeaturesEnabled?: boolean;
 }) {
-  // CR-04: the wiring resolves PER-AGENT. Tests may pass a single `agentConfig`
+  // The wiring resolves PER-AGENT. Tests may pass a single `agentConfig`
   // (keyed under "default") or a full `agentsConfig` map + `defaultAgentId`.
   const defaultAgentId = args.defaultAgentId ?? "default";
   const agentsConfig =
@@ -93,19 +93,19 @@ function makeDeps(args: {
     secretManager: makeSecretManager(args.key),
     providers: args.providers ?? {},
     stores: makeStoreSet(),
-    // The (tenant, agent) scope for the LEARN-03 tuned-alpha read on the dialectic recall path.
+    // The (tenant, agent) scope for the tuned-alpha read on the dialectic recall path.
     tenantId: "default",
     clock: { now: () => 1_700_000_000_000 } as any,
     timers: { setTimeout: vi.fn(), clearTimeout: vi.fn() } as any,
     logger: args.logger ?? makeLogger(),
-    // Default the master kill switch ON (v1 opt-out posture) so existing tests are unaffected.
+    // Default the master kill switch ON (opt-out posture) so existing tests are unaffected.
     costFeaturesEnabled: args.costFeaturesEnabled ?? true,
   };
 }
 
 // --- Tests -----------------------------------------------------------------
 
-describe("buildDialecticWiring (Phase 109 — the dialectic seam + recall builder)", () => {
+describe("buildDialecticWiring (the dialectic seam + recall builder)", () => {
   it("Test 1: enabled + a resolvable key ⇒ returns { dialecticSeam, buildDialecticRecall } both functional", () => {
     const deps = makeDeps({
       agentConfig: makeAgentConfig({ dialectic: { enabled: true, maxOutputTokens: 512, maxRecall: 8 } } as any),
@@ -151,8 +151,8 @@ describe("buildDialecticWiring (Phase 109 — the dialectic seam + recall builde
     expect(wiring.buildDialecticRecall, "no recall builder when disabled").toBeUndefined();
   });
 
-  it("Test 3b: dialectic block ABSENT ⇒ schema default-ON (v1 opt-out) ⇒ LIVE wiring", () => {
-    // v2.9 increment 2 — v1 OPT-OUT posture: an omitted dialectic block now parses to the
+  it("Test 3b: dialectic block ABSENT ⇒ schema default-ON (opt-out) ⇒ LIVE wiring", () => {
+    // OPT-OUT posture: an omitted dialectic block now parses to the
     // schema default `{ enabled: true, ... }` (makeAgentConfig parses through PerAgentConfigSchema),
     // so a bare agent gets a LIVE memory_ask seam. The explicit-OFF off-path is guarded by Test 3
     // (enabled:false ⇒ {}) and the kill-switch off-path by Test 6 (costFeatures off ⇒ {}).
@@ -185,7 +185,7 @@ describe("buildDialecticWiring (Phase 109 — the dialectic seam + recall builde
     ).toMatch(/\.\.\.dialecticWiring/);
   });
 
-  it("Test 5 (CR-04): a NON-default agent with dialectic.enabled gets a LIVE seam even when the default agent is OFF", () => {
+  it("Test 5: a NON-default agent with dialectic.enabled gets a LIVE seam even when the default agent is OFF", () => {
     // The default agent has the dialectic OFF; agent B has it ON. The wiring must NOT be the
     // dead `{}` (which would make agent B's registered memory_ask tool silently abstain) —
     // it must enable when ANY agent opts in.
@@ -203,7 +203,7 @@ describe("buildDialecticWiring (Phase 109 — the dialectic seam + recall builde
     expect(wiring.dialecticMaxRecall, "maxRecall resolver live").toBeDefined();
   });
 
-  it("Test 5b (CR-04): dialecticMaxRecall is resolved PER-AGENT (agent B's bound, not the default's)", () => {
+  it("Test 5b: dialecticMaxRecall is resolved PER-AGENT (agent B's bound, not the default's)", () => {
     const deps = makeDeps({
       defaultAgentId: "default",
       agentsConfig: {
@@ -219,7 +219,7 @@ describe("buildDialecticWiring (Phase 109 — the dialectic seam + recall builde
   });
 
   it("Test 6 (kill switch): costFeaturesEnabled:false force-disables memory_ask wiring even when an agent has dialectic.enabled", () => {
-    // The master cost-feature kill switch (v1 opt-out posture, increment 1): when the
+    // The master cost-feature kill switch (opt-out posture): when the
     // operator sets memory.costFeatures.enabled:false, the dialectic (memory_ask) is the
     // ONE query-time LLM tool and is a cost-bearing feature — so the wiring must return the
     // dead {} (no seam, no recall builder ⇒ the handler abstains, the tool is not exposed)
@@ -262,7 +262,7 @@ describe("buildDialecticWiring (Phase 109 — the dialectic seam + recall builde
     expect(wiring.buildDialecticRecall, "recall builder live when the kill switch is on").toBeDefined();
   });
 
-  it("Test 5c (CR-04): buildDialecticRecall re-reads the CALLING agent's RagConfig (not the default's)", () => {
+  it("Test 5c: buildDialecticRecall re-reads the CALLING agent's RagConfig (not the default's)", () => {
     // The default agent and agent B differ in rag.maxResults; building recall for agent B
     // must use agent B's rag (so its includeTrustLevels / maxResults / model are honored).
     const defaultAgent = makeAgentConfig({ dialectic: { enabled: true, maxOutputTokens: 1024, maxRecall: 10 } } as any);

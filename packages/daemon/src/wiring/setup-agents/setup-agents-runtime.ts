@@ -77,7 +77,7 @@ export type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js
  * for hot-add (adding an agent at runtime without daemon restart).
  *
  * `rawRerankEnabled` is the RAW (pre-Zod-default) `rag.rerank.enabled`
- * (`undefined` = operator unset) — see the resolution site below (CR-01).
+ * (`undefined` = operator unset) — see the resolution site below.
  */
 export async function setupSingleAgent(
   agentId: string,
@@ -93,10 +93,10 @@ export async function setupSingleAgent(
   // Resolve "default" model/provider: per-agent config → YAML models.* → pi-ai catalog heuristic.
   const modelsConfig = container.config.models;
   const resolved = resolveAgentModel(agentConfig, modelsConfig);
-  // Phase 92 (RERANK-01/CR-01): EFFECTIVE rag.rerank.enabled — explicit wins, unset auto-ons
+  // EFFECTIVE rag.rerank.enabled — explicit wins, unset auto-ons
   // iff the model is present. The explicit signal MUST be RAW (parsed agentConfig defaults
   // unset to false, erasing it): explicit arg (hot-add) else the daemon-wide container map
-  // (boot) — the SAME source the build gate reads (T-92-06/WR-03). Spread keeps sibling knobs.
+  // (boot) — the SAME source the build gate reads. Spread keeps sibling knobs.
   const rawRerank =
     rawRerankEnabled !== undefined ? rawRerankEnabled : container.rawAgentRerankEnabled?.get(agentId);
   const effectiveConfig = {
@@ -106,7 +106,7 @@ export async function setupSingleAgent(
     rag: { ...agentConfig.rag, rerank: { ...agentConfig.rag.rerank, enabled: resolveEffectiveRerank(rawRerank, deps.rerankerModelPresent ?? false) } },
   };
 
-  // DAG-05: detect a context-engine MODE SWITCH at the rebuild seam.
+  // Detect a context-engine MODE SWITCH at the rebuild seam.
   // container.config.agents[agentId] still holds the PRIOR config here (on a
   // config-reload re-invocation); it is undefined on the very first build. We
   // must read the prior version BEFORE the overwrite below (which destroys the
@@ -125,8 +125,8 @@ export async function setupSingleAgent(
   // see the resolved model/provider instead of the placeholder "default".
   container.config.agents[agentId] = effectiveConfig;
 
-  // Phase 92 (RERANK-01): surface the locally-gated auto-on once at the boundary (booleans
-  // only — T-92-07). Now LIVE: fires ONLY for unset + model-present (not for explicit-on).
+  // Surface the locally-gated auto-on once at the boundary (booleans
+  // only). Now LIVE: fires ONLY for unset + model-present (not for explicit-on).
   if (rawRerank === undefined && effectiveConfig.rag.rerank.enabled === true) {
     agentLogger.info({ agentId, rerankAutoEnabled: true }, "Reranker auto-enabled (model present, unset config)");
   }
@@ -197,7 +197,7 @@ export async function setupSingleAgent(
     customProviderEntries,
   });
 
-  // REQ-13: hot-swap provider API keys on secret rotation (no restart).
+  // Hot-swap provider API keys on secret rotation (no restart).
   container.eventBus.on("secret:changed", ({ name, action }) => {
     const entry = Object.entries(DEFAULT_PROVIDER_KEYS).find(([, k]) => k === name);
     if (!entry) return;
@@ -427,8 +427,8 @@ export async function setupSingleAgent(
     ? createAuthRotationAdapter({ authStorage: piAuthStorage, profileManager: authProfileManager })
     : undefined;
 
-  // ACP-03: one ExecutionPlanHolder per agent runtime, shared by reference into
-  // PiExecutorDeps.executionPlanHolder AND AcpServerDeps via createAcpWiring (T-74-33).
+  // One ExecutionPlanHolder per agent runtime, shared by reference into
+  // PiExecutorDeps.executionPlanHolder AND AcpServerDeps via createAcpWiring.
   const { holder: executionPlanHolder } = createAcpWiring({ eventBus: container.eventBus, logger: perAgentLogger });
 
   const executor = createPiExecutor(effectiveConfig, {
@@ -460,7 +460,7 @@ export async function setupSingleAgent(
     mcpToolsInherited: deps.mcpToolsInherited,
     memoryPort: memoryAdapter,
     reranker: deps.rerankerPort,  // Cross-encoder reranker (built in setup-memory only when an agent enables rerank).
-    entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, tripleStore: deps.tripleStore, embeddingStore: deps.embeddingStore, usefulnessStore: deps.usefulnessStore, userRepresentationStore: deps.userRepresentationStore, relationshipStore: deps.relationshipStore, tunedAlphaStore: deps.tunedAlphaStore,  // P83/rag.entityLane + P95·LANES-02/rag.lanes.temporal + P96·EXTRACT-03/rag.lanes.causal + P100·KG-01/rag.lanes.graphSpread + P102·IQ-01/rag.mmr + P93·FEED-03/rag.feedback + P107·USER-03/memoryUserRepresentation + P108·SOCIAL-02/socialModeling + P111·LEARN-03/rag.onlineTuning (the buildScoringAlphas tuned-vector read) standing-block -> createMemoryRecall/prompt-assembly read (default-OFF; JSDoc on AgentSetupDeps).
+    entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, tripleStore: deps.tripleStore, embeddingStore: deps.embeddingStore, usefulnessStore: deps.usefulnessStore, userRepresentationStore: deps.userRepresentationStore, relationshipStore: deps.relationshipStore, tunedAlphaStore: deps.tunedAlphaStore,  // rag.entityLane + rag.lanes.temporal + rag.lanes.causal + rag.lanes.graphSpread + rag.mmr + rag.feedback + memoryUserRepresentation + socialModeling + rag.onlineTuning (the buildScoringAlphas tuned-vector read) standing-block -> createMemoryRecall/prompt-assembly read (default-OFF; JSDoc on AgentSetupDeps).
     secretManager: scopedManager,
     envelopeConfig: container.config.envelope,
     senderTrustDisplayConfig: container.config.senderTrustDisplay,
@@ -486,7 +486,7 @@ export async function setupSingleAgent(
     // DAG context engine deps (optional -- only when context engine version is dag)
     contextStore: deps.contextStore,
     db: deps.db,
-    // DAG-05: one-shot delete-on-read consumer of a pending engine-mode switch.
+    // One-shot delete-on-read consumer of a pending engine-mode switch.
     // Threaded through PiExecutorDeps -> setupContextEngine -> DagContextEngineDeps
     // so the DAG reconcile seam can emit context:mode_switched once (with the
     // real import cost) and then clear the pending flag. Returns undefined when
@@ -538,15 +538,15 @@ export async function setupSingleAgent(
           maxFileBytes: container.config.diagnostics.cacheTrace.maxFileBytes,
         }
       : undefined,
-    // Forward AppConfig.diagnostics.recallTrace into the executor (Phase 86 /
-    // OBS-02), EXACTLY mirroring the cacheTraceConfig thread above. Threaded
+    // Forward AppConfig.diagnostics.recallTrace into the executor,
+    // EXACTLY mirroring the cacheTraceConfig thread above. Threaded
     // onward via ToolAssemblyDeps → PromptAssemblyParams.deps.recallTraceConfig,
     // where buildRecallTrace reads the `enabled` gate. Without this thread
     // buildRecallTrace always saw cfg=undefined and returned null, so zero
     // recall traces were written even with diagnostics.recallTrace.enabled: true.
     // Recall-trace is OPT-IN (schema default enabled:false) and has NO
     // raw-content slot (unlike cacheTrace's includeMessages/includeSystem): the
-    // recorder always full-sanitizes before disk (OBS-02).
+    // recorder always full-sanitizes before disk.
     recallTraceConfig: container.config.diagnostics?.recallTrace
       ? {
           enabled: container.config.diagnostics.recallTrace.enabled,
@@ -591,6 +591,6 @@ export async function setupSingleAgent(
     skillWatcherHandle,
     skillRegistry,
     toolCapabilityPort,
-    executionPlanPort: executionPlanHolder, // 78-04 WS-D: SAME ref as PiExecutorDeps + AcpServerDeps (Pitfall 1).
+    executionPlanPort: executionPlanHolder, // SAME ref as PiExecutorDeps + AcpServerDeps (Pitfall 1).
   };
 }

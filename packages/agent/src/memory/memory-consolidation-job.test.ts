@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Orchestration suite for runMemoryConsolidation (Phase 84 — CONS-01/02/04/06/07).
+// Orchestration suite for runMemoryConsolidation.
 //
 // The LLM is MOCKED (Pitfall 5) for determinism — completeSimple returns canned
 // merge JSON. A STUB consolidationStore captures applyConsolidation plans and
@@ -160,7 +160,7 @@ beforeEach(() => {
   (getModel as ReturnType<typeof vi.fn>).mockReturnValue({ id: "mock-model" });
 });
 
-describe("runMemoryConsolidation — trust ceiling end-to-end (CONS-02, the escalation guard)", () => {
+describe("runMemoryConsolidation — trust ceiling end-to-end (the escalation guard)", () => {
   it("mints an external observation for a homogeneous external cluster (ceiling = min(sources) = external)", async () => {
     mockMerge("merged");
     // Two near-parallel embeddings so they cluster; both external + same tags →
@@ -192,7 +192,7 @@ describe("runMemoryConsolidation — trust ceiling end-to-end (CONS-02, the esca
     // never even REACH a merge call. groupByTrustAndTagScope splits the cosine
     // cluster into (system)×1 and (learned)×1; both are singletons → dropped.
     // There is no observation that could outrank its lower-trust member because
-    // the two are never combined (CONS-06 + CONS-02).
+    // the two are never combined.
     mockMerge("merged");
     const store = makeStore([
       makeCand({ trustLevel: "system", tags: ["t"] }, [1, 0, 0]),
@@ -218,7 +218,7 @@ describe("runMemoryConsolidation — trust ceiling end-to-end (CONS-02, the esca
   });
 });
 
-describe("runMemoryConsolidation — external excluded by default (CONS-02)", () => {
+describe("runMemoryConsolidation — external excluded by default", () => {
   it("skips an all-external cluster when consolidateExternal is false (no observation, no LLM call)", async () => {
     mockMerge("merged");
     const store = makeStore([
@@ -243,7 +243,7 @@ describe("runMemoryConsolidation — external excluded by default (CONS-02)", ()
   });
 });
 
-describe("runMemoryConsolidation — no trust/tag mix per LLM call (CONS-06)", () => {
+describe("runMemoryConsolidation — no trust/tag mix per LLM call", () => {
   it("invokes the LLM ONCE per homogeneous sub-cluster, never once over a mixed set", async () => {
     mockMerge("merged");
     // One cosine-tight cluster mixing two trust levels → two homogeneous sub-clusters.
@@ -262,7 +262,7 @@ describe("runMemoryConsolidation — no trust/tag mix per LLM call (CONS-06)", (
   });
 });
 
-describe("runMemoryConsolidation — deterministic dedup pre-check (CONS-04)", () => {
+describe("runMemoryConsolidation — deterministic dedup pre-check", () => {
   it("does not create a second observation when an equivalent one already exists; dedupHits increments", async () => {
     mockMerge("merged");
     const s1 = nextId();
@@ -297,15 +297,15 @@ describe("runMemoryConsolidation — deterministic dedup pre-check (CONS-04)", (
 });
 
 // ---------------------------------------------------------------------------
-// FOLD-01 — the fold-vs-create decision (the secondary content-dedup seam,
+// The fold-vs-create decision (the secondary content-dedup seam,
 // converted from a SKIP into a FOLD).
 //
 // When a merged cluster's content matches a SAME-TRUST PRIOR-RUN observation
 // (>= dedupThreshold) AND the cluster carries source ids NOT already in that
 // observation, the job FOLDs the truly-new sources into it (growing proof)
 // instead of creating a second observation — via consolidationStore
-// .foldIntoExisting (the port TYPE from 94-01). Otherwise it falls through to
-// the UNCHANGED Phase-84 create path.
+// .foldIntoExisting (the port TYPE). Otherwise it falls through to
+// the UNCHANGED create path.
 //
 // Headline guards:
 //   - FOLD ON CONTENT MATCH: same-trust + content-similar + NEW sources → one
@@ -320,7 +320,7 @@ describe("runMemoryConsolidation — deterministic dedup pre-check (CONS-04)", (
 //     cluster) (never above the more-trusted input).
 //   - EVENT: memory:consolidated carries foldsApplied (counts-only).
 // ---------------------------------------------------------------------------
-describe("runMemoryConsolidation — fold-vs-create decision (FOLD-01)", () => {
+describe("runMemoryConsolidation — fold-vs-create decision", () => {
   /** Read the memory:consolidated payload off the eventBus spy. */
   function consolidatedPayload(deps: MemoryConsolidationDeps): {
     observationsCreated: number;
@@ -537,7 +537,7 @@ describe("runMemoryConsolidation — fold-vs-create decision (FOLD-01)", () => {
   });
 });
 
-describe("runMemoryConsolidation — bounded run + minimal event (CONS-07)", () => {
+describe("runMemoryConsolidation — bounded run + minimal event", () => {
   it("processes at most maxClustersPerRun clusters and emits one minimal memory:consolidated event", async () => {
     mockMerge("merged");
     // Three independent (orthogonal) clusters of two each.
@@ -571,7 +571,7 @@ describe("runMemoryConsolidation — bounded run + minimal event (CONS-07)", () 
     expect(typeof payload.durationMs).toBe("number");
   });
 
-  it("carries proofCount and sourceIds on the created observation (CONS-01)", async () => {
+  it("carries proofCount and sourceIds on the created observation", async () => {
     mockMerge("merged");
     const store = makeStore([
       makeCand({ trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),
@@ -585,7 +585,7 @@ describe("runMemoryConsolidation — bounded run + minimal event (CONS-07)", () 
   });
 });
 
-describe("runMemoryConsolidation — WR-02: a dedup-hit cluster must NOT consume the maxClustersPerRun budget", () => {
+describe("runMemoryConsolidation — a dedup-hit cluster must NOT consume the maxClustersPerRun budget", () => {
   it("with maxClustersPerRun=1 and a dedup-hit cluster ordered before a real-merge cluster, the real merge still happens (budget not wasted on the dedup skip)", async () => {
     // The starvation bug: `clustersProcessed++` runs BEFORE the dedup check, and
     // the loop guard is `clustersProcessed >= maxClustersPerRun`. So a leading
@@ -672,7 +672,7 @@ describe("runMemoryConsolidation — WR-02: a dedup-hit cluster must NOT consume
   });
 });
 
-describe("runMemoryConsolidation — WR-03: the consolidation LLM INPUT prompt is bounded, not just the output (CONS-07)", () => {
+describe("runMemoryConsolidation — the consolidation LLM INPUT prompt is bounded, not just the output", () => {
   /** The per-member content cap the merge prompt must enforce (mirror of the production constant). */
   const MAX_MEMORY_CHARS = 2_000;
 
@@ -768,7 +768,7 @@ describe("runMemoryConsolidation — singletons left for a future run", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OBS-03 — candidate-missing-embedding degradation signal (the last gap).
+// Candidate-missing-embedding degradation signal (the last gap).
 //
 // A ConsolidationCandidate arrives with `embedding === undefined` when
 // sqlite-vec is unavailable (the adapter's LEFT JOIN finds no vec row). The
@@ -779,7 +779,7 @@ describe("runMemoryConsolidation — singletons left for a future run", () => {
 // errorKind is the closed 10-member union; "precondition" = an unmet
 // precondition for vector clustering. Counts only — never memory content.
 // ---------------------------------------------------------------------------
-describe("runMemoryConsolidation — candidate-missing-embedding signal (OBS-03)", () => {
+describe("runMemoryConsolidation — candidate-missing-embedding signal", () => {
   /** Find the WARN (obj,msg) pair carrying errorKind:"precondition". */
   function preconditionWarn(deps: MemoryConsolidationDeps): Record<string, unknown> | undefined {
     return ((deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls as Array<[Record<string, unknown>, string]>)
@@ -837,7 +837,7 @@ describe("runMemoryConsolidation — candidate-missing-embedding signal (OBS-03)
 });
 
 // ---------------------------------------------------------------------------
-// OBS-05 — per-stage step-tagged INFO logs (cluster / apply) with durationMs.
+// Per-stage step-tagged INFO logs (cluster / apply) with durationMs.
 //
 // `runMemoryConsolidation` already uses step:"consolidate" on DEBUG skip-logs
 // and emits a final INFO with durationMs, but NO per-stage INFO. ADD
@@ -845,7 +845,7 @@ describe("runMemoryConsolidation — candidate-missing-embedding signal (OBS-03)
 // step:"apply" (after a successful apply, observationsCreated) — O(1)/run lines
 // at INFO per AGENTS.md §2.6. Logger-spy assertions only.
 // ---------------------------------------------------------------------------
-describe("runMemoryConsolidation — step-tagged stage logs (OBS-05)", () => {
+describe("runMemoryConsolidation — step-tagged stage logs", () => {
   /** The first INFO (obj) carrying the given step tag (or undefined). */
   function infoWithStep(deps: MemoryConsolidationDeps, step: string): Record<string, unknown> | undefined {
     return ((deps.logger.info as ReturnType<typeof vi.fn>).mock.calls as Array<[Record<string, unknown>, string]>)

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: approval-token HTTP route; throws caught by Hono error-handler boundary (web-user-facing flows exception).
 /**
- * Email approval-token route for the Comis gateway (APV-10 / SEC-06 email clause).
+ * Email approval-token route for the Comis gateway.
  *
  * Email cannot show interactive buttons, so the `[FAILED]` digest carries a
  * single-use, time-bounded, signed LINK to this route — the token in the URL IS
  * the approval credential. Mounted at `ALL /approve/:token` via
  * `app.route("/approve", createApprovalTokenRoute(deps))`.
  *
- * Single-use invariant (T-73-28 / T-73-29, Pitfall 6): the handler cancels the
+ * Single-use invariant: the handler cancels the
  * expiry timer and REMOVES the pending-token entry at the TOP — BEFORE deciding
  * the outcome and REGARDLESS of HTTP method. A mail client's preview/HEAD
  * prefetch is therefore a use: a following GET finds a dead token. Even when the
@@ -18,12 +18,12 @@
  * orchestrator's InteractiveCallbackRouter / ApprovalGate) so this route — and
  * the whole gateway package — never imports `@comis/orchestrator`.
  *
- * 5-min auto-expiry (T-73-30): `insertPendingApprovalToken` schedules a
+ * 5-min auto-expiry: `insertPendingApprovalToken` schedules a
  * `systemSetTimeout` delete after APPROVAL_TOKEN_TIMEOUT_MS (approvals also
  * default `approvals.defaultTimeoutMs: 300_000`). The token is minted via
  * `generateStrongToken()` (384-bit) at the composition root.
  *
- * Logging discipline (T-73-31): `submodule: "approval-token"` on every line;
+ * Logging discipline: `submodule: "approval-token"` on every line;
  * NEVER log the token or any secret. Time/timers come from `@comis/core`
  * (`systemNowMs`/`systemSetTimeout`/`systemClearTimeout`) — no `Date.now()` /
  * `setTimeout` globals (AGENTS.md §2.8).
@@ -178,7 +178,7 @@ export function createApprovalTokenRoute(deps: ApprovalTokenDeps): Hono {
   app.all("/:token", async (c) => {
     const token = c.req.param("token");
 
-    // Revoke FIRST, regardless of method (Pitfall 6 / T-73-28, T-73-29). A
+    // Revoke FIRST, regardless of method. A
     // preview/HEAD prefetch consumes the token; an errored resolution below
     // still leaves no reusable state because the entry is already gone.
     const entry = deps.tokens.get(token);
@@ -215,7 +215,7 @@ export function createApprovalTokenRoute(deps: ApprovalTokenDeps): Hono {
       );
       return c.html(RESOLVED_HTML);
     } catch {
-      // The token is already revoked above — no retry is possible (T-73-29).
+      // The token is already revoked above — no retry is possible.
       // Never log the caught error verbatim (it could echo request internals).
       deps.logger.warn(
         {
@@ -227,7 +227,7 @@ export function createApprovalTokenRoute(deps: ApprovalTokenDeps): Hono {
         },
         "Approval token resolution failed",
       );
-      // WR-02: the token is already irrevocably consumed above, so this is a
+      // The token is already irrevocably consumed above, so this is a
       // CONSUMED-but-failed terminal state, not a transient server error. Return a
       // non-retryable 409 (not 500 — the conventional "retry me" signal) so the
       // status line agrees with the ERROR_HTML "cannot be retried" body copy and a

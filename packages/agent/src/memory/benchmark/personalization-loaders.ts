@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure personalization + faithfulness dataset loaders (SUITE-07, the on-mission
- * tier): PrefEval, PerLTQA, PersonaMem, HaluMem.
+ * Pure personalization + faithfulness dataset loaders (the on-mission tier):
+ * PrefEval, PerLTQA, PersonaMem, HaluMem.
  *
  * These four loaders cover the personalization / preference-following and the
- * memory-faithfulness / hallucination axes of the v2.8 benchmark suite. Each is a
+ * memory-faithfulness / hallucination axes of the benchmark suite. Each is a
  * pure, defensive parser in the discipline of the sibling `locomo-loader.ts` /
  * `longmemeval-loader.ts`: it returns `Result<…, Error>` (NEVER throws), reads
  * every field of the UNTRUSTED dataset JSON defensively (type-guards before
  * access), and emits the harness ingest shape — dated documents on one channel
  * and the question/qa list (carrying the gold the judge grades against) on a
  * SEPARATE channel. The gold (answers, and HaluMem's hallucination labels) is
- * NEVER serialized into document content (the anti-leak invariant, T-99-07-03).
+ * NEVER serialized into document content (the anti-leak invariant).
  *
  * Documented external formats (RESEARCH §6; full schema is operator-verified):
  *   - PrefEval (ICLR 2025 Oral; amazon-science/PrefEval): preference-adherence
@@ -31,10 +31,9 @@
  *     hallucination labels on a SEPARATE gold channel (never doc content).
  *
  * The full corpora are OPERATOR-PLACED under `$COMIS_BENCH_DATA` (documented in
- * Plan 08's DATASETS.md) and are NEVER committed — only the tiny
+ * DATASETS.md) and are NEVER committed — only the tiny
  * neutral-placeholder fixtures in `__fixtures__/{prefeval,perltqa,personamem,
- * halumem}-sample.json` ship with the repo (licensing + leak hygiene,
- * T-99-07-05).
+ * halumem}-sample.json` ship with the repo (licensing + leak hygiene).
  *
  * PURE parsers. Import ONLY @comis/shared (Result) + Node stdlib types. The
  * agent->memory architecture cut (architecture-graph.test.ts) FORBIDS any import
@@ -43,13 +42,12 @@
  * locomo-loader.ts.
  *
  * SECURITY (ASVS V5): every field is read defensively and a structural mismatch
- * returns `err`, never throws (T-99-07). Outputs are built with LITERAL keys only
+ * returns `err`, never throws. Outputs are built with LITERAL keys only
  * and dataset-keyed maps use `Map`/literal writes, so an attacker-shaped
- * `__proto__`/`constructor` key cannot pollute `Object.prototype` (T-99-07-01).
+ * `__proto__`/`constructor` key cannot pollute `Object.prototype`.
  * Content is only ever `JSON.stringify`'d into an opaque `content` string, NEVER
- * `eval`/`Function` (T-99-07-04 / AGENTS.md §2.2). The synthesized-date and the
- * (reused) PersonaMem date parser are anchored/bounded -> ReDoS-safe
- * (T-99-07-02).
+ * `eval`/`Function` (AGENTS.md §2.2). The synthesized-date and the
+ * (reused) PersonaMem date parser are anchored/bounded -> ReDoS-safe.
  *
  * @module
  */
@@ -99,7 +97,7 @@ function daysInUtcMonth(year: number, monthIdx: number): number {
  * (PersonaMem session dates use this form).
  *
  * Anchored, bounded regex (`^...$`, fixed-width classes, no nested quantifiers)
- * -> linear-time, no ReDoS (T-99-07-02). Builds the epoch with `Date.UTC(...)` (a
+ * -> linear-time, no ReDoS. Builds the epoch with `Date.UTC(...)` (a
  * static-method call, NOT a flagged global). Returns `err` (no throw) when the
  * regex does not match OR a component is out of range: `Date.UTC` silently ROLLS
  * OVER out-of-range-but-numeric components, so every component is range-checked
@@ -250,7 +248,7 @@ export interface PerLtqaParsed {
  *
  * The `profile` is read VERBATIM into `JSON.stringify` — a hostile `__proto__`
  * key inside it becomes serialized text only and never indexes a write, so it
- * cannot pollute the prototype (T-99-07-01).
+ * cannot pollute the prototype.
  */
 export function loadPerLtqa(raw: unknown): Result<PerLtqaParsed, Error> {
   if (!isObject(raw)) {
@@ -387,9 +385,9 @@ export interface HaluMemParsed {
   qa: PersonalizationQa[];
   /**
    * questionId -> whether the answer is a hallucination (the faithfulness gold).
-   * Rides a SEPARATE channel — NEVER in `docs[].content` (the anti-leak invariant,
-   * T-99-07-03). A `Map` (not a plain object), so an untrusted question id cannot
-   * pollute the prototype (T-99-07-01).
+   * Rides a SEPARATE channel — NEVER in `docs[].content` (the anti-leak
+   * invariant). A `Map` (not a plain object), so an untrusted question id cannot
+   * pollute the prototype.
    */
   hallucinationLabels: Map<string, boolean>;
 }

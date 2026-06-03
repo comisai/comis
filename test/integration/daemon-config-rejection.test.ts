@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DAEMON-03: Config Rejection Integration Tests
+ * Config Rejection Integration Tests
  *
  * Validates that the daemon rejects startup when given invalid configuration:
  * - Bad YAML syntax -> PARSE_ERROR
@@ -40,7 +40,7 @@ const nonexistentPath = join(tmpDir, "nonexistent.yaml");
 // Path to the real test config for layered loading tests
 const goodConfigPath = join(__dirname, "../config/config.test.yaml");
 
-describe("Config Rejection (DAEMON-03)", () => {
+describe("Config Rejection", () => {
   beforeAll(() => {
     mkdirSync(tmpDir, { recursive: true });
 

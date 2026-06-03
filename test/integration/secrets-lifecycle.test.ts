@@ -60,7 +60,7 @@ describe("Secrets Lifecycle Integration Tests", () => {
   beforeAll(async () => {
     logCapture = createLogCapture();
 
-    // v1.5: the daemon builds its encrypted store via selectSecretStore →
+    // The daemon builds its encrypted store via selectSecretStore →
     // setupSecrets({ env, dataDir }), which reads SECRETS_MASTER_KEY from the
     // environment and opens <dataDir>/secrets.db. (The old daemon-level
     // `setupSecrets` override is no longer on that path.) So: isolate to a fresh

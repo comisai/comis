@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteMemoryEntityStore: the SOLE adapter for the segregated
- * `MemoryEntityStore` port (@comis/core, Phase 83). It owns ALL the
+ * `MemoryEntityStore` port (@comis/core). It owns ALL the
  * entity-association SQL — the write-path resolver (exact `canonical_key`
  * reuse, else `nameSimilarity >= 0.6` fuzzy reuse, else create; bump
  * `mention_count`/`last_seen`; idempotent link) and the read-path associative
@@ -12,10 +12,10 @@
  * via `getDb()`), so it runs against the same schema (`memory_entities`,
  * `memory_entity_links`, `memories`) with `PRAGMA foreign_keys = ON` already
  * set — that pragma is what makes the `ON DELETE CASCADE` on
- * `memory_entity_links.memory_id` fire (ENT-04 — the entire link-maintenance
- * story; no orphan-sweep job).
+ * `memory_entity_links.memory_id` fire — the entire link-maintenance
+ * story; no orphan-sweep job.
  *
- * ## Isolation is the load-bearing security boundary (ENT-03)
+ * ## Isolation is the load-bearing security boundary
  *
  * Comis runs many agents in one DB. BOTH the resolver SELECT and the lane
  * self-join filter on `(tenant_id, agent_id)` — parameterized — so two agents
@@ -47,7 +47,7 @@ import {
 } from "./row-schemas.js";
 
 /** Dice-bigram similarity at/above which a near-duplicate name reuses an
- *  existing entity rather than minting a new one (design §6.2 / ENT-05). */
+ *  existing entity rather than minting a new one (design §6.2). */
 const FUZZY_REUSE_THRESHOLD = 0.6;
 
 /** Minimal pino-compatible logger (mirrors sqlite-memory-adapter.ts). */
@@ -98,7 +98,7 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
   const insertLink = db.prepare(
     "INSERT OR IGNORE INTO memory_entity_links (memory_id, entity_id) VALUES (?, ?)",
   );
-  // LO-01: scope the per-row hydrate on BOTH (tenant_id, agent_id), not tenant
+  // Scope the per-row hydrate on BOTH (tenant_id, agent_id), not tenant
   // alone. Today this is redundant — the lane self-join already filtered
   // `m.agent_id = ?`, so every id reaching here is agent-scoped — but the
   // isolation boundary then depends on two statements agreeing, with the agent
@@ -107,11 +107,11 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
   const hydrateMemory = db.prepare(
     "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?",
   );
-  // OBS-06 diagnostic read: the scoped entity list, most-mentioned-first. The
+  // Diagnostic read: the scoped entity list, most-mentioned-first. The
   // `WHERE tenant_id = ? AND agent_id = ?` is the SAME load-bearing isolation
-  // boundary (ENT-03) as the resolver SELECT and the lane self-join — two
+  // boundary as the resolver SELECT and the lane self-join — two
   // scopes never surface each other's rows. `canonical_key` is intentionally
-  // NOT projected (DB-internal dedup key, OQ-2). Tie-break on `last_seen DESC`
+  // NOT projected (DB-internal dedup key). Tie-break on `last_seen DESC`
   // then `id` so equal mention_count rows have a deterministic order. `LIMIT ?`
   // bounds the result. Placeholders only — no string-built SQL.
   const selectEntityList = db.prepare(
@@ -131,14 +131,14 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
       try {
         const key = normalizeEntityKey(name);
 
-        // MD-01: ExtractedEntitySchema.name is `z.string().min(1)` — that checks
+        // ExtractedEntitySchema.name is `z.string().min(1)` — that checks
         // LENGTH, not non-whitespace, so a whitespace/punctuation/combining-mark-
         // only name (e.g. "   ", "---", a lone combining acute) passes the schema
         // yet `normalizeEntityKey` folds it to "". With no guard, every such junk
         // name in a scope collapses into ONE empty-`canonical_key` entity (the
         // `(tenant_id, agent_id, canonical_key)` UNIQUE index), spuriously
         // associating unrelated memories. Refuse it here — the resolver is the
-        // sole writer — and return `err`. IN-01 (memory-review-job) treats this
+        // sole writer — and return `err`. The memory-review-job treats this
         // as NON-FATAL: the memory is still stored, only the content-free
         // association is dropped (WARN + continue, watermark advances).
         if (key === "") {
@@ -189,14 +189,14 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
           }
 
           // 3) Create a new entity (display-cased name; normalized key).
-          // LO-02: this is a plain INSERT (not INSERT OR IGNORE). It is race-safe
+          // This is a plain INSERT (not INSERT OR IGNORE). It is race-safe
           // ONLY because of the single-writer assumption documented on the
           // transaction above: under the single-threaded daemon write path no
           // other writer can commit a row for this `(tenant_id, agent_id,
           // canonical_key)` between the selectExact miss and this INSERT. If that
           // assumption were ever broken (a second concurrent writer), this could
           // throw SQLITE_CONSTRAINT_UNIQUE — which is NON-FATAL today (caught
-          // below -> err Result -> IN-01 WARN + continue, the memory is still
+          // below -> err Result -> WARN + continue, the memory is still
           // stored), not data loss. A concurrent design would make this branch
           // idempotent (INSERT OR IGNORE + re-resolve the now-existing row).
           const entityId = randomUUID();
@@ -244,7 +244,7 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
       const startMs = systemNowMs();
       const { tenantId, agentId } = scope;
       try {
-        // ENT-04: no seeds -> empty lane (no query). RRF ranking is unchanged.
+        // No seeds -> empty lane (no query). RRF ranking is unchanged.
         if (seedIds.length === 0) {
           logger?.debug(
             { step: "entity-lane", seedCount: 0, resultCount: 0, durationMs: 0 },
@@ -253,9 +253,9 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
           return ok([]);
         }
 
-        // The scoped one-hop self-join (RESEARCH Pattern 2 — verified). The
+        // The scoped one-hop self-join. The
         // `AND m.tenant_id=? AND m.agent_id=?` on the joined memories row is the
-        // load-bearing ISOLATION boundary (ENT-03) — a cross-scope memory
+        // load-bearing ISOLATION boundary — a cross-scope memory
         // sharing an entity name is excluded. Seeds are excluded via
         // `l2.memory_id <> l1.memory_id`. Placeholders only — no string-built SQL.
         const seedPlaceholders = seedIds.map(() => "?").join(", ");
@@ -319,7 +319,7 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
       const startMs = systemNowMs();
       try {
         // Scoped read — the `tenant_id = ? AND agent_id = ?` filter is the
-        // load-bearing isolation boundary (ENT-03), identical in spirit to the
+        // load-bearing isolation boundary, identical in spirit to the
         // resolver SELECT and the lane self-join: a same-named entity in another
         // scope is never surfaced. Bound parameters only.
         const rows = selectEntityList.all(tenantId, agentId, limit);

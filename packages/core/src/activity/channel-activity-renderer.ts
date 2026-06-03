@@ -14,8 +14,8 @@
  * renderer would reimplement projection state.
  *
  * Pure type-only file: no I/O, no logger, no channel import. The concrete
- * strategy bodies (Phase 71/72) live in `channels/src/shared/strategies/` and
- * implement this port (`channels → core` is the allowed direction).
+ * strategy bodies live in `channels/src/shared/strategies/` and implement this
+ * port (`channels → core` is the allowed direction).
  */
 import type { Result } from "@comis/shared";
 import type { ActivityEvent } from "./activity-event.js";

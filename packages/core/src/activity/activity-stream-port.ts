@@ -6,8 +6,8 @@
  * The port is declared in `core/activity`; the concrete implementation lives in
  * `@comis/observability` and is wired into the composition root by the daemon.
  * The orchestrator depends on this port shape from `@comis/core` only — it
- * never imports `@comis/observability` (TURN-03; `orchestrator/package.json`
- * gains no observability dependency). Pure type-only file (no I/O, no logger).
+ * never imports `@comis/observability` (`orchestrator/package.json` gains no
+ * observability dependency). Pure type-only file (no I/O, no logger).
  */
 import type { ActivityEvent } from "./activity-event.js";
 import type { TurnActivityContext } from "./turn-activity-context.js";

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the SEP plan-stream (STRAT-11, spec §16.7).
+ * RED test for the SEP plan-stream (spec §16.7).
  *
  * Fails on pre-patch code: `./plan-stream.js` does not exist.
  *
@@ -31,7 +31,7 @@ function makePlanPort(plan: ReadonlyExecutionPlan | undefined): {
   };
 }
 
-describe("createPlanStream (STRAT-11 / spec §16.7 — SEP-sourced, no new tool)", () => {
+describe("createPlanStream (spec §16.7 — SEP-sourced, no new tool)", () => {
   it("derives a plan-update from sep:plan_extracted + the live ExecutionPlan", () => {
     const bus = new TypedEventBus();
     const { port } = makePlanPort({

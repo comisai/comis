@@ -187,7 +187,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       EnvSetContract.request.parse(userParams);
 
       try {
-        // Write to storage backend. SecretStorePort is always wired (REQ-04).
+        // Write to storage backend. SecretStorePort is always wired.
         // Env-mode adapter's set() returns err with an actionable message.
         const setResult = deps.secretStore.set(key, value);
         if (!setResult.ok) {
@@ -217,7 +217,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
         // broker/exec observe the new value on the very next request. No restart needed.
         deps.mutableSecretManager.upsert(key, value);
 
-        // Emit secret:changed event — metadata only, never the value (residency — T-03-09).
+        // Emit secret:changed event — metadata only, never the value (residency).
         deps.container.eventBus.emit("secret:changed", {
           name: key,
           action: "upserted" as const,
@@ -227,7 +227,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
         const result = {
           set: true as const,
           key,
-          // Reflect the active storage mode (REQ-14). Env mode never reaches
+          // Reflect the active storage mode. Env mode never reaches
           // here — its set() returns err before this line.
           storage: deps.container.config.security.storage as "encrypted" | "file",
           restarting: false as const,

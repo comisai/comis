@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeLineAdapter — a deterministic, clock-free `ChannelPort` test double for the
- * LINE AppendOnly renderer (CHAN-08 / CHAN-11; §18.1 "fake adapter records every
- * method call").
+ * LINE AppendOnly renderer (§18.1 "fake adapter records every method call").
  *
- * Mirrors `createFakeSignalAdapter` (the Phase-72 non-EditPlace template) but for
- * the AppendOnly shape:
+ * Mirrors `createFakeSignalAdapter` (the non-EditPlace template) but for the
+ * AppendOnly shape:
  *   - mints `line-msg-N` ids (LINE's determinism source for byte-stable fixtures
  *     — Pitfall 2; clock-free, no wall-time call that would flap),
  *   - records NO `silent` flag on `send` (LINE does not send the silent effect —
@@ -15,7 +14,7 @@
  *     absent — that is exactly what `makeLineRenderActions`'s
  *     `not_supported:edit` / `not_supported:delete` guards branch on.
  *
- * Phase 73 lands the LINE Quick-Reply approval-chip affordance: when a
+ * The LINE Quick-Reply approval-chip affordance works as follows: when a
  * `kind:"approval"` frame's opening send carries the signed `buttons` rows (the
  * Quick-Reply chips), the fake records them on the `send` row — ONLY when present,
  * so the button-less golden fixtures stay byte-stable. A non-approval send records
@@ -43,7 +42,7 @@ import type {
  * One recorded adapter call — discriminated by `op`, ids deterministic, no
  * timestamps and NO `silent` field (LINE does not send the silent effect). The
  * optional `buttons` carries the signed Quick-Reply approval chips, recorded ONLY
- * when present so the button-less golden fixtures stay byte-stable (Phase 73).
+ * when present so the button-less golden fixtures stay byte-stable.
  */
 export type FakeLineCall =
   | { op: "send"; id: string; text: string; buttons?: RichButton[][] }
@@ -105,8 +104,8 @@ export function createFakeLineAdapter(channelId = "chat-1"): FakeLineAdapter {
       const injected = takeInjectedError(adapter);
       if (injected) return err(injected);
       const id = `line-msg-${messageCounter++}`;
-      // The Quick-Reply approval chips (Phase 73) are recorded ONLY when present so
-      // the button-less golden fixtures stay byte-stable.
+      // The Quick-Reply approval chips are recorded ONLY when present so the
+      // button-less golden fixtures stay byte-stable.
       recorded.calls.push({
         op: "send",
         id,

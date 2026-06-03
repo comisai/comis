@@ -19,8 +19,8 @@ import { type LazyPaths, resolvePaths } from "../file/safe-path-wrapper.js";
 import { readStringParam, readNumberParam, readBooleanParam } from "../../../platform-tools/tool-helpers.js";
 import ignore from "ignore";
 
-// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
-// emitted name for builtins (find-tool.ts:295 → `name: "find"`).
+// Activity label spec (SPEC §6.1). Descriptor name == emitted name for
+// builtins (find-tool.ts:295 → `name: "find"`).
 registerActivityLabelSpec("find", {
   semanticPhase: "tool",
   label: "finding {pattern}",

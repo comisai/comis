@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED→GREEN unit test for the pure learning-lift rank scorer (SUITE-03, Plan 99-03,
- * Task 1). Pins the first→last rank-delta math the gated FEED-loop harness
+ * RED→GREEN unit test for the pure learning-lift rank scorer. Pins the
+ * first→last rank-delta math the gated FEED-loop harness
  * (learning-lift-harness.bench.test.ts) drives over the SHIPPED recall-outcome
  * loop. Mirrors the recall-eval.test.ts pure-math discipline.
  *

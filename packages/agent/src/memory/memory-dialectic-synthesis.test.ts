@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the PURE dialectic synthesis helpers (Phase 109 — DIAL-01 + DIAL-03).
+ * Tests for the PURE dialectic synthesis helpers.
  *
  * These are the genuinely-new, RED-provable-at-$0 logic of the phase: trust-first
  * contradiction ordering on the `system>learned>external` ladder, the mandatory
@@ -118,7 +118,7 @@ describe("mapCitationsToSourceIds", () => {
     expect(chains.map((c) => c.citationId)).toEqual(["id-a"]);
   });
 
-  it("traverses a cited entry's sourceIds into the DIAL-03 reasoning-tree chain", () => {
+  it("traverses a cited entry's sourceIds into the reasoning-tree chain", () => {
     const recalled = [item("id-a", "system", "x", ["src-1", "src-2"])];
     expect(mapCitationsToSourceIds(recalled, ["id-a"])).toEqual([
       { citationId: "id-a", sourceIds: ["src-1", "src-2"] },

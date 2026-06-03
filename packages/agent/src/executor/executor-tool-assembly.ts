@@ -77,40 +77,40 @@ export interface ToolAssemblyDeps {
   memoryPort?: MemoryPort;
   /** Optional cross-encoder reranker, threaded into prompt-assembly's createMemoryRecall. */
   reranker?: import("@comis/core").RerankerPort;
-  /** Optional entity-associative store (ENT-02), threaded into prompt-assembly's
+  /** Optional entity-associative store, threaded into prompt-assembly's
    *  createMemoryRecall. TYPE-only from @comis/core (the agent↛memory build cut). */
   entityStore?: import("@comis/core").MemoryEntityStore;
-  /** Optional temporal-spread store (LANES-02), threaded into prompt-assembly's
+  /** Optional temporal-spread store, threaded into prompt-assembly's
    *  createMemoryRecall (the 4th temporal lane). TYPE-only from @comis/core (the agent↛memory cut). */
   temporalStore?: import("@comis/core").MemoryTemporalStore;
-  /** Optional causal store (EXTRACT-03), threaded into prompt-assembly's createMemoryRecall
+  /** Optional causal store, threaded into prompt-assembly's createMemoryRecall
    *  (the 5th causal lane). TYPE-only from @comis/core (the agent↛memory build cut). */
   causalStore?: import("@comis/core").MemoryCausalStore;
-  /** Optional triple store (KG-01/04), threaded into prompt-assembly's createMemoryRecall
+  /** Optional triple store, threaded into prompt-assembly's createMemoryRecall
    *  (the 6th graph-spread lane). TYPE-only from @comis/core (the agent↛memory build cut). */
   tripleStore?: import("@comis/core").TripleStorePort;
-  /** Optional embedding read store (IQ-01), threaded into prompt-assembly's createMemoryRecall
+  /** Optional embedding read store, threaded into prompt-assembly's createMemoryRecall
    *  (the MMR diversity re-rank's scoped embedding read). TYPE-only from @comis/core (the
    *  agent↛memory build cut). */
   embeddingStore?: import("@comis/core").MemoryEmbeddingStore;
-  /** Optional usefulness store (FEED-03), threaded into prompt-assembly's createMemoryRecall.
+  /** Optional usefulness store, threaded into prompt-assembly's createMemoryRecall.
    *  TYPE-only from @comis/core (the agent↛memory build cut). */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
-  /** Optional learned-alpha store (LEARN-03), threaded into prompt-assembly's deterministic
+  /** Optional learned-alpha store, threaded into prompt-assembly's deterministic
    *  apply overlay (the gated buildScoringAlphas read on the recall scoring arg). Absent /
    *  off / no-row -> no read, the static config.rag.scoring alphas pass unchanged (byte-identical
-   *  recall). The daemon construction + the createPiExecutor forward land in 111-04; a missing
-   *  forward there leaves the overlay a silent no-op (the field-plumbing hazard). TYPE-only from
+   *  recall). A missing forward of the daemon construction + the createPiExecutor forward leaves
+   *  the overlay a silent no-op (the field-plumbing hazard). TYPE-only from
    *  @comis/core (the agent↛memory build cut). */
   tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
-  /** Optional per-user representation store (USER-03), threaded into prompt-assembly's LLM-free
+  /** Optional per-user representation store, threaded into prompt-assembly's LLM-free
    *  `<user_profile>` standing-block injection (a deterministic scoped read + pure formatter, NO
    *  model call). Absent -> no read, no push, byte-identical prompt. TYPE-only from @comis/core
    *  (the agent↛memory build cut). A missing forward here leaves the profile injection a silent
    *  no-op even when the store is wired in the daemon (the documented latent field-plumbing drop —
    *  Pitfall 1). */
   userRepresentationStore?: import("@comis/core").UserRepresentationStore;
-  /** Optional directional relationship store (SOCIAL-02/03 — Track E2). Forwarded into
+  /** Optional directional relationship store. Forwarded into
    *  prompt-assembly's LLM-free `<channel_relationships>` standing-block injection (a deterministic
    *  channel-scoped read + pure formatter, NO model call). Absent -> no read, no push, byte-identical
    *  prompt. TYPE-only from @comis/core (the agent↛memory build cut). A missing forward here leaves the
@@ -169,9 +169,9 @@ export interface ToolAssemblyDeps {
   tenantId?: string;
   /** Daemon data dir (COMIS_DATA_DIR / config.dataDir). Forwarded to
    *  prompt-assembly so the recall-trace recorder resolves its containment base
-   *  from the SAME source the memory.recall_trace reader uses (WR-02). */
+   *  from the SAME source the memory.recall_trace reader uses. */
   dataDir?: string;
-  /** Recall-trace writer configuration (Phase 86 / OBS-02). Forwarded from
+  /** Recall-trace writer configuration. Forwarded from
    *  PiExecutorDeps.recallTraceConfig (sourced from AppConfig.diagnostics.recallTrace
    *  by daemon wiring) into PromptAssemblyParams.deps.recallTraceConfig, where
    *  buildRecallTrace reads the `enabled` gate. Mirrors the dataDir thread above.
@@ -399,10 +399,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     config,
     deps: {
       workspaceDir: deps.workspaceDir,
-      // WR-02: forward the data dir so the recall-trace recorder's base resolves
+      // Forward the data dir so the recall-trace recorder's base resolves
       // from the same source as the memory.recall_trace reader.
       dataDir: deps.dataDir,
-      // OBS-02: forward the recall-trace config so buildRecallTrace receives the
+      // Forward the recall-trace config so buildRecallTrace receives the
       // operator's `enabled` gate + bounds. Sourced from
       // AppConfig.diagnostics.recallTrace by daemon wiring (mirrors cacheTraceConfig).
       // When omitted/disabled, buildRecallTrace returns null (default-off).
@@ -411,36 +411,34 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       reranker: deps.reranker,
       entityStore: deps.entityStore,
       // The lane stores ride the SAME forwarded subset as entityStore/usefulnessStore.
-      // temporalStore (LANES-02) + causalStore (EXTRACT-03) were previously DROPPED here
+      // temporalStore + causalStore were previously DROPPED here
       // (a latent field-plumbing no-op: ToolAssemblyDeps carried them and
       // prompt-assembly's createMemoryRecall reads them, but this enumeration omitted
       // them, so both lanes were dead via the real pi-executor path). tripleStore
-      // (KG-01/04, the 6th graph-spread lane) is forwarded the same way — a missing
+      // (the 6th graph-spread lane) is forwarded the same way — a missing
       // forward leaves the lane dormant even when its config flag is on. embeddingStore
-      // (IQ-01, the MMR diversity re-rank's scoped embedding read) is forwarded the same
+      // (the MMR diversity re-rank's scoped embedding read) is forwarded the same
       // way — a missing forward leaves MMR a silent no-op even when rag.mmr.enabled is on.
       temporalStore: deps.temporalStore,
       causalStore: deps.causalStore,
       tripleStore: deps.tripleStore,
       embeddingStore: deps.embeddingStore,
       usefulnessStore: deps.usefulnessStore,
-      // USER-03: forward the per-user representation store the SAME way as usefulnessStore — a
+      // Forward the per-user representation store the SAME way as usefulnessStore — a
       // missing forward here is a silent no-op (the profile <user_profile> block never renders even
       // with the store wired in the daemon). prompt-assembly's deps.userRepresentationStore.read is
-      // the LLM-free standing-block read (107-04); the daemon construct + thread is 107-05.
+      // the LLM-free standing-block read.
       userRepresentationStore: deps.userRepresentationStore,
-      // SOCIAL-02/03: forward the directional relationship store the SAME way as
+      // Forward the directional relationship store the SAME way as
       // userRepresentationStore — a missing forward here is a silent no-op (the
       // <channel_relationships> block never renders even with the store wired in the daemon).
-      // prompt-assembly's deps.relationshipStore.read is the LLM-free standing-block read (108-04);
-      // the daemon construct + thread is 108-05.
+      // prompt-assembly's deps.relationshipStore.read is the LLM-free standing-block read.
       relationshipStore: deps.relationshipStore,
-      // LEARN-03 (CR-01): forward the learned-alpha store the SAME way as usefulnessStore — a
+      // Forward the learned-alpha store the SAME way as usefulnessStore — a
       // missing forward here is a silent no-op (buildScoringAlphas never reads the tuned vector
       // even with the store wired through the daemon → BootContext → createPiExecutor chain AND
       // rag.onlineTuning.enabled). prompt-assembly's gated read `if (onlineTuningEnabled &&
-      // deps.tunedAlphaStore)` (the deterministic apply overlay) consumes it; the upstream
-      // daemon construct + thread landed in 111-04/111-05. This is the final hop in the
+      // deps.tunedAlphaStore)` (the deterministic apply overlay) consumes it. This is the final hop in the
       // ToolAssemblyDeps → PromptAssemblyParams.deps enumeration. Default-OFF byte-identity is
       // preserved: when the store is absent/undefined (off) the static config.rag.scoring alphas
       // pass unchanged, and the trust-freeze belts hold (trustAlpha is sourced only from config).

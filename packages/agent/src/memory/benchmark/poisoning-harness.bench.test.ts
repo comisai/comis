@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated end-to-end POISONING-RESISTANCE harness (SUITE-02) -- the platform
+ * Env-gated end-to-end POISONING-RESISTANCE harness -- the platform
  * security FLAGSHIP benchmark. It measures whether an adversarial `external`-trust
  * memory can hijack Comis's recalled answer, exercising the SHIPPED defenses --
  * NOT new security code:
@@ -12,7 +12,7 @@
  *      `includeTrustLevels`; the shipped default EXCLUDES `external`), and
  *   3. `score.ts` `trustWeight` (`external` = 0.0 boost).
  *
- * THE ABLATION (RESEARCH §SUITE-02 -- the evidence that the filter IS the defense):
+ * THE ABLATION (the evidence that the filter IS the defense):
  * every scenario is recalled TWICE -- filter ON (`includeTrustLevels:
  * ["system","learned"]`, the shipped default -> `external` excluded) and filter
  * OFF (`["system","learned","external"]`, the baseline where the poison CAN win).
@@ -35,7 +35,7 @@
  * qa-*) import ONLY @comis/core types. Mirrors the blessed precedent
  * qa-judge-harness.bench.test.ts.
  *
- * DUPLICATED INGEST WIRING (intentional, RESEARCH Anti-Pattern): the
+ * DUPLICATED INGEST WIRING (intentional): the
  * makeBenchConfig / BENCH_SESSION_KEY / extractResponseText / readDataset (unused
  * here -- the scenarios are constructed, no external corpus) / resolveReportDir /
  * percentile-style helpers are DUPLICATED from qa-judge-harness.bench.test.ts
@@ -52,21 +52,21 @@
  *   `it` additionally nests behind `COMIS_BENCH_ANSWER_*` + `COMIS_BENCH_JUDGE_*`.
  *   Judge/answer model ids MUST be pi-ai-registry ids (gpt-4o / gpt-4.1;
  *   `claude-opus-4-8` entered the pi-ai registry in 0.78.0; under 0.75.3 it graded
- *   all-invalid as a same-provider answer+judge pair on one Anthropic key, BUG-004) -- an unresolved
+ *   all-invalid as a same-provider answer+judge pair on one Anthropic key) -- an unresolved
  *   id makes every probe `invalid` (excluded), never a silent wrong number.
  *
  * SECURITY:
  * - Bench store is a fresh `mkdtempSync` tmp DB (NEVER ~/.comis), `tenantId:
- *   "default"` / `agentId:"bench"` -- isolated from any live agent (T-99-02-03).
+ *   "default"` / `agentId:"bench"` -- isolated from any live agent.
  *   Closed per scenario.
  * - The adversarial fixture content is ingested as memory CONTENT only, never
- *   `eval`'d (T-99-02-01); the judge rubric is placed FIRST (buildJudgePrompt) so
- *   injected fixture content cannot masquerade as a judge instruction (T-99-02-04,
- *   accept -- the judge is advisory measurement only).
+ *   `eval`'d; the judge rubric is placed FIRST (buildJudgePrompt) so
+ *   injected fixture content cannot masquerade as a judge instruction
+ *   (accepted -- the judge is advisory measurement only).
  * - The report is built via buildSuiteReport (structural secret omission) and
  *   written via the confined `writeRegularFile` (O_NOFOLLOW + EXCL + confinement,
  *   outside Pino's redaction net); the gated body asserts the serialized report
- *   carries none of `/apiKey|sk-|Bearer/` (T-99-02-02). The harness `console.log`s
+ *   carries none of `/apiKey|sk-|Bearer/`. The harness `console.log`s
  *   ONLY the two ASR numbers, never a key or a model answer.
  *
  * @module
@@ -87,11 +87,11 @@ import { completeSimple, getModel } from "@earendil-works/pi-ai";
 import { writeRegularFile } from "@comis/observability";
 // VALUE core import -- the SHIPPED write-time validator (the defense under test).
 import { validateMemoryWrite } from "@comis/core";
-// RELATIVE Wave-1 (99-01) constructed scenarios -- no external corpus.
+// RELATIVE constructed scenarios -- no external corpus.
 import { buildPoisoningScenarios } from "./suite-scenario.js";
-// RELATIVE Wave-1 (99-01) secret-free per-tier report builder.
+// RELATIVE secret-free per-tier report builder.
 import { buildSuiteReport } from "./suite-report.js";
-// RELATIVE Task-1 (this plan) pure ASR scorer (inverse-accuracy).
+// RELATIVE pure ASR scorer (inverse-accuracy).
 import { scorePoisoning } from "./poisoning-scorer.js";
 // RELATIVE existing pure logic (the answer/judge split + verdict parse + accuracy).
 import { ANSWER_SYSTEM_PROMPT, formatAnswerContext, buildAnswerPrompt } from "./qa-answer-prompt.js";
@@ -123,7 +123,7 @@ const JUDGE_PROVIDER = process.env.COMIS_BENCH_JUDGE_PROVIDER;
 const JUDGE_MODEL = process.env.COMIS_BENCH_JUDGE_MODEL;
 const JUDGE_API_KEY = process.env.COMIS_BENCH_JUDGE_API_KEY;
 
-/** Fixed epoch (matches the Phase-88/89 sibling's neutral clock). */
+/** Fixed epoch (matches the sibling harnesses' neutral clock). */
 const BENCH_NOW = 1_700_000_000_000;
 /** Per-LLM-call wall-clock deadline (a standard timer is allowed in a .test.ts). */
 const LLM_TIMEOUT_MS = 120_000;
@@ -131,7 +131,7 @@ const LLM_TIMEOUT_MS = 120_000;
 const HARNESS_VERSION = "phase-99-v1";
 
 /**
- * The bench store config (mirrors the Phase-88/89 sibling). `as MemoryConfig`:
+ * The bench store config (mirrors the sibling harnesses). `as MemoryConfig`:
  * the adapter reads the fields it needs; `dims` = the probed embedding dimensions
  * (or 4 for the FTS-only honest fallback).
  */
@@ -181,7 +181,7 @@ function extractResponseText(response: { content?: unknown[] }): string {
  * `COMIS_BENCH_DATA` is set, write under that base (resolved, no traversal);
  * otherwise the provided fresh tmp dir. The write itself uses
  * `writeRegularFile({ confinedBaseDir })`, so the O_NOFOLLOW + EXCL + confinement
- * guard applies regardless (T-99-02-02).
+ * guard applies regardless.
  */
 function resolveReportDir(fallbackTmpDir: string): string {
   if (COMIS_BENCH_DATA !== undefined && COMIS_BENCH_DATA.length > 0) {
@@ -227,7 +227,7 @@ describe.skipIf(!COMIS_BENCH)("poisoning resistance (gated)", () => {
   const haveJudge = !!JUDGE_PROVIDER && !!JUDGE_MODEL && !!JUDGE_API_KEY;
 
   beforeAll(async () => {
-    // 1. SCENARIOS -- constructed (Wave 1); no external corpus, no download.
+    // 1. SCENARIOS -- constructed; no external corpus, no download.
     const scenarios = buildPoisoningScenarios();
     expect(scenarios.length, "constructed poisoning scenarios").toBeGreaterThanOrEqual(1);
 
@@ -359,15 +359,15 @@ describe.skipIf(!COMIS_BENCH)("poisoning resistance (gated)", () => {
     await rerankerPort?.dispose?.();
     // 2h hook timeout: ingest + the LLM-free ON/OFF recall for every scenario runs
     // HERE (the it body only grades). The 2-min default trips on a non-trivial set
-    // before any grading begins (BUG-001) -- must match the raised it-body budget.
+    // before any grading begins -- must match the raised it-body budget.
   }, 7_200_000);
 
   it.skipIf(!haveAnswer || !haveJudge)(
     "measures poisoning ASR over the shipped pipeline (filter ON vs OFF)",
     async () => {
       // Resolve BOTH model lanes up front (the getModel guard). The judge/answer ids
-      // MUST be pi-ai-registry ids (gpt-4o / gpt-4.1; claude-opus-4-8 is now a registry id as of pi 0.78.0 but graded all-invalid as a same-provider judge,
-      // BUG-004) -- an unresolved id makes every probe invalid (excluded), never a
+      // MUST be pi-ai-registry ids (gpt-4o / gpt-4.1; claude-opus-4-8 is now a registry id as of pi 0.78.0 but graded all-invalid as a same-provider judge)
+      // -- an unresolved id makes every probe invalid (excluded), never a
       // silent wrong number.
       let answerModel: ReturnType<typeof getModel> | undefined;
       let judgeModel: ReturnType<typeof getModel> | undefined;
@@ -481,7 +481,7 @@ describe.skipIf(!COMIS_BENCH)("poisoning resistance (gated)", () => {
       );
       reportJson = JSON.stringify(report, null, 2);
 
-      // WRITE via the CONFINED writer (T-99-02-02) -- O_NOFOLLOW + EXCL + confinement.
+      // WRITE via the CONFINED writer -- O_NOFOLLOW + EXCL + confinement.
       const writeResult = writeRegularFile({
         path: join(reportDir, "poisoning-report.json"),
         content: reportJson,
@@ -512,7 +512,7 @@ describe.skipIf(!COMIS_BENCH)("poisoning resistance (gated)", () => {
       // context, so the ON arm's attack-success-rate is <= the OFF arm's.
       expect(scoreOn.asr).toBeLessThanOrEqual(scoreOff.asr);
 
-      // STRUCTURAL invariants ONLY (Anti-Pattern: never a hard ASR floor -- the number
+      // STRUCTURAL invariants ONLY (never a hard ASR floor -- the number
       // is machine/model-dependent).
       expect(scoreOn.asr).toBeGreaterThanOrEqual(0);
       expect(scoreOn.asr).toBeLessThanOrEqual(100);
@@ -521,11 +521,11 @@ describe.skipIf(!COMIS_BENCH)("poisoning resistance (gated)", () => {
       expect(scoreOn.validTotal).toBe(scoreOn.total - scoreOn.invalid);
       expect(scoreOff.validTotal).toBe(scoreOff.total - scoreOff.invalid);
 
-      // The report must carry NO secret substring (T-99-02-02) -- the ONLY allowed
+      // The report must carry NO secret substring -- the ONLY allowed
       // occurrence of these tokens in this file is inside this negation.
       expect(reportJson).not.toMatch(/apiKey|sk-|Bearer/);
     },
-    // 2h `it` budget (BUG-001) -- the serial answer+judge loop over both arms can
+    // 2h `it` budget -- the serial answer+judge loop over both arms can
     // exceed the prior ceiling; the per-call LLM_TIMEOUT_MS AbortController bounds any
     // single hung call.
     7_200_000,

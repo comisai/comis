@@ -792,8 +792,8 @@ describe("surfaceDiscardedPreToolUrl", () => {
     expect(result).toContain("Done.");
   });
 
-  it("substring-dedupe suppresses re-surfacing a prefix URL already covered by a longer URL in the response (WR-05)", () => {
-    // WR-05 pins the substring-dedupe semantics documented on
+  it("substring-dedupe suppresses re-surfacing a prefix URL already covered by a longer URL in the response", () => {
+    // Pins the substring-dedupe semantics documented on
     // surfaceDiscardedPreToolUrl. A pre-tool block containing a shorter URL
     // (https://x.ai/device) must NOT be surfaced when the response already
     // carries a longer URL with the same prefix (https://x.ai/device?code=…).
@@ -819,12 +819,12 @@ describe("surfaceDiscardedPreToolUrl", () => {
 });
 
 // ---------------------------------------------------------------------------
-// recoverEmptyFinalResponse — synthesis branch URL/code preservation (R9-EDGE-01)
+// recoverEmptyFinalResponse — synthesis branch URL/code preservation
 // ---------------------------------------------------------------------------
 
 describe("recoverEmptyFinalResponse — synthesis branch URL/code preservation", () => {
   it("recoverEmptyFinalResponse preserves URL from pre-tool assistant text in synthesis branch", () => {
-    // R9-EDGE-01 RED test: synthesis branch currently discards pre-tool URLs.
+    // RED test: synthesis branch currently discards pre-tool URLs.
     // This test asserts the URL is preserved in the synthesized recovery string.
     // FAILS on HEAD because extractActionableArtifacts does not yet exist.
     const result = recoverEmptyFinalResponse({

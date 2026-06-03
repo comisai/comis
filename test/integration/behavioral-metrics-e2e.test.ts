@@ -259,10 +259,10 @@ describe.skipIf(PROVIDERS.length === 0)(
                 // Best-effort augmentation tracking -- see metric-aggregator.ts
                 // module JSDoc. Without per-overlap result-envelope inspection
                 // we record one truth-value per "hinted" event, which makes
-                // the v1 installDetourHintCoverage rate structurally constant
+                // the installDetourHintCoverage rate structurally constant
                 // at 1.0 by construction. The metric DEFINITION is verified
                 // deterministically in synthetic-event-stream unit tests; the
-                // v1.2+ per-overlap tracking enhancement is deferred.
+                // per-overlap tracking enhancement is deferred.
                 hintAugmentations.push(true);
               }
             };

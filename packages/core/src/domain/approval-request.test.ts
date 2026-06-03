@@ -6,7 +6,7 @@ import {
   ApprovalResolutionSchema,
 } from "./approval-request.js";
 
-// EVT-05 / §6.4.1: ApprovalRequestSchema AND SerializedApprovalRequestSchema
+// §6.4.1: ApprovalRequestSchema AND SerializedApprovalRequestSchema
 // require a 12-char base62 `shortId` (the gate mints it). Malformed / wrong-length /
 // non-base62 values must reject. ApprovalResolutionSchema is UNCHANGED (no shortId).
 
@@ -35,7 +35,7 @@ function without(obj: Record<string, unknown>, key: string): Record<string, unkn
   return clone;
 }
 
-describe("ApprovalRequestSchema shortId (EVT-05)", () => {
+describe("ApprovalRequestSchema shortId", () => {
   it("rejects a request that omits shortId (shortId is required)", () => {
     const result = ApprovalRequestSchema.safeParse(without(baseRequest(), "shortId"));
     expect(result.success).toBe(false);
@@ -75,7 +75,7 @@ describe("ApprovalRequestSchema shortId (EVT-05)", () => {
   });
 });
 
-describe("SerializedApprovalRequestSchema shortId (EVT-05)", () => {
+describe("SerializedApprovalRequestSchema shortId", () => {
   it("rejects a serialized record that omits shortId (shortId is required)", () => {
     const result = SerializedApprovalRequestSchema.safeParse(without(baseRequest(), "shortId"));
     expect(result.success).toBe(false);

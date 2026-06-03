@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The pure named-key grammar (spec §5 send_key, TR-04).
+ * The pure named-key grammar (spec §5 send_key).
  *
  * Turns a `send_key` chord (`"C-c"`, `"Up"`, `"S-Tab"`, `"M-x"`) into the exact
  * control/escape byte sequence a PTY consumes. This is a standalone,
  * host-independent, fully unit-testable module with ZERO runtime dependencies —
- * the worker (Plan 04) imports it to encode the `send_key` frame.
+ * the worker imports it to encode the `send_key` frame.
  *
  * A wrong byte for a key is an invisible, load-bearing bug (the agent thinks it
  * pressed Ctrl-C; the program sees garbage). The mapping is encoded once, here,
@@ -20,7 +20,7 @@
  *
  * Purity: no timers, no wall-clock, no env, no `@comis/infra`. The only runtime
  * surface is `throwToolError("invalid_value", …)` for the unknown-key rejection
- * (T-120-01) — parity with the rest of the tool layer.
+ * — parity with the rest of the tool layer.
  *
  * @module
  */
@@ -33,8 +33,8 @@ import { throwToolError } from "../../../platform-tools/tool-helpers.js";
 
 /**
  * Exact-case named keys mapped to their xterm-default byte string. A frozen
- * literal const — there is no runtime mutation path (T-120-03: wrong bytes are
- * caught by the exact-byte RED test, not a runtime threat).
+ * literal const — there is no runtime mutation path (wrong bytes are caught by
+ * the exact-byte RED test, not a runtime threat).
  */
 const NAMED_KEY_BYTES: Readonly<Record<string, string>> = Object.freeze({
   // Literals.
@@ -99,9 +99,9 @@ function isSinglePrintable(key: string): boolean {
  *   3. An Alt/Meta chord `M-<rest>` / `A-<rest>` → `ESC` + `encodeNamedKey(rest)`
  *      (recurse so `M-Up`, `M-c`, `M-C-c` work; the remainder must itself resolve
  *      to a known key or a single printable — a multi-char unknown remainder
- *      throws, blocking arbitrary multi-byte sequence crafting, T-120-02).
+ *      throws, blocking arbitrary multi-byte sequence crafting).
  *   4. A single printable ASCII char → itself.
- *   5. Otherwise → a typed `invalid_value` rejection (T-120-01) — NEVER a silent
+ *   5. Otherwise → a typed `invalid_value` rejection — NEVER a silent
  *      empty-string no-op.
  *
  * @param key - The named key or chord component.

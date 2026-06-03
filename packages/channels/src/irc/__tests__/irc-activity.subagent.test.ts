@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * IRC subagent inline-line tests (APV-02 / APV-03 IRC half; §18.3 LinePerEvent).
+ * IRC subagent inline-line tests (IRC half; §18.3 LinePerEvent).
  *
  * IRC has no thread primitive, so a `kind:"subagent"` event renders INLINE with a
  * `↳ ` depth prefix (the depth-aware plain-text form, §18.3). The prefix is a
- * renderer concern applied via the 73-06 `subagentLine(event, { depthPrefix: "↳ " })`;
+ * renderer concern applied via `subagentLine(event, { depthPrefix: "↳ " })`;
  * the `🤖`/agentId portion rides on the projection's `defaultLabel` and is painted
  * verbatim after the prefix. The renderer adds the `↳ ` — it is NOT baked into the
- * event upstream (contrast the Phase-72 S7 fixture where `↳ ` was pre-baked data).
+ * event upstream (contrast the S7 fixture where `↳ ` was pre-baked data).
  *
  * A non-subagent event keeps the plain `eventLabel` line — no `↳ ` prefix.
  */
@@ -44,7 +44,7 @@ function frame(event: ActivityEvent): ActivityRenderFrame {
   };
 }
 
-describe("IRC subagent inline line (↳ depth prefix — APV-03)", () => {
+describe("IRC subagent inline line (↳ depth prefix)", () => {
   it("prefixes a kind:'subagent' event line with '↳ ' (the projection's label rides after it)", async () => {
     const clock = createFakeClock(0);
     const fake = createFakeIrcAdapter();

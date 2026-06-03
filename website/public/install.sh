@@ -1443,6 +1443,7 @@ install_comis_npm() {
     fi
     ui_success "Comis npm package installed"
     repair_comisai_bundled_deps || true
+    ensure_node_pty_built || true
     return 0
 }
 
@@ -1451,15 +1452,29 @@ install_comis_npm() {
 # end up as empty directories that fail at runtime. Running `npm install`
 # inside the installed package triggers a proper reify pass that nests the
 # missing deps correctly. Idempotent and fast on a clean install.
-repair_comisai_bundled_deps() {
+# resolve_comisai_install_dir
+# ---------------------------
+# Echo the directory of the globally-installed `comisai` package, or nothing if
+# it can't be located. Shared by the post-install native-dep fixups
+# (repair_comisai_bundled_deps, ensure_node_pty_built).
+resolve_comisai_install_dir() {
     local npm_root=""
     npm_root="$(npm root -g 2>/dev/null || true)"
-    local comisai_dir=""
     if [[ -n "$npm_root" && -d "${npm_root}/comisai" ]]; then
-        comisai_dir="${npm_root}/comisai"
-    elif [[ -d "/usr/lib/node_modules/comisai" ]]; then
-        comisai_dir="/usr/lib/node_modules/comisai"
-    else
+        echo "${npm_root}/comisai"
+        return 0
+    fi
+    if [[ -d "/usr/lib/node_modules/comisai" ]]; then
+        echo "/usr/lib/node_modules/comisai"
+        return 0
+    fi
+    return 1
+}
+
+repair_comisai_bundled_deps() {
+    local comisai_dir=""
+    comisai_dir="$(resolve_comisai_install_dir || true)"
+    if [[ -z "$comisai_dir" ]]; then
         return 0
     fi
 
@@ -1487,6 +1502,73 @@ repair_comisai_bundled_deps() {
             ui_info "Manually: cd ${comisai_dir} && npm install"
         fi
     fi
+}
+
+# ensure_node_pty_built
+# ---------------------
+# node-pty is an OPTIONAL native dependency that powers the terminal tool's
+# real-PTY backend (interactive TUIs like vim, full-screen CLIs). It ships NO
+# Linux prebuild, so on Linux it must compile from source (node-gyp) during
+# `npm install -g comisai`.
+#
+# Because it is OPTIONAL, a failed compile leaves `npm install` at exit 0 with
+# node-pty silently absent — npm never surfaces the failure, so the reactive
+# build-tools recovery in install_comis_npm (which keys off a NON-zero npm exit)
+# can't fire. At runtime the terminal tool then falls back to a degraded pipe
+# backend with only a WARN in the daemon log. This function converts that silent
+# degrade into either a successful targeted rebuild or a clear, actionable
+# warning at install time.
+#
+# Linux-only: macOS ships a darwin prebuild, so node-pty always loads there.
+# Non-fatal: the daemon runs fine without node-pty (degraded terminal tool only),
+# so nothing here may abort the install — every path returns 0.
+ensure_node_pty_built() {
+    [[ "$OS" == "linux" ]] || return 0
+
+    local comisai_dir=""
+    comisai_dir="$(resolve_comisai_install_dir || true)"
+    [[ -n "$comisai_dir" ]] || return 0
+
+    # Already loadable (compiled during the npm install)? Nothing to do.
+    # Resolve from the package dir so a nested OR hoisted node-pty both count.
+    if ( cd "$comisai_dir" && node -e "require('node-pty')" >/dev/null 2>&1 ); then
+        return 0
+    fi
+
+    ui_info "Building node-pty (real-PTY backend for the terminal tool)"
+
+    # The C toolchain is normally installed proactively by install_node on the
+    # root/sudo path. If a compiler is somehow still missing and we can elevate,
+    # install it now (idempotent). On a non-root / no-sudo install we cannot, and
+    # the rebuild below will fail into the degraded-mode warning.
+    if ! command -v make >/dev/null 2>&1 || { ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1; }; then
+        if is_root || { command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; }; then
+            install_build_tools_linux || true
+        fi
+    fi
+
+    # Pin the rebuild to the exact version the installed package declares — read
+    # it from the on-disk package.json so the installer never drifts from the
+    # source-of-truth pin in packages/comis/package.json.
+    local pinned=""
+    pinned="$(node -e "const o=require('${comisai_dir}/package.json').optionalDependencies||{};process.stdout.write(o['node-pty']||'')" 2>/dev/null || true)"
+    local spec="node-pty"
+    [[ -n "$pinned" ]] && spec="node-pty@${pinned}"
+
+    # Targeted compile inside the global package (mirrors
+    # repair_comisai_bundled_deps). --no-save leaves package.json untouched.
+    ( cd "$comisai_dir" && npm install "$spec" --no-save --no-fund --no-audit >/dev/null 2>&1 ) || true
+
+    if ( cd "$comisai_dir" && node -e "require('node-pty')" >/dev/null 2>&1 ); then
+        ui_success "node-pty built (terminal tool: full PTY support)"
+        return 0
+    fi
+
+    ui_warn "node-pty could not be built — the terminal tool will run in degraded pipe mode"
+    ui_info "  Piped commands still work; interactive TUIs (vim, full-screen CLIs) need a real PTY."
+    ui_info "  To enable later (requires make, gcc/g++, python3):"
+    ui_info "    cd ${comisai_dir} && npm install ${spec}"
+    return 0
 }
 
 TAGLINE="$DEFAULT_TAGLINE"

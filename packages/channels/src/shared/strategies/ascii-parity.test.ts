@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 78 WS-G — strict ASCII regression test for every renderer output path.
+ * Strict ASCII regression test for every renderer output path.
  *
- * SPEC-§8.9 hardens "ASCII strips ALL non-ASCII": the existing themes.test.ts
+ * §8.9 hardens "ASCII strips ALL non-ASCII": the existing themes.test.ts
  * (`packages/core/src/activity/__tests__/themes.test.ts:111-119`) only checks
  * `\p{Extended_Pictographic}` (emoji), which lets a multiplication-sign `×`
  * (U+00D7) slip through under the ascii theme. This sibling test uses the
  * STRICTER `/[^\x00-\x7F]/` regex (ASCII codepoint floor) and covers every
- * new Phase 78 render path: grouped-surrogate `×N` (must become `xN` under
+ * render path: grouped-surrogate `×N` (must become `xN` under
  * ascii), elapsed-time fallback `(running N s)`, plan header + counter, and
  * the recovered-failure success annotation.
  *
@@ -74,7 +74,7 @@ function frame(partial: Partial<ActivityRenderFrame> = {}): ActivityRenderFrame 
   };
 }
 
-describe("ascii-parity (SPEC-§8.9): no Unicode > U+007F in renderer output under ascii markers", () => {
+describe("ascii-parity (§8.9): no Unicode > U+007F in renderer output under ascii markers", () => {
   it("empty frame produces only ASCII codepoints", () => {
     const out = renderFrameText(frame(), ASCII_MARKERS);
     expect(out).not.toMatch(NON_ASCII);

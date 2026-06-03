@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The daemon-injected OFFLINE reasoning seam builder (Phase 101 — REASON-02/03,
- * 101-06).
+ * The daemon-injected OFFLINE reasoning seam builder.
  *
  * {@link runMemoryReasoning} takes an INJECTED `reason` seam (a single homogeneous
  * evidence cluster's text → typed `{ deductive, inductive }` candidates). This
@@ -52,7 +51,7 @@ export interface ReasoningSeamDeps {
   modelId: string;
   /** The API key VALUE (resolved by NAME at the daemon; never logged here). */
   apiKey: string;
-  /** Per-call LLM output bound (REASON-04 cost axis). */
+  /** Per-call LLM output bound (the cost axis). */
   maxReasoningTokens: number;
   /** Wall-clock reads — the per-message timestamp. NEVER a wall-clock global. */
   clock: ClockPort;

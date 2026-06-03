@@ -5,10 +5,10 @@
  * Tests resolveAgent() pure function specificity scoring and
  * createMessageRouter() factory via direct package API imports.
  *
- * Covers ROUTE-01, ROUTE-02, and ROUTE-04 through ROUTE-09: specificity
- * scoring, pre-sorted resolve, multi-field AND logic, binding field mapping
- * (peerId -> senderId), default agent fallback, per-platform routing,
- * per-user VIP routing, and compound guildId+channelType routing.
+ * Covers specificity scoring, pre-sorted resolve, multi-field AND logic,
+ * binding field mapping (peerId -> senderId), default agent fallback,
+ * per-platform routing, per-user VIP routing, and compound
+ * guildId+channelType routing.
  *
  * No daemon needed -- all tests use direct API imports.
  */
@@ -51,11 +51,11 @@ function routingConfig(overrides: Partial<RoutingConfig> = {}): RoutingConfig {
 }
 
 // ---------------------------------------------------------------------------
-// ROUTE-01: resolveAgent() pure function specificity scoring
+// resolveAgent() pure function specificity scoring
 // ---------------------------------------------------------------------------
 
-describe("ROUTE-01: resolveAgent() pure function specificity scoring", () => {
-  it("ROUTE-01: peerId weight 8 beats channelId weight 4", () => {
+describe("resolveAgent() pure function specificity scoring", () => {
+  it("resolves peerId (weight 8) over channelId (weight 4)", () => {
     const cfg = routingConfig({
       bindings: [
         { channelId: "chan-1", agentId: "chan-agent" },
@@ -65,7 +65,7 @@ describe("ROUTE-01: resolveAgent() pure function specificity scoring", () => {
     expect(resolveAgent(msg({ channelId: "chan-1", senderId: "user-1" }), cfg)).toBe("peer-agent");
   });
 
-  it("ROUTE-01: channelId weight 4 beats guildId weight 2", () => {
+  it("resolves channelId (weight 4) over guildId (weight 2)", () => {
     const cfg = routingConfig({
       bindings: [
         { guildId: "guild-1", agentId: "guild-agent" },
@@ -75,7 +75,7 @@ describe("ROUTE-01: resolveAgent() pure function specificity scoring", () => {
     expect(resolveAgent(msg({ channelId: "chan-1", guildId: "guild-1" }), cfg)).toBe("chan-agent");
   });
 
-  it("ROUTE-01: guildId weight 2 beats channelType weight 1", () => {
+  it("resolves guildId (weight 2) over channelType (weight 1)", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "echo", agentId: "type-agent" },
@@ -85,7 +85,7 @@ describe("ROUTE-01: resolveAgent() pure function specificity scoring", () => {
     expect(resolveAgent(msg({ channelType: "echo", guildId: "guild-1" }), cfg)).toBe("guild-agent");
   });
 
-  it("ROUTE-01: compound peerId+channelType (score 9) beats channelId (score 4)", () => {
+  it("compound peerId+channelType (score 9) beats channelId (score 4)", () => {
     const cfg = routingConfig({
       bindings: [
         { channelId: "chan-1", agentId: "chan-agent" },
@@ -97,7 +97,7 @@ describe("ROUTE-01: resolveAgent() pure function specificity scoring", () => {
     ).toBe("compound-agent");
   });
 
-  it("ROUTE-01: equal specificity resolves to first in config order (stable sort)", () => {
+  it("equal specificity resolves to first in config order (stable sort)", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "echo", agentId: "first-agent" },
@@ -107,7 +107,7 @@ describe("ROUTE-01: resolveAgent() pure function specificity scoring", () => {
     expect(resolveAgent(msg({ channelType: "echo" }), cfg)).toBe("first-agent");
   });
 
-  it("ROUTE-01: 3-binding scenario -- peerId wins regardless of config order (put last)", () => {
+  it("3-binding scenario -- peerId wins regardless of config order (put last)", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "echo", agentId: "type-agent" },
@@ -122,11 +122,11 @@ describe("ROUTE-01: resolveAgent() pure function specificity scoring", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ROUTE-02: createMessageRouter() factory stateful resolve
+// createMessageRouter() factory stateful resolve
 // ---------------------------------------------------------------------------
 
-describe("ROUTE-02: createMessageRouter() factory stateful resolve with pre-sorted bindings", () => {
-  it("ROUTE-02: router.resolve() returns same results as resolveAgent() for identical config/message", () => {
+describe("createMessageRouter() factory stateful resolve with pre-sorted bindings", () => {
+  it("router.resolve() returns same results as resolveAgent() for identical config/message", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "echo", agentId: "type-agent" },
@@ -139,7 +139,7 @@ describe("ROUTE-02: createMessageRouter() factory stateful resolve with pre-sort
     expect(router.resolve(testMsg)).toBe(resolveAgent(testMsg, cfg));
   });
 
-  it("ROUTE-02: router.resolve() is callable multiple times with different messages", () => {
+  it("router.resolve() is callable multiple times with different messages", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "echo", agentId: "echo-agent" },
@@ -153,7 +153,7 @@ describe("ROUTE-02: createMessageRouter() factory stateful resolve with pre-sort
     expect(router.resolve(msg({ channelType: "telegram" }))).toBe("default-agent");
   });
 
-  it("ROUTE-02: router instance identity is preserved across calls (same object reference)", () => {
+  it("router instance identity is preserved across calls (same object reference)", () => {
     const cfg = routingConfig({
       bindings: [{ channelType: "echo", agentId: "echo-agent" }],
     });
@@ -168,11 +168,11 @@ describe("ROUTE-02: createMessageRouter() factory stateful resolve with pre-sort
 });
 
 // ---------------------------------------------------------------------------
-// ROUTE-04: Multi-field AND logic
+// Multi-field AND logic
 // ---------------------------------------------------------------------------
 
-describe("ROUTE-04: Multi-field AND logic", () => {
-  it("ROUTE-04: channelType+guildId binding matches when BOTH fields match", () => {
+describe("Multi-field AND logic", () => {
+  it("channelType+guildId binding matches when BOTH fields match", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "discord", guildId: "guild-1", agentId: "guild-agent" },
@@ -183,7 +183,7 @@ describe("ROUTE-04: Multi-field AND logic", () => {
     ).toBe("guild-agent");
   });
 
-  it("ROUTE-04: channelType matches but guildId missing -> falls to default", () => {
+  it("channelType matches but guildId missing -> falls to default", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "discord", guildId: "guild-1", agentId: "guild-agent" },
@@ -194,7 +194,7 @@ describe("ROUTE-04: Multi-field AND logic", () => {
     ).toBe("default-agent");
   });
 
-  it("ROUTE-04: guildId matches but channelType differs -> falls to default", () => {
+  it("guildId matches but channelType differs -> falls to default", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "discord", guildId: "guild-1", agentId: "guild-agent" },
@@ -205,7 +205,7 @@ describe("ROUTE-04: Multi-field AND logic", () => {
     ).toBe("default-agent");
   });
 
-  it("ROUTE-04: 3-field AND binding matches only when ALL 3 fields match", () => {
+  it("3-field AND binding matches only when ALL 3 fields match", () => {
     const cfg = routingConfig({
       bindings: [
         { peerId: "vip", channelType: "telegram", guildId: "guild-1", agentId: "triple-agent" },
@@ -247,25 +247,25 @@ describe("ROUTE-04: Multi-field AND logic", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ROUTE-05: Binding field mapping (peerId -> senderId on RoutableMessage)
+// Binding field mapping (peerId -> senderId on RoutableMessage)
 // ---------------------------------------------------------------------------
 
-describe("ROUTE-05: Binding field mapping (peerId -> senderId on RoutableMessage)", () => {
-  it("ROUTE-05: peerId binding matches message with matching senderId", () => {
+describe("Binding field mapping (peerId -> senderId on RoutableMessage)", () => {
+  it("peerId binding matches message with matching senderId", () => {
     const cfg = routingConfig({
       bindings: [{ peerId: "user-123", agentId: "user-agent" }],
     });
     expect(resolveAgent(msg({ senderId: "user-123" }), cfg)).toBe("user-agent");
   });
 
-  it("ROUTE-05: peerId binding does NOT match message with different senderId", () => {
+  it("peerId binding does NOT match message with different senderId", () => {
     const cfg = routingConfig({
       bindings: [{ peerId: "user-123", agentId: "user-agent" }],
     });
     expect(resolveAgent(msg({ senderId: "user-456" }), cfg)).toBe("default-agent");
   });
 
-  it("ROUTE-05: compound peerId+channelType binding maps correctly", () => {
+  it("compound peerId+channelType binding maps correctly", () => {
     const cfg = routingConfig({
       bindings: [
         { peerId: "user-123", channelType: "telegram", agentId: "tg-user-agent" },
@@ -290,16 +290,16 @@ describe("ROUTE-05: Binding field mapping (peerId -> senderId on RoutableMessage
 });
 
 // ---------------------------------------------------------------------------
-// ROUTE-06: Default agent fallback
+// Default agent fallback
 // ---------------------------------------------------------------------------
 
-describe("ROUTE-06: Default agent fallback", () => {
-  it("ROUTE-06: empty bindings array returns defaultAgentId", () => {
+describe("Default agent fallback", () => {
+  it("empty bindings array returns defaultAgentId", () => {
     const cfg = routingConfig({ bindings: [] });
     expect(resolveAgent(msg(), cfg)).toBe("default-agent");
   });
 
-  it("ROUTE-06: no binding matches message fields -> returns defaultAgentId", () => {
+  it("no binding matches message fields -> returns defaultAgentId", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "discord", agentId: "discord-agent" },
@@ -311,7 +311,7 @@ describe("ROUTE-06: Default agent fallback", () => {
     );
   });
 
-  it("ROUTE-06: all bindings differ from defaultAgentId; unmatched message -> defaultAgentId", () => {
+  it("all bindings differ from defaultAgentId; unmatched message -> defaultAgentId", () => {
     const cfg = routingConfig({
       defaultAgentId: "fallback",
       bindings: [
@@ -322,7 +322,7 @@ describe("ROUTE-06: Default agent fallback", () => {
     expect(resolveAgent(msg({ channelType: "slack" }), cfg)).toBe("fallback");
   });
 
-  it("ROUTE-06: defaultAgentId set to various values", () => {
+  it("defaultAgentId set to various values", () => {
     for (const defaultId of ["alpha", "beta", "custom-fallback"]) {
       const cfg = routingConfig({ defaultAgentId: defaultId, bindings: [] });
       expect(resolveAgent(msg(), cfg)).toBe(defaultId);
@@ -331,10 +331,10 @@ describe("ROUTE-06: Default agent fallback", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ROUTE-07: Per-platform routing patterns (channelType-based dispatch)
+// Per-platform routing patterns (channelType-based dispatch)
 // ---------------------------------------------------------------------------
 
-describe("ROUTE-07: Per-platform routing patterns (channelType-based dispatch)", () => {
+describe("Per-platform routing patterns (channelType-based dispatch)", () => {
   const cfg = routingConfig({
     bindings: [
       { channelType: "telegram", agentId: "tg-agent" },
@@ -343,29 +343,29 @@ describe("ROUTE-07: Per-platform routing patterns (channelType-based dispatch)",
     ],
   });
 
-  it("ROUTE-07: telegram channelType routes to tg-agent", () => {
+  it("telegram channelType routes to tg-agent", () => {
     expect(resolveAgent(msg({ channelType: "telegram" }), cfg)).toBe("tg-agent");
   });
 
-  it("ROUTE-07: discord channelType routes to discord-agent", () => {
+  it("discord channelType routes to discord-agent", () => {
     expect(resolveAgent(msg({ channelType: "discord" }), cfg)).toBe("discord-agent");
   });
 
-  it("ROUTE-07: slack channelType routes to slack-agent", () => {
+  it("slack channelType routes to slack-agent", () => {
     expect(resolveAgent(msg({ channelType: "slack" }), cfg)).toBe("slack-agent");
   });
 
-  it("ROUTE-07: unknown channelType 'whatsapp' falls to default", () => {
+  it("unknown channelType 'whatsapp' falls to default", () => {
     expect(resolveAgent(msg({ channelType: "whatsapp" }), cfg)).toBe("default-agent");
   });
 });
 
 // ---------------------------------------------------------------------------
-// ROUTE-08: Per-user VIP routing (peerId binding overrides less-specific)
+// Per-user VIP routing (peerId binding overrides less-specific)
 // ---------------------------------------------------------------------------
 
-describe("ROUTE-08: Per-user VIP routing (peerId binding overrides less-specific)", () => {
-  it("ROUTE-08: VIP peerId on telegram -> vip-agent (peerId 8 > channelType 1)", () => {
+describe("Per-user VIP routing (peerId binding overrides less-specific)", () => {
+  it("VIP peerId on telegram -> vip-agent (peerId 8 > channelType 1)", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "telegram", agentId: "tg-agent" },
@@ -377,7 +377,7 @@ describe("ROUTE-08: Per-user VIP routing (peerId binding overrides less-specific
     ).toBe("vip-agent");
   });
 
-  it("ROUTE-08: regular user on telegram -> tg-agent", () => {
+  it("regular user on telegram -> tg-agent", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "telegram", agentId: "tg-agent" },
@@ -389,7 +389,7 @@ describe("ROUTE-08: Per-user VIP routing (peerId binding overrides less-specific
     ).toBe("tg-agent");
   });
 
-  it("ROUTE-08: VIP on discord -> vip-agent (peerId 8 > any channelType 1)", () => {
+  it("VIP on discord -> vip-agent (peerId 8 > any channelType 1)", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "telegram", agentId: "tg-agent" },
@@ -402,7 +402,7 @@ describe("ROUTE-08: Per-user VIP routing (peerId binding overrides less-specific
     ).toBe("vip-agent");
   });
 
-  it("ROUTE-08: VIP still wins over channelId binding (peerId 8 > channelId 4)", () => {
+  it("VIP still wins over channelId binding (peerId 8 > channelId 4)", () => {
     const cfg = routingConfig({
       bindings: [
         { channelType: "telegram", agentId: "tg-agent" },
@@ -420,10 +420,10 @@ describe("ROUTE-08: Per-user VIP routing (peerId binding overrides less-specific
 });
 
 // ---------------------------------------------------------------------------
-// ROUTE-09: Per-guild routing (guildId + channelType compound bindings)
+// Per-guild routing (guildId + channelType compound bindings)
 // ---------------------------------------------------------------------------
 
-describe("ROUTE-09: Per-guild routing (guildId + channelType compound bindings)", () => {
+describe("Per-guild routing (guildId + channelType compound bindings)", () => {
   const cfg = routingConfig({
     bindings: [
       { guildId: "server-1", channelType: "discord", agentId: "guild-agent" }, // weight 3
@@ -432,19 +432,19 @@ describe("ROUTE-09: Per-guild routing (guildId + channelType compound bindings)"
     ],
   });
 
-  it("ROUTE-09: discord message from server-1 -> guild-agent (compound weight 3 > channelType 1)", () => {
+  it("discord message from server-1 -> guild-agent (compound weight 3 > channelType 1)", () => {
     expect(
       resolveAgent(msg({ channelType: "discord", guildId: "server-1" }), cfg),
     ).toBe("guild-agent");
   });
 
-  it("ROUTE-09: discord message from server-2 -> discord-default (guildId mismatch, channelType matches)", () => {
+  it("discord message from server-2 -> discord-default (guildId mismatch, channelType matches)", () => {
     expect(
       resolveAgent(msg({ channelType: "discord", guildId: "server-2" }), cfg),
     ).toBe("discord-default");
   });
 
-  it("ROUTE-09: discord message from server-1 by admin -> admin-agent (peerId 8 > compound 3)", () => {
+  it("discord message from server-1 by admin -> admin-agent (peerId 8 > compound 3)", () => {
     expect(
       resolveAgent(
         msg({ channelType: "discord", guildId: "server-1", senderId: "admin" }),

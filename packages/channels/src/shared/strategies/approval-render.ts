@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Shared approval-render helpers (APV-02 / APV-03 render side, §6.4 / §7.7).
+ * Shared approval-render helpers (render side, §6.4 / §7.7).
  *
  * The render path is text-only by default; these helpers are the foundation
- * every per-channel approval UI (73-08 buttons, 73-09 Block-Kit / Quick-Reply,
- * 73-10 plain-text) consumes. They turn the redacted `ApprovalCorrelation`
+ * every per-channel approval UI (buttons, Block-Kit / Quick-Reply,
+ * plain-text) consumes. They turn the redacted `ApprovalCorrelation`
  * carried on a `kind:"approval"` ActivityEvent into:
  *
  *   - `buildApprovalButtons(event, sign)` → signed `RichButton[][]`. Each
  *     button's `callback_data` is the §6.4.2 wire string
  *     `v1.<choice>.<shortId>.<hmac>`. The `<hmac>` is produced by the INJECTED,
  *     secret-bound signer (`SignCallbackData`) — the renderer never sees the
- *     secret and never reaches across into the orchestrator package (Pitfall 5
- *     / T-73-16). The visible text and style come from the choice's own redacted
- *     hints; no raw tool params are ever read (T-73-17, §19.1).
+ *     secret and never reaches across into the orchestrator package (Pitfall
+ *     5). The visible text and style come from the choice's own redacted
+ *     hints; no raw tool params are ever read (§19.1).
  *   - `buildApprovalText(event, opts?)` → the plain-text fallback for surfaces
  *     with no button affordance (IRC / WhatsApp / Signal / iMessage). Single
  *     pending → "Reply approve or deny …"; `includeShortId` →
  *     "Reply approve <S> or deny <S>" so a renderer that knows there is more
  *     than one pending approval can disambiguate (§6.4.6).
  *
- * The signer is wired at the daemon composition root (73-10): a function that
+ * The signer is wired at the daemon composition root: a function that
  * closes over `activity.interactiveCallbackSigningSecret` and delegates to the
  * core primitive `signCallbackData`. The orchestrator's `InteractiveCallbackRouter`
  * verifies against the SAME core primitive — one implementation, no duplication,
- * no boundary violation (T-73-18).
+ * no boundary violation.
  *
  * Imports ONLY `@comis/core` + `@comis/shared` (the `channels → core` edge).
  * Pure functions: no I/O, no logger.
@@ -33,7 +33,7 @@ import type { ActivityEvent, ApprovalChoice, RichButton } from "@comis/core";
 
 /**
  * The secret-bound signer injected into a renderer's deps at the composition
- * root (73-10). Returns the 16-char base64url HMAC tag for `(choice, shortId)`
+ * root. Returns the 16-char base64url HMAC tag for `(choice, shortId)`
  * — the `<hmac>` segment of the §6.4.2 wire string. Delegates to the core
  * primitive `signCallbackData(secret, choice, shortId)`; the secret is captured
  * by the closure and never crosses into the channels package.
@@ -119,8 +119,8 @@ export function countPendingApprovals(events: readonly ActivityEvent[]): number 
  * (§6.4.6). For each `kind:"approval"` event it emits `buildApprovalText`, joined
  * by newlines. `includeShortId` is derived HERE from the pending count: a shortId
  * is surfaced ONLY when MORE THAN ONE approval is pending in this same frame, so a
- * single-pending prompt stays terse and cross-session shortIds never appear
- * (T-73-27). A frame with no approval event yields `""` — the caller appends
+ * single-pending prompt stays terse and cross-session shortIds never appear.
+ * A frame with no approval event yields `""` — the caller appends
  * nothing.
  */
 export function buildApprovalPrompt(events: readonly ActivityEvent[]): string {

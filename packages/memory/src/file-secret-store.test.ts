@@ -292,8 +292,8 @@ describe("createFileSecretStore", () => {
     expect(listResult.ok && listResult.value).toHaveLength(0);
   });
 
-  it("list on a store with multiple entries never includes plaintext values (REQ-10 file-store residency, multi-entry)", () => {
-    // REQ-10: file-store residency invariant must hold when the store contains
+  it("list on a store with multiple entries never includes plaintext values (file-store residency, multi-entry)", () => {
+    // The file-store residency invariant must hold when the store contains
     // many entries. Each item in list() must have name+metadata but NOT value.
     const store = createFileSecretStore({ dataDir });
     const stored: Record<string, string> = {

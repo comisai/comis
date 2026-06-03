@@ -224,7 +224,7 @@ describe("CREDENTIAL_KEYS contract", () => {
     expect(CREDENTIAL_KEYS.has("private_key")).toBe(true);
     expect(CREDENTIAL_KEYS.has("client_secret")).toBe(true);
     expect(CREDENTIAL_KEYS.has("auth")).toBe(true);
-    // CR-01: bare OAuth token field names used by auth.set RPC contract.
+    // Bare OAuth token field names used by auth.set RPC contract.
     // These MUST be in CREDENTIAL_KEYS so that any dispatcher error log
     // that includes params (which carries {access, refresh}) is redacted
     // by the Pino sanitizer and by sanitizeDiagnosticPayload.
@@ -232,7 +232,7 @@ describe("CREDENTIAL_KEYS contract", () => {
     expect(CREDENTIAL_KEYS.has("refresh")).toBe(true);
     // Minimum size invariant — set must be at least 28 entries to
     // cover the three lanes (bare + snake_case + camelCase) plus the two
-    // CR-01 bare OAuth names.
+    // bare OAuth names.
     expect(CREDENTIAL_KEYS.size).toBeGreaterThanOrEqual(28);
   });
 
@@ -281,12 +281,12 @@ describe("CREDENTIAL_KEYS contract", () => {
     });
   });
 
-  // CR-01: bare OAuth field names used by auth.set RPC contract must be
+  // Bare OAuth field names used by auth.set RPC contract must be
   // redacted by sanitizeDiagnosticPayload. These names were absent from
   // CREDENTIAL_KEYS, meaning a dispatcher error log carrying
   // { access: "<bearer>", refresh: "<token>" } in params would not be
   // sanitized. This test must FAIL before the fix and PASS after.
-  it("CR-01: drops bare 'access' and 'refresh' OAuth token fields (auth.set params leak vector)", () => {
+  it("drops bare 'access' and 'refresh' OAuth token fields (auth.set params leak vector)", () => {
     const input = {
       method: "auth.set",
       params: {
@@ -310,7 +310,7 @@ describe("CREDENTIAL_KEYS contract", () => {
     expect(params["version"]).toBe(1);
   });
 
-  it("CR-01: isCredentialFieldName returns true for bare 'access' and 'refresh'", () => {
+  it("isCredentialFieldName returns true for bare 'access' and 'refresh'", () => {
     expect(isCredentialFieldName("access")).toBe(true);
     expect(isCredentialFieldName("refresh")).toBe(true);
     // Case-insensitive coverage (Pino paths are case-sensitive — the Set

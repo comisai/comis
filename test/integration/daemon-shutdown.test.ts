@@ -74,17 +74,18 @@ describe("Daemon Shutdown", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Shutdown tests: DMN-01, DMN-02, DMN-03
+  // Shutdown tests
   //
-  // Since shutdown can only happen once, the shutdown trigger lives in DMN-02
-  // which needs to open a WebSocket BEFORE triggering SIGTERM. DMN-01 and
-  // DMN-03 assertions run after the same shutdown event using shared log data.
+  // Since shutdown can only happen once, the shutdown trigger lives in the
+  // WebSocket close-frame test, which needs to open a WebSocket BEFORE
+  // triggering SIGTERM. The agent-drain and cron-stop assertions run after the
+  // same shutdown event using shared log data.
   // ---------------------------------------------------------------------------
 
   describe("Shutdown with active subsystems", () => {
     let wsCloseEvent: { code: number; reason: string } | null = null;
 
-    it("DMN-02: SIGTERM sends 1001 close frames to active WebSocket connections", async () => {
+    it("SIGTERM sends 1001 close frames to active WebSocket connections", async () => {
       // Open a WebSocket connection before triggering shutdown
       const ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
 
@@ -118,7 +119,7 @@ describe("Daemon Shutdown", () => {
       expect(wsCloseEvent.reason).toBe("Server shutting down");
     }, 30_000);
 
-    it("DMN-01: SIGTERM during active agent execution drains gracefully", async () => {
+    it("SIGTERM during active agent execution drains gracefully", async () => {
       // Wait for async cleanup to complete and logs to flush
       await new Promise((resolve) => setTimeout(resolve, ASYNC_SETTLE_MS * 5));
 
@@ -152,7 +153,7 @@ describe("Daemon Shutdown", () => {
       ).toHaveLength(0);
     });
 
-    it("DMN-03: SIGTERM stops cron scheduler without orphaned execution", async () => {
+    it("SIGTERM stops cron scheduler without orphaned execution", async () => {
       const entries = logCapture.getEntries();
 
       // Verify CronScheduler stopped log is present
@@ -175,14 +176,14 @@ describe("Daemon Shutdown", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // DMN-04: Shutdown log sequence under load
+  // Shutdown log sequence under load
   //
   // Verifies the full ordered teardown: all subsystems (gateway, cron, memory,
   // sub-agent runner) were active before shutdown and stop in the correct order.
   // ---------------------------------------------------------------------------
 
-  describe("Shutdown log sequence (DMN-04)", () => {
-    it("DMN-04: shutdown subsystems stop in correct defined order", () => {
+  describe("Shutdown log sequence", () => {
+    it("shutdown subsystems stop in correct defined order", () => {
       const entries = logCapture.getEntries();
 
       // Current shutdown order (shutdownOrder in daemon manifest):
@@ -205,7 +206,7 @@ describe("Daemon Shutdown", () => {
       expect(result.matched, result.error).toBe(true);
     });
 
-    it("DMN-04: no error-level logs during shutdown sequence (excluding exit override)", () => {
+    it("no error-level logs during shutdown sequence (excluding exit override)", () => {
       const entries = logCapture.getEntries();
 
       // Find the index of "Graceful shutdown initiated" to isolate shutdown logs
@@ -243,7 +244,8 @@ describe("Daemon Shutdown", () => {
   // instead of the production `createSystemTimers()`. Every `TimerPort.setTimeout`
   // and `TimerPort.setInterval` invocation during bootstrap was recorded.
   //
-  // After SIGTERM (triggered by DMN-02 above) the daemon's graceful-shutdown
+  // After SIGTERM (triggered by the WebSocket close-frame test above) the
+  // daemon's graceful-shutdown
   // sequence must have called either `handle.cancel()` or `handle.unref()` on
   // every long-running interval. A long-running interval is defined as:
   //   - kind === "interval" (recurring sweep / prune / watchdog), OR

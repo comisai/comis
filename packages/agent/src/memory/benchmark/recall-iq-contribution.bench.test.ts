@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated KEYLESS recall-IQ contribution harness (IQ-04, Phase 102-06) -- the
- * FREE, deterministic, no-API-cost measurement of whether the Phase-102 recall-IQ
+ * Env-gated KEYLESS recall-IQ contribution harness -- the
+ * FREE, deterministic, no-API-cost measurement of whether the recall-IQ
  * knobs (MMR diversity re-rank + LLM-free query understanding) actually CONTRIBUTE
  * to recall, and the rigorous proof that they regress NOTHING when off.
  *
- * WHY THIS HARNESS EXISTS (the honest gap the Phase-102 gate must measure -- the
- * SAME structural finding the Phase-100 KG-05 + Phase-101 REASON-05 gates verified):
+ * WHY THIS HARNESS EXISTS (the honest gap this gate must measure -- the
+ * SAME structural finding the graph-spread + reasoning-observations gates verified):
  * the shipping QA + retrieval + contradiction harnesses construct `createMemoryRecall`
  * WITHOUT `mmr`, WITHOUT `queryUnderstanding`, and WITHOUT an `embeddingStore`
  * (verified retrieval-harness.bench.test.ts:225-247 -- the recall config there carries
  * maxResults/minScore/includeTrustLevels/rerank/scoring ONLY). So with every IQ knob
  * DEFAULT-OFF they exercise the IQ features NOT AT ALL -- running `pnpm bench:memory qa`
- * as-built reproduces the Phase-98 baseline with the IQ features dormant (a NULL result
+ * as-built reproduces the prior baseline with the IQ features dormant (a NULL result
  * for the QA headline). To measure the IQ read-side claims HONESTLY and for FREE, this
  * harness wires the SAME production recall pipeline (`createMemoryRecall`) to the SAME
  * production adapters (`SqliteMemoryAdapter` + `createSqliteMemoryEmbeddingStore` +
@@ -46,7 +46,7 @@
  *     does too is POPULATE the fixtures (memories + their embeddings); production stores
  *     them via the ingest/embedding pipeline.
  *
- * KEYLESS (binding-constraint-#8 honest protocol): no answer model, no judge, no API key,
+ * KEYLESS (the honest no-key protocol): no answer model, no judge, no API key,
  * no provider call, no cost. The MMR-diversity probe needs EMBEDDINGS, but it does NOT
  * need a model: it stores fixtures with EXPLICIT 4-dim embedding vectors and queries the
  * vector lane with an EXPLICIT query vector (number[]), so the diversity claim is
@@ -58,7 +58,7 @@
  * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import
  * @comis/memory (a devDependency) -- the agent->memory cut excludes the `.test.ts`
  * suffix (source-rules.test.ts `excludeFileSuffixes: [".test.ts"]`). Mirrors the
- * blessed precedent graph-spread-lane-contribution.bench.test.ts (KG-05) /
+ * blessed precedent graph-spread-lane-contribution.bench.test.ts /
  * retrieval-harness.bench.test.ts.
  *
  * SECURITY: fresh `mkdtempSync` tmp DB (NEVER ~/.comis), `trustLevel:"learned"`,
@@ -106,7 +106,7 @@ const BENCH_NOW = 1_700_000_000_000;
 const HARNESS_VERSION = "phase-102-06-v1";
 /** Whether a real text-query embedding lane would light up (model present). Recorded for
  *  disclosure; the deterministic diversity claim supplies its own vectors, so it does NOT
- *  depend on this flag (the KG-05 `vectorLane` precedent). */
+ *  depend on this flag (the graph-spread `vectorLane` precedent). */
 const VECTOR_LANE = !!process.env.LLAMA_MODEL_PATH;
 
 /** dims=4 keeps the vec index tiny + the fixtures readable; the explicit vectors below are 4-dim. */
@@ -133,7 +133,7 @@ const BENCH_SESSION_KEY: SessionKey = {
 
 /**
  * The agent partition the memories are ingested under -- AND the agentId recall is called
- * with. THE SCOPE IS LOAD-BEARING (T-102-03-01 / T-102-04 scope): the MMR embedding read
+ * with. THE SCOPE IS LOAD-BEARING: the MMR embedding read
  * AND the temporal-spread walk filter on `(tenant_id, agent_id)`, and recall derives the
  * scope as `agentId ?? sessionKey.agentId ?? "default"`. The SessionKey carries NO
  * `agentId`, so recall MUST be called with this explicit `agentId` or the scoped reads
@@ -238,7 +238,7 @@ function writeReport(reportDir: string, name: string, report: unknown): string {
 // CLAIM 1 -- MMR diversity contribution (+ lambda-sweep)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("recall-IQ: MMR diversity contribution (IQ-04 claim 1, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("recall-IQ: MMR diversity contribution (claim 1, keyless gated)", () => {
   // Three candidates, all FTS-matched by the query, with EXPLICIT 4-dim embeddings:
   //   - DUP_A and DUP_B are near-duplicates (cosine ~ 1) and the TWO most FTS-relevant docs
   //     (DUP_A rank-1, DUP_B rank-2 by FTS term frequency).
@@ -368,7 +368,7 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: MMR diversity contribution (IQ-04 clai
 // CLAIM 2 -- intent reweight raises the targeted (temporal) lane's contribution
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("recall-IQ: intent reweight contribution (IQ-04 claim 2, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("recall-IQ: intent reweight contribution (claim 2, keyless gated)", () => {
   // A temporal-marker query ("when did ... last ...") is classified `temporal`, which
   // up-weights the temporal lane (intentMultiplier(temporal,"temporal")=1.5). The temporal
   // lane is lit via the REAL createSqliteMemoryTemporalStore: a SEED memory (FTS-matched +
@@ -459,7 +459,7 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: intent reweight contribution (IQ-04 cl
 // CLAIM 3 -- NL temporal-range filter narrows recall to the occurred_at window
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("recall-IQ: NL temporal-range filter (IQ-04 claim 3, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("recall-IQ: NL temporal-range filter (claim 3, keyless gated)", () => {
   // Two memories matching the same lexical query, one INSIDE a "last week" window and one
   // far OUTSIDE it. With temporalParse ON, parseTemporalRange("...last week...", now) yields
   // an occurred_at range that the scoped query ANDs in -> ONLY the in-window doc survives.
@@ -557,11 +557,11 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: NL temporal-range filter (IQ-04 claim 
 // CLAIM 4 -- DEFAULT-OFF byte-identity (the no-regression-by-construction proof)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("recall-IQ: DEFAULT-OFF byte-identity (IQ-04 claim 4, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("recall-IQ: DEFAULT-OFF byte-identity (claim 4, keyless gated)", () => {
   // The SHIPPING config ships every IQ knob OFF. With the stores PRESENT (the daemon always
   // injects them) but the knobs off, recall must be byte-identical to the IQ-features-absent
   // path -- AND readEmbeddings must NEVER be called (the cost/no-op gate). This is the
-  // no-regression-by-construction proof: the Phase-98 baseline holds in the shipping config.
+  // no-regression-by-construction proof: the prior baseline holds in the shipping config.
   const M1 = { id: "", content: "first baseline memory lexical anchor token one", embedding: [1.0, 0.0, 0.0, 0.0] };
   const M2 = { id: "", content: "second baseline memory lexical anchor token two", embedding: [0.0, 1.0, 0.0, 0.0] };
   const M3 = { id: "", content: "third baseline memory lexical anchor token three", embedding: [0.0, 0.0, 1.0, 0.0] };
@@ -594,7 +594,7 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: DEFAULT-OFF byte-identity (IQ-04 claim
     };
 
     // (a) The IQ-features-ABSENT path: no embeddingStore dep, no mmr/queryUnderstanding cfg
-    // (a caller predating Phase 102). This is the pre-IQ reference order.
+    // (a caller predating the IQ features). This is the pre-IQ reference order.
     const recallAbsent = createMemoryRecall(
       {
         memoryPort: adapter,

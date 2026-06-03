@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the DAG-05 context-engine mode-switch helpers extracted from
+ * Tests for the context-engine mode-switch helpers extracted from
  * setupSingleAgent (setup-agents-mode-switch.ts).
  *
  * Covers the detection guard (records only on a REAL prior!=new version

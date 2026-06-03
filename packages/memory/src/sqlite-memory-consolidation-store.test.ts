@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteMemoryConsolidationStore` — the @comis/memory
- * adapter for the segregated `MemoryConsolidationStore` port (Phase 84,
- * CONS-01/03/04/05).
+ * adapter for the segregated `MemoryConsolidationStore` port.
  *
  * The harness constructs a real `SqliteMemoryAdapter` over an in-memory DB so
  * the full schema is initialised (`ensureMemoryColumns` → the 5 observation
@@ -13,11 +12,11 @@
  * `adapter.store(...)` (the production write path) so every candidate row is a
  * real `memories` row the candidate SELECT + the source-mark UPDATE can see.
  *
- * The two central de-risks of the phase are exercised here:
- *   - The ATOMIC apply (CONS-03): one `db.transaction` — a mid-failure leaves
+ * The two central de-risks are exercised here:
+ *   - The ATOMIC apply: one `db.transaction` — a mid-failure leaves
  *     NEITHER an orphan observation NOR partially-marked sources (the rollback
  *     test).
- *   - The STATE-predicate candidate selection (CONS-04): `consolidated_at IS
+ *   - The STATE-predicate candidate selection: `consolidated_at IS
  *     NULL`, NOT a time cursor — proven idempotent by the singleton-bug
  *     regression (running the cycle twice never double-creates), with the old
  *     cursor anti-pattern documented inline as the negative.
@@ -301,7 +300,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(consolidatedAtOf(s2)).toBe(5_000);
     });
 
-    it("RED 2 (NON-DESTRUCTIVE, CONS-05): sources are never deleted — only consolidated_at changes; row count grows by exactly 1 (the new observation)", async () => {
+    it("RED 2 (NON-DESTRUCTIVE): sources are never deleted — only consolidated_at changes; row count grows by exactly 1 (the new observation)", async () => {
       const s1 = await seedMemory({ content: "source 1", createdAt: 100 });
       const s2 = await seedMemory({ content: "source 2", createdAt: 200 });
       const before = memoriesCount(); // 2 raws
@@ -324,7 +323,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(memoriesCount()).toBe(before + 1);
     });
 
-    it("RED 3 (ROLLBACK, CONS-03): a mid-apply failure leaves ZERO observations created AND ZERO sources marked — returns err, never throws", async () => {
+    it("RED 3 (ROLLBACK): a mid-apply failure leaves ZERO observations created AND ZERO sources marked — returns err, never throws", async () => {
       const s1 = await seedMemory({ content: "source 1", createdAt: 100 });
       const s2 = await seedMemory({ content: "source 2", createdAt: 200 });
       const obsBefore = observationCount();
@@ -408,7 +407,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(rowExists(s1)).toBe(true); // source itself untouched
     });
 
-    it("RED 4 (SINGLETON-BUG REGRESSION, CONS-04): running the candidate→apply cycle twice never double-creates — the state predicate is idempotent where a time cursor would NOT be", async () => {
+    it("RED 4 (SINGLETON-BUG REGRESSION): running the candidate→apply cycle twice never double-creates — the state predicate is idempotent where a time cursor would NOT be", async () => {
       // (a) Seed 2 near-duplicate raws. Simulate ONE consolidation run.
       const r1 = await seedMemory({ content: "the sky is blue", createdAt: 100 });
       const r2 = await seedMemory({ content: "sky is blue", createdAt: 200 });
@@ -466,18 +465,18 @@ describe("createSqliteMemoryConsolidationStore", () => {
   });
 
   // =====================================================================
-  // Phase 101 (REASON-01/03) — the INDUCTIVE WRITE PATH through applyConsolidation.
-  // The reasoning job (101-05) writes an inductive observation by setting
+  // The INDUCTIVE WRITE PATH through applyConsolidation.
+  // The reasoning job writes an inductive observation by setting
   // observationKind="inductive" + patternType on plan.observation and calling the
   // SHIPPED applyConsolidation (NOT a parallel write path). applyConsolidation
-  // delegates to insertMemoryRow (101-01 threaded the 2 columns there), so it
+  // delegates to insertMemoryRow (which threads the 2 columns there), so it
   // persists the typed fields with NO adapter logic change. These tests lock that
   // contract end-to-end through the REAL atomic create+mark path — the read-back
   // proves observationKind/patternType survive (Pitfall 5: an insertMemoryRow
   // arg-shift would write the kind into the wrong column).
   // =====================================================================
 
-  describe("applyConsolidation — inductive observation persistence (REASON-01/03)", () => {
+  describe("applyConsolidation — inductive observation persistence", () => {
     /**
      * Build an observation MemoryEntry carrying the typed-observation fields.
      * makeEntry does not spread observationKind/patternType, so they are set here
@@ -550,7 +549,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(readBack).toBeDefined();
       expect(readBack?.observationKind).toBe("inductive");
       expect(readBack?.patternType).toBe("preference");
-      // The trust ceiling the job set (≤ learned, REASON-03) is written verbatim.
+      // The trust ceiling the job set (≤ learned) is written verbatim.
       expect(readBack?.trustLevel).toBe("learned");
     });
 
@@ -558,7 +557,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       const s1 = await seedMemory({ content: "source one", createdAt: 100 });
       const s2 = await seedMemory({ content: "source two", createdAt: 200 });
       // A consolidation observation with NO observationKind/patternType — the
-      // Phase-84 merge path. observation_kind persists NULL; rowToEntry maps NULL
+      // legacy merge path. observation_kind persists NULL; rowToEntry maps NULL
       // back to "merge" (the forward-only default), pattern_type stays absent.
       const obs = makeTypedObservation([s1, s2], { proofCount: 2 });
       expect(obs.observationKind).toBeUndefined(); // precondition — a merge default
@@ -610,15 +609,15 @@ describe("createSqliteMemoryConsolidationStore", () => {
   });
 
   // =====================================================================
-  // Task 2 (Phase 94) — foldIntoExisting (the proof-accrual dual of
+  // foldIntoExisting (the proof-accrual dual of
   // applyConsolidation): grow an EXISTING observation atomically + idempotently
-  // instead of creating a second one (FOLD-01/02). The load-bearing invariants:
+  // instead of creating a second one. The load-bearing invariants:
   //   - GROW: proof_count → |UNION(existing.source_ids, newSourceIds)|, source_ids
   //     UNIONed, content/history appended on a content-changing fold, sources marked.
-  //   - IDEMPOTENT (FOLD-02): re-folding the same/overlapping sources is a no-op
+  //   - IDEMPOTENT: re-folding the same/overlapping sources is a no-op
   //     (set-cardinality recompute, NEVER a blind +=).
   //   - TRUST VERBATIM (anti-laundering): the adapter writes plan.trustLevel
-  //     exactly — a fold can never RAISE trust (the min ceiling is computed in 94-02).
+  //     exactly — a fold can never RAISE trust (the min ceiling is computed upstream).
   //   - REFRESH (half-life): occurred_at + confidence are reset on a fold.
   //   - CONTENT COALESCE: content omitted → unchanged (no FTS churn); new content → updated.
   //   - ATOMIC ROLLBACK: a mid-fold throw rolls back BOTH the grow and the marks (err, never throws).
@@ -728,7 +727,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(res.value.sourceIds).toEqual([s1, s2, s3]);
     });
 
-    it("RED 2 (IDEMPOTENT, FOLD-02): re-folding the SAME source is a no-op — proof_count UNCHANGED (set-cardinality, never blind +=)", async () => {
+    it("RED 2 (IDEMPOTENT): re-folding the SAME source is a no-op — proof_count UNCHANGED (set-cardinality, never blind +=)", async () => {
       const s1 = crypto.randomUUID();
       const s2 = crypto.randomUUID();
       const obs = await seedObservation([s1, s2], { proofCount: 2 });
@@ -1039,12 +1038,12 @@ describe("createSqliteMemoryConsolidationStore", () => {
     });
 
     // =====================================================================
-    // FOLD-03 end-to-end: the WRITE→READ chain on real rows. Seed an observation,
-    // fold a new source via the (94-01) adapter, read back the GROWN proof_count +
+    // End-to-end: the WRITE→READ chain on real rows. Seed an observation,
+    // fold a new source via the adapter, read back the GROWN proof_count +
     // refreshed occurred_at, and prove the grown observation's PROOF SIGNAL out-ranks
     // a one-off raw — cross-run accrual verified end-to-end (the fold path actually
-    // feeds the read-side proof boost). The canonical score()-level FOLD-03 proof is
-    // PROOF_EVAL_FIXTURES in recall-eval.test.ts (Plan 94-03 Task 1); this test proves
+    // feeds the read-side proof boost). The canonical score()-level proof is
+    // PROOF_EVAL_FIXTURES in recall-eval.test.ts; this test proves
     // the WRITE side (fold) feeds that signal on real rows.
     //
     // The proof signal is asserted INLINE: the agent↛memory architecture cut
@@ -1095,7 +1094,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
         // A ONE-OFF raw R (no proofCount → neutral proof signal) — the thing the grown obs must out-rank.
         const oneOffId = await seedMemory({ content: "user_a guessed billing might use mongo", createdAt: 95_000 });
 
-        // FOLD s3 into O via the live 94-01 adapter (the WRITE side of cross-run accrual).
+        // FOLD s3 into O via the live fold adapter (the WRITE side of cross-run accrual).
         const res = await store.foldIntoExisting({
           targetObservationId: obs,
           newSourceIds: [s3],
@@ -1109,7 +1108,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
         expect(res.ok).toBe(true);
         if (!res.ok) return;
 
-        // READ-BACK: the grown + refreshed state (exercises the 94-01 fold on real rows).
+        // READ-BACK: the grown + refreshed state (exercises the fold on real rows).
         expect(proofCountOf(obs)).toBe(3); // 2 prior + 1 new (UNION cardinality)
         expect(occurredAtOf(obs)).toBe(recentMs); // refreshed from the stale 1_000
         expect(confidenceOf(obs)).toBe(1);
@@ -1117,7 +1116,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
         expect(res.value.proofCount).toBe(3);
         expect(res.value.occurredAt).toBe(recentMs);
 
-        // ACCRUAL OUT-RANKS (the FOLD-03 chain): the grown observation's proof signal exceeds the
+        // ACCRUAL OUT-RANKS (the fold chain): the grown observation's proof signal exceeds the
         // one-off raw's. The read clock is `recentMs`, so the freshly-refreshed occurred_at keeps
         // the proof boost non-decayed (half-life would otherwise erode an OLD observation's gain).
         const grown = res.value;
@@ -1175,7 +1174,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       });
     });
 
-    it("does NOT regress the Phase-84 create path: applyConsolidation still creates a fresh observation", async () => {
+    it("does NOT regress the legacy create path: applyConsolidation still creates a fresh observation", async () => {
       const s1 = await seedMemory({ content: "source 1", createdAt: 100 });
       const s2 = await seedMemory({ content: "source 2", createdAt: 200 });
       const obs = makeEntry({
@@ -1200,8 +1199,8 @@ describe("createSqliteMemoryConsolidationStore", () => {
 
   // =====================================================================
   // Error paths — every read/apply degrades to err (NEVER throws), and the
-  // canonical step-tagged WARN fires. Proves the Result boundary (T-84-01:
-  // a damaged DB never crashes the consolidation cron) and covers the
+  // canonical step-tagged WARN fires. Proves the Result boundary (a damaged
+  // DB never crashes the consolidation cron) and covers the
   // catch/parse-failure branches.
   // =====================================================================
 
@@ -1394,7 +1393,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
   });
 
   // =====================================================================
-  // WR-01 — a misaligned / truncated embedding BLOB must NOT abort the run.
+  // A misaligned / truncated embedding BLOB must NOT abort the run.
   // The documented contract (RESEARCH Pitfall 7 + decodeEmbedding's JSDoc) is
   // that embeddings are OPTIONAL on a candidate: a bad blob degrades that ONE
   // candidate to `embedding: undefined` (the clusterer falls back to entity/FTS
@@ -1405,7 +1404,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
   // err → the job aborts the entire consolidation run on one bad row.
   // =====================================================================
 
-  describe("WR-01: a corrupt/misaligned embedding blob degrades one candidate, never aborts the run", () => {
+  describe("a corrupt/misaligned embedding blob degrades one candidate, never aborts the run", () => {
     /**
      * Monkeypatch the candidate SELECT to return a caller-supplied list of raw
      * rows. Each base row is a REAL seeded `memories` row (so every required
@@ -1455,7 +1454,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       // (NOT a multiple of 4) — exactly the pooled-Buffer shape that makes
       // `new Float32Array(buf.buffer, buf.byteOffset, len)` throw a RangeError.
       // Pre-fix that throw is caught → err → the JOB aborts the WHOLE run on
-      // this one row (the WR-01 bug). Post-fix the decode copies to a 0-aligned
+      // this one row (the misalignment bug). Post-fix the decode copies to a 0-aligned
       // buffer first, so the run completes AND this candidate decodes correctly.
       const backing = Buffer.alloc(18);
       Buffer.from(new Float32Array([1, 2, 3, 4]).buffer).copy(backing, 2);
@@ -1509,16 +1508,16 @@ describe("createSqliteMemoryConsolidationStore", () => {
     });
   });
 
-  // Phase 101 (REASON-04): the corpus-wide k-NN cosine DISTANCES read — the
-  // surprisal-gate engine the agent cannot run as SQL. The 101-02 wave landed
+  // The corpus-wide k-NN cosine DISTANCES read — the
+  // surprisal-gate engine the agent cannot run as SQL. An earlier wave landed
   // the type-only port method + a contract-satisfying graceful-degrade adapter
-  // body (ok([])); THIS wave (101-03) wires the real sqlite-vec searchByVector
+  // body (ok([])); the current adapter wires the real sqlite-vec searchByVector
   // surprisal query (the GLOBAL vec table, ascending distances). The first test
   // pins the FORWARD-COMPATIBLE contract surface that holds for BOTH the degrade
   // body and the real impl; the RED tests below additionally PROVE the real
-  // read returns actual neighbour distances (the 101-02 stub returned ok([]),
+  // read returns actual neighbour distances (the earlier stub returned ok([]),
   // so they FAIL on the pre-patch adapter — a clean RED).
-  describe("knnDistances — surprisal k-NN read (REASON-04)", () => {
+  describe("knnDistances — surprisal k-NN read", () => {
     it("returns ok with a sorted non-negative number[] of distances and never throws (the surprisal-gate contract)", async () => {
       await seedMemory({ content: "a neighbour candidate", createdAt: 100 });
       const res = await store.knnDistances([0.1, 0.2, 0.3, 0.4], 5, AGENT_A, TENANT_A);
@@ -1527,7 +1526,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(Array.isArray(res.value)).toBe(true);
       // An empty list is valid (sqlite-vec unavailable / no neighbours); a
       // non-empty list MUST be sorted ascending (closer first) and non-negative —
-      // the invariant both the 101-02 degrade body and the 101-03 impl uphold.
+      // the invariant both the degrade body and the real impl uphold.
       for (let i = 1; i < res.value.length; i++) {
         expect(res.value[i]).toBeGreaterThanOrEqual(res.value[i - 1]!);
       }
@@ -1553,7 +1552,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(res.ok).toBe(true);
       if (!res.ok) return;
 
-      // The 101-02 stub returned ok([]) — THIS is the RED-distinguishing
+      // The earlier stub returned ok([]) — THIS is the RED-distinguishing
       // assertion: the real searchByVector read surfaces actual neighbours.
       expect(res.value.length).toBeGreaterThan(0);
       expect(res.value.length).toBeLessThanOrEqual(k); // ≤ k neighbours (the cap)
@@ -1619,7 +1618,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
     it("returns err (never throws) when the underlying vec query throws", async () => {
       // Monkeypatch db.prepare so the vec MATCH query throws on execution; the
       // adapter must catch it and return err — the surprisal gate degrades for
-      // that candidate, the run never crashes (T-101-03-03).
+      // that candidate, the run never crashes.
       await seedMemory({ content: "neighbour", createdAt: 100, embedding: [0.1, 0.2, 0.3, 0.4] });
       const warns: { obj: Record<string, unknown>; msg: string }[] = [];
       const logger = {
@@ -1654,14 +1653,14 @@ describe("createSqliteMemoryConsolidationStore", () => {
   });
 
   // =====================================================================
-  // markReasoned — the deductive-only drain (WR-01, REASON-02). Marks
+  // markReasoned — the deductive-only drain. Marks
   // sources consolidated_at WITHOUT creating an observation, so a scope that
   // yielded only a deductive triple (no inductive observation to create) still
   // leaves the candidate pool. Reuses the SAME scoped, fail-closed,
   // non-destructive markConsolidated UPDATE as the apply/fold paths.
   // =====================================================================
 
-  describe("markReasoned — deductive-only drain (WR-01)", () => {
+  describe("markReasoned — deductive-only drain", () => {
     it("marks in-scope sources consolidated_at == now and returns the changed count", async () => {
       const a = await seedMemory({ content: "deductive src one", createdAt: 100 });
       const b = await seedMemory({ content: "deductive src two", createdAt: 200 });
@@ -1699,7 +1698,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(consolidatedAtOf(other)).toBeNull(); // untouched under its own tenant
     });
 
-    it("NON-DESTRUCTIVE (CONS-05): the source row + content survive — only consolidated_at changes", async () => {
+    it("NON-DESTRUCTIVE: the source row + content survive — only consolidated_at changes", async () => {
       const a = await seedMemory({ content: "keep my content", createdAt: 100 });
       const before = memoriesCount();
 

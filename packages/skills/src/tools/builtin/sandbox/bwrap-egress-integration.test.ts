@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * R1 SPIKE GO/NO-GO: This suite is the Phase 5 hard gate.
+ * EGRESS GO/NO-GO: This suite is the hard gate for the egress containment claims.
  * Status: OUTSTANDING — must be run on the Linux production host class.
- * Phase 7 containment claims ("non-bypassable", "kernel-locked egress") are
+ * The containment claims ("non-bypassable", "kernel-locked egress") are
  * publish-gated on this suite passing on that host class.
  *
  * This file MUST compile cleanly on macOS (tsc --noEmit passes).
  * On macOS the entire describe block is silently skipped — no false failures.
  * On Linux with bwrap available, all three groups run as live assertions.
  *
- * FILE SPLIT (122-07): this file owns the egress-TRANSPORT proof — Group A
+ * FILE SPLIT: this file owns the egress-TRANSPORT proof — Group A
  * (unix-socket bind reachable inside `--unshare-net`), Group B (raw direct-TCP
  * egress blocked), Group C (secure-profile credential absence + the child-env
  * scrub). The terminal-driver SCOPE cells built via the production
@@ -28,14 +28,14 @@ import { existsSync, unlinkSync } from "node:fs";
 
 import { systemNowMs } from "@comis/core";
 import { BwrapProvider } from "./bwrap-provider.js";
-// SEC-07: the production child-env scrubber (a sibling terminal-driver primitive,
+// The production child-env scrubber (a sibling terminal-driver primitive,
 // same package). Group C asserts it strips the interpreter-control / nested-CLI
 // markers BEFORE the secure-profile bwrap forwards the env into the jail.
 import { scrubChildEnv } from "../terminal-driver/terminal-env-scrub.js";
 
 // ---------------------------------------------------------------------------
 // Gate function — mirrors the canRealBwrapSandbox() idiom from exec-tool.test.ts
-// but WITHOUT the opt-in env flag: R1 spike tests use only the local broker
+// but WITHOUT the opt-in env flag: these spike tests use only the local broker
 // (no public network), so no cost-gate is needed.
 // ---------------------------------------------------------------------------
 
@@ -88,10 +88,10 @@ const createdSocketPaths: string[] = [];
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!egressIntegrationAvailable)(
-  "R1 spike: rootless --unshare-net broker-only egress (Linux only)",
+  "egress spike: rootless --unshare-net broker-only egress (Linux only)",
   () => {
     // -----------------------------------------------------------------------
-    // Group A: R1 GO criterion 2 — Unix socket bind-mount reachable from inside
+    // Group A: GO criterion — Unix socket bind-mount reachable from inside
     //          the --unshare-net namespace.
     // -----------------------------------------------------------------------
     describe("Group A: unix socket bind-mount is reachable inside --unshare-net namespace", () => {
@@ -192,7 +192,7 @@ describe.skipIf(!egressIntegrationAvailable)(
     });
 
     // -----------------------------------------------------------------------
-    // Group B: R1 GO criterion 3 — Direct TCP egress fails inside --unshare-net.
+    // Group B: GO criterion — Direct TCP egress fails inside --unshare-net.
     //          This is the live proof that --unshare-net actually isolates the
     //          network namespace (not just the route table).
     // -----------------------------------------------------------------------
@@ -247,12 +247,12 @@ describe.skipIf(!egressIntegrationAvailable)(
     });
 
     // -----------------------------------------------------------------------
-    // Group C: EGRESS-02 live — credential files absent inside the
+    // Group C: live — credential files absent inside the
     //          secure-profile namespace.
     //          Uses BwrapProvider.buildArgs() with secureCredentialHome:true
     //          to generate args via the same production code path.
     // -----------------------------------------------------------------------
-    describe("Group C: EGRESS-02 — credential files absent inside secure-profile namespace", () => {
+    describe("Group C: credential files absent inside secure-profile namespace", () => {
       let provider: BwrapProvider;
       let sandboxArgs: string[];
 
@@ -401,10 +401,10 @@ describe.skipIf(!egressIntegrationAvailable)(
       );
 
       it(
-        "the production scrubChildEnv strips NODE_OPTIONS / CLAUDECODE / CLAUDE_CODE_* before the jail spawn (SEC-07)",
+        "the production scrubChildEnv strips NODE_OPTIONS / CLAUDECODE / CLAUDE_CODE_* before the jail spawn",
         { timeout: 15_000 },
         () => {
-          // SEC-07 env-scrub. IMPORTANT: BwrapProvider.buildArgs emits NO
+          // Env-scrub. IMPORTANT: BwrapProvider.buildArgs emits NO
           // --clearenv, so bwrap forwards the spawner env VERBATIM — the secure
           // PROFILE does not itself drop NODE_OPTIONS. The defense is the worker's
           // scrubChildEnv step (terminal-env-scrub.ts), which the terminal worker
@@ -413,7 +413,7 @@ describe.skipIf(!egressIntegrationAvailable)(
           // confirms (a) the markers are removed, then (b) the bwrap profile
           // forwards the SCRUBBED env into the jail with the markers gone. The
           // end-to-end production path (buildSpawnPlan -> bwrap) is also asserted
-          // in the sibling terminal-scope-matrix.linux.test.ts SEC-07 cell; this
+          // in the sibling terminal-scope-matrix.linux.test.ts env-scrub cell; this
           // keeps the transport file's env claim honest about WHERE the scrub lives.
           const dangerousEnv: NodeJS.ProcessEnv = {
             ...process.env,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for buildActivityRenderers (WIRE-02, §17.7).
+ * Tests for buildActivityRenderers (§17.7).
  *
  * The helper routes each registered channel's declared ChannelCapability to a
  * rendering strategy via selectStrategy(caps, channelType) and constructs the
@@ -9,10 +9,10 @@
  * so the EditPlace branch defers the render-actions channelId binding to turn
  * time. Echo→TestSink also goes through the factory (it ignores channelId).
  *
- * Phase 71 (this plan) flips the prior Phase-70 assertion: the four EditPlace
+ * This suite flips the earlier assertion: the four EditPlace
  * channels (Telegram/Discord/Slack/WhatsApp) are now CONSTRUCTIBLE — their
- * per-channel render-actions adapters landed in 71-02/03/04 and the factories
- * are barrel-exported (71-05). These tests assert: the live TestSink factory
+ * per-channel render-actions adapters have landed and the factories
+ * are barrel-exported. These tests assert: the live TestSink factory
  * for Echo, an EditPlace factory PRESENT for an edit-capable channel, and
  * no-capability channels skipped.
  *
@@ -83,7 +83,7 @@ function makeTime(): { timer: ReturnType<typeof createFakeTimers>; clock: Return
   return { timer: createFakeTimers(), clock: createFakeClock(0) };
 }
 
-describe("buildActivityRenderers (WIRE-02)", () => {
+describe("buildActivityRenderers", () => {
   it("constructs a live TestSink renderer factory for the Echo channel, keyed by channelType", () => {
     const adapters = new Map<string, ChannelPort>([["echo", makeStubAdapter("echo")]]);
     const plugins = new Map<string, ChannelPluginPort>([["echo", makeStubPlugin("echo", makeCaps())]]);
@@ -103,9 +103,9 @@ describe("buildActivityRenderers (WIRE-02)", () => {
 
   it("constructs an EditPlace renderer factory for an edit-capable channel (Telegram)", () => {
     // editMessages → EditPlace. Its per-channel ActivityRenderActions adapter
-    // landed in 71-02 and the factory is barrel-exported (71-05), so the
+    // has landed and the factory is barrel-exported, so the
     // EditPlace branch now PRODUCES a per-channelId factory (this inverts the
-    // Phase-70 "omits EditPlace until its adapter lands" assertion).
+    // earlier "omits EditPlace until its adapter lands" assertion).
     const adapters = new Map<string, ChannelPort>([["telegram", makeStubAdapter("telegram")]]);
     const plugins = new Map<string, ChannelPluginPort>([
       ["telegram", makeStubPlugin("telegram", makeCaps({ editMessages: true }))],
@@ -177,7 +177,7 @@ describe("buildActivityRenderers (WIRE-02)", () => {
   });
 });
 
-describe("buildActivityRenderers — non-EditPlace strategies (CHAN-11, §18.3 matrix)", () => {
+describe("buildActivityRenderers — non-EditPlace strategies (§18.3 matrix)", () => {
   it("constructs a DeleteAndRepost factory for Signal (deleteMessages, no edit)", () => {
     // deleteMessages without editMessages → DeleteAndRepost (selectStrategy).
     const adapters = new Map<string, ChannelPort>([["signal", makeStubAdapter("signal")]]);
@@ -246,8 +246,8 @@ describe("buildActivityRenderers — non-EditPlace strategies (CHAN-11, §18.3 m
     expect(factory!("user@example.com").strategy).toBe("DigestOnly");
   });
 
-  it("threads PER-CALL markers (not just the boot-time default) into the renderer it builds (WR-04)", async () => {
-    // WR-04: markers were baked once from the DEFAULT agent's theme and shared
+  it("threads PER-CALL markers (not just the boot-time default) into the renderer it builds", async () => {
+    // Previously, markers were baked once from the DEFAULT agent's theme and shared
     // across every per-turn renderer, so a non-default agent rendered with the
     // wrong theme. The factory must accept per-call markers (resolved per-agent in
     // the coordinatorFactory) that OVERRIDE the boot-time default. Drive an IRC

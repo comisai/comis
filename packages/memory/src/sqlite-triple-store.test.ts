@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteTripleStore` — the @comis/memory adapter for the
- * `TripleStorePort` (Phase 100, Track F — KG-01/KG-03 skeleton).
+ * `TripleStorePort`.
  *
  * This is the SKELETON cut: `upsertTriple` is INSERT-ONLY (always writes a
- * current-truth row — the trust-first invalidation transaction is Plan 100-02);
+ * current-truth row — the trust-first invalidation transaction comes later);
  * `asOf(t)` is the working valid-time query; `spreadLane` stubs to `[]` (the
- * recursive-CTE spread is Plan 100-04).
+ * recursive-CTE spread comes later).
  *
  * The harness constructs a real `SqliteMemoryAdapter` over an in-memory DB (so
  * `PRAGMA foreign_keys = ON` is set via `openSqliteDatabase` and the triple
  * table's `ON DELETE CASCADE` fires) and gets `adapter.getDb()`.
  *
- * The load-bearing security boundary (T-100-01-01, the §5.2 / ENT-03 pattern):
+ * The load-bearing security boundary (the §5.2 pattern):
  * every read/write filters `WHERE tenant_id = ? AND agent_id = ?` (bound params).
  * A triple written under one (tenant, agent) MUST NEVER be returned for another
  * scope by subject coincidence — proven by the "scope" describes.
@@ -185,7 +185,7 @@ describe("createSqliteTripleStore", () => {
   });
 
   // =====================================================================
-  // ISOLATION (T-100-01-01): asOf is (tenant, agent) scoped
+  // ISOLATION: asOf is (tenant, agent) scoped
   // =====================================================================
 
   describe("(tenant, agent) scope isolation", () => {
@@ -223,7 +223,7 @@ describe("createSqliteTripleStore", () => {
   });
 
   // =====================================================================
-  // TRUST-FIRST SINGLE-CURRENT-TRUTH INVALIDATION (KG-02) — Plan 100-02.
+  // TRUST-FIRST SINGLE-CURRENT-TRUTH INVALIDATION.
   //
   // A contradiction is same (tenant, agent, subject, predicate) + DIFFERENT
   // object + an incumbent current-truth (t_valid_end IS NULL). It is resolved
@@ -234,7 +234,7 @@ describe("createSqliteTripleStore", () => {
   // idempotent corroboration; non-overlapping occurred intervals coexist.
   // =====================================================================
 
-  describe("trust-first single-current-truth invalidation (KG-02)", () => {
+  describe("trust-first single-current-truth invalidation", () => {
     it("no incumbent: the first write on (s,p) is the sole current-truth row (t_valid_end NULL)", async () => {
       const wrote = await store.upsertTriple(
         makeTriple({ subject: "ada", predicate: "born_in", object: "london", trust: "learned" }),
@@ -322,8 +322,8 @@ describe("createSqliteTripleStore", () => {
       expect(pastRead.ok && pastRead.value.some((r) => r.object === "globex")).toBe(false);
     });
 
-    it("new < incumbent (SUITE-04: older system 'Paris' vs newer external 'Berlin'): a newer LOW-trust claim NEVER supersedes — incumbent stays current, the new row is recorded-but-not-believed, BOTH kept", async () => {
-      // THE LOAD-BEARING trust-first-not-recency-first assertion (KG-02 / SUITE-04).
+    it("new < incumbent (older system 'Paris' vs newer external 'Berlin'): a newer LOW-trust claim NEVER supersedes — incumbent stays current, the new row is recorded-but-not-believed, BOTH kept", async () => {
+      // THE LOAD-BEARING trust-first-not-recency-first assertion.
       // Older, higher-trust fact ("Paris", system).
       const paris = await store.upsertTriple(
         makeTriple({
@@ -580,8 +580,8 @@ describe("createSqliteTripleStore", () => {
   });
 
   // =====================================================================
-  // AS-OF TIME-TRAVEL (KG-03) — valid-time vs txn-time variants +
-  // currentTruth default-filter (the Graphiti opt-in-leak fix). Plan 100-03.
+  // AS-OF TIME-TRAVEL — valid-time vs txn-time variants +
+  // currentTruth default-filter (the Graphiti opt-in-leak fix).
   //
   // - asOf(t, scope, "valid")  → "what was BELIEVED true at t":
   //     t_valid_start <= t AND (t_valid_end IS NULL OR t_valid_end > t)
@@ -593,7 +593,7 @@ describe("createSqliteTripleStore", () => {
   // All three are (tenant, agent) scoped.
   // =====================================================================
 
-  describe("as-of time-travel: valid-time vs txn-time variants (KG-03)", () => {
+  describe("as-of time-travel: valid-time vs txn-time variants", () => {
     it("asOf defaults to valid-time (a 2-arg call is byte-identical to mode 'valid')", async () => {
       await store.upsertTriple(makeTriple({ subject: "ada", object: "london", tValidStart: T0 }), SCOPE_A);
 
@@ -706,7 +706,7 @@ describe("createSqliteTripleStore", () => {
     });
   });
 
-  describe("currentTruth default-filter — excludes expired/invalidated edges (the Graphiti leak fix, KG-03)", () => {
+  describe("currentTruth default-filter — excludes expired/invalidated edges (the Graphiti leak fix)", () => {
     it("after a supersession, currentTruth returns ONLY the new current-truth object — the soft-closed loser is NOT returned", async () => {
       // external "acme" then a higher-trust "globex" → "acme" soft-closed.
       await store.upsertTriple(
@@ -729,7 +729,7 @@ describe("createSqliteTripleStore", () => {
     });
 
     it("a recorded-but-not-believed (new < incumbent) row is NEVER in currentTruth", async () => {
-      // SUITE-04 shape: older system "Paris" stays current; newer external
+      // Anti-poisoning shape: older system "Paris" stays current; newer external
       // "Berlin" is recorded ALREADY-CLOSED (not believed) → must not appear.
       await store.upsertTriple(
         makeTriple({ subject: "france", predicate: "capital_is", object: "Paris", trust: "system", tValidStart: T0, tOccurred: T0 }),
@@ -794,11 +794,7 @@ describe("createSqliteTripleStore", () => {
   });
 
   // =====================================================================
-  // spreadLane stub (Plan 100-04 implements it)
-  // =====================================================================
-
-  // =====================================================================
-  // spreadLane: the bounded recursive-CTE neighbourhood walk (KG-04).
+  // spreadLane: the bounded recursive-CTE neighbourhood walk.
   //
   // Walks the triple store's OWN current-truth subject→object edges from the
   // seed subjects, depth- + fan-out-capped, scope + current-truth filtered ON
@@ -811,7 +807,7 @@ describe("createSqliteTripleStore", () => {
   // A-knows->Z. depth=2 reaches B + C, not D/X/Z.
   // =====================================================================
 
-  describe("spreadLane — bounded recursive-CTE current-truth walk (KG-04)", () => {
+  describe("spreadLane — bounded recursive-CTE current-truth walk", () => {
     /** Seed a memory row under SCOPE_A so a triple's source_memory_id FK resolves + the lane can hydrate it. */
     async function seedMemory(id: string, scope = SCOPE_A, content = `content for ${id}`): Promise<string> {
       const entry: MemoryEntry = {

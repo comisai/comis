@@ -2,12 +2,12 @@
 /**
  * Injection engine tests.
  *
- * Anchors (INJECT-01, INJECT-02 edge-case matrix):
- *   - empty rules → Authorization: Bearer <secret>  (INJECT-01 default)
- *   - replaceHeader absent = no-op                  (INJECT-02 security invariant)
+ * Edge-case matrix:
+ *   - empty rules → Authorization: Bearer <secret>  (default)
+ *   - replaceHeader absent = no-op                  (security invariant)
  *   - setParam preserves verbatim query bytes        (raw-append, not re-encode)
- *   - CRLF in header name rejected by WHATWG Headers (T-03-03 tamper guard)
- *   - removeHeader operates case-insensitively       (T-03-04)
+ *   - CRLF in header name rejected by WHATWG Headers (tamper guard)
+ *   - removeHeader operates case-insensitively
  *
  * @module
  */
@@ -32,9 +32,9 @@ function makeInput(
   return { headers: h, url: new URL(url), secret: TEST_SECRET };
 }
 
-// ── applyInjections — default-Bearer (INJECT-01) ──────────────────────────────
+// ── applyInjections — default-Bearer ──────────────────────────────────────────
 
-describe("applyInjections — default-Bearer (INJECT-01)", () => {
+describe("applyInjections — default-Bearer", () => {
   it("injects Authorization: Bearer <secret> when no rules are provided", () => {
     const input = makeInput("https://api.example.com/v1");
     applyInjections([], input);
@@ -86,7 +86,7 @@ describe("applyInjections — setHeader bearer format", () => {
   });
 });
 
-describe("applyInjections — setHeader with removeAuthorization (T-03-01)", () => {
+describe("applyInjections — setHeader with removeAuthorization", () => {
   it("sets the named header and removes the authorization header when removeAuthorization is true", () => {
     const input = makeInput("https://api.example.com/", {
       authorization: "Bearer old-token",
@@ -150,7 +150,7 @@ describe("applyInjections — setHeader raw GitHub Basic pattern", () => {
   });
 });
 
-// ── applyInjections — replaceHeader (INJECT-02 security invariant) ─────────────
+// ── applyInjections — replaceHeader (security invariant) ──────────────────────
 
 describe("applyInjections — replaceHeader when header is present", () => {
   it("replaces the header value when the header already exists", () => {
@@ -165,7 +165,7 @@ describe("applyInjections — replaceHeader when header is present", () => {
   });
 });
 
-describe("applyInjections — replaceHeader absent = no-op (INJECT-02 critical security invariant)", () => {
+describe("applyInjections — replaceHeader absent = no-op (critical security invariant)", () => {
   it("does not set the header when it is absent — no credential injection into unintended requests", () => {
     const input = makeInput("https://api.example.com/");
     const rules: readonly InjectionRule[] = [
@@ -211,7 +211,7 @@ describe("applyInjections — removeHeader", () => {
   });
 });
 
-describe("applyInjections — removeHeader case-insensitive (T-03-04)", () => {
+describe("applyInjections — removeHeader case-insensitive", () => {
   it("removes Authorization header set with capital A when rule uses lowercase 'authorization'", () => {
     const h = new Headers();
     h.set("Authorization", "Bearer capital-A-set");
@@ -279,11 +279,11 @@ describe("applyInjections — multiple rules are applied in declaration order", 
   });
 });
 
-// ── applyInjections — CRLF tamper guard (T-03-03) ────────────────────────────
+// ── applyInjections — CRLF tamper guard ──────────────────────────────────────
 
-describe("applyInjections — CRLF in header name rejected by WHATWG Headers (T-03-03)", () => {
-  it("CRLF injection via setHeader throws — Node 22 WHATWG Headers rejects invalid header names (WR-04)", () => {
-    // WR-04: Node 22 always throws on CRLF in header names
+describe("applyInjections — CRLF in header name rejected by WHATWG Headers", () => {
+  it("CRLF injection via setHeader throws — Node 22 WHATWG Headers rejects invalid header names", () => {
+    // Node 22 always throws on CRLF in header names
     // ("Headers.set: 'x-evil\nX-Injected' is an invalid header name.").
     // Assert unconditionally — the weakened either/or branch would silently
     // accept a hypothetical implementation that strips the CRLF and injects
@@ -321,7 +321,7 @@ describe("applySetParam — existing query preserved verbatim", () => {
     );
   });
 
-  it("existing query bytes preserved verbatim — percent-encoded slash is NOT double-encoded (T-03-02)", () => {
+  it("existing query bytes preserved verbatim — percent-encoded slash is NOT double-encoded", () => {
     // The %2F must remain %2F after injection — not become %252F
     const originalUrl = "https://s3.amazonaws.com/obj?X-Amz-Signature=abc%2Fdef";
     const input = makeInput(originalUrl);

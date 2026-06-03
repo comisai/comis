@@ -10,8 +10,7 @@
  *       • success: nothing (the model's reply carries the outcome).
  *       • failure: exactly one failure digest (header "<failure> {errorKind}",
  *         glyph from the resolved theme `markers` — default `[FAILED]`) carrying
- *         the activity trail, so a failed turn still leaves a diagnostic record
- *         (T-70-07-02).
+ *         the activity trail, so a failed turn still leaves a diagnostic record.
  *       • trivial / silent / aborted: nothing.
  *
  * No timers — DigestOnly is purely end-of-turn. Implements the core
@@ -33,7 +32,7 @@ import { eventLabel } from "./render.js";
  * Failure-digest header glyph when no theme markers are injected (default-theme
  * parity). DigestOnly does NOT route through the shared `failureLabel` helper:
  * Email's failure header is the bracketed ASCII tag `"[FAILED]"`, NOT the `❌`
- * the shared `DEFAULT_MARKERS` use. This literal is the pre-75-06 Phase-72
+ * the shared `DEFAULT_MARKERS` use. This literal is the historical Email
  * default; a marker-less call MUST stay byte-identical to it (golden-fixture
  * parity for the 5 Email digest fixtures).
  */
@@ -42,19 +41,19 @@ const DEFAULT_FAILURE_MARKER = "[FAILED]";
 export interface DigestOnlyDeps {
   actions: ActivityRenderActions;
   /**
-   * Optional trailer appended to the `[FAILED]` digest body (APV-10 / SEC-06).
+   * Optional trailer appended to the `[FAILED]` digest body.
    * Email cannot show buttons, so it injects this to append a single-use,
    * time-bounded, signed approval LINK when the buffered trail carries a
    * `kind:"approval"` event. Receives the full buffered trail; returns the
    * trailer text (already newline-prefixed by this strategy) or `undefined`
    * when there is nothing to append (no approval event / no link minter). The
-   * trailer must carry an OPAQUE link only — never a raw HMAC/secret (T-73-31).
+   * trailer must carry an OPAQUE link only — never a raw HMAC/secret.
    */
   appendToFailureDigest?: (trail: readonly ActivityEvent[]) => string | undefined;
   /**
-   * Resolved theme status markers (UX-01). The `failure` glyph on the digest
+   * Resolved theme status markers. The `failure` glyph on the digest
    * header follows this. Omitted → the Email default (`[FAILED]`), keeping a
-   * marker-less call byte-identical to the pre-75-06 Phase-72 digest body. Only
+   * marker-less call byte-identical to the historical digest body. Only
    * `failure` is read (success sends nothing; subagent/running never appear on
    * the header).
    */
@@ -74,7 +73,7 @@ export function createDigestOnlyRenderer(deps: DigestOnlyDeps): ChannelActivityR
     const header = `${markers?.failure ?? DEFAULT_FAILURE_MARKER} ${outcome.errorKind}`;
     const body = trail.map((e) => `  • ${eventLabel(e)}`).join("\n");
     const digest = body.length > 0 ? `${header}\n${body}` : header;
-    // Optional approval-link trailer (Email). Absent → byte-stable Phase-72 body.
+    // Optional approval-link trailer (Email). Absent → byte-stable digest body.
     const trailer = appendToFailureDigest?.(trail);
     return trailer !== undefined && trailer.length > 0
       ? `${digest}\n${trailer}`

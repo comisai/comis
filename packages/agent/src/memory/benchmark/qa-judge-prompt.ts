@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure per-category LLM-judge prompt builder (BENCH-03) — the category-specific,
- * LongMemEval-paper-derived grading rubric the gated harness (Plan 89-03) feeds
+ * Pure per-category LLM-judge prompt builder — the category-specific,
+ * LongMemEval-paper-derived grading rubric the gated harness feeds
  * to the judge model via `completeSimple`.
  *
  * Mirrors the discipline of `memory-extraction.ts` (the `STRUCTURED_PROMPT`
@@ -12,7 +12,7 @@
  * PROVENANCE: the rubric strings are ported VERBATIM from the LongMemEval-paper
  * judge prompts as carried by the Hindsight harness (`benchmark_runner.py`
  * `judge_answer`, the category branches at :261-323 + the uniform tail at
- * :329-337), with TWO deliberate adaptations (89-PATTERNS.md Correction #7):
+ * :329-337), with TWO deliberate adaptations:
  *   1. Hindsight's source has a stray negative-verdict typo (it writes the
  *      verdict token with "no" instead of "false") in the single-session
  *      branch — ported here as the corrected `correct=false`.
@@ -20,7 +20,7 @@
  *      pi-ai `completeSimple` has NO response_format arg, so the JSON verdict
  *      contract is instructed IN-PROMPT and parsed by the judge-verdict parser.
  *
- * SECURITY (prompt-injection ordering, Pitfall 3 / T-89-01-03): the rubric and
+ * SECURITY (prompt-injection ordering, Pitfall 3): the rubric and
  * instructions are placed FIRST; the UNTRUSTED dataset slots (`question`,
  * `goldAnswer`, `modelAnswer`) are appended AFTER, in clearly labeled fields, so
  * adversarial dataset content cannot masquerade as judge instructions. The judge

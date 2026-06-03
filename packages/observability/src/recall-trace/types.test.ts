@@ -67,17 +67,17 @@ describe("RecallTraceEventSchema -- well-formed record", () => {
       expect(parsed.data.traceSchema).toBe("comis-recall-trace");
       expect(parsed.data.schemaVersion).toBe(1);
       expect(parsed.data.lanes.vector).toBe(3);
-      // LANES-02: the lanes cluster carries the temporal candidate count (append-only).
+      // The lanes cluster carries the temporal candidate count (append-only).
       expect(parsed.data.lanes.temporal).toBe(1);
       expect(parsed.data.rerank.outcome).toBe("ran");
       expect(parsed.data.ranked[0]!.reason).toBe("included");
     }
   });
 
-  it("requires the temporal lane count on the lanes cluster (LANES-02 — the 4th lane)", () => {
+  it("requires the temporal lane count on the lanes cluster (the 4th lane)", () => {
     // The lanes cluster gained `temporal` (append-only). A record carrying it parses; one
-    // MISSING `temporal` must FAIL — proving the schema was extended (pre-LANES-02 the
-    // field was absent and a record omitting it would have passed).
+    // MISSING `temporal` must FAIL — proving the schema was extended (before the temporal
+    // lane the field was absent and a record omitting it would have passed).
     const withTemporal = makeValidRecord();
     expect(RecallTraceEventSchema.safeParse(withTemporal).success).toBe(true);
 
@@ -98,10 +98,10 @@ describe("RecallTraceEventSchema -- well-formed record", () => {
     expect(parsed.success).toBe(true);
   });
 
-  it("requires the usefulness factor on the score breakdown (FEED-03 — the 5th factor)", () => {
+  it("requires the usefulness factor on the score breakdown (the 5th factor)", () => {
     // The breakdown is the FIVE multiplicative factors now. A breakdown carrying
     // `usefulness: number` parses; one MISSING `usefulness` must FAIL — proving the
-    // schema was extended (pre-FEED-03 the field was absent and this would pass).
+    // schema was extended (before the usefulness factor the field was absent and this would pass).
     const withUsefulness = makeValidRecord();
     expect(RecallTraceEventSchema.safeParse(withUsefulness).success).toBe(true);
     expect(

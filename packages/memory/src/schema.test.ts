@@ -222,9 +222,9 @@ describe("initSchema", () => {
     expect(tables).toHaveLength(2);
   });
 
-  // ── occurred_at additive column (TEMP-01) ──────────────────────────
+  // ── occurred_at additive column ──────────────────────────
 
-  describe("occurred_at additive column (TEMP-01)", () => {
+  describe("occurred_at additive column", () => {
     /**
      * Build a `memories` table with the PRE-occurred_at column set (the
      * shape a live ~/.comis DB has before this phase). Deliberately omits
@@ -253,7 +253,7 @@ describe("initSchema", () => {
     }
 
     it("adds occurred_at to a pre-existing memories table WITHOUT it, non-destructively", () => {
-      // Simulate a live DB created before Phase 81 — no occurred_at column.
+      // Simulate a live DB created before the occurred_at feature — no occurred_at column.
       createLegacyMemoriesTable(db);
       db.prepare(
         `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
@@ -332,7 +332,7 @@ describe("initSchema", () => {
     });
   });
 
-  // ── observation additive columns (Phase 84 CONS-01/04/05/08) ────────
+  // ── observation additive columns ────────
   //
   // The column-flag data model (design §4.1): an observation is a `memories`
   // row with `proof_count IS NOT NULL` (NOT a separate table, NOT a
@@ -340,13 +340,13 @@ describe("initSchema", () => {
   // columns idempotently on a live DB that predates them (existing rows get
   // NULL), and initSchema must create the 2 partial indexes.
 
-  describe("observation additive columns (Phase 84)", () => {
+  describe("observation additive columns", () => {
     const OBS_COLS = ["proof_count", "source_ids", "consolidated_at", "confidence", "history"];
 
     /**
-     * Build a `memories` table at the PRE-Phase-84 shape (occurred_at present,
+     * Build a `memories` table at the pre-observation shape (occurred_at present,
      * the 5 observation columns absent) — the shape a live ~/.comis DB has
-     * after Phase 81 but before this phase.
+     * after the occurred_at feature but before observations.
      */
     function createPreObservationTable(target: Database.Database): void {
       target.exec(`
@@ -442,20 +442,20 @@ describe("initSchema", () => {
     });
   });
 
-  // ── typed-observation additive columns (Phase 101 REASON-01) ────────
+  // ── typed-observation additive columns ────────
   //
   // observation_kind / pattern_type are forward-only nullable ALTERs (the
   // occurred_at/proof_count precedent): O(1), no backfill, no CHECK. A live
   // ~/.comis DB that predates them gains the columns with existing rows NULL
   // (observation_kind NULL reads back as "merge", the default).
 
-  describe("typed-observation additive columns (Phase 101 REASON-01)", () => {
+  describe("typed-observation additive columns", () => {
     const REASON_COLS = ["observation_kind", "pattern_type"];
 
     /**
-     * Build a `memories` table at the PRE-Phase-101 shape (the Phase-84
+     * Build a `memories` table at the pre-typed-observation shape (the
      * observation columns present, the 2 typed-observation columns absent) —
-     * the shape a live ~/.comis DB has after Phase 84 but before this phase.
+     * the shape a live ~/.comis DB has after observations but before typed observations.
      */
     function createPreReasoningTable(target: Database.Database): void {
       target.exec(`
@@ -489,7 +489,7 @@ describe("initSchema", () => {
       createPreReasoningTable(db);
       db.prepare(
         `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-         VALUES ('pre-reason', 'default', 'u1', 'an existing pre-101 fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
+         VALUES ('pre-reason', 'default', 'u1', 'an existing pre-typed-observation fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
       ).run();
 
       const before = (
@@ -510,7 +510,7 @@ describe("initSchema", () => {
         .prepare("SELECT id, content, observation_kind, pattern_type FROM memories WHERE id = 'pre-reason'")
         .get() as Record<string, unknown>;
       expect(row.id).toBe("pre-reason");
-      expect(row.content).toBe("an existing pre-101 fact");
+      expect(row.content).toBe("an existing pre-typed-observation fact");
       expect(row.observation_kind).toBeNull();
       expect(row.pattern_type).toBeNull();
     });
@@ -536,7 +536,7 @@ describe("initSchema", () => {
       initSchema(db, 1536);
       // The CREATE TABLE for `memories` is reconstructable from sqlite_master; the
       // new columns must appear WITHOUT a CHECK clause (a post-hoc ALTER CHECK is
-      // unreliable across existing rows — Pattern 4 / REASON-01).
+      // unreliable across existing rows — Pattern 4).
       const sql = (
         db
           .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='memories'")
@@ -713,7 +713,7 @@ describe("initSchema", () => {
 });
 
 // =====================================================================
-// ensureEntityTables — the entity junction DDL (Phase 83 ENT-01/03/04/05)
+// ensureEntityTables — the entity junction DDL
 //
 // Pitfall 1: a raw `new Database(":memory:")` does NOT enable FK enforcement,
 // so `ON DELETE CASCADE` would silently no-op. These tests set
@@ -768,7 +768,7 @@ describe("ensureEntityTables", () => {
     expect(memoryFk!.on_delete).toBe("CASCADE");
   });
 
-  it("UNIQUE-indexes (tenant_id, agent_id, canonical_key) so two scopes never collapse to one entity (ENT-03)", () => {
+  it("UNIQUE-indexes (tenant_id, agent_id, canonical_key) so two scopes never collapse to one entity", () => {
     initSchema(db, 1536);
     db.prepare(
       `INSERT INTO memory_entities
@@ -797,7 +797,7 @@ describe("ensureEntityTables", () => {
     ).not.toThrow();
   });
 
-  it("cascades link deletion when the parent memory is deleted (ENT-04, no orphans)", () => {
+  it("cascades link deletion when the parent memory is deleted (no orphans)", () => {
     initSchema(db, 1536);
     db.prepare(
       `INSERT INTO memories (id, user_id, content, trust_level, source_who, created_at)
@@ -839,13 +839,13 @@ describe("ensureEntityTables", () => {
 });
 
 // =====================================================================
-// ensureTripleTable (Phase 100, KG-01/KG-02/KG-03) — the segregated
+// ensureTripleTable — the segregated
 // bi-temporal `memory_triples` table: S/P/O + the four bi-temporal
 // timestamps + occurred range + trust CHECK, tenant+agent on every row,
 // created idempotently AFTER ensureCausalTables.
 // =====================================================================
 
-describe("ensureTripleTable (Phase 100, KG-01)", () => {
+describe("ensureTripleTable", () => {
   let db: Database.Database;
 
   beforeEach(() => {
@@ -883,7 +883,7 @@ describe("ensureTripleTable (Phase 100, KG-01)", () => {
     expect(cols).toContain("object");
     // trust
     expect(cols).toContain("trust");
-    // the FOUR bi-temporal timestamps (KG-01)
+    // the FOUR bi-temporal timestamps
     expect(cols).toContain("t_valid_start");
     expect(cols).toContain("t_valid_end");
     expect(cols).toContain("t_ingested");
@@ -933,7 +933,7 @@ describe("ensureTripleTable (Phase 100, KG-01)", () => {
     }
   });
 
-  it("rejects an out-of-ladder trust via the CHECK constraint (T-100-01-04)", () => {
+  it("rejects an out-of-ladder trust via the CHECK constraint", () => {
     initSchema(db, 1536);
     // A valid trust inserts fine.
     expect(() =>
@@ -996,18 +996,18 @@ describe("ensureTripleTable (Phase 100, KG-01)", () => {
 });
 
 // =====================================================================
-// ensureUsefulnessTable (Phase 110, LEARN-01) — the additive `intent`
+// ensureUsefulnessTable — the additive `intent`
 // bucket on `memory_usefulness`. Fresh DBs get the 4-col PK
 // (tenant, agent, memory, intent) + an `intent TEXT NOT NULL DEFAULT ''`
-// column; a PRE-110 DB (the old 3-col PK + rows) gets a guarded
+// column; a pre-intent DB (the old 3-col PK + rows) gets a guarded
 // ALTER ADD COLUMN (the PRAGMA table_info precedent) so existing rows
 // survive AS the global ('') bucket — the headline PK-widening-on-
 // existing-DB safety (RESEARCH Pitfall 3). Both paths gain the idempotent
 // `idx_usefulness_intent` unique index so the adapter's 4-col ON CONFLICT
-// target resolves on a pre-110 DB too.
+// target resolves on a pre-intent DB too.
 // =====================================================================
 
-describe("ensureUsefulnessTable intent column (Phase 110, LEARN-01)", () => {
+describe("ensureUsefulnessTable intent column", () => {
   let db: Database.Database;
 
   beforeEach(() => {
@@ -1028,19 +1028,20 @@ describe("ensureUsefulnessTable intent column (Phase 110, LEARN-01)", () => {
     ).map((r) => r.name);
 
   /**
-   * Hand-create the PRE-110 `memory_usefulness` at the OLD 3-col-PK shape
-   * (NO `intent` column) — the EXACT shape a live ~/.comis DB has from Phase 93
-   * but before this phase, INCLUDING the `memory_id REFERENCES memories(id) ON
-   * DELETE CASCADE` FK (so the CR-01 rebuild's FK-preservation is exercised — not
-   * a stripped-down stand-in). Mirrors `createPreReasoningTable`.
+   * Hand-create the pre-intent `memory_usefulness` at the OLD 3-col-PK shape
+   * (NO `intent` column) — the EXACT shape a live ~/.comis DB has from the
+   * original usefulness feature but before per-intent buckets, INCLUDING the
+   * `memory_id REFERENCES memories(id) ON DELETE CASCADE` FK (so the rebuild's
+   * FK-preservation is exercised — not a stripped-down stand-in). Mirrors
+   * `createPreReasoningTable`.
    */
   function createPre110UsefulnessTable(target: Database.Database): void {
-    // The FK target. The real pre-110 `memory_usefulness.memory_id` REFERENCES
-    // `memories(id)` (Phase 93 DDL), so the parent must exist for any usefulness
-    // INSERT (FK enforced at DML under foreign_keys=ON) AND for the CR-01
+    // The FK target. The real pre-intent `memory_usefulness.memory_id` REFERENCES
+    // `memories(id)`, so the parent must exist for any usefulness
+    // INSERT (FK enforced at DML under foreign_keys=ON) AND for the
     // transactional table-REBUILD to re-declare the FK. A minimal stand-in column
-    // set suffices (these pre-110 tests never call initSchema, so no full-schema
-    // memories row is inserted); seed the 'm1' parent every pre-110 test uses.
+    // set suffices (these pre-intent tests never call initSchema, so no full-schema
+    // memories row is inserted); seed the 'm1' parent every pre-intent test uses.
     target.exec(`CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, content TEXT NOT NULL DEFAULT '');`);
     target.prepare(`INSERT INTO memories (id, content) VALUES ('m1', 'a fact')`).run();
     target.exec(`
@@ -1135,17 +1136,17 @@ describe("ensureUsefulnessTable intent column (Phase 110, LEARN-01)", () => {
     expect(usefulnessIndexes()).toContain("idx_usefulness_intent");
   });
 
-  // --- PRE-110 (existing) DB: the PK-widening-on-existing-DB safety (Pitfall 3) ---
+  // --- pre-intent (existing) DB: the PK-widening-on-existing-DB safety (Pitfall 3) ---
 
-  it("EXISTING (pre-110) DB: a guarded ALTER adds `intent` with default '' WITHOUT corrupting the seeded row — the row survives as the GLOBAL bucket", () => {
+  it("EXISTING (pre-intent) DB: a guarded ALTER adds `intent` with default '' WITHOUT corrupting the seeded row — the row survives as the GLOBAL bucket", () => {
     createPre110UsefulnessTable(db);
-    // Seed a pre-110 row (intent absent — the column does not exist yet).
+    // Seed a pre-intent row (intent absent — the column does not exist yet).
     db.prepare(
       `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at)
        VALUES ('t1', 'a1', 'm1', 3, 1, 555)`,
     ).run();
 
-    // Pre-condition: no `intent` column on the pre-110 table.
+    // Pre-condition: no `intent` column on the pre-intent table.
     expect(usefulnessCols()).not.toContain("intent");
 
     expect(() => ensureUsefulnessTable(db)).not.toThrow();
@@ -1173,7 +1174,7 @@ describe("ensureUsefulnessTable intent column (Phase 110, LEARN-01)", () => {
     ).toBe(1);
   });
 
-  it("EXISTING (pre-110) DB: ensureUsefulnessTable genuinely WIDENS the PRIMARY KEY to 4-col (tenant,agent,memory,intent) — not just an ADD COLUMN that leaves the 3-col PK (CR-01)", () => {
+  it("EXISTING (pre-intent) DB: ensureUsefulnessTable genuinely WIDENS the PRIMARY KEY to 4-col (tenant,agent,memory,intent) — not just an ADD COLUMN that leaves the 3-col PK", () => {
     createPre110UsefulnessTable(db);
     db.prepare(
       `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at)
@@ -1187,7 +1188,7 @@ describe("ensureUsefulnessTable intent column (Phase 110, LEARN-01)", () => {
     // The PK is now the 4-col tuple — the table was rebuilt, not just ALTER-ADD'd.
     // (On the broken ADD-COLUMN-only code the PK stays 3-col and this FAILS.)
     expect(usefulnessPkColumns()).toEqual(["tenant_id", "agent_id", "memory_id", "intent"]);
-    // The pre-110 row survives in the GLOBAL ('') bucket with its original counts.
+    // The pre-intent row survives in the GLOBAL ('') bucket with its original counts.
     const row = db
       .prepare(
         "SELECT used_count, ignored_count, last_useful_at, intent FROM memory_usefulness WHERE tenant_id='t1' AND agent_id='a1' AND memory_id='m1'",
@@ -1198,14 +1199,14 @@ describe("ensureUsefulnessTable intent column (Phase 110, LEARN-01)", () => {
     expect(row).toEqual({ used_count: 3, ignored_count: 1, last_useful_at: 555, intent: "" });
   });
 
-  it("EXISTING (pre-110) DB: the migrated table lets the ADAPTER upsert BOTH the global '' bucket AND a per-intent bucket for the SAME memory without throwing — LEARN-01 per-intent learning works on the existing fleet (CR-01 / WR-02)", async () => {
-    // This is the regression the BLOCKER (CR-01) describes: on the broken
+  it("EXISTING (pre-intent) DB: the migrated table lets the ADAPTER upsert BOTH the global '' bucket AND a per-intent bucket for the SAME memory without throwing — per-intent learning works on the existing fleet", async () => {
+    // This is the regression the blocker describes: on the broken
     // ADD-COLUMN-only migration the surviving 3-col PK aborts the SECOND intent
     // bucket's upsert with `UNIQUE constraint failed`. It drives the REAL adapter
-    // (createSqliteMemoryUsefulnessStore.recordUsage), the path WR-02 noted the
+    // (createSqliteMemoryUsefulnessStore.recordUsage), the path the
     // old index-only test never exercised.
     createPre110UsefulnessTable(db);
-    // A pre-110 row (no `intent` column yet) — the global signal a v2.8 DB carries.
+    // A pre-intent row (no `intent` column yet) — the global signal a pre-intent DB carries.
     db.prepare(
       `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at)
        VALUES ('t1', 'a1', 'm1', 3, 0, 555)`,
@@ -1216,13 +1217,13 @@ describe("ensureUsefulnessTable intent column (Phase 110, LEARN-01)", () => {
     const store = createSqliteMemoryUsefulnessStore({ db });
     const scope = { tenantId: "t1", agentId: "a1", now: 1_000 } as const;
 
-    // 1) Global ('') bucket: bumps the migrated pre-110 row (3 -> 4).
+    // 1) Global ('') bucket: bumps the migrated pre-intent row (3 -> 4).
     const globalWrite = await store.recordUsage(["m1"], [], scope);
     expect(globalWrite.ok).toBe(true);
 
     // 2) A DIFFERENT intent bucket for the SAME memory. On the broken code this
     //    recordUsage returns err (UNIQUE constraint failed on the surviving 3-col
-    //    PK) — the LEARN-01 signal silently dies. After the rebuild it succeeds.
+    //    PK) — the per-intent learning signal silently dies. After the rebuild it succeeds.
     const intentWrite = await store.recordUsage(["m1"], [], { ...scope, intent: "temporal" });
     expect(intentWrite.ok).toBe(true);
 
@@ -1244,7 +1245,7 @@ describe("ensureUsefulnessTable intent column (Phase 110, LEARN-01)", () => {
     ]);
   });
 
-  it("EXISTING (pre-110) DB: the idx_usefulness_intent unique index is created and PRESERVES the memory_id -> memories(id) ON DELETE CASCADE FK across the rebuild", () => {
+  it("EXISTING (pre-intent) DB: the idx_usefulness_intent unique index is created and PRESERVES the memory_id -> memories(id) ON DELETE CASCADE FK across the rebuild", () => {
     createPre110UsefulnessTable(db);
     db.prepare(
       `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at)
@@ -1272,7 +1273,7 @@ describe("ensureUsefulnessTable intent column (Phase 110, LEARN-01)", () => {
     expect(usefulnessCols().filter((c) => c === "intent")).toHaveLength(1);
   });
 
-  it("is idempotent on a PRE-110 DB — a second ensureUsefulnessTable after the ALTER does not error and preserves the row", () => {
+  it("is idempotent on a pre-intent DB — a second ensureUsefulnessTable after the ALTER does not error and preserves the row", () => {
     createPre110UsefulnessTable(db);
     db.prepare(
       `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at)

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The terminal-driver reaper (spec §4.6; TR-06, OPS-06).
+ * The terminal-driver reaper (spec §4.6).
  *
  * Bounds the per-worker/cgroup session footprint with THREE caps, each evicting
  * with an audited reason:
  *   - idle-TTL (reason `idle`): a periodic sweep evicts sessions idle longer than
  *     `idleTtlMs` (`nowMs() - lastActivity > idleTtlMs`).
- *   - wall-clock age (reason `wall_clock`, OPS-06): the SAME sweep evicts sessions
+ *   - wall-clock age (reason `wall_clock`): the SAME sweep evicts sessions
  *     whose total lifetime exceeds `wallClockMs` (`nowMs() - startedAtMs >
  *     wallClockMs`) — even an actively-used session.
- *   - max-sessions overflow (reason `max_sessions`, TR-06): `checkOverflow()` (run
+ *   - max-sessions overflow (reason `max_sessions`): `checkOverflow()` (run
  *     from `create`) evicts the idlest session(s) until size == `maxSessions`.
  *
  * The reaper does NOT own the session map — it calls back into the registry's
@@ -21,7 +21,7 @@
  * Architecture (binding):
  *   - TYPE-ONLY ports from `@comis/core` (`TimerPort`/`TimerHandle`) — this module
  *     value-imports NEITHER `@comis/infra` NOR `@comis/observability` (worker ↛
- *     infra/observability, SEC-07). The daemon (composition root) constructs the
+ *     infra/observability). The daemon (composition root) constructs the
  *     concrete `TimerPort` (`createSystemTimers`) + the `nowMs` clock and injects
  *     them; tests inject a fake clock/timer.
  *   - CLOSURE-local state only: a single sweep-interval `handle` — NO module-global
@@ -29,7 +29,7 @@
  *   - NO raw `setInterval`/`setTimeout`/`Date.now`/`new Date()` global — time is read
  *     only via the injected `nowMs`, and the sweep uses the injected
  *     `timers.setInterval(...).unref()` (so it never holds the loop open on SIGTERM).
- *     Ring bytes are enforced in the WORKER (P0 `ringBytes`), NOT here — the reaper
+ *     Ring bytes are enforced in the WORKER (`ringBytes`), NOT here — the reaper
  *     bounds session count + idle + lifetime.
  *
  * Analog: packages/agent/src/background/background-task-manager.ts (injected
@@ -41,10 +41,11 @@
 import type { TimerPort, TimerHandle } from "@comis/core";
 
 /**
- * The audited eviction reason — the full four-value union (123-01
- * `terminal:session_evicted`). This plan emits `idle`/`wall_clock` (the sweep) +
- * `max_sessions` (the create-overflow check); Plan 05 emits `max_interactions` on
- * the SAME `onEvict` path. `max_requests` is NOT here — it REJECTS (session survives).
+ * The audited eviction reason — the full four-value union carried on the
+ * `terminal:session_evicted` event. The reaper emits `idle`/`wall_clock` (the
+ * sweep) + `max_sessions` (the create-overflow check); `max_interactions` is
+ * emitted on the SAME `onEvict` path. `max_requests` is NOT here — it REJECTS
+ * (session survives).
  */
 export type EvictReason = "idle" | "max_sessions" | "wall_clock" | "max_interactions";
 
@@ -172,7 +173,7 @@ export interface ReaperCaps {
   sweepIntervalMs?: number; // sweep cadence ms (default 30_000).
   timers?: TimerPort; // injected TimerPort (daemon: createSystemTimers); type-only @comis/core. Absent ⇒ no reaper.
   onEvict?: (info: ReaperEvictInfo) => void; // daemon emits terminal:session_evicted + _state(lost) + a WARN.
-  onCapForget?: (sessionId: string) => void; // daemon wires caps.forget — T-123-17 (no cap-map leak on the reap path).
+  onCapForget?: (sessionId: string) => void; // daemon wires caps.forget (no cap-map leak on the reap path).
 }
 
 /**
@@ -200,9 +201,9 @@ export interface RegistryReaperWiring<H extends ReaperSessionHandle> {
  * Returns `evict(sessionId, reason)` — the ONE place a reaped session is dropped: it
  * reuses the registry's `evictInternal` (the kill drop + `cleanupSessionWorkspace`,
  * never duplicated), FORGETS the per-session cap state via `onCapForget` (no
- * SessionCaps Map leak on the reap path — T-123-17), emits the audited reason via
- * `onEvict`, and logs a WARN (`hint` + `errorKind: "resource"`, §2.7). Plan 05's
- * `max_interactions` reuses this exact `evict`. The reaper is undefined when
+ * SessionCaps Map leak on the reap path), emits the audited reason via
+ * `onEvict`, and logs a WARN (`hint` + `errorKind: "resource"`, §2.7). The
+ * `max_interactions` eviction reuses this exact `evict`. The reaper is undefined when
  * `timers`/`maxSessions` are not both provided — `checkOverflow`/`stop` then no-op.
  */
 export function wireRegistryReaper<H extends ReaperSessionHandle>(w: RegistryReaperWiring<H>): {

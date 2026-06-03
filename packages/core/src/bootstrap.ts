@@ -19,11 +19,11 @@ const DEFAULT_DATA_DIR = safePath(os.homedir(), ".comis");
 
 /**
  * Name of the 32-byte HMAC secret backing every signed channel callback
- * (interactive approvals, APV-05/APV-07). It is generated/read at the daemon
+ * (interactive approvals). It is generated/read at the daemon
  * composition root (via SecretStorePort, with an in-memory fallback when the
  * encrypted store is disabled) and is added unconditionally to
- * `platformSecretNames` so user-facing secret-ref tools can never resolve it
- * (T-73-31). NOT a config `${VAR}` reference — a platform-managed secret.
+ * `platformSecretNames` so user-facing secret-ref tools can never resolve it.
+ * NOT a config `${VAR}` reference — a platform-managed secret.
  */
 export const INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME =
   "activity.interactiveCallbackSigningSecret";
@@ -109,8 +109,8 @@ export interface AppContainer {
   /**
    * Per-agent RAW (pre-Zod-default) `rag.rerank.enabled` signal, keyed by
    * agentId. `true`/`false` = the operator set it explicitly; `undefined` (or a
-   * missing key) = the operator left it UNSET. Phase 92 (RERANK-01) needs this
-   * because the parsed `config.agents.<id>.rag.rerank.enabled` always carries a
+   * missing key) = the operator left it UNSET. The reranker activation logic
+   * needs this because the parsed `config.agents.<id>.rag.rerank.enabled` always carries a
    * concrete boolean (`RagConfigSchema.rerank.enabled` has `.default(false)`),
    * which erases the unset signal — so auto-on (unset + model present) could
    * never be distinguished from explicit-off. Both the daemon's per-agent
@@ -171,7 +171,7 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   referencedNames.add(INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME);
   // Capture the merged RAW config (pre-Zod) so the genuine per-agent
   // rag.rerank.enabled tri-state survives — the parsed config below defaults
-  // unset to a concrete `false` and erases it (Phase 92 / RERANK-01).
+  // unset to a concrete `false` and erases it.
   const rawMergedOut: { value?: Record<string, unknown> } = {};
   const configResult = loadLayered(options.configPaths, {
     getSecret: (key) => {

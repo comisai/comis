@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Read-time contradiction guidance (TEMP-02/03/04/05, design §7.3). A PURE formatter
+ * Read-time contradiction guidance (design §7.3). A PURE formatter
  * over {@link MemorySearchResult}[] that returns the design-§7.3 guidance block — a FIXED
  * constant string — iff >=2 memories are surfaced for a query, else `undefined`.
  *
  * The block is INJECTED TEXT that tells the agent HOW to resolve a surfaced contradiction
- * TRUST-FIRST, recency-SECOND (CONTRA-01): when two memories conflict, the higher-TRUST
+ * TRUST-FIRST, recency-SECOND: when two memories conflict, the higher-TRUST
  * memory wins EVEN WHEN it is older (system > learned > external); recency only breaks ties
  * among EQUAL-trust memories; never average/sum; order a timeline by when events OCCURRED.
  * It does NOT mutate memories and it does NOT resolve the contradiction in code — resolution
- * is the LLM's job, guided by this text (non-destructive, TEMP-03).
+ * is the LLM's job, guided by this text (non-destructive).
  *
  * Imports ONLY @comis/core types — the agent-package production source must not import the
  * memory package (architecture.test.ts "agent -> memory cut"). Mirrors score.ts: a pure
@@ -20,7 +20,7 @@
  * hybrid injector split), NOT inside createMemoryRecall — `recall()` returns
  * MemorySearchResult[] (DATA) and is reused by the text-free eval harness (recall-eval.ts).
  *
- * Prompt-injection safety (T-81-08): the block is a STATIC constant; it NEVER interpolates
+ * Prompt-injection safety: the block is a STATIC constant; it NEVER interpolates
  * `entry.content`, so untrusted memory bodies cannot cross into the guidance text. Memory
  * CONTENT lines remain sanitizeToolOutput + wrapExternalContent-wrapped at the injector
  * (unchanged). It reads only `results.length` (the conflict gate).
@@ -31,22 +31,22 @@
 import type { MemorySearchResult } from "@comis/core";
 
 /**
- * The read-time temporal contradiction guidance block (CONTRA-01: TRUST-FIRST,
+ * The read-time temporal contradiction guidance block (TRUST-FIRST,
  * recency-SECOND), VERBATIM. A fixed constant — references memory METADATA semantics
  * (recorded time, occurred time, trust tier) in prose; it does NOT echo or interpolate
  * any memory CONTENT (prompt-injection safe). The FIRST conflict bullet asserts
  * trust-primacy (the higher-trust memory wins a conflict even if older); recency appears
- * only as a tie-break among EQUAL-trust memories (TEMP-04). The conflict bullet frames the
+ * only as a tie-break among EQUAL-trust memories. The conflict bullet frames the
  * demotion as an answer-time PREFERENCE — both memories are RETAINED ("keep BOTH in mind …
  * not a deletion"), never "superseded"/dropped — keeping the prose the LLM reads aligned
- * with the NON-DESTRUCTIVE contract (TEMP-03; resolution is answering guidance, not a store delete).
+ * with the NON-DESTRUCTIVE contract (resolution is answering guidance, not a store delete).
  *
- * The FINAL bullet is the KG-04 read-side current-truth/as-of hint (Phase 100): it tells the
+ * The FINAL bullet is the read-side current-truth/as-of hint: it tells the
  * LLM how to read the trust-first bi-temporal knowledge graph — the current believed value of
  * a contested fact is the higher-trust one, while older superseded values still EXIST as history
  * (the value believed true as of a past time, reachable by an explicit as-of) and are NOT the
  * current answer. Like every other bullet it is FIXED prose over memory METADATA semantics — it
- * interpolates NO memory body / no untrusted content (prompt-injection safe, T-81-08).
+ * interpolates NO memory body / no untrusted content (prompt-injection safe).
  */
 const TEMPORAL_GUIDANCE = `## Using these memories over time
 - Each memory shows when it was recorded, when the event occurred (if known), and its trust tier ([system] > [learned] > [external]).
@@ -57,9 +57,9 @@ const TEMPORAL_GUIDANCE = `## Using these memories over time
 - The current believed value of a contested fact is the higher-trust one; an older superseded value is not deleted — it still exists as history (the value that was believed true as of a past time) but it is not the current answer.`;
 
 /**
- * Phase-81 baseline (Option A, RESEARCH.md Open Q5 RESOLVED): the co-retrieved recall set
+ * The baseline (Option A, RESEARCH.md Open Q5 RESOLVED): the co-retrieved recall set
  * IS the "same topic" signal — all results were surfaced for the same query, so >=2 of them
- * means there is a contradiction worth guiding the LLM about. Phase 83 TIGHTENS this seam
+ * means there is a contradiction worth guiding the LLM about. A later iteration TIGHTENS this seam
  * with resolved-entity overlap (two memories that share a resolved entity), once the entity
  * lane ships. Leave this seam; do NOT inline entity logic here.
  */
@@ -69,9 +69,9 @@ function sharesTopic(results: MemorySearchResult[]): boolean {
 
 /**
  * Build the read-time §7.3 contradiction guidance block. Returns the FIXED block string when
- * `sharesTopic(results)` holds (>=2 surfaced memories, the Phase-81 conflict gate), else
+ * `sharesTopic(results)` holds (>=2 surfaced memories, the conflict gate), else
  * `undefined` (no block — nothing to disambiguate). Pure and non-mutating: it reads only
- * `results.length` and never touches the entries (TEMP-03; no content echo, T-81-08).
+ * `results.length` and never touches the entries (no content echo).
  */
 export function buildTemporalGuidanceBlock(
   results: MemorySearchResult[],

@@ -355,17 +355,17 @@ describe("Compaction Cycle (Originals Recoverable)", () => {
 // =========================================================================
 // Mode Switch — §13.2 row-8 taxonomy (8 cases) + cross-cutting assertions
 //
-// The full edge-case taxonomy for engine mode switching (design §13.2 row 8 /
-// CONTEXT.md "§19"). Covers BOTH directions (pipeline->dag full import and
+// The full edge-case taxonomy for engine mode switching (design §13.2 row 8).
+// Covers BOTH directions (pipeline->dag full import and
 // dag->pipeline non-destructive re-read), the full-vs-incremental import-cost
 // distinction the context:mode_switched event reports, the lost-anchor graceful
-// skip (§8.5), and a lossless pipeline->dag->pipeline round-trip (DAG-04).
+// skip (§8.5), and a lossless pipeline->dag->pipeline round-trip.
 //
 // Cross-cutting: the context:mode_switched event end-to-end through
 // createDagContextEngine (fires once on a real switch, suppressed for a
-// brand-new DAG conversation — DAG-05) and the DAG-03 turn-boundary guarantee
-// (an in-flight, closure-captured engine is unaffected by a later rebuild;
-// the switch lands at the NEXT engine build, never mid-turn).
+// brand-new DAG conversation) and the turn-boundary guarantee (an in-flight,
+// closure-captured engine is unaffected by a later rebuild; the switch lands
+// at the NEXT engine build, never mid-turn).
 // =========================================================================
 
 describe("Mode Switch (8-case taxonomy + event + turn-boundary)", () => {
@@ -514,7 +514,7 @@ describe("Mode Switch (8-case taxonomy + event + turn-boundary)", () => {
       .join("\n");
   }
 
-  // ---- Case 5 (ADD): dag->pipeline re-reads full content, NO orphaned stubs (DAG-04) ----
+  // ---- Case 5 (ADD): dag->pipeline re-reads full content, NO orphaned stubs ----
   it("case 5: dag->pipeline re-reads full content with no orphaned ctx_inspect placeholders", async () => {
     // Establish the dag state (pipeline->dag full import).
     const pipelineMessages = buildSyntheticMessages(10);
@@ -606,7 +606,7 @@ describe("Mode Switch (8-case taxonomy + event + turn-boundary)", () => {
     expect(store.getMessagesByConversation(conversationId).length).toBe(6);
   });
 
-  // ---- Case 8 (ADD): pipeline->dag->pipeline round-trip is lossless (DAG-04, T-85-15) ----
+  // ---- Case 8 (ADD): pipeline->dag->pipeline round-trip is lossless ----
   it("case 8: round-trip pipeline->dag->pipeline is lossless and the switch back to dag is non-destructive", async () => {
     const original = buildSyntheticMessages(10);
 
@@ -655,7 +655,7 @@ describe("Mode Switch (8-case taxonomy + event + turn-boundary)", () => {
     }
   });
 
-  // ---- Cross-cutting: context:mode_switched emitted on a REAL switch (DAG-05) ----
+  // ---- Cross-cutting: context:mode_switched emitted on a REAL switch ----
   it("emits context:mode_switched ONCE on a real operator switch with the right direction + cost", async () => {
     const messages = buildSyntheticMessages(10);
 
@@ -725,8 +725,8 @@ describe("Mode Switch (8-case taxonomy + event + turn-boundary)", () => {
     expect(emitted).not.toContain("context:mode_switched");
   });
 
-  // ---- Cross-cutting: DAG-03 turn-boundary (never mid-turn) ----
-  it("DAG-03: an in-flight (closure-captured) dag engine is unaffected by a later pipeline rebuild; the next build uses pipeline", async () => {
+  // ---- Cross-cutting: turn-boundary (never mid-turn) ----
+  it("an in-flight (closure-captured) dag engine is unaffected by a later pipeline rebuild; the next build uses pipeline", async () => {
     const messages = buildSyntheticMessages(10);
     reconcileJsonlToDag(messages, store, db, conversationId, estimateTokens, mockLogger);
 
@@ -762,12 +762,12 @@ describe("Mode Switch (8-case taxonomy + event + turn-boundary)", () => {
   // ---- Cross-cutting: tool-set flip (§8.1 force-include) — coverage note ----
   // The end-to-end tool-set flip (dag mode force-includes ctx_* under a
   // restricted profile; pipeline mode does not) is proven at the UNIT level in
-  // Plan 02's setup-tools.test.ts (the §8.1 force-include in setup-tools.ts:587).
+  // setup-tools.test.ts (the §8.1 force-include in setup-tools.ts:587).
   // Standing up the full daemon platform-tool provider here — which is the only
   // place allowedNames is computed — would violate this file's in-process,
   // no-daemon pattern (TESTING.md). The flip is therefore asserted where the
   // logic lives (the setup-tools unit suite), not duplicated through a daemon
-  // harness here. (See SUMMARY: tool-set-flip coverage location.)
+  // harness here.
 });
 
 // =========================================================================

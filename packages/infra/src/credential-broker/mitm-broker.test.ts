@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for NodeMitmBroker — BROKER-01..03 + audit + non-leakage.
+ * Tests for NodeMitmBroker — auth gate, injection, fail-closed + audit + non-leakage.
  *
  * Uses in-process HTTP fixtures (real http.createServer on loopback:0)
  * and manual TCP CONNECT clients to assert fail-closed behavior.
@@ -11,7 +11,7 @@
  *
  * @module
  */
-import "reflect-metadata"; // required when createNodeCaManager is used in Phase 3 tests
+import "reflect-metadata"; // required when createNodeCaManager is used in the TLS-upgrade tests
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import * as http from "node:http";
 import * as net from "node:net";
@@ -232,9 +232,9 @@ afterEach(async () => {
   }
 });
 
-// ── BROKER-01: Auth gate tests ─────────────────────────────────────────────────
+// ── Auth gate tests ─────────────────────────────────────────────────────────────
 
-describe("BROKER-01 — CONNECT auth gate (fail-closed 407)", () => {
+describe("CONNECT auth gate (fail-closed 407)", () => {
   it("missing Proxy-Authorization header → 407, zero upstream calls", async () => {
     const upstream = await makeUpstreamFixture();
     const deps = makeDeps();
@@ -460,9 +460,9 @@ describe("BROKER-01 — CONNECT auth gate (fail-closed 407)", () => {
   });
 });
 
-// ── BROKER-02: Injection tests ─────────────────────────────────────────────────
+// ── Injection tests ─────────────────────────────────────────────────────────────
 
-describe("BROKER-02 — credential injection (happy path)", () => {
+describe("credential injection (happy path)", () => {
   it("valid token + allowed host: upstream receives real secret key via x-api-key header, NOT the placeholder", async () => {
     const upstream = await makeUpstreamFixture();
     // Use a secret manager with a known real key (not sentinel for this test)
@@ -642,9 +642,9 @@ describe("BROKER-02 — credential injection (happy path)", () => {
   });
 });
 
-// ── BROKER-03: Fail-closed tests ──────────────────────────────────────────────
+// ── Fail-closed tests ──────────────────────────────────────────────────────────
 
-describe("BROKER-03 — fail-closed (403/502 with zero upstream calls)", () => {
+describe("fail-closed (403/502 with zero upstream calls)", () => {
   it("unknown host (not in bindings) → 403, zero upstream calls", async () => {
     const upstream = await makeUpstreamFixture();
     const clock = createFakeClock(1_700_000_000_000);
@@ -1648,7 +1648,7 @@ describe("Edge cases — error paths and coverage branches", () => {
   });
 });
 
-// ── (02-fix) RED tests — findings from REVIEW.md ─────────────────────────────
+// ── Regression tests — review findings ───────────────────────────────────────
 //
 // These tests are written first (RED) and MUST FAIL on the pre-fix code.
 // The production patches (GREEN) follow in separate commits.
@@ -1721,10 +1721,10 @@ async function sendPostThroughTunnel(
       }
     };
 
-    // Attach listener BEFORE writing so we don't miss an early 413 (WR-01).
+    // Attach listener BEFORE writing so we don't miss an early 413.
     socket.on("data", onData);
 
-    // Absorb EPIPE/ECONNRESET — expected when broker sends early 413 (WR-01) and
+    // Absorb EPIPE/ECONNRESET — expected when broker sends early 413 and
     // destroys the socket before the client body write completes.
     socket.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EPIPE" || err.code === "ECONNRESET") return;
@@ -1758,9 +1758,9 @@ async function sendPostThroughTunnel(
   });
 }
 
-// ── CR-01 RED: request body forwarding ────────────────────────────────────────
+// ── request body forwarding ───────────────────────────────────────────────────
 
-describe("(02-fix) CR-01 — POST body must reach upstream (bidirectional pipe)", () => {
+describe("POST body must reach upstream (bidirectional pipe)", () => {
   it("POST /v1/messages with JSON body: upstream receives the exact body bytes", async () => {
     const upstream = await makeBodyUpstreamFixture();
     const clock = createFakeClock(1_700_000_000_000);
@@ -1842,9 +1842,9 @@ describe("(02-fix) CR-01 — POST body must reach upstream (bidirectional pipe)"
   }, 15_000);
 });
 
-// ── CR-02 + WR-01 RED: EPIPE protection on 200 write ─────────────────────────
+// ── EPIPE protection on 200 write ────────────────────────────────────────────
 
-describe("(02-fix) CR-02/WR-01 — client socket error before 200 write must not throw uncaughtException", () => {
+describe("client socket error before 200 write must not throw uncaughtException", () => {
   it("client closes socket immediately after CONNECT is parsed — no uncaughtException", async () => {
     const clock = createFakeClock(1_700_000_000_000);
     const sessionManager = createSessionManager({ clock });
@@ -1940,9 +1940,9 @@ describe("(02-fix) CR-02/WR-01 — client socket error before 200 write must not
   });
 });
 
-// ── CR-03 + WR-04 RED: audit event completeness ──────────────────────────────
+// ── audit event completeness ─────────────────────────────────────────────────
 
-describe("(02-fix) CR-03/WR-04 — broker:denied audit events on all exit paths with correct reasons", () => {
+describe("broker:denied audit events on all exit paths with correct reasons", () => {
   it("header overflow path emits broker:denied with reason:malformed_request (NOT path_policy)", async () => {
     const clock = createFakeClock(1_700_000_000_000);
     const sessionManager = createSessionManager({ clock });
@@ -2042,9 +2042,9 @@ describe("(02-fix) CR-03/WR-04 — broker:denied audit events on all exit paths 
   });
 });
 
-// ── CR-04 RED: endSession must DELETE the map entry ──────────────────────────
+// ── endSession must DELETE the map entry ─────────────────────────────────────
 
-describe("(02-fix) CR-04 — endSession must remove the Map entry (not just set active=false)", () => {
+describe("endSession must remove the Map entry (not just set active=false)", () => {
   it("after endSession, consumeToken returns null — session fully removed", () => {
     const clock = createFakeClock(1_700_000_000_000);
     const mgr = createSessionManager({ clock });
@@ -2097,9 +2097,9 @@ describe("(02-fix) CR-04 — endSession must remove the Map entry (not just set 
   });
 });
 
-// ── WR-03 RED: upstreamSocket must not block process exit ────────────────────
+// ── upstreamSocket must not block process exit ───────────────────────────────
 
-describe("(02-fix) WR-03 — stop() destroys in-flight upstream sockets (no process-exit block)", () => {
+describe("stop() destroys in-flight upstream sockets (no process-exit block)", () => {
   it("stop() called during in-flight request: broker resolves stop() promise promptly", async () => {
     const upstream = await makeBodyUpstreamFixture();
     const clock = createFakeClock(1_700_000_000_000);
@@ -2153,13 +2153,13 @@ describe("(02-fix) WR-03 — stop() destroys in-flight upstream sockets (no proc
   });
 });
 
-// ── (03-03) RED: TLS upgrade via caManager — Phase 3 wiring ──────────────────
+// ── TLS upgrade via caManager ────────────────────────────────────────────────
 //
 // These tests MUST FAIL before mitm-broker.ts wires the TLS upgrade.
-// The caManager seam already exists in Phase 2 (caManager?: CaManagerPort)
-// but the CONNECT handler currently ignores it. Phase 3 wires the upgrade.
+// The caManager seam already exists (caManager?: CaManagerPort) but the
+// CONNECT handler must wire it to terminate TLS on the decrypted layer.
 
-describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManager", () => {
+describe("broker CONNECT handler terminates TLS via caManager", () => {
   let caDataDir: string;
 
   beforeEach(() => {
@@ -2192,7 +2192,7 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
         secretManager,
         sessionManager,
         bindings: [makeAnthropicBinding()],
-        caManager, // Phase 3: wired!
+        caManager, // wired!
       };
 
       const broker = createMitmBroker(deps);
@@ -2228,8 +2228,8 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
       });
 
       // Step 2: after the 200, wrap the raw TCP socket in a TLS client that trusts the broker CA.
-      // When Phase 3 is wired, the broker upgrades the raw socket to a TLS server socket, so
-      // a TLS client handshake should complete. Before Phase 3, the broker does not upgrade
+      // When the TLS upgrade is wired, the broker upgrades the raw socket to a TLS server socket,
+      // so a TLS client handshake should complete. Without it, the broker does not upgrade
       // the socket and the handshake will fail (the raw socket sends no TLS ServerHello).
       const tlsResult = await new Promise<{ alpnProtocol: string | boolean | null; subjectaltname: string }>(
         (resolve, reject) => {
@@ -2324,9 +2324,9 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
   );
 
   it(
-    "caManager undefined (Phase 2 mode): CONNECT handler behaves identically — no TLS upgrade, inner HTTP still works",
+    "caManager undefined (opaque-TCP mode): CONNECT handler behaves identically — no TLS upgrade, inner HTTP still works",
     async () => {
-      // Regression guard: when caManager is NOT wired, Phase 2 behavior is unchanged.
+      // Regression guard: when caManager is NOT wired, opaque-TCP behavior is unchanged.
       const upstream = await makeUpstreamFixture();
       const clock = createFakeClock(1_700_000_000_000);
       const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "no-upgrade-key" });
@@ -2340,7 +2340,7 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
         secretManager,
         sessionManager,
         bindings: [makeAnthropicBinding()],
-        // caManager intentionally omitted — Phase 2 behavior
+        // caManager intentionally omitted — opaque-TCP behavior
       };
 
       const broker = createMitmBroker(deps);
@@ -2361,7 +2361,7 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
 
       await new Promise((r) => setTimeout(r, 100));
 
-      // Upstream received the request — Phase 2 injection path still works
+      // Upstream received the request — the injection path still works
       expect(upstream.receivedHeaders.length).toBeGreaterThan(0);
       expect(upstream.receivedHeaders[0]).toMatchObject({ "x-api-key": "no-upgrade-key" });
 
@@ -2370,11 +2370,11 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
   );
 });
 
-// ── FINAL-01 — Finalizer interface tests ─────────────────────────────────────
+// ── Finalizer interface tests ────────────────────────────────────────────────
 
 /**
  * Build an awsSigV4 BrokerBinding based on the Anthropic binding but with a
- * finalizer: { kind: "awsSigV4" } on the first hostRule. Used by FINAL-01 tests.
+ * finalizer: { kind: "awsSigV4" } on the first hostRule. Used by the finalizer tests.
  */
 function makeAwsSigV4Binding(): BrokerBinding {
   const base = makeAnthropicBinding();
@@ -2389,7 +2389,7 @@ function makeAwsSigV4Binding(): BrokerBinding {
   };
 }
 
-describe("FINAL-01a — finalizer runs after injection (ordering via log step index)", () => {
+describe("finalizer runs after injection (ordering via log step index)", () => {
   it("step='inject' log index is strictly less than step='finalizer_skipped' log index", async () => {
     const upstream = await makeBodyUpstreamFixture();
     const clock = createFakeClock(1_700_000_000_000);
@@ -2433,7 +2433,7 @@ describe("FINAL-01a — finalizer runs after injection (ordering via log step in
   }, 15_000);
 });
 
-describe("FINAL-01b — no-finalizer rule: body pass-through byte-identical", () => {
+describe("no-finalizer rule: body pass-through byte-identical", () => {
   it("body received by upstream matches body sent by client exactly", async () => {
     const upstream = await makeBodyUpstreamFixture();
     const clock = createFakeClock(1_700_000_000_000);
@@ -2472,7 +2472,7 @@ describe("FINAL-01b — no-finalizer rule: body pass-through byte-identical", ()
   }, 15_000);
 });
 
-describe("FINAL-01c — awsSigV4 no-op: body and headers unchanged, deferral logged", () => {
+describe("awsSigV4 no-op: body and headers unchanged, deferral logged", () => {
   it("upstream sees original body and custom header; deferral log emitted", async () => {
     const upstream = await makeBodyUpstreamFixture();
     const clock = createFakeClock(1_700_000_000_000);
@@ -2526,9 +2526,9 @@ describe("FINAL-01c — awsSigV4 no-op: body and headers unchanged, deferral log
   }, 15_000);
 });
 
-describe("FINAL-01d — body > cap → 413, zero upstream bytes", () => {
+describe("body > cap → 413, zero upstream bytes", () => {
   it("413 returned to client; upstream receives no headers; broker:denied body_too_large emitted", async () => {
-    // Tests the WR-01 early-413 path: when the declared Content-Length exceeds
+    // Tests the early-413 path: when the declared Content-Length exceeds
     // MAX_BODY_BYTES, the broker returns 413 immediately without buffering and
     // without opening an upstream connection. We declare a large CL but only send
     // a small body — the broker should reject on the declared size alone.
@@ -2593,7 +2593,7 @@ describe("FINAL-01d — body > cap → 413, zero upstream bytes", () => {
   }, 30_000);
 });
 
-describe("FINAL-01e — finalizer path with query string in URL", () => {
+describe("finalizer path with query string in URL", () => {
   it("request with query string is forwarded correctly through finalizer path", async () => {
     const upstream = await makeBodyUpstreamFixture();
     const clock = createFakeClock(1_700_000_000_000);
@@ -2635,7 +2635,7 @@ describe("FINAL-01e — finalizer path with query string in URL", () => {
   }, 15_000);
 });
 
-describe("FINAL-01f — finalizer path upstream socket error is handled", () => {
+describe("finalizer path upstream socket error is handled", () => {
   it("upstream connection error on finalizer path: client socket is destroyed", async () => {
     const clock = createFakeClock(1_700_000_000_000);
     const sessionManager = createSessionManager({ clock });
@@ -2694,9 +2694,9 @@ describe("FINAL-01f — finalizer path upstream socket error is handled", () => 
   }, 15_000);
 });
 
-// ── (04-fix) Tests for CR-01/WR-01/IN-01 — finalizer stage improvements ───────
+// ── Tests for finalizer stage improvements ───────────────────────────────────
 
-describe("(04-fix) IN-01 — chunked Transfer-Encoding with no Content-Length → 411", () => {
+describe("chunked Transfer-Encoding with no Content-Length → 411", () => {
   it("finalizer-configured rule + chunked TE + no CL → socket receives 411 Length Required", async () => {
     const upstream = await makeBodyUpstreamFixture();
     const clock = createFakeClock(1_700_000_000_000);
@@ -2747,7 +2747,7 @@ describe("(04-fix) IN-01 — chunked Transfer-Encoding with no Content-Length �
   }, 15_000);
 });
 
-describe("(04-fix) body > cap via actual bytes (bufferBody null path) → 413 denied", () => {
+describe("body > cap via actual bytes (bufferBody null path) → 413 denied", () => {
   it("body bytes exceed cap without Content-Length declaration → 413 fail-closed", async () => {
     // This covers the bodyBuf === null path when cap is exceeded via actual bytes
     // (not via declared CL). We use a tiny cap binding to make the test fast.
@@ -2761,7 +2761,7 @@ describe("(04-fix) body > cap via actual bytes (bufferBody null path) → 413 de
     // we test the bufferBody null path via a body that exceeds the local cap.
     // Since we can't easily inject a smaller cap, we use a real large body
     // but test via the bytes-exceed-cap path with MAX_BODY_BYTES+1 bytes
-    // but WITHOUT declaring a Content-Length (so WR-01 doesn't intercept it).
+    // but WITHOUT declaring a Content-Length (so the early-413 check doesn't intercept it).
     // To do this efficiently in tests, we use a 1-byte body but with cap=0.
     // We can't change the global MAX_BODY_BYTES, so instead we'll just
     // send the cap+1 bytes without a Content-Length header so the broker
@@ -2797,7 +2797,7 @@ describe("(04-fix) body > cap via actual bytes (bufferBody null path) → 413 de
     );
     expect(statusCode).toBe(200);
 
-    // Send MAX_BODY_BYTES + 1 bytes with NO Content-Length (bypasses WR-01 early check).
+    // Send MAX_BODY_BYTES + 1 bytes with NO Content-Length (bypasses the early-413 check).
     // The broker must buffer and hit the cap mid-stream.
     const overCapBuf = Buffer.alloc(MAX_BODY_BYTES + 1, 0x61);
     let responseBuf = "";
@@ -2832,9 +2832,9 @@ describe("(04-fix) body > cap via actual bytes (bufferBody null path) → 413 de
   }, 30_000);
 });
 
-// ── (03-fix) RED tests — findings from Phase 3 REVIEW.md ─────────────────────
+// ── Regression tests — TLS fail-closed ordering ──────────────────────────────
 
-describe("(03-fix) CR-02 — fail-closed ordering: unlisted host must NOT get a cert minted before 403", () => {
+describe("fail-closed ordering: unlisted host must NOT get a cert minted before 403", () => {
   let caDataDir: string;
 
   beforeEach(() => {
@@ -2926,9 +2926,9 @@ describe("(03-fix) CR-02 — fail-closed ordering: unlisted host must NOT get a 
   );
 });
 
-// ── EGRESS-04: WebSocket upgrade guard ────────────────────────────────────────
+// ── WebSocket upgrade guard ────────────────────────────────────────────────────
 
-describe("EGRESS-04 — WebSocket upgrade guard", () => {
+describe("WebSocket upgrade guard", () => {
   it("inner request with Upgrade: websocket → 501, broker:denied emitted, no upstream reached", async () => {
     const upstream = await makeUpstreamFixture();
     const deps = makeDeps();
@@ -3046,7 +3046,7 @@ describe("EGRESS-04 — WebSocket upgrade guard", () => {
     upstream.server.close();
   });
 
-  it("duplicate Upgrade headers: websocket first, decoy second → 501 (CR-03 bypass prevention)", async () => {
+  it("duplicate Upgrade headers: websocket first, decoy second → 501 (bypass prevention)", async () => {
     // RFC 7230 §3.2.2: duplicate headers with the same name — the Map.set implementation
     // keeps only the LAST value. With 'Upgrade: websocket\r\nUpgrade: x-decoy', the map
     // stores 'x-decoy' and the simple .toLowerCase() === 'websocket' check is bypassed.
@@ -3099,7 +3099,7 @@ describe("EGRESS-04 — WebSocket upgrade guard", () => {
     upstream.server.close();
   });
 
-  it("duplicate Upgrade headers: decoy first, websocket second → 501 (CR-03 bypass prevention, reversed order)", async () => {
+  it("duplicate Upgrade headers: decoy first, websocket second → 501 (bypass prevention, reversed order)", async () => {
     const upstream = await makeUpstreamFixture();
     const deps = makeDeps();
     const broker = createMitmBroker(deps);
@@ -3148,9 +3148,9 @@ describe("EGRESS-04 — WebSocket upgrade guard", () => {
   });
 });
 
-// ── EGRESS-01: Unix socket listen ─────────────────────────────────────────────
+// ── Unix socket listen ─────────────────────────────────────────────────────────
 
-describe("EGRESS-01 — Unix socket listen (startUnixSocket)", () => {
+describe("Unix socket listen (startUnixSocket)", () => {
   it("startUnixSocket creates a listening Unix-domain socket that accepts CONNECT and fires auth gate (407)", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "mitm-broker-unix-"));
     const socketPath = join(tmpDir, "broker.sock");
@@ -3201,7 +3201,7 @@ describe("EGRESS-01 — Unix socket listen (startUnixSocket)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("WR-01 — Unix socket file mode is 0o600 (owner-only) after startUnixSocket", async () => {
+  it("Unix socket file mode is 0o600 (owner-only) after startUnixSocket", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "mitm-broker-mode-"));
     const socketPath = join(tmpDir, "broker.sock");
 
@@ -3221,7 +3221,7 @@ describe("EGRESS-01 — Unix socket listen (startUnixSocket)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("WR-02 — stop() destroys Unix server client sockets even when TCP server was never started", async () => {
+  it("stop() destroys Unix server client sockets even when TCP server was never started", async () => {
     // This test proves the bug: when only startUnixSocket() was called (start() never called),
     // stop() must still destroy tracked openSockets. The original code hits the early
     // `if (!server) { resolve(); return; }` before the openSockets loop.
@@ -3262,9 +3262,9 @@ describe("EGRESS-01 — Unix socket listen (startUnixSocket)", () => {
   });
 });
 
-// ── Phase 6 emit-site smoke tests (RED gate) ─────────────────────────────────
+// ── emit-site smoke tests ────────────────────────────────────────────────────
 
-describe("Phase 6 emit-site smoke (RED gate)", () => {
+describe("emit-site smoke", () => {
   it("broker:session_opened emitted when tunnel established", async () => {
     const upstream = await makeUpstreamFixture();
     const deps = makeDeps();
@@ -3366,7 +3366,7 @@ describe("Phase 6 emit-site smoke (RED gate)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OBS-02 sentinel helper — scans all log calls + all bus events
+// sentinel helper — scans all log calls + all bus events
 // ---------------------------------------------------------------------------
 function assertNoSentinel(
   logger: ReturnType<typeof makeMockLogger>,
@@ -3383,9 +3383,9 @@ function assertNoSentinel(
   }
 }
 
-// ── OBS-01: broker:* event taxonomy assertions ────────────────────────────────
+// ── broker:* event taxonomy assertions ────────────────────────────────────────
 
-describe("OBS-01 — broker:* event taxonomy", () => {
+describe("broker:* event taxonomy", () => {
   it("broker:session_opened emitted with correct structural fields", async () => {
     const upstream = await makeUpstreamFixture();
     const logger = makeMockLogger();
@@ -3656,9 +3656,9 @@ describe("OBS-01 — broker:* event taxonomy", () => {
   });
 });
 
-// ── OBS-02: exhaustive sentinel property test (all 9 paths) ──────────────────
+// ── exhaustive sentinel property test (all 9 paths) ──────────────────────────
 
-describe("OBS-02 — non-leakage property test (all paths)", () => {
+describe("non-leakage property test (all paths)", () => {
   it("sentinel never appears — Path 1: happy setHeader (Anthropic)", async () => {
     const upstream = await makeUpstreamFixture();
     const logger = makeMockLogger();
@@ -3929,7 +3929,7 @@ describe("E2E-01 — in-process broker end-to-end", () => {
     // Confirm the real secret string is present in headers received by the upstream
     expect(JSON.stringify(fixture.receivedHeaders[0])).toContain(SENTINEL_SECRET);
 
-    // But it must NOT appear in logs or events (dual-polarity assertion — T-06-12)
+    // But it must NOT appear in logs or events (dual-polarity assertion)
     assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
 
     await new Promise<void>((r) => fixture.server.close(() => r()));
@@ -3973,15 +3973,15 @@ describe("E2E-01 — in-process broker end-to-end", () => {
   });
 });
 
-// ── (06-fix) RED tests — findings from Phase 6 REVIEW.md ─────────────────────
+// ── Regression tests — session lifecycle and egress-block emission ───────────
 //
-// CR-01: session lifecycle balance (session_closed must fire on ALL exit paths)
-// WR-01: clock snapshot in teardown (timestamp - durationMs == sessionStartedAt)
-// IN-02: emitEgressBlocked on pre-flight no_binding denial (Step 2.5)
+// - session lifecycle balance (session_closed must fire on ALL exit paths)
+// - clock snapshot in teardown (timestamp - durationMs == sessionStartedAt)
+// - emitEgressBlocked on pre-flight no_binding denial (Step 2.5)
 //
 // These tests MUST FAIL on the pre-fix code and turn GREEN after the fix.
 
-describe("(06-fix) CR-01 — broker:session_closed must be emitted on ALL exit paths (session lifecycle balance)", () => {
+describe("broker:session_closed must be emitted on ALL exit paths (session lifecycle balance)", () => {
   it("no_binding 403 (unknown host, post-CONNECT): session_opened AND session_closed both emitted", async () => {
     // This is an early-exit path after session_opened — currently missing session_closed.
     // The test verifies the imbalance is fixed.
@@ -4113,7 +4113,7 @@ describe("(06-fix) CR-01 — broker:session_closed must be emitted on ALL exit p
   });
 });
 
-describe("(06-fix) WR-01 — teardown: single clock snapshot ensures timestamp - durationMs === sessionStartedAt", () => {
+describe("teardown: single clock snapshot ensures timestamp - durationMs === sessionStartedAt", () => {
   it("session_closed: (timestamp - durationMs) equals the sessionStartedAt captured by session_opened.timestamp", async () => {
     const upstream = await makeUpstreamFixture();
     // Use a step-clock so each call to clock.now() advances by a fixed amount
@@ -4167,7 +4167,7 @@ describe("(06-fix) WR-01 — teardown: single clock snapshot ensures timestamp -
   });
 });
 
-describe("(06-fix) IN-02 — pre-flight no_binding denial (Step 2.5 caManager path) emits broker:egress_blocked", () => {
+describe("pre-flight no_binding denial (Step 2.5 caManager path) emits broker:egress_blocked", () => {
   let caDataDir: string;
 
   beforeEach(() => {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteTunedAlphaStore: the SOLE adapter for the segregated `TunedAlphaStore`
- * port (@comis/core, Phase 111, Track H2 — LEARN-03). It owns ALL the
+ * port (@comis/core). It owns ALL the
  * per-(tenant, agent) tuned-alpha SQL over the additive `tuned_alpha` table — the
  * only place SQL is written for this capability.
  *
@@ -15,8 +15,8 @@
  *   user-representation / relationship adapters there is NO redaction firewall and
  *   NO write-boundary reject). `updated_at` is the injected clock `scope.now`,
  *   never a wall-clock read in src (globals.test.ts bans the wall clock).
- *   Called ONLY by the offline bandit job (111-04) — never on the recall hot path.
- * - `read(scope)` is the deterministic, LLM-free apply-site read (111-03): the
+ *   Called ONLY by the offline bandit job — never on the recall hot path.
+ * - `read(scope)` is the deterministic, LLM-free apply-site read: the
  *   tuned vector for the caller's (tenant, agent) scope ONLY. Returns `undefined`
  *   when no tuned row exists — the apply site then falls back to the static
  *   `rag.scoring` config alphas (the default-OFF byte-identity no-op). It does NOT
@@ -26,7 +26,7 @@
  * `getDb()`); the handle's lifecycle (open/close, pragmas) is owned by the caller
  * — this factory neither opens nor closes it.
  *
- * ## Isolation is the load-bearing security boundary (T-111-04, the §5.2 invariant)
+ * ## Isolation is the load-bearing security boundary (the §5.2 invariant)
  *
  * Comis runs many agents and many tenants in ONE DB. The UPSERT keys on the
  * `(tenant_id, agent_id)` PRIMARY KEY and the read filters
@@ -40,7 +40,7 @@
  * there is no fifth weight column, and this file deliberately never names that
  * fifth `ScoringAlphas` weight (the grep-0 belt — its literal field name is never
  * written here, asserted in the contract test). The bandit can never move that
- * fifth weight; it is sourced ONLY from static config at the apply site (111-03).
+ * fifth weight; it is sourced ONLY from static config at the apply site.
  * This is belt #3, alongside the port type (belt #1) and the pure
  * `computeTunedAlphas` step (belt #2).
  *
@@ -105,7 +105,7 @@ export function createSqliteTunedAlphaStore(
       "usefulness_alpha = excluded.usefulness_alpha, " +
       "updated_at = excluded.updated_at",
   );
-  // The scoped read (T-111-04). The `tenant_id = ? AND agent_id = ?` filter is the
+  // The scoped read. The `tenant_id = ? AND agent_id = ?` filter is the
   // load-bearing 2-way ISOLATION boundary: a vector written under one scope can
   // NEVER be read under any differing tenant/agent. Bound params only.
   const readScoped = db.prepare(

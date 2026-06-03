@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for {@link DialecticConfigSchema} (Phase 109 — DIAL-02): the
+ * Tests for {@link DialecticConfigSchema}: the
  * default-OFF per-agent opt-in knob that gates the `memory_ask` tool (the
  * ONE allowed query-time LLM surface). RED-first: the schema module does not
  * exist until the GREEN patch.
@@ -8,11 +8,11 @@
  * The contract these tests pin:
  *   - `enabled` defaults to `false` — the cost gate. A config that omits the
  *     `dialectic` block, or sets it `{}`, can NEVER silently enable the
- *     query-time LLM (T-109-01).
+ *     query-time LLM.
  *   - `maxOutputTokens` + `maxRecall` are positive-int DoS bounds, both
- *     defaulted (T-109-04 — the cost axis).
+ *     defaulted (the cost axis).
  *   - `z.strictObject` rejects unknown keys (matches the social-modeling
- *     discipline; T-109-01).
+ *     discipline).
  *   - the knob is registered onto `PerAgentConfigSchema` as `.optional()` —
  *     present-and-enabled parses, AND omitting it entirely parses (no existing
  *     default changes).
@@ -24,8 +24,8 @@ import { DialecticConfigSchema } from "./schema-dialectic.js";
 import { PerAgentConfigSchema } from "./schema-agent/schema-agent-runtime.js";
 
 describe("DialecticConfigSchema", () => {
-  it("defaults every field with enabled:true (v1 opt-out posture; kill-switch-gated cost feature)", () => {
-    // v2.9 increment 2 — v1 OPT-OUT posture: memory_ask defaults ON. It is a COST feature (the one
+  it("defaults every field with enabled:true (opt-out posture; kill-switch-gated cost feature)", () => {
+    // Opt-out posture: memory_ask defaults ON. It is a COST feature (the one
     // query-time LLM surface), so the master cost-feature kill switch still force-disables it at
     // the dialectic-wiring layer. The DoS cost bounds stay frozen.
     const parsed = DialecticConfigSchema.parse({});
@@ -63,8 +63,8 @@ describe("PerAgentConfigSchema dialectic registration", () => {
     });
   });
 
-  it("defaults dialectic ON for a config that omits it (v1 opt-out posture; kill-switch-gated)", () => {
-    // v2.9 increment 2 — the knob is no longer `.optional()`; a bare config gets it populated +
+  it("defaults dialectic ON for a config that omits it (opt-out posture; kill-switch-gated)", () => {
+    // The knob is no longer `.optional()`; a bare config gets it populated +
     // enabled. The master cost-feature kill switch still force-disables memory_ask at the wiring
     // layer (buildDialecticWiring returns the dead `{}` when costFeatures is off).
     const parsed = PerAgentConfigSchema.parse({});

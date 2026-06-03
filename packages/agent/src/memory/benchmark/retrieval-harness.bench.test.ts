@@ -1,42 +1,41 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated retrieval-recall harness (BENCH-01 ingest half + BENCH-02) — the
+ * Env-gated retrieval-recall harness (the ingest + recall-scoring halves) — the
  * proof gate's measurement engine.
  *
- * It ingests the Plan-01 LongMemEval + LoCoMo documents (one dated document per
+ * It ingests the LongMemEval + LoCoMo documents (one dated document per
  * session, a fresh `randomUUID()` per document) into a REAL `SqliteMemoryAdapter`,
  * runs the LIVE `createMemoryRecall` pipeline (search -> fuse -> rerank -> score ->
  * trust-filter -> dedup) per benchmark question, and scores recall@k / MRR against
  * the `buildGoldMap`-resolved gold-evidence ids by REUSING `recall-eval.ts`'s
- * `scoreRanking`. The number this prints is the v2.6 "better memory" claim turned
- * into a reproducible regression proxy that every later v2.7 phase is scored against.
+ * `scoreRanking`. The number this prints is the "better memory" claim turned
+ * into a reproducible regression proxy that every later phase is scored against.
  *
- * ARCHITECTURE CUT (the single escape hatch in this phase): this *.test.ts MAY
+ * ARCHITECTURE CUT (the single escape hatch): this *.test.ts MAY
  * import the memory package (a devDependency); the agent->memory architecture cut
  * excludes .test.ts via findForbiddenImports' suffix filter (source-rules.test.ts:137,
- * excludeFileSuffixes: [".test.ts"]). The production loaders (Plan 01: longmemeval-loader.ts,
- * locomo-loader.ts, gold-map.ts) and analyzer (Plan 02: recall-trace-analyzer.ts) import
+ * excludeFileSuffixes: [".test.ts"]). The production loaders (longmemeval-loader.ts,
+ * locomo-loader.ts, gold-map.ts) and analyzer (recall-trace-analyzer.ts) import
  * ONLY @comis/core / @comis/observability types + @comis/shared Result + Node stdlib —
  * this harness is the single cut escape. Mirrors the blessed precedent recall-eval.test.ts:14-18.
  *
  * TWO-TIER SPLIT (mirrors recall-eval.test.ts:5-13):
  * - UNGATED (default CI, `pnpm test`/`pnpm validate`): the deterministic, structural
- *   correctness of the loaders + gold-map + analyzer is unit-tested in Plan 01/02's
+ *   correctness of the loaders + gold-map + analyzer is unit-tested in their
  *   co-located *.test.ts over the tiny vendored fixtures.
  * - GATED (THIS file, `COMIS_BENCH=1`): the full ingest + live-recall + score run.
  *   The model lanes nest behind `LLAMA_MODEL_PATH` (vector lane / embeddings) and
  *   `LLAMA_RERANKER_MODEL_PATH` (rerank lift); absent both -> honest FTS-only retrieval
- *   (Assumption A6 — recall@k reflects lexical-only retrieval). A default `pnpm test`
+ *   (recall@k reflects lexical-only retrieval). A default `pnpm test`
  *   run (no COMIS_BENCH) skips this entire suite, so no dataset / GGUF weight reaches CI.
  *
  * SECURITY: the bench store is a fresh `mkdtempSync` tmp DB (NEVER ~/.comis),
  * `trustLevel: "learned"`, `tenantId: "default"` / `agentId: "bench"` — isolated from
- * any live agent (T-88-03-03). The operator-provided `COMIS_BENCH_DATA` base is resolved
+ * any live agent. The operator-provided `COMIS_BENCH_DATA` base is resolved
  * and each dataset file path is asserted to live under it before any read (rejects
- * `..`-escape; T-88-03-01, ASVS V5). Content comes from Plan 01's loaders, which strip
+ * `..`-escape; ASVS V5). Content comes from the loaders, which strip
  * `has_answer` (LongMemEval) and exclude the `qa` block (LoCoMo) — gold lives only in
- * the `buildGoldMap` side-channel keyed by UUID, never re-introduced into content
- * (T-88-03-02).
+ * the `buildGoldMap` side-channel keyed by UUID, never re-introduced into content.
  *
  * @module
  */
@@ -45,24 +44,24 @@ import { describe, it, expect, beforeAll } from "vitest";
 // GATED test-only imports (the agent->memory cut excludes *.test.ts). Public-barrel
 // factories: the local-embedding factory is reached via createEmbeddingProvider
 // ({provider:"local",...}) — the direct local-embedding factory is NOT on the
-// @comis/memory barrel (PATTERNS correction #1) — plus createLocalRerankerProvider.
+// @comis/memory barrel — plus createLocalRerankerProvider.
 import {
   SqliteMemoryAdapter,
   createEmbeddingProvider,
   createLocalRerankerProvider,
 } from "@comis/memory";
-// BARE production orchestrator (the live recall pipeline scored by BENCH-02).
+// BARE production orchestrator (the live recall pipeline scored by this harness).
 import { createMemoryRecall, type MemoryRecallDeps } from "@comis/agent";
 // RELATIVE scorer + the EvalQuery type (NEITHER is on the @comis/agent barrel — reached
 // relatively from this co-located file).
 import { scoreRanking } from "../recall-eval.js";
 import type { EvalQuery } from "../__fixtures__/recall-eval-fixtures.js";
-// RELATIVE Plan 01 loaders + gold-map (consumed verbatim — NO field-rename, NO
+// RELATIVE loaders + gold-map (consumed verbatim — NO field-rename, NO
 // questionId synthesis in the harness; the loaders own those).
 import { loadLongMemEvalDataset } from "./longmemeval-loader.js";
 import { loadLocomoDataset } from "./locomo-loader.js";
 import { buildGoldMap } from "./gold-map.js";
-// RELATIVE Plan 02 analyzer (the optional quality-view tie-in, step 8).
+// RELATIVE analyzer (the optional quality-view tie-in, step 8).
 import { analyzeRecallTrace } from "./recall-trace-analyzer.js";
 // VALUE obs import (fine in a .test.ts) — the tmp-filePath recall-trace recorder +
 // the confined report writer (O_NOFOLLOW + EXCL + confinement) for retrieval-metrics.json.
@@ -80,7 +79,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
 // ENV GATES — read process.env ONLY at the test boundary (allowed in a .test.ts;
-// the globals rule scopes to src/**). Names pinned by PATTERNS/RESEARCH (A1).
+// the globals rule scopes to src/**). The env-var names are pinned.
 const COMIS_BENCH = process.env.COMIS_BENCH; // the full ingest+recall+score run
 const LLAMA_MODEL_PATH = process.env.LLAMA_MODEL_PATH; // vector lane (embeddings)
 const LLAMA_RERANKER_MODEL_PATH = process.env.LLAMA_RERANKER_MODEL_PATH; // rerank lift
@@ -119,7 +118,7 @@ const BENCH_SESSION_KEY: SessionKey = {
  * Read a vendored fixture (default) or an operator-placed dataset file under
  * `COMIS_BENCH_DATA`. When the operator base is set, resolve it and assert the
  * resolved file path stays under it BEFORE `readFileSync` — this rejects a
- * `..`-escape on the operator path (T-88-03-01, ASVS V5). An absolute operator
+ * `..`-escape on the operator path (ASVS V5). An absolute operator
  * path under an asserted base is acceptable in a .test.ts; full safePath
  * confinement is the src-side control.
  */
@@ -249,7 +248,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
 
     // 4. Recall every question of ONE item against ITS store, resolving gold through
     // that item's OWN datasetRef -> uuid side-map. Gold refs (sessionId / "D<sess>:<dia>")
-    // are unique only WITHIN an item, so buildGoldMap MUST run per item (WR-02 — a global
+    // are unique only WITHIN an item, so buildGoldMap MUST run per item (a global
     // map would let two items' identical refs collide and zero a lane). The questionIds
     // are globally unique, so memoizing/accumulating across items is collision-proof.
     const recallItem = async (
@@ -309,7 +308,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
 
     // 5b. LoCoMo samples — each an INDEPENDENT store. Key the side-map on the FULL
     // session-qualified dia ref ("D2:3") verbatim — the SAME form the loader emits for
-    // qa[].goldDiaIds, so buildGoldMap resolves (WR-02).
+    // qa[].goldDiaIds, so buildGoldMap resolves.
     for (const locomo of locomoItems) {
       const adapter = new SqliteMemoryAdapter(
         makeBenchConfig(join(dir, `locomo-${storeIdx++}.db`), dims),
@@ -347,7 +346,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
     await rerankerPort?.dispose?.();
     // 2h hook timeout: full-set ingestion (all 500 LongMemEval items + 10 LoCoMo,
     // on-device embedding) runs in THIS beforeAll and far exceeds the 2-min default —
-    // it must match the raised it-body budget or the real run trips here (BASE-01).
+    // it must match the raised it-body budget or the real run trips here.
   }, 7_200_000);
 
   // The sync rankFn reads the same questionId memo (the closure keys on questionId).
@@ -356,7 +355,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
 
   it("reports recall@k / MRR over the ingested haystack without regression", () => {
     const metrics = scoreRanking(queries, rankFn);
-    // Report the BENCH-02 regression-proxy number for the operator:
+    // Report the regression-proxy number for the operator:
     // eslint-disable-next-line no-console -- gated bench harness reports its number (this is a .test.ts, not packages/cli)
     console.log(
       "BENCH recall@k/MRR",
@@ -367,9 +366,9 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
       !!LLAMA_RERANKER_MODEL_PATH,
     );
 
-    // BASE-01: persist recall@k/MRR to disk so it is a committable manifest sibling of
+    // Persist recall@k/MRR to disk so it is a committable manifest sibling of
     // qa-report.json, not a console-only number. The written object is pure metrics +
-    // booleans + a version string — no model identity carrying a key (T-98-01-02); the
+    // booleans + a version string — no model identity carrying a key; the
     // confined writeRegularFile (O_NOFOLLOW + EXCL + confinement) is the same writer the
     // QA harness uses for qa-report.json. retrieval is keyless, so no secret exists to leak.
     const metricsJson = JSON.stringify(
@@ -389,7 +388,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
     });
     expect(writeResult.ok, "retrieval-metrics.json written to the confined dir").toBe(true);
 
-    // Assertion discipline (Pitfall 2) — structural invariants ONLY, never a hard floor.
+    // Assertion discipline — structural invariants ONLY, never a hard floor.
     expect(metrics.recallAt1).toBeGreaterThanOrEqual(0); // recall-eval.test.ts:328 style
     expect(metrics.recallAt5).toBeGreaterThanOrEqual(metrics.recallAt1); // monotone @k invariant
     expect(metrics.mrr).toBeGreaterThanOrEqual(0);
@@ -422,7 +421,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
     ).toBe(true);
   });
 
-  // OPTIONAL quality-view tie-in (Plan 02): prove the BENCH-05 analyzer reads a REAL
+  // OPTIONAL quality-view tie-in: prove the analyzer reads a REAL
   // produced trace (not just the hand-authored fixture). Structural assertion only.
   it("analyzeRecallTrace folds the real produced recall-trace JSONL", () => {
     const view = analyzeRecallTrace(readFileSync(traceFile, "utf-8"));

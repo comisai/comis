@@ -3,7 +3,7 @@
  * Agent Communication E2E Tests
  *
  * ACP Protocol Handshake (no LLM keys needed)
- *   ACP-01: Full initialize -> newSession -> prompt -> multi-turn lifecycle via ndJson
+ *   Full initialize -> newSession -> prompt -> multi-turn lifecycle via ndJson
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -107,11 +107,11 @@ function createTestAcpDeps(
 
 describe("ACP Protocol Handshake E2E", () => {
   // -------------------------------------------------------------------------
-  // ACP-01: Full lifecycle through ndJson transport
+  // Full lifecycle through ndJson transport
   // -------------------------------------------------------------------------
 
   it(
-    "ACP-01: Full initialize -> newSession -> prompt -> multi-turn lifecycle through ndJson transport",
+    "Full initialize -> newSession -> prompt -> multi-turn lifecycle through ndJson transport",
     async () => {
       const [sideA, sideB] = createPairedByteStreams();
       const deps = createTestAcpDeps();

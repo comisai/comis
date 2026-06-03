@@ -261,11 +261,11 @@ describe("insertMemoryRow", () => {
   });
 });
 
-// ── occurred_at full round-trip through the strict schema (TEMP-01) ──
+// ── occurred_at full round-trip through the strict schema ──
 //
 // This is the lockstep guard: domain MemoryEntry -> insertMemoryRow ->
 // SELECT * -> MemoryRowSchema (z.strictObject) -> rowToEntry. If occurred_at
-// were added to the table (Task 1) but NOT to MemoryRowSchema, the strict
+// were added to the table but NOT to MemoryRowSchema, the strict
 // parse below would FAIL -> the adapter would skip every row -> recall would
 // silently return []. These tests fail loudly instead.
 
@@ -321,7 +321,7 @@ describe("occurred_at round-trip (domain -> INSERT -> SELECT * -> rowToEntry)", 
   });
 });
 
-// ── Observation columns full round-trip (Phase 84 CONS-01/05/08) ────
+// ── Observation columns full round-trip ────
 //
 // THE 4-WAY LOCKSTEP guard for the 5 observation columns: domain
 // MemoryEntry -> insertMemoryRow -> SELECT * -> MemoryRowSchema
@@ -419,19 +419,19 @@ describe("observation columns round-trip (domain -> INSERT -> SELECT * -> rowToE
   });
 });
 
-// ── Typed-observation columns full round-trip (Phase 101 REASON-01) ──
+// ── Typed-observation columns full round-trip ──
 //
 // THE LOCKSTEP guard for the 2 typed-observation columns (observation_kind,
 // pattern_type): domain MemoryEntry -> insertMemoryRow -> SELECT * ->
 // MemoryRowSchema (z.strictObject) -> rowToEntry. If observation_kind/
 // pattern_type are added to the table but NOT to MemoryRowSchema, the strict
 // parse below FAILS -> the adapter skips the row -> recall silently returns [].
-// These fail loudly instead. The third test is the Pitfall-5 ARG-SHIFT guard:
+// These fail loudly instead. The third test is the ARG-SHIFT guard:
 // a misaligned INSERT column/placeholder/run triplet would write a kind string
 // into has_embedding or expires_at (an unrelated field) — asserting those two
 // are unshifted catches it.
 
-describe("typed-observation columns round-trip (domain -> INSERT -> SELECT * -> rowToEntry, REASON-01)", () => {
+describe("typed-observation columns round-trip (domain -> INSERT -> SELECT * -> rowToEntry)", () => {
   let db: Database.Database;
   const memoryRowMapper = createRowMapper(MemoryRowSchema);
 
@@ -471,7 +471,7 @@ describe("typed-observation columns round-trip (domain -> INSERT -> SELECT * -> 
     expect(back.patternType).toBe("preference");
   });
 
-  it("reads back observationKind='merge' (NULL default) and NO patternType when both are omitted (pre-101 row behavior)", () => {
+  it("reads back observationKind='merge' (NULL default) and NO patternType when both are omitted (legacy row behavior)", () => {
     const entry = makeEntry({ id: "rt-merge-default" });
     expect("observationKind" in entry).toBe(false);
     expect("patternType" in entry).toBe(false);
@@ -483,13 +483,13 @@ describe("typed-observation columns round-trip (domain -> INSERT -> SELECT * -> 
     expect(row.pattern_type).toBeNull();
 
     const back = rowToEntry(row);
-    // NULL observation_kind -> "merge" (the forward-only default for pre-101 rows).
+    // NULL observation_kind -> "merge" (the forward-only default for legacy rows).
     expect(back.observationKind).toBe("merge");
     // NULL pattern_type -> the key is ABSENT (conditional spread), not present-undefined.
     expect("patternType" in back).toBe(false);
   });
 
-  it("does NOT shift has_embedding or expires_at when an inductive observation is inserted (Pitfall-5 arg-alignment guard)", () => {
+  it("does NOT shift has_embedding or expires_at when an inductive observation is inserted (arg-alignment guard)", () => {
     // A misaligned INSERT column/placeholder/run triplet would write the kind
     // string ("inductive") into has_embedding (the literal 0, last) or into
     // expires_at — corrupting an unrelated column. Assert both are intact.

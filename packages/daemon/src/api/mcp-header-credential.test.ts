@@ -344,7 +344,7 @@ describe("processHeaderCredentials — plaintextOptOut static-secret warn-and-al
 });
 
 // ---------------------------------------------------------------------------
-// processHeaderCredentials — mutableSecretManager live-apply (WR-01)
+// processHeaderCredentials — mutableSecretManager live-apply
 // ---------------------------------------------------------------------------
 
 describe("processHeaderCredentials — mutableSecretManager live-apply", () => {

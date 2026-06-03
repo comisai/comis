@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * template-engine — the pure, single chokepoint that turns redacted tool params
- * into a user-visible activity label (ACT-06, spec §10.1).
+ * into a user-visible activity label (spec §10.1).
  *
- * `applyTemplate(spec, params)` is the projection-time enforcement of
- * SEC-01/02/03. The pipeline (spec §10.1 lines 1219-1231):
+ * `applyTemplate(spec, params)` is the projection-time enforcement of the
+ * redaction rules. The pipeline (spec §10.1 lines 1219-1231):
  *
  *   raw params
  *     → allowlist filter   (accept ONLY the keys the LabelSpec declares —
  *                           drops the raw user message body / un-declared keys;
- *                           this is the SEC-03 reflection guard)
+ *                           this is the reflection guard)
  *     → redactValue()      (per surviving value: secret-key + secret-shape +
- *                           absolute-path compaction + PII masks; SEC-01/02)
+ *                           absolute-path compaction + PII masks)
  *     → static substitution of `{key}` placeholders (a plain string-replace
  *                           callback — NO dynamic code execution of any form,
  *                           §19.4); a referenced placeholder absent from the
  *                           allowlist → unknown_key
- *     → transform hook     (Phase 78 WS-C: spec.transform(params) consumes RAW
+ *     → transform hook     (spec.transform(params) consumes RAW
  *                           params and produces the final label; non-empty
  *                           return wins. The transform output is piped through
  *                           redactValue defense-in-depth — Pitfall 4 — so a
@@ -26,9 +26,9 @@
  *     → length cap (label ≤ 120, detail ≤ 280) → { …, truncated }
  *
  * It is PURE: no logger, no I/O, no dynamic code execution. It consumes the
- * `redactValue` primitive from `core/security` (plan 70-02) — it does NOT
- * hand-roll redaction. The observability layer (plan 70-08) reads the returned
- * `redactionsApplied` and emits the OBS-03 WARN; this engine never logs.
+ * `redactValue` primitive from `core/security` — it does NOT
+ * hand-roll redaction. The observability layer reads the returned
+ * `redactionsApplied` and emits the WARN; this engine never logs.
  *
  * The template engine is the ONLY path from `params` to user-visible strings —
  * raw `params` never reach a channel adapter (spec §10.1 line 1233).
@@ -78,7 +78,7 @@ export interface TemplateOutput {
 
 /**
  * Why a template could not be rendered. Closed union — never widened to
- * `string` (AGENTS.md §2.8). `unknown_key` is the SEC-03 enforcement: a template
+ * `string` (AGENTS.md §2.8). `unknown_key` is the allowlist enforcement: a template
  * that references a placeholder the spec did not allowlist is rejected, not
  * silently filled from the raw params.
  */
@@ -99,7 +99,7 @@ export function applyTemplate(
   params: Readonly<Record<string, unknown>>,
   opts: RedactOptions = {},
 ): Result<TemplateOutput, TemplateError> {
-  // (1) Allowlist filter (SEC-03): keep ONLY the keys the spec declares. Every
+  // (1) Allowlist filter: keep ONLY the keys the spec declares. Every
   //     other params key — including the raw user message body — is dropped
   //     here, before any value can reach the substitution step.
   const allowed = new Set<string>(spec.detailKeys ?? []);
@@ -113,7 +113,7 @@ export function applyTemplate(
   for (const [key, raw] of Object.entries(params)) {
     if (!allowed.has(key)) continue;
     // Redact the value IN THE CONTEXT OF ITS KEY so key-based redaction
-    // (SEC-01: a value under `token`/`apiKey`/`secret`/... collapses wholesale)
+    // (key-based: a value under `token`/`apiKey`/`secret`/... collapses wholesale)
     // fires. Passing the bare value would lose the key and only catch
     // shape-based secrets. The single-key wrapper is then unwrapped via
     // Object.values (no computed index access on the result).
@@ -126,7 +126,7 @@ export function applyTemplate(
   }
 
   // (3) Static substitution of `{key}` placeholders. A referenced placeholder
-  //     that is NOT in the allowlist is an unknown_key error (SEC-03) — it is
+  //     that is NOT in the allowlist is an unknown_key error — it is
   //     never resolved from the raw params. A declared-but-absent placeholder
   //     renders as empty (it is allowlisted, just not supplied).
   const labelResult = substitute(spec.label, allowed, substitutions);
@@ -139,7 +139,7 @@ export function applyTemplate(
     detailRendered = detailResult.value;
   }
 
-  // (4) Transform-hook override (Phase 78 WS-C). When the spec declares a
+  // (4) Transform-hook override. When the spec declares a
   //     transform, invoke it with the RAW params and use its non-empty return
   //     as the label text (an empty return falls through to the substituted
   //     label). The transform output is piped through `redactValue` even when

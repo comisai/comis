@@ -123,7 +123,7 @@ export interface ShutdownDeps {
   /** Lifecycle reactors for cleanup on shutdown */
   lifecycleReactors?: Array<{ destroy: () => void }>;
   /** Observability persistence write buffers for shutdown drain */ obsPersistence?: { drainAll(): void; snapshotTimer: ReturnType<typeof setInterval> };
-  disposeActivityStream?: () => void; // WIRE-05/§17.7: drain + unsubscribe ActivityStream
+  disposeActivityStream?: () => void; // §17.7: drain + unsubscribe ActivityStream
   /** Context pipeline collector for shutdown cleanup */
   contextPipelineCollector?: { dispose(): void };
   /** Gemini CachedContent lifecycle manager for shutdown disposal. */
@@ -607,7 +607,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       {
         const stopMs = systemNowMs();
         await withStepTimeout(() => {
-          disposeActivityStream?.(); // WIRE-05: drain ActivityStream FIRST (T-70-10-03)
+          disposeActivityStream?.(); // drain ActivityStream FIRST
           deps.contextPipelineCollector?.dispose();
           diagnosticCollector.dispose();
           channelActivityTracker.dispose();

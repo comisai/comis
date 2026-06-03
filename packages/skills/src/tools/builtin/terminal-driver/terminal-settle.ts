@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The settle engine (spec §5 wait, §4.3 attention model, TR-05).
+ * The settle engine (spec §5 wait, §4.3 attention model).
  *
- * The bounded, injected-clock debounce that powers every P1 mutating tool's
- * "act then return the SETTLED snapshot" contract and the explicit `wait` tool.
+ * The bounded, injected-clock debounce that powers every mutating tool's "act
+ * then return the SETTLED snapshot" contract and the explicit `wait` tool.
  * It resolves on the EARLIEST of:
  *   - the stdout ring going quiet for `idleMs` (idle debounce) — armed IFF the
  *     caller asked for idle (`forIdleMs`) or asked for nothing specific (idle is
- *     the DEFAULT only when no `forText`/`forExit` is requested; see TR-05),
+ *     the DEFAULT only when no `forText`/`forExit` is requested),
  *   - a `forText` substring appearing in the ring (text) — armed IFF `forText` set,
  *   - the session exiting (exit) — ALWAYS terminal (an exited program can produce
  *     no more output, so it ends any wait, including an idle/text wait),
@@ -15,13 +15,13 @@
  *
  * On timeout it resolves a LOAD-BEARING `isComplete:false` — it NEVER throws and
  * NEVER holds the turn open. A settle that could hang would strand a turn; a
- * settle that returned a false `isComplete:true` on timeout would convince the P5
+ * settle that returned a false `isComplete:true` on timeout would convince the
  * attention model the work is done and abandon a live session. Both failure modes
  * are security/correctness load-bearing, so the engine is deterministic under a
  * fake timer and the timeout shape is hard-coded.
  *
- * Timer indirection mirrors `terminal-session-registry.ts` (119-03 + MR-01): the
- * worker (Plan 04) injects `setTimer`/`clearTimer` whose production defaults wrap
+ * Timer indirection mirrors `terminal-session-registry.ts`: the worker injects
+ * `setTimer`/`clearTimer` whose production defaults wrap
  * `systemSetTimeout`/`systemClearTimeout` from `@comis/core` and `.unref()` the
  * handle so a pending timer never holds the event loop open. There is NO raw
  * `setTimeout` here and NO `@comis/infra` import; the engine is pure and
@@ -37,8 +37,8 @@
 
 /**
  * Default idle window (the debounce): resolve `idle` once the ring is unchanged
- * for this many ms. A small value in the 75-150ms band per CONTEXT — a shell
- * settles fast. The per-entry adaptive longer settle for AI CLIs is P5; P1 ships
+ * for this many ms. A small value in the 75-150ms band — a shell settles fast.
+ * The per-entry adaptive longer settle for AI CLIs is a later concern; this is
  * the bounded primitive with a sane default.
  */
 export const SETTLE_DEFAULT_IDLE_MS = 120;
@@ -55,9 +55,9 @@ export const SETTLE_MAX_TIMEOUT_MS = 15_000;
 // ---------------------------------------------------------------------------
 
 /**
- * The injected ports `runSettle` needs. The worker (Plan 04) wires these to the
- * session's ring append + the backend close; tests inject a deterministic fake
- * scheduler + ring source. NO `@comis/infra`, NO raw timers.
+ * The injected ports `runSettle` needs. The worker wires these to the session's
+ * ring append + the backend close; tests inject a deterministic fake scheduler +
+ * ring source. NO `@comis/infra`, NO raw timers.
  */
 export interface SettleDeps {
   /** Schedule a one-shot timer; returns an opaque handle for `clearTimer`. */
@@ -73,14 +73,14 @@ export interface SettleDeps {
   /** Subscribe to backend-exit notifications; returns an unsubscribe. */
   onExit: (cb: () => void) => () => void;
   /**
-   * OPTIONAL gate (P2/121, TR-14): may the session settle IDLE right now? The
-   * worker wires this to `!hasContentBelowFold()` so a frame with content below
-   * the visible viewport (still scrolling / more to render) is NOT marked idle —
-   * the idle timer RE-ARMS instead of resolving. Absent ⇒ always settleable (the
-   * 120-02 behavior). This gates ONLY the idle path; exit/text/timeout are
-   * UNCHANGED (exit stays always-terminal, the load-bearing `isComplete:false`
-   * on timeout is preserved). The gate can only SUPPRESS an idle-settle (keep
-   * waiting), never falsely declare settled — the SAFE direction.
+   * OPTIONAL gate: may the session settle IDLE right now? The worker wires this
+   * to `!hasContentBelowFold()` so a frame with content below the visible
+   * viewport (still scrolling / more to render) is NOT marked idle — the idle
+   * timer RE-ARMS instead of resolving. Absent ⇒ always settleable. This gates
+   * ONLY the idle path; exit/text/timeout are UNCHANGED (exit stays
+   * always-terminal, the load-bearing `isComplete:false` on timeout is
+   * preserved). The gate can only SUPPRESS an idle-settle (keep waiting), never
+   * falsely declare settled — the SAFE direction.
    */
   isSettleable?: () => boolean;
 }
@@ -92,7 +92,7 @@ export interface SettleParams {
    * value. When omitted, idle is armed only if NO other condition (`forText`/
    * `forExit`) is requested — then it defaults to {@link SETTLE_DEFAULT_IDLE_MS};
    * a `forExit`/`forText`-only wait does NOT arm idle, so a quiet window cannot
-   * pre-empt the requested exit/text condition (TR-05).
+   * pre-empt the requested exit/text condition.
    */
   forIdleMs?: number;
   /**
@@ -148,12 +148,12 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
   // caller explicitly asked for it (`forIdleMs`) OR asked for NOTHING specific
   // (idle is the sensible DEFAULT only when no forText/forExit is requested). When
   // the caller asked for forExit (or forText), a quiet output window must NOT fire
-  // the idle timer and pre-empt the slightly-later exit/text event (TR-05): on a
-  // real PTY that mis-reported reason:"idle" for a session that actually EXITED,
-  // and the P5 attention model would read "awaiting input" for a dead session.
-  // exit and timeout stay ALWAYS armed regardless; text is armed when forText is
-  // set. The post-action send_text/send_key quiesce requests forIdleMs explicitly,
-  // so it keeps its idle behavior.
+  // the idle timer and pre-empt the slightly-later exit/text event: on a real PTY
+  // that mis-reported reason:"idle" for a session that actually EXITED, and the
+  // attention model would read "awaiting input" for a dead session. exit and
+  // timeout stay ALWAYS armed regardless; text is armed when forText is set. The
+  // post-action send_text/send_key quiesce requests forIdleMs explicitly, so it
+  // keeps its idle behavior.
   const idleArmed = params.forIdleMs !== undefined || (forText === undefined && params.forExit !== true);
 
   return new Promise<SettleResult>((resolve) => {
@@ -186,12 +186,12 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
     /**
      * (Re)start the idle debounce: clear the prior idle timer, schedule a fresh
      * one. A NO-OP when idle is not armed (forExit/forText-only waits) so a quiet
-     * window can never pre-empt the requested exit/text condition (TR-05).
+     * window can never pre-empt the requested exit/text condition.
      *
-     * When the idle window elapses but `isSettleable()` is false (P2/121, TR-14 —
-     * content remains below the fold), the timer RE-ARMS instead of resolving
-     * idle: a still-rendering frame is never marked idle. The gate can only delay
-     * an idle-settle (bounded by the overall timeout), never force one — exit/text
+     * When the idle window elapses but `isSettleable()` is false (content remains
+     * below the fold), the timer RE-ARMS instead of resolving idle: a
+     * still-rendering frame is never marked idle. The gate can only delay an
+     * idle-settle (bounded by the overall timeout), never force one — exit/text
      * /timeout are unaffected.
      *
      * Adaptive N-stable-window (spec §4.3): a settleable idle window does not

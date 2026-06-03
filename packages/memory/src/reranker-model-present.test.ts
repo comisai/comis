@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit + env-gated coverage for the no-download reranker presence probe
- * (Phase 92, RERANK-01/RERANK-02).
+ * Unit + env-gated coverage for the no-download reranker presence probe.
  *
  * The supply-chain invariant under test: probing whether the ~606 MB GGUF is
  * already cached must NEVER fetch it. The mocked-node-llama-cpp suite asserts

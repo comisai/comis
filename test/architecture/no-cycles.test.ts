@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * No-cycles invariants (ARCH-BASE-05).
+ * No-cycles invariants.
  *
  * Two distinct tests, fired from `pnpm test` (SOURCE MODE only):
  *   1. INTRA-PACKAGE: madge programmatic API walks every packages/*\/src/
@@ -14,9 +14,9 @@
  *      source-level cycles wouldn't materialize (type-only project-ref
  *      cycles).
  *
- * The DIST-MODE madge gate AND `tsc -b --dry` gate (ARCH-BASE-14's third
- * belt) live in .github/workflows/ci.yml as post-`pnpm build` CI steps —
- * NOT here, since they require dist/ artifacts.
+ * The DIST-MODE madge gate AND `tsc -b --dry` gate (the third belt) live in
+ * .github/workflows/ci.yml as post-`pnpm build` CI steps — NOT here, since
+ * they require dist/ artifacts.
  *
  * @module
  */
@@ -141,7 +141,7 @@ function canonicalizeCycle(cycle: readonly string[]): string {
   return [...cycle].sort().join("|");
 }
 
-describe("no-cycles -- intra-package via madge (ARCH-BASE-05, source mode)", () => {
+describe("no-cycles -- intra-package via madge (source mode)", () => {
   it("packages/*/src introduces no NEW source-level circular import paths beyond the recorded baseline", async () => {
     const rootPaths = WORKSPACE_PACKAGES.map((p) =>
       resolve(REPO_ROOT, `packages/${p}/src`),
@@ -181,7 +181,7 @@ describe("no-cycles -- intra-package via madge (ARCH-BASE-05, source mode)", () 
   });
 });
 
-describe("no-cycles -- cross-package via Tarjan SCC (ARCH-BASE-05)", () => {
+describe("no-cycles -- cross-package via Tarjan SCC", () => {
   it("verifies tsconfig references + package.json @comis/* deps form an acyclic graph via Tarjan SCC", () => {
     const nodes = new Set<string>(WORKSPACE_PACKAGES);
     const edges = new Map<string, Set<string>>();

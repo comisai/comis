@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * MSG: Echo Adapter Dispatch Integration Tests
+ * Echo Adapter Dispatch Integration Tests
  *
  * Validates all 7 message operations by dispatching through the daemon's
  * adapterRegistry -- the same Map<string, ChannelPort> that rpcCall's
  * resolveAdapter() uses internally (daemon.ts line 1749).
  *
- *   MSG-01: message.send dispatches through registry, returns { messageId, channelId }
- *   MSG-02: message.reply dispatches with replyTo, returns { messageId, channelId }
- *   MSG-03: message.react dispatches through registry, returns { reacted, emoji }
- *   MSG-04: message.edit dispatches through registry, returns { edited }
- *   MSG-05: message.delete dispatches through registry, returns { deleted }
- *   MSG-06: message.fetch dispatches through registry, returns { messages }
- *   MSG-07: message.attach dispatches through registry, returns { messageId }
+ *   message.send dispatches through registry, returns { messageId, channelId }
+ *   message.reply dispatches with replyTo, returns { messageId, channelId }
+ *   message.react dispatches through registry, returns { reacted, emoji }
+ *   message.edit dispatches through registry, returns { edited }
+ *   message.delete dispatches through registry, returns { deleted }
+ *   message.fetch dispatches through registry, returns { messages }
+ *   message.attach dispatches through registry, returns { messageId }
  *
  * Tests register the EchoChannelAdapter on the daemon's adapterRegistry,
  * resolve it by channel type (mirroring resolveAdapter behavior), and call
@@ -46,7 +46,7 @@ const messagingConfigPath = resolve(
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("MSG: Echo Adapter Dispatch", () => {
+describe("Echo Adapter Dispatch", () => {
   let handle: TestDaemonHandle;
   let echoAdapter: EchoChannelAdapter;
   let registry: Map<string, ChannelPort>;
@@ -202,7 +202,7 @@ describe("MSG: Echo Adapter Dispatch", () => {
   );
 
   it(
-    "message.send dispatches through registry and returns { messageId, channelId } (MSG-01)",
+    "message.send dispatches through registry and returns { messageId, channelId }",
     async () => {
       const result = (await dispatchMessage("message.send", {
         channel_type: "echo",
@@ -223,7 +223,7 @@ describe("MSG: Echo Adapter Dispatch", () => {
   );
 
   it(
-    "message.reply dispatches with replyTo through registry (MSG-02)",
+    "message.reply dispatches with replyTo through registry",
     async () => {
       const result = (await dispatchMessage("message.reply", {
         channel_type: "echo",
@@ -245,7 +245,7 @@ describe("MSG: Echo Adapter Dispatch", () => {
   );
 
   it(
-    "message.react dispatches through registry and returns { reacted, emoji } (MSG-03)",
+    "message.react dispatches through registry and returns { reacted, emoji }",
     async () => {
       const result = await dispatchMessage("message.react", {
         channel_type: "echo",
@@ -265,7 +265,7 @@ describe("MSG: Echo Adapter Dispatch", () => {
   );
 
   it(
-    "message.edit dispatches through registry and returns { edited } (MSG-04)",
+    "message.edit dispatches through registry and returns { edited }",
     async () => {
       const result = await dispatchMessage("message.edit", {
         channel_type: "echo",
@@ -284,7 +284,7 @@ describe("MSG: Echo Adapter Dispatch", () => {
   );
 
   it(
-    "message.delete dispatches through registry and returns { deleted } (MSG-05)",
+    "message.delete dispatches through registry and returns { deleted }",
     async () => {
       const result = await dispatchMessage("message.delete", {
         channel_type: "echo",
@@ -302,7 +302,7 @@ describe("MSG: Echo Adapter Dispatch", () => {
   );
 
   it(
-    "message.fetch dispatches through registry and returns { messages } (MSG-06)",
+    "message.fetch dispatches through registry and returns { messages }",
     async () => {
       // Send 3 messages to a dedicated fetch channel
       for (let i = 0; i < 3; i++) {
@@ -335,7 +335,7 @@ describe("MSG: Echo Adapter Dispatch", () => {
   );
 
   it(
-    "message.attach dispatches through registry and returns { messageId } (MSG-07)",
+    "message.attach dispatches through registry and returns { messageId }",
     async () => {
       const result = (await dispatchMessage("message.attach", {
         channel_type: "echo",

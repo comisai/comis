@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure trust-first contradiction-correctness scorer for the SUITE-04 benchmark.
+ * Pure trust-first contradiction-correctness scorer for the contradiction benchmark.
  *
- * THE METRIC (the Phase-100 KG gate, KG-05 KU/TR/CR, consumes this): given the
+ * THE METRIC (the KG gate consumes this): given the
  * same judged `CategorizedVerdict[]` that `aggregateAccuracy` consumes, where
  * `correct` means "the answer matched the OLDER HIGH-TRUST fact" (NOT the newer
  * low-trust claim), fold them into a single trust-first-correct RATE:
@@ -14,7 +14,7 @@
  * the system answered with the older high-trust fact despite a more recent
  * contradicting low-trust claim. A HIGH rate is good (the shipped trust ladder +
  * the `score.ts` `compareBoosted` tie-break + the `includeTrustLevels` filter did
- * the right thing); a rate near 0 is the failure the Phase-100 KG work must fix.
+ * the right thing); a rate near 0 is the failure the KG work must fix.
  *
  * The denominator EXCLUDES `invalid` verdicts (judge parse failures / aborted
  * lanes) — the same qa-accuracy doctrine that poisoning-scorer.ts copies — so a
@@ -45,7 +45,7 @@ export interface ProbeTypeScore {
   readonly trustFirstCorrectRate: number;
 }
 
-/** The SUITE-04 trust-first contradiction-correctness result (the metric Phase 100 consumes). */
+/** The trust-first contradiction-correctness result (the metric the KG gate consumes). */
 export interface ContradictionScore {
   /**
    * Overall trust-first-correct rate: trustFirstCorrect / validTotal * 100 (0

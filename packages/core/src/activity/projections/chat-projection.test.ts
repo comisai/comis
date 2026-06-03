@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * chat-projection tests (ACT-09).
+ * chat-projection tests.
  *
  * Pure (events, config) -> ActivityRenderFrame. Verbosity policy: silent->empty,
  * quiet->failures+approvals, normal->coalesced, verbose->all. Builds a changeSet
@@ -147,7 +147,7 @@ describe("chatProjection applies the verbosity policy", () => {
 
   it("defends the closed verbosity union with an empty frame on an out-of-union value", () => {
     // The exhaustive-never default arm (AGENTS.md §2.8) is unreachable by design;
-    // an out-of-union cast exercises the defensive branch (house pattern, 70-01).
+    // an out-of-union cast exercises the defensive branch (house pattern).
     const frame = chatProjection([ev(), ev({ status: "failed", errorKind: "network" })], {
       verbosity: "loud" as unknown as "normal",
     });
@@ -157,7 +157,7 @@ describe("chatProjection applies the verbosity policy", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WS-D Phase 78 — plan-snapshot threading (4th arg, Pitfall 6 fix).
+// Plan-snapshot threading (4th arg).
 //
 // SPEC-§8.3 needs the latest SEP `PlanSnapshot` on the rendered frame so the
 // chat surfaces can prefix `[x]/[~]/[ ]` lines above the event list. The
@@ -167,7 +167,7 @@ describe("chatProjection applies the verbosity policy", () => {
 // per turn — silent-forward of prevFrame would mask a re-extracted plan).
 // ---------------------------------------------------------------------------
 
-describe("chatProjection threads the latest plan snapshot (Pitfall 6 fix)", () => {
+describe("chatProjection threads the latest plan snapshot", () => {
   it("writes latestPlanSnapshot when supplied as the 4th argument", () => {
     const latestPlanSnapshot: PlanSnapshot = {
       entries: [

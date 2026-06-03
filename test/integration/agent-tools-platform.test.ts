@@ -9,23 +9,23 @@
  * Coverage matrix:
  *
  * SESSION TOOLS (no LLM keys needed):
- *   TOOLS-01: agents.list returns all configured agent IDs
- *   TOOLS-02: session.status returns model, cost, and step info
- *   TOOLS-03: session.list returns empty session list initially
- *   TOOLS-04: session.list filtering by kind (dm, group, sub-agent)
+ *   agents.list returns all configured agent IDs
+ *   session.status returns model, cost, and step info
+ *   session.list returns empty session list initially
+ *   session.list filtering by kind (dm, group, sub-agent)
  *
  * PLATFORM ACTIONS (via EchoChannelAdapter, no LLM keys needed):
- *   TOOLS-10: discord.action dispatches through adapter and returns echoed result
- *   TOOLS-11: discord.action pin/unpin/guild_info/channel_info/set_topic/set_slowmode
- *   TOOLS-12: telegram.action dispatches through adapter (chat_info, member_count, pin)
- *   TOOLS-13: slack.action dispatches through adapter (channel_info, set_topic, pin)
- *   TOOLS-14: whatsapp.action dispatches through adapter (group_info, group_invite_code)
- *   TOOLS-15: platform action rejects unknown channel type
- *   TOOLS-16: platform action rejects unknown action (via adapter echo)
+ *   discord.action dispatches through adapter and returns echoed result
+ *   discord.action pin/unpin/guild_info/channel_info/set_topic/set_slowmode
+ *   telegram.action dispatches through adapter (chat_info, member_count, pin)
+ *   slack.action dispatches through adapter (channel_info, set_topic, pin)
+ *   whatsapp.action dispatches through adapter (group_info, group_invite_code)
+ *   platform action rejects unknown channel type
+ *   platform action rejects unknown action (via adapter echo)
  *
  * CROSS-CUTTING:
- *   TOOLS-20: rpcCall rejects unknown method names
- *   TOOLS-21: session.run_status rejects unknown run ID
+ *   rpcCall rejects unknown method names
+ *   session.run_status rejects unknown run ID
  *
  * Uses a dedicated config (port 8493, separate memory DB) to avoid conflicts.
  * Accesses daemon internals directly: rpcCall, adapterRegistry.
@@ -140,11 +140,11 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
 
   describe("Session & Agent Information Tools", () => {
     // -----------------------------------------------------------------------
-    // TOOLS-01: agents.list
+    // agents.list
     // -----------------------------------------------------------------------
 
     it(
-      "TOOLS-01: agents.list returns all configured agent IDs",
+      "agents.list returns all configured agent IDs",
       async () => {
         const result = (await rpcCall("agents.list", {})) as {
           agents: string[];
@@ -160,11 +160,11 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
     );
 
     // -----------------------------------------------------------------------
-    // TOOLS-02: session.status
+    // session.status
     // -----------------------------------------------------------------------
 
     it(
-      "TOOLS-02: session.status returns model, cost tracking, and step info",
+      "session.status returns model, cost tracking, and step info",
       async () => {
         const result = (await rpcCall("session.status", {})) as {
           model: string;
@@ -191,7 +191,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
     );
 
     it(
-      "TOOLS-02b: session.status for specific agent returns that agent's config",
+      "session.status for specific agent returns that agent's config",
       async () => {
         const result = (await rpcCall("session.status", {
           _agentId: "helper",
@@ -208,11 +208,11 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
     );
 
     // -----------------------------------------------------------------------
-    // TOOLS-03: session.list (empty)
+    // session.list (empty)
     // -----------------------------------------------------------------------
 
     it(
-      "TOOLS-03: session.list returns session list with total count",
+      "session.list returns session list with total count",
       async () => {
         const result = (await rpcCall("session.list", {})) as {
           sessions: Array<{
@@ -245,11 +245,11 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
     );
 
     // -----------------------------------------------------------------------
-    // TOOLS-04: session.list with kind filter
+    // session.list with kind filter
     // -----------------------------------------------------------------------
 
     it(
-      "TOOLS-04: session.list accepts kind filter without error",
+      "session.list accepts kind filter without error",
       async () => {
         // dm filter
         const dmResult = (await rpcCall("session.list", {
@@ -274,7 +274,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
     );
 
     it(
-      "TOOLS-04b: session.list accepts since_minutes recency filter",
+      "session.list accepts since_minutes recency filter",
       async () => {
         const result = (await rpcCall("session.list", {
           since_minutes: 5,
@@ -287,11 +287,11 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
     );
 
     // -----------------------------------------------------------------------
-    // TOOLS-21: session.run_status rejects unknown run ID
+    // session.run_status rejects unknown run ID
     // -----------------------------------------------------------------------
 
     it(
-      "TOOLS-21: session.run_status rejects unknown run ID",
+      "session.run_status rejects unknown run ID",
       async () => {
         await expect(
           rpcCall("session.run_status", { run_id: "nonexistent-run-id" }),
@@ -305,7 +305,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
   // Section 2: Platform Actions — Discord
   // =========================================================================
 
-  describe("TOOLS-10/11: Discord Platform Actions", () => {
+  describe("Discord Platform Actions", () => {
     it(
       "discord.action pin dispatches through adapter",
       async () => {
@@ -498,7 +498,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
   // Section 3: Platform Actions — Telegram
   // =========================================================================
 
-  describe("TOOLS-12: Telegram Platform Actions", () => {
+  describe("Telegram Platform Actions", () => {
     it(
       "telegram.action chat_info dispatches through adapter",
       async () => {
@@ -700,7 +700,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
   // Section 4: Platform Actions — Slack
   // =========================================================================
 
-  describe("TOOLS-13: Slack Platform Actions", () => {
+  describe("Slack Platform Actions", () => {
     it(
       "slack.action channel_info dispatches through adapter",
       async () => {
@@ -902,7 +902,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
   // Section 5: Platform Actions — WhatsApp
   // =========================================================================
 
-  describe("TOOLS-14: WhatsApp Platform Actions", () => {
+  describe("WhatsApp Platform Actions", () => {
     it(
       "whatsapp.action group_info dispatches through adapter",
       async () => {
@@ -1087,9 +1087,9 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
   // Section 6: Platform Action Error Handling
   // =========================================================================
 
-  describe("TOOLS-15/16: Platform Action Error Handling", () => {
+  describe("Platform Action Error Handling", () => {
     it(
-      "TOOLS-15: platform action rejects unregistered channel type",
+      "platform action rejects unregistered channel type",
       async () => {
         // Remove any existing "matrix" adapter to ensure it's not found
         registry.delete("matrix");
@@ -1125,7 +1125,7 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
     );
 
     it(
-      "TOOLS-16: all platform action echo adapters pass through unknown actions",
+      "all platform action echo adapters pass through unknown actions",
       async () => {
         // The echo adapter echoes any action, verifying the dispatch path works
         // even for arbitrary action names (real adapters would reject unsupported ones)
@@ -1147,9 +1147,9 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
   // Section 7: Cross-Cutting Validation
   // =========================================================================
 
-  describe("TOOLS-20: Cross-Cutting Validation", () => {
+  describe("Cross-Cutting Validation", () => {
     it(
-      "TOOLS-20: rpcCall rejects unknown method names",
+      "rpcCall rejects unknown method names",
       async () => {
         await expect(
           rpcCall("nonexistent.method", {}),

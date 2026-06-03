@@ -3,7 +3,7 @@
 # Identical to config.test-logs.yaml but with:
 # - Unique port (8480) to avoid conflicts with 4766-8472
 # - Unique dbPath to avoid cross-test data leaks
-# - Debug logging for LOG-04/LOG-06 verification
+# - Debug logging for log orchestration verification
 
 tenantId: "test"
 logLevel: "debug"

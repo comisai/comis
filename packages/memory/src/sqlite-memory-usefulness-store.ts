@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteMemoryUsefulnessStore: the SOLE adapter for the segregated
- * `MemoryUsefulnessStore` port (@comis/core, Phase 93, FEED-02; per-intent in
- * Phase 110, LEARN-01). It owns ALL the recall-utility SQL — the write-path
+ * `MemoryUsefulnessStore` port (@comis/core). It owns ALL the recall-utility SQL — the write-path
  * upsert (increment used/ignored counts + set last_useful_at, idempotent on the
  * (tenant, agent, memory_id, intent) bucket) and the read-path bulk fetch (scoped
  * `IN (...)` lookup with a per-intent/global-`''`-fallback, returning an
  * absent-id-omitted Map).
  *
- * ## The intent bucket (Phase 110, LEARN-01)
+ * ## The intent bucket
  *
  * `UsefulnessScope.intent` partitions the signal per query-intent; the GLOBAL
- * bucket is `''` (an omitted intent → `''` → byte-identical v2.8). A write
- * targets ONLY its `(…, intent)` bucket (no-clobber across buckets — Pitfall 3);
+ * bucket is `''` (an omitted intent → `''` → byte-identical to the prior behaviour). A write
+ * targets ONLY its `(…, intent)` bucket (no-clobber across buckets);
  * a read PREFERS the requested per-intent row and falls back to the global `''`
  * row per id. intent is an ADDITIONAL key — the `(tenant, agent)` filter below is
  * STILL the load-bearing isolation boundary, never relaxed by intent.
@@ -23,7 +22,7 @@
  * makes the `ON DELETE CASCADE` on `memory_usefulness.memory_id` fire (a memory
  * delete drops its usefulness row; no orphan-sweep job).
  *
- * ## Isolation is the load-bearing security boundary (T-93-01)
+ * ## Isolation is the load-bearing security boundary
  *
  * Comis runs many agents in one DB. EVERY statement (both upserts and the bulk
  * read) filters on `(tenant_id, agent_id)` — parameterized — and the PRIMARY
@@ -79,13 +78,13 @@ export function createSqliteMemoryUsefulnessStore(
 
   // --- Prepared statements (parameterized; reused across calls) ---
   // Idempotent per-intent upsert keyed on the (tenant_id, agent_id, memory_id,
-  // intent) bucket (Phase 110, LEARN-01): first touch INSERTs (used_count=1),
+  // intent) bucket: first touch INSERTs (used_count=1),
   // later touches bump used_count and refresh last_useful_at to the latest "used"
   // now. The 4-col ON CONFLICT target resolves on the genuine 4-col PRIMARY KEY,
   // which `ensureUsefulnessTable` guarantees on BOTH a fresh DB (CREATE TABLE) and
-  // a pre-110 DB (a transactional table REBUILD widens the surviving 3-col PK —
-  // `ADD COLUMN` cannot; schema.ts). So a per-intent write touches ONLY its bucket
-  // — the global ('') row and other intents' rows are never clobbered (Pitfall 3).
+  // a pre-intent-column DB (a transactional table REBUILD widens the surviving
+  // 3-col PK — `ADD COLUMN` cannot; schema.ts). So a per-intent write touches ONLY
+  // its bucket — the global ('') row and other intents' rows are never clobbered.
   const upsertUsed = db.prepare(
     "INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, last_useful_at) " +
       "VALUES (?, ?, ?, ?, 1, 0, ?) " +
@@ -110,12 +109,12 @@ export function createSqliteMemoryUsefulnessStore(
     ): Promise<Result<void, Error>> {
       const startMs = systemNowMs();
       const { tenantId, agentId, now } = scope;
-      // Phase 110 (LEARN-01): default to the GLOBAL bucket when no intent is
-      // supplied (omitted intent === '' === byte-identical v2.8). intent is an
+      // Default to the GLOBAL bucket when no intent is
+      // supplied (omitted intent === '' === byte-identical to the prior behaviour). intent is an
       // ADDITIONAL key, never a relaxation of the (tenant, agent) isolation scope.
       const intent = scope.intent ?? "";
       try {
-        // FEED-02: nothing to record -> no-op, no transaction. (Counts only — no
+        // Nothing to record -> no-op, no transaction. (Counts only — no
         // content ever logged, AGENTS.md §2.7.)
         if (usedIds.length === 0 && ignoredIds.length === 0) {
           logger?.debug(
@@ -128,7 +127,7 @@ export function createSqliteMemoryUsefulnessStore(
         // Both loops run in ONE transaction (mirror sqlite-memory-entity-store.ts
         // :163). better-sqlite3 is synchronous + the daemon memory write path is
         // single-threaded, so two recordUsage calls cannot interleave mid-write.
-        // NOTE: the caller (FEED-01 attribution, Plan 93-02) produces DISJOINT
+        // NOTE: the caller (the attribution step) produces DISJOINT
         // used/ignored sets; a stray id in BOTH would double-touch the row —
         // used runs FIRST so such a duplicate biases toward "used" (acceptable).
         // Every write targets the (…, intent) bucket — no-clobber across buckets.
@@ -172,12 +171,12 @@ export function createSqliteMemoryUsefulnessStore(
     ): Promise<Result<Map<string, UsefulnessSignal>, Error>> {
       const startMs = systemNowMs();
       const { tenantId, agentId } = scope;
-      // Phase 110 (LEARN-01): the requested per-intent bucket; '' = global. When
+      // The requested per-intent bucket; '' = global. When
       // omitted, `IN (?, '')` collapses to `IN ('', '')` → the global bucket only
-      // (byte-identical v2.8). intent EXTENDS the isolation key, never relaxes it.
+      // (byte-identical to the prior behaviour). intent EXTENDS the isolation key, never relaxes it.
       const intent = scope.intent ?? "";
       try {
-        // FEED-03: no ids -> empty map (no query). (Mirror the entity-store
+        // No ids -> empty map (no query). (Mirror the entity-store
         // seedIds.length===0 short-circuit.)
         if (memoryIds.length === 0) {
           logger?.debug(
@@ -188,7 +187,7 @@ export function createSqliteMemoryUsefulnessStore(
         }
 
         // Scoped bulk read. The `tenant_id = ? AND agent_id = ?` filter is the
-        // load-bearing isolation boundary (T-93-01); the dynamic placeholder list
+        // load-bearing isolation boundary; the dynamic placeholder list
         // keeps every id a bound `?` param (never string-built SQL). `intent IN
         // (?, '')` fetches BOTH the requested per-intent bucket AND the global
         // fallback row per id; the per-id preference is resolved below.

@@ -4,7 +4,7 @@
  *
  * Unlike the channel strategies, TestSink applies NO coalescing and performs NO
  * channel I/O: it records the canonical render stream verbatim so an in-memory
- * acceptance test (WIRE-06, 70-10) can assert it received every `apply(frame)`
+ * acceptance test can assert it received every `apply(frame)`
  * and the single `finalize(outcome)` with full payload. This is the Echo
  * channel's "TestSink" routing (`selectStrategy(cap, "echo")`, §7.1).
  *

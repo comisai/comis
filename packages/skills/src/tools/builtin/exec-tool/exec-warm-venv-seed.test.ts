@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * R7.3 regression tests — warm-venv requests seed for non-Docker hosts.
+ * Regression tests — warm-venv requests seed for non-Docker hosts.
  *
  * ensureWarmVenvSeed:
  *  - On first init (venv exists, no sentinel): writes sentinel + spawns pip
@@ -97,7 +97,7 @@ describe("ensureWarmVenvSeed", () => {
   });
 
   it("ensureWarmVenv aborts seed when the lock directory is already held (concurrent caller)", async () => {
-    // WR-01 regression: two concurrent calls into ensureWarmVenvSeed must NOT
+    // Regression: two concurrent calls into ensureWarmVenvSeed must NOT
     // both spawn pip. The atomic mkdirSync({recursive:false}) acts as the
     // lock — simulating a holding caller by pre-creating the lock directory
     // must cause the next call to bail without spawning pip.

@@ -43,7 +43,7 @@ export interface CronEventListenerDeps {
   sessionManager: ReturnType<typeof createSessionLifecycle>;
   sessionStore: ReturnType<typeof createSessionStore>;
   logger: ComisLogger;
-  /** Composition-root clock — threaded to runMemoryReview for relative-date resolution (EXTR-02). */
+  /** Composition-root clock — threaded to runMemoryReview for relative-date resolution. */
   clock: ClockPort;
   adaptersByType: Map<string, ChannelPort>;
   deliveryService: DeliveryService;
@@ -52,66 +52,66 @@ export interface CronEventListenerDeps {
   transcriber?: TranscriptionPort;
   workspaceDirs?: Map<string, string>;
   memoryAdapter?: MemoryPort;
-  /** Entity-associative store (Phase 83, IN-01). Threaded into runMemoryReview so each
+  /** Entity-associative store. Threaded into runMemoryReview so each
    *  successfully-stored memory's entity mentions are resolved + linked
    *  (memory_entities / memory_entity_links), scoped to the entry's (tenantId, agentId).
-   *  Absent => Phase-82 behaviour (entities emitted but not persisted). Built in
+   *  Absent => entities emitted but not persisted. Built in
    *  setup-memory on the SAME db handle the memory adapter owns. */
   entityStore?: MemoryEntityStore;
-  /** Causal store (Phase 96, EXTRACT-03). Threaded into runMemoryReview so each
+  /** Causal store. Threaded into runMemoryReview so each
    *  successfully-stored memory's extracted cause->effect pairs are linked via linkCausal
    *  (memory_causal_edges), scoped to the entry's (tenantId, agentId) in SQL — load-bearing
-   *  isolation (T-96-11). Absent => Phase-91 behaviour (causes parsed but not persisted). Built
+   *  isolation. Absent => causes parsed but not persisted. Built
    *  in setup-memory on the SAME db handle the memory adapter owns; the port TYPE (agent↛memory cut). */
   causalStore?: MemoryCausalStore;
-  /** Consolidation store (Phase 84, CONS-07). Threaded into runMemoryConsolidation by the
+  /** Consolidation store. Threaded into runMemoryConsolidation by the
    *  opt-in `__MEMORY_CONSOLIDATION__` sentinel below. Built in setup-memory on the SAME db
    *  handle the memory adapter owns; injected as the port TYPE (agent↛memory cut). Absent =>
    *  the sentinel cannot run, but the cron is off-by-default so a default-config agent never
    *  reaches it. */
   consolidationStore?: MemoryConsolidationStore;
-  /** Triple store (Phase 101, REASON-02) — the deductive current-truth write path.
+  /** Triple store — the deductive current-truth write path.
    *  Threaded into runMemoryReasoning by the opt-in `__MEMORY_REASONING__` sentinel
    *  below. Built in setup-memory on the SAME db handle the memory adapter owns;
    *  injected as the port TYPE (agent↛memory cut). Threaded the full daemon → registry
-   *  → credentials chain (T-101-06-01) — a missing thread would make the deductive
+   *  → credentials chain — a missing thread would make the deductive
    *  write a silent no-op. Absent => the reasoning sentinel cannot run, but the cron is
    *  off-by-default so a default-config agent never reaches it. */
   tripleStore?: TripleStorePort;
-  /** Per-user representation store (Phase 107, USER-03 — Track E1) — the offline-builder
+  /** Per-user representation store — the offline-builder
    *  upsert write path. Threaded into runUserRepresentationBuild by the opt-in
    *  `__USER_REPRESENTATION__` sentinel below. Built in setup-memory on the SAME db handle the
    *  memory adapter owns; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
    *  registry → credentials chain — a missing thread would make the offline-builder write a silent
-   *  no-op (Pitfall 1). Absent => the representation sentinel cannot run, but the cron is
+   *  no-op. Absent => the representation sentinel cannot run, but the cron is
    *  off-by-default so a default-config agent never reaches it. */
   userRepresentationStore?: UserRepresentationStore;
-  /** Directional relationship store (Phase 108, SOCIAL-01/02) — the __SOCIAL_MODELING__ sentinel's
+  /** Directional relationship store — the __SOCIAL_MODELING__ sentinel's
    *  per-(tenant, agent, channel) directional-edge upsert write path. Built in setup-memory on the
    *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
    *  registry → credentials chain — a missing thread would make the offline-builder write a silent
-   *  no-op (Pitfall 6). Absent => the relationship sentinel cannot run, but the cron is off-by-default
+   *  no-op. Absent => the relationship sentinel cannot run, but the cron is off-by-default
    *  AND sign-off-gated so a default-config agent never reaches it. */
   relationshipStore?: RelationshipStore;
-  /** Tuned-alpha store (Phase 111, LEARN-03) — the __ONLINE_TUNING__ bandit sentinel's
+  /** Tuned-alpha store — the __ONLINE_TUNING__ bandit sentinel's
    *  per-(tenant, agent) tuned-4-alpha-vector upsert write path. Built in setup-memory on the
    *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
    *  registry → credentials chain — a missing thread would make the bandit a silent no-op
    *  (the field-plumbing lesson). Absent => the bandit sentinel cannot run, but the cron is
    *  off-by-default so a default-config agent never reaches it. */
   tunedAlphaStore?: TunedAlphaStore;
-  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C) — the KEYLESS
+  /** Memory-lifecycle sweep store — the KEYLESS
    *  __MEMORY_LIFECYCLE__ sentinel's per-(tenant, agent) DORMANT runLifecycleSweep. Built in
    *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
    *  the full daemon → registry → credentials chain — a missing thread would make the sweep a
    *  silent no-op (the field-plumbing lesson). Absent => the lifecycle sentinel cannot run, but the
    *  cron is off-by-default so a default-config agent never reaches it. */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  /** Recall-utility usefulness READ surface (Phase 93, FEED-02 / Phase 111 LEARN-03) — the
+  /** Recall-utility usefulness READ surface — the
    *  __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it (`readUsefulness`).
    *  Built in setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). */
   usefulnessStore?: MemoryUsefulnessStore;
-  /** Per-user representation read surface (Phase 107, USER-04) — the __USER_REPRESENTATION__
+  /** Per-user representation read surface — the __USER_REPRESENTATION__
    *  sentinel scopes the per-(tenant, agent, user) high-trust source read over `inspect`.
    *  Built in setup-memory; daemon-side (the agent imports no memory package). The SAME `inspect`
    *  surface backs the __SOCIAL_MODELING__ sentinel (grouped by resolved channelId). */
@@ -211,12 +211,12 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         modelId: resolved.modelId,
         apiKey,
         clock: deps.clock,
-        // Phase 83 (IN-01): persist each stored memory's entity mentions. The store
-        // is scoped to (tenantId, agentId) in SQL — load-bearing isolation (ENT-03).
-        // Absent (older config / store not built) => Phase-82 emit-only behaviour.
+        // Persist each stored memory's entity mentions. The store
+        // is scoped to (tenantId, agentId) in SQL — load-bearing isolation.
+        // Absent (older config / store not built) => emit-only behaviour.
         entityStore: deps.entityStore,
-        // Phase 96 (EXTRACT-03): link each stored memory's extracted cause->effect pairs via
-        // linkCausal. Scoped to (tenantId, agentId) in SQL (T-96-11). Absent => Phase-91
+        // Link each stored memory's extracted cause->effect pairs via
+        // linkCausal. Scoped to (tenantId, agentId) in SQL. Absent =>
         // emit-only behaviour (causes parsed, no edge written).
         causalStore: deps.causalStore,
         logger: reviewLogger,
@@ -229,8 +229,8 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       return;
     }
 
-    // -- LLM-backed memory-cron sentinels (Phase 84 __MEMORY_CONSOLIDATION__ +
-    //    Phase 101 __MEMORY_REASONING__) — extracted to setup-channels-memory-crons.ts
+    // -- LLM-backed memory-cron sentinels (__MEMORY_CONSOLIDATION__ +
+    //    __MEMORY_REASONING__) — extracted to setup-channels-memory-crons.ts
     //    to keep this leaf under the 600L cap. Both re-check cfg.enabled (the opt-in
     //    cost gate, defence-in-depth) and inject the segregated stores as port TYPES
     //    (the agent↛memory cut). Returns true when handled → we return here.

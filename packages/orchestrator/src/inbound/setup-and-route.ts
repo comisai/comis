@@ -60,7 +60,7 @@ export const PLATFORM_TYPING_DEFAULTS: Record<string, number> = {
  * 23 unique fields: 4 shared between the former setup + route Pick<>s
  * (logger / eventBus / channelRegistry / streamingConfig), 1 unique to setup
  * (lifecycleReactionsEnabled), and 18 unique to route (the route set gained
- * the WIRE-03 activityStreamPort + coordinatorFactory pass-through to execDeps).
+ * the activityStreamPort + coordinatorFactory pass-through to execDeps).
  */
 export type SetupAndRouteDeps = Pick<
   InboundPipelineDeps,
@@ -87,7 +87,7 @@ export type SetupAndRouteDeps = Pick<
   | "responsePrefixConfig"
   | "buildTemplateContext"
   | "getEnforceFinalTag"
-  // WIRE-03: propagated onto execDeps for the pipeline gate (execution-pipeline.ts:395).
+  // Propagated onto execDeps for the pipeline gate (see execution-pipeline.ts).
   | "activityStreamPort"
   | "coordinatorFactory"
 >;

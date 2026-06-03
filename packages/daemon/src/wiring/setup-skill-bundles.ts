@@ -214,7 +214,7 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
 
     const bundleServers = parseResult.value.mcpServers;
     if (bundleServers === undefined || bundleServers.length === 0) {
-      // No bundle block ⇒ pre-Phase-68 skill (silent no-op).
+      // No bundle block ⇒ a legacy skill predating bundle support (silent no-op).
       continue;
     }
 

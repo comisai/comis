@@ -33,7 +33,7 @@ describe("IMMUTABLE_CONFIG_PREFIXES", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("daemon.logging");
   });
 
-  it("contains immutable prefix: tooling (v1.1 capability layer)", () => {
+  it("contains immutable prefix: tooling (capability layer)", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("tooling");
   });
 
@@ -485,7 +485,7 @@ describe("isImmutableConfigPath -- tooling root prefix", () => {
 });
 
 // ---------------------------------------------------------------------------
-// REQ-19 / D16 §8.1: executor section is OPERATOR-ONLY — broker anti-exfiltration
+// D16 §8.1: executor section is OPERATOR-ONLY — broker anti-exfiltration
 // guard. An LLM-driven agent MUST NOT be able to self-configure
 // executor.broker.bindings to route credentials to an attacker-controlled host.
 // "executor" as a top-level prefix catches all three write paths:
@@ -493,7 +493,7 @@ describe("isImmutableConfigPath -- tooling root prefix", () => {
 //   2. config.patch whole-section — isImmutableConfigPath("executor", undefined)
 //   3. config.apply section       — isImmutableConfigPath("executor")
 // ---------------------------------------------------------------------------
-describe("REQ-19: executor section is operator-only (broker anti-exfiltration guard)", () => {
+describe("executor section is operator-only (broker anti-exfiltration guard)", () => {
   it("isImmutableConfigPath rejects keyed config.patch on executor.broker.bindings", () => {
     expect(isImmutableConfigPath("executor", "broker.bindings")).toBe(true);
   });
@@ -512,12 +512,12 @@ describe("REQ-19: executor section is operator-only (broker anti-exfiltration gu
 });
 
 // ---------------------------------------------------------------------------
-// DAG-03 (SECURITY): contextEngine.version is OPERATOR-ONLY (immutable to the
+// SECURITY: contextEngine.version is OPERATOR-ONLY (immutable to the
 // agent config.patch RPC). The pipeline<->dag switch is applied by an OPERATOR
-// config RELOAD (re-runs setupSingleAgent — Plan 04), NEVER by the agent's own
+// config RELOAD (re-runs setupSingleAgent), NEVER by the agent's own
 // config.patch, which MUST reject. This locks the anti-self-escalation posture:
 // an agent cannot self-switch into DAG to widen its own ctx_* tool exposure
-// (the Phase 85 §8.1 force-include would otherwise be self-exploitable).
+// (the §8.1 force-include would otherwise be self-exploitable).
 //
 // These are REGRESSION / BOUNDARY LOCKS (AGENTS.md §2.10): the boundary already
 // holds, so they are GREEN on arrival. They FAIL only if a future change
@@ -527,7 +527,7 @@ describe("REQ-19: executor section is operator-only (broker anti-exfiltration gu
 // asserts below flip to red — proving these are real locks, not no-ops.
 // DO NOT add contextEngine.version to MUTABLE_CONFIG_OVERRIDES.
 // ---------------------------------------------------------------------------
-describe("DAG-03: contextEngine.version is operator-only (immutable to config.patch)", () => {
+describe("contextEngine.version is operator-only (immutable to config.patch)", () => {
   it("rejects agents.default.contextEngine.version (config.patch must NOT switch engine mode)", () => {
     expect(isImmutableConfigPath("agents", "default.contextEngine.version")).toBe(true);
   });

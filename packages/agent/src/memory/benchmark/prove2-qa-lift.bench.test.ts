@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PROVE2 (Phase 114) — the costed cross-judge per-capability QA-lift + competitor
- * head-to-head harness. The v2.10 "measure-first" keystone: it produces the
- * cross-judged numbers that gate the activation phase (115).
+ * PROVE2 — the costed cross-judge per-capability QA-lift + competitor
+ * head-to-head harness. The "measure-first" keystone: it produces the
+ * cross-judged numbers that gate the activation phase.
  *
  * WHAT IT DOES (one bounded, sampled, COSTED run):
  *   1. Ingest a bounded sample (COMIS_BENCH_LIMIT LongMemEval items + the first
@@ -10,8 +10,8 @@
  *      standard per-item protocol (mirrors qa-judge-harness.bench.test.ts).
  *   2. For each SYSTEM under test, build its per-question CONTEXT (LLM-free, in
  *      beforeAll):
- *        - comis-baseline   : recall AS SHIPPED (the v2.9 defaults).
- *        - comis-<capability>: recall with ONE v2.9 capability overlaid ON
+ *        - comis-baseline   : recall AS SHIPPED (the defaults).
+ *        - comis-<capability>: recall with ONE capability overlaid ON
  *          (graphSpread / intent-reweight / forget) — the per-capability QA-lift.
  *        - letta-fs-control : the full-haystack dump (the honesty control; never
  *          Comis's headline).
@@ -21,13 +21,13 @@
  *   3. Grade EVERY system's per-question context through the SAME answer LLM + the
  *      SAME ≥2 judges (cross-judge), at temperature 0. A per-(questionId, context)
  *      verdict cache means a capability whose recall is byte-identical to baseline
- *      reuses the baseline verdict at $0 — a provably-0 lift, the v2.9 byte-identity
+ *      reuses the baseline verdict at $0 — a provably-0 lift, the byte-identity
  *      discipline made load-bearing.
  *   4. Aggregate per system (overall + per-category), the Wilson CI, the
  *      two-proportion significance vs baseline, and the cross-judge spread; write a
  *      committed-shape manifest via the confined writer.
  *
- * THE CREDIBILITY PROTOCOL (.planning/MEMORY_BENCHMARK_CREDIBILITY.md): ≥2 judges,
+ * THE CREDIBILITY PROTOCOL: ≥2 judges,
  * competitors re-run by us under ONE protocol/judge/machine, N + significance,
  * cost + latency, COI disclosed, raw verdicts attributable to fixed harness code.
  * A number stands only if it survives BOTH judges (the cross-judge spread).
@@ -128,7 +128,7 @@ const BASELINE_LABEL = "comis-baseline";
 const BENCH_SESSION_KEY: SessionKey = { tenantId: "default", userId: "user_a", channelId: "default" };
 
 /**
- * The as-shipped v2.9 recall defaults. usefulnessAlpha/forgetAlpha are set to their
+ * The as-shipped recall defaults. usefulnessAlpha/forgetAlpha are set to their
  * NEUTRAL values (usefulness is centered on a 0.5 used-rate -> factor 1.0 with no
  * feedback signal; forgetAlpha 0 -> no decay), so this baseline is behaviourally
  * equivalent to the shipped 4-alpha config (qa-judge-harness.bench.test.ts) while staying
@@ -152,12 +152,13 @@ function baselineConfig(rerankEnabled: boolean): MemoryRecallConfig {
 }
 
 /**
- * The Comis systems under test: the baseline + one overlay per v2.9 capability that
- * has a RECALL-TIME knob. USER / SOCIAL / REASON / DIALECTIC are write-path / tool
- * features with no recall-config toggle on verbatim-ingested docs — their costed lift
- * needs an enrichment-aware harness (documented in the gap report; their v2.9 keyless
- * mechanical proofs stand). LEARN-RANK (onlineTuning) needs a learned tuned-alpha
- * store the bench never builds -> measuring it needs simulated episodes (deferred).
+ * The Comis systems under test: the baseline + one overlay per capability that
+ * has a RECALL-TIME knob. User-representation, social-modeling, memory-reasoning,
+ * and dialectic are write-path / tool features with no recall-config toggle on
+ * verbatim-ingested docs — their costed lift needs an enrichment-aware harness
+ * (documented in the gap report; their keyless mechanical proofs stand). The
+ * learn-rank online-tuning capability needs a learned tuned-alpha store the bench
+ * never builds -> measuring it needs simulated episodes (deferred).
  */
 interface ComisSystem {
   label: string;
@@ -661,7 +662,7 @@ describe.skipIf(!COMIS_BENCH)("PROVE2 — costed per-capability QA-lift + head-t
         defaults: { maxResults: 5, includeTrustLevels: ["system", "learned"], rerankEnabled, scoringAlphas: { recency: 0.2, temporal: 0.2, proof: 0.1, trust: 0.1 } },
         capabilitiesMeasured: COMIS_SYSTEMS.map((s) => s.label).filter((l) => l !== BASELINE_LABEL),
         capabilitiesDeferred: {
-          note: "USER/SOCIAL/REASON/DIALECTIC are write-path/tool features with no recall-config toggle on verbatim-ingested docs; LEARN-RANK (onlineTuning) needs a learned tuned-alpha store the standard protocol never builds; KG graphSpread needs a built tripleStore. Their costed QA-lift needs an enrichment-aware harness; their v2.9 keyless mechanical proofs stand.",
+          note: "USER/SOCIAL/REASON/DIALECTIC are write-path/tool features with no recall-config toggle on verbatim-ingested docs; online rank-tuning needs a learned tuned-alpha store the standard protocol never builds; KG graphSpread needs a built tripleStore. Their costed QA-lift needs an enrichment-aware harness; their keyless mechanical proofs stand.",
           list: ["user-representation", "social-modeling", "memory-reasoning", "dialectic", "learn-rank-online-tuning"],
           unrunnableOnThisBench: deferredUnrunnable,
         },

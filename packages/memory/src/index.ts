@@ -31,24 +31,24 @@ export { createOpenAIEmbeddingProvider } from "./embedding-provider-openai.js";
 export type { OpenAIEmbeddingProviderOptions } from "./embedding-provider-openai.js";
 
 // Local cross-encoder reranker provider (sole RerankerPort impl; GGUF via
-// node-llama-cpp). Consumed by the daemon composition root in Plan 04.
+// node-llama-cpp). Consumed by the daemon composition root.
 export { createLocalRerankerProvider } from "./reranker-provider-local.js";
 export type { LocalRerankerProviderOptions } from "./reranker-provider-local.js";
 
-// No-download reranker model-presence probe (Phase 92, RERANK-01/RERANK-02).
+// No-download reranker model-presence probe.
 // resolveModelFile({ download: false }) + existsSync; never the SOLE download
 // site (createLocalRerankerProvider stays that). The daemon composition root
-// (Plan 02) consults it to drive the locally-gated default-on rerank decision.
+// consults it to drive the locally-gated default-on rerank decision.
 export { rerankerModelPresent } from "./reranker-model-present.js";
 
-// Entity-associative recall store (sole MemoryEntityStore impl; Phase 83).
+// Entity-associative recall store (sole MemoryEntityStore impl).
 // Owns the resolve/link write path + the scoped one-hop self-join read lane.
-// The daemon (Plan 05) constructs it on the memory adapter's db handle; the
+// The daemon constructs it on the memory adapter's db handle; the
 // MemoryEntityStore port TYPE itself lives in @comis/core (not re-exported here).
 export { createSqliteMemoryEntityStore } from "./sqlite-memory-entity-store.js";
 export type { MemoryEntityStoreDeps } from "./sqlite-memory-entity-store.js";
 
-// Temporal-spread recall store (sole MemoryTemporalStore impl; Phase 95, LANES-02).
+// Temporal-spread recall store (sole MemoryTemporalStore impl).
 // Owns the windowed read over the EXISTING `memories.occurred_at` column — given the
 // seed memories' event times, surfaces OTHER memories near those times (NO new table).
 // The daemon (composition root) constructs it on the memory adapter's db handle; the
@@ -57,10 +57,10 @@ export type { MemoryEntityStoreDeps } from "./sqlite-memory-entity-store.js";
 export { createSqliteMemoryTemporalStore } from "./sqlite-memory-temporal-store.js";
 export type { MemoryTemporalStoreDeps } from "./sqlite-memory-temporal-store.js";
 
-// Causal-edge recall store (sole MemoryCausalStore impl; Phase 96, EXTRACT-03).
+// Causal-edge recall store (sole MemoryCausalStore impl).
 // Owns the edge write (effectText -> scoped FTS top-1 -> INSERT OR IGNORE a
 // directed cause->effect edge over the additive `memory_causal_edges` table) +
-// the scoped one-hop UNION read lane. The daemon (composition root, Plan 96-03)
+// the scoped one-hop UNION read lane. The daemon (composition root)
 // constructs it on the memory adapter's db handle; the MemoryCausalStore port
 // TYPE lives in @comis/core (the agent↛memory cut — the extraction write path and
 // the recall read path consume the type only).
@@ -68,62 +68,62 @@ export { createSqliteMemoryCausalStore } from "./sqlite-memory-causal-store.js";
 export type { MemoryCausalStoreDeps } from "./sqlite-memory-causal-store.js";
 
 // Trust-first bi-temporal knowledge-graph triple store (sole TripleStorePort
-// impl; Phase 100, Track F — KG-01/KG-02/KG-03/KG-04). Owns ALL the S/P/O triple
+// impl). Owns ALL the S/P/O triple
 // SQL over the additive `memory_triples` table: the trust-first single-current-
-// truth upsert (Plan 100-01 skeleton = INSERT-only; invalidation = Plan 100-02),
-// the valid-time `asOf(t)` read, and the bounded recursive-CTE `spreadLane`
-// (Plan 100-04). The daemon (composition root, Plan 100-03) constructs it on the
+// truth upsert (the skeleton is INSERT-only; invalidation lands separately),
+// the valid-time `asOf(t)` read, and the bounded recursive-CTE `spreadLane`.
+// The daemon (composition root) constructs it on the
 // memory adapter's db handle; the TripleStorePort TYPE lives in @comis/core (the
 // agent↛memory cut — the offline writer + the recall lane consume the type only).
 export { createSqliteTripleStore } from "./sqlite-triple-store.js";
 export type { MemoryTripleStoreDeps } from "./sqlite-triple-store.js";
 
-// Per-user representation store (sole UserRepresentationStore impl; Phase 107,
-// Track E1 — USER-01). Owns ALL the per-user-representation SQL over the additive
+// Per-user representation store (sole UserRepresentationStore impl).
+// Owns ALL the per-user-representation SQL over the additive
 // `user_representation` table: the (tenant, agent, user)-scoped upsert (with the
 // write-time high-trust-floor reject + validateMemoryWrite redaction firewall) +
-// the LLM-free scoped read. The daemon (composition root, Plan 107-05) constructs
+// the LLM-free scoped read. The daemon (composition root) constructs
 // it on the memory adapter's db handle; the UserRepresentationStore port TYPE
 // lives in @comis/core (the agent↛memory cut — the offline profile-builder write
 // path + the prompt-assembly read path consume the type only). AHEAD of its
-// daemon consumer until 107-05 (the factory-orphan dance).
+// daemon consumer (the factory-orphan dance).
 export { createSqliteUserRepresentationStore } from "./sqlite-user-representation-store.js";
 export type { MemoryUserRepresentationStoreDeps } from "./sqlite-user-representation-store.js";
 
-// Directional relationship store (sole RelationshipStore impl; Phase 108, Track E2
-// — SOCIAL-02). Owns ALL the directional relationship SQL over the additive
+// Directional relationship store (sole RelationshipStore impl).
+// Owns ALL the directional relationship SQL over the additive
 // `relationship` table: the (tenant, agent, channel)-scoped upsert (with the
 // write-time high-trust-floor reject + validateMemoryWrite redaction firewall) +
 // the LLM-free scoped read. channel_id is the NEW privacy axis; the
 // (subject_user_id, about_user_id) pair is directional ROW DATA (A→B ≠ B→A). The
-// daemon (composition root, Plan 108-05) constructs it on the memory adapter's db
+// daemon (composition root) constructs it on the memory adapter's db
 // handle; the RelationshipStore port TYPE lives in @comis/core (the agent↛memory
 // cut — the offline relationship-builder write path + the optional prompt-assembly
-// read path consume the type only). AHEAD of its daemon consumer until 108-05 (the
+// read path consume the type only). AHEAD of its daemon consumer (the
 // factory-orphan dance).
 export { createSqliteRelationshipStore } from "./sqlite-relationship-store.js";
 export type { MemoryRelationshipStoreDeps } from "./sqlite-relationship-store.js";
 
-// Scoped embedding-read store (sole MemoryEmbeddingStore impl; Phase 102, IQ-01).
+// Scoped embedding-read store (sole MemoryEmbeddingStore impl).
 // Owns the (tenant, agent)-scoped LEFT JOIN vec_memories bulk read that hydrates
 // the MMR diversity re-rank (returns id->vector for the caller's scope ONLY — the
-// load-bearing T-102-03-01 isolation, UNLIKE the corpus-wide distances-only
-// knnDistances). The daemon (composition root, Plan 102-05) constructs it on the
+// load-bearing scope isolation, UNLIKE the corpus-wide distances-only
+// knnDistances). The daemon (composition root) constructs it on the
 // memory adapter's db handle; the MemoryEmbeddingStore port TYPE lives in
 // @comis/core (the agent↛memory cut — the recall MMR read path consumes the type only).
 export { createSqliteMemoryEmbeddingStore } from "./sqlite-memory-embedding-store.js";
 export type { MemoryEmbeddingStoreDeps } from "./sqlite-memory-embedding-store.js";
 
-// Memory consolidation store (sole MemoryConsolidationStore impl; Phase 84).
+// Memory consolidation store (sole MemoryConsolidationStore impl).
 // Owns the scoped, state-predicate (consolidated_at IS NULL) candidate selection
-// + the atomic applyConsolidation transaction. The daemon (Plan 05) constructs
+// + the atomic applyConsolidation transaction. The daemon constructs
 // it on the memory adapter's db handle; the MemoryConsolidationStore port TYPE
 // lives in @comis/core (the agent↛memory cut — the job imports the type only).
 export { createSqliteMemoryConsolidationStore } from "./sqlite-memory-consolidation-store.js";
 export type { MemoryConsolidationStoreDeps } from "./sqlite-memory-consolidation-store.js";
 
-// Recall-utility usefulness store (sole MemoryUsefulnessStore impl; Phase 93,
-// FEED-02). Owns the idempotent used/ignored upsert (scoped to the
+// Recall-utility usefulness store (sole MemoryUsefulnessStore impl).
+// Owns the idempotent used/ignored upsert (scoped to the
 // (tenant, agent, memory_id) PK) + the scoped absent-id-omitted bulk read. The
 // daemon (composition root) constructs it on the memory adapter's db handle; the
 // MemoryUsefulnessStore port TYPE lives in @comis/core (the agent↛memory cut —
@@ -131,7 +131,7 @@ export type { MemoryConsolidationStoreDeps } from "./sqlite-memory-consolidation
 export { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
 export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store.js";
 
-// Tuned-alpha store (sole TunedAlphaStore impl; Phase 111, Track H2 — LEARN-03).
+// Tuned-alpha store (sole TunedAlphaStore impl).
 // Owns the idempotent per-(tenant, agent) tuned-alpha-vector upsert + the scoped
 // read (undefined when absent → the apply-site default-OFF no-op). The daemon
 // (composition root) constructs it on the memory adapter's db handle; the
@@ -141,13 +141,13 @@ export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store
 export { createSqliteTunedAlphaStore } from "./sqlite-tuned-alpha-store.js";
 export type { MemoryTunedAlphaStoreDeps } from "./sqlite-tuned-alpha-store.js";
 
-// Memory-lifecycle sweep store (sole MemoryLifecyclePort impl; Phase 112, Track C
-// — FORGET-02). Owns the (tenant, agent)-scoped candidate scan over the `memories`
+// Memory-lifecycle sweep store (sole MemoryLifecyclePort impl).
+// Owns the (tenant, agent)-scoped candidate scan over the `memories`
 // table + its additive NON-DESTRUCTIVE marker columns (lifecycle_demoted_at /
-// evicted_at / strength). SCAFFOLD-DORMANT per OD4: it computes strengths/tiers but
+// evicted_at / strength). SCAFFOLD-DORMANT: it computes strengths/tiers but
 // evicts/demotes/promotes NOTHING (report all-0, no DELETE, no marker UPDATE) — the
-// live eviction policy is the deferred operator/v2.10 step. The daemon (composition
-// root, Plan 112-04) constructs it on the memory adapter's db handle + registers the
+// live eviction policy is the deferred operator step. The daemon (composition
+// root) constructs it on the memory adapter's db handle + registers the
 // default-OFF __MEMORY_LIFECYCLE__ cron; the MemoryLifecyclePort TYPE lives in
 // @comis/core (the agent↛memory cut — the agent never imports this adapter).
 export { createSqliteMemoryLifecycleStore } from "./sqlite-memory-lifecycle-store.js";

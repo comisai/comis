@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Theme registry (UX-01, Plan 75-01) — a name→bundle lookup over the four
+ * Theme registry — a name→bundle lookup over the four
  * bundled activity themes.
  *
  * Mirrors the verified module-level-registry idiom (`core/tool-metadata.ts`):
@@ -26,7 +26,7 @@ import { playfulTheme } from "./playful.js";
 import { terminalMinimalTheme } from "./terminal-minimal.js";
 
 /**
- * The four bundled activity theme names (UX-01). Matches
+ * The four bundled activity theme names. Matches
  * `ActivityConfigSchema.theme` exactly.
  */
 export type ThemeName = "default" | "terminal-minimal" | "playful" | "ascii";

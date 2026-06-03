@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for finalizer-stage — FINAL-01e/f/g/h.
+ * Tests for finalizer-stage.
  *
  * RED-first TDD: tests written before the implementation.
  * Covers: bufferBody (cap, bodyPrefix fold, error paths),
- *         bufferBody (contentLength-guided stop — WR-02/CR-01/CR-02),
+ *         bufferBody (contentLength-guided stop),
  *         runFinalizer (awsSigV4 dispatch + exhaustiveness guard),
  *         runAwsSigV4Finalizer (no-op + deferral log).
  *
@@ -54,9 +54,9 @@ function noopScheduleTimeout(_cb: () => void, _ms: number): () => void {
   return () => {};
 }
 
-// ── FINAL-01e — cap-exceeded path ─────────────────────────────────────────────
+// ── cap-exceeded path ─────────────────────────────────────────────────────────
 
-describe("FINAL-01e — bufferBody: cap-exceeded path returns null", () => {
+describe("bufferBody: cap-exceeded path returns null", () => {
   it("resolves null when a single data chunk exceeds the cap", async () => {
     const socket = makeSocketMock();
     const promise = bufferBody(socket as never, "", 10, undefined, noopScheduleTimeout);
@@ -85,9 +85,9 @@ describe("FINAL-01e — bufferBody: cap-exceeded path returns null", () => {
   });
 });
 
-// ── FINAL-01f — bodyPrefix fold and normal completion ─────────────────────────
+// ── bodyPrefix fold and normal completion ─────────────────────────────────────
 
-describe("FINAL-01f — bufferBody: bodyPrefix fold and normal completion", () => {
+describe("bufferBody: bodyPrefix fold and normal completion", () => {
   it("folds bodyPrefix + data chunk into a single Buffer on success", async () => {
     const socket = makeSocketMock();
     // "hello" (5 bytes) + "world" (5 bytes) = 10 bytes, cap=100
@@ -137,9 +137,9 @@ describe("FINAL-01f — bufferBody: bodyPrefix fold and normal completion", () =
   });
 });
 
-// ── FINAL-01g — runFinalizer / runAwsSigV4Finalizer ───────────────────────────
+// ── runFinalizer / runAwsSigV4Finalizer ───────────────────────────────────────
 
-describe("FINAL-01g — runFinalizer / runAwsSigV4Finalizer", () => {
+describe("runFinalizer / runAwsSigV4Finalizer", () => {
   it("runFinalizer delegates to runAwsSigV4Finalizer for kind='awsSigV4'", () => {
     const log = makeMockLogger();
     const body = Buffer.from("test body");
@@ -177,10 +177,10 @@ describe("FINAL-01g — runFinalizer / runAwsSigV4Finalizer", () => {
   });
 });
 
-// ── FINAL-01h — contentLength-guided stop (WR-02 / CR-01 / CR-02) ─────────────
+// ── contentLength-guided stop ─────────────────────────────────────────────────
 
-describe("FINAL-01h — bufferBody: contentLength-guided stop", () => {
-  it("stops accumulating at contentLength bytes without waiting for socket end (WR-02-a)", async () => {
+describe("bufferBody: contentLength-guided stop", () => {
+  it("stops accumulating at contentLength bytes without waiting for socket end", async () => {
     // RED: current code has this path; test verifies it works correctly.
     const socket = makeSocketMock();
     const promise = bufferBody(socket as never, "", 100, 5, noopScheduleTimeout);
@@ -190,7 +190,7 @@ describe("FINAL-01h — bufferBody: contentLength-guided stop", () => {
     expect(result!.equals(Buffer.from("hello"))).toBe(true);
   });
 
-  it("bodyPrefix alone satisfies contentLength — resolves before any data (WR-02-b)", async () => {
+  it("bodyPrefix alone satisfies contentLength — resolves before any data", async () => {
     // RED: current code has bodyPrefix check before resume(); should work.
     const socket = makeSocketMock();
     const promise = bufferBody(socket as never, "hello", 100, 5, noopScheduleTimeout);
@@ -200,7 +200,7 @@ describe("FINAL-01h — bufferBody: contentLength-guided stop", () => {
     expect(result!.equals(Buffer.from("hello", "latin1"))).toBe(true);
   });
 
-  it("contentLength=0 resolves immediately with empty Buffer without waiting for EOF (CR-01 root cause, WR-02-c)", async () => {
+  it("contentLength=0 resolves immediately with empty Buffer without waiting for EOF", async () => {
     // RED: current code treats CL=0 as absent (parseInt("0",10) || undefined === undefined)
     // so bufferBody waits for socket end. This test asserts immediate resolution.
     const socket = makeSocketMock();
@@ -211,7 +211,7 @@ describe("FINAL-01h — bufferBody: contentLength-guided stop", () => {
     expect((result as Buffer).length).toBe(0);
   });
 
-  it("negative contentLength (-1) is treated as absent — cap+timeout governs (WR-02-d)", async () => {
+  it("negative contentLength (-1) is treated as absent — cap+timeout governs", async () => {
     // Negative CL is invalid; bufferBody treats it as absent (cap+timeout path).
     // The socket closes first here to resolve — we just verify no immediate resolve.
     const socket = makeSocketMock();
@@ -223,7 +223,7 @@ describe("FINAL-01h — bufferBody: contentLength-guided stop", () => {
     expect(result).toBeNull();
   });
 
-  it("declared contentLength > cap — caller handles this; bufferBody still returns null on timeout (WR-02-e)", async () => {
+  it("declared contentLength > cap — caller handles this; bufferBody still returns null on timeout", async () => {
     // When CL is declared but > cap, the cap check fires first on data arrival.
     // Here we verify that timeout also settles with null when no data arrives.
     const fst = makeFakeScheduleTimeout();
@@ -235,7 +235,7 @@ describe("FINAL-01h — bufferBody: contentLength-guided stop", () => {
     expect(result).toBeNull();
   });
 
-  it("timeout fires when contentLength is under-filled — returns null for 413 path (CR-02)", async () => {
+  it("timeout fires when contentLength is under-filled — returns null for 413 path", async () => {
     // RED: current code has NO timeout. Under-filled CL hangs forever.
     // After fix: bufferBody must accept a scheduleTimeout and fire it → settle(null).
     const fst = makeFakeScheduleTimeout();
@@ -249,7 +249,7 @@ describe("FINAL-01h — bufferBody: contentLength-guided stop", () => {
     expect(result).toBeNull();
   });
 
-  it("timeout is cancelled when contentLength is satisfied before deadline (CR-02 cancel path)", async () => {
+  it("timeout is cancelled when contentLength is satisfied before deadline", async () => {
     // After fix: when the full body arrives before timeout, the cancel fn is called.
     // Verify by checking that after settlement, firing the timeout has no effect.
     const fst = makeFakeScheduleTimeout();

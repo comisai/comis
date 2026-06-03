@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Orchestration suite for runMemoryReasoning (Phase 101 — REASON-02/03/04, the
-// offline deductive + inductive reasoning job).
+// Orchestration suite for runMemoryReasoning (the offline deductive + inductive
+// reasoning job).
 //
 // The OFFLINE reasoning LLM is INJECTED as `deps.reason` (the offline seam — it is
 // NEVER on the recall hot path), so this suite needs NO pi-ai mock: `reason` is a
@@ -11,12 +11,12 @@
 // anti-poisoning assertions here run against a REAL SqliteMemoryAdapter (`:memory:`)
 // with a REAL createSqliteTripleStore + createSqliteMemoryConsolidationStore over the
 // SAME shared db handle (adapter.getDb()) — so the deductive write exercises the
-// SHIPPED trust-first upsertTriple (the Phase-100 path) and the inductive write
+// SHIPPED trust-first upsertTriple and the inductive write
 // exercises the SHIPPED applyConsolidation atomic create+mark. The architecture cut
 // EXCLUDES *.test.ts (source-rules.test.ts excludeFileSuffixes: [".test.ts"]), so the
 // @comis/memory import here is the blessed escape hatch.
 //
-// Task-1 headline assertions (the deductive path + the security invariants):
+// Headline assertions (the deductive path + the security invariants):
 //   - default-OFF: enabled:false → NO reason call, NO triple/observation written.
 //   - DEDUCTIVE current-truth: a deductive candidate writes X located_in Berlin via
 //     the real upsertTriple; tripleStore.currentTruth(scope) shows it.
@@ -96,7 +96,7 @@ function makeReasonSpy(
 
 const baseConfig = {
   enabled: true,
-  surprisalTopFraction: 1, // select everything by default (the surprisal math is tested in 101-04)
+  surprisalTopFraction: 1, // select everything by default (the surprisal math is tested separately)
   knnK: 4,
   maxObservationsPerRun: 25,
   maxCandidatesPerRun: 200,
@@ -165,7 +165,7 @@ describe("runMemoryReasoning — Task 1: default-OFF + deductive (upsertTriple)"
   });
 
   // -------------------------------------------------------------------------
-  // DEFAULT-OFF cost gate (T-101-05-06)
+  // DEFAULT-OFF cost gate
   // -------------------------------------------------------------------------
   it("default-off: enabled:false → the reason seam is NEVER called and NOTHING is written", async () => {
     await seedMemory({ content: "alice lives in berlin", createdAt: 100 });
@@ -189,7 +189,7 @@ describe("runMemoryReasoning — Task 1: default-OFF + deductive (upsertTriple)"
   });
 
   // -------------------------------------------------------------------------
-  // DEDUCTIVE current-truth via the real upsertTriple (REASON-02)
+  // DEDUCTIVE current-truth via the real upsertTriple
   // -------------------------------------------------------------------------
   it("deductive: writes a new current-truth triple via the real upsertTriple", async () => {
     const sourceId = await seedMemory({ content: "alice moved to berlin", createdAt: 100, trustLevel: "learned" });
@@ -234,7 +234,7 @@ describe("runMemoryReasoning — Task 1: default-OFF + deductive (upsertTriple)"
   });
 
   // -------------------------------------------------------------------------
-  // DEDUCTIVE trust-first (the anti-poisoning case, T-101-05-03)
+  // DEDUCTIVE trust-first (the anti-poisoning case)
   // -------------------------------------------------------------------------
   it("trust-first (anti-poisoning): an external deductive claim does NOT supersede a system current-truth", async () => {
     // Seed an existing 'system'-trust current-truth: alice located_in Paris.
@@ -270,7 +270,7 @@ describe("runMemoryReasoning — Task 1: default-OFF + deductive (upsertTriple)"
   });
 
   // -------------------------------------------------------------------------
-  // validateMemoryWrite on the deductive object (T-101-05-02)
+  // validateMemoryWrite on the deductive object
   // -------------------------------------------------------------------------
   it("validateMemoryWrite: a critical-pattern deductive object is BLOCKED from the store", async () => {
     await seedMemory({ content: "alice notes", createdAt: 100, trustLevel: "learned" });
@@ -446,7 +446,7 @@ describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + s
   });
 
   // -------------------------------------------------------------------------
-  // INDUCTIVE ≤ learned cap (T-101-05-01, the load-bearing binding constraint)
+  // INDUCTIVE ≤ learned cap (the load-bearing binding constraint)
   // -------------------------------------------------------------------------
   it("inductive ≤ learned: an ALL-system cluster writes the observation at trust 'learned', NEVER 'system'", async () => {
     // A cluster of ALL 'system'-trust sources.
@@ -488,7 +488,7 @@ describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + s
   });
 
   // -------------------------------------------------------------------------
-  // validateMemoryWrite on inductive content (T-101-05-02)
+  // validateMemoryWrite on inductive content
   // -------------------------------------------------------------------------
   it("validateMemoryWrite: a critical-pattern inductive content is BLOCKED (blocked++, nothing written)", async () => {
     await seedMemory({ content: "notes", createdAt: 100, trustLevel: "learned" });
@@ -505,7 +505,7 @@ describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + s
   });
 
   // -------------------------------------------------------------------------
-  // Scope partition BEFORE the seam (T-101-05-01)
+  // Scope partition BEFORE the seam
   // -------------------------------------------------------------------------
   it("scope partition: a mixed-trust cluster is split by groupByTrustAndTagScope BEFORE the seam (homogeneous per call)", async () => {
     // Two trust levels → groupByTrustAndTagScope must yield ≥2 sub-clusters, one homogeneous each.
@@ -528,7 +528,7 @@ describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + s
   });
 
   // -------------------------------------------------------------------------
-  // Surprisal gate (T-101-05-06)
+  // Surprisal gate
   // -------------------------------------------------------------------------
   it("surprisal gate: with topFraction=0.5 only the top-half-by-novelty candidates reach the seam", async () => {
     // 4 embedded candidates with distinct neighbour geometry → distinct surprisal.
@@ -548,7 +548,7 @@ describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + s
   });
 
   it("surprisal gate: un-embedded candidates are excluded from the reasoning set", async () => {
-    // 2 embedded + 1 un-embedded → the un-embedded one is never selected (101-04 policy).
+    // 2 embedded + 1 un-embedded → the un-embedded one is never selected (surprisal-gate policy).
     await seedMemory({ content: "embedded one", createdAt: 100, embedding: [1, 0, 0, 0] });
     await seedMemory({ content: "embedded two", createdAt: 200, embedding: [0, 1, 0, 0] });
     await seedMemory({ content: "no embedding here", createdAt: 300 }); // no embedding
@@ -562,7 +562,7 @@ describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + s
   });
 
   // -------------------------------------------------------------------------
-  // Bounded (T-101-05-06)
+  // Bounded
   // -------------------------------------------------------------------------
   it("bounded: maxObservationsPerRun=1 with 3 inductive candidates writes exactly 1, counts the rest as skippedOverCap", async () => {
     await seedMemory({ content: "fact one", createdAt: 100, trustLevel: "learned" });
@@ -585,7 +585,7 @@ describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + s
   });
 
   // -------------------------------------------------------------------------
-  // Idempotent re-run (T-101-05-07, Pitfall 1)
+  // Idempotent re-run
   // -------------------------------------------------------------------------
   it("idempotent re-run: running the cycle TWICE writes 0 NEW inductive observations the second time", async () => {
     await seedMemory({ content: "system fact one", createdAt: 100, trustLevel: "system" });
@@ -607,15 +607,15 @@ describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + s
   });
 
   // -------------------------------------------------------------------------
-  // WR-01: a DEDUCTIVE-ONLY scope (a deductive write, NO inductive pattern) must
+  // A DEDUCTIVE-ONLY scope (a deductive write, NO inductive pattern) must
   // also drain the candidate pool — otherwise its sources stay
   // consolidated_at IS NULL and are re-selected + re-fed to the paid seam every
   // run, forever. The candidate predicate is `consolidated_at IS NULL AND
   // proof_count IS NULL`; only the inductive applyConsolidation marked sources
-  // pre-fix. This RED asserts a deductive-only scope's sources are marked so a
+  // pre-fix. This asserts a deductive-only scope's sources are marked so a
   // 2nd pass does NOT re-call the seam over the same evidence.
   // -------------------------------------------------------------------------
-  it("deductive-only scope marks its sources consolidated so a re-run does NOT re-call the seam (WR-01)", async () => {
+  it("deductive-only scope marks its sources consolidated so a re-run does NOT re-call the seam", async () => {
     // One raw source whose ONLY output is a deductive triple (empty inductive).
     const sourceId = await seedMemory({ content: "alice moved to berlin", createdAt: 100, trustLevel: "learned" });
     const spy = makeReasonSpy(() => ({
@@ -647,7 +647,7 @@ describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + s
   });
 
   // -------------------------------------------------------------------------
-  // Counts-only event (T-101-05-05)
+  // Counts-only event
   // -------------------------------------------------------------------------
   it("counts-only event: memory:reasoned carries only counts/durationMs/timestamp — NO S/P/O or content", async () => {
     await seedMemory({ content: "secretive content xyz", createdAt: 100, trustLevel: "learned" });

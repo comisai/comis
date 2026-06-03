@@ -36,10 +36,10 @@ const mockRetryEngine = { sendWithRetry: vi.fn() };
 vi.mock("@comis/channels", () => ({
   createLifecycleReactor: vi.fn(() => ({ destroy: vi.fn() })),
   reactWithFallback: vi.fn(),
-  // Activity-renderer factories consumed by buildActivityRenderers (WIRE-02).
+  // Activity-renderer factories consumed by buildActivityRenderers.
   // The *_RENDERER_FACTORIES consts in setup-channels-activity-renderers.ts
   // reference every per-channel factory at MODULE LOAD (EditPlace + the four
-  // non-EditPlace strategy maps added in 72-05), so this explicit
+  // non-EditPlace strategy maps), so this explicit
   // (non-importOriginal) mock must expose them all or import-time collection fails.
   createTestSink: vi.fn(() => ({ strategy: "TestSink", apply: vi.fn(), finalize: vi.fn() })),
   createTelegramActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
@@ -124,8 +124,8 @@ vi.mock("@comis/core", async () => {
     createNoOpDeliveryQueue: vi.fn(() => ({})),
     systemNowMs: () => Date.now(),
     systemNowDate: () => new Date(),
-    // 75-06: setupChannels resolves the default agent's activity.theme →
-    // themeForName(name).markers for the activity renderers (UX-01). The fake
+    // setupChannels resolves the default agent's activity.theme →
+    // themeForName(name).markers for the activity renderers. The fake
     // returns the default-theme marker bundle so the resolved markers stay
     // default-parity in these wiring tests.
     themeForName: vi.fn(() => ({
@@ -1192,7 +1192,7 @@ describe("setupChannels", () => {
     });
   });
 
-  // -- CR-01 / WR-01: interactive-callback router threaded to the inbound pipeline --
+  // -- interactive-callback router threaded to the inbound pipeline --
   //
   // The InteractiveCallbackRouter is constructed in the daemon wiring bundle
   // (createInteractiveCallbackWiring → .router) but must reach the orchestrator's
@@ -1206,10 +1206,10 @@ describe("setupChannels", () => {
   // Because every layer types the slot OPTIONAL, a missing thread compiles and
   // silently no-ops: at runtime `deps.interactiveCallbackRouter === undefined`,
   // the button-callback intercept is dead, and a signed `v1.<choice>.<shortId>.<hmac>`
-  // payload falls through to the LLM. This is the exact blind spot that let CR-01
-  // ship — there was no assertion that the daemon POPULATES the slot. These tests
-  // pin the seam end-to-end at the real daemon composition layer.
-  describe("interactive-callback router wiring (CR-01)", () => {
+  // payload falls through to the LLM. This is the exact blind spot that let the
+  // unthreaded router ship — there was no assertion that the daemon POPULATES the
+  // slot. These tests pin the seam end-to-end at the real daemon composition layer.
+  describe("interactive-callback router wiring", () => {
     it("threads the wiring router into createChannelManager so the inbound button-intercept is reachable", async () => {
       mockAdaptersByType.set("telegram", mockAdapter);
       const router = { route: vi.fn(), render: vi.fn() } as any;

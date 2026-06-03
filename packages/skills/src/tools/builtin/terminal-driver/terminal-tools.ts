@@ -1,40 +1,40 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The eight implemented terminal-driver AgentTool factories (spec §5):
- * `terminal_session_create` / `_read` / `_list` / `_kill` (P0, 119-04) and the
- * four P1 interaction tools `_send_text` / `_send_key` / `_resize` / `_wait`
- * (this plan). (`terminal_session_status` is the lone remaining stub →
- * `terminal-tools-stubs.ts`, Phase 124.)
+ * `terminal_session_create` / `_read` / `_list` / `_kill` and the
+ * four interaction tools `_send_text` / `_send_key` / `_resize` / `_wait`.
+ * (`terminal_session_status` is the lone remaining stub →
+ * `terminal-tools-stubs.ts`.)
  *
- * `create` is the gate that composes the whole P0 substrate:
- *   1. ALLOWLIST GATE (SEC-01): `matchAllowEntry(command, allowEntries)` — a
+ * `create` is the gate that composes the whole substrate:
+ *   1. ALLOWLIST GATE: `matchAllowEntry(command, allowEntries)` — a
  *      command whose canonical binary matches no operator entry is rejected with
  *      `permission_denied` and NEVER reaches the registry (no worker spawn). The
- *      matcher (119-02) enforces realpath + the optional hash pin.
- *   2. FAIL-CLOSED (SEC-16): if `detectProvider()` returns `undefined` there is
+ *      matcher enforces realpath + the optional hash pin.
+ *   2. FAIL-CLOSED: if `detectProvider()` returns `undefined` there is
  *      no sandbox runtime — `create` rejects rather than spawn an unsandboxed
- *      child. Demonstrated on the Phase-118 stack (G-5).
- *   3. CANONICALIZE (M-1, SEC-14 end-to-end): `buildDirectSpawn(entry, command,
+ *      child.
+ *   3. CANONICALIZE (end-to-end): `buildDirectSpawn(entry, command,
  *      args)` is the SOLE canonicalization site — it resolves the realpath and
  *      prepends the operator's `argsPrefix`. The resulting `{bin,argv}` (NOT the
  *      raw command) is handed to the registry, so the worker spawns the canonical
  *      target verbatim and never re-derives realpath (the argsPrefix guarantee
  *      holds end-to-end).
- *   4. OBSERVABILITY (OPS-07): a successful transition logs INFO + `durationMs` +
+ *   4. OBSERVABILITY: a successful transition logs INFO + `durationMs` +
  *      emits `terminal:session_state`; a spawn failure logs WARN + `hint` +
  *      `errorKind` + emits `terminal:spawn_failed`, then rethrows.
  *
  * `read` / `list` / `kill` and the four interaction tools (`send_text` /
  * `send_key` / `resize` / `wait`) are thin delegations to the injected registry —
- * they operate on an ALREADY-GATED session (create enforced SEC-01/SEC-16), so
- * they do NOT re-run the allowlist gate and never touch `detectProvider` (the
- * read/list/kill precedent). The registry's forwarding methods (120-03) carry the
+ * they operate on an ALREADY-GATED session (create enforced the allowlist + fail-closed
+ * checks), so they do NOT re-run the allowlist gate and never touch `detectProvider` (the
+ * read/list/kill precedent). The registry's forwarding methods carry the
  * post-action settled snapshot back; `wait`'s `isComplete:false` survives verbatim.
  *
  * Architecture: this module is daemon-side but lives in `@comis/skills`, so it
  * takes an INJECTED structural logger + event bus (never `getLogger` from
- * `@comis/infra` — the registry mirrors this). The daemon (composition root,
- * 119-04 wiring) passes the real logger + the `TypedEventBus`. Clock is the
+ * `@comis/infra` — the registry mirrors this). The daemon (composition root)
+ * passes the real logger + the `TypedEventBus`. Clock is the
  * injected `nowMs` (no raw wall-clock global).
  *
  * @module
@@ -108,7 +108,7 @@ export interface TerminalSpawnFailedEvent {
   timestamp: number;
 }
 
-/** The reaper/cap-trip eviction payload (mirrors core `TerminalEvents["terminal:session_evicted"]`, OPS-06). */
+/** The reaper/cap-trip eviction payload (mirrors core `TerminalEvents["terminal:session_evicted"]`). */
 export interface TerminalEvictedEvent {
   sessionId: string;
   agentId: string;
@@ -118,13 +118,13 @@ export interface TerminalEvictedEvent {
 }
 
 /**
- * The SEC-10 keystroke-audit event payload (mirrors core
- * `TerminalEvents["terminal:keystroke"]`, 123-01). REDACTION-SAFE BY CONSTRUCTION:
+ * The keystroke-audit event payload (mirrors core
+ * `TerminalEvents["terminal:keystroke"]`). REDACTION-SAFE BY CONSTRUCTION:
  * it carries the counts/ids (`redactions`, `byteLength`) + the typed `outcome` ONLY
  * — there is NO `text`/`keys`/`payload` field, so an emit site cannot leak a
- * keystroke on the bus even by mistake (T-123-13). The scrubSecretsFromText-REDACTED
+ * keystroke on the bus even by mistake. The scrubSecretsFromText-REDACTED
  * payload rides the structured LOG only; the bus event is the redaction-safe summary.
- * `outcome` is an ATTEMPT tag (WR-03): `attempted` = forwarded, `rejected` = blocked
+ * `outcome` is an ATTEMPT tag: `attempted` = forwarded, `rejected` = blocked
  * by a cap breach — never proof of delivery; `sessionId` is caller-asserted.
  */
 export interface TerminalKeystrokeEvent {
@@ -146,9 +146,9 @@ export interface TerminalKeystrokeEvent {
 export interface TerminalEventBus {
   emit(event: "terminal:session_state", payload: TerminalStateEvent): unknown;
   emit(event: "terminal:spawn_failed", payload: TerminalSpawnFailedEvent): unknown;
-  // P4 OPS-06: the reaper/cap-trip eviction audit event (123-01 declared the typed payload).
+  // The reaper/cap-trip eviction audit event.
   emit(event: "terminal:session_evicted", payload: TerminalEvictedEvent): unknown;
-  // P4 SEC-10: the per-send keystroke audit event (123-01 declared the typed payload).
+  // The per-send keystroke audit event.
   emit(event: "terminal:keystroke", payload: TerminalKeystrokeEvent): unknown;
   // P5/124 — the attention + audit overloads (124-02 declared the typed payloads in
   // events-terminal.ts site 1; the emit call sites land in 124-05/07/09):
@@ -160,12 +160,12 @@ export interface TerminalEventBus {
 
 /** Dependencies shared by all four implemented tools. */
 export interface TerminalToolDeps {
-  /** The daemon-side session registry (119-03) that spawns + supervises the worker. */
+  /** The daemon-side session registry that spawns + supervises the worker. */
   readonly registry: TerminalSessionRegistry;
-  /** The operator allow-set (parsed config mapped onto `AllowEntryLike`); the SEC-01 trust source. */
+  /** The operator allow-set (parsed config mapped onto `AllowEntryLike`); the allowlist trust source. */
   readonly allowEntries: AllowEntryLike[];
   /**
-   * Sandbox-provider detector (SEC-16). Injected so the fail-closed test can
+   * Sandbox-provider detector. Injected so the fail-closed test can
    * force `undefined`. Production passes a closure over the daemon's
    * once-detected provider (or `detectSandboxProvider` itself).
    */
@@ -179,9 +179,9 @@ export interface TerminalToolDeps {
   /** The owning agent id — stamped onto every emitted event. */
   readonly agentId: string;
   /**
-   * The per-session usage caps (OPS-03/OPS-06; Plan 02). A SHARED per-agent instance
+   * The per-session usage caps. A SHARED per-agent instance
    * the daemon constructs from the matched entry's `limits` AND also threads into the
-   * registry's `onCapForget` (Plan 04) so eviction forgets the SAME cap-state map.
+   * registry's `onCapForget` so eviction forgets the SAME cap-state map.
    * `create` calls `startSession`; each `send_*` calls `consumeRequest` (REJECT on
    * breach — session survives) + `consumeInteraction` / `checkWallClock` (EVICT via
    * `registry.evict` on breach); the explicit kill tool calls `forget`. The evict
@@ -189,7 +189,7 @@ export interface TerminalToolDeps {
    */
   readonly caps: SessionCaps;
   /**
-   * The operator approval gate (SEC-06). Injected by the daemon (the existing
+   * The operator approval gate. Injected by the daemon (the existing
    * `ApprovalGate` from setup-tools). Consulted ONLY when the matched entry sets
    * `approveOnCreate` — an entry that demands approval with NO gate wired
    * fail-closes (reject), never silently proceeds. Optional so non-approving
@@ -299,12 +299,12 @@ function readOptInt(p: Record<string, unknown>, key: string): number | undefined
 }
 
 // ---------------------------------------------------------------------------
-// Origin-keying: derive the (agentId, sessionKey) owner per call (TR-13)
+// Origin-keying: derive the (agentId, sessionKey) owner per call
 // ---------------------------------------------------------------------------
 
 /**
  * Derive the calling origin `(agentId, sessionKey)` for the owner-scoped registry
- * calls (TR-13/TR-09). Read from the AsyncLocalStorage `RequestContext`
+ * calls. Read from the AsyncLocalStorage `RequestContext`
  * (`tryGetContext()`) the SAME way the create approval gate already does
  * (terminal-tools.ts create): `agentId = ctx.userId ?? deps.agentId`, `sessionKey
  * = ctx.sessionKey ?? ""`. Two subagent runs of one parent get distinct owners
@@ -316,17 +316,17 @@ export function resolveOwner(deps: TerminalToolDeps): SessionOwner {
   return { agentId: ctx?.userId ?? deps.agentId, sessionKey: ctx?.sessionKey ?? "" };
 }
 
-/** The degraded `{screen,cursor}` snapshot a send_text/send_key returns when the turn signal already aborted (TR-10). */
+/** The degraded `{screen,cursor}` snapshot a send_text/send_key returns when the turn signal already aborted. */
 const ABORTED_SEND: SendResult = { screen: "", cursor: { x: 0, y: 0 } };
 
 // ---------------------------------------------------------------------------
-// create (the gate — SEC-01 / SEC-16 / M-1 / OPS-07)
+// create (the gate — allowlist / fail-closed / canonicalize / observe)
 // ---------------------------------------------------------------------------
 
 /**
- * `terminal_session_create` — gate on the allowlist (SEC-01), fail closed on a
- * missing sandbox provider (SEC-16), canonicalize via the sole `buildDirectSpawn`
- * site (M-1), then register a session and emit the OPS-07 transition.
+ * `terminal_session_create` — gate on the allowlist, fail closed on a
+ * missing sandbox provider, canonicalize via the sole `buildDirectSpawn`
+ * site, then register a session and emit the transition.
  */
 export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTool<typeof CreateParams> {
   return {
@@ -336,7 +336,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       "Start an interactive terminal session driving an allowlisted binary. Rejected unless the canonical command matches an operator allowlist entry.",
     parameters: CreateParams,
 
-    // TR-10: the SDK 4-arg execute — the turn's AbortSignal is arg 3. We OBSERVE it
+    // The SDK 4-arg execute — the turn's AbortSignal is arg 3. We OBSERVE it
     // to end the call but abort ends the CALL, NOT the session — never registry.kill.
     async execute(
       _id: string,
@@ -350,16 +350,16 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       const cols = readInt(params, "cols", DEFAULT_COLS);
       const rows = readInt(params, "rows", DEFAULT_ROWS);
 
-      // abort ends the call, NOT the session (TR-10) — never registry.kill here. The
+      // abort ends the call, NOT the session — never registry.kill here. The
       // turn already aborted, so do NOT spawn a new session (create is the one
       // mutating-but-not-yet-existing tool); return an honest not-created result.
       if (signal?.aborted) {
         return jsonResult({ sessionId: "", allowId, cols, rows, aborted: true });
       }
 
-      // (1) ALLOWLIST GATE (SEC-01). matchAllowEntry (119-02) resolves the
+      // (1) ALLOWLIST GATE. matchAllowEntry resolves the
       // realpath ONCE + the optional hash pin; a non-match rejects BEFORE any
-      // spawn. The result carries the verified `requestedReal` (MR-02) so the
+      // spawn. The result carries the verified `requestedReal` so the
       // hash-checked inode is the exact one threaded to spawn — no second resolve.
       const matched = matchAllowEntry(command, deps.allowEntries);
       if (matched === undefined) {
@@ -368,7 +368,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         });
       }
 
-      // (2) FAIL-CLOSED (SEC-16). No sandbox runtime ⇒ refuse — never spawn an
+      // (2) FAIL-CLOSED. No sandbox runtime ⇒ refuse — never spawn an
       // unsandboxed child. The bare-metal (bwrap removed) confirmation is VPS-gated.
       const provider = deps.detectProvider();
       if (!provider) {
@@ -379,13 +379,13 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         );
       }
 
-      // (2b) CONSENT GATE (SEC-06, §3.7). A high-risk entry (`approveOnCreate`)
+      // (2b) CONSENT GATE (§3.7). A high-risk entry (`approveOnCreate`)
       // pauses for the OPERATOR — not the prompt-injectable agent — BEFORE any
       // spawn. Mirrors the exec-tool precedent (exec-shared.ts:410-438): identity
       // from tryGetContext() with the documented fallbacks; params are SECRET-FREE
       // (allowId + command only — `args` may carry secrets, so they are omitted).
       // FAIL-CLOSED: an entry that demands approval with NO gate wired rejects —
-      // it must NEVER run unauthorized (T-122-16 silent-degrade).
+      // it must NEVER run unauthorized (no silent-degrade).
       if (matched.entry.approveOnCreate) {
         if (!deps.approvalGate) {
           throwToolError(
@@ -411,28 +411,28 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         }
       }
 
-      // (3) CANONICALIZE (M-1, SEC-14 end-to-end). buildDirectSpawn consumes the
-      // matcher's already-resolved realpath (MR-02 — no second resolution) and
+      // (3) CANONICALIZE (end-to-end). buildDirectSpawn consumes the
+      // matcher's already-resolved realpath (no second resolution) and
       // prepends the operator's argsPrefix ahead of the agent args. We forward
       // {bin,argv} — NOT the raw command — so the worker spawns the verified
       // canonical inode verbatim.
       const { bin, argv } = buildDirectSpawn(matched.entry, matched.requestedReal, args);
 
-      // (4) REGISTER + OBSERVE (OPS-07). A spawn failure logs hint+errorKind and
+      // (4) REGISTER + OBSERVE. A spawn failure logs hint+errorKind and
       // emits terminal:spawn_failed before rethrowing.
       const start = deps.nowMs();
       let result;
       try {
-        // TR-14: scrollback is NOT an agent-facing param — the create surface
+        // Scrollback is NOT an agent-facing param — the create surface
         // exposes only {allowId,command,args,cwd,cols,rows,...} to the model. The
         // per-session emulator's retained-memory ceiling is sourced from
         // DEFAULT_SCROLLBACK (operator config later), so the agent cannot inflate
-        // per-session memory (T-121-11). The CreateParams schema is unchanged.
+        // per-session memory. The CreateParams schema is unchanged.
         //
-        // SEC-02/03: the sandbox scope is sourced EXCLUSIVELY from the matched
+        // The sandbox scope is sourced EXCLUSIVELY from the matched
         // allow entry (operator closed config) — NEVER from `params`. The agent has
         // no `scope` create param (CreateParams is closed), so it cannot set or
-        // widen the jail; scope rides the create frame to the worker (122-06).
+        // widen the jail; scope rides the create frame to the worker.
         result = await deps.registry.create(
           {
             allowId,
@@ -443,7 +443,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
             scrollback: DEFAULT_SCROLLBACK,
             scope: matched.entry.scope,
           },
-          // TR-13: stamp the origin so this session is visible ONLY to its owner.
+          // Stamp the origin so this session is visible ONLY to its owner.
           resolveOwner(deps),
         );
       } catch (err) {
@@ -468,7 +468,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
           timestamp: failedAt,
         });
         // @allow-throw: re-propagate the original spawn error to the AgentTool
-        // execution boundary after recording OPS-07 observability; the SDK catches
+        // execution boundary after recording observability; the SDK catches
         // it and marks the tool result isError:true (same boundary as tool-helpers.ts).
         throw err;
       }
@@ -491,7 +491,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         durationMs: doneAt - start,
         timestamp: doneAt,
       });
-      // OPS-06: anchor the session's wall-clock start + request/interaction counters so
+      // Anchor the session's wall-clock start + request/interaction counters so
       // the per-send caps (consumeRequest/consumeInteraction/checkWallClock) measure
       // from create. Idempotent — a re-call never re-anchors the wall clock.
       deps.caps.startSession(result.sessionId);
@@ -513,7 +513,7 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
     description: "Read the current settled screen + cursor of a terminal session.",
     parameters: ReadParams,
 
-    // 4-arg execute (TR-10): observe the turn signal (read is read-only — it never
+    // 4-arg execute: observe the turn signal (read is read-only — it never
     // kills; the owner-scoped read is the load-bearing change).
     async execute(
       _id: string,
@@ -522,21 +522,21 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
       _onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
-      // TR-02/14: forward the render params to the worker (closing the 119-04
+      // Forward the render params to the worker (closing a prior
       // schema-only gap — these were declared but never forwarded). Spec §5
       // defaults: format=text, scrollback=0, includeAltBuffer=true. The schema
       // (TypeBox closed Union) already validated `format`; the worker's render
-      // dispatch (Plan 02) defaults any unrecognized value to text as a 2nd guard.
+      // dispatch defaults any unrecognized value to text as a 2nd guard.
       const format = (readString(params, "format") as "text" | "ansi" | "html" | undefined) ?? "text";
       const scrollback = readInt(params, "scrollback", 0);
       const includeAltBuffer = readBool(params, "includeAltBuffer") ?? true;
-      // TR-13: owner-scoped — a cross-owner read returns the not-found view (alive:false).
+      // Owner-scoped — a cross-owner read returns the not-found view (alive:false).
       const view: TerminalView = await deps.registry.read(sessionId, resolveOwner(deps), {
         format,
         scrollback,
         includeAltBuffer,
       });
-      // SEC-15 (§3.6): the driven CLI's screen is a PROMPT-INJECTION vector — it can
+      // §3.6: the driven CLI's screen is a PROMPT-INJECTION vector — it can
       // render attacker-controlled text (a file/web the CLI read) and echo secrets.
       // REDACT secret-shaped values FIRST (so a leaked token never reaches the agent
       // or the wrap), THEN wrap as untrusted external content (random delimiter +
@@ -554,7 +554,7 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
   };
 }
 
-/** `terminal_session_list` — owner-scoped session listing (P0 single-owner; origin-keying is P4). */
+/** `terminal_session_list` — owner-scoped session listing. */
 export function createTerminalSessionListTool(deps: TerminalToolDeps): AgentTool<typeof ListParams> {
   return {
     name: "terminal_session_list",
@@ -568,7 +568,7 @@ export function createTerminalSessionListTool(deps: TerminalToolDeps): AgentTool
       _signal?: AbortSignal,
       _onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<unknown>> {
-      // TR-13: owner-scoped — the caller sees ONLY its own (agentId, sessionKey) sessions.
+      // Owner-scoped — the caller sees ONLY its own (agentId, sessionKey) sessions.
       const rows: SessionListing[] = deps.registry.list(resolveOwner(deps));
       deps.logger.debug({ toolName: "terminal_session_list", count: rows.length, step: "list" }, "terminal sessions listed");
       return jsonResult(rows);
@@ -585,8 +585,8 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
     parameters: KillParams,
 
     // 4-arg execute. NOTE: the EXPLICIT kill tool is the agent's intentional
-    // terminate — it is NOT the turn abort. The TR-10 invariant (abort ends the
-    // call, never the session) governs the OTHER tools' abort branch; an explicit
+    // terminate — it is NOT the turn abort. The abort-ends-the-call-never-the-session
+    // invariant governs the OTHER tools' abort branch; an explicit
     // kill request from the agent stands on its own and is honoured here.
     async execute(
       _id: string,
@@ -595,13 +595,13 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
       _onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
-      // TR-13: owner-scoped get+kill — a cross-owner kill is a registry no-op.
+      // Owner-scoped get+kill — a cross-owner kill is a registry no-op.
       const owner = resolveOwner(deps);
       // Read the exit code (if the session already exited) BEFORE killing.
       const handle = deps.registry.get(sessionId, owner);
       const exitCode = handle?.exitCode;
       await deps.registry.kill(sessionId, owner);
-      // OPS-06: the EXPLICIT kill forgets the per-session cap state directly (KEEP this —
+      // The EXPLICIT kill forgets the per-session cap state directly (KEEP this —
       // it complements the reap-path onCapForget so EVERY end-of-life forgets the cap
       // state; the kill tool is the agent's intentional terminate, not an evict).
       deps.caps.forget(sessionId);
@@ -612,10 +612,10 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
 }
 
 // ---------------------------------------------------------------------------
-// Interaction tools (send_text / send_key / resize / wait) — TR-03/04/05.
+// Interaction tools (send_text / send_key / resize / wait).
 //
-// Each is a thin delegation to the matching registry forwarding method (120-03),
-// which forwards a frame to the worker handler (120-04) and resolves the
+// Each is a thin delegation to the matching registry forwarding method,
+// which forwards a frame to the worker handler and resolves the
 // post-action settled snapshot. These tools do NOT re-gate the allowlist (the
 // session was gated at create) and never touch detectProvider — exactly the
 // read/list/kill posture. They take the full TerminalToolDeps so the daemon hands
@@ -624,7 +624,7 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
 
 /**
  * `terminal_session_send_text` — type `text` into the session; with `submit` the
- * worker settles then writes `\r` (a settle separates text from Enter, TR-04);
+ * worker settles then writes `\r` (a settle separates text from Enter);
  * with `bracketedPaste` the text is paste-wrapped. Returns the post-action
  * `{screen,cursor}`.
  */
@@ -643,14 +643,14 @@ export function createTerminalSessionSendTextTool(deps: TerminalToolDeps): Agent
     ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
       const owner = resolveOwner(deps);
-      // abort ends the call, NOT the session (TR-10) — never registry.kill here. The
+      // abort ends the call, NOT the session — never registry.kill here. The
       // turn aborted, so end THIS call with the degraded snapshot; the session stays
       // alive in the registry for the next turn (session lifetime ⟂ turn lifetime).
       if (signal?.aborted) return jsonResult(ABORTED_SEND);
       const text = readString(params, "text") ?? "";
       const submit = readBool(params, "submit");
       const bracketedPaste = readBool(params, "bracketedPaste");
-      // OPS-03/OPS-06 + SEC-10 (WR-02/WR-03): enforce the per-session caps, THEN audit
+      // Enforce the per-session caps, THEN audit
       // EVERY invocation tagged with its outcome — BEFORE the registry forward. A
       // maxRequestsPerSession breach REJECTS (session survives); a maxInteractions /
       // wallClockMs breach EVICTS via registry.evict; either way the attempt is audited
@@ -689,10 +689,10 @@ export function createTerminalSessionSendKeyTool(deps: TerminalToolDeps): AgentT
     ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
       const owner = resolveOwner(deps);
-      // abort ends the call, NOT the session (TR-10) — never registry.kill here.
+      // abort ends the call, NOT the session — never registry.kill here.
       if (signal?.aborted) return jsonResult(ABORTED_SEND);
       const keys = readStringArray(params, "keys");
-      // OPS-03/OPS-06 + SEC-10 (WR-02/WR-03): same enforce-then-audit-EVERY-invocation
+      // Same enforce-then-audit-EVERY-invocation
       // order as send_text. Keys are generally non-secret chords, but EVERY send is
       // audited (join + scrub for consistency) — including a cap-rejected one
       // (outcome:"rejected"); a clean pass audits outcome:"attempted" then forwards.
@@ -728,9 +728,9 @@ export function createTerminalSessionResizeTool(deps: TerminalToolDeps): AgentTo
     ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
       const owner = resolveOwner(deps);
-      // abort ends the call, NOT the session (TR-10) — never registry.kill here.
+      // abort ends the call, NOT the session — never registry.kill here.
       if (signal?.aborted) return jsonResult({ ok: false });
-      // IN-02: cols/rows are schema-typed integers, but VALIDATE the value range here
+      // cols/rows are schema-typed integers, but VALIDATE the value range here
       // (1..MAX_DIMENSION) and reject a degenerate geometry (0/negative/non-integer/
       // absurd) with a typed invalid_value BEFORE forwarding to the emulator/PTY — the
       // tool must not push a bad winsize into the worker (an aborted call returned above).
@@ -748,9 +748,9 @@ export function createTerminalSessionResizeTool(deps: TerminalToolDeps): AgentTo
 }
 
 /**
- * `terminal_session_wait` — a bounded in-turn settle on idle/text/exit (TR-05).
+ * `terminal_session_wait` — a bounded in-turn settle on idle/text/exit.
  * Returns `{matched,isComplete,reason,screen,cursor}` VERBATIM from the registry —
- * on timeout the load-bearing `isComplete:false` survives (the P5 attention model
+ * on timeout the load-bearing `isComplete:false` survives (the attention model
  * resumes the turn). This tool is read-only (it observes a settle; it writes
  * nothing), so it logs DEBUG. It NEVER coerces `isComplete`.
  */
@@ -769,7 +769,7 @@ export function createTerminalSessionWaitTool(deps: TerminalToolDeps): AgentTool
     ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
       const owner = resolveOwner(deps);
-      // abort ends the call, NOT the session (TR-10) — never registry.kill here.
+      // abort ends the call, NOT the session — never registry.kill here.
       // The turn aborted mid-settle: return the honest not-complete shape (NEVER
       // isComplete:true — a false true would strand the agent) and leave the session
       // alive for the next turn to resume the settle.

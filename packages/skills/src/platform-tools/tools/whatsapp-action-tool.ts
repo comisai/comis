@@ -17,7 +17,7 @@ import { registerActivityLabelSpec } from "@comis/core";
 import { createPlatformActionTool, type PlatformActionDescriptor } from "../platform-action-tool.js";
 import type { RpcCall } from "./cron-tool.js";
 
-// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name.
+// Activity label spec (§17.6). Descriptor name == emitted name.
 registerActivityLabelSpec("whatsapp_action", {
   semanticPhase: "tool",
   label: "running WhatsApp action",

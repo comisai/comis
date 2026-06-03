@@ -210,8 +210,8 @@ export function buildGreetingGenerator(input: {
 }
 
 /**
- * Detect the greeting variant (UX-04, spec §12) from wiring-tier state — NOT
- * from a `core/bootstrap.ts` hook (RESEARCH Pitfall 4). Pure: reads only
+ * Detect the greeting variant (spec §12) from wiring-tier state — NOT
+ * from a `core/bootstrap.ts` hook. Pure: reads only
  * non-secret agent-config presence + an interactivity flag, never `process.env`
  * and never a secret (the API-key gate stays in {@link buildGreetingGenerator}).
  *

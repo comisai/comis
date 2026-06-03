@@ -8,11 +8,11 @@
  * reply out of order). A separate push channel carries `terminal:*` event
  * frames; consumers route a decoded frame by the presence of `requestId`
  * (request/reply) vs `event` (push). Each request frame carries `traceId` so
- * the worker can re-establish the originating ALS context (119-03).
+ * the worker can re-establish the originating ALS context.
  *
  * Pure JS — no `node-pty` / `@comis/infra` import. The decoder holds its
- * accumulation buffer in CLOSURE scope (no module-global mutable state, per the
- * RESEARCH anti-pattern and the `globals.test.ts` architecture gate). No raw
+ * accumulation buffer in CLOSURE scope (no module-global mutable state, as
+ * enforced by the `globals.test.ts` architecture gate). No raw
  * wall-clock or timer globals — this module is a pure transform.
  *
  * @module
@@ -53,7 +53,7 @@ export type TerminalFrame =
 const LENGTH_PREFIX_BYTES = 4;
 
 /**
- * Hard ceiling on a single frame's declared body length (HR-01).
+ * Hard ceiling on a single frame's declared body length.
  *
  * The length prefix is an attacker/garbage-controlled `uint32` (0 …
  * 4 294 967 295). Without a ceiling, one corrupt/hostile prefix (e.g.
@@ -66,17 +66,17 @@ const LENGTH_PREFIX_BYTES = 4;
  * larger is treated as corrupt/hostile: the decoder REFUSES to buffer toward it
  * and throws {@link FrameTooLargeError} so the caller can drop the frame, log
  * `errorKind:"validation"`, and — at the registry — treat the worker as corrupt
- * and re-spawn it (HR-02). The load-bearing property is the bound itself.
+ * and re-spawn it. The load-bearing property is the bound itself.
  */
 export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 
 /**
  * Thrown by the decoder when a frame's declared body length exceeds
- * {@link MAX_FRAME_BYTES} (HR-01). Carries the offending `declaredBytes` and the
+ * {@link MAX_FRAME_BYTES}. Carries the offending `declaredBytes` and the
  * `maxBytes` ceiling so the caller can log a precise `errorKind:"validation"`
  * diagnostic and resync/re-spawn rather than grow the buffer toward a hostile
  * length. A typed error (not a bare `Error`) so the registry's stdout handler
- * (HR-02) can branch on `instanceof` if it ever needs frame-specific recovery.
+ * can branch on `instanceof` if it ever needs frame-specific recovery.
  */
 export class FrameTooLargeError extends Error {
   readonly declaredBytes: number;
@@ -137,9 +137,9 @@ export function createFrameDecoder(): { push(chunk: Buffer): TerminalFrame[] } {
     for (;;) {
       if (buffered.length < LENGTH_PREFIX_BYTES) break; // not even a full length prefix yet
       const bodyLen = buffered.readUInt32BE(0);
-      // HR-01: refuse a corrupt/hostile length before reserving toward it. Never
+      // Refuse a corrupt/hostile length before reserving toward it. Never
       // grow `buffered` toward a multi-GiB body — that is the DoS primitive. The
-      // caller (registry stdout handler, HR-02) catches this, drops the worker as
+      // caller (registry stdout handler) catches this, drops the worker as
       // corrupt, and re-spawns. The buffer is left intact (not consumed): a 2nd
       // push re-reads the same oversized prefix and re-throws — it never silently
       // accumulates the follow-on bytes.
@@ -147,7 +147,7 @@ export function createFrameDecoder(): { push(chunk: Buffer): TerminalFrame[] } {
       // @allow-throw: the framer is a decode-protocol boundary — a typed decode
       // error IS the contract here (symmetric with the built-in JSON.parse throw
       // on the very next decode step). The sole caller (registry stdout 'data'
-      // handler, HR-02) wraps decoder.push in try/catch, logs errorKind:
+      // handler) wraps decoder.push in try/catch, logs errorKind:
       // "validation", and drops/re-spawns the worker; it never reaches
       // uncaughtException. Returning a Result here would force every push() caller
       // (incl. the tests' in-process bridge) to branch on a discriminated union on
@@ -172,8 +172,9 @@ export function createFrameDecoder(): { push(chunk: Buffer): TerminalFrame[] } {
 /**
  * The daemon-side reply router. Resolve a pending request by the
  * `(sessionId,requestId)` key — independent of the order replies arrive in
- * (OPS-08 framing half). Returns `true` if a pending resolver matched (and was
- * invoked + removed), `false` for an orphan/duplicate reply with no waiter.
+ * (the framing half of out-of-order correlation). Returns `true` if a pending
+ * resolver matched (and was invoked + removed), `false` for an orphan/duplicate
+ * reply with no waiter.
  *
  * The worker uses {@link encodeFrame}/{@link createFrameDecoder} symmetrically
  * on its side; this helper is the correlation gate on the daemon side.

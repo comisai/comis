@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * §17.8 GLOBAL SHIP GATE — transparency-suite-green checklist as an
- * executable assertion (WIRE-09, Phase 76).
+ * executable assertion.
  *
  * This is the milestone's terminal lightweight gate. It does NOT re-run the
  * whole suite — that is `pnpm validate`'s job (build && test && lint:security
  * && cycles). Instead it asserts the §17.8 transparency ANCHORS are still in
- * place, so a future PR that silently removes the LBL-03 gate script, the
- * core/observability ⊀ channels boundary lock, the 47-tool registry-parity
- * lock, one of the 10 channel plugins, or the §18.3 golden fixtures fails THIS
- * test loudly (deterministic, cheap — fs/JSON reads only, no runtime path).
+ * place, so a future PR that silently removes the transparency-label coverage
+ * gate script, the core/observability ⊀ channels boundary lock, the 47-tool
+ * registry-parity lock, one of the 10 channel plugins, or the §18.3 golden
+ * fixtures fails THIS test loudly (deterministic, cheap — fs/JSON reads only,
+ * no runtime path).
  *
- * Why a checklist-as-test (not a full-suite shell-out): RESEARCH A3 — the §17.8
- * ship gate is the UNION of existing automated gates + a written security
- * sign-off; no single executable "ship-gate test" is mandated by the spec. The
+ * Why a checklist-as-test (not a full-suite shell-out): the §17.8 ship gate is
+ * the UNION of existing automated gates + a written security sign-off; no
+ * single executable "ship-gate test" is mandated by the spec. The
  * transparency-label-coverage gate (`pnpm test:transparency`) already runs
  * under the normal `pnpm test` (it is a `.test.ts` under `packages/skills/`),
  * so this file deliberately omits a fragile shell-out and instead pins that the
@@ -39,13 +40,13 @@ function readRootPackageJson(): { scripts?: Record<string, string> } {
   ) as { scripts?: Record<string, string> };
 }
 
-describe("§17.8 global ship gate — transparency anchors are present (WIRE-09)", () => {
-  it("wires the pnpm test:transparency LBL-03 coverage gate script pointing at the registry walk", () => {
+describe("§17.8 global ship gate — transparency anchors are present", () => {
+  it("wires the pnpm test:transparency coverage gate script pointing at the registry walk", () => {
     const { scripts } = readRootPackageJson();
     const script = scripts?.["test:transparency"];
     expect(
       script,
-      "root package.json must expose a `test:transparency` script (the LBL-03 coverage gate)",
+      "root package.json must expose a `test:transparency` script (the transparency-label coverage gate)",
     ).toBeTruthy();
     // The script must run the live-registry coverage gate, not a stale path.
     expect(
@@ -60,7 +61,7 @@ describe("§17.8 global ship gate — transparency anchors are present (WIRE-09)
           "packages/skills/src/__tests__/transparency-label-coverage.test.ts",
         ),
       ),
-      "the LBL-03 gate file packages/skills/src/__tests__/transparency-label-coverage.test.ts must exist",
+      "the transparency-label coverage gate file packages/skills/src/__tests__/transparency-label-coverage.test.ts must exist",
     ).toBe(true);
   });
 
@@ -137,7 +138,7 @@ describe("§17.8 global ship gate — transparency anchors are present (WIRE-09)
     // which cells apply is channel-shape-dependent (e.g. email is DigestOnly
     // and has no S1; some channels have no S8 by design). A wholly-missing or
     // wholly-empty fixture directory is the regression this catches; the
-    // channels CHAN-11 architecture test owns the full ✓-cell coverage lock.
+    // channels architecture test owns the full ✓-cell coverage lock.
     const channelsWithoutAnyFixture = CHANNELS.filter((ch) => {
       const dir = resolve(
         REPO_ROOT,

@@ -76,7 +76,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * validation/defaulting. This is the only place the genuine pre-default config
  * is observable — the return value is the fully-defaulted `AppConfig`, where
  * tri-state "unset" signals have already collapsed to their schema defaults.
- * Phase 92 (RERANK-01) needs the raw `agents.<id>.rag.rerank.enabled` to
+ * Reranking needs the raw `agents.<id>.rag.rerank.enabled` to
  * distinguish operator-unset (auto-on candidate) from an explicit `false`
  * (force-off); `bootstrap()` reads it from here. The out-param keeps the
  * return contract byte-identical for every other caller.

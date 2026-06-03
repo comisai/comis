@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteMemoryEmbeddingStore: the SOLE adapter for the segregated
- * `MemoryEmbeddingStore` port (@comis/core, Phase 102, IQ-01 Approach A). It
+ * `MemoryEmbeddingStore` port (@comis/core). It
  * owns the (tenant, agent)-scoped bulk embedding read that hydrates the MMR
  * diversity re-rank — given an already-ranked candidate id set, it returns
  * id→vector for the caller's own (tenant, agent), so the agent-side `mmrRerank`
  * can run `λ·rel − (1−λ)·maxCosineToSelected` over the candidates' ACTUAL
- * embeddings (not a lexical proxy — locked decision #3).
+ * embeddings (not a lexical proxy).
  *
  * It shares the `better-sqlite3` handle of the `SqliteMemoryAdapter` (passed in
  * via `getDb()`); the handle's lifecycle is owned by the caller — this factory
  * neither opens nor closes it.
  *
- * ## Scope is the load-bearing security boundary (T-102-03-01)
+ * ## Scope is the load-bearing security boundary
  *
  * UNLIKE the corpus-wide distances-only `MemoryConsolidationStore.knnDistances`
  * (which reads the GLOBAL `vec_memories` vec0 table — no tenant/agent column —
@@ -27,7 +27,7 @@
  * (RED-tested in sqlite-memory-embedding-store.test.ts). Do NOT copy
  * `knnDistances`'s corpus-wide read here.
  *
- * ## Untrusted input (T-102-03-03)
+ * ## Untrusted input
  *
  * The candidate ids derive from recall over conversation text. Every value
  * reaches SQL as a bound `?` parameter — the `id IN (...)` placeholder list is
@@ -37,7 +37,7 @@
  * mode and there is no `as Foo[]` cast (the row mapper is the sanctioned read
  * path — untyped-sqlite.test.ts).
  *
- * ## Degrade discipline (T-102-03-04)
+ * ## Degrade discipline
  *
  * A pure read wrapped in try/catch → `err` — it NEVER throws out. When sqlite-vec
  * is unavailable there is no `vec_memories` table to JOIN, so the read returns
@@ -151,10 +151,10 @@ export function createSqliteMemoryEmbeddingStore(
           return ok(new Map());
         }
 
-        // The scoped LEFT JOIN (T-102-03-01). The candidate set is bounded
+        // The scoped LEFT JOIN. The candidate set is bounded
         // (recall's post-rerank pool, ≤ a few dozen), so building the variadic
         // `id IN (?,?,...)` placeholder list + preparing per-call is fine — the
-        // ids are BOUND, never concatenated (T-102-03-03).
+        // ids are BOUND, never concatenated.
         const placeholders = ids.map(() => "?").join(",");
         const stmt = db.prepare(
           "SELECT m.id AS id, v.embedding AS embedding FROM memories m " +

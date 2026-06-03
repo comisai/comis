@@ -3,12 +3,12 @@
  * Agent Queue E2E Integration Tests
  *
  * Tests the CommandQueue system through the full daemon stack:
- * - AGT-03: Stale session lock recovery (validated by unit tests)
- * - AGT-04: Budget pre-check rejects when perExecution exceeded
- * - AGT-04-deletion: Session deletion during active execution (validated by unit tests)
- * - TOOL-04: Circuit breaker opens after N provider failures
- * - TOOL-05: Circuit breaker recovers to half-open after resetTimeoutMs
- * - TOOL-06: Circuit breaker closes after successful probe in half-open
+ * - Stale session lock recovery (validated by unit tests)
+ * - Budget pre-check rejects when perExecution exceeded
+ * - Session deletion during active execution (validated by unit tests)
+ * - Circuit breaker opens after N provider failures
+ * - Circuit breaker recovers to half-open after resetTimeoutMs
+ * - Circuit breaker closes after successful probe in half-open
  *
  * @module
  */
@@ -61,11 +61,11 @@ describe("Config-driven queue tests (no LLM key required)", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // AGT-04: Budget pre-check rejects when perExecution exceeded
+  // Budget pre-check rejects when perExecution exceeded
   // -------------------------------------------------------------------------
 
   it(
-    "AGT-04: budget pre-check rejects when perExecution exceeded",
+    "budget pre-check rejects when perExecution exceeded",
     async () => {
       let ws: WebSocket | undefined;
       try {
@@ -106,13 +106,13 @@ describe("Config-driven queue tests (no LLM key required)", () => {
   );
 
   // -------------------------------------------------------------------------
-  // AGT-03: Stale session lock recovery (unit test validation)
+  // Stale session lock recovery (unit test validation)
   // -------------------------------------------------------------------------
 
   it(
-    "AGT-03: stale session lock recovery is covered by unit tests",
+    "stale session lock recovery is covered by unit tests",
     async () => {
-      // AGT-03 stale lock recovery: validated by unit tests in session-concurrency.test.ts
+      // Stale lock recovery: validated by unit tests in session-concurrency.test.ts.
       // Stale lock recovery is impractical to trigger through daemon RPC because the
       // lock lifecycle is internal to withSessionLock(). Instead, verify daemon health
       // and queue config is present with correct values.
@@ -134,7 +134,7 @@ describe("Config-driven queue tests (no LLM key required)", () => {
         expect(response).toHaveProperty("result");
         expect(response).not.toHaveProperty("error");
 
-        // WR-03 (§17.8): `queue` is NOT on the getConfig non-secret allowlist,
+        // Per §17.8: `queue` is NOT on the getConfig non-secret allowlist,
         // so config.get returns the safe default with the `queue` section
         // ABSENT — it is no longer RPC-observable. Assert that contract plus
         // daemon health (a well-formed result carrying the allowlisted gateway
@@ -151,13 +151,13 @@ describe("Config-driven queue tests (no LLM key required)", () => {
   );
 
   // -------------------------------------------------------------------------
-  // AGT-04-deletion: Session deletion during active execution (unit test)
+  // Session deletion during active execution (unit test)
   // -------------------------------------------------------------------------
 
   it(
-    "AGT-04-deletion: session deletion during active execution is covered by unit tests",
+    "session deletion during active execution is covered by unit tests",
     async () => {
-      // AGT-04 session deletion during execution: validated by unit tests in
+      // Session deletion during execution: validated by unit tests in
       // session-concurrency.test.ts. The daemon session management
       // layer delegates to the same withSessionLock() infrastructure.
       let ws: WebSocket | undefined;
@@ -200,11 +200,11 @@ describe("Circuit breaker lifecycle (unit-integration)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // TOOL-04: Circuit breaker opens after N provider failures
+  // Circuit breaker opens after N provider failures
   // -------------------------------------------------------------------------
 
   it(
-    "TOOL-04: circuit breaker opens after N provider failures",
+    "circuit breaker opens after N provider failures",
     () => {
       const cb = createCircuitBreaker(
         {
@@ -229,11 +229,11 @@ describe("Circuit breaker lifecycle (unit-integration)", () => {
   );
 
   // -------------------------------------------------------------------------
-  // TOOL-05: Circuit breaker recovers to half-open after resetTimeoutMs
+  // Circuit breaker recovers to half-open after resetTimeoutMs
   // -------------------------------------------------------------------------
 
   it(
-    "TOOL-05: circuit breaker recovers to half-open after resetTimeoutMs",
+    "circuit breaker recovers to half-open after resetTimeoutMs",
     async () => {
       const cb = createCircuitBreaker(
         {
@@ -260,11 +260,11 @@ describe("Circuit breaker lifecycle (unit-integration)", () => {
   );
 
   // -------------------------------------------------------------------------
-  // TOOL-06: Circuit breaker closes after successful probe in half-open
+  // Circuit breaker closes after successful probe in half-open
   // -------------------------------------------------------------------------
 
   it(
-    "TOOL-06: circuit breaker closes after successful probe in half-open",
+    "circuit breaker closes after successful probe in half-open",
     async () => {
       // Test success path: half-open -> closed
       const cb = createCircuitBreaker(

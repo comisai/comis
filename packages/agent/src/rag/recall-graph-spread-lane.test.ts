@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for appendGraphSpreadLane — the 6th fused recall lane (KG-04), the
+ * Tests for appendGraphSpreadLane — the 6th fused recall lane, the
  * file-for-file analog of appendCausalLane. PURE helper: it appends the
  * graph-spread lane to `lanes` IN PLACE and returns the lane's candidate count
- * (0 when no seeds / store err / empty lane — the ENT-04 no-op).
+ * (0 when no seeds / store err / empty lane — the empty-lane no-op).
  *
  * Mirrors recall-causal-lane.test.ts tier-for-tier:
  * - empty seedSubjects → 0, the store is NEVER queried (the defensive early-return).
@@ -143,7 +143,7 @@ describe("appendGraphSpreadLane (the 6th-lane helper)", () => {
     expect(calls[0]?.cap).toBe(5);
   });
 
-  it("returns 0 and pushes nothing on an EMPTY lane (ok([])) — the ENT-04 no-op", async () => {
+  it("returns 0 and pushes nothing on an EMPTY lane (ok([])) — the empty-lane no-op", async () => {
     const lanes: FusionLane[] = [{ results: [makeResult("base")], weight: 1.0 }];
     const { store, calls } = fakeTripleStore(ok([]));
     const count = await appendGraphSpreadLane(

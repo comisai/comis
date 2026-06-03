@@ -191,8 +191,8 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("version", () => {
-    it("version defaults to 'dag' when unset (DAG-01 first-class default)", () => {
-      // DAG is the first-class default engine (DAG-01). New conversations use
+    it("version defaults to 'dag' when unset (first-class default)", () => {
+      // DAG is the first-class default engine. New conversations use
       // the graph-based context engine unless an operator opts out explicitly.
       const result = ContextEngineConfigSchema.parse({});
       expect(result.version).toBe("dag");

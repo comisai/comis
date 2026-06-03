@@ -1849,7 +1849,7 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-rag");
 
-      // Recall (RANK-07) resolves results via MemoryPort.search + the hybrid injector.
+      // Recall resolves results via MemoryPort.search + the hybrid injector.
       // With rerank OFF the search limit is maxResults (default pool size unchanged).
       expect(mockMemoryPort.search).toHaveBeenCalledWith(
         testSessionKey,

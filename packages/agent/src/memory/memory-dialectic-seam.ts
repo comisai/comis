@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The daemon-injected QUERY-TIME dialectic synthesis seam builder
- * (Phase 109 — DIAL-01, the ONE allowed query-time LLM surface).
+ * (the ONE allowed query-time LLM surface).
  *
- * {@link createDialecticSeam} is the factory the daemon's `memory.ask` handler (Plan 03)
+ * {@link createDialecticSeam} is the factory the daemon's `memory.ask` handler
  * calls to BUILD the `synthesize(question, groundingText)` seam from a cheap resolved model
- * (Plan 04 injects the model + key). It mirrors {@link createUserRepresentationSeam}
+ * (the daemon injects the model + key). It mirrors {@link createUserRepresentationSeam}
  * verbatim in structure, so the synthesis prompt (`DIALECTIC_PROMPT`, embedded by
  * {@link buildDialecticPrompt}) + its lenient/total parser ({@link parseDialecticOutput})
  * stay AGENT-INTERNAL — the prompt string never crosses the package boundary, mirroring how

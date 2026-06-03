@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CaManagerPort: hexagonal boundary for TLS CA management (Phase 3 seam).
+ * CaManagerPort: hexagonal boundary for TLS CA management.
  *
- * Phase 2: stub only. NodeMitmBroker accepts an optional CaManagerPort;
- * when undefined, the broker passes the TCP stream opaque (no TLS termination).
- * Phase 3 provides NodeCaManager in @comis/infra.
+ * NodeMitmBroker accepts an optional CaManagerPort; when undefined, the broker
+ * passes the TCP stream opaque (no TLS termination). The concrete NodeCaManager
+ * adapter lives in @comis/infra.
  *
  * Type-only file — no runtime values. Adapter lives in @comis/infra.
  *

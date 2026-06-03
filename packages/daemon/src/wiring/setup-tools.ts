@@ -257,10 +257,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   /** Per-agent ProcessRegistry instances for background process lifecycle management. */
   const processRegistries = new Map<string, ProcessRegistry>();
 
-  /** Per-agent TerminalSessionRegistry instances (v2.11); closure-local, lazily built. */
+  /** Per-agent TerminalSessionRegistry instances; closure-local, lazily built. */
   const terminalRegistries = new Map<string, TerminalSessionRegistry>();
 
-  const terminalEgress = buildTerminalEgressDeps(skillsLogger, sandboxProvider); // SEC-07 (122-05): built ONCE, injected per-agent
+  const terminalEgress = buildTerminalEgressDeps(skillsLogger, sandboxProvider); // built ONCE, injected per-agent
 
   /** Agents we've already logged the no-sandbox WARN for. Per-agent assembly
    * runs on every session/heartbeat/cron tick; without this guard the WARN
@@ -473,7 +473,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
         contextEngineVersion: agentConfig?.contextEngine?.version ?? "pipeline",
         builtinToolsBrowserEnabled: skillsConfig.builtinTools.browser,
-        // DIAL-02 opt-in gate for the memory_ask (dialectic) tool. `=== true` so an
+        // Opt-in gate for the memory_ask (dialectic) tool. `=== true` so an
         // absent/typo'd `dialectic` block is OFF (default-OFF byte-identity — the tool
         // is filtered out before build, no query-time-LLM surface registered).
         dialecticEnabled: agentConfig?.dialectic?.enabled === true,
@@ -538,7 +538,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
               readOnlyPaths,
               configReadOnlyPaths: [...skillsConfig.execSandbox.readOnlyAllowPaths, logsDir],
               warmVenvSeed: skillsConfig.execSandbox.warmVenvSeed,
-              // INTEG-03: broker activation (undefined = open/legacy, no regression)
+              // Broker activation (undefined = open/legacy, no regression)
               network: deps.brokerContext
                 ? { mode: "broker-only" as const, brokerSocketPath: deps.brokerContext.socketPath }
                 : undefined,
@@ -598,7 +598,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           // convention.
           toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
           approvalGate,                                      // Soft-stop override path
-          // INTEG-03: broker proxy env — only present when brokerContext wired.
+          // Broker proxy env — only present when brokerContext wired.
           // Issues the single-use token + builds the placeholder/CA/proxy env;
           // extracted to setup-broker-activation.ts (buildBrokerSpawnEnv).
           brokerSpawnEnv: buildBrokerSpawnEnv(deps.brokerContext, agentId),
@@ -651,7 +651,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           for (const t of groupTools) allowedNames.add(t);
         }
       }
-      // §8.1 fix (DAG-02): in DAG mode, force-include the ctx_* recall tools
+      // §8.1 fix: in DAG mode, force-include the ctx_* recall tools
       // regardless of the restricted profile. Without this, a masked DAG tool
       // result ("...Use ctx_inspect to view.") has no recovery path -- no
       // profile lists ctx_* (tool-policy.ts), so a restricted-profile DAG agent

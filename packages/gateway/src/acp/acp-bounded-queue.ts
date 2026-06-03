@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * acp-bounded-queue — the ACP renderer's backpressure ring (ACP-02, spec
- * §5.1 line 717).
+ * acp-bounded-queue — the ACP renderer's backpressure ring (spec §5.1 line
+ * 717).
  *
  * A LOCAL re-implementation of the FIFO drop-oldest core that lives in the
  * observability package (`createBoundedQueue`). Gateway depends only on

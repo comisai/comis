@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED->GREEN unit suite for {@link parseJudgeVerdict} (BENCH-03) -- the TOTAL
+ * RED->GREEN unit suite for {@link parseJudgeVerdict} -- the TOTAL
  * judge-output parser.
  *
  * UNGATED, default-CI: this is pure, deterministic string->value parsing (no
@@ -10,7 +10,7 @@
  * coverage run).
  *
  * The judge is a lightly-trusted, possibly-injected free-text boundary
- * (T-89-02-01 DoS/Tampering): the parser MUST be TOTAL -- never throw, and
+ * (DoS/Tampering): the parser MUST be TOTAL -- never throw, and
  * return `undefined` (the INVALID signal) on unparseable text rather than a
  * wrong verdict. Every branch (valid JSON true/false, fenced JSON, regex
  * `yes`/`no`, garbage->undefined) gets a case to hold the agent 79% branch
@@ -22,7 +22,7 @@
 import { describe, it, expect } from "vitest";
 import { parseJudgeVerdict, stripCodeFences } from "./qa-judge-parse.js";
 
-describe("parseJudgeVerdict -- TOTAL judge-output parser (BENCH-03)", () => {
+describe("parseJudgeVerdict -- TOTAL judge-output parser", () => {
   it("Test 1: valid JSON {correct:true, reasoning} maps to { correct: true, reasoning }", () => {
     const v = parseJudgeVerdict('{"correct": true, "reasoning": "ok"}');
     expect(v).toEqual({ correct: true, reasoning: "ok" });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Composition-root wiring test for the ACP SEP holder (74-07, ACP-03).
+ * Composition-root wiring test for the ACP SEP holder.
  *
  * The composition root must create ONE `ExecutionPlanHolder` per agent runtime
  * and thread the SAME instance into BOTH:
@@ -9,7 +9,7 @@
  *   - `AcpServerDeps.executionPlanPort` (so the gateway/ACP plan bridge reads
  *     that same live ref).
  * A second-holder regression (one published-into, a different one read-from)
- * means the plan bridge silently reads an empty port forever (threat T-74-33).
+ * means the plan bridge silently reads an empty port forever.
  *
  * RED on pre-patch code: `./setup-acp-wiring.js` does not exist, so the import
  * below fails on a missing module — making the RED unambiguous.
@@ -25,7 +25,7 @@ import type { ExecutionPlanHolder } from "@comis/agent";
 type PublishRef = Parameters<ExecutionPlanHolder["publish"]>[0];
 type PlanLike = NonNullable<PublishRef["current"]>;
 
-describe("createAcpWiring (74-07, ACP-03 — one shared SEP holder)", () => {
+describe("createAcpWiring (one shared SEP holder)", () => {
   it("the agent runtime creates one execution-plan holder and shares the same instance with the ACP server deps", () => {
     const eventBus = new TypedEventBus();
     const activityStreamPort = {
@@ -45,7 +45,7 @@ describe("createAcpWiring (74-07, ACP-03 — one shared SEP holder)", () => {
 
     // The object placed on PiExecutorDeps.executionPlanHolder must be the SAME
     // reference as the one placed on AcpServerDeps.executionPlanPort — not two
-    // holders (T-74-33).
+    // holders.
     expect(wiring.holder).toBe(wiring.acpServerDeps.executionPlanPort);
     // The same shared holder is what the agent runtime publishes into.
     expect(wiring.acpServerDeps.executionPlanPort).toBe(wiring.holder);
@@ -85,7 +85,7 @@ describe("createAcpWiring (74-07, ACP-03 — one shared SEP holder)", () => {
     expect(wiring.acpServerDeps.executionPlanPort.getCurrentPlan()).toBe(plan);
 
     // A SEP-off turn de-publishes via the same shared holder; the port then
-    // reads undefined (stale-plan leak guard — T-74-05).
+    // reads undefined (stale-plan leak guard).
     wiring.holder.clear();
     expect(
       wiring.acpServerDeps.executionPlanPort.getCurrentPlan(),

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram callback_data budget tests (APV-06; spec §6.4.3).
+ * Telegram callback_data budget tests (spec §6.4.3).
  *
  * `validateCallbackDataWithinBudget` replaces the silent `truncateCallbackData`.
  * Truncating a signed `callback_data` corrupts its HMAC, so the budget check

@@ -9,7 +9,7 @@
  * Session key format:
  *   {tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]
  *
- * The legacy `agent:<agentId>:` prefix (pre-v2.1) is no longer recognized
+ * The legacy `agent:<agentId>:` prefix is no longer recognized
  * here — both the daemon parser and emitter dropped it. This parser
  * mirrors the daemon.
  */

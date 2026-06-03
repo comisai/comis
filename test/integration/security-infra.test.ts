@@ -4,11 +4,11 @@
  *
  * Non-daemon integration tests verifying cross-layer composition of Comis's
  * security infrastructure:
- * - SEC-INF-01: SafePath traversal guard with real filesystem
- * - SEC-INF-03: SSRF guard DNS-pinned URL validation
- * - SEC-INF-04: Plugin registry security model
+ * - SafePath traversal guard with real filesystem
+ * - SSRF guard DNS-pinned URL validation
+ * - Plugin registry security model
  *
- * Note: SEC-INF-02 (V8 sandbox resource limits) was removed -- code skills
+ * Note: the V8 sandbox resource-limits coverage was removed -- code skills
  * and the V8 sandbox were deleted.
  */
 
@@ -27,10 +27,10 @@ import { ok } from "@comis/shared";
 import { z } from "zod";
 
 // =============================================================================
-// SEC-INF-01: SafePath Traversal Guard with Real Filesystem
+// SafePath Traversal Guard with Real Filesystem
 // =============================================================================
 
-describe("SEC-INF-01: SafePath Traversal Guard", () => {
+describe("SafePath Traversal Guard", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "comis-safepath-"));
   const baseDir = join(tempRoot, "base");
 
@@ -69,10 +69,10 @@ describe("SEC-INF-01: SafePath Traversal Guard", () => {
 });
 
 // =============================================================================
-// SEC-INF-03: SSRF Guard URL Validation
+// SSRF Guard URL Validation
 // =============================================================================
 
-describe("SEC-INF-03: SSRF Guard URL Validation", () => {
+describe("SSRF Guard URL Validation", () => {
   it("blocks loopback address http://127.0.0.1/secret", async () => {
     const result = await validateUrl("http://127.0.0.1/secret");
     expect(result.ok).toBe(false);
@@ -112,10 +112,10 @@ describe("SEC-INF-03: SSRF Guard URL Validation", () => {
 });
 
 // =============================================================================
-// SEC-INF-04: Plugin Registry Security Model
+// Plugin Registry Security Model
 // =============================================================================
 
-describe("SEC-INF-04: Plugin Registry Security Model", () => {
+describe("Plugin Registry Security Model", () => {
   it("registers a plugin and exposes its hooks via getHooksByName", () => {
     const registry = createPluginRegistry();
 

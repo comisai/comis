@@ -101,8 +101,8 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 122 P3 (SEC-07): a NAMED, focused regression guard for the three
-  // terminal scope/egress files. The global rule above already covers them (they
+  // A NAMED, focused regression guard for the three terminal scope/egress
+  // files. The global rule above already covers them (they
   // live under packages/skills/src/), but the EgressControlPort design has a
   // BINDING constraint — the worker-side egress code depends on the PORT TYPE in
   // @comis/core and NEVER value-imports @comis/infra. Naming the files makes that
@@ -118,20 +118,20 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       "terminal-scope-args.ts",
       "terminal-env-scrub.ts",
       "terminal-egress-relay.ts",
-      // 122-06: the worker-side scope-jail composition seam. Imports only the
+      // the worker-side scope-jail composition seam. Imports only the
       // EgressControlPort/EgressMaterialization TYPES from @comis/core + the sibling
       // skills composers + node builtins — never @comis/infra (worker ↛ infra).
       "terminal-spawn-plan.ts",
-      // 122-fix: the in-jail relay-as-init runtime (SEC-07). Spawned as a subprocess
+      // the in-jail relay-as-init runtime. Spawned as a subprocess
       // inside the bwrap jail; imports ONLY node builtins (net / child_process) —
       // carries no secret, injects nothing, never @comis/infra.
       "egress-relay-init.ts",
-      // P4 OPS-03/06: per-session caps — closure-local counters + injected clock; node + @comis/core types only, never @comis/infra.
+      // per-session caps — closure-local counters + injected clock; node + @comis/core types only, never @comis/infra.
       "terminal-caps.ts",
-      // P4 TR-06/OPS-06: the reaper — injected-timer sweep (idle + wall-clock) + overflow;
+      // the reaper — injected-timer sweep (idle + wall-clock) + overflow;
       // TYPE-ONLY TimerPort/TimerHandle from @comis/core + injected nowMs, never @comis/infra.
       "terminal-reaper.ts",
-      // P4 SEC-10/OPS-03/06: the send-path guards (keystroke audit + cap enforcement) —
+      // the send-path guards (keystroke audit + cap enforcement) —
       // value-import only @comis/core's scrubSecretsFromText + the local tool-helpers
       // (throwToolError) + TYPE-ONLY the tool/registry shapes, never @comis/infra/observability.
       "terminal-send-guards.ts",
@@ -192,7 +192,7 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
         })),
         suggestedFix:
           'Import the EgressControlPort as a TYPE from "@comis/core" and use node `net`/`fs` builtins; the concrete proxy impl is wired by the daemon (composition root) and injected via the port. Never value-import @comis/infra from a worker-side file.',
-        designRef: "SEC-07 / 122-RESEARCH EgressControlPort placement decision",
+        designRef: "EgressControlPort placement decision",
       }),
     ).toEqual([]);
 

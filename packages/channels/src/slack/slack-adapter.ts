@@ -427,7 +427,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         // Preserve the typed Slack error as `cause` for structural classification
-        // (CHAN-03: data.error "ratelimited" -> rate_limited, "message_not_found"
+        // (data.error "ratelimited" -> rate_limited, "message_not_found"
         // -> not_supported). classifySlackError reads e.data.error off `cause`,
         // never this generic string.
         return err(new Error(`Failed to edit Slack message: ${message}`, { cause: error }));
@@ -486,8 +486,8 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         return ok(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        // Preserve the typed Slack error as `cause` for structural classification
-        // (CHAN-03). classifySlackError reads e.data.error off `cause`, never this
+        // Preserve the typed Slack error as `cause` for structural classification.
+        // classifySlackError reads e.data.error off `cause`, never this
         // generic string.
         return err(new Error(`Failed to delete message: ${message}`, { cause: error }));
       }

@@ -1,6 +1,6 @@
 # Comis Test Configuration — Browser Integration Tests
 #
-# Designed for BROWSER-01 through BROWSER-09 integration testing with:
+# Designed for browser integration testing with:
 # - Port 8452 to avoid conflicts with other test suites (4766-8451)
 # - browser: true to trigger BrowserService creation
 # - Separate memory DB to avoid cross-test pollution

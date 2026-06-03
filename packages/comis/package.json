@@ -228,6 +228,9 @@
     "yaml": "2.8.4",
     "zod": "4.4.3"
   },
+  "optionalDependencies": {
+    "node-pty": "1.1.0"
+  },
   "devDependencies": {
     "typescript": "5.9.3"
   }

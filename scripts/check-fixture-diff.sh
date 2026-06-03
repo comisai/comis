@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# CI gate — golden-fixture undeclared-diff lock (AGENT-TRANSPARENCY-SPEC §18.1, CHAN-05).
+# CI gate — golden-fixture undeclared-diff lock (AGENT-TRANSPARENCY-SPEC §18.1).
 #
 # Golden fixtures under `packages/channels/src/__tests__/__fixtures__/**/*.expected.json`
 # pin the canonical recorded render stream. §18.1: "changing a fixture requires a

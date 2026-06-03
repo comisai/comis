@@ -4,7 +4,7 @@
  * config files.
  *
  * The daemon needs this answer BEFORE `writeMasterKeyIfAbsent` so that
- * file/env mode first boots do not create key material (REQ-17). Full config
+ * file/env mode first boots do not create key material. Full config
  * parsing happens later in the boot sequence; this is a lightweight YAML scan
  * with no Zod validation, no `${VAR}` substitution, and no `$include` resolution.
  *
@@ -29,7 +29,7 @@ export type StorageModePreRead = CredentialStorageMode;
  * override) before full config parse.
  *
  * The daemon calls this BEFORE `writeMasterKeyIfAbsent` to ensure file/env
- * mode first boots do not create key material (REQ-17).
+ * mode first boots do not create key material.
  *
  * Silently ignores: missing files, unreadable files, and parse errors. These
  * are surfaced by the full `bootstrap()` pass later in daemon startup.

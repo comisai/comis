@@ -3,7 +3,7 @@ import type { Result } from "@comis/shared";
 
 /**
  * MemoryUsefulnessStore: the SEGREGATED hexagonal boundary for the recall-utility
- * feedback loop (FEED-02) — the durable per-memory signal of whether a recalled
+ * feedback loop — the durable per-memory signal of whether a recalled
  * memory was actually USED (attributed) or IGNORED, so recall can learn from
  * outcomes (the leapfrog Hindsight structurally cannot follow — `access_count`
  * is dead schema there; HINDSIGHT_VS_COMIS.md #7).
@@ -22,7 +22,7 @@ import type { Result } from "@comis/shared";
  */
 
 /**
- * The isolation boundary for every usefulness operation (FEED-02). Every
+ * The isolation boundary for every usefulness operation. Every
  * statement in the sole adapter filters on `(tenantId, agentId)` and the table
  * PRIMARY KEY keys on `(tenant_id, agent_id, memory_id)` — this is a
  * load-bearing SECURITY scope in a multi-agent DB, not a nicety: a write under
@@ -41,12 +41,12 @@ export interface UsefulnessScope {
    */
   now: number;
   /**
-   * Optional query-INTENT bucket (LEARN-01/H1). When present, the read fetches /
+   * Optional query-INTENT bucket. When present, the read fetches /
    * the write records the per-intent usefulness signal (a memory's usefulness FOR
    * THAT intent); when OMITTED the adapter resolves the GLOBAL bucket (intent="")
-   * — byte-identical to v2.8. The closed-union value comes from the agent's
+   * — byte-identical to the prior behaviour. The closed-union value comes from the agent's
    * deterministic `classifyIntent` (LLM-free); typed here as a plain string so
-   * @comis/core takes no @comis/agent dependency (Pitfall 2). NOT a security
+   * @comis/core takes no @comis/agent dependency. NOT a security
    * boundary — (tenantId, agentId) remain the isolation scope; intent is an
    * ADDITIONAL key, never a relaxation.
    *
@@ -57,7 +57,7 @@ export interface UsefulnessScope {
 }
 
 /**
- * Per-memory usefulness signal (FEED-02). Counts only — no content ever enters
+ * Per-memory usefulness signal. Counts only — no content ever enters
  * this layer (content-free, like the `memory:*` bus events). A memory id with no
  * persisted row is absent from `readUsefulness`'s Map (→ a neutral factor in
  * score.ts), so these counts only ever start at the values written.
@@ -73,12 +73,12 @@ export interface UsefulnessSignal {
 
 export interface MemoryUsefulnessStore {
   /**
-   * WRITE (FEED-02). Increment `used_count` for `usedIds` and `ignored_count`
+   * WRITE. Increment `used_count` for `usedIds` and `ignored_count`
    * for `ignoredIds`, upserting the (tenant, agent, memory_id) row; set
    * `last_useful_at = scope.now` for `usedIds`. Idempotent at the row level
    * (INSERT ... ON CONFLICT DO UPDATE) — re-running over the same ids increments,
    * never duplicates rows. Empty `usedIds` AND empty `ignoredIds` → no-op
-   * `ok(undefined)` (no transaction). The caller (FEED-01 attribution) produces
+   * `ok(undefined)` (no transaction). The caller (the attribution path) produces
    * DISJOINT sets; a stray id appearing in both is touched used-before-ignored.
    */
   recordUsage(
@@ -88,7 +88,7 @@ export interface MemoryUsefulnessStore {
   ): Promise<Result<void, Error>>;
 
   /**
-   * READ (FEED-03). Bulk-fetch the usefulness signal for `memoryIds`, scoped to
+   * READ. Bulk-fetch the usefulness signal for `memoryIds`, scoped to
    * (tenant, agent). Returns a Map keyed by memory id; ids with no persisted row
    * are ABSENT from the map (→ a neutral 1.0 factor in score.ts). Empty input →
    * empty map, no query.

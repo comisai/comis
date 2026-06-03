@@ -172,13 +172,13 @@ export type RoutingBinding = z.infer<typeof RoutingBindingSchema>;
 export type RoutingConfig = z.infer<typeof RoutingConfigSchema>;
 
 /**
- * Per-agent activity-presentation config (v2.5 Agent Transparency, §16.3).
+ * Per-agent activity-presentation config (Agent Transparency, §16.3).
  *
  * Controls how much work-in-progress UI the agent renders. Distinct from the
  * top-level `verbosity` (response-style `VerbosityConfigSchema`) — they share
- * only the word "verbosity". This plan defines the SCHEMA only; kill-switch
- * ENFORCEMENT (`channels.<key>.enabled` / `emergencyDisabled`) is Phase 76
- * (WIRE-07) — not wired here.
+ * only the word "verbosity". This defines the SCHEMA only; kill-switch
+ * ENFORCEMENT (`channels.<key>.enabled` / `emergencyDisabled`) is handled
+ * elsewhere — not wired here.
  */
 export const ActivityConfigSchema = z.strictObject({
     /** How much work-in-progress UI to render. */
@@ -190,7 +190,7 @@ export const ActivityConfigSchema = z.strictObject({
     theme: z.enum(["default", "terminal-minimal", "playful", "ascii"]).default("default"),
     /** Agent-scoped emergency kill switch (§22.2). When true, no activity
      *  messages are produced for this agent on any channel; lifecycle reactions
-     *  and final-message delivery are unaffected. Enforcement is Phase 76. */
+     *  and final-message delivery are unaffected. Enforcement is handled elsewhere. */
     emergencyDisabled: z.boolean().default(false),
     /** Renderer-scoped enable map (§22.2), keyed by TurnActivityContext.rendererKey.
      *  A missing entry follows `defaultChannelEnabled` (default true → enabled).
@@ -210,14 +210,14 @@ export const ActivityConfigSchema = z.strictObject({
   });
 
 /**
- * Per-agent delivery config (v2.5 Agent Transparency, §16.3).
+ * Per-agent delivery config (Agent Transparency, §16.3).
  *
  * `visibleReplies` decides what becomes a room-visible assistant reply. It is
  * intentionally separate from `activity` (presentation): "automatic" delivers
  * the assistant's final text; "message_tool" suppresses it unless the model
  * explicitly called the `message` tool. Approval UIs and activity messages
- * still render regardless. Enforcement point is `execution-deliver.ts` (TURN-09,
- * later phase); this plan defines the schema only.
+ * still render regardless. Enforcement point is `execution-deliver.ts`;
+ * this defines the schema only.
  */
 const VisibleRepliesSchema = z.strictObject({
     /** DM default: assistant final text auto-delivers. */
@@ -355,7 +355,7 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   /** Channel-aware response-style verbosity hints (KEPT unchanged — distinct
    *  from `activity.verbosity`, which is the work-in-progress UI level). */
   verbosity: VerbosityConfigSchema.optional(),
-  /** Per-agent activity-presentation config (v2.5 Agent Transparency, §16.3). */
+  /** Per-agent activity-presentation config (Agent Transparency, §16.3). */
   activity: ActivityConfigSchema.default(() => ActivityConfigSchema.parse({})),
   /** Per-agent delivery config: final-assistant-reply visibility (§16.3). */
   delivery: DeliveryConfigSchema.default(() => DeliveryConfigSchema.parse({})),
@@ -363,33 +363,33 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   deferredTools: DeferredToolsConfigSchema.optional(),
   /** Background tasks configuration (auto-promotion of long tool calls) */
   backgroundTasks: BackgroundTasksConfigSchema.optional(),
-  /** Periodic memory review configuration (session history extraction). v1 opt-out posture (v2.9
-   *  increment 2): default-ON. A COST feature — force-disabled at its registration site when the
+  /** Periodic memory review configuration (session history extraction). Opt-out posture:
+   *  default-ON. A COST feature — force-disabled at its registration site when the
    *  master kill switch `memory.costFeatures.enabled` is false. */
   memoryReview: MemoryReviewConfigSchema.default(() => MemoryReviewConfigSchema.parse({})),
-  /** Periodic memory consolidation configuration (observation clustering, Phase 84). v1 opt-out
+  /** Periodic memory consolidation configuration (observation clustering). Opt-out
    *  posture: default-ON; a COST feature gated by the kill switch at its registration site. */
   memoryConsolidation: MemoryConsolidationConfigSchema.default(() => MemoryConsolidationConfigSchema.parse({})),
-  /** Periodic memory reasoning configuration (deductive/inductive observations, Phase 101). v1
-   *  opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
+  /** Periodic memory reasoning configuration (deductive/inductive observations).
+   *  Opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
   memoryReasoning: MemoryReasoningConfigSchema.default(() => MemoryReasoningConfigSchema.parse({})),
-  /** Periodic per-user representation profile-builder configuration (Phase 107). v1 opt-out
+  /** Periodic per-user representation profile-builder configuration. Opt-out
    *  posture: default-ON; a COST feature gated by the kill switch at its registration site. */
   memoryUserRepresentation: MemoryUserRepresentationConfigSchema.default(() => MemoryUserRepresentationConfigSchema.parse({})),
-  /** Directional relationship-modeling configuration (Phase 108; STAYS OFF — privacy/consent gate
-   *  `privacyReviewSignedOffBy`, NOT flipped by the v1 opt-out posture). */
+  /** Directional relationship-modeling configuration (STAYS OFF — privacy/consent gate
+   *  `privacyReviewSignedOffBy`, NOT flipped by the opt-out posture). */
   socialModeling: SocialModelingConfigSchema.optional(),
-  /** memory_ask grounded-Q&A tool config; Phase 109 — the ONE allowed query-time LLM surface. v1
-   *  opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
+  /** memory_ask grounded-Q&A tool config — the ONE allowed query-time LLM surface.
+   *  Opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
   dialectic: DialecticConfigSchema.default(() => DialecticConfigSchema.parse({})),
-  /** Offline usefulness-judge configuration (Phase 110, LEARN-02 — an OFFLINE cron, never the
-   *  recall path). v1 opt-out posture: default-ON; a COST feature gated by the kill switch. */
+  /** Offline usefulness-judge configuration (an OFFLINE cron, never the
+   *  recall path). Opt-out posture: default-ON; a COST feature gated by the kill switch. */
   memoryUsefulnessJudge: MemoryUsefulnessJudgeConfigSchema.default(() => MemoryUsefulnessJudgeConfigSchema.parse({})),
-  /** Offline tuned-alpha bandit cron (Phase 111, LEARN-03 — an OFFLINE, DETERMINISTIC, KEYLESS
-   *  cron, never the recall path). v1 opt-out posture: default-ON; in the operator-facing
+  /** Offline tuned-alpha bandit cron (an OFFLINE, DETERMINISTIC, KEYLESS
+   *  cron, never the recall path). Opt-out posture: default-ON; in the operator-facing
    *  cost-feature set, so gated by the kill switch at its registration site. */
   memoryOnlineTuning: MemoryOnlineTuningConfigSchema.default(() => MemoryOnlineTuningConfigSchema.parse({})),
-  /** SCAFFOLD-DORMANT memory-lifecycle sweep cron (Phase 112, FORGET-02; off by default — a KEYLESS cron that evicts/demotes NOTHING until the deferred live policy lands, OD4) */
+  /** SCAFFOLD-DORMANT memory-lifecycle sweep cron (off by default — a KEYLESS cron that evicts/demotes NOTHING until the deferred live policy lands) */
   memoryLifecycle: MemoryLifecycleConfigSchema.optional(),
   /**
    * Per-provider OAuth profile preferences (provider -> profileId map).

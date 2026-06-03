@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Comis Publish-Honesty Gate (Phase 105 / PUB-03 — binding constraint #8).
+# Comis Publish-Honesty Gate (binding constraint #8).
 #
 # Enforces the trim contract in benchmarks/CLAIMS.md mechanically:
 #   1. The PUBLISHED memory surfaces must contain NO superiority claim
@@ -10,7 +10,7 @@
 #      dialectic / memory_ask / theory-of-mind), and NO placeholder benchmark
 #      number (__%, __x, TODO, FIXME, "placeholder <number>").
 #   2. Every committed-manifest path cited in benchmarks/CLAIMS.md must resolve
-#      on disk (the PUB-03 "no orphan claim" rule).
+#      on disk (the "no orphan claim" rule).
 #
 # Mirrors scripts/docs-grep-checks.sh: `set -u` (NOT -e), check_no_match /
 # check_grep_min_count helpers, PASS/FAIL/TOTAL counters, a --self-test mode,
@@ -19,13 +19,13 @@
 # GREP HYGIENE (load-bearing): this gate scopes every content grep to an
 # explicit PUBLISHED_SURFACES allow-list. It NEVER greps itself (the forbidden
 # tokens are named in this header) and NEVER greps the .planning/ drafts (which
-# legitimately discuss the cut claims). Missing surfaces SKIP — so in Wave 1,
-# before memory.astro / the launch post exist, the gate still exits 0.
+# legitimately discuss the cut claims). Missing surfaces SKIP — so while
+# memory.astro / the launch post do not yet exist, the gate still exits 0.
 #
 # Usage:
 #   bash scripts/check-publish-honesty.sh              Run the gate; exit 0 on PASS
 #   bash scripts/check-publish-honesty.sh --strict     Also FAIL on missing
-#                                                       structural presence (Waves 2-3)
+#                                                       structural presence
 #   bash scripts/check-publish-honesty.sh --self-test  Parse + planted-violation
 #                                                       proof; exit 0 on success
 #
@@ -46,8 +46,8 @@ YELLOW=$'\033[0;33m'
 NC=$'\033[0m'
 
 # --- The published surfaces (the ONLY files this gate greps) --------------
-# Wave 1: only README.md + the methodology page exist; memory.astro + the
-# launch blog post are written in Waves 2-3. check_no_match SKIPs the missing
+# Today only README.md + the methodology page exist; memory.astro + the
+# launch blog post are not yet written. check_no_match SKIPs the missing
 # ones, so the gate exits 0 today. NEVER add a .planning/ draft or CLAIMS.md
 # here — the drafts and CLAIMS.md's CUT table legitimately name the cut tokens.
 PUBLISHED_SURFACES=(
@@ -81,7 +81,7 @@ FORBIDDEN=(
   "superiority:the-only-memory::the only ([a-z]+ )?memory"
   "superiority:the-only-X-memory::the only .{0,30}(agent )?memory"
   "superiority:no-other-memory::no other ([a-z]+ )?memory"
-  # --- FORGET-as-shipped (Track C, deferred v2.9) ---
+  # --- FORGET-as-shipped (deferred capability) ---
   "forget:forgetting::\\bforgetting\\b"
   "forget:per-type-decay::per-type (decay|forgetting)"
   "forget:usefulness-eviction::usefulness-aware (eviction|lifecycle)"
@@ -94,7 +94,7 @@ FORBIDDEN=(
   "deferred:dialectic::\\bdialectic\\b"
   "deferred:memory_ask::memory_ask"
   "deferred:theory-of-mind::theory.?of.?mind"
-  # --- Placeholder benchmark numbers (PUB-02) ---
+  # --- Placeholder benchmark numbers ---
   "placeholder:pct::__%"
   "placeholder:times::__×"
   "placeholder:x::__x"
@@ -146,7 +146,7 @@ check_grep_min_count() {
 }
 
 # check_no_orphan_manifest — every committed-manifest path token cited in
-# benchmarks/CLAIMS.md must resolve on disk (PUB-03 no-orphan-claim rule).
+# benchmarks/CLAIMS.md must resolve on disk (no-orphan-claim rule).
 # Robust to prose: strips trailing dots and skips the bare prefix / ellipsis.
 check_no_orphan_manifest() {
   TOTAL=$((TOTAL + 1))
@@ -250,7 +250,7 @@ fi
 echo
 echo "-- Publish-honesty gate (binding constraint #8) --"
 echo "   surfaces scoped to: README.md, docs/agents/memory-benchmarks.mdx, website/src/pages/memory.astro, launch blog post"
-echo "   (missing surfaces SKIP — the gate exits 0 in Wave 1 before they are written)"
+echo "   (missing surfaces SKIP — the gate exits 0 before they are written)"
 
 for surface in "${PUBLISHED_SURFACES[@]}"; do
   echo

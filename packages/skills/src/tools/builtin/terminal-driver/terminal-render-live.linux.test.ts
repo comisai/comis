@@ -1,29 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TR-02 / TR-14 (Linux/VPS) — the LIVE-TUI render gate: drive a REAL alt-screen
+ * (Linux/VPS) — the LIVE-TUI render gate: drive a REAL alt-screen
  * TUI (`vim`) + a REAL scrolling program (`bash`/`seq`) through the REAL Terminal
  * Worker with the REAL node-pty `forkpty` backend (`loadPty = defaultLoadPty`) +
  * the REAL `createSessionEmulator`, and assert the WHOLE stack — real PTY →
  * emulator → grid — renders correctly on Linux.
  *
- * This proves the rendering substrate (121-01..04) against a real PTY, where the
+ * This proves the rendering substrate against a real PTY, where the
  * macOS unit suite cannot reach: this repo's macOS author box's node-pty cannot
- * `posix_spawnp` in-harness (the 119/120 precedent). `describe.skipIf(
+ * `posix_spawnp` in-harness. `describe.skipIf(
  * process.platform !== "linux")` so it COMPILES + SKIPS cleanly on macOS and runs
  * live on `comisvps` (where forkpty works). The orchestrator flips it green on the
- * VPS post-execute, exactly as it ran every 119/120 `.linux.test.ts`. Mirrors the
+ * VPS post-execute, exactly as it ran every other `.linux.test.ts`. Mirrors the
  * `terminal-worker-entry.linux.test.ts` / `terminal-roundtrip.linux.test.ts`
  * Linux-gate idiom (the `bwrap-egress-integration.test.ts` pattern).
  *
- * The three live assertions (TR-02 alt-screen grid + TR-14 live scrollback +
- * TR-14 live below-fold-not-settled):
+ * The three live assertions (alt-screen grid + live scrollback +
+ * live below-fold-not-settled):
  *   1. live `vim` renders a stable alt-screen `cols×rows` grid (`alt:true`,
  *      `alive:true`, non-empty grid of the expected dimensions), then `:q!` exits.
  *   2. a live `seq 1 100` scroll: `read({scrollback:N})` surfaces an early
  *      off-screen line the viewport-only `read` omits (live perception beyond the
  *      fold).
  *   3. a live slow producer: a `wait({forIdleMs})` does NOT settle `idle` while
- *      output is still scrolling below the fold (Plan 03's gate over a real stream).
+ *      output is still scrolling below the fold (the idle-settle gate over a real stream).
  *
  * NO `@comis/infra` import (the worker-boundary rule). On macOS this entire
  * describe block is skipped.
@@ -54,9 +54,9 @@ const silentLogger = {
 };
 
 /**
- * 122-06: the worker now ALWAYS jails the child (`bwrap [scope args] -- bin argv`;
+ * The worker now ALWAYS jails the child (`bwrap [scope args] -- bin argv`;
  * the unjailed path is gone), so the live worker MUST be given the resolved bwrap
- * path or create fails closed (SEC-16). vim/bash/seq all run fine in a
+ * path or create fails closed. vim/bash/seq all run fine in a
  * `filesystem:workspace` jail (system RO binds supply the interpreter + libs +
  * terminfo; the workspace + /tmp are RW). Resolved once like `BwrapProvider`.
  */
@@ -69,7 +69,7 @@ function makeWorkspace(): string {
   return mkdtempSync(join(tmpdir(), "render-live-ws-"));
 }
 
-/** The least-privilege live scope (SEC-02) the create frame carries so 122-06 jails the child. */
+/** The least-privilege live scope the create frame carries so the worker jails the child. */
 const LIVE_WORKSPACE_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
@@ -167,14 +167,14 @@ async function readUntil(
   return view;
 }
 
-describe.skipIf(!isLinux)("TR-02/14 (Linux) — live-TUI render through the real PTY + emulator", () => {
+describe.skipIf(!isLinux)("(Linux) — live-TUI render through the real PTY + emulator", () => {
   it("live vim renders a stable alt-screen grid (alt:true, cols×rows-shaped), then :q! exits", async () => {
     const vim = resolveBin(["/usr/bin/vim", "/bin/vim", "/usr/local/bin/vim"]);
     const worker = makeLiveWorker();
     const workspace = makeWorkspace();
 
     // create a real-PTY `vim -u NONE -N` session (no host vimrc; deterministic),
-    // jailed inside the workspace (122-06).
+    // jailed inside the workspace.
     const created = await drive<{ backend: string; cols: number; rows: number }>(
       worker,
       frame(
@@ -188,7 +188,7 @@ describe.skipIf(!isLinux)("TR-02/14 (Linux) — live-TUI render through the real
 
     // Let vim draw, then assert the alt-screen grid is stable + correctly shaped.
     const view = await readUntil(worker, "vim", (v) => v.alt && v.alive && v.screen.length > 0);
-    expect(view.alt).toBe(true); // vim owns the alternate screen buffer (TR-02)
+    expect(view.alt).toBe(true); // vim owns the alternate screen buffer
     expect(view.alive).toBe(true);
     expect(view.cols).toBe(80);
     expect(view.rows).toBe(24);
@@ -209,7 +209,7 @@ describe.skipIf(!isLinux)("TR-02/14 (Linux) — live-TUI render through the real
     expect(finalView.alive).toBe(false);
   });
 
-  it("live scrollback: read({scrollback:N}) surfaces an early off-screen line the viewport omits (TR-14)", async () => {
+  it("live scrollback: read({scrollback:N}) surfaces an early off-screen line the viewport omits", async () => {
     const bash = resolveBin(["/bin/bash", "/usr/bin/bash"]);
     const worker = makeLiveWorker();
     const workspace = makeWorkspace();
@@ -238,7 +238,7 @@ describe.skipIf(!isLinux)("TR-02/14 (Linux) — live-TUI render through the real
     const earlyLineVisibleInViewport = /(^|\n)1(\r?\n|$)/.test(viewportOnly.screen);
     expect(earlyLineVisibleInViewport).toBe(false);
 
-    // With scrollback, the early off-screen line IS perceivable (TR-14 live perception).
+    // With scrollback, the early off-screen line IS perceivable (live perception).
     const withScrollback = await drive<LiveView>(
       worker,
       frame("seq", "read", { sessionId: "seq", scrollback: 200 }, "rq-read-scrollback"),
@@ -250,7 +250,7 @@ describe.skipIf(!isLinux)("TR-02/14 (Linux) — live-TUI render through the real
     await drive<unknown>(worker, frame("seq", "send_key", { sessionId: "seq", keys: ["C-d"] }, "rq-eof"));
   });
 
-  it("live below-fold ⇒ NOT settled: a slow producer keeps wait({forIdleMs}) from settling idle (TR-14)", async () => {
+  it("live below-fold ⇒ NOT settled: a slow producer keeps wait({forIdleMs}) from settling idle", async () => {
     const bash = resolveBin(["/bin/bash", "/usr/bin/bash"]);
     const worker = makeLiveWorker();
     const workspace = makeWorkspace();

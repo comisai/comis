@@ -102,7 +102,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       // Delete the entry immediately to prevent unbounded Map growth.
       // Previously this only set active=false, leaving stale entries that
       // would accumulate forever without a subsequent consumeToken scan
-      // (the lazy TTL reaper only fires at consume time — CR-04).
+      // (the lazy TTL reaper only fires at consume time).
       sessions.delete(sessionId);
     },
   };

@@ -738,8 +738,8 @@ describe("@comis/agent -- architecture invariants", () => {
    * Exempt files: index.ts, pi-executor.ts (the factory itself);
    * before-tool-call-guard.ts and session-stats.ts (co-equal top-level
    * functions that already take named typed parameters); types.ts
-   * (type-only collection file); execution-plan-holder.ts (Phase 74,
-   * ACP-03 — a standalone ExecutionPlanPort holder factory that owns its
+   * (type-only collection file); execution-plan-holder.ts (a standalone
+   * ExecutionPlanPort holder factory that owns its
    * OWN per-instance live ref; it is NOT a helper extracted from
    * createPiExecutor's closure and reads no PiExecutorState, so the
    * `state`-first contract does not apply — same posture as the co-equal

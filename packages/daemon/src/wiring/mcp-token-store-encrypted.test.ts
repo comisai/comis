@@ -427,7 +427,7 @@ describe("close() does NOT close the shared secretsDb handle", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Group 10 — decrypt-failure rejects (IN-02)
+// Group 10 — decrypt-failure rejects
 // ---------------------------------------------------------------------------
 
 describe("Group 10 — decrypt-failure rejects, does not return garbage", () => {
@@ -463,10 +463,10 @@ describe("Group 10 — decrypt-failure rejects, does not return garbage", () => 
 });
 
 // ---------------------------------------------------------------------------
-// Group 11 — created_at preserved on rotation (IN-01 regression guard)
+// Group 11 — created_at preserved on rotation (regression guard)
 // ---------------------------------------------------------------------------
 
-describe("Group 11 — created_at preserved on token rotation (IN-01)", () => {
+describe("Group 11 — created_at preserved on token rotation", () => {
   let db: Database.Database;
 
   beforeEach(() => {

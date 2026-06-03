@@ -45,6 +45,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Docs (MDX syntax check)
+        # Compiles docs/**/*.mdx so a bare `<`/`{` in prose fails here instead
+        # of server-side at the Mintlify deploy. Runs before the build because
+        # it needs no compiled output — only the installed MDX compiler.
+        run: pnpm docs:check
+
       - name: Build
         run: pnpm build
 

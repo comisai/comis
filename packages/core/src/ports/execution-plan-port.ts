@@ -10,7 +10,7 @@
  * render plan-state (`session/update { sessionUpdate: "plan" }`, §16.8) and the
  * chat-projection plan renderer (§8.3) can draw checkboxes WITHOUT the gateway
  * depending on `@comis/agent`. The implementation (agent/orchestrator) and the
- * consumer (gateway) are wired in Phase 74; this plan declares only the port
+ * consumer (gateway) are wired separately; this declares only the port
  * shape. Pure type-only file (no I/O, no logger).
  */
 
@@ -50,7 +50,7 @@ export interface ReadonlyExecutionPlan {
 /**
  * Read-only accessor the gateway/ACP plan bridge depends on. The concrete
  * implementation reads the live SEP `ExecutionPlan` from the agent runtime and
- * is wired into the composition root in Phase 74.
+ * is wired into the composition root.
  */
 export interface ExecutionPlanPort {
   /**

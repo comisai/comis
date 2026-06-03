@@ -6,8 +6,8 @@
  * (closest analog by admin-only + login/logout admin lifecycle methods).
  *
  * Focus of this file: the {@link McpOauthLoginContract.response} Zod schema
- * MUST mirror {@link OAuthLoginResult} from `@comis/skills` 1:1. Plan 09-02
- * extends both in lockstep (DEVAUTH-03) so the agent can surface the
+ * MUST mirror {@link OAuthLoginResult} from `@comis/skills` 1:1. Both are
+ * extended in lockstep so the agent can surface the
  * `verificationUri` + `userCode` + `expiresIn` fields via the `message` tool
  * after a successful `device_code_pending` dispatch. The PKCE path stays
  * clean (the 3 new fields land as `undefined`).
@@ -41,7 +41,7 @@ describe("mcp-oauth domain contracts", () => {
   });
 
   // -------------------------------------------------------------------------
-  // DEVAUTH-03 — response schema mirrors the extended OAuthLoginResult.
+  // Response schema mirrors the extended OAuthLoginResult.
   // -------------------------------------------------------------------------
 
   it("McpOauthLoginContract.response accepts status device_code_pending with verificationUri userCode and expiresIn", () => {

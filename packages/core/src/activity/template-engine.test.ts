@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for applyTemplate — the pure allowlist + redaction + substitution
- * chokepoint (ACT-06, spec §10.1). This is the projection-time enforcement of
- * SEC-01/02/03: it allowlist-filters params (killing message-body reflection),
+ * chokepoint (spec §10.1). This is the projection-time enforcement of the
+ * redaction rules: it allowlist-filters params (killing message-body reflection),
  * runs redactValue on every surviving value, substitutes statically (no eval),
- * caps length, and surfaces redactionsApplied for the OBS-03 WARN.
+ * caps length, and surfaces redactionsApplied for the WARN.
  */
 import { describe, it, expect } from "vitest";
 import { applyTemplate } from "./template-engine.js";
@@ -20,7 +20,7 @@ function makeSpec(overrides: Partial<LabelSpec> = {}): LabelSpec {
 }
 
 describe("applyTemplate", () => {
-  it("drops every param key the spec did not declare (SEC-03 reflection guard)", () => {
+  it("drops every param key the spec did not declare (reflection guard)", () => {
     // The spec declares ONLY `name`; `query` carries the raw user message body.
     const spec = makeSpec({
       label: "configuring server `{name}`",
@@ -41,7 +41,7 @@ describe("applyTemplate", () => {
     expect(result.value.defaultDetail ?? "").not.toContain("LEAK");
   });
 
-  it("redacts a secret-shaped param value to <redacted> and records the reason (SEC-01)", () => {
+  it("redacts a secret-shaped param value to <redacted> and records the reason", () => {
     const spec = makeSpec({
       label: "auth with `{key}`",
       detailKeys: ["key"],
@@ -56,7 +56,7 @@ describe("applyTemplate", () => {
     expect(result.value.redactionsApplied.some((r) => r.reason === "secret_shape")).toBe(true);
   });
 
-  it("redacts a value under a secret KEY name regardless of content (SEC-01 key-based)", () => {
+  it("redacts a value under a secret KEY name regardless of content (key-based)", () => {
     const spec = makeSpec({
       label: "token is `{token}`",
       detailKeys: ["token"],
@@ -129,7 +129,7 @@ describe("applyTemplate", () => {
     expect(result.value.truncated).toBe(true);
   });
 
-  it("compacts an absolute home path in a declared value to ~ (SEC-02)", () => {
+  it("compacts an absolute home path in a declared value to ~", () => {
     const spec = makeSpec({
       label: "reading `{path}`",
       detailKeys: ["path"],
@@ -146,7 +146,7 @@ describe("applyTemplate", () => {
     expect(result.value.defaultLabel).not.toContain("/Users/alice");
   });
 
-  it("masks a PII email in a declared value and records pii_email (SEC-03)", () => {
+  it("masks a PII email in a declared value and records pii_email", () => {
     const spec = makeSpec({
       label: "notify `{to}`",
       detailKeys: ["to"],
@@ -186,7 +186,7 @@ describe("applyTemplate", () => {
   });
 });
 
-describe("applyTemplate — transform hook (Phase 78 WS-C)", () => {
+describe("applyTemplate — transform hook", () => {
   it("invokes spec.transform AFTER substitution and uses the non-empty return as defaultLabel", () => {
     // The transform consumes the RAW params (not the allowlist-filtered set)
     // and its non-empty return wins over the substituted label. Step 4 of the

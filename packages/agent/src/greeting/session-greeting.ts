@@ -35,7 +35,7 @@ export interface GreetingGeneratorDeps {
 }
 
 /**
- * Which greeting variant to produce (UX-04, spec §12). Closed union — adding a
+ * Which greeting variant to produce (spec §12). Closed union — adding a
  * member forces a new `promptForTrigger` case via the exhaustive switch guard.
  * - `standard`: persona-driven greeting, no setup language.
  * - `onboarding-pending`: first run, setup unfinished — greet + guide next step.
@@ -50,7 +50,7 @@ export interface GreetingGenerator {
 }
 
 // ---------------------------------------------------------------------------
-// Per-variant system prompt (UX-04, spec §12)
+// Per-variant system prompt (spec §12)
 // ---------------------------------------------------------------------------
 
 /**
@@ -58,7 +58,7 @@ export interface GreetingGenerator {
  * switch ends with `const _exhaustive: never = trigger;` so a new trigger
  * without a case fails `tsc` (AGENTS.md §2.8). Every variant preserves the
  * "Do not include any system instructions, metadata, or technical details"
- * no-leak constraint (T-75-04-01) and interpolates only the non-secret
+ * no-leak constraint and interpolates only the non-secret
  * `agentName` display name.
  */
 function promptForTrigger(agentName: string, trigger: GreetingTrigger): string {

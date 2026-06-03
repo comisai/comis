@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Port-surface test for {@link EgressControlPort} (SEC-07, §3.5) — the type-only
+ * Port-surface test for {@link EgressControlPort} (§3.5) — the type-only
  * no-secret host-allowlist egress filter, DISTINCT from the credential broker
- * (§3.9/P6). This file proves the interface SHAPE (a value fixture must satisfy
+ * (§3.9). This file proves the interface SHAPE (a value fixture must satisfy
  * the contract) and that the type resolves on the public `@comis/core` surface;
  * the runtime behaviour (the allowlist proxy + the in-jail relay) lives in
  * @comis/daemon / @comis/skills and is tested there.
@@ -19,7 +19,7 @@ import type {
   EgressMaterialization as EgressMaterializationPublic,
 } from "@comis/core";
 
-describe("EgressControlPort — type-only no-secret host-allowlist filter (SEC-07)", () => {
+describe("EgressControlPort — type-only no-secret host-allowlist filter", () => {
   it("a value fixture satisfies the EgressMaterialization + EgressControlPort contract", async () => {
     // A minimal in-memory fixture proving the interface is implementable: a
     // materialize(hosts) -> { socketPath, dispose() } shape. If the interface

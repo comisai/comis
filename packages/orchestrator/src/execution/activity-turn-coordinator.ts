@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * ActivityTurnCoordinator — owns the turn boundary in the orchestrator
- * (spec §4.5/§4.6, TURN-04/07, SEC-04).
+ * (spec §4.5/§4.6).
  *
  * One coordinator is constructed per turn and disposed at turn end. It:
  *   1. subscribes to the canonical activity stream for the turn
@@ -12,7 +12,7 @@
  *      `renderer.apply(frame)` debounced to one paint per 800ms via the
  *      injected `TimerPort` (`handle.cancel()` for cancellation — never a raw
  *      timer global, Pitfall 7),
- *   3. on `finalize(outcome)` enforces the SEC-04 delete gate:
+ *   3. on `finalize(outcome)` enforces the delete gate:
  *      • any observed `ActivityEvent{status:"failed"}` reclassifies the
  *        outcome to `kind:"failure"` with NO delete branch — even when delivery
  *        itself succeeded,
@@ -24,7 +24,7 @@
  *   4. translates any `ActivityRenderError` from `apply`/`finalize` into an
  *      operator-visible WARN via the injected logger (`{hint, errorKind}`).
  *
- * Hexagonal boundary (TURN-03): this file imports ONLY the core package (the
+ * Hexagonal boundary: this file imports ONLY the core package (the
  * port + types + projections) and the shared Result helpers. It never depends
  * on the observability package; `orchestrator/package.json` gains no
  * observability dependency. Logger / timer / clock are injected via `Deps`.
@@ -67,11 +67,11 @@ const APPLY_DEBOUNCE_MS = 800;
 /**
  * Projection function the coordinator drives per render tick. Unifies the chat
  * (`chatProjection(events, config, prev?, latestPlanSnapshot?)`) and ACP
- * (`acpProjection(events, prev?)`) shapes from `@comis/core` — 70-10 adapts
- * the ACP projection (which ignores `config` and `latestPlanSnapshot`) to this
- * signature when wiring the coordinator factory. WS-D Phase 78 widened the
- * signature with the optional 4th arg so the chat projection threads the
- * latest SEP plan snapshot into `ActivityRenderFrame.planSnapshot`.
+ * (`acpProjection(events, prev?)`) shapes from `@comis/core` — the coordinator
+ * factory adapts the ACP projection (which ignores `config` and
+ * `latestPlanSnapshot`) to this signature when wiring it. The optional 4th arg
+ * lets the chat projection thread the latest SEP plan snapshot into
+ * `ActivityRenderFrame.planSnapshot`.
  */
 export type ActivityProjection = (
   events: readonly ActivityEvent[],
@@ -84,7 +84,7 @@ export type ActivityProjection = (
  * Minimal PlanUpdate shape the coordinator's PlanStream subscription expects.
  *
  * Structural type defined LOCALLY here (NOT imported from `@comis/observability`)
- * so the orchestrator preserves its TURN-03 / §4.7 boundary: imports ONLY
+ * so the orchestrator preserves its §4.7 boundary: imports ONLY
  * `@comis/core` and never `@comis/observability` (see src/index.ts:36 and
  * execution-pipeline.ts:131). The observability `createPlanStream(...)` returns
  * a `PlanStream` whose `PlanUpdate` payload structurally satisfies THIS shape;
@@ -114,7 +114,7 @@ export interface PlanUpdate {
 /**
  * Minimal PlanStream port the coordinator subscribes to in start(ctx).
  *
- * Structural type defined locally for the same TURN-03 reason as PlanUpdate
+ * Structural type defined locally for the same boundary reason as PlanUpdate
  * above. The single `subscribe` method matches the observability shape; the
  * returned `unsubscribe()` is walked from `releaseSubscription`.
  */
@@ -124,7 +124,7 @@ export interface PlanStream {
 
 /**
  * Live read of the operator kill switches for the agent owning this turn
- * (WIRE-07, §22.2). Returns the per-agent `activity` slice the gate cares about:
+ * (§22.2). Returns the per-agent `activity` slice the gate cares about:
  * the agent-wide `emergencyDisabled` stop and the per-renderer `channels` enable
  * map (keyed by `TurnActivityContext.rendererKey`). MUST be a getter, not a
  * snapshot — the coordinator reads it on every `flushApply` so an in-memory
@@ -144,7 +144,7 @@ export type ActivityKillSwitch = () =>
   | undefined;
 
 /**
- * The slice of the WIRE-08 circuit breaker the coordinator consumes. Keyed on
+ * The slice of the circuit breaker the coordinator consumes. Keyed on
  * the turn's `(agentId, channelKey)`; the coordinator calls `isTripped(key)`
  * before `renderer.apply` (skip when tripped) and `record(key, result)` after
  * the apply result is available. `record` returns whether THIS call caused a
@@ -171,7 +171,7 @@ export interface ActivityTurnCoordinatorDeps {
   logger: ComisLogger;
   config: ProjectionConfig;
   /**
-   * WIRE-07 live kill-switch getter. OPTIONAL: when absent, no suppression is
+   * Live kill-switch getter. OPTIONAL: when absent, no suppression is
    * applied (preserving behavior for callers that do not inject it — the daemon
    * thread-through is the documented composition-root follow-on). When present,
    * `flushApply` early-returns BEFORE `renderer.apply` if the agent is
@@ -179,20 +179,20 @@ export interface ActivityTurnCoordinatorDeps {
    */
   killSwitch?: ActivityKillSwitch;
   /**
-   * WIRE-08 auto-managed per-agent×channel circuit breaker. OPTIONAL: when
+   * Auto-managed per-agent×channel circuit breaker. OPTIONAL: when
    * absent, no breaker gating is applied (preserving behavior for callers that
    * do not inject it — the daemon thread-through is the same documented
-   * composition-root follow-on as `killSwitch`, per 76-02-SUMMARY). When
+   * composition-root follow-on as `killSwitch`). When
    * present, `flushApply` skips `renderer.apply` while the turn's
    * `(agentId, channelKey)` is tripped (AFTER the killSwitch gate) and records
    * every apply result so the breaker can count toward / recover from a trip.
    */
   breaker?: ActivityBreakerGate;
   /**
-   * WS-D Phase 78: optional SEP plan-stream the coordinator subscribes to in
+   * Optional SEP plan-stream the coordinator subscribes to in
    * start(ctx). Absent → no plan-state wiring; the renderer's `frame.planSnapshot`
-   * stays undefined (the elapsed-time fallback at render.ts handles this —
-   * Plan 78-05 WS-F elapsed line). Built ONCE per agent runtime at the
+   * stays undefined (the elapsed-time fallback at render.ts handles this via the
+   * elapsed line). Built ONCE per agent runtime at the
    * composition root via `createPlanStream({eventBus, executionPlanPort})` and
    * threaded into the per-turn coordinator. The subscription is detached in
    * `releaseSubscription` (cleanup runs even on aborted turns via try/finally).
@@ -201,7 +201,7 @@ export interface ActivityTurnCoordinatorDeps {
 }
 
 /**
- * OBS-01 in-process counter snapshot (spec §20.1). Mirrors the observability
+ * In-process counter snapshot (spec §20.1). Mirrors the observability
  * ActivityStream pattern — there is no metrics-sink primitive, so counters are
  * surfaced as a snapshot for the daemon scrape + the test harness.
  */
@@ -218,7 +218,7 @@ export interface ActivityTurnCounters {
   turnDurationMs: number;
   /**
    * `activity.circuit_breaker.tripped` — count of FRESH breaker trips observed
-   * by this coordinator (WIRE-08). Incremented once per trip, never per
+   * by this coordinator. Incremented once per trip, never per
    * subsequent skipped flush. Zero when no breaker is injected.
    */
   circuitBreakerTripped: number;
@@ -229,20 +229,20 @@ export interface ActivityTurnCoordinator {
   /** Subscribe for the turn. Call once at turn start. */
   start(ctx: TurnActivityContext): void;
   /**
-   * End-of-turn finalisation with the SEC-04 delete gate. Idempotent w.r.t.
+   * End-of-turn finalisation with the delete gate. Idempotent w.r.t.
    * subscription cleanup (unsubscribes in a finally).
    */
   finalize(outcome: TurnOutcome): Promise<void>;
   /** Release the subscription (idempotent). Safe to call after finalize. */
   dispose(): void;
-  /** OBS-01 counter snapshot. */
+  /** Counter snapshot. */
   counters(): ActivityTurnCounters;
 }
 
 /**
- * Factory shape 70-10 wires: `(ctx) => ActivityTurnCoordinator`. The deps are
- * captured once at the composition root; the per-turn context is supplied to
- * `start`.
+ * Factory shape the composition root wires: `(ctx) => ActivityTurnCoordinator`.
+ * The deps are captured once at the composition root; the per-turn context is
+ * supplied to `start`.
  */
 export type CoordinatorFactory = (deps: ActivityTurnCoordinatorDeps) => ActivityTurnCoordinator;
 
@@ -281,30 +281,30 @@ function renderErrorKind(e: ActivityRenderError): ErrorKind {
 export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps): ActivityTurnCoordinator {
   const events: ActivityEvent[] = [];
   let subscription: ActivitySubscription | undefined;
-  // WIRE-07: the per-turn context, captured at start(). flushApply reads
+  // The per-turn context, captured at start(). flushApply reads
   // ctx.rendererKey to key the per-renderer kill switch.
   let turnCtx: TurnActivityContext | undefined;
   let prevFrame: ActivityRenderFrame | undefined;
   let debounceHandle: TimerHandle | undefined;
-  // WS-D Phase 78: the live PlanStream subscription cleanup + the latest SEP
+  // The live PlanStream subscription cleanup + the latest SEP
   // snapshot captured by the in-handler adapter. The cleanup runs in
   // releaseSubscription (the SAME finally-guarded path as the activity-stream
   // subscription) so an aborted turn never leaks a plan handler.
   let planUnsubscribe: (() => void) | undefined;
   let latestPlanSnapshot: PlanSnapshot | undefined;
-  // SEC-04 success-path delivery gate timer; captured so it can be unref'd (so
+  // Success-path delivery gate timer; captured so it can be unref'd (so
   // it never keeps the event loop alive during shutdown) and cancelled on an
-  // aborted turn (WR-01).
+  // aborted turn.
   let pendingGate: TimerHandle | undefined;
-  // SEC-04 reclassification trigger: set once any observed event is "failed".
+  // Reclassification trigger: set once any observed event is "failed".
   let sawFailedEvent = false;
   let startedAtMs = 0;
   let disposed = false;
-  // APV-01: the turn's root activity id, minted once at start(). The spawning
+  // The turn's root activity id, minted once at start(). The spawning
   // turn's root is the parent of every sub-agent ActivityEvent (the spawn event
   // carries parentSessionKey, not a parent activityId — §17.3 / Assumption A2).
   let turnRootActivityId: string | undefined;
-  // APV-01: active sub-agent stack (runId-less here — the coordinator keys on the
+  // Active sub-agent stack (runId-less here — the coordinator keys on the
   // event's own activityId) for nested-spawn parent resolution. The top of the
   // stack is the parent of the next nested sub-agent; entries pop on phase:"end".
   const subAgentStack: string[] = [];
@@ -318,7 +318,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     circuitBreakerTripped: 0,
   };
 
-  /** Translate an apply/finalize render error into an operator WARN (TURN-04). */
+  /** Translate an apply/finalize render error into an operator WARN. */
   function warnRenderError(stage: "apply" | "finalize", e: ActivityRenderError): void {
     counters.renderError++;
     deps.logger.warn({
@@ -331,7 +331,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   }
 
   /**
-   * WIRE-07 kill-switch gate. Returns true when this renderer's activity must be
+   * Kill-switch gate. Returns true when this renderer's activity must be
    * suppressed for the current turn. Reads the LIVE getter on every call (no
    * captured snapshot) so an in-memory config.write flip hot-reloads without
    * reconstructing the coordinator (Pitfall 4 / §22.2):
@@ -359,8 +359,8 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   /**
    * The current turn's breaker key (agentId, channelKey). Both fields live on
    * `TurnActivityContext` (:14,:20); undefined until `start(ctx)` captures the
-   * context. The WIRE-08 breaker keys on the (agent, channel) pair — distinct
-   * from the WIRE-07 kill switch which keys on `ctx.rendererKey`.
+   * context. The breaker keys on the (agent, channel) pair — distinct
+   * from the kill switch which keys on `ctx.rendererKey`.
    */
   function breakerKey(): { agentId: string; channelKey: string } | undefined {
     if (turnCtx === undefined) return undefined;
@@ -368,7 +368,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   }
 
   /**
-   * WIRE-08 fresh-trip handler: a single operator WARN (mirrors warnRenderError
+   * Fresh-trip handler: a single operator WARN (mirrors warnRenderError
    * :216-225) naming the channelKey + reason, plus one counter increment. Fired
    * ONLY on the record that crossed a threshold — never on a subsequent skipped
    * flush (the breaker reports `tripped:true` exactly once per trip).
@@ -391,18 +391,18 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   /** Build the next frame from the buffered events and paint it (idempotent). */
   async function flushApply(): Promise<void> {
     // Gate BEFORE rendering — never paint when an operator has the renderer or
-    // the whole agent killed (WIRE-07). Lifecycle reactions and final delivery
+    // the whole agent killed. Lifecycle reactions and final delivery
     // flow through separate paths (lifecycle-reactor.ts / execution-deliver.ts)
     // and are intentionally NOT gated here.
     if (isActivitySuppressed()) return;
-    // WIRE-08: after the kill switch, before the paint — skip apply while this
+    // After the kill switch, before the paint — skip apply while this
     // (agent, channel) breaker is tripped. A half-open transient breaker reports
     // not-tripped (one probe allowed), so the apply runs and its result is
     // recorded below, closing or re-opening the breaker.
     const key = breakerKey();
     if (key !== undefined && deps.breaker?.isTripped(key) === true) return;
 
-    // WS-D Phase 78: pass the cached `latestPlanSnapshot` as the projection's
+    // Pass the cached `latestPlanSnapshot` as the projection's
     // 4th arg so chatProjection threads it onto frame.planSnapshot (Pitfall 6
     // — supersedes silent forward of prevFrame's stale snapshot).
     const frame = deps.projection(events, deps.config, prevFrame, latestPlanSnapshot);
@@ -451,7 +451,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   }
 
   /**
-   * APV-01: supply `parentActivityId` for a sub-agent event from the active
+   * Supply `parentActivityId` for a sub-agent event from the active
    * stack. The stream emits sub-agent events WITHOUT a parent link (it has no
    * turn state); the coordinator (the §4.5 single owner) resolves it here:
    *   • phase:"start" lacking a parent → parent is the enclosing sub-agent (top
@@ -490,10 +490,10 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     subAgentStack.length = 0;
     debounceHandle?.cancel();
     // Cancel the in-flight delivery gate so an aborted turn does not leave a
-    // timer holding the event loop open (WR-01). cancel() is idempotent.
+    // timer holding the event loop open. cancel() is idempotent.
     pendingGate?.cancel();
     subscription?.unsubscribe();
-    // WS-D Phase 78: detach the SEP plan-stream subscription so a re-extracted
+    // Detach the SEP plan-stream subscription so a re-extracted
     // plan after this turn's dispose never fires the (now-stale) handler.
     planUnsubscribe?.();
     planUnsubscribe = undefined;
@@ -501,15 +501,15 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   }
 
   /**
-   * The SEC-04 delete gate. Reclassifies on observed failure, then dispatches
+   * The delete gate. Reclassifies on observed failure, then dispatches
    * `renderer.finalize` — gated on deliveredAtMs for the success path.
    */
   async function runFinalize(outcome: TurnOutcome): Promise<void> {
     counters.turnDurationMs = deps.clock.now() - startedAtMs;
 
     // (1) Reclassify: any observed failed event flips a non-failure outcome to
-    // failure with NO delete branch — even if delivery itself succeeded (SEC-04,
-    // §19.3). Already-failure / silent / aborted outcomes are left as-is.
+    // failure with NO delete branch — even if delivery itself succeeded
+    // (§19.3). Already-failure / silent / aborted outcomes are left as-is.
     let effective = outcome;
     if (sawFailedEvent && (outcome.kind === "success" || outcome.kind === "success_with_recovered_failures")) {
       effective = {
@@ -529,7 +529,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
         await new Promise<void>((resolve) => {
           // Capture + unref the gate handle: unref so a pending gate never keeps
           // the Node event loop alive during graceful shutdown, captured so
-          // releaseSubscription() can cancel it on an aborted turn (WR-01).
+          // releaseSubscription() can cancel it on an aborted turn.
           pendingGate = deps.timer.setTimeout(() => resolve(), waitMs);
           pendingGate.unref();
         });
@@ -552,15 +552,15 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   return {
     start(ctx: TurnActivityContext): void {
       startedAtMs = deps.clock.now();
-      // Capture the per-turn context so flushApply can key the WIRE-07 kill
+      // Capture the per-turn context so flushApply can key the kill
       // switch on ctx.rendererKey.
       turnCtx = ctx;
       // Mint the turn's root activity id once — the parent of every sub-agent
-      // event observed during this turn (APV-01).
+      // event observed during this turn.
       turnRootActivityId = randomUUID();
       subscription = deps.activityStreamPort.subscribeForTurn(ctx, onEvent);
 
-      // WS-D Phase 78: subscribe to the injected SEP plan-stream and cache
+      // Subscribe to the injected SEP plan-stream and cache
       // the most recent snapshot per turn. The plan-stream is shared per agent
       // runtime; the per-turn (agentId, sessionKey) filter prevents a snapshot
       // from session A reaching a render of session B. The adapter maps the
@@ -598,7 +598,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
       try {
         await runFinalize(outcome);
       } finally {
-        // Aborted/failed turns still release the subscription (TURN-04 cleanup).
+        // Aborted/failed turns still release the subscription.
         releaseSubscription();
       }
     },

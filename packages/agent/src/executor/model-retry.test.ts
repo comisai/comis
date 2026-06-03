@@ -1040,9 +1040,9 @@ describe("runWithModelRetry", () => {
   });
 
   // -------------------------------------------------------------------
-  // EVT-04: model:* turn-scoping ids on the emit sites (§16.9)
+  // model:* turn-scoping ids on the emit sites (§16.9)
   // -------------------------------------------------------------------
-  describe("model:* turn-scoping ids (EVT-04)", () => {
+  describe("model:* turn-scoping ids", () => {
     function emitOf(eventBus: ReturnType<typeof makeEventBus>, name: string) {
       return vi.mocked(eventBus.emit).mock.calls.find((c: unknown[]) => c[0] === name)?.[1] as
         | Record<string, unknown>

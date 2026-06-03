@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 111 (LEARN-03) forward-presence test — drives the REAL `setupSingleAgent`
+ * Forward-presence test — drives the REAL `setupSingleAgent`
  * boot path and asserts that `tunedAlphaStore` from `SingleAgentDeps` is actually
  * forwarded into the `createPiExecutor(...)` deps object literal.
  *
- * The field-plumbing lesson this file guards (the Phase-107 USER-03 BLOCKER, the
- * Phase-108 SOCIAL-02 reproduction, now for the tuned-alpha sibling): a store can be
+ * The field-plumbing lesson this file guards (the earlier user-representation BLOCKER, the
+ * relationship-store reproduction, now for the tuned-alpha sibling): a store can be
  * threaded through the TYPES (setup-agents-types.ts, pi-executor-types.ts) and
  * POPULATED in setup-agents-registry.ts, yet the `createPiExecutor` construction site
  * in setup-agents-runtime.ts (the long sibling-stores line that already carries
  * `usefulnessStore`/`userRepresentationStore`/`relationshipStore`) can still OMIT it —
- * so in the live daemon `deps.tunedAlphaStore` is always `undefined` and the 111-03
+ * so in the live daemon `deps.tunedAlphaStore` is always `undefined` and the
  * gated read in prompt-assembly's `buildScoringAlphas` overlay never sees the store
  * (the learned alphas silently never apply — Pitfall 5). The keyless bench passes
  * (it constructs the adapter directly) but a live daemon never reads the tuned vector.
@@ -153,7 +153,7 @@ function makeDeps(container: AppContainer): SingleAgentDeps {
 
 // --- Test ------------------------------------------------------------------
 
-describe("setupSingleAgent forwards tunedAlphaStore into createPiExecutor (LEARN-03 field-plumbing)", () => {
+describe("setupSingleAgent forwards tunedAlphaStore into createPiExecutor (field-plumbing)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

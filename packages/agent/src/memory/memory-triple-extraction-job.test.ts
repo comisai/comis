@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Orchestration suite for runMemoryTripleExtraction (Phase 100 — KG-01, decision 6).
+// Orchestration suite for runMemoryTripleExtraction.
 //
 // The OFFLINE LLM extractor is INJECTED as `deps.extract` (the offline seam — it
 // is NEVER on the recall hot path), so this suite needs NO pi-ai mock: `extract`
@@ -93,7 +93,7 @@ function makeDeps(
   return { deps, upserts, extract: (overrides.extract ?? extract) as ReturnType<typeof vi.fn> };
 }
 
-describe("runMemoryTripleExtraction — default-off cost gate (T-100-05-03)", () => {
+describe("runMemoryTripleExtraction — default-off cost gate", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("default-off: enabled:false skips the extractor AND any upsert (no LLM, no write)", async () => {
@@ -107,7 +107,7 @@ describe("runMemoryTripleExtraction — default-off cost gate (T-100-05-03)", ()
   });
 });
 
-describe("runMemoryTripleExtraction — trust cap + write validation (T-100-05-02)", () => {
+describe("runMemoryTripleExtraction — trust cap + write validation", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("trust: the upsert trust equals the candidate sourceTrust (the writer never RAISES trust)", async () => {
@@ -157,7 +157,7 @@ describe("runMemoryTripleExtraction — trust cap + write validation (T-100-05-0
   });
 });
 
-describe("runMemoryTripleExtraction — bounded run (T-100-05-03)", () => {
+describe("runMemoryTripleExtraction — bounded run", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("caps the number of upserts at maxCandidatesPerRun even when the extractor returns more", async () => {

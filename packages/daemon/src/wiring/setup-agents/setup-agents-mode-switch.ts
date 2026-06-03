@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DAG-05: context-engine mode-switch detection at the daemon rebuild seam.
+ * Context-engine mode-switch detection at the daemon rebuild seam.
  *
  * Extracted from {@link setupSingleAgent} (setup-agents-runtime.ts) to keep
  * that file under the per-subdirectory size cap. Two cohesive helpers:
@@ -42,9 +42,9 @@ export type PendingModeSwitches = Map<string, ModeSwitch>;
  *
  * We deliberately do NOT use `fullImport` as the trigger: `fullImport` fires
  * for every brand-new DAG-default conversation (now the common case), which is
- * NOT a switch (RESEARCH Pitfall 2). The pending switch is consumed one-shot by
- * the DAG engine at the next reconcile, which emits `context:mode_switched`
- * with the real import cost.
+ * NOT a switch. The pending switch is consumed one-shot by the DAG engine at
+ * the next reconcile, which emits `context:mode_switched` with the real import
+ * cost.
  *
  * @param agentId - Agent being (re)built.
  * @param prevVersion - The prior `contextEngine.version` (read before the overwrite).

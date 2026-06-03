@@ -6,14 +6,14 @@
  * a CLOSURE-local `Map<sessionId, CapState>` (no module-global mutable state) and an
  * INJECTED `nowMs` reader (no wall-clock global anywhere in the module under test). The
  * module never throws and never evicts — it returns a typed `{ breach }` discriminant
- * the tool/registry layer (Plan 05/04) maps to a reject (`maxRequestsPerSession`) or
+ * the tool/registry layer maps to a reject (`maxRequestsPerSession`) or
  * an eviction (`maxInteractions`/`wallClockMs`). These tests pin the FULL contract:
  *
- *   - OPS-03 / R1: `maxRequestsPerSession` trips on the Nth+1 request (breach
+ *   - `maxRequestsPerSession` trips on the Nth+1 request (breach
  *     "max_requests"); the counter increments only on ok, never on a breach.
- *   - OPS-06: `maxInteractions` trips on the Nth+1 interaction (breach
+ *   - `maxInteractions` trips on the Nth+1 interaction (breach
  *     "max_interactions").
- *   - OPS-06: `wallClockMs` trips when `nowMs() - startedAtMs` EXCEEDS the cap
+ *   - `wallClockMs` trips when `nowMs() - startedAtMs` EXCEEDS the cap
  *     (breach "wall_clock") — read via the INJECTED clock, advanced by a mutable
  *     `let now` (no real time, no wall-clock global).
  *   - Undefined / empty limits ⇒ no cap ⇒ never breaches, however many calls.
@@ -31,7 +31,7 @@ import { createSessionCaps, type CapBreach } from "./terminal-caps.js";
 
 const FIXED_NOW = 1_700_000_000_000;
 
-describe("createSessionCaps — OPS-03 maxRequestsPerSession (R1, REJECT)", () => {
+describe("createSessionCaps — maxRequestsPerSession (REJECT)", () => {
   it("trips on the Nth+1 request and increments only on ok", () => {
     const caps = createSessionCaps({ maxRequestsPerSession: 2 }, () => FIXED_NOW);
 
@@ -48,7 +48,7 @@ describe("createSessionCaps — OPS-03 maxRequestsPerSession (R1, REJECT)", () =
   });
 });
 
-describe("createSessionCaps — OPS-06 maxInteractions (EVICT-driving)", () => {
+describe("createSessionCaps — maxInteractions (EVICT-driving)", () => {
   it("trips on the Nth+1 interaction", () => {
     const caps = createSessionCaps({ maxInteractions: 1 }, () => FIXED_NOW);
 
@@ -59,7 +59,7 @@ describe("createSessionCaps — OPS-06 maxInteractions (EVICT-driving)", () => {
   });
 });
 
-describe("createSessionCaps — OPS-06 wallClockMs (injected clock, EVICT-driving)", () => {
+describe("createSessionCaps — wallClockMs (injected clock, EVICT-driving)", () => {
   it("trips once nowMs - startedAtMs EXCEEDS the cap, using the injected reader", () => {
     let now = 1_000_000;
     const caps = createSessionCaps({ wallClockMs: 1000 }, () => now);

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SLACK-FMT: Slack Format Pipeline E2E Integration Test
+ * Slack Format Pipeline E2E Integration Test
  *
  * Validates the full markdown -> format -> chunk -> adapter pipeline for Slack.
  * Ensures single IR conversion (no double conversion) and multi-chunk
  * bold-to-italic corruption is eliminated.
  *
- *   SLACK-FMT-01: Single markdown message renders correct mrkdwn through pipeline
- *   SLACK-FMT-02: Multi-chunk message preserves bold without italic corruption
- *   SLACK-FMT-03: DeliveryService.deliverToChannel with mock Slack adapter sends mrkdwn, not raw markdown
+ *   Single markdown message renders correct mrkdwn through pipeline
+ *   Multi-chunk message preserves bold without italic corruption
+ *   DeliveryService.deliverToChannel with mock Slack adapter sends mrkdwn, not raw markdown
  */
 
 import { describe, it, expect } from "vitest";
@@ -46,8 +46,7 @@ function createMockSlackAdapter(): DeliveryAdapter & { captured: CapturedMessage
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("SLACK-FMT: Slack Format Pipeline E2E", () => {
-  // SLACK-FMT-01
+describe("Slack Format Pipeline E2E", () => {
   it("single markdown message renders correct mrkdwn through pipeline", () => {
     const result = formatForChannel("**bold** and _italic_", "slack");
 
@@ -61,7 +60,6 @@ describe("SLACK-FMT: Slack Format Pipeline E2E", () => {
     expect(result).not.toContain("**bold**");
   });
 
-  // SLACK-FMT-02
   it("multi-chunk message preserves bold without italic corruption", () => {
     // Multi-paragraph with bold and italic in different paragraphs
     const input = [
@@ -96,7 +94,6 @@ describe("SLACK-FMT: Slack Format Pipeline E2E", () => {
     expect(result).not.toContain("**more bold**");
   });
 
-  // SLACK-FMT-03
   it("DeliveryService.deliverToChannel with mock Slack adapter sends mrkdwn, not raw markdown", async () => {
     const adapter = createMockSlackAdapter();
     const service = makeDeliveryService();

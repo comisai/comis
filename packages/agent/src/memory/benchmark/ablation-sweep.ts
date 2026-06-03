@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The v2.8 ablation-sweep registry (Phase 104, Plan 104-02, PROVE-03 -- "each new
- * factor has an ablation toggle"). Maps every shipped v2.8 recall/reasoning factor
- * to its EXACT config knob leaf so each factor's contribution to a benchmark
- * number is independently measurable (turn it OFF, re-run, read the delta). The
- * keyless head-to-head harness (104-04) drives `sweepCells` at $0.
+ * The ablation-sweep registry (each new factor has an ablation toggle).
+ * Maps every shipped recall/reasoning factor to its EXACT config knob leaf
+ * so each factor's contribution to a benchmark number is independently measurable
+ * (turn it OFF, re-run, read the delta). The keyless head-to-head harness drives
+ * `sweepCells` at $0.
  *
- * THE VERIFIED KNOB LEAVES (104-PATTERNS.md, re-grepped against recall-types.ts
- * :142-182 + schema-memory-reasoning.ts:41 this phase -- RESEARCH's draft was
- * WRONG on three of them):
+ * THE VERIFIED KNOB LEAVES (re-grepped against recall-types.ts:142-182 +
+ * schema-memory-reasoning.ts:41 -- an earlier draft was WRONG on three of them):
  *   - kg-graph-spread    -> `lanes.graphSpread.enabled`        (recall-types.ts:157)
  *   - iq-mmr             -> `mmr.enabled`         (recall-types.ts:178; NOT `rag.mmr.enabled`)
  *   - iq-intent          -> `queryUnderstanding.intentReweight` (recall-types.ts:182; the leaf
@@ -18,15 +17,15 @@
  *                           WRITE-side offline reasoning job, NOT a MemoryRecallConfig recall
  *                           lane; represented as a sweep cell the harness threads separately.
  *
- * THE off=byte-identity SAFETY NET (T-104-02-04): a MISTYPED leaf is a silent
+ * THE off=byte-identity SAFETY NET: a MISTYPED leaf is a silent
  * no-op toggle -- a false "no contribution" reading. {@link applyFactor} sets the
  * leaf via the EXACT path; the ablation-sweep.test.ts Test-3 proves
  * `applyFactor(baseline, factor, false)` is byte-identical to a baseline with that
  * leaf explicitly off (a wrong leaf would set a phantom key and diverge -> fail
- * loudly). Every shipped lane is "Default-OFF (`enabled:false`) -> RRF unchanged"
- * (the ENT-04 no-op), so OFF === the shipping-default posture.
+ * loudly). Every shipped lane is "Default-OFF (`enabled:false`) -> RRF unchanged",
+ * so OFF === the shipping-default posture.
  *
- * NO-MUTATION (T-104-02-04): {@link applyFactor} returns a NEW config -- it
+ * NO-MUTATION: {@link applyFactor} returns a NEW config -- it
  * rebuilds only the touched branch via structural object literals and NEVER
  * mutates the input (so a sweep can reuse one baseline across all cells without
  * cross-cell contamination).
@@ -74,7 +73,7 @@ export interface AblationFactor {
 export const REASON_WRITE_SIDE_FACTOR = "reason-observations" as const;
 
 /**
- * The shipped v2.8 ablation factors, each pinned to its VERIFIED knob leaf. The
+ * The shipped ablation factors, each pinned to its VERIFIED knob leaf. The
  * grep acceptance criteria + the off=byte-identity test guard these paths against
  * the stale `rag.`-prefixed / `.intent` draft leaves.
  */

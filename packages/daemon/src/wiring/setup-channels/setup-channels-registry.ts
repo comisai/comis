@@ -92,24 +92,24 @@ export interface ChannelsDeps {
   /** System timers (composition root). Threaded to buildActivityRenderers so the
    *  EditPlace renderer debounces edits via TimerPort (no raw setTimeout). */
   timers: TimerPort;
-  /** WIRE-03: the orchestrator-facing redacted activity stream port (the
+  /** The orchestrator-facing redacted activity stream port (the
    *  setupObservability ActivityStream). Threaded into the inbound
    *  coordinatorFactory built in buildAndStartChannelManager as its
    *  activityStreamPort. Optional: absent → no inbound coordinatorFactory is built
    *  (the pipeline gate stays false, fail-closed §22.2 Day-0). */
   activityStream?: ActivityStreamPort;
-  /** WIRE-08: the process-singleton activity circuit breaker (constructed once in
-   *  daemon.ts, D2). Threaded into every per-turn coordinator so a permission/error
+  /** The process-singleton activity circuit breaker (constructed once in
+   *  daemon.ts). Threaded into every per-turn coordinator so a permission/error
    *  storm on one (agentId, channelKey) pair auto-quiesces it across turns.
    *  Optional: absent → no breaker gating (the un-wired path is unaffected). */
   activityBreaker?: ActivityBreakerGate;
   /**
-   * WS-D Phase 78: the SHARED ExecutionPlanHolder reference for the DEFAULT
+   * The SHARED ExecutionPlanHolder reference for the DEFAULT
    * agent (the same object createAcpWiring already shares with the gateway).
    * Threaded into buildAndStartChannelManager → createPlanStream so the chat
    * coordinator reads the SAME SEP plan SEP publishes into.
    *
-   * Pitfall 1 lock: this MUST NOT be a fresh `createExecutionPlanHolder()` —
+   * Lock: this MUST NOT be a fresh `createExecutionPlanHolder()` —
    * a parallel holder would always read empty since SEP publishes into the one
    * threaded into PiExecutorDeps.executionPlanHolder. The composition test in
    * setup-channels-plan-stream.composition.test.ts asserts the identity
@@ -121,24 +121,24 @@ export interface ChannelsDeps {
    * A per-agent plan-stream Map is a clean follow-up.
    *
    * Optional: absent → no plan-stream is built (frame.planSnapshot stays
-   * undefined; the elapsed-time fallback applies — Plan 78-05 WS-F).
+   * undefined; the elapsed-time fallback applies).
    */
   executionPlanPort?: ExecutionPlanPort;
-  /** WIRE-06 test-only renderer-injection seam (daemon-types.ts
+  /** Test-only renderer-injection seam (daemon-types.ts
    *  DaemonOverrides.activityRendererFactory). When set, replaces the renderer
    *  produced by buildActivityRenderers for a given channelType so an integration
    *  test can inject a spy/TestSink and assert `apply` fired on a real inbound
    *  turn. Optional + default-undefined; production never sets it. */
   activityRendererFactory?: (channelType: string) => import("@comis/core").ChannelActivityRenderer | undefined;
-  /** Secret-bound callback signer (73-10). Threaded to buildActivityRenderers so
+  /** Secret-bound callback signer. Threaded to buildActivityRenderers so
    *  button-capable renderers (Telegram/Discord/Slack/LINE) paint signed
    *  approval callback_data. Optional: absent → button-less approval prompts. */
   signCallbackData?: import("@comis/channels").SignCallbackData;
-  /** Single-use approval-link minter (73-10). Threaded to the Email DigestOnly
+  /** Single-use approval-link minter. Threaded to the Email DigestOnly
    *  renderer (it has no buttons). Optional: absent → no approval link in the
    *  [FAILED] digest. */
   mintApprovalLink?: import("@comis/channels").MintApprovalLink;
-  /** Server-side interactive-callback router (CR-01 / 73-04). Threaded through
+  /** Server-side interactive-callback router. Threaded through
    *  buildAndStartChannelManager → createChannelManager → the inbound pipeline so
    *  inbound-gate.ts intercepts a signed button callback and verifies it BEFORE
    *  slash parsing (the signed payload must never reach the LLM). Optional: absent
@@ -178,60 +178,60 @@ export interface ChannelsDeps {
   defaultWorkspaceDir?: string;
   /** Memory adapter for storing media file references. */
   memoryAdapter?: MemoryPort;
-  /** Memory read API (Phase 107, USER-04) — the __USER_REPRESENTATION__ sentinel scopes the
+  /** Memory read API — the __USER_REPRESENTATION__ sentinel scopes the
    *  per-(tenant, agent, user) high-trust source read over `inspect`. Built in setup-memory;
    *  daemon-side (the agent imports no memory package). */
   memoryApi?: MemoryApi;
-  /** Entity-associative store (Phase 83) — forwarded to registerCronEventListeners so
+  /** Entity-associative store — forwarded to registerCronEventListeners so
    *  runMemoryReview (the write path) populates entity links after each successful store.
    *  Built in setup-memory on the shared db handle. */
   entityStore?: MemoryEntityStore;
-  /** Causal store (Phase 96, EXTRACT-03) — forwarded to registerCronEventListeners so
+  /** Causal store — forwarded to registerCronEventListeners so
    *  runMemoryReview (the write path) links cause->effect edges via linkCausal after each
    *  successful store. Built in setup-memory on the shared db handle; injected as the port
    *  TYPE (agent↛memory cut). */
   causalStore?: MemoryCausalStore;
-  /** Consolidation store (Phase 84, CONS-07) — forwarded to registerCronEventListeners so
+  /** Consolidation store — forwarded to registerCronEventListeners so
    *  the opt-in __MEMORY_CONSOLIDATION__ sentinel runs runMemoryConsolidation with the
    *  injected store. Built in setup-memory on the shared db handle; injected as the port
    *  TYPE (agent↛memory cut). Absent => the consolidation sentinel cannot run (the cron is
    *  off-by-default anyway, so a default-config agent never reaches it). */
   consolidationStore?: MemoryConsolidationStore;
-  /** Triple store (Phase 101, REASON-02) — forwarded to registerCronEventListeners so
+  /** Triple store — forwarded to registerCronEventListeners so
    *  the opt-in __MEMORY_REASONING__ sentinel runs runMemoryReasoning's DEDUCTIVE write
    *  via the trust-first upsertTriple. Built in setup-memory on the shared db handle;
    *  injected as the port TYPE (agent↛memory cut). Threaded the full daemon → registry →
-   *  credentials chain (T-101-06-01) — a missing thread silently disables the deductive
+   *  credentials chain — a missing thread silently disables the deductive
    *  write path. Absent => the reasoning sentinel cannot run (the cron is off-by-default
    *  anyway, so a default-config agent never reaches it). */
   tripleStore?: TripleStorePort;
-  /** Per-user representation store (Phase 107, USER-03 — Track E1) — forwarded to the cron path
+  /** Per-user representation store — forwarded to the cron path
    *  so the opt-in __USER_REPRESENTATION__ sentinel runs runUserRepresentationBuild's offline
    *  upsert write. Built in setup-memory on the shared db handle; injected as the port TYPE
    *  (agent↛memory cut). Threaded the full daemon → registry → credentials chain — a missing
-   *  thread silently disables the offline-builder write path (Pitfall 1). Absent => the
+   *  thread silently disables the offline-builder write path. Absent => the
    *  representation sentinel cannot run (the cron is off-by-default anyway). */
   userRepresentationStore?: UserRepresentationStore;
-  /** Directional relationship store (Phase 108, SOCIAL-01/02 — Track E2) — forwarded to the cron path
+  /** Directional relationship store — forwarded to the cron path
    *  so the opt-in + sign-off-gated __SOCIAL_MODELING__ sentinel runs runRelationshipBuild's offline
    *  per-channel directional-edge upsert write. Built in setup-memory on the shared db handle; injected
    *  as the port TYPE (agent↛memory cut). Threaded the full daemon → registry → credentials chain — a
-   *  missing thread silently disables the offline-builder write path (Pitfall 6). Absent => the
+   *  missing thread silently disables the offline-builder write path. Absent => the
    *  relationship sentinel cannot run (the cron is off-by-default + sign-off-gated anyway). */
   relationshipStore?: RelationshipStore;
-  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2) — forwarded to the cron path so the
+  /** Tuned-alpha store — forwarded to the cron path so the
    *  opt-in __ONLINE_TUNING__ bandit sentinel runs runOnlineTuning's tuned-vector upsert. Built
    *  in setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut).
    *  Threaded the full daemon → registry → credentials chain — a missing thread silently disables
    *  the bandit write (the field-plumbing lesson). Absent => off-by-default, never reached. */
   tunedAlphaStore?: TunedAlphaStore;
-  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C) — forwarded to the cron path so
+  /** Memory-lifecycle sweep store — forwarded to the cron path so
    *  the opt-in KEYLESS __MEMORY_LIFECYCLE__ sentinel runs the DORMANT runLifecycleSweep. Built in
    *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
    *  the full daemon → registry → credentials chain — a missing thread silently disables the sweep
    *  (the field-plumbing lesson). Absent => off-by-default, never reached. */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  /** Recall-utility usefulness READ surface (Phase 93 / Phase 111) — forwarded to the cron path so
+  /** Recall-utility usefulness READ surface — forwarded to the cron path so
    *  the __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it. Built in setup-memory
    *  on the shared db handle; injected as the port TYPE (agent↛memory cut). */
   usefulnessStore?: MemoryUsefulnessStore;
@@ -412,13 +412,13 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       channelPlugins,
       clock: deps.clock,
       timers: deps.timers,
-      activityStream: deps.activityStream, // WIRE-03: ActivityStreamPort for the inbound coordinatorFactory
-      activityBreaker: deps.activityBreaker, // WIRE-08: process-singleton breaker (shared)
-      executionPlanPort: deps.executionPlanPort, // WS-D Phase 78: shared ExecutionPlanHolder for the chat plan-stream
-      activityRendererFactory: deps.activityRendererFactory, // WIRE-06 test seam
+      activityStream: deps.activityStream, // ActivityStreamPort for the inbound coordinatorFactory
+      activityBreaker: deps.activityBreaker, // process-singleton breaker (shared)
+      executionPlanPort: deps.executionPlanPort, // shared ExecutionPlanHolder for the chat plan-stream
+      activityRendererFactory: deps.activityRendererFactory, // test seam
       signCallbackData: deps.signCallbackData,
       mintApprovalLink: deps.mintApprovalLink,
-      interactiveCallbackRouter: deps.interactiveCallbackRouter, // CR-01: verifier → inbound pipeline
+      interactiveCallbackRouter: deps.interactiveCallbackRouter, // verifier → inbound pipeline
       preprocessMessageCallback,
       preflightFn,
       assembleToolsForAgent: deps.assembleToolsForAgent,

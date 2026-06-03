@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WIRE-06 — the §17.9 "day-4" composition acceptance test: the activity pipe
- * works end-to-end IN-MEMORY.
+ * The §17.9 "day-4" composition acceptance test: the activity pipe works
+ * end-to-end IN-MEMORY.
  *
- * This is the terminus of Phase 70 (Workstream A). It proves a typed, redacted
- * `ActivityEvent` flows the whole way:
+ * This is the terminus of the activity-pipe workstream. It proves a typed,
+ * redacted `ActivityEvent` flows the whole way:
  *
  *   EventBus emit (tool:*) → ActivityStream (observability substrate, redacts +
  *   validates) → bounded queue → per-turn ActivityTurnCoordinator (orchestrator)
@@ -27,11 +27,11 @@
  *     over a real `TypedEventBus`) with deterministic fake timer/clock. This is
  *     the authoritative §17.9 Echo-end-to-end-in-memory proof — no channel API.
  *   • Part B boots the real daemon via the existing `startTestDaemon` harness and
- *     proves the DAEMON-level WIRE-01/05 wiring: the ActivityStream is
+ *     proves the DAEMON-level wiring: the ActivityStream is
  *     constructed + subscribed to the EventBus at boot, and a clean shutdown
  *     drains it (the EventBus handler is detached; no long-running timer leaks).
  *
- * KEEP the `__tests__/` path: the daemon dir convention (Pitfall 1) — this is the
+ * KEEP the `__tests__/` path: the daemon dir convention — this is the
  * one place that keeps `__tests__/` per the §17.1 test table.
  *
  * @module
@@ -78,7 +78,7 @@ function makeEchoCtx(overrides: Partial<TurnActivityContext> = {}): TurnActivity
 // Part A — in-memory composition (the §17.9 day-4 Echo-end-to-end proof)
 // ---------------------------------------------------------------------------
 
-describe("WIRE-06 activity composition: Echo renderer end-to-end in-memory", () => {
+describe("activity composition: Echo renderer end-to-end in-memory", () => {
   it("routes one inbound's tool events through the stream and coordinator into Echo TestSink apply+finalize", async () => {
     // --- Compose the real production pieces over a real EventBus -------------
     const bus = new TypedEventBus();
@@ -177,7 +177,7 @@ describe("WIRE-06 activity composition: Echo renderer end-to-end in-memory", () 
 
     // --- Assertion 4 (clean shutdown drain) ---------------------------------
     // The coordinator's finalize unsubscribed the turn (in its finally); dispose
-    // is idempotent. Then dispose the stream (the WIRE-05 shutdown drain hook):
+    // is idempotent. Then dispose the stream (the shutdown drain hook):
     // it detaches every EventBus handler so post-shutdown emits never reach the
     // sink (no orphaned pending placeholder).
     coordinator.dispose();
@@ -270,11 +270,11 @@ describe("WIRE-06 activity composition: Echo renderer end-to-end in-memory", () 
 });
 
 // ---------------------------------------------------------------------------
-// Part B — daemon-level wiring (WIRE-01/05) via the real setupObservability
+// Part B — daemon-level wiring via the real setupObservability
 // ---------------------------------------------------------------------------
 //
-// Drives the daemon's OWN composition-root wiring function (setupObservability,
-// the WIRE-01 unit) over a real TypedEventBus and exercises its WIRE-05 drain
+// Drives the daemon's OWN composition-root wiring function (setupObservability)
+// over a real TypedEventBus and exercises its drain
 // hook (disposeActivityStream). This proves the daemon constructs the
 // ActivityStream, returns it as the orchestrator-facing port, subscribes it to
 // the EventBus at boot, and detaches every handler on shutdown — using the
@@ -289,13 +289,13 @@ describe("WIRE-06 activity composition: Echo renderer end-to-end in-memory", () 
 // collide on the gateway port. The functional pipe assertions (apply/finalize/
 // drain) are proven deterministically in-memory in Part A above.
 
-describe("WIRE-06 activity composition: daemon constructs and drains the ActivityStream", () => {
+describe("activity composition: daemon constructs and drains the ActivityStream", () => {
   it("returns the ActivityStream from setupObservability and clears its EventBus subscription on dispose", () => {
     const bus = new TypedEventBus();
     // Pre-wiring baseline: no tool:* handler before setupObservability runs.
     const baseline = bus.listenerCount("tool:executed");
 
-    // The REAL daemon WIRE-01 composition-root function.
+    // The REAL daemon composition-root function.
     const obs = setupObservability({
       eventBus: bus,
       _createTokenTracker: createTokenTracker,
@@ -304,7 +304,7 @@ describe("WIRE-06 activity composition: daemon constructs and drains the Activit
 
     // Assertion 1 (daemon level): the ActivityStream is constructed + returned as
     // the orchestrator-facing port, and it subscribed to the EventBus tool:*
-    // events at construction (WIRE-01).
+    // events at construction.
     expect(obs.activityStream).toBeDefined();
     expect(typeof obs.activityStream.subscribeForTurn).toBe("function");
     expect(bus.listenerCount("tool:executed")).toBeGreaterThan(baseline);
@@ -326,8 +326,8 @@ describe("WIRE-06 activity composition: daemon constructs and drains the Activit
     expect(received.length).toBeGreaterThanOrEqual(1);
     sub.unsubscribe();
 
-    // Assertion 4 (daemon level): the WIRE-05 drain hook detaches every EventBus
-    // handler (no orphaned subscriber across a restart — T-70-10-03).
+    // Assertion 4 (daemon level): the drain hook detaches every EventBus
+    // handler (no orphaned subscriber across a restart).
     obs.disposeActivityStream();
     expect(bus.listenerCount("tool:executed")).toBe(baseline);
 

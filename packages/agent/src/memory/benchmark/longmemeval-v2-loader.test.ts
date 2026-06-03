@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * UNGATED unit tests for the pure LongMemEval-V2 loader (SUITE-08, the
- * academic-core headline loader).
+ * UNGATED unit tests for the pure LongMemEval-V2 loader (the academic-core
+ * headline loader).
  *
  * TIER: default CI / fast unit tier (no model, no dataset download, no store).
  * Runs over the tiny vendored neutral-placeholder fixture in __fixtures__/.

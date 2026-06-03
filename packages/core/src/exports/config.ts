@@ -133,12 +133,12 @@ export {
   getFieldMetadata,
   validatePartial,
   createConfigGitManager,
-  // Tooling subtree (capability layer v1.1)
+  // Tooling subtree (capability layer)
   ToolingConfigSchema,
   DEFAULT_CLUSTER_CONFIG,
   DEFAULT_BUILTIN_ASSIGNMENTS,
   checkApprovalsConfig,
-  // Broker binding config schema (INTEG-02/03)
+  // Broker binding config schema
   BrokerBindingConfigSchema,
 } from "../config/index.js";
 
@@ -273,9 +273,9 @@ export type {
   OperationModelEntry,
   OperationModels,
   ModelOperationType,
-  // Tooling subtree (capability layer v1.1)
+  // Tooling subtree (capability layer)
   ToolingConfig,
-  // Broker binding config type (INTEG-02/03)
+  // Broker binding config type
   BrokerBindingConfig,
   // Pre-read storage mode (pre-Zod boot gate)
   StorageModePreRead,

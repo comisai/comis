@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the activity theme tier (UX-01, Plan 75-01).
+ * Tests for the activity theme tier.
  *
  * Two contracts under test:
  *   - Task 1 (label-spec.ts): `ActivityTheme` gains an OPTIONAL `markers` tier

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteMemoryEntityStore` — the @comis/memory adapter
- * for the `MemoryEntityStore` port (Phase 83, ENT-01/02/03/04/05).
+ * for the `MemoryEntityStore` port.
  *
  * The harness constructs a real `SqliteMemoryAdapter` over an in-memory DB so
  * that `PRAGMA foreign_keys = ON` is set (via `openSqliteDatabase`) — a raw
  * `new Database(":memory:")` would have FKs OFF and the ON DELETE CASCADE
- * (ENT-04) would silently no-op (RESEARCH Pitfall 1). Memories are seeded via
+ * would silently no-op. Memories are seeded via
  * `adapter.store(...)` so the `memories(id)` rows exist for the link FK, the
  * lane JOIN, and CASCADE-on-delete.
  *
@@ -101,7 +101,7 @@ describe("createSqliteMemoryEntityStore", () => {
   });
 
   // =====================================================================
-  // Task 1 — resolveAndLink
+  // resolveAndLink
   // =====================================================================
 
   describe("resolveAndLink", () => {
@@ -209,14 +209,14 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(entityRow(first.value)?.mention_count).toBe(2);
     });
 
-    it("does NOT link an entity whose name normalizes to an empty canonical_key — returns err, mints no junk row (MD-01)", async () => {
+    it("does NOT link an entity whose name normalizes to an empty canonical_key — returns err, mints no junk row", async () => {
       // ExtractedEntitySchema.name is z.string().min(1) — LENGTH, not non-whitespace
       // (memory-entry.ts). A whitespace/punctuation/combining-mark-only name passes
       // the schema but normalizeEntityKey folds it to "". Without an empty-key guard
       // ALL such junk names collapse into ONE empty-canonical_key entity (the
       // (tenant,agent,canonical_key) UNIQUE index), spuriously associating unrelated
       // memories within the scope. The resolver MUST refuse to mint/reuse an
-      // empty-key entity and return err (IN-01 treats this as non-fatal: the memory
+      // empty-key entity and return err (treated as non-fatal: the memory
       // is still stored, only the content-free association is dropped).
       const junk = await seedMemory({ id: "junk" });
       const real = await seedMemory({ id: "real" });
@@ -246,7 +246,7 @@ describe("createSqliteMemoryEntityStore", () => {
   });
 
   // =====================================================================
-  // Task 2 — associativeLane (scoped self-join, seeds excluded, hydrated)
+  // associativeLane (scoped self-join, seeds excluded, hydrated)
   //          + CASCADE + empty-lane
   // =====================================================================
 
@@ -281,7 +281,7 @@ describe("createSqliteMemoryEntityStore", () => {
 
       // Two DISsimilar names (nameSimilarity ~0.09 << 0.6) so they resolve to
       // TWO distinct entities — using near-identical names would (correctly)
-      // fuzzy-collapse to one entity (ENT-05) and defeat the 2-vs-1 ordering.
+      // fuzzy-collapse to one entity and defeat the 2-vs-1 ordering.
       await store.resolveAndLink(seed, "Mercury Labs", SCOPE_A);
       await store.resolveAndLink(seed, "Saturn Foods", SCOPE_A);
       await store.resolveAndLink(two, "Mercury Labs", SCOPE_A);
@@ -298,7 +298,7 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(res.value[0]?.score ?? 0).toBeGreaterThan(res.value[1]?.score ?? 0);
     });
 
-    it("does NOT surface a cross-tenant memory sharing the same entity NAME (ENT-03 isolation negative)", async () => {
+    it("does NOT surface a cross-tenant memory sharing the same entity NAME (isolation negative)", async () => {
       const m1 = await seedMemory({ id: "m1", tenantId: "tenant_a", agentId: "agent_a" });
       // A memory in a DIFFERENT tenant that mentions the SAME entity name.
       const cross = await seedMemory({
@@ -330,7 +330,7 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(ids).toEqual([]); // no same-scope sharer exists either
     });
 
-    it("does NOT surface a cross-AGENT memory sharing the same entity NAME (ENT-03 isolation negative)", async () => {
+    it("does NOT surface a cross-AGENT memory sharing the same entity NAME (isolation negative)", async () => {
       const m1 = await seedMemory({ id: "m1", tenantId: "tenant_a", agentId: "agent_a" });
       const crossAgent = await seedMemory({
         id: "cross_agent",
@@ -355,13 +355,13 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(ids).toEqual([]);
     });
 
-    it("the lane's (tenant,agent) scope is LOAD-BEARING — a cross-scope memory sharing the SAME entity_id is excluded by the WHERE (ENT-03)", async () => {
+    it("the lane's (tenant,agent) scope is LOAD-BEARING — a cross-scope memory sharing the SAME entity_id is excluded by the WHERE", async () => {
       // Adversarial setup: bypass the scoped resolver and link a seed memory
       // (tenant_a/agent_a) AND a cross-AGENT memory (tenant_a/agent_z) to the
       // SAME entity_id. The resolver would never do this (it scopes entity ids),
       // but this exercises the lane's `m.agent_id` WHERE: the cross memory shares
-      // the seed's tenant, so a tenant-only filter would NOT exclude it. After
-      // LO-01 the agent dimension is enforced in TWO places — the self-join's
+      // the seed's tenant, so a tenant-only filter would NOT exclude it. The
+      // agent dimension is enforced in TWO places — the self-join's
       // `AND m.agent_id=?` AND the per-row hydrate's `AND agent_id=?` — so this
       // test fails if EITHER agent filter is dropped (defense-in-depth).
       const m1 = await seedMemory({ id: "m1", tenantId: "tenant_a", agentId: "agent_a" });
@@ -391,7 +391,7 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(ids).toEqual([]);
     });
 
-    it("ENT-04: empty seeds -> ok([]); seeds with NO shared entities -> ok([])", async () => {
+    it("empty seeds -> ok([]); seeds with NO shared entities -> ok([])", async () => {
       const lonely = await seedMemory({ id: "lonely" });
       const other = await seedMemory({ id: "other" });
       // Distinct, non-overlapping entities.
@@ -424,10 +424,10 @@ describe("createSqliteMemoryEntityStore", () => {
   });
 
   // =====================================================================
-  // Task 2 — CASCADE + no-recompute (ENT-04 / OQ-4)
+  // CASCADE + no-recompute
   // =====================================================================
 
-  describe("CASCADE on memory delete (ENT-04)", () => {
+  describe("CASCADE on memory delete", () => {
     it("deleting a memory drops its entity links to 0; the entity row survives with an UNCHANGED mention_count", async () => {
       const m1 = await seedMemory({ id: "m1" });
       const m2 = await seedMemory({ id: "m2" });
@@ -448,7 +448,7 @@ describe("createSqliteMemoryEntityStore", () => {
 
       // m1's links are gone (CASCADE)...
       expect(linkCount(m1)).toBe(0);
-      // ...but the entity row SURVIVES, mention_count UNCHANGED (no recompute, OQ-4).
+      // ...but the entity row SURVIVES, mention_count UNCHANGED (no recompute).
       const survivor = entityRow(entityId);
       expect(survivor).toBeDefined();
       expect(survivor?.mention_count).toBe(2); // stale-by-design, NOT decremented
@@ -459,17 +459,17 @@ describe("createSqliteMemoryEntityStore", () => {
   });
 
   // =====================================================================
-  // OBS-06 — listEntities (scoped entity-graph diagnostic read)
+  // listEntities (scoped entity-graph diagnostic read)
   //
   // NON-seed read: list the entities in a single (tenant, agent) scope,
   // ordered most-mentioned-first, bounded by `limit`. Bakes the SAME
   // (tenant, agent) isolation as the resolver UNIQUE index + the lane
-  // self-join (ENT-03) — two scopes must NEVER surface each other's rows.
-  // 86-05 (the daemon `memory.entities` handler + CLI) wires this; the
-  // adapter impl is pre-implemented here so 86-05 only adds the handler.
+  // self-join — two scopes must NEVER surface each other's rows.
+  // The daemon `memory.entities` handler + CLI wires this; the
+  // adapter impl is pre-implemented here so the handler is all that is left to add.
   // =====================================================================
 
-  describe("listEntities (OBS-06)", () => {
+  describe("listEntities", () => {
     const LIST_SCOPE = { tenantId: "tenant_a", agentId: "agent_a" } as const;
 
     it("returns the scope's entities as EntityRow[], ordered most-mentioned-first, with bookkeeping timestamps", async () => {
@@ -493,7 +493,7 @@ describe("createSqliteMemoryEntityStore", () => {
 
       // EntityRow shape (mirrors the port's EntityRow): id/name/mentionCount +
       // optional firstSeen/lastSeen as epoch ms (NOT the snake_case DB columns,
-      // and NOT the DB-internal canonical_key — OQ-2).
+      // and NOT the DB-internal canonical_key).
       const top = res.value[0];
       expect(top?.id).toBe(popular.value);
       expect(top?.name).toBe("Popular Co");
@@ -503,7 +503,7 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(JSON.stringify(top)).not.toContain("canonical_key");
     });
 
-    it("isolates by scope — a cross-(tenant or agent) entity with the SAME name is NOT returned (ENT-03)", async () => {
+    it("isolates by scope — a cross-(tenant or agent) entity with the SAME name is NOT returned", async () => {
       const mine = await seedMemory({ id: "mine", tenantId: "tenant_a", agentId: "agent_a" });
       const otherTenant = await seedMemory({ id: "ot", tenantId: "tenant_b", agentId: "agent_a" });
       const otherAgent = await seedMemory({ id: "oa", tenantId: "tenant_a", agentId: "agent_z" });

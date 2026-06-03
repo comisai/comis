@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Recall-counters bus wiring (OBS-07).
+ * Recall-counters bus wiring.
  *
  * The composition-root glue between the three `memory:*` bus events and the
  * in-process recall counter registry from `@comis/observability`. It stands up
@@ -13,12 +13,11 @@
  *
  * The returned `{ snapshot }` accessor is the SAME registry the daemon threads
  * into `MemoryApiDeps.recallCounters` so the `memory.recall_stats` handler
- * (Plan 86-05 Task 2) reads live counters — NOT a fresh registry per call.
+ * reads live counters — NOT a fresh registry per call.
  *
  * Mirrors `obs-persistence-wiring.ts`'s `eventBus.on(...)` subscriber model.
  * Counts only ever cross the bus (AGENTS.md §2.7) — no content, ids, or query
- * text — so the registry holds integers exclusively (T-86-05, disposition:
- * accept).
+ * text — so the registry holds integers exclusively.
  *
  * @module
  */

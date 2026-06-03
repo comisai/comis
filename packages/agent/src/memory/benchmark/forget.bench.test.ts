@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated KEYLESS forgetting harness (FORGET-01 + FORGET-02, Phase 112-05) -- the
- * FREE, deterministic, no-API-cost measurement of the Phase-112 forgetting MECHANISM:
- * the per-type FadeMem decay factor the recall hot path folds (FORGET-01) and the
- * SCAFFOLD-DORMANT lifecycle sweep the daemon cron drives (FORGET-02). It is the
- * MECHANICAL gate that ships alongside the manifest; any COSTED QA-accuracy impact of
+ * Env-gated KEYLESS forgetting harness -- the FREE, deterministic, no-API-cost
+ * measurement of the forgetting MECHANISM: the per-type FadeMem decay factor the recall
+ * hot path folds and the SCAFFOLD-DORMANT lifecycle sweep the daemon cron drives. It is
+ * the MECHANICAL gate that ships alongside the manifest; any COSTED QA-accuracy impact of
  * the decay is DEFERRED to an operator-costed re-run (FadeMem's decay is never ablated
- * in isolation -- 112-RESEARCH Pitfall 5 -- so a "decay improves QA" claim has no
+ * in isolation -- a known research pitfall -- so a "decay improves QA" claim has no
  * keyless evidence and a fresh one here would be fabricated).
  *
- * WHY THIS HARNESS EXISTS (the honest gap the Phase-112 gate must measure -- the SAME
- * structural finding the Phase-102 IQ-04 / Phase-110 LEARN-IQ / Phase-111 LEARN-RANK
- * gates verified): the shipping QA + retrieval harnesses construct `createMemoryRecall`
+ * WHY THIS HARNESS EXISTS (the honest gap this gate must measure -- the SAME
+ * structural finding the sibling IQ / learning-IQ / learning-rank gates verified): the
+ * shipping QA + retrieval harnesses construct `createMemoryRecall`
  * with forget DEFAULT-OFF, so they exercise the decay NOT AT ALL. To measure the
- * FORGET-01 decay + byte-identity claims HONESTLY and for FREE, this harness wires the
+ * decay + byte-identity claims HONESTLY and for FREE, this harness wires the
  * SAME production recall pipeline (`createMemoryRecall`) to the SAME production adapters
  * (`SqliteMemoryAdapter` + `createSqliteMemoryLifecycleStore`, both over one shared
  * `getDb()` handle), seeds synthetic memories at KNOWN event-ages under a fixed fake
@@ -26,7 +25,7 @@
  *      ranks IDENTICALLY three ways -- forget OFF, forget ON-at-neutral, and a pre-forget
  *      reference (the `forget` field absent). At Δt=0 the FadeMem factor is `0.5 +
  *      0.5·exp(0) = 1.0` EXACTLY, independent of λ/β/imp, so a fresh neutral row is never
- *      reordered even with the decay enabled at a live `forgetAlpha` (FORGET-01).
+ *      reordered even with the decay enabled at a live `forgetAlpha`.
  *   2. DETERMINISTIC DECAY EFFECT (MEASURED): an OLD (90-day event-age) low-importance
  *      EPHEMERAL memory (memoryType:"episodic", β=1.2) decays BELOW a FRESH (1-day) durable
  *      memory (memoryType:"semantic", β=0.8) under the fixed BENCH_NOW fake clock. Measured
@@ -35,32 +34,32 @@
  *      score, all other factors held fixed) -- the old-ephemeral's factor < the
  *      fresh-durable's. The intended FadeMem behavior, MEASURED, not a QA claim.
  *   3. FOOTPRINT UNCHANGED WHEN THE EVICTION SCAFFOLD IS OFF/DORMANT: running the WIRED
- *      lifecycle sweep (`createSqliteMemoryLifecycleStore.runLifecycleSweep`, the 112-04
+ *      lifecycle sweep (`createSqliteMemoryLifecycleStore.runLifecycleSweep`, the
  *      DORMANT scaffold) over N real rows evicts/demotes 0 -- the row COUNT(*) is
  *      unchanged, the `evicted_at IS NOT NULL` + `lifecycle_demoted_at IS NOT NULL`
  *      marker counts are 0, and the report is `{promoted:0,demoted:0,evicted:0}`
- *      (FORGET-02; OD4 -- the live eviction policy is the deferred operator/v2.10 step).
+ *      (the live eviction policy is the deferred operator step).
  *   4. ZERO CATEGORY REGRESSION: the recall hot path with forget OFF is byte-identical to
  *      a no-forget baseline run (the `forget` field absent) on the same fixtures -- the
- *      established keyless no-regression tier, referenced to the Phase-106 baseline.
+ *      established keyless no-regression tier, referenced to the committed baseline.
  *
  * THIS IS THE PRODUCTION CODE PATH, NOT A MOCK:
  *   - recall = `createMemoryRecall(deps, cfg)` (bare @comis/agent production orchestrator),
  *   - memoryPort = a fresh `mkdtempSync` `SqliteMemoryAdapter` (the sole @comis/memory adapter),
  *   - the lifecycle sweep = `createSqliteMemoryLifecycleStore({ db: adapter.getDb() })`
  *     (bare @comis/memory -- the SOLE DORMANT lifecycle adapter, over the SAME handle),
- *   - cfg.forget = { enabled } (the shipped FORGET-01 knob, Plan 112-01) toggled per claim;
+ *   - cfg.forget = { enabled } (the shipped forget knob) toggled per claim;
  *     cfg.scoring.forgetAlpha carries the decay MAGNITUDE (the single canonical knob). The
  *     decay is LAZY-at-read (pure over the injected `clock.now()` -- no Date.now, no write
  *     mutation); the sweep is the daemon-cron-side DORMANT pass (evicts nothing).
  *
- * KEYLESS (binding-constraint-#8 honest protocol): no answer model, no judge, no API key,
+ * KEYLESS (the honest protocol): no answer model, no judge, no API key,
  * no provider call, no cost -- the suite reads ONLY the COMIS_BENCH gate, with no costed
  * answer-model or judge-model env lane at all (the beam-harness.bench.test.ts
  * COMIS_BENCH-only precedent). The forget claims need NO model:
  * the decay is the deterministic LLM-free `createMemoryRecall` factor and the sweep is the
  * deterministic DORMANT adapter. Any COSTED QA-accuracy impact of the decay is DEFERRED to
- * the operator (kept STRICTLY SEPARATE -- no fabricated decay-accuracy number, Pitfall 5).
+ * the operator (kept STRICTLY SEPARATE -- no fabricated decay-accuracy number).
  *
  * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import @comis/memory
  * (a devDependency) -- the agent->memory cut excludes the `.test.ts` suffix
@@ -107,7 +106,7 @@ const COMIS_FORGET_REPORT_DIR = process.env.COMIS_FORGET_REPORT_DIR;
 const BENCH_NOW = 1_700_000_000_000;
 /** Harness version stamp -- a number is always attributable to fixed harness code. */
 const HARNESS_VERSION = "phase-112-05-v1";
-/** The Phase-106 baseline this gate's no-regression claim references. */
+/** The committed baseline this gate's no-regression claim references. */
 const BASELINE_REF = "benchmarks/results/2026-06-01-phase106-baser/";
 
 /** dims=4 keeps the (unused-here) vec index tiny; the forget claims are FTS-driven. */
@@ -256,10 +255,10 @@ function writeReport(reportDir: string, name: string, report: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// CLAIM 1 -- byte-identity at neutral importance (the safety gate, FORGET-01)
+// CLAIM 1 -- byte-identity at neutral importance (the safety gate)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("forget: byte-identity at neutral importance (FORGET-01 claim 1, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("forget: byte-identity at neutral importance (claim 1, keyless gated)", () => {
   // A NEUTRAL/legacy memory: no memoryType (-> parity β=1.0), no proofCount/confidence
   // (-> minimal imp), at EVENT-AGE 0 (createdAt = occurredAt = BENCH_NOW). At Δt=0 the
   // FadeMem factor is `0.5 + 0.5·exp(0) = 1.0` EXACTLY for ANY λ/β/imp, so the recall
@@ -343,10 +342,10 @@ describe.skipIf(!COMIS_BENCH)("forget: byte-identity at neutral importance (FORG
 });
 
 // ---------------------------------------------------------------------------
-// CLAIM 2 -- the deterministic decay effect (MEASURED, FORGET-01)
+// CLAIM 2 -- the deterministic decay effect (MEASURED)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("forget: deterministic decay effect (FORGET-01 claim 2, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("forget: deterministic decay effect (claim 2, keyless gated)", () => {
   // An OLD (90-day event-age) low-importance EPHEMERAL memory (memoryType:"episodic",
   // β=1.2 sharp drop, no proofCount -> minimal imp) vs a FRESH (1-day) DURABLE memory
   // (memoryType:"semantic", β=0.8 slow tail), under the fixed BENCH_NOW fake clock with
@@ -433,13 +432,13 @@ describe.skipIf(!COMIS_BENCH)("forget: deterministic decay effect (FORGET-01 cla
 });
 
 // ---------------------------------------------------------------------------
-// CLAIM 3 -- footprint unchanged when the eviction scaffold is off/dormant (FORGET-02)
+// CLAIM 3 -- footprint unchanged when the eviction scaffold is off/dormant
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("forget: footprint unchanged when dormant (FORGET-02 claim 3, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("forget: footprint unchanged when dormant (claim 3, keyless gated)", () => {
   // Seed N real memories on the SqliteMemoryAdapter, construct the SOLE lifecycle adapter
   // `createSqliteMemoryLifecycleStore` on the SAME `getDb()` handle, and run the WIRED
-  // `runLifecycleSweep` (the 112-04 DORMANT scaffold). THE CLAIM: the sweep evicts/demotes
+  // `runLifecycleSweep` (the DORMANT scaffold). THE CLAIM: the sweep evicts/demotes
   // 0 rows -- the row COUNT(*) is unchanged, the `evicted_at IS NOT NULL` + the
   // `lifecycle_demoted_at IS NOT NULL` marker counts are 0, and the report is all-0. The
   // fixtures include a deliberately STALE low-importance row (an eviction CANDIDATE a live
@@ -553,13 +552,13 @@ describe.skipIf(!COMIS_BENCH)("forget: footprint unchanged when dormant (FORGET-
 });
 
 // ---------------------------------------------------------------------------
-// CLAIM 4 -- zero category regression (FORGET-01, the no-regression tier)
+// CLAIM 4 -- zero category regression (the no-regression tier)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("forget: zero category regression (FORGET-01 claim 4, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("forget: zero category regression (claim 4, keyless gated)", () => {
   // The recall hot path with forget OFF must be byte-identical to a no-forget baseline run
   // (the `forget` field ABSENT) on the SAME mixed-age, mixed-type fixtures -- the
-  // established keyless no-regression tier, referenced to the Phase-106 baseline. The
+  // established keyless no-regression tier, referenced to the committed baseline. The
   // fixtures span every memoryType + a range of event-ages so "no category is reordered
   // when forget is off" is observable across the whole ordering.
   const FIXTURES: Array<{ id: string; content: string; memoryType: MemoryEntry["memoryType"]; ageDays: number }> = [
@@ -591,7 +590,7 @@ describe.skipIf(!COMIS_BENCH)("forget: zero category regression (FORGET-01 claim
       });
     }
 
-    // (a) The baseline: the `forget` field ABSENT (a caller predating the FORGET-01 knob).
+    // (a) The baseline: the `forget` field ABSENT (a caller predating the forget knob).
     const recallAbsent = createMemoryRecall(makeRecallDeps(adapter), baseRecallConfig());
     const rAbsent = await recallAbsent.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
     baselineAbsentOrder = rAbsent.ok ? rAbsent.value.map((r) => r.entry.id) : [];
@@ -608,7 +607,7 @@ describe.skipIf(!COMIS_BENCH)("forget: zero category regression (FORGET-01 claim
     expect(baselineAbsentOrder.length, "baseline returned the fixtures").toBeGreaterThan(0);
 
     // THE CLAIM: forget OFF is byte-identical to the no-forget baseline ordering -- the
-    // shipping default moves no stable-category ranking (the Phase-106 baseline holds).
+    // shipping default moves no stable-category ranking (the committed baseline holds).
     expect(forgetOffOrder, "forget-off order byte-identical to the no-forget baseline").toEqual(baselineAbsentOrder);
 
     const noRegression = JSON.stringify(forgetOffOrder) === JSON.stringify(baselineAbsentOrder);

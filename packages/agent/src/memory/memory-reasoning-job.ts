@@ -1,35 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Offline reasoning job handler (Phase 101 — REASON-02/03/04).
+ * Offline reasoning job handler.
  *
- * The heart of Phase 101: it composes every prior layer into the offline job that
+ * It composes every prior layer into the offline job that
  * emits typed DEDUCTIVE + INDUCTIVE observations. Runs OFF the recall hot path (a
  * background cron seam, mirroring {@link runMemoryConsolidation} and
  * {@link runMemoryTripleExtraction}). Reads not-yet-consolidated candidates →
- * applies the surprisal novelty gate (REASON-04) → clusters → partitions into
- * homogeneous (trust, tag) sub-clusters (REASON-03) → for each scope calls the
+ * applies the surprisal novelty gate → clusters → partitions into
+ * homogeneous (trust, tag) sub-clusters → for each scope calls the
  * INJECTED reasoning seam, then writes:
  *   - DEDUCTIVE knowledge-updates → the SHIPPED trust-first `tripleStore.upsertTriple`
- *     (the Phase-100 path — non-destructive soft-close, NEVER a re-implemented
+ *     (non-destructive soft-close, NEVER a re-implemented
  *     invalidation, NEVER a DELETE). Trust is capped in CODE at the sub-cluster's
  *     own (homogeneous) source trust — the writer can never RAISE trust.
  *   - INDUCTIVE patterns → the SHIPPED `consolidationStore.applyConsolidation` with
  *     `observationKind="inductive"` + `patternType`. Trust is HARD-capped ≤ learned
  *     in CODE (`minTrustLevel(minTrust(cluster), "learned")`) — a cluster of
- *     all-`system` sources STILL yields `learned`, NEVER `system` (REASON-03, the
- *     milestone's binding constraint).
+ *     all-`system` sources STILL yields `learned`, NEVER `system` (the
+ *     binding constraint).
  *
  * Security posture (design §9 — the same anti-poisoning discipline as the
  * consolidation + triple-extraction jobs):
  * - Trust is computed in CODE on BOTH branches, NEVER chosen by the LLM (the
- *   101-04 parsers STRIP any smuggled trust field). Deductive caps at source
- *   trust; inductive floors at ≤ learned (T-101-05-01, the binding constraint).
+ *   parsers STRIP any smuggled trust field). Deductive caps at source
+ *   trust; inductive floors at ≤ learned (the binding constraint).
  * - Every deductive object + inductive content runs `validateMemoryWrite` BEFORE
- *   write (T-101-05-02): `critical` → skip; `warn` → trust downgraded toward
+ *   write: `critical` → skip; `warn` → trust downgraded toward
  *   `external`; `clean` → the code-computed ceiling.
  * - `groupByTrustAndTagScope` partitions every cluster BEFORE the seam call
- *   (T-101-05-01) — one reasoning call NEVER mixes trust levels or tag scopes.
- * - DEFAULT-OFF cost gate (T-101-05-06): with `config.enabled === false` the
+ *   — one reasoning call NEVER mixes trust levels or tag scopes.
+ * - DEFAULT-OFF cost gate: with `config.enabled === false` the
  *   reasoning seam is NEVER called and nothing is written (no LLM spend, no write).
  * - The run is BOUNDED by the SURPRISAL GATE (which caps the scope/seam-call
  *   count — at most one `reason()` call per surprisal-selected scope) and by
@@ -37,13 +37,13 @@
  *   scopes once the write cap is hit, but does NOT bound the seam-call count: a
  *   0-write scope still issues its call). It emits a MINIMAL, counts-only
  *   `memory:reasoned` event + counts-only logs — NEVER the S/P/O bodies or the
- *   observation content (AGENTS.md §2.7 / T-101-05-05).
- * - Every read + write is `(tenantId, agentId)`-scoped (T-101-05-04); inductive
+ *   observation content (AGENTS.md §2.7).
+ * - Every read + write is `(tenantId, agentId)`-scoped; inductive
  *   sources are marked `consolidated_at` via `applyConsolidation` so a re-run does
- *   not double-create (T-101-05-07).
+ *   not double-create.
  *
- * The `reason` LLM call is INJECTED (the offline seam) — the caller (the daemon,
- * 101-06) builds it from a cheap model; it is NEVER invoked on the recall path.
+ * The `reason` LLM call is INJECTED (the offline seam) — the caller (the daemon)
+ * builds it from a cheap model; it is NEVER invoked on the recall path.
  * The agent consumes both stores as port TYPES from `@comis/core` (the agent↛memory
  * build cut); the daemon injects the concrete memory-package adapters. NO
  * memory-package import here, NO wall-clock global (the injected `clock`).
@@ -134,7 +134,7 @@ function maxOccurredAt(cluster: MemoryEntry[]): number {
 /**
  * The typed output of one INJECTED reasoning call over a single homogeneous
  * evidence sub-cluster: zero-or-more deductive S/P/O candidates AND zero-or-more
- * inductive patterns. Both arrays use the 101-04 parsed shapes (the parser already
+ * inductive patterns. Both arrays use the parsed shapes (the parser already
  * STRIPPED any smuggled trust field; trust is computed in CODE by this job).
  */
 export interface ReasoningOutput {
@@ -145,7 +145,7 @@ export interface ReasoningOutput {
 }
 
 /**
- * Configuration for one offline reasoning run (the 101-02
+ * Configuration for one offline reasoning run (the
  * `MemoryReasoningConfig` shape — re-declared structurally so the agent does not
  * depend on the config schema symbol, only its fields; the daemon passes the
  * parsed config).
@@ -155,7 +155,7 @@ export interface MemoryReasoningConfig {
   enabled: boolean;
   /** Candidate pool cap for the read (the first DoS bound). */
   maxCandidatesPerRun: number;
-  /** Top fraction of candidates kept by the surprisal novelty gate (REASON-04). */
+  /** Top fraction of candidates kept by the surprisal novelty gate. */
   surprisalTopFraction: number;
   /** Neighbours per surprisal score (the knnDistances k). */
   knnK: number;
@@ -226,8 +226,8 @@ export type MemoryReasoningResult = Result<MemoryReasoningStats, Error>;
  * Run one offline reasoning pass for a single agent.
  *
  * Gate on `config.enabled` (default-OFF → return early, no seam, no write) → read
- * candidates (READ failure is fatal → `err`) → surprisal gate (REASON-04) → cluster
- * → partition each cluster into homogeneous (trust, tag) sub-clusters (REASON-03) →
+ * candidates (READ failure is fatal → `err`) → surprisal gate → cluster
+ * → partition each cluster into homogeneous (trust, tag) sub-clusters →
  * for each scope sub-cluster: call the INJECTED `reason` seam (non-fatal via
  * `fromPromise`) → write each DEDUCTIVE candidate via the trust-first `upsertTriple`
  * (trust capped in CODE at the sub-cluster trust; `validateMemoryWrite` first) AND
@@ -273,7 +273,7 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
     skippedOverCap,
   });
 
-  // T-101-05-06: the DEFAULT-OFF cost gate. No reason call, no write, no spend.
+  // The DEFAULT-OFF cost gate. No reason call, no write, no spend.
   if (!config.enabled) {
     logger.debug({ agentId, step: "reason" as const }, "Memory reasoning disabled (enabled=false) — skipping");
     emit();
@@ -289,8 +289,8 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
   if (!candidatesResult.value.ok) return err(candidatesResult.value.error);
   let candidates: ConsolidationCandidate[] = candidatesResult.value.value;
 
-  // 1b. Trust hardening — exclude external-trust sources by default (REASON-03,
-  //     mirrors consolidation's consolidateExternal gate). Done BEFORE surprisal so
+  // 1b. Trust hardening — exclude external-trust sources by default (mirrors
+  //     consolidation's consolidateExternal gate). Done BEFORE surprisal so
   //     external candidates never even count toward the novelty denominator.
   if (!config.reasonExternal) {
     candidates = candidates.filter((c) => c.entry.trustLevel !== "external");
@@ -301,11 +301,11 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
     return ok(stats());
   }
 
-  // 2. SURPRISAL GATE (REASON-04) — bound which raw candidates the costly reasoning
+  // 2. SURPRISAL GATE — bound which raw candidates the costly reasoning
   //    seam sees. Build knnByCandidate by calling the knnDistances port per embedded
   //    candidate (the agent cannot run the SQL), then keep the top fraction by
   //    novelty. The selection math (exclude-before-score, the (surprisal desc, id
-  //    asc) total order, the ceil cut) is tested in 101-04 — here it is a thin
+  //    asc) total order, the ceil cut) is tested separately — here it is a thin
   //    pass-through. `dim` = the embedding length of the first embedded candidate.
   const embeddedCount = candidates.filter((c) => c.embedding !== undefined).length;
   let selected: ConsolidationCandidate[];
@@ -335,10 +335,10 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
         consolidationStore.knnDistances(c.embedding, config.knnK, agentId, tenantId),
       );
       // Non-fatal: a failed/empty k-NN read → the candidate scores as not-novel (the
-      // 101-04 missing-distance policy: eligible but ranks last). Never throws out.
+      // missing-distance policy: eligible but ranks last). Never throws out.
       if (knn.ok && knn.value.ok) knnByCandidate.set(c.entry.id, knn.value.value);
     }
-    // The 101-04 gate EXCLUDES un-embedded candidates BEFORE scoring (surprisalSelect's
+    // The gate EXCLUDES un-embedded candidates BEFORE scoring (surprisalSelect's
     // pre-score filter, clustering.ts). Hydration is NOT all-or-nothing: even with
     // sqlite-vec available, decodeEmbedding returns undefined for any row lacking a
     // vec_memories entry (has_embedding=0, the embedding queue not yet drained, or a
@@ -356,8 +356,8 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
     return ok(stats());
   }
 
-  // 3. Cluster the selected subset (CONS-01 greedy single-link by cosine), then
-  //    partition each cluster into homogeneous (trust, tag) sub-clusters (REASON-03)
+  // 3. Cluster the selected subset (greedy single-link by cosine), then
+  //    partition each cluster into homogeneous (trust, tag) sub-clusters
   //    — one seam call NEVER mixes trust levels or tag scopes. When embeddings are
   //    present, cosine clustering groups the co-located evidence; when ABSENT
   //    (the degrade path), cosine cannot group, so each in-scope evidence set is
@@ -374,7 +374,7 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
   // a deductive fact ("alice located_in Berlin") or an inductive tendency, so it is
   // a valid reasoning unit. The cost of reasoning singletons is bounded by the same
   // surprisal gate + maxObservationsPerRun, and deductive-only singletons drain via
-  // markReasoned (WR-01) so they are not re-reasoned. Do NOT add the >= 2 filter.
+  // markReasoned so they are not re-reasoned. Do NOT add the >= 2 filter.
   const scopes: MemoryEntry[][] = [];
   for (const cluster of clusters) {
     for (const scope of groupByTrustAndTagScope(cluster)) scopes.push(scope);
@@ -394,7 +394,7 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
       continue;
     }
 
-    // Per-scope write tallies (WR-01): the inductive write marks its sources
+    // Per-scope write tallies: the inductive write marks its sources
     // consolidated_at via applyConsolidation, but a DEDUCTIVE-ONLY scope (a
     // deductive write, no inductive pattern) has no observation to create — its
     // sources must still be drained below, or the candidate predicate
@@ -420,7 +420,7 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
     }
     const output = reasoned.value;
 
-    // --- 4a. DEDUCTIVE branch — the SHIPPED trust-first upsertTriple (REASON-02).
+    // --- 4a. DEDUCTIVE branch — the SHIPPED trust-first upsertTriple.
     //     The scope is homogeneous, so its single trust level IS the source-trust cap.
     const deductiveTrust: TripleTrust = (scope[0]?.trustLevel ?? "external") as TripleTrust;
     for (const candidate of output.deductive) {
@@ -476,8 +476,8 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
       scopeDeductiveWrites++;
     }
 
-    // --- 4b. INDUCTIVE branch — applyConsolidation with the HARD ≤ learned cap
-    //     (REASON-03, T-101-05-01). The cap is computed in CODE via the IMPORTED
+    // --- 4b. INDUCTIVE branch — applyConsolidation with the HARD ≤ learned cap.
+    //     The cap is computed in CODE via the IMPORTED
     //     consolidation-clustering helpers (the INVERSE ladder) — a cluster of
     //     all-system sources STILL yields "learned".
     const sourceIds = scope.map((e) => e.id);
@@ -537,7 +537,7 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
         sourceType: "conversation",
       };
 
-      // T-101-05-04/07: atomic create + mark sources consolidated_at (they leave the
+      // Atomic create + mark sources consolidated_at (they leave the
       // candidate pool → idempotent re-run). Non-fatal: a rejecting store → WARN +
       // continue (sources stay unconsolidated for retry next run).
       const applied = await fromPromise(
@@ -560,7 +560,7 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
       writtenInductiveKeys.add(dedupKey);
     }
 
-    // WR-01: drain a DEDUCTIVE-ONLY scope. When the scope produced ≥1 successful
+    // Drain a DEDUCTIVE-ONLY scope. When the scope produced ≥1 successful
     // deductive write but NO inductive write, applyConsolidation never ran, so its
     // sources are still consolidated_at IS NULL and would be re-selected +
     // re-reasoned (paid seam) every run. Mark them via the no-observation

@@ -22,9 +22,9 @@ import type { PatchHunk, PatchOperation } from "./apply-patch-parser.js";
 import { PROTECTED_WORKSPACE_FILES, resolvePaths, type LazyPaths, type SafePathLogger } from "./safe-path-wrapper.js";
 import { withFileMutationQueue } from "../file-tools/shared/file-mutation-queue.js";
 
-// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). The EMITTED name
+// Activity label spec. The EMITTED name
 // uses an UNDERSCORE — `apply-patch-tool.ts:475 → name: "apply_patch"` —
-// while the file basename is hyphenated (RESEARCH Pitfall 2). No detailKeys:
+// while the file basename is hyphenated. No detailKeys:
 // the patch body is the only param and is NEVER safe to substitute (it can
 // contain entire files including secret material), so the label is static.
 registerActivityLabelSpec("apply_patch", {

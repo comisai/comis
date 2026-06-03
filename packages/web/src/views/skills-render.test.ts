@@ -21,7 +21,7 @@ import type { SkillsController, SkillsViewSnapshot } from "./skills-controller.j
 import "./skills.js";
 
 /**
- * Post-Phase-44 the view delegates state to a controller. These render-branch
+ * The view delegates state to a controller. These render-branch
  * tests want to poke at private state directly, so `priv()` installs a stub
  * controller on first call (attaching a `_stubSnap` updater) and returns a
  * mutable proxy that writes through that updater. Subsequent `priv()` calls

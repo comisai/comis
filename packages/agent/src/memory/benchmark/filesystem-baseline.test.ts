@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED->GREEN unit suite for {@link formatFilesystemContext} (BASE-01, the
- * Letta-style filesystem-tool CONTROL) — the deliberately-trivial no-memory
- * reference the gated QA harness records as a labelled control row.
+ * RED->GREEN unit suite for {@link formatFilesystemContext} (the Letta-style
+ * filesystem-tool CONTROL) — the deliberately-trivial no-memory reference the
+ * gated QA harness records as a labelled control row.
  *
  * THE LOAD-BEARING PROPERTY (what distinguishes the control from recall): the
  * formatter dumps the FULL haystack — EVERY doc, in deterministic order, with NO
@@ -16,7 +16,7 @@
  * no provider). Imports `filesystem-baseline.ts` so it is never a 0%-coverage
  * file under the agent all:true floor.
  *
- * SECURITY — prototype-pollution discipline (T-98-02-02): the doc `content`
+ * SECURITY — prototype-pollution discipline: the doc `content`
  * strings originate from the UNTRUSTED dataset haystack. The formatter builds the
  * dump by string concatenation only and NEVER uses doc content as an object key,
  * so a `"__proto__"` / `"constructor"` content value becomes ordinary rendered
@@ -31,7 +31,7 @@
 import { describe, it, expect } from "vitest";
 import { formatFilesystemContext } from "./filesystem-baseline.js";
 
-describe("formatFilesystemContext -- BASE-01 Letta-style full-dump control", () => {
+describe("formatFilesystemContext -- Letta-style full-dump control", () => {
   it("Test 1 (RED): the dump contains BOTH docs' content (the trivial full-context baseline)", () => {
     const out = formatFilesystemContext([
       { content: "alpha-fact", createdAt: 1 },
@@ -86,7 +86,7 @@ describe("formatFilesystemContext -- BASE-01 Letta-style full-dump control", () 
     expect(out.indexOf("tie-B")).toBeLessThan(out.indexOf("tie-C"));
   });
 
-  it("Test 5 (SECURITY, T-98-02-02): a doc whose content is the literal '__proto__' does NOT pollute Object.prototype", () => {
+  it("Test 5 (SECURITY): a doc whose content is the literal '__proto__' does NOT pollute Object.prototype", () => {
     const before = ({} as Record<string, unknown>).polluted;
     expect(before).toBeUndefined();
     const out = formatFilesystemContext([

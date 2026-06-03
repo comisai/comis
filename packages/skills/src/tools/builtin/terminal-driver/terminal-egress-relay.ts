@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * buildEgressRelayLaunch -- the worker-side, PORT-typed constructor for the
- * in-jail relay-as-init launch (SEC-07, §3.5). It builds (does NOT run) the pieces
- * the Terminal Worker (122-06) needs to spawn the driven CLI under the egress
+ * in-jail relay-as-init launch (§3.5). It builds (does NOT run) the pieces
+ * the Terminal Worker needs to spawn the driven CLI under the egress
  * relay for `network: listed-hosts`:
  *
  *   1. `relayArgv` — the relay-as-init wrapper that runs INSIDE the jail as the
- *      userns-root init and, in this exact order (118 §3 "Composition note",
- *      RESEARCH Pitfall 3 / Open Q2 = relay-as-init):
+ *      userns-root init and, in this exact order (the relay-as-init composition):
  *        a. brings `lo` up (needs CAP_NET_ADMIN, held over the OWNED netns),
  *        b. launches a TCP->unix relay on `127.0.0.1:<relayPort>` forwarding every
  *           connection to the bind-mounted host unix socket (`socketPath`),
@@ -17,18 +16,18 @@
  *   2. `proxyEnv` — the env addition pointing the child's standard TCP-proxy
  *      client (curl / node-undici / claude) at the in-jail relay:
  *      `HTTPS_PROXY=HTTP_PROXY=http://127.0.0.1:<relayPort>`. No client needs
- *      native proxy-over-unix support; the relay bridges TCP->unix (118 resolved
- *      "HTTPS_PROXY-TCP vs unix-socket: use BOTH, bridged by the relay").
+ *      native proxy-over-unix support; the relay bridges TCP->unix (both the
+ *      TCP-proxy env and the unix socket are used, bridged by the relay).
  *   3. `socketPath` — echoed back so the caller feeds it to `buildScopeArgs`'
- *      `relaySocketPath` (122-03) for the `--bind <socketPath> <socketPath>`
+ *      `relaySocketPath` for the `--bind <socketPath> <socketPath>`
  *      bind-mount; the proxy listens on, and the relay bridges to, the SAME path.
  *
  * This is a PURE function (no spawn, no netns, no fs) — so the construction is
  * fully macOS-testable. The LIVE relay-as-init (the real `lo`-up + bridge +
  * uid-drop + exec inside `--unshare-net`) is NOT macOS-testable; its enforcement
- * is the VPS security suite (122-07) + the live `bwrap-egress-integration.test.ts`.
+ * is the VPS security suite + the live `bwrap-egress-integration.test.ts`.
  *
- * BINDING CONSTRAINT (122-RESEARCH): this worker-side module imports the
+ * BINDING CONSTRAINT: this worker-side module imports the
  * {@link EgressControlPort} as a TYPE from @comis/core and NEVER value-imports
  * @comis/infra (the architecture test names this file; a focused source grep in
  * the neighbor test is the second guard). The concrete proxy (the port impl) is
@@ -62,8 +61,8 @@ import type { EgressControlPort } from "@comis/core";
  * but src-test-broken (it pointed at the absent `src` `.js`, and the VPS scope-matrix
  * egress cell died with `Cannot find module`). The existsSync-then-src->dist map below
  * is honest: BOTH branches resolve to the real compiled relay-init.js the launcher
- * actually spawns. This replaced the 122-05 sentinel name (`comis-egress-relay-init`)
- * which pointed at a binary that was never built — the SEC-07 listed-hosts gap.
+ * actually spawns. This replaced the earlier sentinel name (`comis-egress-relay-init`)
+ * which pointed at a binary that was never built — the listed-hosts gap.
  */
 function resolveRelayInitScript(): URL {
   // The direct sibling: correct in dist (production) or anywhere the built `.js`
@@ -109,7 +108,7 @@ export interface EgressRelayLaunchInput {
   /**
    * The net-new uid/gid the relay-init drops to BEFORE exec'ing the child. For
    * `listed-hosts` the init (not bwrap's `--uid`) owns the uid drop, because it must
-   * run as userns-root to bring `lo` up first (118 §3 composition). Absent ⇒ no
+   * run as userns-root to bring `lo` up first (the relay-as-init composition). Absent ⇒ no
    * drop (the init exec's the child with whatever uid the jail already holds).
    */
   dedicatedUid?: { uid: number; gid: number };
@@ -136,7 +135,7 @@ export interface EgressRelayLaunch {
    * The resolved on-disk relay-init script the in-jail `node` execs (== `relayArgv[1]`).
    * The caller feeds it to `buildScopeArgs`' `relayInitScriptPath` for the
    * `--ro-bind <path> <path>` so in-jail node can READ its own init script (the file
-   * exists on the HOST but is NOT bound by default — SEC-07; the VPS scope-matrix
+   * exists on the HOST but is NOT bound by default; the VPS scope-matrix
    * egress cell died with `Cannot find module …/egress-relay-init.js` without it).
    * Returned from the SAME source as `relayArgv[1]` so the bound path and the exec
    * path can never drift.
@@ -146,7 +145,7 @@ export interface EgressRelayLaunch {
 
 /**
  * Build the relay-as-init launch pieces for one `listed-hosts` session. Pure: no
- * spawn, no netns, no fs — the worker (122-06) executes the result; this only
+ * spawn, no netns, no fs — the worker executes the result; this only
  * constructs it (macOS-testable). See the module doc for the relay-as-init order.
  */
 export function buildEgressRelayLaunch(input: EgressRelayLaunchInput): EgressRelayLaunch {
@@ -156,7 +155,7 @@ export function buildEgressRelayLaunch(input: EgressRelayLaunchInput): EgressRel
   // process.execPath) so it works under the jail's `/usr` ro-bind; the trailing
   // `--` separates the init's flags from the child argv the worker appends after.
   // The script path is ALSO surfaced as `relayInitScriptPath` so the caller can
-  // `--ro-bind` it (in-jail node must READ this exact file — SEC-07).
+  // `--ro-bind` it (in-jail node must READ this exact file).
   const relayInitScriptPath = fileURLToPath(RELAY_INIT_SCRIPT_URL);
   const relayArgv: string[] = [
     process.execPath,

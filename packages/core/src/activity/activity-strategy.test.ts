@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * selectStrategy routing tests (STRAT-03).
+ * selectStrategy routing tests.
  *
  * Capability fixtures are the ground-truth feature/limits shapes declared by
  * the 10 in-tree `*-plugin.ts` files (spec §7.1 capability matrix) — verified

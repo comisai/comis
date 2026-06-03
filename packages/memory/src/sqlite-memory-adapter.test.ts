@@ -193,7 +193,7 @@ describe("SqliteMemoryAdapter", () => {
       expect(row.memory_type).toBe("semantic");
     });
 
-    it("persists a non-semantic memoryType carried on the entry (LANES-03)", async () => {
+    it("persists a non-semantic memoryType carried on the entry", async () => {
       // The classified memoryType arrives as a first-class MemoryEntry field — the
       // adapter must write it verbatim, NOT collapse it to the 'semantic' default.
       const entry = makeEntry({ memoryType: "episodic" });
@@ -846,7 +846,7 @@ describe("SqliteMemoryAdapter", () => {
   });
 });
 
-// ── searchLanes — the un-fused FTS/vector split (LANES-01) ────────────────
+// ── searchLanes — the un-fused FTS/vector split ────────────────
 //
 // searchLanes surfaces the FTS-ranked and vector-ranked candidate lists
 // SEPARATELY (NO computeRRF inside the adapter, NO minScore — both move to the
@@ -877,7 +877,7 @@ function fuseLanesParity(
     .map(([id]) => id);
 }
 
-describe("SqliteMemoryAdapter.searchLanes (LANES-01 un-fused split)", () => {
+describe("SqliteMemoryAdapter.searchLanes (un-fused split)", () => {
   let adapter: SqliteMemoryAdapter;
 
   afterEach(() => {
@@ -1066,17 +1066,17 @@ describe("SqliteMemoryAdapter.searchLanes (LANES-01 un-fused split)", () => {
   });
 });
 
-// ── occurredAtRange filter threaded into search + searchLanes (IQ-03b) ────
+// ── occurredAtRange filter threaded into search + searchLanes ────
 //
 // The MemorySearchOptions.occurredAtRange field ANDs an `occurred_at BETWEEN`
 // onto the ALREADY-scoped query on BOTH the search() and searchLanes() paths
 // (recall prefers searchLanes when present, falls back to search — missing one
 // is a silent no-op on that path; the MEMORY.md mcp_field_plumbing lesson).
-// T-102-03-02: the range can only NARROW — a multi-agent range query returns
+// The range can only NARROW — a multi-agent range query returns
 // ONLY the caller's agent's in-window rows. RED on pre-patch (the range is
 // ignored on both paths).
 
-describe("SqliteMemoryAdapter occurredAtRange (IQ-03b) — narrows on search + searchLanes", () => {
+describe("SqliteMemoryAdapter occurredAtRange — narrows on search + searchLanes", () => {
   let adapter: SqliteMemoryAdapter;
   const DAY = 86_400_000;
   const T0 = 100 * DAY;
@@ -1156,7 +1156,7 @@ describe("SqliteMemoryAdapter occurredAtRange (IQ-03b) — narrows on search + s
     }
   });
 
-  it("T-102-03-02: range + agent scope returns ONLY the caller's agent's in-window rows (never widens scope)", async () => {
+  it("range + agent scope returns ONLY the caller's agent's in-window rows (never widens scope)", async () => {
     // Two agents, both with an in-window row at the SAME occurred_at + same text.
     await adapter.store(makeEntry({ id: "mine", agentId: "agent_x", content: "dentist appointment", occurredAt: T0 + 1 * DAY }));
     await adapter.store(makeEntry({ id: "foreign", agentId: "agent_y", content: "dentist appointment", occurredAt: T0 + 1 * DAY }));

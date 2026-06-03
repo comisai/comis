@@ -79,7 +79,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
   async store(entry: MemoryEntry): Promise<Result<MemoryEntry, Error>> {
     const startMs = systemNowMs();
     try {
-      // memoryType is a first-class optional MemoryEntry field (P95/LANES-03). The
+      // memoryType is a first-class optional MemoryEntry field. The
       // `?? "semantic"` fallback is belt-and-braces: an omitting write still satisfies
       // the column's NOT NULL DEFAULT 'semantic' CHECK.
       const memoryType = entry.memoryType ?? "semantic";
@@ -196,7 +196,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
         trustLevel: options?.trustLevel,
         tenantId,
         agentId: options?.agentId,
-        // IQ-03b: forward the NL temporal range into the post-fusion WHERE
+        // Forward the NL temporal range into the post-fusion WHERE
         // (occurred_at BETWEEN ? AND ?, ANDed onto the scope — never widens).
         ...(options?.occurredAtRange ? { occurredAtRange: options.occurredAtRange } : {}),
       }, this.vecAvailable);
@@ -263,7 +263,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
     }
   }
 
-  // ── searchLanes (LANES-01: the un-fused FTS/vector split) ──────────
+  // ── searchLanes (the un-fused FTS/vector split) ──────────
 
   /**
    * Resolve the query embedding exactly as {@link search} does for a string
@@ -321,7 +321,7 @@ export class SqliteMemoryAdapter implements MemoryPort {
       if (row.expires_at !== null && row.expires_at <= now) continue;
       if (options?.agentId && row.agent_id !== options.agentId) continue;
       if (options?.trustLevel && row.trust_level !== options.trustLevel) continue;
-      // IQ-03b: the NL temporal range ANDs onto the ALREADY-(tenant, agent)-scoped
+      // The NL temporal range ANDs onto the ALREADY-(tenant, agent)-scoped
       // per-id read above — it can only NARROW (never widens scope). A NULL
       // occurred_at (no event time) fails the range and drops out, matching the
       // `occurred_at BETWEEN ? AND ?` semantics on the fused search() path. (The

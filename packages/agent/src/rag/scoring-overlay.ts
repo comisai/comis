@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The deterministic apply overlay (LEARN-03 / RESEARCH RQ5, Pattern 1): merges a
+ * The deterministic apply overlay (RESEARCH RQ5, Pattern 1): merges a
  * learned 4-tuple onto the static `ScoringAlphas` at the single recall apply site
  * (`prompt-assembly.ts` — the `scoring:` arg into `createMemoryRecall`).
  *
@@ -13,7 +13,7 @@
  *     The learned 4-tuple has no such field BY TYPE ({@link TunedAlphaVector}, belt #1),
  *     and this explicit `configScoring`-sourced read is belt #2 — the learned vector
  *     can never raise the trust weight, even if a future type-widened caller smuggles
- *     one onto the tuned object. Per LEARN-03, the trust weight from config is
+ *     one onto the tuned object. The trust weight from config is
  *     NON-NEGOTIABLE.
  *
  * Default-OFF byte-identity (RESEARCH Pitfall 3): when `tuned` is absent (tuning off,
@@ -49,7 +49,7 @@ export function buildScoringAlphas(
     // belt #2 (the OD2 ship-gate): the trust weight is read EXPLICITLY from config,
     // NEVER from `tuned` — the learned vector cannot move trust.
     trustAlpha: configScoring.trustAlpha,
-    // FORGET-01: the FadeMem decay weight is likewise config-sourced, NEVER tuned — the
+    // The FadeMem decay weight is likewise config-sourced, NEVER tuned — the
     // learned 4-tuple has no such dimension (TunedAlphaVector, belt #1) and the bandit
     // never reads/writes it (online-tuning-job's baseline is the four non-trust weights).
     // So the overlay passes it through from config unchanged (a stale memory's decay is an

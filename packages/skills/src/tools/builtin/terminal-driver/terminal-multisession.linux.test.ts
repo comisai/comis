@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TR-09 (Linux/VPS) — the OPTIONAL live multi-session isolation proof. Spawns 2-3
+ * (Linux/VPS) — the OPTIONAL live multi-session isolation proof. Spawns 2-3
  * REAL jailed bash sessions under ONE owner, drives a DISTINCT marker into each via
  * the `send_text` TOOL path, settles, then reads each interleaved and asserts every
  * session read returns ONLY its OWN marker — no cross-bleed (the live analog of the
- * in-process Plan-03 isolation test).
+ * in-process isolation test).
  *
  * `describe.skipIf(process.platform !== "linux")` so it COMPILES + SKIPS CLEAN on the
- * macOS author box (the established 119-122 `.linux.test.ts` pattern) and runs live on
+ * macOS author box (the established `.linux.test.ts` pattern) and runs live on
  * `comisvps` (where forkpty + bwrap work). This is the OPTIONAL live corroboration:
- * the BINDING TR-09 proof is the in-process 3-session isolation test (Plan 03, via the
- * fake worker keying each read reply to its sessionId). This file is NOT a phase gate —
+ * the BINDING proof is the in-process 3-session isolation test (via the
+ * fake worker keying each read reply to its sessionId). This file is NOT a required gate —
  * it is VPS-only and must not fail the macOS suite.
  *
- * The send_text path now runs the OPS-03/06 cap check (Plan 05) before forwarding, so
+ * The send_text path now runs the cap check before forwarding, so
  * the toolDeps wire a no-limit SessionCaps (every send is audited but never
  * rejected/evicted) — the isolation, not the caps, is under test here.
  *
@@ -45,12 +45,12 @@ function isLinux(): boolean {
 
 const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
-/** Resolve the daemon's bwrap path once (the SEC-16 seam the registry threads to the worker). */
+/** Resolve the daemon's bwrap path once (the seam the registry threads to the worker). */
 function resolveBwrapPath(): string {
   return execFileSync("which", ["bwrap"], { encoding: "utf8" }).trim();
 }
 
-/** The operator-declared least-privilege scope (SEC-02/03) — sourced from the entry, never params. */
+/** The operator-declared least-privilege scope — sourced from the entry, never params. */
 const WORKSPACE_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
@@ -116,14 +116,14 @@ function toolDeps(registry: ReturnType<typeof createTerminalSessionRegistry>, en
   };
 }
 
-describe.skipIf(!isLinux())("TR-09 (Linux) — live multi-session isolation (each session reads ONLY its own bytes)", () => {
+describe.skipIf(!isLinux())("(Linux) — live multi-session isolation (each session reads ONLY its own bytes)", () => {
   it("spawns 3 real jailed sessions, sends a distinct marker into each, and each read returns only its own marker (no cross-bleed)", async () => {
     const shell = realShell();
     const registry = createTerminalSessionRegistry({
       spawnWorker: makeBridgedPtyWorkerChild,
       logger: noopLogger,
       nowMs: () => Date.now(),
-      // 122-06: the registry threads bwrapPath onto the create frame so the worker jails bash.
+      // The registry threads bwrapPath onto the create frame so the worker jails bash.
       bwrapPath: resolveBwrapPath(),
     });
     // An interactive bash (no -c) so each session is a live, writable shell we can type into.
@@ -167,9 +167,9 @@ describe.skipIf(!isLinux())("TR-09 (Linux) — live multi-session isolation (eac
         if (screen.includes(marker(i))) break;
         await new Promise((r) => setTimeout(r, 25));
       }
-      // This read goes through the TOOL layer → SEC-15 applies (redact + wrap as
-      // untrusted external content); assert the wrap is present AND the OWN marker is
-      // framed inside it (we do NOT weaken SEC-15).
+      // This read goes through the TOOL layer → the redact + wrap as untrusted
+      // external content applies; assert the wrap is present AND the OWN marker is
+      // framed inside it (we do NOT weaken that wrapping).
       expect(screen).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
       expect(screen).toContain(marker(i)); // its OWN marker rendered
       // … and NONE of the OTHER sessions' markers leaked onto this session's screen.

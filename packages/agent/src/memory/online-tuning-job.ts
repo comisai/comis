@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The OFFLINE tuned-alpha bandit job (Phase 111 — LEARN-03, Track H2).
+ * The OFFLINE tuned-alpha bandit job.
  *
  * The WRITE path of learning-to-rank. Mirrors {@link runUserRepresentationBuild}
  * STRUCTURALLY (a background cron seam OFF the recall hot path: default-OFF gate →
@@ -8,33 +8,33 @@
  * but DELETES the offline LLM seam: the bandit is DETERMINISTIC and KEYLESS. There
  * is NO injected model-call seam, NO operation-model resolution, NO provider API
  * key — the bandit reads the already-accrued FEED signal, runs the pure clamped
- * {@link computeTunedAlphas} step (111-01), and upserts a four-alpha vector. So this
- * job can NEVER make a network/model call or incur model cost (T-111-11).
+ * {@link computeTunedAlphas} step, and upserts a four-alpha vector. So this job can
+ * NEVER make a network/model call or incur model cost.
  *
  * Security + correctness posture:
- * - DEFAULT-OFF gate (T-111-11): with `config.enabled === false` nothing is read or
- *   written and a counts-only event is emitted — byte-identical to today.
+ * - DEFAULT-OFF gate: with `config.enabled === false` nothing is read or written and
+ *   a counts-only event is emitted — byte-identical to today.
  * - TRUST-FREEZE (the OD2 ship-gate, belt #4 at the job layer): the bandit reads +
  *   writes a {@link TunedAlphaVector}, which structurally has no trust field, and the
  *   {@link FeedAggregate} it builds has no trust gradient — the bandit cannot move the
- *   trust weight (it stays config-sourced at the apply site, 111-03). The literal
- *   trust-weight field name is deliberately never written here (the grep-0 belt, the
- *   111-01/02 precedent — JSDoc paraphrases it as "the fifth scoring weight").
+ *   trust weight (it stays config-sourced at the apply site). The literal
+ *   trust-weight field name is deliberately never written here (the grep-0 belt —
+ *   JSDoc paraphrases it as "the fifth scoring weight").
  * - CLAMP (Pitfall 2): the pure {@link computeTunedAlphas} clamps every output to
  *   `[0, 1]`, and the gradients are derived from the BOUNDED used-RATE in `[0, 1]`
  *   (NOT raw counts — Pitfall 2), so a pathological FEED signal can neither invert a
  *   boost (negative weight) nor run away (>1, overturning trust-first).
- * - NON-FATAL (T-111-13): a FEED-read failure OR a store-upsert rejection is a WARN +
+ * - NON-FATAL: a FEED-read failure OR a store-upsert rejection is a WARN +
  *   `ok({ updated: false })` — the bandit must never break a run. Idempotent: the
- *   upsert is keyed per `(tenant, agent)` (one row per scope, 111-02).
- * - OBSERVABILITY (T-111-14): emits a MINIMAL counts-only `memory:online_tuning_applied`
+ *   upsert is keyed per `(tenant, agent)` (one row per scope).
+ * - OBSERVABILITY: emits a MINIMAL counts-only `memory:online_tuning_applied`
  *   event + counts-only logs — NEVER the FEED content or the alpha VALUES (AGENTS.md
  *   §2.7 + the binding constraint "counts/ids-only logging, NEVER the FEED content").
  *
  * The agent consumes the store as a port TYPE from `@comis/core` (the agent↛memory
- * cut); the daemon (111-04 wiring) injects the concrete adapter + scopes the
- * `readUsefulness` seam. NO memory-package import here, NO wall-clock global (the
- * injected `clock`), NO env read.
+ * cut); the daemon injects the concrete adapter + scopes the `readUsefulness` seam.
+ * NO memory-package import here, NO wall-clock global (the injected `clock`), NO env
+ * read.
  *
  * @module
  */
@@ -53,7 +53,7 @@ import { computeTunedAlphas, type FeedAggregate } from "../rag/tuned-alpha-updat
  * bandit starts from when no tuned row exists yet for this scope — so the FIRST run
  * nudges away from the operator's configured weights, not from zero. The fifth
  * (trust) scoring weight is deliberately ABSENT: the bandit never reads or writes it
- * (the OD2 ship-gate — trust stays config-sourced at the apply site, 111-03).
+ * (the OD2 ship-gate — trust stays config-sourced at the apply site).
  */
 export interface OnlineTuningBaselineAlphas {
   recencyAlpha: number;
@@ -203,8 +203,8 @@ export async function runOnlineTuning(
   let signalCount = 0;
 
   const emit = (): void => {
-    // Counts-only (T-111-14): booleans/counts ONLY — NEVER the alpha values or the
-    // FEED content (the binding constraint). Mirrors the userrep/reasoning jobs.
+    // Counts-only: booleans/counts ONLY — NEVER the alpha values or the FEED content
+    // (the binding constraint). Mirrors the userrep/reasoning jobs.
     eventBus?.emit("memory:online_tuning_applied", {
       agentId,
       updated,
@@ -217,7 +217,7 @@ export async function runOnlineTuning(
 
   const stats = (): MemoryOnlineTuningStats => ({ updated, clampHits, signalCount });
 
-  // T-111-11: the DEFAULT-OFF gate. No read, no write (the bandit is keyless anyway).
+  // The DEFAULT-OFF gate. No read, no write (the bandit is keyless anyway).
   if (!config.enabled) {
     logger.debug(
       { agentId, step: "online-tuning" as const },
@@ -227,8 +227,8 @@ export async function runOnlineTuning(
     return ok(stats());
   }
 
-  // 1. Read the accrued FEED signal. NON-FATAL (T-111-13): a read failure must never
-  //    break a run — WARN + return ok with nothing written (the bandit is a background
+  // 1. Read the accrued FEED signal. NON-FATAL: a read failure must never break a
+  //    run — WARN + return ok with nothing written (the bandit is a background
   //    optimizer, not a correctness dependency). This is the delta vs the userrep job
   //    (whose source read is FATAL): a missing FEED signal simply means "no nudge".
   const feedResult = await fromPromise(deps.readUsefulness());
@@ -265,15 +265,15 @@ export async function runOnlineTuning(
       : baseline;
 
   // 3. Aggregate the FEED Map into the bounded gradient (the used-RATE, NOT raw
-  //    counts — Pitfall 2) and run the PURE clamped step (111-01). A neutral/empty
-  //    signal is a no-op (all-zero aggregate → next === current).
+  //    counts — Pitfall 2) and run the PURE clamped step. A neutral/empty signal is a
+  //    no-op (all-zero aggregate → next === current).
   const aggregate = aggregateFeed(feed);
   const next = computeTunedAlphas(current, aggregate);
   clampHits = countClampHits(next);
 
-  // 4. Persist via the port. NON-FATAL (T-111-13): a rejecting/erroring store → WARN
-  //    + return ok (the run continues; the ranker keeps its prior weights). Idempotent:
-  //    one row per (tenant, agent) — re-running upsert-replaces in place (111-02).
+  // 4. Persist via the port. NON-FATAL: a rejecting/erroring store → WARN + return ok
+  //    (the run continues; the ranker keeps its prior weights). Idempotent: one row
+  //    per (tenant, agent) — re-running upsert-replaces in place.
   const upserted = await fromPromise(
     tunedAlphaStore.upsert(next, { tenantId, agentId, now: clock.now() }),
   );

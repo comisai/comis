@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * IRC LinePerEvent activity renderer (CHAN-09; §7.2 / §18.3 row "LinePerEvent").
+ * IRC LinePerEvent activity renderer (§7.2 / §18.3 row "LinePerEvent").
  * IRC is text-only — no in-place edit, no delete, a hard per-line character cap
- * (§7.1). Three parts, copying the Phase-72 non-EditPlace
+ * (§7.1). Three parts, copying the non-EditPlace
  * `make<Ch>RenderActions` / `classify<Ch>Error` / `create<Ch>ActivityRenderer`
  * shape (signal-activity.ts / whatsapp-activity.ts are the structural analogs —
  * `buttons:"none"`, no rich effect, thin wiring):
@@ -12,7 +12,7 @@
  *      with NO structured numeric code, so there is no reliable structural signal
  *      to disambiguate a richer variant; the classifier DEFAULTS to
  *      `{kind:"internal", cause:e}` (KISS — Pitfall 4; no invented rich
- *      classifier). SEC-05/§19.3: the wrapped error is read for NOTHING
+ *      classifier). Per §19.3, the wrapped error is read for NOTHING
  *      user-facing — it selects the variant only and is NEVER rendered or logged
  *      as activity text. The S4 fixture proves the failure line is
  *      `[ERR] {errorKind}` (from the strategy), not the platform error body.
@@ -25,12 +25,12 @@
  *      `adapter.editMessage!` — AGENTS.md §2.8). All paths return `Result`;
  *      nothing throws across the boundary.
  *
- *   3. `createIrcActivityRenderer` — wires the Phase-70
+ *   3. `createIrcActivityRenderer` — wires the
  *      {@link createLinePerEventRenderer} (one capped line per
  *      `frame.changeSet.added` event; a closing `✓ done · N steps · Xs` on a
  *      non-trivial success — elapsed via the injected clock — or `[ERR] {errorKind}`
- *      on failure; the success/failure glyph follows the resolved theme `markers`
- *      (UX-01), omitting them yields those defaults). The per-line character cap
+ *      on failure; the success/failure glyph follows the resolved theme `markers`,
+ *      omitting them yields those defaults). The per-line character cap
  *      + ellipsis truncation and the
  *      closing-summary logic live IN the strategy body; this file re-implements
  *      none of it. The `↳ ` subagent depth prefix is DATA
@@ -65,7 +65,7 @@ import {
  * `new Error("Failed to send IRC message: …")` with no structured numeric code to
  * read, so this DEFAULTS to `internal` carrying the cause. The error is consulted
  * for NOTHING that reaches the user — it selects the variant only and is never
- * rendered or logged as activity text (SEC-05/§19.3, T-72-03-01).
+ * rendered or logged as activity text (§19.3).
  */
 export function classifyIrcError(e: unknown): ActivityRenderError {
   // IRC offers no structured code for send failures; there is no reliable
@@ -116,11 +116,11 @@ const SUBAGENT_DEPTH_PREFIX = "↳ ";
 
 /**
  * Build one IRC line for an event, the {@link createLinePerEventRenderer} `lineFor`
- * override (APV-02 / APV-10, §6.4.6 / §18.3). IRC has no button surface, so a
+ * override (§6.4.6 / §18.3). IRC has no button surface, so a
  * `kind:"approval"` event renders the plain-text prompt
  * `buildApprovalText(event, { includeShortId })` — the shortId form only when MORE
  * THAN ONE approval is pending in the same frame (so the user's reply, parsed by
- * the router's plain-text branch in 73-04, is unambiguous; T-73-27). A
+ * the router's plain-text branch, is unambiguous). A
  * `kind:"subagent"` event renders with a `↳ ` depth prefix via `subagentLine`.
  * Everything else keeps the redacted `eventLabel`. No signing — HMAC is skipped for
  * plaintext (§6.4.6); the router scopes replies to `pendingForSession`.
@@ -141,15 +141,14 @@ export function ircLineFor(
 }
 
 /**
- * Create the IRC LinePerEvent activity renderer — wires the Phase-70
+ * Create the IRC LinePerEvent activity renderer — wires the
  * {@link createLinePerEventRenderer} with the per-channel render-actions adapter.
  * The daemon composition root constructs this with its runtime `ClockPort` and the
- * channel id (WIRE-02); the `{clock}` feeds ONLY the elapsed-time suffix on the
+ * channel id; the `{clock}` feeds ONLY the elapsed-time suffix on the
  * success closing line — LinePerEvent schedules nothing, so there is NO timer.
- * This is the signature the 72-05 wiring constructs.
  *
- * The `lineFor` override paints the plain-text approval prompt (APV-10) and the
- * `↳ ` subagent inline (APV-03) — IRC's button-less, thread-less form.
+ * The `lineFor` override paints the plain-text approval prompt and the
+ * `↳ ` subagent inline — IRC's button-less, thread-less form.
  */
 export function createIrcActivityRenderer(
   adapter: ChannelPort,
@@ -159,9 +158,9 @@ export function createIrcActivityRenderer(
   return createLinePerEventRenderer({
     actions: makeIrcRenderActions(adapter, channelId),
     clock: deps.clock,
-    // UX-01: forward the resolved theme markers so the closing success/failure
+    // Forward the resolved theme markers so the closing success/failure
     // glyphs follow the operator theme; omitting them keeps the `✓`/`[ERR]`
-    // defaults byte-identical to the pre-75-06 output.
+    // defaults byte-identical to the prior output.
     markers: deps.markers,
     lineFor: ircLineFor,
   });

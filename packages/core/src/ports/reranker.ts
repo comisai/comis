@@ -11,7 +11,7 @@ import type { Result } from "@comis/shared";
  * the agent-side recall orchestrator consumes this port type from
  * @comis/core (it cannot import @comis/memory).
  *
- * Reranking is opt-in (default-OFF per the Phase-79 latency decision): when
+ * Reranking is opt-in (default-OFF per the latency decision): when
  * disabled or unavailable, recall keeps fusion-ranked order. This port never
  * mints trust — relevance scoring is orthogonal to the trust model.
  */
@@ -24,7 +24,7 @@ export interface RerankerPort {
 
   /**
    * Whether the model loaded. false -> the recall orchestrator keeps
-   * fusion order (graceful degradation, RANK-03).
+   * fusion order (graceful degradation).
    */
   isAvailable(): boolean;
 

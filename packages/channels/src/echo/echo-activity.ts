@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Echo activity renderer (CHAN-01, §7.2 row "TestSink").
+ * Echo activity renderer (§7.2 row "TestSink").
  *
  * Echo is the thinnest channel: its renderer is the canonical-stream recorder.
  * It wraps `createTestSink()` verbatim — every `apply(frame)` is captured with

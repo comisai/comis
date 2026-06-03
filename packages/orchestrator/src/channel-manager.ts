@@ -26,8 +26,8 @@ import type { CommandQueue } from "./queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { InteractiveCallbackRouter } from "./approval/index.js";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
-// WIRE-03: orchestrator imports ONLY the @comis/core activity port + ctx type
-// (never the observability impl — TURN-03 hexagonal boundary). The
+// Orchestrator imports ONLY the @comis/core activity port + ctx type
+// (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
 import type { ActivityStreamPort, TurnActivityContext } from "@comis/core";
 import type { ActivityTurnCoordinator } from "./execution/activity-turn-coordinator.js";
@@ -58,7 +58,7 @@ import type { VoiceResponsePipelineDeps } from "@comis/channels";
 // ChannelManagerDeps to preserve that direction.
 
 /**
- * WR-05: best-effort seed of `msg.metadata.traceId` for downstream consumers.
+ * Best-effort seed of `msg.metadata.traceId` for downstream consumers.
  * Context propagation does NOT depend on this — `runWithContext({ traceId })`
  * already carries the canonical id. The metadata write is a convenience; if the
  * caller passed a FROZEN/non-extensible metadata object, an in-place assignment
@@ -174,13 +174,13 @@ export interface ChannelManagerDeps {
     resolveApproval(requestId: string, approved: boolean, approvedBy: string, reason?: string): void;
     pending(): Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }>;
     getRequest(requestId: string): { requestId: string; sessionKey: string } | undefined;
-    /** Resolve a minted 12-char shortId to its pending request (APV-04). Gate-internal; channels never call this. */
+    /** Resolve a minted 12-char shortId to its pending request. Gate-internal; channels never call this. */
     getRequestByShortId(shortId: string): { requestId: string; shortId: string; sessionKey: string; action: string; toolName: string } | undefined;
     /** Pending requests scoped to a session (the plain-text/button resolution source). */
     pendingForSession(sessionKey: string): Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }>;
   };
   /**
-   * Optional server-side interactive-callback router (73-04). When present, an inbound
+   * Optional server-side interactive-callback router. When present, an inbound
    * button-callback (`metadata.isButtonCallback`) is forwarded to `router.route()` (the
    * verifier) BEFORE slash-command handling. Injected by daemon wiring; when absent,
    * button callbacks fall through to the normal pipeline.
@@ -202,10 +202,10 @@ export interface ChannelManagerDeps {
   >;
   /** Per-agent enforceFinalTag config lookup. */
   getEnforceFinalTag?: (agentId: string) => boolean | undefined;
-  /** WIRE-03: orchestrator-facing redacted activity stream port. Daemon injects
+  /** Orchestrator-facing redacted activity stream port. Daemon injects
    *  setupObservability's `activityStream`. Absent ⇒ activity pipe inert. */
   activityStreamPort?: ActivityStreamPort;
-  /** WIRE-03: per-turn coordinator factory built at the daemon composition root
+  /** Per-turn coordinator factory built at the daemon composition root
    *  (setup-channels-runtime.ts). The pipeline calls it once both this and
    *  `activityStreamPort` are present (execution-pipeline.ts:395). */
   coordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
@@ -227,7 +227,7 @@ export interface ChannelManagerDeps {
    */
   exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
   /**
-   * REQ-13: Credential-to-channelType mapping for targeted reconnect on secret rotation.
+   * Credential-to-channelType mapping for targeted reconnect on secret rotation.
    * Maps credential name (e.g. "TELEGRAM_BOT_TOKEN") to channelType (e.g. "telegram").
    * When present, a secret:changed event with action="upserted" triggers stop()+start()
    * on the adapter whose channelType matches the mapped value.
@@ -238,7 +238,7 @@ export interface ChannelManagerDeps {
    * The daemon's LIVE boot adapter registry (`adaptersByType`, exposed as
    * `DaemonInstance.adapterRegistry`). `injectMessage` consults it as a fallback
    * when an adapter for the requested channelType was not registered in
-   * `startAll()` — adapters added to this map AFTER boot (the WIRE-06 activation
+   * `startAll()` — adapters added to this map AFTER boot (the activation
    * test registers a test Echo adapter post-boot via `adapterRegistry.set`) are
    * reachable for a synthetic inbound turn. Absent ⇒ only `startAll()`-registered
    * adapters drive `injectMessage` (production unaffected — the daemon registers
@@ -308,7 +308,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
     sendOverrides.delete(formatSessionKey(ev.sessionKey));
   });
 
-  // REQ-13: Targeted channel adapter reconnect on credential rotation.
+  // Targeted channel adapter reconnect on credential rotation.
   // When a channel credential is rotated (action="upserted"), stop() the specific
   // adapter and start() it again so it picks up the new credential value from the
   // live secretManager. Only fires when channelCredentialMap is configured.
@@ -324,7 +324,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       // Fire-and-forget with explicit error capture: the event bus is void-typed
       // and does not observe the returned Promise, so an unhandled async throw
       // would produce an unhandled rejection. The void-IIFE ensures rejections
-      // are always caught here (WR-01).
+      // are always caught here.
       void (async () => {
         try {
           await adapter.stop();
@@ -538,7 +538,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
 
     async injectMessage(channelType: string, msg: NormalizedMessage): Promise<void> {
       // Prefer the startAll()-registered adapter; fall back to the daemon's live
-      // boot registry for adapters added after boot (WIRE-06 activation test).
+      // boot registry for adapters added after boot (activation test).
       const adapter = adaptersByType.get(channelType) ?? deps.adapterRegistry?.get(channelType);
       if (!adapter) {
         deps.logger.warn(
@@ -576,7 +576,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       // subscribes with `traceId = formatSessionKey(sessionKey)` (the pipeline fallback)
       // while the agent execution emits activity events under its OWN fresh traceId —
       // the ActivityStream's {agentId,sessionKey,traceId} turn filter never matches and
-      // renderer.apply never fires (WIRE-06). Sharing one traceId across the pipeline +
+      // renderer.apply never fires. Sharing one traceId across the pipeline +
       // the agent run makes the coordinator's subscription observe the turn's tool:*/model:* events.
       const traceId = getMessageTraceId(msg) ?? randomUUID();
       seedMetadataTraceId(msg, traceId);

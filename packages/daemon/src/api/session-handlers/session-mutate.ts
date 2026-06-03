@@ -80,7 +80,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
 
       // session.spawn is async-only. The poll-until-complete branch was
       // deleted (CHANGELOG: callers passing `async: false` are now
-      // treated as async; pre-v2.3 callers must update to expect the
+      // treated as async; such callers must update to expect the
       // async-running response shape immediately). Pre-deletion grep
       // gates verified 0 callers in packages/*/src/ or
       // packages/skills/src/ pass `async: false`.

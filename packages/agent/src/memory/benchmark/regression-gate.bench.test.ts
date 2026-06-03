@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated REGRESSION-GATE harness (Phase 116, GATE-01) — the per-release
+ * Env-gated REGRESSION-GATE harness — the per-release
  * benchmark regression gate, wired for the SCHEDULED CI job
  * (`.github/workflows/bench-regression.yml`) via the `gate` mode of
  * `scripts/bench-memory.sh`.
@@ -18,7 +18,7 @@
  *      This proves the MECHANISM that the costed scheduled run relies on, at $0.
  *      It writes NO success-shaped "the release passed the regression gate" text —
  *      a keyless run has no real current manifest, so it can only prove the
- *      machine, never a pass (the §gate honesty rule, WR-01).
+ *      machine, never a pass (the gate honesty rule).
  *
  *   2. COSTED REAL GATE (only when COMIS_GATE_CURRENT_MANIFEST points at a real
  *      run's manifest): read that manifest's per-category accuracy, compare it to
@@ -85,7 +85,7 @@ function readPerCategory(path: string): Record<string, CategoryAccuracy> {
   return parsed.results?.perCategory ?? {};
 }
 
-describe.skipIf(!COMIS_BENCH)("regression gate vs the committed J1 baseline (GATE-01, keyless-gated)", () => {
+describe.skipIf(!COMIS_BENCH)("regression gate vs the committed J1 baseline (keyless-gated)", () => {
   let baseline: Record<string, CategoryAccuracy> = {};
 
   beforeAll(() => {

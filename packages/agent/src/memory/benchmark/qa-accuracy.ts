@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Overall + per-category QA accuracy aggregator (BENCH-03) -- folds the judged
+ * Overall + per-category QA accuracy aggregator -- folds the judged
  * verdicts into the apples-to-apples accuracy numbers the benchmark report
  * carries.
  *
- * THE LOAD-BEARING DENOMINATOR (PATTERNS Correction #1, verified VERBATIM
+ * THE LOAD-BEARING DENOMINATOR (verified VERBATIM
  * against Hindsight benchmark_runner.py:840-866):
  *
  *     correct    = count of valid verdicts graded correct
@@ -27,7 +27,7 @@
  * PURE MATH (no Result, no throws, no I/O -- AGENTS.md 2.1 carve-out for pure
  * functions; the same carve-out recall-eval.ts uses). No clock, no randomness.
  *
- * SECURITY -- prototype-pollution discipline (T-89-02-04): the `category` strings
+ * SECURITY -- prototype-pollution discipline: the `category` strings
  * originate from the dataset `question_type` field and are UNTRUSTED. The
  * per-category accumulator is a null-prototype map (`Object.create(null)`), so a
  * `__proto__` / `constructor` / `prototype` category key becomes an ordinary own
@@ -102,8 +102,7 @@ function accuracyOf(correct: number, total: number, invalid: number): number {
  * an invalid verdict never counts toward `correct`. Division by zero maps to 0.
  *
  * The per-category map is built on a null-prototype object so an untrusted
- * `__proto__`/`constructor` category key cannot pollute `Object.prototype`
- * (T-89-02-04).
+ * `__proto__`/`constructor` category key cannot pollute `Object.prototype`.
  */
 export function aggregateAccuracy(verdicts: ReadonlyArray<CategorizedVerdict>): AccuracyResult {
   // Null-prototype accumulator: a `__proto__`/`constructor` category key is an

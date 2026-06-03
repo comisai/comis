@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * execution-deliver.test — TURN-05/09/10.
+ * execution-deliver.test.
  *
  * Pins the void→Result migration of `deliverExecutionResponse`:
  *  - a fully-successful multi-chunk delivery returns `ok(FinalDeliveryReceipt)`
@@ -128,10 +128,10 @@ function makeBlockStreamCfg() {
 const NO_TYPING: TypingLifecycleController | undefined = undefined;
 
 // ---------------------------------------------------------------------------
-// TURN-05 — Result receipt + deliveredAtMs ordering
+// Result receipt + deliveredAtMs ordering
 // ---------------------------------------------------------------------------
 
-describe("deliverExecutionResponse — TURN-05 delivery receipt", () => {
+describe("deliverExecutionResponse — delivery receipt", () => {
   it("returns ok(receipt) with deliveredChunks and the real lastChunkMessageId on full success", async () => {
     let counter = 0;
     const send = vi.fn(async () => ok(`msg-${++counter}`));
@@ -245,10 +245,10 @@ describe("deliverExecutionResponse — TURN-05 delivery receipt", () => {
 });
 
 // ---------------------------------------------------------------------------
-// TURN-09 / TURN-10 — visibleReplies enforcement (post-filter, pre-delivery)
+// visibleReplies enforcement (post-filter, pre-delivery)
 // ---------------------------------------------------------------------------
 
-describe("deliverExecutionResponse — TURN-09/10 visibleReplies enforcement", () => {
+describe("deliverExecutionResponse — visibleReplies enforcement", () => {
   it("suppresses final assistant text under group:message_tool when the message tool did NOT act", async () => {
     const send = vi.fn(async () => ok("msg-x"));
     const adapter = makeAdapter(send as unknown as ChannelPort["sendMessage"]);

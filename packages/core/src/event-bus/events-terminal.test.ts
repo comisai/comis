@@ -22,7 +22,7 @@ const here = dirname(fileURLToPath(import.meta.url));
  * source file does not exist and `TerminalEvents` is not in the `EventMap`
  * extends list. The bus-emit cases additionally exercise the payload shape.
  */
-describe("TerminalEvents source contract (Open Q2)", () => {
+describe("TerminalEvents source contract", () => {
   it("events-terminal.ts declares the TerminalEvents interface with both event keys", () => {
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     expect(src, "TerminalEvents interface must exist").toMatch(/export interface TerminalEvents/);
@@ -39,7 +39,7 @@ describe("TerminalEvents source contract (Open Q2)", () => {
   });
 });
 
-describe("TerminalEvents payload structure (Open Q2)", () => {
+describe("TerminalEvents payload structure", () => {
   it("terminal:session_state delivers sessionId, agentId, state, durationMs", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
@@ -62,7 +62,7 @@ describe("TerminalEvents payload structure (Open Q2)", () => {
     expect(received.durationMs).toBe(12);
   });
 
-  it("terminal:spawn_failed delivers sessionId, agentId, hint, errorKind (OPS-07 failure branch)", () => {
+  it("terminal:spawn_failed delivers sessionId, agentId, hint, errorKind (failure branch)", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["terminal:spawn_failed"] = {
@@ -100,23 +100,23 @@ describe("TerminalEvents payload structure (Open Q2)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 123 P4 (SEC-10 / OPS-06) — terminal:keystroke + terminal:session_evicted.
+// terminal:keystroke + terminal:session_evicted.
 //
-// P4 needs two NET-NEW typed bus events so the tool layer (Plan 05) and the
-// reaper (Plan 04) can `emit(...)` them: `TypedEventBus` is a CLOSED union, so
-// an undeclared event fails to typecheck (RESEARCH Pitfall 4). This block is
-// RED on pre-patch code: `events-terminal.ts` declares only session_state +
-// spawn_failed, so the source-introspection cases below (the genuinely-RED
-// layer — esbuild strips bare type annotations) do not find the two new keys.
+// These two NET-NEW typed bus events let the tool layer and the reaper
+// `emit(...)` them: `TypedEventBus` is a CLOSED union, so an undeclared event
+// fails to typecheck. This block is RED on pre-patch code: `events-terminal.ts`
+// declares only session_state + spawn_failed, so the source-introspection cases
+// below (the genuinely-RED layer — esbuild strips bare type annotations) do not
+// find the two new keys.
 //
 // Payloads are redaction-SAFE: counts / ids / a typed reason ONLY — NEVER the
 // raw keystroke text/keys, screen, or command (the REDACTED payload rides the
 // structured LOG, never the bus; the file's own doc-comment forbids it). The
 // keystroke event's exact safe key-set is asserted so a leak field cannot creep
-// in (T-123-01); the eviction reason union is exactly the four EvictReason
-// values (idle | max_sessions | wall_clock | max_interactions).
+// in; the eviction reason union is exactly the four EvictReason values
+// (idle | max_sessions | wall_clock | max_interactions).
 // ---------------------------------------------------------------------------
-describe("TerminalEvents — P4 keystroke + eviction (SEC-10/OPS-06)", () => {
+describe("TerminalEvents — keystroke + eviction", () => {
   it("declares terminal:keystroke + terminal:session_evicted on TerminalEvents (source RED on pre-patch)", () => {
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     expect(src, "terminal:keystroke key must be declared").toMatch(/"terminal:keystroke":/);
@@ -169,7 +169,7 @@ describe("TerminalEvents — P4 keystroke + eviction (SEC-10/OPS-06)", () => {
 
   it("terminal:keystroke carries ONLY the redaction-safe key-set — no text/keys/screen/payload/command", () => {
     // The exact safe key-set. Constructed from EventMap so it tracks the type;
-    // Object.keys proves no raw-payload field rides the bus (T-123-01).
+    // Object.keys proves no raw-payload field rides the bus.
     const payload: EventMap["terminal:keystroke"] = {
       sessionId: "s",
       agentId: "a",

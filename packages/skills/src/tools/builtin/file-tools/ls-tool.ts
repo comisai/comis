@@ -17,8 +17,8 @@ import { safePath, PathTraversalError, registerActivityLabelSpec } from "@comis/
 import { type LazyPaths, resolvePaths } from "../file/safe-path-wrapper.js";
 import { readStringParam, readNumberParam } from "../../../platform-tools/tool-helpers.js";
 
-// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
-// emitted name for builtins (ls-tool.ts:126 → `name: "ls"`).
+// Activity label spec (SPEC §6.1). Descriptor name == emitted name for
+// builtins (ls-tool.ts:126 → `name: "ls"`).
 registerActivityLabelSpec("ls", {
   semanticPhase: "tool",
   label: "listing {path}",

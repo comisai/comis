@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Linux-gated live-host confirmation for the canonical-binary matcher (SEC-14).
+ * Linux-gated live-host confirmation for the canonical-binary matcher.
  *
  * This file MUST compile cleanly on macOS (tsc --noEmit passes). On macOS the
  * entire describe block is silently SKIPPED via `describe.skipIf` — no false
@@ -56,7 +56,7 @@ describe.skipIf(!isLinux)("allowlist matcher live PATH-shadow (Linux only)", () 
     symlinkSync(canonicalBash, link);
 
     const entry: AllowEntryLike = { id: "bash", match: { path: canonicalBash } };
-    // MR-02: matchAllowEntry now returns { entry, requestedReal }.
+    // matchAllowEntry now returns { entry, requestedReal }.
     expect(matchAllowEntry(link, [entry])?.entry.id).toBe("bash");
   });
 });

@@ -13,7 +13,7 @@
  *     (see `presets.ts`).
  *   - Fail-closed defaults throughout: unknown host → undefined; empty `pathPolicy` → deny all.
  *
- * Consumed by the CredentialBroker (Phase 2) on every CONNECT request. No I/O, no logger,
+ * Consumed by the CredentialBroker on every CONNECT request. No I/O, no logger,
  * no timestamps — fully deterministic pure functions.
  *
  * @module
@@ -71,7 +71,7 @@ export function normalizeHost(authority: string): string {
  *
  * Exact: strict equality.
  * Suffix: `hostname.endsWith(suffix) && hostname.length > suffix.length` — the length guard
- *   is mandatory (T-02-01): the bare suffix string itself must never match its own rule.
+ *   is mandatory: the bare suffix string itself must never match its own rule.
  */
 export function hostRuleMatches(rule: HostRule, hostname: string): boolean {
   switch (rule.pattern.kind) {
@@ -83,7 +83,7 @@ export function hostRuleMatches(rule: HostRule, hostname: string): boolean {
         hostname.length > rule.pattern.suffix.length
       );
     default: {
-      // WR-03: exhaustiveness guard — catches new HostPattern kinds at compile time.
+      // Exhaustiveness guard — catches new HostPattern kinds at compile time.
       // Fail-closed at runtime: return false so an unknown pattern never grants access.
       const _exhaustive: never = rule.pattern;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -104,13 +104,13 @@ export function hostRuleMatches(rule: HostRule, hostname: string): boolean {
  *   - prefix glob (/v1/messages*): path must start with the literal prefix /v1/messages
  *   - segment wildcard (/repos/STAR/issues): exactly one path segment in the wildcard slot
  *
- * Query string is stripped before comparison (T-02-05).
+ * Query string is stripped before comparison.
  * Fail-closed: `pathPolicy: []` rejects all paths.
  *
- * WR-01 normalization: `/../` and `/./` segments are resolved before comparison
+ * Path normalization: `/../` and `/./` segments are resolved before comparison
  * via `new URL(path, "https://x").pathname`. Malformed paths that cannot be
  * parsed return false (deny). This is defense-in-depth — the CredentialBroker
- * (Phase 2) MUST also normalize the raw path before calling this function.
+ * MUST also normalize the raw path before calling this function.
  */
 export function pathAllowed(rule: HostRule, path: string): boolean {
   // No policy → allow all paths (open policy when operator has not restricted)
@@ -119,7 +119,7 @@ export function pathAllowed(rule: HostRule, path: string): boolean {
   // Empty policy → deny all (fail-closed)
   if (rule.pathPolicy.length === 0) return false;
 
-  // WR-01: normalize dotdot and dot segments before comparison.
+  // Normalize dotdot and dot segments before comparison.
   // new URL resolves /v1/../admin/secret → /admin/secret so it cannot
   // escape the intended policy scope. Malformed paths deny fail-closed.
   let normalizedPath: string;
@@ -129,7 +129,7 @@ export function pathAllowed(rule: HostRule, path: string): boolean {
     return false;
   }
 
-  // Strip query string before comparison (T-02-05)
+  // Strip query string before comparison
   const cleanPath = normalizedPath.split("?")[0] ?? normalizedPath;
 
   for (const pattern of rule.pathPolicy) {
@@ -181,7 +181,7 @@ function matchPathPattern(pattern: string, cleanPath: string): boolean {
     }
 
     const segment = remainder.slice(0, segmentEnd); // "foo" or "foo/bar"
-    // segment must be non-empty (CR-01: empty segment must not match)
+    // segment must be non-empty (empty segment must not match)
     if (segment.length === 0) return false;
     // segment must not itself contain "/" (exactly one segment in the slot)
     if (segment.includes("/")) return false;
@@ -203,7 +203,7 @@ function matchPathPattern(pattern: string, cleanPath: string): boolean {
  *   1. Path-scoped rules (those with `rule.pathPrefix` defined) are evaluated first.
  *   2. Host-only rules (no `pathPrefix`) are evaluated in config order as fallback.
  *
- * Returns `undefined` when no binding matches — fail-closed (T-02-03, INJECT-03).
+ * Returns `undefined` when no binding matches — fail-closed.
  * `hostname` is assumed already normalised by the caller.
  */
 export function resolveBinding(

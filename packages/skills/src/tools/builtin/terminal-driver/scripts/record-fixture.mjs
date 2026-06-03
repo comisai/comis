@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 //
-// The golden-frame fixture-recording helper (Plan 121-05, TR-02 / §11).
+// The golden-frame fixture-recording helper (§11).
 //
 // Two modes:
 //
 //   1. --synthetic  — write a built-in literal byte string to --out WITHOUT a
 //      PTY. Reproducibly authors the macOS-side synthetic fixtures (the spinner
 //      + the alt-screen stream) so they are regenerable from THIS script, never
-//      hand-typed raw escapes that drift (T-121-13). Runs anywhere (no node-pty).
+//      hand-typed raw escapes that drift. Runs anywhere (no node-pty).
 //
 //   2. (default)    — spawn a real command through node-pty, pipe its raw output
 //      bytes to --out for a bounded --duration, optionally feeding scripted
 //      --keys, then exit. This is the REAL-PTY recording the orchestrator runs on
 //      the VPS `comisvps` to capture `fixtures/vim.stream.txt` (macOS node-pty
-//      cannot posix_spawnp in-harness — the 119/120 precedent). node-pty is loaded
+//      cannot posix_spawnp in-harness). node-pty is loaded
 //      via `createRequire` (the SAME guarded lazy-load the worker uses), so this
 //      script imports it only in PTY mode and never at module top-level.
 //
@@ -98,7 +98,7 @@ function decodeEscapes(s) {
 // The built-in synthetic fixtures (the macOS-authorable byte streams).
 //
 // These are LITERAL byte strings — no PTY, no host content, fully deterministic
-// + human-reviewable in the commit diff (T-121-13 / T-121-14). Each is the exact
+// + human-reviewable in the commit diff. Each is the exact
 // stream the golden-frame test replays.
 // ---------------------------------------------------------------------------
 

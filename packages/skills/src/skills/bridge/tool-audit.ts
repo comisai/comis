@@ -46,8 +46,8 @@ function asErrorKind(value: unknown): ErrorKind | undefined {
  * @param tool - The AgentTool to wrap
  * @param eventBus - The TypedEventBus to emit events on
  * @param agentId - Optional agent ID to include in audit events
- * @param homeDir - Optional operator `$HOME` for SEC-02 `$HOME`→`~` path
- *   compaction of the redacted params (WR-05). When supplied, absolute home
+ * @param homeDir - Optional operator `$HOME` for `$HOME`→`~` path
+ *   compaction of the redacted params. When supplied, absolute home
  *   paths in `tool:executed.params` compact to `~` for all bus consumers; when
  *   omitted, secret/PII/absolute-path masking still applies (only home-prefix
  *   compaction is skipped).
@@ -81,8 +81,8 @@ export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, age
           details.exitCode !== 0
         ) {
           success = false;
-          // A non-zero exit code is NOT a member of the closed ErrorKind union
-          // (T-70-06-03). Map it to "dependency" so downstream closed-union
+          // A non-zero exit code is NOT a member of the closed ErrorKind union.
+          // Map it to "dependency" so downstream closed-union
           // switches + activity classification stay exhaustive. Matches the
           // pi-event-bridge.ts exitCode branch.
           errorKind = "dependency";
@@ -104,11 +104,11 @@ export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, age
         const durationMs = performance.now() - startMs;
         const ctx = tryGetContext();
 
-        // EVT-06 / Pitfall 2 / T-70-06-01: redact params BEFORE the emit
+        // Redact params BEFORE the emit
         // crosses the bus. This closes the documented leak where raw tool
         // params (secrets, message bodies, absolute paths) were forwarded
         // verbatim. `redactValue` is the only sanctioned path. When the caller
-        // threads `homeDir` (WR-05), $HOME paths also compact to `~` for all
+        // threads `homeDir`, $HOME paths also compact to `~` for all
         // consumers; otherwise secret/PII/absolute-path masking still applies.
         const redactedParams = redactValue(params, { homeDir }).value as
           | Record<string, unknown>

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LongMemEval-style labeled eval fixtures (EVAL-01).
+ * LongMemEval-style labeled eval fixtures.
  *
  * A small, hand-labeled multi-session fixture suite used by the deterministic
  * recall@k / MRR scorer in recall-eval.ts. Each {@link EvalQuery} pairs a query
  * with the candidate pool a ranker sees (as if returned by search, carrying a
  * fusion-ish base `score`) and the ground-truth set of relevant memory ids.
  *
- * THE LIFT SIGNAL. The Phase-80 "reranking" group is authored so that for at
+ * THE LIFT SIGNAL. The "reranking" group is authored so that for at
  * least one query the lexically-overlapping-but-IRRELEVANT candidate carries a
  * HIGHER base/fusion score than the truly-relevant candidate. Because the
  * single-lane `fuse()` is order-preserving, fusion-only ranking puts that
@@ -15,10 +15,10 @@
  * headroom a cross-encoder can rescue. That gap is what makes "recall lift"
  * (reranked recall@1 > fusion recall@1) measurable on the labeled set.
  *
- * EXTENSIBILITY (scored per phase). The `group` tag lets later phases APPEND
- * fixtures without restructuring: Phase 81 adds a `"temporal"` group
- * (contradiction/recency), Phase 83 adds an `"entity"` group (association).
- * Each phase filters by its group and re-scores.
+ * EXTENSIBILITY (scored per group). The `group` tag lets later work APPEND
+ * fixtures without restructuring: a `"temporal"` group
+ * (contradiction/recency) and an `"entity"` group (association) join later.
+ * Each consumer filters by its group and re-scores.
  *
  * DETERMINISM (AGENTS.md §2.5). Neutral placeholders only — "user_a",
  * "example.com", stable ids `m1`, `m2`, … No real identities, no network.
@@ -29,21 +29,21 @@
 import type { MemorySearchResult, TrustLevel, UsefulnessSignal } from "@comis/core";
 
 /**
- * Phase group tag for an eval query. Lets subsequent phases append fixtures
+ * Group tag for an eval query. Lets later work append fixtures
  * without restructuring and re-score a single group in isolation.
- * - `"reranking"` — Phase 80 (this plan): cross-encoder rescue of fusion mis-ranks.
- * - `"temporal"`  — Phase 81: temporal-contradiction / recency.
- * - `"entity"`    — Phase 83: entity-association.
- * - `"feedback"`  — Phase 93: recall-utility feedback loop repeat-query lift (FEED-04).
- * - `"proof"`     — Phase 94: fold-into-existing proof accrual (FOLD-03) — a cross-run-corroborated
+ * - `"reranking"` — cross-encoder rescue of fusion mis-ranks.
+ * - `"temporal"`  — temporal-contradiction / recency.
+ * - `"entity"`    — entity-association.
+ * - `"feedback"`  — recall-utility feedback loop repeat-query lift.
+ * - `"proof"`     — fold-into-existing proof accrual — a cross-run-corroborated
  *   observation out-ranks a one-off mention via the LIVE proofAlpha factor.
- * - `"lanes"`     — Phase 95: the un-fused FTS/vector split (LANES-01) — default-weight
+ * - `"lanes"`     — the un-fused FTS/vector split — default-weight
  *   {fts:1.0, vector:1.5} lanes reproduce today's pre-fused order (the parity guard);
  *   a tuned vector weight reorders (proving the weights are live).
- * - `"temporal-spread"` — Phase 95: the temporal-spread lane (LANES-02) — a memory near
+ * - `"temporal-spread"` — the temporal-spread lane — a memory near
  *   the seed's event time, surfaced by the temporal lane as a 4th fusion lane, lifts
  *   recall@1 over a lexical distractor fusion ranked first.
- * - `"causal"` — Phase 96: the causal one-hop lane (EXTRACT-03) — a causally-linked memory,
+ * - `"causal"` — the causal one-hop lane — a causally-linked memory,
  *   surfaced by the causal lane as a 5th fusion lane, lifts recall@1 over an unlinked lexical
  *   distractor fusion ranked first (the multi-hop / consuming-lane proof; the table is never
  *   write-only dead data).
@@ -63,7 +63,7 @@ export type EvalGroup =
  * ground-truth relevant ids it should surface.
  */
 export interface EvalQuery {
-  /** Phase group: "reranking" (P80), "temporal" (P81), "entity" (P83). */
+  /** Group: "reranking", "temporal", "entity", etc. */
   group: EvalGroup;
   /** The user query the ranker is scoring candidates against. */
   query: string;
@@ -109,7 +109,7 @@ function candidate(id: string, content: string, score: number): MemorySearchResu
 /**
  * Like {@link candidate}, but sets an event time (`occurredAt`) for the
  * `"temporal"` group. `occurred_at` is set DIRECTLY here — extraction-populated
- * `occurred_at` is Phase 82, which will replace these hand-authored values as the
+ * `occurred_at` will replace these hand-authored values as the
  * production source (the same way `score.test.ts` injects `occurredAt` to exercise
  * the temporal boost). `occurredAt`/`createdAt` are epoch ms (offsets from
  * {@link EVAL_NOW}).
@@ -133,7 +133,7 @@ function temporalCandidate(
 
 /**
  * Like {@link candidate}, but sets the trust tier EXPLICITLY for the `"temporal"` trust
- * case (CONTRA-02) — `candidate()` hardcodes `trustLevel: "learned"`, so a trust-first
+ * case — `candidate()` hardcodes `trustLevel: "learned"`, so a trust-first
  * fixture needs `system`/`external` entries. Mirrors `score.test.ts`'s opts-driven
  * `makeResult` (a `trustLevel` param). `createdAt` is an optional epoch-ms offset from
  * {@link EVAL_NOW} (the newer claim at EVAL_NOW, the older fact earlier) — set so the case
@@ -158,7 +158,7 @@ function trustCandidate(
 }
 
 /**
- * Like {@link candidate}, but sets the proof-accrual signal for the `"proof"` group (FOLD-03) —
+ * Like {@link candidate}, but sets the proof-accrual signal for the `"proof"` group —
  * `proofCount`/`confidence`/`occurredAt` ride DIRECTLY on the candidate's entry (NO side-map, unlike
  * the feedback group; NO new {@link EvalQuery} field — the cut stays clean). These are exactly the
  * fields the LIVE score.ts proof factor reads (`proofNorm`/`confidenceFactor`/`decayedProof`,
@@ -186,7 +186,7 @@ function proofCandidate(
 }
 
 /**
- * Phase-80 reranking fixtures.
+ * Reranking fixtures.
  *
  * Authored so the fusion-only baseline cannot reach recall@1 = 1.0:
  * - Q1 ("reset password") — the lexically-overlapping distractor "reset the
@@ -239,23 +239,23 @@ export const RECALL_EVAL_FIXTURES: EvalQuery[] = [
 ];
 
 /**
- * Phase-81 temporal fixtures (TEMP-01/TEMP-05) — the temporal-contradiction /
- * recency group scored against the temporal boost (`score()` with `temporalAlpha>0`,
- * plan 02). Kept in a SEPARATE exported array from {@link RECALL_EVAL_FIXTURES} so
- * the Phase-80 reranking-group assertions (which assert an exact `1/3` recall@1 over
+ * Temporal fixtures — the temporal-contradiction /
+ * recency group scored against the temporal boost (`score()` with `temporalAlpha>0`).
+ * Kept in a SEPARATE exported array from {@link RECALL_EVAL_FIXTURES} so
+ * the reranking-group assertions (which assert an exact `1/3` recall@1 over
  * RECALL_EVAL_FIXTURES) are untouched and stay green.
  *
- * LIFT HEADROOM (mirrors the reranking doc-block above; T-81-12). Each query pairs a
+ * LIFT HEADROOM (mirrors the reranking doc-block above). Each query pairs a
  * STALE-but-lexically-strong distractor with a HIGHER fusion `score` but an OLD
  * `occurredAt`, against the RELEVANT current fact with a LOWER fusion `score` but a
  * RECENT `occurredAt` (`EVAL_NOW`). Because single-lane `fuse()` is order-preserving,
  * the fusion-only baseline ranks the stale distractor at rank 1 and MISSES the
  * relevant id at recall@1. The temporal boost (`temporalProx(occurredAt)` favors the
- * recent event) then lifts the relevant memory to rank 1 — the measurable EVAL-01
+ * recent event) then lifts the relevant memory to rank 1 — the measurable
  * gain. A no-op fixture that fusion already nailed would leave nothing to measure, so
  * the lift test also asserts `baseline.recallAt1 < 1`.
  *
- * occurred_at is set DIRECTLY (A6) — extraction-populated occurred_at is Phase 82.
+ * occurred_at is set DIRECTLY — extraction-populated occurred_at lands later.
  * Distractors also carry an OLD `createdAt` so the temporal gain is attributable to
  * the event-time (`occurredAt`) axis, not an incidental `createdAt` recency edge.
  *
@@ -299,10 +299,10 @@ export const TEMPORAL_EVAL_FIXTURES: EvalQuery[] = [
 ];
 
 /**
- * Phase-90 trust-first contradiction fixtures (CONTRA-02) — the `"temporal"` group's TRUST
- * case, scored against the EXISTING trust lever (`score()` with `trustAlpha>0`, plan 01;
+ * Trust-first contradiction fixtures — the `"temporal"` group's TRUST
+ * case, scored against the EXISTING trust lever (`score()` with `trustAlpha>0`;
  * score.ts UNCHANGED). Kept in a SEPARATE exported array from {@link TEMPORAL_EVAL_FIXTURES}
- * (Pitfall 1) so the Phase-81 temporal-group lift/neutral assertions over T1/T2 stay
+ * (Pitfall 1) so the temporal-group lift/neutral assertions over T1/T2 stay
  * byte-untouched and green (the documented zero-regression discipline).
  *
  * THE TRUST LEAPFROG (vs Hindsight's latest-mentioned-wins). Each query pairs a NEWER
@@ -366,26 +366,26 @@ export const TEMPORAL_TRUST_EVAL_FIXTURES: EvalQuery[] = [
 ];
 
 /**
- * Phase-83 entity-association fixtures (ENT-02 / EVAL-01, success criterion 5) — the
+ * Entity-association fixtures — the
  * `"entity"` group scored against the entity lane MODELED as a 2nd fusion lane
  * (recall-eval.test.ts). Kept in a SEPARATE exported array from
- * {@link RECALL_EVAL_FIXTURES} / {@link TEMPORAL_EVAL_FIXTURES} so the Phase-80
- * reranking-group assertions (exact `1/3` recall@1) and the Phase-81 temporal-group
+ * {@link RECALL_EVAL_FIXTURES} / {@link TEMPORAL_EVAL_FIXTURES} so the
+ * reranking-group assertions (exact `1/3` recall@1) and the temporal-group
  * assertions stay untouched and green.
  *
- * LIFT HEADROOM (mirrors the reranking + temporal doc-blocks above; T-83-19). Each
+ * LIFT HEADROOM (mirrors the reranking + temporal doc-blocks above). Each
  * query pairs a lexically-strong DISTRACTOR carrying a HIGHER fusion `score` against the
  * RELEVANT memory — one that shares an entity with the query's subject — carrying a
  * LOWER fusion `score`. Because single-lane `fuse()` is order-preserving, the
  * fusion-only baseline ranks the distractor at rank 1 and MISSES the relevant id at
  * recall@1. Adding the entity lane (the shared-entity neighbour, surfaced FIRST) as a
  * 2nd fusion lane sums the relevant id's two RRF terms over the distractor's single term
- * and lifts it to rank 1 — the measurable EVAL-01 entity figure. A no-op fixture that
+ * and lifts it to rank 1 — the measurable entity figure. A no-op fixture that
  * fusion already nailed would leave nothing to measure, so the lift test also asserts
  * `baseline.recallAt1 < 1`.
  *
- * THE ENTITY-LANE SEAM. This is the FIXTURE model of the live `associativeLane` (Phase
- * 83 plans 02/03): a one-hop entity self-join that surfaces memories sharing an entity
+ * THE ENTITY-LANE SEAM. This is the FIXTURE model of the live `associativeLane`:
+ * a one-hop entity self-join that surfaces memories sharing an entity
  * with the seed, absent from (or under-ranked by) lexical search. {@link entityLane}
  * builds that lane from each fixture's `relevantIds` (the shared-entity neighbour),
  * relevant-first — PURE, no DB, so the lift is reproducible from the fixtures alone.
@@ -433,7 +433,7 @@ export const ENTITY_EVAL_FIXTURES: EvalQuery[] = [
 /**
  * The MODELED entity lane for a fixture — the shared-entity neighbour(s) surfaced
  * FIRST, ready to fuse as a 2nd {@link import("../../rag/fuse.js").FusionLane}. This is
- * the fixture stand-in for the live `associativeLane`'s output (Phase-83 plans 02/03):
+ * the fixture stand-in for the live `associativeLane`'s output:
  * the entity self-join returns the memories that share an entity with the seed. Here
  * those are exactly the fixture's `relevantIds` (the shared-entity memory), placed at
  * lane rank 1 so RRF lifts them over the lexical distractor. PURE — no DB, no I/O.
@@ -444,18 +444,18 @@ export function entityLane(q: EvalQuery): MemorySearchResult[] {
 }
 
 /**
- * `"temporal-spread"` group (Phase 95, LANES-02) scored against the temporal lane MODELED
+ * `"temporal-spread"` group scored against the temporal lane MODELED
  * as a 2nd fusion lane (recall-eval.test.ts). Kept in a SEPARATE exported array from the
  * prior groups so their assertions stay untouched and green.
  *
- * LIFT HEADROOM (mirrors the entity doc-block; T-83-19). Each query pairs a lexically-
+ * LIFT HEADROOM (mirrors the entity doc-block). Each query pairs a lexically-
  * strong DISTRACTOR carrying a HIGHER fusion `score` against the RELEVANT memory — one
  * whose event time is NEAR the seed's `occurredAt` — carrying a LOWER fusion `score`.
  * Single-lane `fuse()` is order-preserving, so the fusion-only baseline ranks the
  * distractor at rank 1 and MISSES the relevant id at recall@1. Adding the temporal lane
  * (the near-seed neighbour, surfaced FIRST) as a 2nd fusion lane sums the relevant id's
  * two RRF terms over the distractor's single term and lifts it to rank 1 — the measurable
- * LANES-02 figure. The lift test also asserts `baseline.recallAt1 < 1` (a no-op fixture
+ * temporal-spread figure. The lift test also asserts `baseline.recallAt1 < 1` (a no-op fixture
  * that fusion already nailed would leave nothing to measure).
  *
  * THE TEMPORAL-LANE SEAM. This is the FIXTURE model of the live `spreadLane` (the windowed
@@ -507,16 +507,16 @@ export function temporalLane(q: EvalQuery): MemorySearchResult[] {
   return q.candidates.filter((c) => relevant.has(c.entry.id));
 }
 
-// Phase-96 causal-lane fixtures (EXTRACT-03) — the `"causal"` group + the modeled `causalLane`
+// The causal-lane fixtures — the `"causal"` group + the modeled `causalLane`
 // helper live in the sibling module recall-eval-fixtures-causal.ts (split out when this file
 // crossed the 800-line cap). They are NOT re-exported here: a re-export would create an
 // intra-package import cycle (the causal module imports the EvalQuery type from this file), so
 // recall-eval.test.ts imports them directly from ./recall-eval-fixtures-causal.js.
 
 /**
- * Phase-93 recall-utility feedback fixtures (FEED-04) — the `"feedback"` group, the
+ * Recall-utility feedback fixtures — the `"feedback"` group, the
  * repeat-query scenario scored against the LIVE usefulness lever (`score()` with
- * `usefulnessAlpha>0` + a `usefulnessById` map, Phase-93 plan 03; the fifth score.ts factor).
+ * `usefulnessAlpha>0` + a `usefulnessById` map; the fifth score.ts factor).
  * Kept in a SEPARATE exported array from {@link RECALL_EVAL_FIXTURES} /
  * {@link TEMPORAL_EVAL_FIXTURES} / {@link ENTITY_EVAL_FIXTURES} so the prior groups' assertions
  * stay untouched and green (the documented zero-regression discipline).
@@ -534,7 +534,7 @@ export function temporalLane(q: EvalQuery): MemorySearchResult[] {
  * The usefulness signal is NOT a field on {@link EvalQuery} — it is supplied to `score()` as a
  * `usefulnessById` map built by {@link usefulnessByIdFor} from {@link FEEDBACK_USEFULNESS}
  * (keeping the EvalQuery cut clean — the read-side feeds the signal via a side map, exactly as
- * the live `memory-recall.ts` does after FEED-02).
+ * the live `memory-recall.ts` does).
  *
  * Worked math (usefulnessFactor = 1 + 0.5·(usedRate − 0.5); all other alphas 0):
  *   distractor base 0.80, usedRate 0/(0+3)=0   → 0.80·(1 + 0.5·(0 − 0.5)) = 0.80·0.75 = 0.60
@@ -583,8 +583,8 @@ export const FEEDBACK_EVAL_FIXTURES: EvalQuery[] = [
 ];
 
 /**
- * The MODELED turn-1 usefulness signal per memory id (FEED-04) — the fixture stand-in for the
- * FEED-02 store's `readUsefulness` output (the per-memory used/ignored counts the daemon
+ * The MODELED turn-1 usefulness signal per memory id — the fixture stand-in for the
+ * usefulness store's `readUsefulness` output (the per-memory used/ignored counts the daemon
  * write-back accrued from `memory:recall_used`). The USED memories carry `usedCount >= 1`
  * (used-rate 1.0 → a boost); the distractors carry `ignoredCount >= 1` with `usedCount 0`
  * (recalled-but-ignored, used-rate 0.0 → a demotion below neutral). Noise ids are absent
@@ -605,7 +605,7 @@ export const FEEDBACK_USEFULNESS: ReadonlyMap<string, UsefulnessSignal> = new Ma
  * returns an EMPTY map, so `score()` over those groups sees `usefulnessNorm(undefined)` → 0.5 →
  * a neutral 1.0 factor (the zero-regression guard). PURE — no DB, no I/O; the lift is
  * reproducible from the fixtures alone. This is the read-side seam: the live `memory-recall.ts`
- * reads the same per-id signal from the FEED-02 store after fuse() and passes it to the scorer.
+ * reads the same per-id signal from the usefulness store after fuse() and passes it to the scorer.
  */
 export function usefulnessByIdFor(q: EvalQuery): ReadonlyMap<string, UsefulnessSignal> {
   const out = new Map<string, UsefulnessSignal>();
@@ -617,14 +617,14 @@ export function usefulnessByIdFor(q: EvalQuery): ReadonlyMap<string, UsefulnessS
 }
 
 /**
- * Phase-94 proof-accrual fixtures (FOLD-03) — the `"proof"` group, the cross-run-corroboration
- * scenario scored against the LIVE proof lever (`score()` with `proofAlpha>0`; the CONS-08 proof
- * log curve × confidence half-life — score.ts:166-198 UNCHANGED, proofAlpha is already live since
- * Phase 84). Kept in a SEPARATE exported array from the prior groups' fixtures so their assertions
+ * Proof-accrual fixtures — the `"proof"` group, the cross-run-corroboration
+ * scenario scored against the LIVE proof lever (`score()` with `proofAlpha>0`; the proof
+ * log curve × confidence half-life — score.ts:166-198 UNCHANGED, proofAlpha is already live).
+ * Kept in a SEPARATE exported array from the prior groups' fixtures so their assertions
  * stay untouched and green (the documented zero-regression discipline, Pitfall 1).
  *
  * THE PROOF-ACCRUAL PAYOFF (HINDSIGHT_VS_COMIS.md N2 PARITY). A fact corroborated across MULTIPLE
- * consolidation runs accrues proof and OUT-RANKS a one-off mention. The fold path (94-01/94-02)
+ * consolidation runs accrues proof and OUT-RANKS a one-off mention. The fold path
  * grows `proof_count` via the UNIONed source-set cardinality + refreshes `occurredAt`/`confidence`;
  * this group proves the read side rewards that accrual. Each query pairs a ONE-OFF mention (a raw,
  * `proofCount` ABSENT → `proofNorm` 0.5 → neutral 1.0 factor) carrying the HIGHER fusion `score`
@@ -700,7 +700,7 @@ export const PROOF_EVAL_FIXTURES: EvalQuery[] = [
 ];
 
 /**
- * Phase-95 lane-split fixtures (LANES-01) — the `"lanes"` group proving the un-fused
+ * Lane-split fixtures — the `"lanes"` group proving the un-fused
  * FTS/vector split. Unlike the prior groups (one candidate pool), each lanes fixture
  * carries the TWO ranked id lists a real `searchLanes` returns: `fts` (BM25 rank order)
  * and `vector` (KNN distance order). The candidate `pool` is the FULL set so the EvalQuery
@@ -708,7 +708,7 @@ export const PROOF_EVAL_FIXTURES: EvalQuery[] = [
  *
  * THE PARITY GUARD (the load-bearing characterization). Today `hybridSearch` pre-fuses fts
  * + vector via `computeRRF(fts, vec, 1.0, 1.5)` (k=60) INSIDE the memory adapter and returns
- * ONE order. After LANES-01 the agent builds two lanes and routes them through `fuse()`
+ * ONE order. After the split the agent builds two lanes and routes them through `fuse()`
  * (k=60, same formula). Because `fuse([{fts,1.0},{vec,1.5}])` is byte-identical math to
  * `computeRRF(fts,vec,1.0,1.5)`, the default-weight fused order MUST equal today's pre-fused
  * order id-for-id — the regression guard. A TUNED fixture (vector weight raised) shows a
@@ -767,7 +767,7 @@ export function vectorLane(q: LanesEvalQuery): MemorySearchResult[] {
  * Today's pre-fused order for a lanes fixture — the reference the default-weight 2-lane
  * `fuse()` MUST reproduce. Re-derives `computeRRF(fts, vec, weightFts, weightVec)` (k=60,
  * hybrid-search.ts:205-246) and the sort: the EXACT math the memory adapter ran before
- * LANES-01. PURE — no DB, no I/O; the parity is reproducible from the fixtures alone.
+ * the lane split. PURE — no DB, no I/O; the parity is reproducible from the fixtures alone.
  */
 export function preFusedOrder(q: LanesEvalQuery, weightFts = 1.0, weightVec = 1.5): string[] {
   const k = 60;

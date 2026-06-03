@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * UNGATED unit tests for the pure gold-map builder (BENCH-01).
+ * UNGATED unit tests for the pure gold-map builder.
  *
  * TIER: default CI / fast unit tier (no model, no store).
  *
- * The Pitfall-6 invariant proven here: a dataset ref (e.g. "s1" or "5") is the
+ * The invariant proven here: a dataset ref (e.g. "s1" or "5") is the
  * side-map KEY only — it is NEVER a value in the resolved gold set. Only the
  * ingested `MemoryEntry.id` (a UUID) ever appears as a Set value. Unresolved
  * refs (no side-map entry) are silently skipped (no `undefined` leaks in).
@@ -66,7 +66,7 @@ describe("buildGoldMap (multiple refs union into one Set)", () => {
   });
 });
 
-describe("buildGoldMap (WR-02/WR-03: session-qualified refs resolve to distinct docs)", () => {
+describe("buildGoldMap (session-qualified refs resolve to distinct docs)", () => {
   it("resolves two questions whose gold refs share a dia index to DISTINCT uuids", () => {
     // With the fixed loader, gold refs carry the session prefix ("D1:1" vs
     // "D2:1") and the side-map is keyed by that SAME full form. The two refs are

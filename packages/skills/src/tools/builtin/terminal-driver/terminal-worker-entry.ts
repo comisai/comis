@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: the worker IS the frame error-mapping boundary — `dispatch` wraps every handler in a try/catch that maps a thrown error to an `ok:false` reply (the registry's HR-03 path). The sole `throw` is `handleCreate` re-raising a SEC-16 fail-closed JailUnavailableError (after dropping the half-registered session) so it reaches that boundary; never an unjailed fallback.
+// @allow-throw: the worker IS the frame error-mapping boundary — `dispatch` wraps every handler in a try/catch that maps a thrown error to an `ok:false` reply (the registry's error-reply path). The sole `throw` is `handleCreate` re-raising a fail-closed JailUnavailableError (after dropping the half-registered session) so it reaches that boundary; never an unjailed fallback.
 /**
  * The supervised Terminal Worker entry (spec §2.1/§2.2/§2.3).
  *
  * The worker is the one net-new process boundary: a daemon-supervised child that
- * owns the PTY (node-pty, optional) + the driven CLI. The registry (119-03) spawns
- * it under the 118-proven `--permission` posture and exchanges length-prefixed JSON
- * frames (119-02) over stdio. A FACTORY (`createTerminalWorker(deps)`) so it is
+ * owns the PTY (node-pty, optional) + the driven CLI. The registry spawns
+ * it under the proven `--permission` posture and exchanges length-prefixed JSON
+ * frames over stdio. A FACTORY (`createTerminalWorker(deps)`) so it is
  * fully unit-testable WITHOUT forking — loader, logger, clock, env snapshot, pipe
- * spawner, durable-fs ops, the @xterm emulator factory, AND the 122-06 scope-jail
+ * spawner, durable-fs ops, the @xterm emulator factory, AND the scope-jail
  * composers are all injected.
  *
  * Architecture invariants enforced here: NO top-level static `node-pty` import
- * (INJECTED `loadPty`; a throw → the PIPE backend, `degraded`, TR-08); NO
+ * (INJECTED `loadPty`; a throw → the PIPE backend, `degraded`); NO
  * module-global mutable state (the session map is CLOSURE-local); NO `@comis/infra`
  * value-import (injected structural logger); NO redundant path resolution (the
  * frame's `{bin,argv}` ride VERBATIM after the bwrap `--`; buildDirectSpawn is the
- * SOLE path-resolution site, M-1); NO raw wall-clock/timer/env globals
- * (injected ports). 122-06: the child runs INSIDE a bwrap jail — both backends
+ * SOLE path-resolution site); NO raw wall-clock/timer/env globals
+ * (injected ports). The child runs INSIDE a bwrap jail — both backends
  * spawn `bwrap [scope args] -- bin argv`; no unjailed path.
  *
  * @module
@@ -89,7 +89,7 @@ import {
 
 /**
  * The per-session emulator scrollback depth (retained rows above the viewport).
- * A sane default here; Plan 04 makes it config/param-driven. Bounds per-session
+ * A sane default here; later made config/param-driven. Bounds per-session
  * emulator memory to `(rows + 1000) × cols` cells.
  */
 const SCROLLBACK_DEFAULT = 1000;
@@ -131,7 +131,7 @@ export interface WorkerFsPort {
 // exercises. The "(a) genuinely conditional" classification, not a cluster-split — one
 // cohesive worker deps bag. 124-05 added writeFd3+stuckMs; 124-08 added loadTmux (OPS-05).
 export interface TerminalWorkerDeps {
-  /** Load node-pty. Default: a guarded `createRequire` load in a try — NEVER a top-level static import (crashes module load on a no-prebuild host); a throw → the pipe backend (TR-08). */
+  /** Load node-pty. Default: a guarded `createRequire` load in a try — NEVER a top-level static import (crashes module load on a no-prebuild host); a throw → the pipe backend. */
   loadPty: () => PtyModuleLike;
   /** 124-08 (OPS-05): the tmux named-session backend loader — the 3rd option behind the same FakePtyLike seam as node-pty | pipe. Used ONLY when a create frame requests `backend:"tmux"`; the daemon binds it (resolved tmux path + has-session probe + runTmux). Absent ⇒ a tmux request falls back to pty/pipe. */
   loadTmux?: TmuxBackendLike;
@@ -149,11 +149,11 @@ export interface TerminalWorkerDeps {
   envSnapshot?: () => NodeJS.ProcessEnv;
   /** Durable-fs ops. Default: `node:fs` sync ops. */
   fs?: WorkerFsPort;
-  /** Schedule a one-shot timer. Default: wraps `systemSetTimeout` (no raw `setTimeout` global) + `.unref()`s the handle so a pending settle timer never holds the loop open (MR-01 port shape). */
+  /** Schedule a one-shot timer. Default: wraps `systemSetTimeout` (no raw `setTimeout` global) + `.unref()`s the handle so a pending settle timer never holds the loop open. */
   setTimer?: (cb: () => void, ms: number) => unknown;
   /** Cancel a `setTimer` handle (default: `systemClearTimeout`). */
   clearTimer?: (handle: unknown) => void;
-  /** Construct a per-session @xterm emulator (P2/121). Default: `createSessionEmulator`. Injectable so a test can assert the wiring (mirrors loadPty/spawnPipe). */
+  /** Construct a per-session @xterm emulator. Default: `createSessionEmulator`. Injectable so a test can assert the wiring (mirrors loadPty/spawnPipe). */
   createEmulator?: (opts: { cols: number; rows: number; scrollback: number }) => SessionEmulator;
   /**
    * Write a length-prefixed frame to fd3 — the no-poll attention push channel (124-05,
@@ -172,13 +172,13 @@ export interface TerminalWorkerDeps {
   // -- 122-06 scope-jail composition (injected; heavy logic is terminal-spawn-plan.ts) --
   /** Scope->bwrap argv composer (122-03). Default: the module export. */
   buildScopeArgs?: typeof defaultBuildScopeArgs;
-  /** Child-env blocklist scrubber (122-02). Default: the module export. */
+  /** Child-env blocklist scrubber. Default: the module export. */
   scrubChildEnv?: typeof defaultScrubChildEnv;
-  /** Egress relay-as-init launch builder (122-05). Default: the module export. */
+  /** Egress relay-as-init launch builder. Default: the module export. */
   buildEgressRelayLaunch?: typeof defaultBuildEgressRelayLaunch;
   /** Daemon-injected no-secret egress port (TYPE from @comis/core, NEVER infra). ONLY `network: listed-hosts` materializes it; untouched for none/full. */
   egressControl?: EgressControlPort;
-  /** Resolved bwrap path (daemon-detected once). NO default — `undefined` ⇒ fail-closed (SEC-16): no spawn, create reply `ok:false`, session `lost`; never an unjailed fallback. */
+  /** Resolved bwrap path (daemon-detected once). NO default — `undefined` ⇒ fail-closed: no spawn, create reply `ok:false`, session `lost`; never an unjailed fallback. */
   bwrapPath?: string;
 }
 
@@ -222,8 +222,8 @@ export interface TerminalWorker {
 /**
  * The production node-pty loader: a guarded `createRequire` load inside a try —
  * NEVER a top-level static import (that crashes module load when the native addon
- * has no prebuild). A throw is caught by the worker → the pipe backend, `degraded`
- * (TR-08). ESM (`"type":"module"`), so `createRequire(import.meta.url)` is the lazy
+ * has no prebuild). A throw is caught by the worker → the pipe backend, `degraded`.
+ * ESM (`"type":"module"`), so `createRequire(import.meta.url)` is the lazy
  * load path; the literal module name appears only here, never a top-level binding.
  */
 function defaultLoadPty(): PtyModuleLike {
@@ -256,7 +256,7 @@ const defaultFsPort: WorkerFsPort = {
 // Bracketed-paste delimiters (spec §5 send_text bracketedPaste)
 // ---------------------------------------------------------------------------
 
-/** DECSET 2004 bracketed-paste START. `bracketedPaste:true` wraps text in START…END so a paste-aware program treats the bytes as DATA, not typed commands (T-120-10). */
+/** DECSET 2004 bracketed-paste START. `bracketedPaste:true` wraps text in START…END so a paste-aware program treats the bytes as DATA, not typed commands. */
 const BRACKETED_PASTE_START = "\x1b[200~";
 /** DECSET 2004 bracketed-paste END. */
 const BRACKETED_PASTE_END = "\x1b[201~";
@@ -268,7 +268,7 @@ const BRACKETED_PASTE_END = "\x1b[201~";
 /**
  * Create a Terminal Worker. The per-session backend + ring map is CLOSURE-local
  * — there is no module-global mutable state. Each `handle(frame)` re-establishes
- * a VALIDATED `traceId` as the ALS context (OPS-07 / LR-01) so worker logs
+ * a VALIDATED `traceId` as the ALS context so worker logs
  * correlate to the originating turn, then dispatches by `frame.method`.
  */
 export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
@@ -282,7 +282,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   const { logger } = deps;
   // The sanctioned timer indirection (no raw setTimeout global). The production
   // default `.unref()`s the handle so a pending in-worker settle timer never
-  // holds the event loop open — mirrors the registry's MR-01 port shape.
+  // holds the event loop open — mirrors the registry's port shape.
   const setTimer =
     deps.setTimer ??
     ((cb: () => void, ms: number): SystemTimeoutHandle => {
@@ -292,7 +292,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     });
   const clearTimer =
     deps.clearTimer ?? ((handle: unknown) => systemClearTimeout(handle as SystemTimeoutHandle));
-  // The per-session @xterm emulator factory (P2/121). Default: the real pure-JS
+  // The per-session @xterm emulator factory. Default: the real pure-JS
   // wrapper; a test injects a recording emulator to assert the wiring.
   const createEmulator = deps.createEmulator ?? createSessionEmulator;
   // 124-05: the no-poll attention plumbing. `writeFd3` is the push-channel sink (a
@@ -326,7 +326,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
   /**
    * Build the {@link SettleDeps} over a session (injected timer ports + ring/liveness
-   * getters + closure-local listener sets) and run the bounded settle (Plan 02) — the
+   * getters + closure-local listener sets) and run the bounded settle — the
    * heart of every act-then-return-SETTLED handler + the explicit `wait`. `params`
    * passes through to {@link runSettle}.
    */
@@ -344,7 +344,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
         state.exitListeners.add(cb);
         return () => state.exitListeners.delete(cb);
       },
-      // TR-14: content below the viewport is NOT settleable — the idle path RE-ARMS
+      // Content below the viewport is NOT settleable — the idle path RE-ARMS
       // (more below ⇒ keep waiting). The gate only SUPPRESSES an idle-settle, never
       // forces one (exit/text/timeout unaffected).
       isSettleable: () => !(state.emu?.hasContentBelowFold() ?? false),
@@ -371,11 +371,11 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
   /**
    * Handle a `create` frame. Materializes the entry's `scope` into a bwrap jail
-   * (122-06) and spawns `bwrap [scope args] -- bin argv` (the worker holds the PTY
+   * and spawns `bwrap [scope args] -- bin argv` (the worker holds the PTY
    * master; bwrap + the driven child run INSIDE). The frame's `{bin,argv}` ride
-   * VERBATIM after the composer's `--` (M-1 — no re-resolution; buildDirectSpawn is
+   * VERBATIM after the composer's `--` (no re-resolution; buildDirectSpawn is
    * the SOLE path-resolution site). BOTH backends are wrapped (no unjailed path).
-   * SEC-16 fail-closed: no `bwrapPath` (or a `listed-hosts` scope with no egress
+   * Fail-closed: no `bwrapPath` (or a `listed-hosts` scope with no egress
    * port) ⇒ {@link planSpawnFromCreateFrame} throws ⇒ dispatch replies `ok:false`
    * (the registry flips the session `lost`) and NOTHING spawns.
    */
@@ -387,12 +387,12 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const argv = Array.isArray(p["argv"]) ? (p["argv"] as string[]) : [];
     const cols = typeof p["cols"] === "number" ? p["cols"] : 80;
     const rows = typeof p["rows"] === "number" ? p["rows"] : 24;
-    // 121-04: the create frame carries the per-session scrollback ceiling (registry-
+    // The create frame carries the per-session scrollback ceiling (registry-
     // sourced from DEFAULT_SCROLLBACK / config, NOT agent input); fall back to
     // SCROLLBACK_DEFAULT only when the frame omits it.
     const scrollback = typeof p["scrollback"] === "number" ? p["scrollback"] : SCROLLBACK_DEFAULT;
-    // 122-06: the operator scope (SEC-02) + its workspace/cwd jail companions (122-01
-    // threaded them onto the frame). Least-privilege default when absent.
+    // The operator scope + its workspace/cwd jail companions (threaded onto the
+    // frame). Least-privilege default when absent.
     const scope = (p["scope"] as TerminalScope | undefined) ?? LEAST_PRIVILEGE_SCOPE;
     const workspace = typeof p["workspace"] === "string" ? p["workspace"] : undefined;
     const cwd = typeof p["cwd"] === "string" ? p["cwd"] : undefined;
@@ -412,8 +412,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     };
 
     // Construct the per-session @xterm emulator BEFORE wiring the backend's onData
-    // (so the first chunk is rendered). Built for BOTH backends; 121-04 threads the
-    // scrollback from the create frame (DEFAULT_SCROLLBACK / config, never agent input).
+    // (so the first chunk is rendered). Built for BOTH backends; the
+    // scrollback is threaded from the create frame (DEFAULT_SCROLLBACK / config, never agent input).
     state.emu = createEmulator({ cols, rows, scrollback });
 
     // 124-05 (TR-11): a per-session transition-only attention emitter over the injected
@@ -427,12 +427,12 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
     // Register the session SYNCHRONOUSLY (before the async spawn-plan await) so a
     // read/resize/wait frame arriving mid-composition finds it; the backend attaches
-    // after the plan (pre-122-06 create was sync — the egress materialize made it async).
+    // after the plan (create was once sync — the egress materialize made it async).
     sessions.set(sessionId, state);
 
-    // 122-06: compose the bwrap-wrapping spawn (host-side jail companions +
+    // Compose the bwrap-wrapping spawn (host-side jail companions +
     // SYSTEM_RO_PATHS filtering live in planSpawnFromCreateFrame so the worker stays
-    // fs/os-read-free). THROWS (SEC-16) when fail-closed (no bwrapPath / no egress
+    // fs/os-read-free). THROWS when fail-closed (no bwrapPath / no egress
     // port) — caught to DROP the session + re-throw so dispatch replies ok:false (the
     // registry flips it lost); NOTHING spawns. The frame's bwrapPath (registry-threaded
     // from the daemon) overrides the factory default.
@@ -480,7 +480,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Handle a `read` frame (H-1). AWAITS the pending emulator write-parse
+   * Handle a `read` frame. AWAITS the pending emulator write-parse
    * ({@link SessionState.writeFlush}, the §2.4 stability flush — resolves on the
    * @xterm parse callback) so the snapshot reflects every emitted byte, then
    * serializes the @xterm grid (real cursor+alt) in the requested format/scrollback.
@@ -501,7 +501,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       rows: state.rows,
       alive: state.alive,
     });
-    // TR-14 screen-diff: compare to the prior snapshot, attach the diff, store the
+    // Screen-diff: compare to the prior snapshot, attach the diff, store the
     // new one as lastSnapshot. Only when an emulator snapshot exists (the diff is
     // over the rendered grid; the degraded ring-fallback path carries no diff).
     if (snap !== undefined) {
@@ -537,10 +537,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Handle a `send_key` frame (TR-04): encode the chord via the named-key grammar
-   * (Plan 01), write the EXACT bytes ONCE. An unknown key makes `encodeKeyChord`
+   * Handle a `send_key` frame: encode the chord via the named-key grammar,
+   * write the EXACT bytes ONCE. An unknown key makes `encodeKeyChord`
    * throw `invalid_value` → dispatch's catch returns ok:false with NOTHING written
-   * (the write is AFTER the encode — the keystroke-injection guard, T-120-01b).
+   * (the write is AFTER the encode — the keystroke-injection guard).
    */
   function handleSendKey(frame: TerminalRequestFrame): SendResult {
     const startedAt = nowMs();
@@ -559,7 +559,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Handle a `send_text` frame (TR-04): write the text (bracketed-paste-wrapped on
+   * Handle a `send_text` frame: write the text (bracketed-paste-wrapped on
    * request), settle, then on `submit` write `\r` as a SEPARATE write AFTER the
    * settle resolves (text → settle → Enter; NEVER coalesced, so the program
    * consumes/echoes the line before it sees Enter). Returns the post-action SETTLED snapshot.
@@ -580,7 +580,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     writeToBackend(state, payload);
 
     // Settle so the program consumed/echoed the text; on submit the settle SEPARATES
-    // the text from the Enter byte (TR-04), else it still settles for the post-action snapshot.
+    // the text from the Enter byte, else it still settles for the post-action snapshot.
     await settleSession(state, { forIdleMs: SETTLE_DEFAULT_IDLE_MS });
     if (submit) {
       writeToBackend(state, "\r");
@@ -595,8 +595,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Handle a `resize` frame (TR-03): resize the PTY winsize (pty backend only), the
-   * @xterm emulator grid (reflows on BOTH backends, P2/121), and record the ring
+   * Handle a `resize` frame: resize the PTY winsize (pty backend only), the
+   * @xterm emulator grid (reflows on BOTH backends), and record the ring
    * geometry. The degraded pipe backend has no winsize but its grid still reflows. Replies `{ ok }`.
    */
   function handleResize(frame: TerminalRequestFrame): ResizeResult {
@@ -618,11 +618,11 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Handle a `wait` frame (TR-05) — the explicit parameterized settle. Runs the
+   * Handle a `wait` frame — the explicit parameterized settle. Runs the
    * bounded {@link runSettle} and replies `{matched,isComplete,reason,screen,cursor}`;
    * an absent session is gone (reason `exit`, not-complete). CRITICAL: `isComplete`
    * passes through from runSettle VERBATIM — `false` on timeout (the worker never
-   * holds the frame open; the P5 attention model resumes the turn), NEVER hard-coded true.
+   * holds the frame open; the attention model resumes the turn), NEVER hard-coded true.
    */
   async function handleWait(frame: TerminalRequestFrame): Promise<WaitResult> {
     const startedAt = nowMs();
@@ -715,7 +715,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
   /**
    * Persist durable worker state via write→rename, swallowing ONLY the disabled-fsync
-   * refusal under `--permission` (G-4). A genuine I/O error (EIO/ENOSPC/EBADF)
+   * refusal under `--permission`. A genuine I/O error (EIO/ENOSPC/EBADF)
    * re-throws (real disk problems are not masked); the fsync is best-effort over an
    * already-completed write+rename (skipping it only widens the power-failure window).
    */
@@ -743,9 +743,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
   return {
     async handle(frame: TerminalRequestFrame): Promise<TerminalReplyFrame> {
-      // OPS-07: re-establish the originating traceId as the ALS context (ALS does
+      // Re-establish the originating traceId as the ALS context (ALS does
       // not cross the process boundary — re-established from the frame here) so the
-      // bound logger's mixin carries it. LR-01: the wire traceId is VALIDATED (a
+      // bound logger's mixin carries it. The wire traceId is VALIDATED (a
       // non-UUID is regenerated — log-correlation-poisoning defense) + the context
       // runs at the least-privileged trust level (the worker makes no authz calls).
       const { traceId, regenerated } = sanitizeTraceId(frame.traceId);
