@@ -22,6 +22,12 @@
  * addon-serialize dep is pinned (0.14.0) + golden-frame tested (Plan 05) against
  * churn.
  *
+ * TR-14 perception signals: `hasContentBelowFold()` is the "more content below
+ * the fold ⇒ NOT settled" rendering signal the settle composes (a still-scrolling
+ * frame is not marked idle); `diffSnapshot(prev, next)` is the per-read
+ * screen-diff (a changed flag + changed-row range) so the agent / the P5
+ * classifier can cheaply see what changed without re-diffing whole grids.
+ *
  * §2.4 flush primitive: `@xterm`'s `term.write(data, cb)` is ASYNC-PARSED — the
  * callback fires once the chunk is fully parsed into the buffer. `write` here
  * returns a Promise that resolves on that callback, so the worker can `await`
@@ -113,6 +119,13 @@ export interface SessionEmulator {
   snapshot(opts?: SnapshotOptions): EmulatorSnapshot;
   /** Resize the grid; reflows the buffer. */
   resize(cols: number, rows: number): void;
+  /**
+   * True when buffer lines exist BELOW the displayed viewport bottom — the §2.4 /
+   * TR-14 "more content below the fold" signal the settle composes (a below-fold
+   * frame is NOT settled). False at the bottom, on short output, and on the
+   * alternate buffer (alt apps own the full screen, no scrollback below).
+   */
+  hasContentBelowFold(): boolean;
   /** Dispose the underlying Terminal once; a second call is a no-op. */
   dispose(): void;
   /** The underlying @xterm Terminal (Plan 02 loads the addon; Plan 03 reads the buffer). */
@@ -217,12 +230,76 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
       term.resize(cols, rows);
     },
 
+    hasContentBelowFold(): boolean {
+      // `viewportY` is the DISPLAYED viewport-top line index (it tracks scroll);
+      // `length` is the total buffer lines. Content sits below the displayed fold
+      // when the displayed `rows` rows do not reach the buffer bottom. (NOTE: we
+      // use `viewportY`, NOT `baseY` — in @xterm/headless `baseY` is the
+      // cursor-anchored bottom-viewport index and does NOT move when the display
+      // scrolls up, so `baseY + rows` always equals `length` after settled output
+      // and would never detect a below-fold frame.) On the alternate buffer the
+      // app owns the full screen with no scrollback below, so `viewportY` is 0 and
+      // `length === rows` ⇒ correctly false.
+      const buf = term.buffer.active;
+      return buf.viewportY + term.rows < buf.length;
+    },
+
     dispose(): void {
       if (disposed) return;
       disposed = true;
       term.dispose();
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Screen-diff (the per-read changed-region signal, TR-14)
+// ---------------------------------------------------------------------------
+
+/** The screen-diff between two snapshots: a changed flag + the changed-row range. */
+export interface SnapshotDiff {
+  /** Whether the `screen` text differs between the two snapshots. */
+  changed: boolean;
+  /** First differing line index (0-based), or `-1` when unchanged. */
+  firstChangedRow: number;
+  /** Last differing line index (0-based), or `-1` when unchanged. */
+  lastChangedRow: number;
+}
+
+/**
+ * Diff two snapshots' `screen` text line-by-line (TR-14). A pure helper (no
+ * emulator access) so the worker can cheaply compare two snapshots and tell the
+ * agent / the P5 classifier "did anything change" without re-diffing whole grids.
+ *
+ * `prev === undefined` ⇒ `changed:true` over the full range (the first read).
+ * Otherwise the line arrays are compared: `changed` is true when they differ;
+ * `firstChangedRow`/`lastChangedRow` bound the differing lines (both `-1` when
+ * unchanged). Lines present in only one snapshot count as changed (the longer
+ * array's extra indices extend the range).
+ *
+ * @param prev - The previous snapshot, or `undefined` for the first read.
+ * @param next - The current snapshot.
+ * @returns The {@link SnapshotDiff}.
+ */
+export function diffSnapshot(
+  prev: EmulatorSnapshot | undefined,
+  next: EmulatorSnapshot,
+): SnapshotDiff {
+  const nextLines = next.screen.split("\n");
+  if (prev === undefined) {
+    return { changed: true, firstChangedRow: 0, lastChangedRow: Math.max(0, nextLines.length - 1) };
+  }
+  const prevLines = prev.screen.split("\n");
+  const max = Math.max(prevLines.length, nextLines.length);
+  let first = -1;
+  let last = -1;
+  for (let i = 0; i < max; i++) {
+    if (prevLines[i] !== nextLines[i]) {
+      if (first === -1) first = i;
+      last = i;
+    }
+  }
+  return { changed: first !== -1, firstChangedRow: first, lastChangedRow: last };
 }
 
 // ---------------------------------------------------------------------------
