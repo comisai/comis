@@ -182,6 +182,25 @@ export interface TerminalView {
   alive: boolean;
 }
 
+/**
+ * The post-action snapshot subset returned by `sendText`/`sendKey` (spec §5) —
+ * `{screen,cursor}`, a strict subset of {@link TerminalView}. The full grid +
+ * real cursor land in P2/121; P1 forwards whatever the worker renders.
+ */
+export interface SendResult {
+  screen: string;
+  cursor: { x: number; y: number };
+}
+
+/** The settle snapshot returned by `wait` (spec §5) — `{matched,isComplete,reason}` + the view subset. */
+export interface WaitResult {
+  matched: boolean;
+  isComplete: boolean;
+  reason: string;
+  screen: string;
+  cursor: { x: number; y: number };
+}
+
 /** A `list` row — the create-time + liveness summary. */
 export interface SessionListing {
   sessionId: string;
@@ -195,6 +214,21 @@ export interface SessionListing {
 export interface TerminalSessionRegistry {
   create(req: CreateRequest): Promise<CreateResult>;
   read(sessionId: string): Promise<TerminalView>;
+  /**
+   * Forward a `send_text` frame (TR-03) and resolve the post-action
+   * `{screen,cursor}` subset. Degrades to `{screen:"",cursor:{0,0}}` for an
+   * absent session or a wedged worker (the MR-01 timeout reply) — never hangs.
+   */
+  sendText(
+    sessionId: string,
+    args: { text: string; submit?: boolean; bracketedPaste?: boolean },
+  ): Promise<SendResult>;
+  /**
+   * Forward a `send_key` frame (TR-03) and resolve the post-action
+   * `{screen,cursor}` subset. Same degrade-on-timeout/absent contract as
+   * {@link sendText}.
+   */
+  sendKey(sessionId: string, args: { keys: string[] }): Promise<SendResult>;
   get(sessionId: string): SessionHandle | undefined;
   list(): SessionListing[];
   kill(sessionId: string): Promise<void>;
@@ -550,6 +584,60 @@ export function createTerminalSessionRegistry(
     return reply.result as TerminalView;
   }
 
+  /**
+   * Defensively extract the `{screen,cursor}` subset from a worker reply.result
+   * (T-120-09: read the fields rather than trusting the shape blindly — a
+   * corrupt reply degrades to the empty snapshot, never injects an odd structure).
+   */
+  function toSendResult(result: unknown): SendResult {
+    const r = (result ?? {}) as { screen?: unknown; cursor?: { x?: unknown; y?: unknown } };
+    const screen = typeof r.screen === "string" ? r.screen : "";
+    const x = typeof r.cursor?.x === "number" ? r.cursor.x : 0;
+    const y = typeof r.cursor?.y === "number" ? r.cursor.y : 0;
+    return { screen, cursor: { x, y } };
+  }
+
+  /**
+   * Map a forwarded mutating-frame reply to the `{screen,cursor}` subset (TR-03):
+   * absent/not-running session OR a wedged worker (`!reply.ok`, the MR-01 reply
+   * timeout) → the degraded empty snapshot; otherwise the defensively-extracted
+   * subset, advancing `lastActivity`. Each `send*` method calls `request()` with
+   * its LITERAL method name so the forwarding seam is explicit at the call site.
+   */
+  function mapSendReply(handle: SessionHandle, reply: TerminalReplyFrame): SendResult {
+    if (!reply.ok || reply.result === undefined) {
+      return { screen: "", cursor: { x: 0, y: 0 } };
+    }
+    handle.lastActivity = nowMs();
+    return toSendResult(reply.result);
+  }
+
+  async function sendText(
+    sessionId: string,
+    args: { text: string; submit?: boolean; bracketedPaste?: boolean },
+  ): Promise<SendResult> {
+    const handle = sessions.get(sessionId);
+    if (handle === undefined || handle.status !== "running") {
+      return { screen: "", cursor: { x: 0, y: 0 } };
+    }
+    const reply = await request(sessionId, "send_text", {
+      sessionId,
+      text: args.text,
+      submit: args.submit ?? false,
+      bracketedPaste: args.bracketedPaste ?? false,
+    });
+    return mapSendReply(handle, reply);
+  }
+
+  async function sendKey(sessionId: string, args: { keys: string[] }): Promise<SendResult> {
+    const handle = sessions.get(sessionId);
+    if (handle === undefined || handle.status !== "running") {
+      return { screen: "", cursor: { x: 0, y: 0 } };
+    }
+    const reply = await request(sessionId, "send_key", { sessionId, keys: args.keys });
+    return mapSendReply(handle, reply);
+  }
+
   function get(sessionId: string): SessionHandle | undefined {
     return sessions.get(sessionId);
   }
@@ -591,5 +679,5 @@ export function createTerminalSessionRegistry(
     }
   }
 
-  return { create, read, get, list, kill, size, cleanup };
+  return { create, read, sendText, sendKey, get, list, kill, size, cleanup };
 }
