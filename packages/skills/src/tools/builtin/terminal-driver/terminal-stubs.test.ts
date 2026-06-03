@@ -3,9 +3,9 @@
  * Unit test for the LONE remaining terminal-driver stub tool: `status`
  * (`terminal_session_status`). The four interaction tools
  * (send_text / send_key / wait / resize) are REAL factories in `terminal-tools.ts`;
- * only `status` is still deferred (→ Phase 124 attention tier). It carries its
- * final spec §5 TypeBox schema now (so the registered surface is correct) but its
- * `execute()` rejects with `[not_implemented]` naming Phase 124. No
+ * only `status` is still deferred (the attention + autonomous tier). It carries
+ * its final spec §5 TypeBox schema now (so the registered surface is correct) but
+ * its `execute()` rejects with `[not_implemented]`. No
  * no-backward-compat-banned wording.
  *
  * Also asserts (negative) that the four interaction factories are NO LONGER
@@ -22,12 +22,12 @@ import { describe, it, expect } from "vitest";
 import { createTerminalSessionStatusTool } from "./terminal-tools-stubs.js";
 import * as stubsModule from "./terminal-tools-stubs.js";
 
-describe("terminal-tools-stubs — status is the only remaining stub (→ Phase 124)", () => {
-  it("terminal_session_status rejects [not_implemented] naming Phase 124", async () => {
+describe("terminal-tools-stubs — status is the only remaining stub", () => {
+  it("terminal_session_status rejects [not_implemented]", async () => {
     const tool = createTerminalSessionStatusTool();
     expect(tool.name).toBe("terminal_session_status");
     await expect(tool.execute("call-1", { sessionId: "s" } as never)).rejects.toThrow(/^\[not_implemented\]/);
-    await expect(tool.execute("call-1", { sessionId: "s" } as never)).rejects.toThrow(/not available until Phase 124/);
+    await expect(tool.execute("call-1", { sessionId: "s" } as never)).rejects.toThrow(/not yet implemented/);
   });
 
   it("status carries its canonical name + a non-empty TypeBox object schema", () => {
@@ -47,7 +47,7 @@ describe("terminal-tools-stubs — status is the only remaining stub (→ Phase 
     } catch (err) {
       message = err instanceof Error ? err.message : String(err);
     }
-    expect(message).toMatch(/not available until Phase 124/);
+    expect(message).toMatch(/not yet implemented/);
     expect(message).not.toMatch(/legacy|backward|fallback|deprecated/i);
   });
 

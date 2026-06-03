@@ -662,7 +662,7 @@ describe.skipIf(!COMIS_BENCH)("PROVE2 — costed per-capability QA-lift + head-t
         defaults: { maxResults: 5, includeTrustLevels: ["system", "learned"], rerankEnabled, scoringAlphas: { recency: 0.2, temporal: 0.2, proof: 0.1, trust: 0.1 } },
         capabilitiesMeasured: COMIS_SYSTEMS.map((s) => s.label).filter((l) => l !== BASELINE_LABEL),
         capabilitiesDeferred: {
-          note: "USER/SOCIAL/REASON/DIALECTIC are write-path/tool features with no recall-config toggle on verbatim-ingested docs; LEARN-RANK (onlineTuning) needs a learned tuned-alpha store the standard protocol never builds; KG graphSpread needs a built tripleStore. Their costed QA-lift needs an enrichment-aware harness; their v2.9 keyless mechanical proofs stand.",
+          note: "USER/SOCIAL/REASON/DIALECTIC are write-path/tool features with no recall-config toggle on verbatim-ingested docs; online rank-tuning needs a learned tuned-alpha store the standard protocol never builds; KG graphSpread needs a built tripleStore. Their costed QA-lift needs an enrichment-aware harness; their keyless mechanical proofs stand.",
           list: ["user-representation", "social-modeling", "memory-reasoning", "dialectic", "learn-rank-online-tuning"],
           unrunnableOnThisBench: deferredUnrunnable,
         },
