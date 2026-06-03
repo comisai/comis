@@ -288,6 +288,12 @@ function baseDeps(over: Partial<TerminalWorkerDeps> = {}): TerminalWorkerDeps {
     logger: makeLogger(),
     nowMs: () => 1_700_000_000_000,
     envSnapshot: () => ({ PATH: "/usr/bin" }) as NodeJS.ProcessEnv,
+    // 122-06: the resolved bwrap path the worker wraps the child in. A real path
+    // here keeps every behavioural test on the spawn-the-jail path; the SEC-16
+    // fail-closed suite overrides it to `undefined` to prove no-provider rejects.
+    // buildScopeArgs / scrubChildEnv / buildEgressRelayLaunch default to the real
+    // module exports — tests inject them only to assert the composition.
+    bwrapPath: "/usr/bin/bwrap",
     ...over,
   };
 }
@@ -536,11 +542,20 @@ describe("createTerminalWorker — H-1 read frame handler", () => {
   });
 });
 
-describe("createTerminalWorker — M-1 spawn from frame bin/argv", () => {
-  it("spawns the child with EXACTLY the frame's bin + full argv (argsPrefix preserved, no realpath)", async () => {
+describe("createTerminalWorker — M-1 spawn the child verbatim AFTER the bwrap `--` (122-06)", () => {
+  it("spawns bwrap as arg0 with the frame's bin + full argv appearing AFTER `--` (no realpath)", async () => {
+    // 122-06: the child is wrapped in bwrap (the worker holds the PTY master,
+    // bwrap+child run inside). M-1 still holds: the frame's {bin,argv} are passed
+    // VERBATIM — but now AFTER the bwrap composer's `--` terminator, never
+    // re-canonicalized (buildDirectSpawn is the SOLE canonicalization site).
     const fake = makeFakeBackend();
     const ptyLib = { spawn: fake.spawn };
-    const worker = createTerminalWorker(baseDeps({ loadPty: () => ptyLib }));
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ptyLib,
+        bwrapPath: "/usr/bin/bwrap",
+      }),
+    );
 
     await worker.handle(
       createFrame({
@@ -549,24 +564,38 @@ describe("createTerminalWorker — M-1 spawn from frame bin/argv", () => {
         argv: ["--prefix-arg", "extra"],
         cols: 80,
         rows: 24,
+        scope: {
+          filesystem: "workspace",
+          network: "none",
+          credentialHome: "exclude",
+          uid: "dedicated",
+        },
+        workspace: "/work/agent-1",
+        cwd: "/work/agent-1/project",
       }),
     );
 
     const spawned = fake.lastSpawn();
-    expect(spawned?.bin).toBe("/canonical/bash");
-    expect(spawned?.argv).toEqual(["--prefix-arg", "extra"]);
+    // arg0 is bwrap, not the bare child.
+    expect(spawned?.bin).toBe("/usr/bin/bwrap");
+    // The child bin + its full argv appear AFTER the `--` separator, verbatim.
+    const sep = spawned?.argv.indexOf("--") ?? -1;
+    expect(sep).toBeGreaterThanOrEqual(0);
+    expect(spawned?.argv.slice(sep + 1)).toEqual(["/canonical/bash", "--prefix-arg", "extra"]);
   });
 });
 
-describe("createTerminalWorker — 122-01 handleCreate reads scope inert (jail wiring is 122-06)", () => {
-  it("accepts a create frame carrying scope/workspace/cwd without throwing and still spawns normally", async () => {
-    // 122-01 threads scope (+ workspace/cwd) onto the create frame; the worker
-    // reads them into a SessionState field but does NOT act on them yet (the bwrap
-    // jail composer is 122-06). The create must succeed exactly as before — the
-    // child is spawned from {bin,argv} VERBATIM, scope is a passive read.
+describe("createTerminalWorker — 122-06 the scope materializes into the bwrap argv", () => {
+  it("wraps the child in bwrap with the scope-materialized args (workspace bind, unshare-net, uid)", async () => {
+    // 122-06 CONSUMES the scope 122-01 threaded onto the frame: the worker calls
+    // buildScopeArgs and spawns `bwrap [scope args] -- bin argv`. Assert the
+    // composed argv carries the workspace bind, the deny-all netns, the net-new
+    // uid, and the child AFTER `--`.
     const fake = makeFakeBackend();
     const ptyLib = { spawn: fake.spawn };
-    const worker = createTerminalWorker(baseDeps({ loadPty: () => ptyLib }));
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ptyLib, bwrapPath: "/usr/bin/bwrap" }),
+    );
 
     const reply = await worker.handle(
       createFrame({
@@ -576,11 +605,9 @@ describe("createTerminalWorker — 122-01 handleCreate reads scope inert (jail w
         cols: 80,
         rows: 24,
         scope: {
-          filesystem: "listed-paths",
-          paths: ["/srv/data"],
-          network: "listed-hosts",
-          hosts: ["api.example.com"],
-          credentialHome: "include",
+          filesystem: "workspace",
+          network: "none",
+          credentialHome: "exclude",
           uid: "dedicated",
         },
         workspace: "/work/agent-1",
@@ -589,10 +616,139 @@ describe("createTerminalWorker — 122-01 handleCreate reads scope inert (jail w
     );
 
     expect(reply.ok).toBe(true);
-    // Unchanged spawn behavior: bin/argv forwarded verbatim, scope NOT yet applied.
     const spawned = fake.lastSpawn();
-    expect(spawned?.bin).toBe("/canonical/bash");
-    expect(spawned?.argv).toEqual(["extra"]);
+    expect(spawned?.bin).toBe("/usr/bin/bwrap");
+    const argv = spawned?.argv ?? [];
+    // The workspace is always bound RW.
+    expect(argv).toContain("--bind");
+    expect(argv.join(" ")).toContain("/work/agent-1 /work/agent-1");
+    // network:none => a kernel-enforced empty netns, no socket.
+    expect(argv).toContain("--unshare-net");
+    // uid:dedicated => a net-new uid (the default least-privilege posture).
+    expect(argv).toContain("--uid");
+    // The child appears AFTER the `--` separator.
+    const sep = argv.indexOf("--");
+    expect(argv.slice(sep + 1)).toEqual(["/canonical/bash", "extra"]);
+  });
+
+  it("includes the always-on ~/.comis carve-out (--tmpfs <dataDir>) before the child (SEC-13)", async () => {
+    // The carve-out rides through the composer — proves the worker passes the real
+    // dataDir (os.homedir()/.comis). The tmpfs shadows ~/.comis for every child.
+    const fake = makeFakeBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: fake.spawn }), bwrapPath: "/usr/bin/bwrap" }),
+    );
+
+    await worker.handle(
+      createFrame({
+        sessionId: "s1",
+        bin: "/bin/bash",
+        argv: [],
+        cols: 80,
+        rows: 24,
+        scope: { filesystem: "full", network: "full", credentialHome: "include", uid: "daemon" },
+        workspace: "/work/agent-1",
+        cwd: "/work/agent-1",
+      }),
+    );
+
+    const argv = fake.lastSpawn()?.argv ?? [];
+    // `--tmpfs <home>/.comis` is present even at filesystem:full.
+    const tmpfsIdx = argv.indexOf("--tmpfs");
+    expect(tmpfsIdx).toBeGreaterThanOrEqual(0);
+    const carveOut = argv.find((a) => a.endsWith("/.comis"));
+    expect(carveOut).toBeDefined();
+  });
+
+  it("scrubs the child env: NODE_OPTIONS / CLAUDECODE / CLAUDE_CODE_* are stripped, PATH survives", async () => {
+    // bwrap forwards the spawner env to the child (no --clearenv), so the env handed
+    // to pty.spawn IS the child env — it must be scrubbed (SEC-07).
+    const fake = makeFakeBackend();
+    let recordedEnv: NodeJS.ProcessEnv | undefined;
+    const recordingSpawn = vi.fn(
+      (bin: string, argv: string[], opts: { cols: number; rows: number; env: NodeJS.ProcessEnv }) => {
+        recordedEnv = opts.env;
+        return fake.spawn(bin, argv);
+      },
+    );
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: recordingSpawn }),
+        bwrapPath: "/usr/bin/bwrap",
+        envSnapshot: () =>
+          ({
+            PATH: "/usr/bin",
+            NODE_OPTIONS: "--require /tmp/evil.js",
+            CLAUDECODE: "1",
+            CLAUDE_CODE_ENTRYPOINT: "cli",
+          }) as NodeJS.ProcessEnv,
+      }),
+    );
+
+    await worker.handle(
+      createFrame({
+        sessionId: "s1",
+        bin: "/bin/bash",
+        argv: [],
+        cols: 80,
+        rows: 24,
+        scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
+        workspace: "/work/a",
+        cwd: "/work/a",
+      }),
+    );
+
+    expect(recordedEnv).toBeDefined();
+    expect(recordedEnv?.["PATH"]).toBe("/usr/bin"); // rich env survives
+    expect(recordedEnv?.["NODE_OPTIONS"]).toBeUndefined(); // interpreter-control stripped
+    expect(recordedEnv?.["CLAUDECODE"]).toBeUndefined(); // nested-CLI marker stripped
+    expect(recordedEnv?.["CLAUDE_CODE_ENTRYPOINT"]).toBeUndefined(); // CLAUDE_CODE_* stripped
+  });
+
+  it("wraps the DEGRADED pipe backend in bwrap too (no unjailed degraded path)", async () => {
+    // When loadPty throws, the worker uses the pipe backend — which is ALSO wrapped
+    // in bwrap with the scrubbed env (the jail wraps BOTH backends).
+    const pipe = makeFakePipeBackend();
+    let recordedEnv: NodeJS.ProcessEnv | undefined;
+    const recordingPipe = vi.fn(
+      (bin: string, argv: string[], opts: { env: NodeJS.ProcessEnv }) => {
+        recordedEnv = opts.env;
+        return pipe.spawnPipe(bin, argv);
+      },
+    );
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => {
+          throw new Error("Cannot find module 'node-pty'");
+        },
+        spawnPipe: recordingPipe,
+        bwrapPath: "/usr/bin/bwrap",
+        envSnapshot: () =>
+          ({ PATH: "/usr/bin", NODE_OPTIONS: "--require /tmp/evil.js" }) as NodeJS.ProcessEnv,
+      }),
+    );
+
+    const reply = await worker.handle(
+      createFrame({
+        sessionId: "s1",
+        bin: "/bin/bash",
+        argv: ["-l"],
+        cols: 80,
+        rows: 24,
+        scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
+        workspace: "/work/a",
+        cwd: "/work/a",
+      }),
+    );
+
+    expect(reply.ok).toBe(true);
+    expect((reply.result as { backend: string }).backend).toBe("degraded");
+    const spawned = pipe.lastSpawn();
+    expect(spawned?.bin).toBe("/usr/bin/bwrap"); // bwrap wraps the pipe child too
+    const sep = spawned?.argv.indexOf("--") ?? -1;
+    expect(spawned?.argv.slice(sep + 1)).toEqual(["/bin/bash", "-l"]); // child after `--`
+    expect(recordedEnv?.["NODE_OPTIONS"]).toBeUndefined(); // env scrubbed on the degraded path
+    expect(recordedEnv?.["PATH"]).toBe("/usr/bin");
   });
 });
 
