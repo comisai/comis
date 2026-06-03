@@ -3,26 +3,21 @@
  * The supervised Terminal Worker entry (spec §2.1/§2.2/§2.3).
  *
  * The worker is the one net-new process boundary: a daemon-supervised child that
- * owns the PTY (node-pty, optional) + the driven CLI. The registry (119-03)
- * spawns it under the 118-proven `--permission` posture and exchanges
- * length-prefixed JSON frames (119-02) over stdio. A FACTORY
- * (`createTerminalWorker(deps)`) so it is fully unit-testable WITHOUT forking:
- * the node-pty loader, logger, clock, env snapshot, pipe spawner, durable-fs ops,
- * and the @xterm emulator factory are all injected (production defaults wire
- * `child_process.spawn`, `node:fs`, the `@comis/core` system-time ports).
+ * owns the PTY (node-pty, optional) + the driven CLI. The registry (119-03) spawns
+ * it under the 118-proven `--permission` posture and exchanges length-prefixed JSON
+ * frames (119-02) over stdio. A FACTORY (`createTerminalWorker(deps)`) so it is
+ * fully unit-testable WITHOUT forking — loader, logger, clock, env snapshot, pipe
+ * spawner, durable-fs ops, and the @xterm emulator factory are all injected.
  *
  * Architecture invariants enforced here:
  *   - NO top-level static `import … from "node-pty"` — loaded via the INJECTED
  *     `loadPty` (guarded `createRequire` in a try); a throw selects the PIPE
  *     backend, `backend:"degraded"` (TR-08), never an unhandled crash.
  *   - NO module-global mutable state — the per-session map is CLOSURE-local.
- *   - NO `@comis/infra` value-import — an injected structural logger
- *     (`{ info, debug, warn, error }`); the daemon passes the real one.
+ *   - NO `@comis/infra` value-import — an injected structural logger.
  *   - NO redundant path-canonicalization — spawns from the create frame's
- *     `{bin,argv}` (buildDirectSpawn is the SOLE canonicalization site, 119-02);
- *     argsPrefix preserved end-to-end (M-1).
- *   - NO raw wall-clock / timer / env globals — injected ports only
- *     (`globals.test.ts`).
+ *     `{bin,argv}` (buildDirectSpawn is the SOLE canonicalization site, M-1).
+ *   - NO raw wall-clock / timer / env globals — injected ports only.
  *
  * @module
  */
@@ -262,6 +257,12 @@ interface SessionState {
    * half). The pipe `close`/`error` and (live) pty exit notify these.
    */
   exitListeners: Set<() => void>;
+  /** Operator-declared sandbox scope (SEC-02) off the create frame — inert in 122-01, consumed by the 122-06 jail composer (typed `unknown`: not interpreted this plan). */
+  scope?: unknown;
+  /** Session workspace root (create frame) — consumed by the 122-06 composer. */
+  workspace?: string;
+  /** Session working directory (create frame) — consumed by the 122-06 composer. */
+  cwd?: string;
 }
 
 /** The worker's public surface — `handle` dispatches a frame; `writeDurable` persists state. */
@@ -440,6 +441,11 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // (the registry sources it from DEFAULT_SCROLLBACK / config — NOT agent input).
     // Fall back to the worker's SCROLLBACK_DEFAULT only when the frame omits it.
     const scrollback = typeof p["scrollback"] === "number" ? p["scrollback"] : SCROLLBACK_DEFAULT;
+    // 122-01: read the create frame's scope (SEC-02) + workspace/cwd inert — the
+    // 122-06 jail composer consumes them; pty.spawn(bin,argv) is unchanged here.
+    const scope = p["scope"];
+    const workspace = typeof p["workspace"] === "string" ? p["workspace"] : undefined;
+    const cwd = typeof p["cwd"] === "string" ? p["cwd"] : undefined;
 
     const state: SessionState = {
       backend: "pty",
@@ -449,13 +455,15 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       alive: true,
       ringListeners: new Set(),
       exitListeners: new Set(),
+      // 122-06: consumed by the scope-jail composer (inert this plan).
+      scope,
+      workspace,
+      cwd,
     };
 
-    // Construct the per-session @xterm emulator BEFORE wiring the backend's
-    // onData (so the first chunk is rendered). Built for BOTH backends — the
-    // emulator renders whatever bytes arrive (pty OR degraded pipe). 121-04
-    // threads the scrollback from the create frame (the registry's
-    // DEFAULT_SCROLLBACK / config, never agent input).
+    // Construct the per-session @xterm emulator BEFORE wiring the backend's onData
+    // (so the first chunk is rendered). Built for BOTH backends; 121-04 threads the
+    // scrollback from the create frame (DEFAULT_SCROLLBACK / config, never agent input).
     state.emu = createEmulator({ cols, rows, scrollback });
 
     let pty: PtyModuleLike | undefined;
@@ -474,12 +482,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       // PTY backend — spawn from the frame's bin/argv (no re-canonicalization).
       const handle = pty.spawn(bin, argv, { cols, rows, env: envSnapshot() });
       handle.onData((d) => appendRing(state, d));
-      // Wire the child exit -> markExited, the pty analog of the pipe backend's
-      // close/error below. node-pty's onExit fires {exitCode,signal} when the
-      // child exits; we ignore the payload (markExited only flips liveness +
-      // notifies the settle's exit subscribers). WITHOUT this, a real node-pty
-      // child that exits never notifies an in-flight wait({forExit:true}), which
-      // then runs to timeout instead of settling "exit" (the VPS real-PTY gate).
+      // Wire the child exit -> markExited (the pty analog of the pipe backend's
+      // close/error below; payload ignored — markExited flips liveness + notifies
+      // the settle's exit subscribers). WITHOUT this, a real node-pty child that
+      // exits never notifies an in-flight wait({forExit:true}) (the VPS real-PTY gate).
       handle.onExit(() => {
         markExited(state);
       });

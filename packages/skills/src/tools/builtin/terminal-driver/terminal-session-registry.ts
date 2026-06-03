@@ -2,31 +2,24 @@
 /**
  * The daemon-side TerminalSessionRegistry (spec §2.1, OPS-01).
  *
- * Owns the `Map<sessionId,SessionHandle>` and the single supervised worker
- * handle. Spawns the Terminal Worker (119-03 `terminal-worker-entry.ts`) under
- * the 118-proven `--permission` posture via the daemon's existing
- * `--allow-child-process`, and exchanges length-prefixed JSON frames (119-02
- * `terminal-ipc.ts`) over the worker's stdio pipes: requests/replies on the
- * stdin/stdout pair, correlated by `(sessionId,requestId)`.
+ * Owns the `Map<sessionId,SessionHandle>` + the single supervised worker handle.
+ * Spawns the Terminal Worker (119-03 `terminal-worker-entry.ts`) under the
+ * 118-proven `--permission` posture and exchanges length-prefixed JSON frames
+ * (119-02 `terminal-ipc.ts`) over the worker stdio pipes, correlated by
+ * `(sessionId,requestId)`.
  *
- * Crash isolation (OPS-01): the worker is a SEPARATE process, so a node-pty /
- * PTY / emulator crash there is isolated by construction. The registry attaches
- * `child.on("error")` / `child.on("close")` handlers (mirroring
- * exec-background.ts) that flip the affected sessions to `lost`/`exited` and
- * CLEAR the worker handle — the daemon stays up, and the next `create`
- * re-spawns the worker lazily. A crash restarts the WORKER, never the daemon.
+ * Crash isolation (OPS-01): the worker is a SEPARATE process. The registry's
+ * `child.on("error")`/`"close"` handlers (mirroring exec-background.ts) flip the
+ * affected sessions to `lost`/`exited`, CLEAR the worker handle, and the next
+ * `create` re-spawns lazily — a crash restarts the WORKER, never the daemon.
  *
- * This module is a FACTORY (`createTerminalSessionRegistry(deps)`) closing over
- * a LOCAL session map + worker handle — there is NO module-global mutable state
- * (the `globals.test.ts` / no-module-global architecture rule). `deps` injects
- * `{ spawnWorker, logger, nowMs }` so tests substitute a fake child.
+ * FACTORY (`createTerminalSessionRegistry(deps)`) closing over a LOCAL session
+ * map + worker handle — NO module-global mutable state (the no-module-global
+ * architecture rule). `deps` injects `{ spawnWorker, logger, nowMs }`.
  *
- * M-1: `create` forwards the daemon-canonical `{bin,argv}` (buildDirectSpawn's
- * output, 119-02 — the SOLE canonicalization site) to the worker VERBATIM. The
- * registry does NOT re-canonicalize; argsPrefix is preserved end-to-end.
- *
- * No `@comis/infra` value-import — the registry takes an injected structural
- * logger; the daemon (composition root, 119-04 wiring) passes the real logger.
+ * M-1: `create` forwards buildDirectSpawn's daemon-canonical `{bin,argv}` (119-02,
+ * the SOLE canonicalization site) to the worker VERBATIM — no re-canonicalization.
+ * No `@comis/infra` value-import (the daemon passes the real logger).
  *
  * @module
  */
@@ -51,13 +44,12 @@ import {
   type TerminalRequestFrame,
 } from "./terminal-ipc.js";
 import type { ReadOptions, SnapshotDiff } from "./terminal-render.js";
+import type { TerminalScope } from "./allowlist-matcher.js";
 
 /**
- * The per-session emulator scrollback depth (TR-14) the registry defaults
- * `create` to — the SINGLE source the create tool defaults to (121-04), the
- * value Plan 01 hard-coded worker-side now sourced here. Operator-overridable via
- * config later; NOT agent-dialable (no `scrollback` param on the create tool).
- * Bounds per-session emulator memory to `(rows + scrollback) × cols` cells.
+ * The per-session emulator scrollback depth (TR-14) — the SINGLE source the create
+ * tool defaults to (121-04). NOT agent-dialable (no `scrollback` create param);
+ * bounds per-session emulator memory to `(rows + scrollback) × cols` cells.
  */
 export const DEFAULT_SCROLLBACK = 1000;
 
@@ -179,6 +171,12 @@ export interface CreateRequest {
    * falls back to it in `create`. NOT agent-dialable — const/config-sourced.
    */
   scrollback?: number;
+  /** Operator-declared sandbox scope (SEC-02), from the allow entry not agent params (SEC-03); rides the frame for the 122-06 jail composer, inert until then. */
+  scope?: TerminalScope;
+  /** Session workspace root — `scope`'s companion for the 122-06 jail binds. */
+  workspace?: string;
+  /** Session working directory — `scope`'s companion for the 122-06 jail `--chdir`. */
+  cwd?: string;
 }
 
 /** The `create` result handed back to the tool layer. */
@@ -565,20 +563,14 @@ export function createTerminalSessionRegistry(
     };
     sessions.set(sessionId, handle);
 
-    // M-1: forward the daemon-canonical {bin,argv} to the worker VERBATIM. The
-    // registry does NOT re-canonicalize — buildDirectSpawn (119-02) is the SOLE
-    // canonicalization site; argsPrefix is preserved end-to-end.
-    //
-    // The create frame is fired WITHOUT blocking the turn (the worker spawns the
-    // backend asynchronously; the rendered view is fetched later via `read`), but
-    // — unlike a bare fire-and-forget — we register an ASYNC create-reply waiter
-    // (HR-03). If the worker's backend spawn fails (bad bin ENOENT, forkpty
-    // failure, resource limits), `handleCreate` throws and the worker replies
-    // `ok:false`; that reply now flips the session to `lost` (so `list`/`read`
-    // agree `alive:false`) and fires the OPS-07 `onSpawnFailed` hook. Without this
-    // the failure was silently dropped and the handle stayed `running`/`alive:true`
-    // forever despite a dead child. The turn is NOT held — the waiter resolves
-    // out-of-band; the tool call still returns immediately (non-blocking contract).
+    // M-1: forward the daemon-canonical {bin,argv} VERBATIM (buildDirectSpawn,
+    // 119-02, is the SOLE canonicalization site; argsPrefix preserved end-to-end).
+    // The create frame is fired WITHOUT blocking the turn, but we register an ASYNC
+    // create-reply waiter (HR-03): if the worker's backend spawn fails the worker
+    // replies `ok:false`, flipping the session to `lost` (so `list`/`read` agree
+    // `alive:false`) and firing the OPS-07 `onSpawnFailed` hook — otherwise the
+    // failure was silently dropped and the handle stayed `running` forever. The
+    // turn is NOT held — the waiter resolves out-of-band (non-blocking contract).
     const createFrame = buildRequestFrame(sessionId, "create", {
       sessionId,
       bin: req.bin,
@@ -589,6 +581,10 @@ export function createTerminalSessionRegistry(
       // Terminal({cols,rows,scrollback}). Defaults to DEFAULT_SCROLLBACK when the
       // caller omits one (the create tool always supplies it; this is the safety net).
       scrollback: req.scrollback ?? DEFAULT_SCROLLBACK,
+      // SEC-02: scope (+ workspace/cwd) rides the frame for the 122-06 jail composer.
+      scope: req.scope,
+      workspace: req.workspace,
+      cwd: req.cwd,
     });
     pending.set(`${sessionId}:${createFrame.requestId}`, (reply) => {
       if (reply.ok) return; // backend spawned — leave the session running.

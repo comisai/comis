@@ -281,7 +281,20 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         // per-session emulator's retained-memory ceiling is sourced from
         // DEFAULT_SCROLLBACK (operator config later), so the agent cannot inflate
         // per-session memory (T-121-11). The CreateParams schema is unchanged.
-        result = await deps.registry.create({ allowId, bin, argv, cols, rows, scrollback: DEFAULT_SCROLLBACK });
+        //
+        // SEC-02/03: the sandbox scope is sourced EXCLUSIVELY from the matched
+        // allow entry (operator closed config) — NEVER from `params`. The agent has
+        // no `scope` create param (CreateParams is closed), so it cannot set or
+        // widen the jail; scope rides the create frame to the worker (122-06).
+        result = await deps.registry.create({
+          allowId,
+          bin,
+          argv,
+          cols,
+          rows,
+          scrollback: DEFAULT_SCROLLBACK,
+          scope: matched.entry.scope,
+        });
       } catch (err) {
         const failedAt = deps.nowMs();
         deps.logger.warn(

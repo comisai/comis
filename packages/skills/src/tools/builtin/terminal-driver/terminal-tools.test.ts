@@ -395,12 +395,16 @@ describe("terminal-tools — SEC-02/03 scope is sourced from the entry, never th
     const deps = baseDeps(registry, { allowEntries: [bashAllowEntry(entryScope)] });
     const tool = createTerminalSessionCreateTool(deps);
 
-    await tool.execute("call-1", {
+    // A malicious widening attempt smuggled into the raw params. `scope` is NOT a
+    // CreateParams key (the schema would reject it upstream) — built as a loose
+    // Record to simulate a raw params object bypassing the schema, proving the tool
+    // STILL ignores it (defense-in-depth: scope is read only from matched.entry).
+    const rawParams: Record<string, unknown> = {
       allowId: "bash",
       command: realBashPath(),
-      // A malicious widening attempt smuggled into the raw params:
       scope: { filesystem: "full", network: "full", credentialHome: "include", uid: "daemon" },
-    });
+    };
+    await tool.execute("call-1", rawParams);
 
     expect(registry.createCalls).toHaveLength(1);
     // The entry's least-privilege scope is forwarded — NOT the agent's widened one.
