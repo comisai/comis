@@ -43,8 +43,31 @@
  * @module
  */
 
-import { SerializeAddon } from "@xterm/addon-serialize";
-import { Terminal } from "@xterm/headless";
+import { createRequire } from "node:module";
+
+// `@xterm/headless` + `@xterm/addon-serialize` are BOTH CommonJS modules whose
+// exports the cjs-module-lexer cannot statically resolve. A static NAMED ESM
+// import (`import { Terminal } from "@xterm/headless"`) therefore throws
+// `SyntaxError: Named export 'Terminal' not found …` the instant this BUILT file
+// is loaded under Node's NATIVE ESM loader — which is exactly how the registry's
+// SEPARATE spawned worker process loads it (buildProductionSpawnWorker →
+// childSpawn(process.execPath, …) for OPS-01 crash isolation). Vitest's bundler
+// rewrites the CJS interop and so masks the crash in every unit/.linux test.
+//
+// Load both via `createRequire` instead — the SAME guarded-CJS pattern
+// terminal-worker-entry.ts already uses for node-pty (a native CJS dep). This is
+// a module-scope `const` BINDING, not mutable state, so the no-module-global
+// architecture rule is satisfied (mirrors the node-pty precedent). The
+// `import type { … }` lines below are type-only (erased at emit, ESM-safe) so the
+// `Terminal` / `SerializeAddon` TYPE annotations stay correct; the runtime
+// constructors come from the `require` below.
+import type { Terminal as XtermTerminal } from "@xterm/headless";
+
+const xtermRequire = createRequire(import.meta.url);
+const { Terminal } = xtermRequire("@xterm/headless") as typeof import("@xterm/headless");
+const { SerializeAddon } = xtermRequire(
+  "@xterm/addon-serialize",
+) as typeof import("@xterm/addon-serialize");
 
 // ---------------------------------------------------------------------------
 // Construction options + the snapshot shape
@@ -145,7 +168,7 @@ export interface SessionEmulator {
   /** Dispose the underlying Terminal once; a second call is a no-op. */
   dispose(): void;
   /** The underlying @xterm Terminal (Plan 02 loads the addon; Plan 03 reads the buffer). */
-  readonly term: Terminal;
+  readonly term: XtermTerminal;
 }
 
 // ---------------------------------------------------------------------------
