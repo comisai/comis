@@ -706,3 +706,194 @@ describe("createTerminalWorker — TR-04 send_key (named-key grammar -> exact by
     expect(rec.writes).toEqual(["\x03"]);
   });
 });
+
+function sendTextFrame(
+  text: string,
+  opts: { submit?: boolean; bracketedPaste?: boolean } = {},
+): TerminalRequestFrame {
+  return {
+    sessionId: "s1",
+    requestId: "rq-send-text",
+    traceId: TRACE_ID,
+    method: "send_text",
+    params: {
+      sessionId: "s1",
+      text,
+      submit: opts.submit ?? false,
+      bracketedPaste: opts.bracketedPaste ?? false,
+    },
+  };
+}
+
+function resizeFrame(cols: number, rows: number): TerminalRequestFrame {
+  return {
+    sessionId: "s1",
+    requestId: "rq-resize",
+    traceId: TRACE_ID,
+    method: "resize",
+    params: { sessionId: "s1", cols, rows },
+  };
+}
+
+/**
+ * The deterministic settle-drive pattern (Plan-02 precedent): the in-worker
+ * settle resolves only when the fake clock fires its idle timer, but the handler
+ * AWAITS that settle — so we cannot `await worker.handle(...)` then advance (the
+ * promise never resolves; deadlock). Instead: kick the handle (capturing the
+ * promise), `advance` past the idle window on the NEXT microtask tick to fire the
+ * idle timer, THEN await. A small `await Promise.resolve()` lets the handler reach
+ * its `await settleSession(...)` (registering the timer) before we advance.
+ */
+async function driveSettle<T>(
+  promise: Promise<T>,
+  sched: ReturnType<typeof makeFakeScheduler>,
+  advanceMs: number,
+): Promise<T> {
+  // Yield so the async handler runs up to its first `await` (timer registered).
+  await Promise.resolve();
+  await Promise.resolve();
+  sched.advance(advanceMs);
+  return promise;
+}
+
+describe("createTerminalWorker — TR-04 send_text (submit ordering + bracketed paste)", () => {
+  it("send_text WITHOUT submit writes the text once, settles, never writes \\r", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    const p = worker.handle(sendTextFrame("ls", { submit: false }));
+    const reply = await driveSettle(p, sched, 200); // > the 120ms idle window
+
+    expect(reply.ok).toBe(true);
+    expect(rec.writes).toEqual(["ls"]); // exactly the text — no \r ever
+    expect(rec.writes).not.toContain("\r");
+    const result = reply.result as { screen: string; cursor: { x: number; y: number } };
+    expect(result.cursor).toEqual({ x: 0, y: 0 });
+  });
+
+  it("send_text WITH submit writes text, settles, THEN writes \\r (ordered, NEVER coalesced)", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    const p = worker.handle(sendTextFrame("ls", { submit: true }));
+    // Let the handler write the text + register the settle timer, but DO NOT
+    // advance yet: at this point only the text has been written, NOT the \r.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(rec.writes).toEqual(["ls"]); // text first, Enter not yet sent
+
+    // Now fire the idle settle; the \r is written only AFTER the settle resolves.
+    sched.advance(200);
+    const reply = await p;
+
+    expect(reply.ok).toBe(true);
+    expect(rec.writes).toEqual(["ls", "\r"]); // text, settle, THEN Enter — two writes
+    // TR-04: the text and Enter are NEVER coalesced into one write.
+    expect(rec.writes).not.toContain("ls\r");
+  });
+
+  it("send_text bracketedPaste wraps the text in \\x1b[200~ ... \\x1b[201~", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    const p = worker.handle(sendTextFrame("pasted", { bracketedPaste: true, submit: false }));
+    await driveSettle(p, sched, 200);
+
+    expect(rec.writes).toContain("\x1b[200~pasted\x1b[201~");
+    expect(rec.writes).not.toContain("\r");
+  });
+
+  it("send_text bracketedPaste + submit: wraps, settles, THEN \\r (writes === [wrapped, \\r])", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    const p = worker.handle(sendTextFrame("pasted", { bracketedPaste: true, submit: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(rec.writes).toEqual(["\x1b[200~pasted\x1b[201~"]); // wrapped first, no \r yet
+    sched.advance(200);
+    await p;
+
+    expect(rec.writes).toEqual(["\x1b[200~pasted\x1b[201~", "\r"]);
+  });
+
+  it("send_text on an absent session returns the minimal not-alive snapshot (no throw)", async () => {
+    const sched = makeFakeScheduler();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: makeRecordingBackend().spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    // No create — the session does not exist.
+    const reply = await worker.handle(sendTextFrame("ls", { submit: true }));
+    expect(reply.ok).toBe(true);
+    expect((reply.result as { screen: string }).screen).toBe("");
+  });
+});
+
+describe("createTerminalWorker — TR-03 resize (pty winsize + ring geometry)", () => {
+  it("calls pty.resize(cols,rows), updates state geometry, replies { ok:true }", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    const reply = await worker.handle(resizeFrame(100, 30));
+
+    expect(reply.ok).toBe(true);
+    expect((reply.result as { ok: boolean }).ok).toBe(true);
+    // The pty backend's winsize was updated.
+    expect(rec.resizes).toEqual([[100, 30]]);
+    // The ring geometry (P1 records it; P2 does the real grid resize) — a
+    // subsequent read reflects the new cols/rows.
+    const read = await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-read",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "s1" },
+    });
+    expect((read.result as { cols: number; rows: number }).cols).toBe(100);
+    expect((read.result as { cols: number; rows: number }).rows).toBe(30);
+  });
+
+  it("on the degraded pipe backend (no PTY winsize) still records geometry + replies { ok:true }", async () => {
+    const pipe = makeRecordingPipeBackend();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => {
+          throw new Error("no node-pty");
+        },
+        spawnPipe: pipe.spawnPipe,
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    const reply = await worker.handle(resizeFrame(120, 40));
+
+    expect(reply.ok).toBe(true);
+    expect((reply.result as { ok: boolean }).ok).toBe(true);
+    const read = await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-read",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "s1" },
+    });
+    expect((read.result as { cols: number; rows: number }).cols).toBe(120);
+    expect((read.result as { cols: number; rows: number }).rows).toBe(40);
+  });
+});
