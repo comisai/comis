@@ -40,6 +40,28 @@ import type { PlatformToolProvider } from "@comis/skills";
 
 /** The daemon tool-assembly array element type (an `AgentTool`), via skills. */
 type AgentToolArray = ReturnType<PlatformToolProvider>;
+
+/** The closed `terminal:escalated` reason union (mirrors `events-terminal.ts`). */
+type EscalationReason =
+  | "destructive"
+  | "approval"
+  | "auth_login"
+  | "loop_detected"
+  | "hop_limit"
+  | "stuck"
+  | "no_safe_match";
+
+/** The runtime allowlist of valid escalation reasons — an off-union frame value falls
+ * back to `no_safe_match` (never trusted verbatim onto the closed bus union). */
+const ESCALATION_REASONS = new Set<string>([
+  "destructive",
+  "approval",
+  "auth_login",
+  "loop_detected",
+  "hop_limit",
+  "stuck",
+  "no_safe_match",
+]);
 import {
   createTerminalSessionRegistry,
   buildProductionSpawnWorker,
@@ -55,6 +77,7 @@ import {
   createSessionCaps,
   type TerminalSessionRegistry,
   type TerminalEventBus,
+  type TerminalEventFrame,
   type ReaperEvictInfo,
   type AllowEntryLike,
   type TerminalScope,
@@ -210,6 +233,101 @@ export function buildTerminalReaperHooks(
 }
 
 /**
+ * Build the daemon-side fd3 attention emit hook for one agent (124-09 Task 1; TR-11 /
+ * SEC-11/12 / OPS-04) — the 3rd emit-hook site, mirroring {@link buildTerminalReaperHooks}
+ * + the `onSpawnFailed` template. The returned `onTerminalEvent` closure is bound on the
+ * registry deps (next to `onSpawnFailed`): for each decoded {@link TerminalEventFrame} the
+ * worker pushes on fd3 (124-05, the no-poll attention channel), it RE-PUBLISHES the frame
+ * onto the daemon's `TypedEventBus` as the matching closed `terminal:*` event — injecting
+ * `agentId` (the worker is owner-agnostic) + `timestamp` and copying ONLY the structural
+ * fields off `frame.payload`. This is the re-publish seam the wake-FSM (Task 2) subscribes.
+ *
+ * REDACTION-SAFE BY CONSTRUCTION (T-124-25): the hook copies ONLY the typed structural
+ * fields per event (`state`/`reason`/`noProgressMs`) — a `screen`/`text`/`payload` field
+ * on the worker frame is NEVER read, so screen text physically cannot cross the bus. The
+ * worker frame is already redaction-safe (124-05); this is defense-in-depth.
+ *
+ * §2.7 observability: a wake (`input_needed`) is an INFO completion-style line (step-
+ * tagged); an `escalated` frame is a WARN carrying `hint` + `errorKind` so the next
+ * escalation is reconstructable from logs+events alone. An unknown/unmodeled event kind
+ * is dropped (no emit, no throw) — the hook never forwards an unmodeled frame.
+ *
+ * Exported so the re-publish wiring is unit-testable in isolation (Task 1).
+ */
+export function buildTerminalEventHook(
+  agentId: string,
+  deps: TerminalWiringDeps,
+): { onTerminalEvent: (frame: TerminalEventFrame) => void } {
+  return {
+    onTerminalEvent: (frame: TerminalEventFrame) => {
+      const timestamp = systemNowMs();
+      // The worker payload is an unknown structural bag (the IPC frame body); read
+      // ONLY the typed structural fields per event — never a screen/text field.
+      const p = (frame.payload ?? {}) as Record<string, unknown>;
+      switch (frame.event) {
+        case "terminal:input_needed": {
+          // The attention wake (TR-11). state ∈ {awaiting-input, stuck}; reason is the
+          // classifier's structural tag (e.g. "settled_cursor_parked") — never screen text.
+          const state = p.state === "stuck" ? "stuck" : "awaiting-input";
+          const reason = typeof p.reason === "string" ? p.reason : "input_needed";
+          deps.eventBus.emit("terminal:input_needed", { sessionId: frame.sessionId, agentId, state, reason, timestamp });
+          deps.skillsLogger.info(
+            { sessionId: frame.sessionId, agentId, state, reason, step: "terminal_input_needed" },
+            "terminal session needs input (re-published from fd3)",
+          );
+          break;
+        }
+        case "terminal:stuck": {
+          // Settled, no affordance, no progress past stuckMs (OPS-04) — a duration signal.
+          const noProgressMs = typeof p.noProgressMs === "number" ? p.noProgressMs : 0;
+          deps.eventBus.emit("terminal:stuck", { sessionId: frame.sessionId, agentId, noProgressMs, timestamp });
+          deps.skillsLogger.info(
+            { sessionId: frame.sessionId, agentId, noProgressMs, step: "terminal_stuck" },
+            "terminal session stuck (re-published from fd3)",
+          );
+          break;
+        }
+        case "terminal:session_state": {
+          // A per-session PTY exit (the worker hosts other sessions — this is the signal).
+          const state = p.state === "exited" ? "exited" : "lost";
+          deps.eventBus.emit("terminal:session_state", { sessionId: frame.sessionId, agentId, state, durationMs: 0, timestamp });
+          break;
+        }
+        case "terminal:escalated": {
+          // An escalation audit (SEC-11/12). Typed closed reason ONLY; the prompt rides the LOG.
+          const reason = ESCALATION_REASONS.has(p.reason as string) ? (p.reason as EscalationReason) : "no_safe_match";
+          deps.eventBus.emit("terminal:escalated", { sessionId: frame.sessionId, agentId, reason, timestamp });
+          deps.skillsLogger.warn(
+            {
+              sessionId: frame.sessionId,
+              agentId,
+              reason,
+              hint: "terminal session escalated to a human (auto-answer declined / loop / hop-limit)",
+              errorKind: "policy" as const,
+            },
+            "terminal session escalated",
+          );
+          break;
+        }
+        case "terminal:auto_answered": {
+          // A safe-pattern answer was sent (SEC-12): the matched index + keystroke COUNT only.
+          const matchedPatternIndex = typeof p.matchedPatternIndex === "number" ? p.matchedPatternIndex : -1;
+          const keystrokeCount = typeof p.keystrokeCount === "number" ? p.keystrokeCount : 0;
+          deps.eventBus.emit("terminal:auto_answered", { sessionId: frame.sessionId, agentId, matchedPatternIndex, keystrokeCount, timestamp });
+          break;
+        }
+        default:
+          // Unknown/unmodeled event kind — drop it (never forward an unmodeled frame).
+          deps.skillsLogger.debug(
+            { sessionId: frame.sessionId, agentId, event: frame.event, step: "terminal_event_dropped" },
+            "terminal fd3 frame with an unmodeled event kind dropped",
+          );
+      }
+    },
+  };
+}
+
+/**
  * Get (or lazily create) the per-agent `TerminalSessionRegistry`. The map lives
  * in the `setupTools` closure (passed in) — no module-global state. The registry
  * is constructed with the 118-proven `--permission` worker-spawn posture
@@ -249,6 +367,11 @@ function getOrCreateTerminalRegistry(
           timestamp: systemNowMs(),
         });
       },
+      // 124-09 (TR-11): re-publish each fd3 attention frame (terminal:input_needed /
+      // stuck / session_state / escalated / auto_answered) onto the TypedEventBus —
+      // the no-poll seam the wake-FSM (setup-terminal-wake.ts) subscribes. The HR-02
+      // guard runs BEFORE this; a corrupt frame drops the worker and never reaches it.
+      onTerminalEvent: buildTerminalEventHook(agentId, deps).onTerminalEvent,
       // P4 (TR-06/OPS-06): the reaper caps + TimerPort + the audited eviction hooks.
       // worker.{maxSessions,idleTtlMs} + the entry limits.wallClockMs (0 while the
       // allow-set is empty) bound the per-agent session footprint; onCapForget wires

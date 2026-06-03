@@ -75,6 +75,9 @@ export {
   createSessionCaps,
   type TerminalToolDeps,
   type TerminalEventBus,
+  // 124-09: the decoded fd3 push-channel frame the daemon's onTerminalEvent hook
+  // re-publishes onto the TypedEventBus (the 3rd emit-hook site).
+  type TerminalEventFrame,
   type TerminalEvictedEvent,
   type TerminalSessionRegistry,
   type TerminalSessionRegistryDeps,
