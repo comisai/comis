@@ -10,7 +10,7 @@ it as a regular message.
 
 ## Quick reference
 
-Here is the complete list of all 16 commands:
+Here is the complete list of all 17 commands:
 
 | Command | What it does | Example |
 |---------|-------------|---------|
@@ -26,6 +26,7 @@ Here is the complete list of all 16 commands:
 | `/reset` | Reset current session (clear history) | `/reset` |
 | `/compact [verbose] [instructions]` | Manually trigger context compaction | `/compact` |
 | `/export [path]` | Export session to HTML file | `/export ~/chat.html` |
+| `/export-trajectory` | Export a trajectory bundle for the current session (trace, context, and artifact snapshot) | `/export-trajectory` |
 | `/stop` | Cancel current agent execution | `/stop` |
 | `/fork` | Fork conversation at your latest message | `/fork` |
 | `/branch [list\|target-id]` | List branch points or navigate to one | `/branch list` |
@@ -252,7 +253,7 @@ Commands are not case-sensitive for the `/skill:` prefix (`/Skill:weather` and
 (`/think`, not `/Think`).
 
 If you type an unrecognized command (for example, `/hello`), it is treated as
-a regular message and passed to your agent as-is. Only the 16 built-in
+a regular message and passed to your agent as-is. Only the 17 built-in
 commands and the `/skill:name` prefix have special behavior.
 
 <Note>
