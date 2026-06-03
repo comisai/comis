@@ -9,6 +9,15 @@
  * On macOS the entire describe block is silently skipped — no false failures.
  * On Linux with bwrap available, all three groups run as live assertions.
  *
+ * FILE SPLIT (122-07): this file owns the egress-TRANSPORT proof — Group A
+ * (unix-socket bind reachable inside `--unshare-net`), Group B (raw direct-TCP
+ * egress blocked), Group C (secure-profile credential absence + the child-env
+ * scrub). The terminal-driver SCOPE cells built via the production
+ * `buildScopeArgs` composer (filesystem/credentialHome/uid + the always-on
+ * `~/.comis` carve-out, the allowlist-proxy ALLOW/DENY decision, no-provider
+ * fail-closed) live in the sibling `terminal-driver/terminal-scope-matrix.linux.test.ts`
+ * so the two compose WITHOUT overlap. Both run on `comisvps`; both skip on macOS.
+ *
  * @module
  */
 
@@ -19,6 +28,10 @@ import { existsSync, unlinkSync } from "node:fs";
 
 import { systemNowMs } from "@comis/core";
 import { BwrapProvider } from "./bwrap-provider.js";
+// SEC-07: the production child-env scrubber (a sibling terminal-driver primitive,
+// same package). Group C asserts it strips the interpreter-control / nested-CLI
+// markers BEFORE the secure-profile bwrap forwards the env into the jail.
+import { scrubChildEnv } from "../terminal-driver/terminal-env-scrub.js";
 
 // ---------------------------------------------------------------------------
 // Gate function — mirrors the canRealBwrapSandbox() idiom from exec-tool.test.ts
@@ -384,6 +397,66 @@ describe.skipIf(!egressIntegrationAvailable)(
             ).toBe(false);
           }
           // If ANTHROPIC_API_KEY is absent entirely, the test passes trivially.
+        },
+      );
+
+      it(
+        "the production scrubChildEnv strips NODE_OPTIONS / CLAUDECODE / CLAUDE_CODE_* before the jail spawn (SEC-07)",
+        { timeout: 15_000 },
+        () => {
+          // SEC-07 env-scrub. IMPORTANT: BwrapProvider.buildArgs emits NO
+          // --clearenv, so bwrap forwards the spawner env VERBATIM — the secure
+          // PROFILE does not itself drop NODE_OPTIONS. The defense is the worker's
+          // scrubChildEnv step (terminal-env-scrub.ts), which the terminal worker
+          // runs over its env snapshot BEFORE handing it to bwrap. This case
+          // exercises that production scrubber against a dangerous spawner env and
+          // confirms (a) the markers are removed, then (b) the bwrap profile
+          // forwards the SCRUBBED env into the jail with the markers gone. The
+          // end-to-end production path (buildSpawnPlan -> bwrap) is also asserted
+          // in the sibling terminal-scope-matrix.linux.test.ts SEC-07 cell; this
+          // keeps the transport file's env claim honest about WHERE the scrub lives.
+          const dangerousEnv: NodeJS.ProcessEnv = {
+            ...process.env,
+            NODE_OPTIONS: "--require /tmp/evil.js",
+            CLAUDECODE: "1",
+            CLAUDE_CODE_ENTRYPOINT: "cli",
+            SAFE_KEEPER: "keep-me",
+          };
+          const scrubbed = scrubChildEnv(dangerousEnv);
+          // (a) the scrubber removed the markers (a blocklist, not a wipe).
+          expect(scrubbed.NODE_OPTIONS, "scrubChildEnv MUST drop NODE_OPTIONS").toBeUndefined();
+          expect(scrubbed.CLAUDECODE, "scrubChildEnv MUST drop CLAUDECODE").toBeUndefined();
+          expect(
+            Object.keys(scrubbed).some((k) => k.startsWith("CLAUDE_CODE_")),
+            "scrubChildEnv MUST drop CLAUDE_CODE_*",
+          ).toBe(false);
+          expect(scrubbed.SAFE_KEEPER, "scrubChildEnv MUST keep benign vars").toBe("keep-me");
+
+          // (b) hand the SCRUBBED env to the secure-profile bwrap (the worker's
+          // contract) and confirm the jail env carries no markers.
+          const result = spawnSync(
+            sandboxArgs[0],
+            [...sandboxArgs.slice(1), "env"],
+            {
+              encoding: "utf8",
+              timeout: 15_000,
+              env: scrubbed as NodeJS.ProcessEnv,
+            },
+          );
+          expect(result.status, `env command failed: ${result.stderr ?? ""}`).toBe(0);
+          const lines = (result.stdout ?? "").split("\n");
+          expect(
+            lines.some((l) => l.startsWith("NODE_OPTIONS=")),
+            "NODE_OPTIONS MUST be absent in the jail env after the scrub.",
+          ).toBe(false);
+          expect(
+            lines.some((l) => l.startsWith("CLAUDECODE=")),
+            "CLAUDECODE MUST be absent in the jail env after the scrub.",
+          ).toBe(false);
+          expect(
+            lines.some((l) => l.startsWith("CLAUDE_CODE_")),
+            "CLAUDE_CODE_* MUST be absent in the jail env after the scrub.",
+          ).toBe(false);
         },
       );
     });
