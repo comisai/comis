@@ -58,6 +58,17 @@ export interface ScopeArgsInput {
   dedicatedUid?: { uid: number; gid: number };
   /** The egress relay socket to bind-mount — present ONLY when `scope.network === "listed-hosts"` (supplied by 122-05). */
   relaySocketPath?: string;
+  /**
+   * The on-disk relay-as-init SCRIPT the in-jail `node` execs — RO-bound into the
+   * jail so node can READ it (the worker spawns `bwrap [scope] -- node <this> -- bin`).
+   * Present ONLY for `scope.network === "listed-hosts"` (supplied by `buildSpawnPlan`
+   * from `buildEgressRelayLaunch().relayInitScriptPath`). The file exists on the HOST
+   * but is NOT covered by SYSTEM_RO_PATHS or the workspace bind, so without this
+   * `--ro-bind` the jail dies with `Cannot find module …/egress-relay-init.js`
+   * (SEC-07; the last VPS scope-matrix egress-cell failure). none/full never run the
+   * relay, so this is unset for them.
+   */
+  relayInitScriptPath?: string;
 }
 
 /** Push a `--proc /proc`, `--dev /dev`, `--dev-bind /dev/pts`, `--tmpfs /tmp` block. */
@@ -113,8 +124,11 @@ function pushFilesystemBinds(args: string[], input: ScopeArgsInput): void {
  *
  * - `none` (default) -> `--unshare-net` (kernel-enforced netns, NO socket, NO proxy).
  * - `listed-hosts` -> `--unshare-net` + `--bind <relaySocketPath>` (the egress
- *   proxy socket; the in-jail relay launch is 122-05/06). Mirrors the exec
- *   `broker-only` socket bind, but the socket is the egress proxy, not a broker.
+ *   proxy socket) + `--ro-bind <relayInitScriptPath>` (the in-jail relay-as-init
+ *   script node execs — it must be readable INSIDE the jail; the 122-05/06 launch).
+ *   Mirrors the exec `broker-only` socket bind, but the socket is the egress proxy,
+ *   not a broker. WITHOUT the script ro-bind the jail dies `Cannot find module
+ *   …/egress-relay-init.js` (the file is on the HOST but unbound — SEC-07).
  * - `full` -> `--share-net` (host network, no proxy).
  */
 function pushNetwork(args: string[], input: ScopeArgsInput): void {
@@ -126,6 +140,12 @@ function pushNetwork(args: string[], input: ScopeArgsInput): void {
       args.push("--unshare-net");
       if (input.relaySocketPath !== undefined) {
         args.push("--bind", input.relaySocketPath, input.relaySocketPath);
+      }
+      // The in-jail relay-as-init script must be READABLE inside the jail (in-jail
+      // node execs it). Bind it RO at the same host path. Only for listed-hosts —
+      // none/full never spawn the relay (SEC-07; the VPS Cannot-find-module fix).
+      if (input.relayInitScriptPath !== undefined) {
+        args.push("--ro-bind", input.relayInitScriptPath, input.relayInitScriptPath);
       }
       break;
     case "full":

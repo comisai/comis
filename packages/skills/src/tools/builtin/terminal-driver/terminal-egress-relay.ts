@@ -132,6 +132,16 @@ export interface EgressRelayLaunch {
   proxyEnv: Record<string, string>;
   /** Echo of the input socket path — the caller binds it via `relaySocketPath`. */
   socketPath: string;
+  /**
+   * The resolved on-disk relay-init script the in-jail `node` execs (== `relayArgv[1]`).
+   * The caller feeds it to `buildScopeArgs`' `relayInitScriptPath` for the
+   * `--ro-bind <path> <path>` so in-jail node can READ its own init script (the file
+   * exists on the HOST but is NOT bound by default — SEC-07; the VPS scope-matrix
+   * egress cell died with `Cannot find module …/egress-relay-init.js` without it).
+   * Returned from the SAME source as `relayArgv[1]` so the bound path and the exec
+   * path can never drift.
+   */
+  relayInitScriptPath: string;
 }
 
 /**
@@ -145,9 +155,12 @@ export function buildEgressRelayLaunch(input: EgressRelayLaunchInput): EgressRel
   // --port <port> [--setgid <g> --setuid <u>] --`. Run as a subprocess (arg0 =
   // process.execPath) so it works under the jail's `/usr` ro-bind; the trailing
   // `--` separates the init's flags from the child argv the worker appends after.
+  // The script path is ALSO surfaced as `relayInitScriptPath` so the caller can
+  // `--ro-bind` it (in-jail node must READ this exact file — SEC-07).
+  const relayInitScriptPath = fileURLToPath(RELAY_INIT_SCRIPT_URL);
   const relayArgv: string[] = [
     process.execPath,
-    fileURLToPath(RELAY_INIT_SCRIPT_URL),
+    relayInitScriptPath,
     "--socket",
     input.socketPath,
     "--port",
@@ -167,6 +180,7 @@ export function buildEgressRelayLaunch(input: EgressRelayLaunchInput): EgressRel
       HTTP_PROXY: proxyUrl,
     },
     socketPath: input.socketPath,
+    relayInitScriptPath,
   };
 }
 
