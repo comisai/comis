@@ -123,7 +123,15 @@ function isWakeState(parsed: Partial<PersistedWakeState>): parsed is PersistedWa
  */
 export function recoverWakeStates(dataDir: string): PersistedWakeState[] {
   const recovered: PersistedWakeState[] = [];
-  const dir = wakeDir(dataDir);
+  // Best-effort: a degenerate dataDir (e.g. a relative "." from a bootstrap/test config)
+  // makes safePath throw PathTraversalError — recovery must NOT crash the FSM constructor
+  // (124-07 recovers on construction). Swallow + return [] (mirrors persistWakeStateSync).
+  let dir: string;
+  try {
+    dir = wakeDir(dataDir);
+  } catch {
+    return recovered;
+  }
   if (!existsSync(dir)) return recovered;
 
   let files: string[];
@@ -162,7 +170,15 @@ export function recoverWakeStates(dataDir: string): PersistedWakeState[] {
  * does not survive past the session's own lifetime.
  */
 export function removeWakeStateFile(dataDir: string, sessionId: string): void {
-  const filePath = safePath(wakeDir(dataDir), `${sessionId}.json`);
+  // Best-effort path resolution: a degenerate dataDir (relative ".") throws
+  // PathTraversalError in safePath — a removal that cannot resolve is a no-op (there is
+  // nothing on disk to remove), never a crash. Mirrors recoverWakeStates/persistWakeStateSync.
+  let filePath: string;
+  try {
+    filePath = safePath(wakeDir(dataDir), `${sessionId}.json`);
+  } catch {
+    return;
+  }
   try {
     unlinkSync(filePath);
   } catch (e: unknown) {

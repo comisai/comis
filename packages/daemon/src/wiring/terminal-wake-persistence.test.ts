@@ -121,4 +121,19 @@ describe("terminal-wake-persistence (durable per-session wake-state)", () => {
     // Removing a non-existent file must not throw.
     expect(() => removeWakeStateFile(dataDir, "never-there")).not.toThrow();
   });
+
+  // 124-09: recovery is best-effort + runs in the FSM CONSTRUCTOR (124-07) — the keystone
+  // wiring calls createTerminalWakeDispatcher at boot. A degenerate dataDir (e.g. a relative
+  // "." in a test/bootstrap config) makes safePath throw PathTraversalError; recoverWakeStates
+  // must SWALLOW that (return []) so it never crashes daemon boot. RED on pre-fix: the
+  // unguarded wakeDir(".") call throws PathTraversalError out of the constructor.
+  it("returns an empty array (never throws) for a degenerate relative dataDir like '.'", () => {
+    expect(() => recoverWakeStates(".")).not.toThrow();
+    expect(recoverWakeStates(".")).toEqual([]);
+  });
+
+  it("persistWakeStateSync + removeWakeStateFile stay best-effort (no throw) for a degenerate '.' dataDir", () => {
+    expect(() => persistWakeStateSync(".", makeState({ sessionId: "sess-rel" }))).not.toThrow();
+    expect(() => removeWakeStateFile(".", "sess-rel")).not.toThrow();
+  });
 });
