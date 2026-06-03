@@ -223,13 +223,16 @@ function recordPty({ bin, argv, keys, durationMs }) {
 async function main() {
   const { _, flags } = parseArgs(process.argv.slice(2));
 
-  // --golden: replay an existing --in stream → write the --out golden.
+  // --golden: replay an existing --in stream → write the --out golden. Reads the
+  // stream + writes the golden as `latin1` — the SAME encoding the golden-frame
+  // test uses (`readFileSync(..., "latin1")`), so the generated golden is
+  // byte-identical to what the test asserts (control bytes round-trip exactly).
   if (flags.golden) {
     const inPath = resolveOut(String(flags.in));
     const outPath = resolveOut(String(flags.out));
-    const stream = readFileSync(inPath, "utf8");
+    const stream = readFileSync(inPath, "latin1");
     const golden = await generateGolden(stream);
-    writeFileSync(outPath, golden);
+    writeFileSync(outPath, golden, "latin1");
     process.stderr.write(`golden ${outPath} (${golden.length} bytes) from ${inPath}\n`);
     return;
   }
