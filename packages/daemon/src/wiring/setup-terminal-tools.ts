@@ -168,6 +168,12 @@ function getOrCreateTerminalRegistry(
       spawnWorker: buildProductionSpawnWorker(resolveWorkerJsPath(deps.dataDir), deps.dataDir),
       logger: deps.skillsLogger,
       nowMs: systemNowMs,
+      // SEC-16 / SEC-07 (122-06): the daemon-resolved bwrap path rides the create
+      // frame to the worker's fail-closed branch; the live egress port is the
+      // daemon->worker-main seam for `listed-hosts`. Both undefined on a no-sandbox
+      // host ⇒ the worker fail-closes (no unjailed spawn).
+      bwrapPath: deps.bwrapPath,
+      egressControl: deps.egressControl,
       // HR-03 / OPS-07: turn a worker backend-spawn failure (an `ok:false` create
       // reply, which the registry uses to flip the session to `lost`) into the
       // `terminal:spawn_failed` bus event. The registry already logged the WARN +
