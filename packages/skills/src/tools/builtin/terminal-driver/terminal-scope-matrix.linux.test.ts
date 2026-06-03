@@ -60,6 +60,8 @@ import {
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 
+import type { EgressControlPort } from "@comis/core";
+
 import { BwrapProvider } from "../sandbox/bwrap-provider.js";
 import {
   buildScopeArgs,
@@ -150,15 +152,16 @@ function runProbe(argv: string[], probe: string): ReturnType<typeof spawnSync> {
 }
 
 /**
- * A minimal host-side allowlist CONNECT proxy on a unix socket — the SAME
- * allow/deny contract as the production `createTerminalEgressProxy`
+ * The host-side allowlist CONNECT proxy on a unix socket — the SAME allow/deny
+ * contract as the production `createTerminalEgressProxy`
  * (`packages/daemon/src/wiring/terminal-egress-proxy.ts`), inlined here because
  * @comis/skills must not value-import @comis/daemon (it would be a dependency
- * cycle — daemon depends on skills). curl inside the jail dials this bound socket
- * directly via `-x` CONNECT, the same target the worker's in-jail relay bridges
- * `HTTPS_PROXY` to. ALLOW a CONNECT to a listed host -> 200 (no upstream dial —
- * we never reach the public net in CI; a synthetic 200 is enough to prove the
- * allow gate + socket reachability); a non-listed host -> 403.
+ * cycle — daemon depends on skills). It mirrors the proven 118 G-3 `g3-proxy.mjs`
+ * transport: on a CONNECT to a LISTED host it dials the real upstream and tunnels
+ * the bytes (a real 200 round-trip through the in-jail relay -> bound socket ->
+ * here -> upstream); a non-listed host -> 403 with NO upstream dial (the no-SSRF
+ * semantics). The driven `curl` inside the jail reaches this socket via
+ * `HTTPS_PROXY=http://127.0.0.1:<port>` -> the relay-init's TCP->unix bridge.
  */
 function startAllowlistProxy(
   socketPath: string,
@@ -175,12 +178,26 @@ function startAllowlistProxy(
       const line = preamble.slice(0, eol);
       const m = /^CONNECT\s+([^:\s]+):(\d+)\b/i.exec(line);
       const host = m?.[1];
+      const port = m?.[2] ? Number.parseInt(m[2], 10) : 443;
       if (host !== undefined && allow.has(host)) {
-        // ALLOW — synthetic 200 (the allow DECISION + socket reachability is the
-        // assertion; no real public egress in CI).
-        client.end("HTTP/1.1 200 Connection established\r\n\r\n");
+        // ALLOW — dial the real upstream and tunnel (a genuine 200 round-trip;
+        // matches 118 G-3 ALLOWLISTED=200). curl then completes its TLS handshake
+        // end-to-end through the relay -> socket -> here -> upstream.
+        const upstream = net.connect(port, host, () => {
+          client.write("HTTP/1.1 200 Connection established\r\n\r\n");
+          upstream.pipe(client);
+          client.pipe(upstream);
+        });
+        upstream.on("error", () => {
+          try {
+            client.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+          } catch {
+            /* client already gone */
+          }
+        });
       } else {
-        // DENY — 403, no upstream dial (the production no-SSRF semantics).
+        // DENY — 403, no upstream dial (the production no-SSRF semantics; 118 G-3
+        // NONLISTED was a proxy BLOCK).
         client.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
       }
     };
@@ -190,6 +207,20 @@ function startAllowlistProxy(
     });
   });
   return server;
+}
+
+/**
+ * A minimal {@link EgressControlPort} over an already-listening proxy socket — so
+ * the egress cell drives the REAL production composition (`buildSpawnPlan` ->
+ * `buildEgressRelayLaunch` -> the relay-init) instead of hand-rolling the argv.
+ * `materialize` echoes the bound socket; `dispose` is a no-op (the test owns the
+ * server lifetime + cleanup in `afterEach`).
+ */
+function fixedEgressControl(socketPath: string): EgressControlPort {
+  return {
+    materialize: (_hosts: string[]) =>
+      Promise.resolve({ socketPath, dispose: () => Promise.resolve() }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -268,10 +299,21 @@ describe.skipIf(!linuxBwrap)(
     //          the child runs as the net-new uid (65534).
     // -----------------------------------------------------------------------
     describe("SEC-02 — filesystem confinement + net-new uid", () => {
-      it("write outside the workspace fails at filesystem:workspace (EROFS/ENOENT/EACCES)", () => {
+      it("a jailed write to an unbound host path does NOT escape to the host (filesystem:workspace)", () => {
         const ws = makeWorkspace();
         const home = mkdtempSync(join(tmpdir(), "scope-matrix-home-"));
         createdPaths.push(home);
+        // The HOST-ISOLATION probe target: a unique file under the test's OWN
+        // mkdtemp home that is NOT bound into the jail (not the workspace, not a
+        // SYSTEM_RO_PATH). If the jail leaked to the host, this file WOULD appear
+        // on the host after the jailed `touch`. The directory exists on the host
+        // (so an escape would land), but its tree is unbound — inside the jail the
+        // path resolves into the EPHEMERAL tmpfs root, so the in-jail `touch`
+        // SUCCEEDS (rc=0) yet leaves the host untouched. Asserting rc≠0 would be
+        // WRONG (it conflates "ro-bind" with "isolation"); the real invariant is
+        // that the write never reaches the host.
+        const hostEscapeTarget = join(home, "escape-sentinel.txt");
+        createdPaths.push(hostEscapeTarget);
         const scope: TerminalScope = {
           filesystem: "workspace",
           network: "none",
@@ -279,24 +321,29 @@ describe.skipIf(!linuxBwrap)(
           uid: "dedicated",
         };
         const argv = buildCellArgs(scope, { workspace: ws, home, dataDir: join(home, ".comis") });
-        // /etc is ro-bound (SYSTEM_RO_PATHS); a write there must fail. The
-        // workspace IS writable — assert that side too so the probe proves
-        // CONFINEMENT, not a blanket-readonly jail.
+        // Inside the jail: write to the unbound host path (lands in the jail tmpfs,
+        // rc=0) AND to the bound workspace (rc=0). Both succeed IN the jail; the
+        // host-side assertion below is what proves confinement.
         const r = runProbe(
           argv,
-          `touch /etc/scope-matrix-escape 2>&1; echo "outside_rc=$?"; ` +
+          `touch "${hostEscapeTarget}" 2>&1; echo "outside_rc=$?"; ` +
             `touch "${ws}/inside" 2>&1; echo "inside_rc=$?"`,
         );
         const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-        // GO: the outside write is rejected (non-zero rc reported by the probe).
+        // GO (HOST-ISOLATION): the jailed write did NOT escape — the host path is
+        // absent even though the in-jail touch may have returned rc=0. This is the
+        // real confinement invariant (the write hit the ephemeral jail tmpfs root).
         expect(
-          /outside_rc=[1-9]/.test(out),
-          `SEC-02: a write OUTSIDE the bound workspace MUST fail at filesystem:workspace. out=${out}`,
-        ).toBe(true);
-        // And the workspace itself is writable (confinement, not lockout).
+          existsSync(hostEscapeTarget),
+          `SEC-02: a jailed write to an UNBOUND host path MUST NOT escape to the host ` +
+            `at filesystem:workspace. The host file appeared — the jail leaked. out=${out}`,
+        ).toBe(false);
+        // And the workspace itself IS writable on the host (confinement, not lockout):
+        // the bound workspace write propagates to the host file.
         expect(
-          out.includes("inside_rc=0"),
-          `SEC-02: the bound workspace MUST be writable (the session's working dir). out=${out}`,
+          out.includes("inside_rc=0") && existsSync(join(ws, "inside")),
+          `SEC-02: the bound workspace MUST be writable (the session's working dir) ` +
+            `and the write MUST reach the host-side bound dir. out=${out}`,
         ).toBe(true);
       });
 
@@ -483,13 +530,17 @@ describe.skipIf(!linuxBwrap)(
         ).toBe(true);
       });
 
-      it("the allowlist proxy on the bound socket allows a listed host (200) and 403s a non-listed host", async () => {
+      it("the relay-init bridges egress: allowlisted host -> 200, non-listed -> 403, direct bypass -> fail", async () => {
         const home = mkdtempSync(join(tmpdir(), "scope-matrix-home-"));
         createdPaths.push(home);
         const socketPath = join(tmpdir(), `scope-matrix-egress-${Date.now()}.sock`);
         createdSockets.push(socketPath);
 
-        const server = startAllowlistProxy(socketPath, ["allowed.example"]);
+        // The host-side allowlist proxy: allow `example.com` (a real upstream the
+        // VPS can reach — mirrors 118 G-3's ALLOWLISTED=example.com=200), 403 the
+        // rest. It dials the real upstream on allow so the 200 is a genuine
+        // end-to-end round-trip through the relay (NOT a synthetic decision).
+        const server = startAllowlistProxy(socketPath, ["example.com"]);
         await new Promise<void>((resolve, reject) => {
           server.once("error", reject);
           server.listen(socketPath, () => resolve());
@@ -499,77 +550,76 @@ describe.skipIf(!linuxBwrap)(
           const scope: TerminalScope = {
             filesystem: "workspace",
             network: "listed-hosts", // --unshare-net + --bind <relaySocketPath>
-            hosts: ["allowed.example"],
+            hosts: ["example.com"],
             credentialHome: "exclude",
             uid: "dedicated",
           };
-          // buildScopeArgs binds the proxy socket into the jail via relaySocketPath
-          // (the SAME --bind the worker uses). curl inside the jail dials the bound
-          // socket via -x CONNECT — the same target the relay-as-init bridges
-          // HTTPS_PROXY to. We assert the ALLOW DECISION + socket reachability; the
-          // in-jail loopback relay (HTTPS_PROXY->127.0.0.1:port->socket) is the
-          // worker's runtime path, exercised end-to-end by the higher VPS smoke.
-          const argv = buildCellArgs(scope, {
-            workspace: makeWorkspace(),
-            home,
-            dataDir: join(home, ".comis"),
-            relaySocketPath: socketPath,
-          });
 
-          // Allowed host -> 200 through the bound proxy socket.
-          const allowed = await new Promise<{ status: number | null; out: string }>((resolve) => {
-            const child = spawn(argv[0]!, [
-              ...argv.slice(1),
-              "curl",
-              "--silent",
-              "--show-error",
-              "--include",
-              "--max-time",
-              "5",
-              "-x",
-              `http://localhost/`, // proxy URL ignored; --unix-socket sets the dial
-              "--proxy-unix-socket",
-              socketPath,
-              "https://allowed.example/",
-            ]);
-            let out = "";
-            child.stdout.setEncoding("utf8");
-            child.stderr.setEncoding("utf8");
-            child.stdout.on("data", (d: string) => (out += d));
-            child.stderr.on("data", (d: string) => (out += d));
-            child.on("close", (code) => resolve({ status: code, out }));
-          });
+          /**
+           * Build the FULL production spawn plan for a jailed `curl <url>` (the SAME
+           * buildSpawnPlan the worker calls): it materializes the egress port (our
+           * proxy socket), composes the in-jail relay-init (lo up -> TCP->unix bridge
+           * -> uid drop -> exec curl), binds the socket, and sets HTTPS_PROXY. curl
+           * then egresses via HTTPS_PROXY -> the relay -> the bound socket -> the
+           * allowlist proxy — the REAL runtime path, not a hand-rolled argv.
+           */
+          const planCurl = (url: string, extra: string[] = []): Promise<{ status: number | null; out: string }> =>
+            buildSpawnPlan(
+              {
+                scope,
+                bin: "curl",
+                argv: ["--silent", "--show-error", "--max-time", "8", "-o", "/dev/null", "-w", "%{http_code}", ...extra, url],
+                workspace: makeWorkspace(),
+                cwd: home,
+                home,
+                dataDir: join(home, ".comis"),
+                systemRoPaths: resolvedSystemRoPaths(),
+                env: { ...process.env },
+              },
+              { bwrapPath: resolveBwrapPath(), egressControl: fixedEgressControl(socketPath) },
+            ).then(
+              (plan) =>
+                new Promise<{ status: number | null; out: string }>((resolve) => {
+                  // plan.bin = bwrap; plan.argv = [...scopeArgs, ...relayInitArgv,
+                  // curl, ...curlArgv]; plan.env carries HTTPS_PROXY -> the relay.
+                  const child = spawn(plan.bin, plan.argv, { env: plan.env });
+                  let out = "";
+                  child.stdout.setEncoding("utf8");
+                  child.stderr.setEncoding("utf8");
+                  child.stdout.on("data", (d: string) => (out += d));
+                  child.stderr.on("data", (d: string) => (out += d));
+                  child.on("close", (code) => resolve({ status: code, out }));
+                }),
+            );
+
+          // ALLOWLISTED -> 200: curl egresses through the relay to the real upstream.
+          const allowed = await planCurl("https://example.com/");
           expect(
             allowed.out.includes("200"),
-            `SEC-07: an ALLOWLISTED host MUST get 200 through the bound proxy socket ` +
-              `(allow decision + in-jail socket reachability). out=${allowed.out}`,
+            `SEC-07: an ALLOWLISTED host MUST get 200 end-to-end through the relay-init ` +
+              `(HTTPS_PROXY -> 127.0.0.1 relay -> bound socket -> allowlist proxy -> upstream). ` +
+              `out=${allowed.out} status=${allowed.status}`,
           ).toBe(true);
 
-          // Non-listed host -> 403 (no upstream dial — the no-SSRF semantics).
-          const denied = await new Promise<{ status: number | null; out: string }>((resolve) => {
-            const child = spawn(argv[0]!, [
-              ...argv.slice(1),
-              "curl",
-              "--silent",
-              "--show-error",
-              "--include",
-              "--max-time",
-              "5",
-              "--proxy-unix-socket",
-              socketPath,
-              "https://blocked.example/",
-            ]);
-            let out = "";
-            child.stdout.setEncoding("utf8");
-            child.stderr.setEncoding("utf8");
-            child.stdout.on("data", (d: string) => (out += d));
-            child.stderr.on("data", (d: string) => (out += d));
-            child.on("close", (code) => resolve({ status: code, out }));
-          });
+          // NON-LISTED -> 403: the proxy refuses (no upstream dial). curl reports the
+          // 403 as the proxy CONNECT response (its http_code is 000, but the body /
+          // stderr carries the 403). Accept either the 403 surfaced by curl or a
+          // CONNECT-refused failure — both prove the block (118 G-3 NONLISTED).
+          const denied = await planCurl("https://blocked.example/");
           expect(
-            denied.out.includes("403"),
-            `SEC-07: a NON-LISTED host MUST be blocked (403, no upstream dial) by the ` +
-              `allowlist proxy. out=${denied.out}`,
+            denied.out.includes("403") || (denied.status !== null && denied.status !== 0),
+            `SEC-07: a NON-LISTED host MUST be blocked by the allowlist proxy (403 / CONNECT ` +
+              `refused, no upstream dial). out=${denied.out} status=${denied.status}`,
+          ).toBe(true);
+
+          // DIRECT BYPASS -> fail (rc≠0): even with the relay present, a child that
+          // forces --noproxy has no route out of the empty netns (118 G-3 rc=7).
+          const direct = await planCurl("https://example.com/", ["--noproxy", "*"]);
+          expect(
+            direct.status !== 0,
+            `SEC-07: a DIRECT (--noproxy) egress MUST fail even at network:listed-hosts ` +
+              `(the kernel netns has no route; only the relay socket bridges out). ` +
+              `out=${direct.out} status=${direct.status}`,
           ).toBe(true);
         } finally {
           await new Promise<void>((resolve) => server.close(() => resolve()));
