@@ -1433,3 +1433,106 @@ describe("terminal-tools — OPS-03/OPS-06 cap enforcement (EVICT-vs-REJECT spli
     expect(caps.startSessionSpy).toHaveBeenCalledWith("sess-1");
   });
 });
+
+// ===========================================================================
+// WR-02 / WR-03 (code-review 123): the keystroke audit must fire on EVERY
+// send_text/send_key invocation — INCLUDING a send REJECTED on a cap breach —
+// and each audit must be tagged with a closed-enum `outcome` so a capped attempt
+// is distinguishable from a forwarded one (SEC-10/OPS-03: every send auditable +
+// reconstructable). The redaction invariant is unchanged: redacted text → LOG
+// only, the event carries counts/ids + the outcome tag (never raw text).
+//
+// RED on pre-patch: enforceSendCaps throws BEFORE auditKeystroke, so a capped
+// send emits NO terminal:keystroke event and NO keystroke_audit log; and the
+// event payload has no `outcome` field at all.
+// ===========================================================================
+describe("terminal-tools — WR-02/WR-03 audit-on-cap-breach + outcome tag", () => {
+  it("WR-02: a maxRequestsPerSession-rejected send_text STILL emits a terminal:keystroke audit (event + log)", async () => {
+    const registry = makeFakeRegistry();
+    const logger = makeCapturingLogger();
+    const eventBus = makeCapturingBus();
+    const caps = createSessionCaps({ maxRequestsPerSession: 1 }, () => 1000);
+    const tool = createTerminalSessionSendTextTool(baseDeps(registry, { logger, eventBus, caps }));
+
+    // 1st send ok (consumes the single allowance) — audited.
+    await tool.execute("c1", { sessionId: "s1", text: "first" });
+    // 2nd send breaches the rate cap → REJECT, but it must STILL be audited.
+    await expect(tool.execute("c2", { sessionId: "s1", text: "second" })).rejects.toThrow(/\[permission_denied\]/);
+
+    // the breaching send was NOT forwarded …
+    expect(registry.sendTextCalls).toHaveLength(1);
+    // … yet BOTH sends produced a keystroke audit event (the attempt is recorded).
+    expect(eventBus.events.filter((e) => e.event === "terminal:keystroke")).toHaveLength(2);
+    // … and a keystroke_audit LOG fired for the rejected attempt too.
+    expect(logger.logs.filter((l) => l.obj.step === "keystroke_audit")).toHaveLength(2);
+  });
+
+  it("WR-02: a maxRequestsPerSession-rejected send_key STILL emits a terminal:keystroke audit", async () => {
+    const registry = makeFakeRegistry();
+    const eventBus = makeCapturingBus();
+    const caps = createSessionCaps({ maxRequestsPerSession: 1 }, () => 1000);
+    const tool = createTerminalSessionSendKeyTool(baseDeps(registry, { eventBus, caps }));
+
+    await tool.execute("k1", { sessionId: "s1", keys: ["a"] });
+    await expect(tool.execute("k2", { sessionId: "s1", keys: ["b"] })).rejects.toThrow(/\[permission_denied\]/);
+
+    expect(registry.sendKeyCalls).toHaveLength(1);
+    expect(eventBus.events.filter((e) => e.event === "terminal:keystroke")).toHaveLength(2);
+  });
+
+  it("WR-03: the keystroke event carries outcome='attempted' on a forwarded send, 'rejected' on a cap breach", async () => {
+    const registry = makeFakeRegistry();
+    const eventBus = makeCapturingBus();
+    const caps = createSessionCaps({ maxRequestsPerSession: 1 }, () => 1000);
+    const tool = createTerminalSessionSendTextTool(baseDeps(registry, { eventBus, caps }));
+
+    await tool.execute("c1", { sessionId: "s1", text: "first" });
+    await expect(tool.execute("c2", { sessionId: "s1", text: "second" })).rejects.toThrow(/\[permission_denied\]/);
+
+    const ks = eventBus.events.filter((e) => e.event === "terminal:keystroke");
+    expect(ks).toHaveLength(2);
+    expect(ks[0].payload.outcome).toBe("attempted");
+    expect(ks[1].payload.outcome).toBe("rejected");
+    // the rejected audit is still redaction-safe — no raw text field on the event.
+    expect(Object.keys(ks[1].payload)).not.toContain("text");
+  });
+
+  it("WR-02/03: a maxInteractions EVICT-then-reject send_key is STILL audited, tagged rejected", async () => {
+    const registry = makeFakeRegistry();
+    const eventBus = makeCapturingBus();
+    const caps = createSessionCaps({ maxInteractions: 1 }, () => 1000);
+    const tool = createTerminalSessionSendKeyTool(baseDeps(registry, { eventBus, caps }));
+
+    await tool.execute("k1", { sessionId: "s1", keys: ["a"] });
+    await expect(tool.execute("k2", { sessionId: "s1", keys: ["b"] })).rejects.toThrow(/\[permission_denied\]/);
+
+    // the EVICT was routed …
+    expect(registry.evictCalls).toHaveLength(1);
+    expect(registry.evictCalls[0].reason).toBe("max_interactions");
+    // … and BOTH sends were audited; the evicted one tagged rejected.
+    const ks = eventBus.events.filter((e) => e.event === "terminal:keystroke");
+    expect(ks).toHaveLength(2);
+    expect(ks[1].payload.outcome).toBe("rejected");
+  });
+
+  it("WR-02: a rejected send's redacted payload still reaches the LOG only (never the bus)", async () => {
+    const registry = makeFakeRegistry();
+    const logger = makeCapturingLogger();
+    const eventBus = makeCapturingBus();
+    const caps = createSessionCaps({ maxRequestsPerSession: 1 }, () => 1000);
+    const tool = createTerminalSessionSendTextTool(baseDeps(registry, { logger, eventBus, caps }));
+
+    await tool.execute("c1", { sessionId: "s1", text: "ok" });
+    await expect(
+      tool.execute("c2", { sessionId: "s1", text: `export KEY=${PLANTED_SECRET}` }),
+    ).rejects.toThrow(/\[permission_denied\]/);
+
+    // the rejected attempt's keystroke_audit log redacted the secret (LOG only) …
+    const audits = logger.logs.filter((l) => l.obj.step === "keystroke_audit");
+    expect(audits).toHaveLength(2);
+    expect(String(audits[1].obj.redactedText)).toContain("[REDACTED]");
+    expect(JSON.stringify(logger.logs)).not.toContain(PLANTED_SECRET);
+    // … and the raw secret is NOT anywhere on the bus.
+    expect(JSON.stringify(eventBus.events)).not.toContain(PLANTED_SECRET);
+  });
+});
