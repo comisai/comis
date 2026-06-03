@@ -243,6 +243,15 @@ export const TerminalDriverConfigSchema = z.strictObject({
 /** Inferred terminal driver configuration type. */
 export type TerminalDriverConfig = z.infer<typeof TerminalDriverConfigSchema>;
 
+/**
+ * A single parsed terminal allow entry (spec §6 / SEC-01-03). The daemon wiring
+ * (`setup-terminal-tools.ts:mapAllowEntry`) maps this onto the skills-side
+ * `AllowEntryLike`, threading `{id, match, scope}` so the operator-declared scope
+ * reaches the worker (SEC-02). Scope sub-fields are already default-applied by the
+ * schema (least-privilege), so the mapping is a pure passthrough.
+ */
+export type TerminalAllowEntry = TerminalDriverConfig["allow"][number];
+
 /** Inferred skills configuration type. */
 export type SkillsConfig = z.infer<typeof SkillsConfigSchema>;
 

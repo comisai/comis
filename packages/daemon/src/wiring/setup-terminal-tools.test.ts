@@ -21,9 +21,10 @@
 
 import { describe, it, expect } from "vitest";
 
-import { wireTerminalTools } from "./setup-terminal-tools.js";
+import { wireTerminalTools, mapAllowEntry } from "./setup-terminal-tools.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import type { TerminalSessionRegistry } from "@comis/skills/tools";
+import { TerminalDriverConfigSchema, type TerminalAllowEntry } from "@comis/core";
 
 type ToolLike = { name: string; execute: (id: string, params: object) => Promise<unknown> };
 
@@ -131,5 +132,89 @@ describe("wireTerminalTools — daemon composition root", () => {
     const status = tools.find((t) => t.name === "terminal_session_status");
     expect(status).toBeDefined();
     await expect(status!.execute("call-1", { sessionId: "s" })).rejects.toThrow(/\[not_implemented\]/);
+  });
+});
+
+// ===========================================================================
+// 122-01 Task 3 — config -> AllowEntryLike scope mapping (SEC-02/03). The single
+// site config scope becomes an AllowEntryLike, so the later config-plumbing step
+// (mapAllowEntries(config.allow)) threads scope automatically — no silent drop.
+// ===========================================================================
+
+/** Parse a single allow entry through the closed schema (so defaults are applied). */
+function parsedEntry(over: Record<string, unknown> = {}): TerminalAllowEntry {
+  const cfg = TerminalDriverConfigSchema.parse({
+    enabled: true,
+    worker: { maxSessions: 4, idleTtlMs: 1000, ringBytes: 1024, stuckMs: 1000, maxConcurrentAttentionTurns: 1 },
+    defaults: { cols: 120, rows: 40, scrollback: 1000 },
+    allow: [
+      {
+        id: "bash",
+        match: { path: "/bin/bash" },
+        // `scope` is a required object whose SUB-FIELDS default (least-privilege);
+        // pass an empty object so the schema applies workspace/none/exclude/dedicated
+        // unless a test overrides it.
+        scope: {},
+        consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-03T00:00:00Z" },
+        ...over,
+      },
+    ],
+    redactSecrets: true,
+    audit: { enabled: false },
+  });
+  return cfg.allow[0];
+}
+
+describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-02/03)", () => {
+  it("copies {id, match, scope} — a config scope.filesystem:'home' survives the map (NOT dropped)", () => {
+    const entry = parsedEntry({
+      scope: { filesystem: "home", network: "listed-hosts", hosts: ["api.example.com"], credentialHome: "include", uid: "daemon" },
+    });
+    const mapped = mapAllowEntry(entry);
+
+    expect(mapped.id).toBe("bash");
+    expect(mapped.match.path).toBe("/bin/bash");
+    // RESEARCH Pitfall 4: scope MUST survive the daemon boundary.
+    expect(mapped.scope.filesystem).toBe("home");
+    expect(mapped.scope.network).toBe("listed-hosts");
+    expect(mapped.scope.hosts).toEqual(["api.example.com"]);
+    expect(mapped.scope.credentialHome).toBe("include");
+    expect(mapped.scope.uid).toBe("daemon");
+  });
+
+  it("an entry omitting scope sub-fields maps the schema's least-privilege defaults", () => {
+    // The config schema applies .default(...) at every scope sub-field, so an entry
+    // with an empty scope object already arrives least-privilege; the map is a
+    // passthrough that must preserve those defaults (workspace/none/exclude/dedicated).
+    const entry = parsedEntry(); // no scope override → schema defaults
+    const mapped = mapAllowEntry(entry);
+
+    expect(mapped.scope.filesystem).toBe("workspace");
+    expect(mapped.scope.network).toBe("none");
+    expect(mapped.scope.credentialHome).toBe("exclude");
+    expect(mapped.scope.uid).toBe("dedicated");
+  });
+
+  it("is the single mapping site: the mapped entry feeds matchAllowEntry's AllowEntryLike shape unchanged", () => {
+    // Structural proof the mapping yields the exact AllowEntryLike contract the
+    // skills matcher consumes ({id, match, scope}) — so a later config-plumbing step
+    // can do allowEntries = config.allow.map(mapAllowEntry) and scope flows.
+    const mapped = mapAllowEntry(parsedEntry());
+    expect(Object.keys(mapped).sort()).toEqual(["id", "match", "scope"]);
+  });
+});
+
+describe("wireTerminalTools — still fail-closed at this phase (config not yet threaded)", () => {
+  it("the WIRED allow-set stays empty, so a create still fail-closes (the 119-04 invariant holds)", async () => {
+    // mapAllowEntry exists, but the wiring does NOT yet populate allowEntries from
+    // config (that config-plumbing is a later step). The wired set is empty → every
+    // create rejects before any spawn — SEC-01/16 unchanged.
+    const tools: ToolLike[] = [];
+    const registries = new Map<string, TerminalSessionRegistry>();
+    wireTerminalTools(tools as never, registries, "agent-a", makeDeps());
+    const createTool = tools.find((t) => t.name === "terminal_session_create");
+    await expect(
+      createTool!.execute("call-1", { allowId: "bash", command: "/bin/bash" }),
+    ).rejects.toThrow(/\[permission_denied\]/);
   });
 });
