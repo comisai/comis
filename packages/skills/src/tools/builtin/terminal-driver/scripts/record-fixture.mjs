@@ -147,9 +147,146 @@ function syntheticAltScreen() {
   return s;
 }
 
+// ---------------------------------------------------------------------------
+// Plan 124-03: the 8-scenario CLASSIFIER corpus (spec §10.4). These streams pin
+// `terminal-classifier.ts` — each replays through the emulator and the test asserts
+// the §4.3 state. They are HAND-AUTHORED to the documented `claude` 2.1.161 byte
+// patterns (deterministic + reviewable, like the spinner/altscreen goldens); a live
+// PTY recording of `claude` is non-deterministic + auth-gated, so these are
+// synthetic by design. REFRESH on each `claude` version bump (spec §10.4).
+//
+// The LOAD-BEARING distinction is the CURSOR POSITION at capture end:
+//   - a real PROMPT parks the cursor at/near the LAST non-blank row (a prompt line);
+//   - a THINKING/TOOL-USE PAUSE leaves the cursor MID-SCREEN with generated output
+//     rendered BELOW it — so the classifier reads it as `working`, NOT `awaiting-input`.
+// CUP = `ESC[row;colH` (1-based). The grid the test replays is 80×24.
+// ---------------------------------------------------------------------------
+
+const cup = (row, col) => `${ESC}[${row};${col}H`; // 1-based cursor position
+const clearHome = `${ESC}[2J${ESC}[1;1H`;
+
+/** Startup: the CLI banner still painting (the test classifies this as an UNSETTLED working frame). */
+function corpusStartup() {
+  let s = clearHome;
+  s += "╭───────────────────────────────────────────╮\r\n";
+  s += "│  Claude Code                                │\r\n";
+  s += "│  Initializing…                              │\r\n";
+  s += "╰───────────────────────────────────────────╯\r\n";
+  // Cursor left trailing the still-painting banner (the frame is unsettled anyway).
+  s += cup(5, 1);
+  return s;
+}
+
+/** Trust dialog: a real prompt; cursor PARKED on the selected affordance near the bottom. */
+function corpusTrustDialog() {
+  let s = clearHome;
+  s += "Do you trust the files in this folder?\r\n";
+  s += "\r\n";
+  s += "/Users/dev/project\r\n";
+  s += "\r\n";
+  s += "❯ 1. Yes, proceed\r\n";
+  s += "  2. No, exit\r\n";
+  // Park the cursor on the highlighted affordance line (row 5), col after "❯ ".
+  s += cup(5, 3);
+  return s;
+}
+
+/** AskUserQuestion: a choice menu; cursor PARKED on the selected option at the bottom. */
+function corpusAskUserQuestion() {
+  let s = clearHome;
+  s += "Which approach should I take?\r\n";
+  s += "\r\n";
+  s += "❯ Refactor incrementally\r\n";
+  s += "  Rewrite the module\r\n";
+  s += "  Leave as-is\r\n";
+  // Park on the selected option (row 3), col after "❯ ".
+  s += cup(3, 3);
+  return s;
+}
+
+/** Permission gate: a tool-use (y/n) gate; cursor PARKED right after the prompt. */
+function corpusPermissionGate() {
+  let s = clearHome;
+  s += "Claude wants to run:\r\n";
+  s += "  $ rm -rf build/\r\n";
+  s += "\r\n";
+  s += "Allow this command? (y/n) ";
+  // After writing the prompt the cursor naturally trails it on the last non-blank
+  // row — a parked prompt position (row 4, just past the text).
+  return s;
+}
+
+/** Long working: a streaming spinner + output (the test classifies this UNSETTLED). */
+function corpusLongWorking() {
+  let s = clearHome;
+  s += "● Running the test suite…\r\n";
+  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
+  let line = "  ";
+  for (const f of frames) line += `\r  ${f} 124 passing`;
+  s += line + "\r\n";
+  s += "  building packages…\r\n";
+  // Cursor trailing the live output (unsettled frame).
+  s += cup(4, 1);
+  return s;
+}
+
+/**
+ * THINKING / TOOL-USE PAUSE (the #1-de-risk fixture). Generation is rendered across
+ * several rows, then the cursor is moved UP to a MID-SCREEN row while output remains
+ * BELOW it — exactly the shape that must NOT be read as a prompt. settled+diff∅ but
+ * cursor-unparked ⇒ `working`.
+ */
+function corpusThinkingPause() {
+  let s = clearHome;
+  s += "● Let me analyze the codebase structure.\r\n"; // row 1
+  s += "\r\n"; // row 2
+  s += "  Looking at the module graph and the\r\n"; // row 3
+  s += "  dependency edges to plan the change.\r\n"; // row 4
+  s += "\r\n"; // row 5
+  s += "  ⎿ Read packages/skills/src/index.ts\r\n"; // row 6 (tool-use output)
+  s += "  ⎿ Read packages/core/src/config.ts\r\n"; // row 7 (more output BELOW)
+  // Move the cursor UP into the generation region (row 3) — content stays on rows
+  // 6-7 BELOW the cursor. This is the load-bearing mid-screen-cursor shape.
+  s += cup(3, 39);
+  return s;
+}
+
+/** Completion: the turn finished and returned to the input prompt; cursor PARKED at the bottom. */
+function corpusCompletion() {
+  let s = clearHome;
+  s += "● Done. Updated 3 files and ran the tests (all green).\r\n";
+  s += "\r\n";
+  s += "❯ ";
+  // After writing "❯ " the cursor trails it on the last non-blank row — parked at
+  // the input prompt (row 3, col 3).
+  return s;
+}
+
+/** Auth-expired: an OAuth/login prompt (expired Max); cursor PARKED at the prompt. */
+function corpusAuthExpired() {
+  let s = clearHome;
+  s += "Your session has expired.\r\n";
+  s += "\r\n";
+  s += "Please sign in again to continue.\r\n";
+  s += "\r\n";
+  s += "Press Enter to open the browser for authentication… ";
+  // The cursor trails the prompt on the last non-blank row (row 5) — parked. The
+  // 124-04 auto-answer plan asserts an auth/login prompt ESCALATES (never auto-answered).
+  return s;
+}
+
 const SYNTHETIC = {
   spinner: syntheticSpinner,
   altscreen: syntheticAltScreen,
+  // The 124-03 classifier corpus (spec §10.4) — refresh on a `claude` version bump.
+  startup: corpusStartup,
+  "trust-dialog": corpusTrustDialog,
+  "ask-user-question": corpusAskUserQuestion,
+  "permission-gate": corpusPermissionGate,
+  "long-working": corpusLongWorking,
+  "thinking-pause": corpusThinkingPause,
+  completion: corpusCompletion,
+  "auth-expired": corpusAuthExpired,
 };
 
 // ---------------------------------------------------------------------------

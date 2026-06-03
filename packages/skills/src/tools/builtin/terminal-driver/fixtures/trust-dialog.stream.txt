@@ -1,0 +1,7 @@
+[2J[1;1HDo you trust the files in this folder?
+
+/Users/dev/project
+
+❯ 1. Yes, proceed
+  2. No, exit
+[5;3H

@@ -177,6 +177,7 @@ export type {
   CredentialStorageMode,
   SkillsConfig,
   TerminalAllowEntry,
+  TerminalDriverConfig,
   DaemonConfig,
   LoggingConfig,
   TracingDefaults,

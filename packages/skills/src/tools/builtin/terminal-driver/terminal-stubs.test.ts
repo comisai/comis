@@ -1,37 +1,63 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit test for the LONE remaining terminal-driver stub tool: `status`
- * (`terminal_session_status`). The four interaction tools
- * (send_text / send_key / wait / resize) are REAL factories in `terminal-tools.ts`;
- * only `status` is still deferred (the attention + autonomous tier). It carries
- * its final spec §5 TypeBox schema now (so the registered surface is correct) but
- * its `execute()` rejects with `[not_implemented]`. No
- * no-backward-compat-banned wording.
+ * Tests for the (formerly "stubs") `terminal-tools-stubs.ts` surface. After Phase
+ * 124-06 there is NO remaining `not_implemented` stub: `terminal_session_status` is a
+ * real, classifier-backed, owner-scoped tool whose body lives in
+ * `terminal-status-tool.ts`; this module re-exports it (so the barrel import path is
+ * unchanged).
  *
- * Also asserts (negative) that the four interaction factories are NO LONGER
- * exported from the stubs module — they moved to `terminal-tools.ts`, so the stubs
- * file is the single-stub surface and there is no dual path.
+ * Asserts:
+ *   - the re-exported `createTerminalSessionStatusTool` is the REAL deps-taking factory
+ *     (it carries the canonical name + the spec §5 schema and does NOT throw
+ *     `not_implemented`);
+ *   - the four interaction factories remain NOT exported from this module (they live in
+ *     `terminal-tools.ts` — no dual path).
  *
  * Pure-JS / macOS-green.
  *
  * @module
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 import { createTerminalSessionStatusTool } from "./terminal-tools-stubs.js";
 import * as stubsModule from "./terminal-tools-stubs.js";
+import type { TerminalToolDeps } from "./terminal-tools.js";
 
-describe("terminal-tools-stubs — status is the only remaining stub", () => {
-  it("terminal_session_status rejects [not_implemented]", async () => {
-    const tool = createTerminalSessionStatusTool();
+/** Minimal deps whose registry.status returns a fixed view (the tool delegates to it). */
+function makeDeps(): TerminalToolDeps {
+  const registry = {
+    async status() {
+      return {
+        state: "working" as const,
+        lastActivity: 1,
+        interactions: 0,
+        cursorParked: false,
+        screenDiffEmpty: true,
+      };
+    },
+  } as unknown as TerminalToolDeps["registry"];
+  return {
+    registry,
+    allowEntries: [],
+    detectProvider: () => ({}) as never,
+    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    eventBus: { emit: vi.fn() } as unknown as TerminalToolDeps["eventBus"],
+    nowMs: () => 1,
+    agentId: "agent-1",
+  } as unknown as TerminalToolDeps;
+}
+
+describe("terminal-tools-stubs — status is now a real tool (124-06; no remaining stub)", () => {
+  it("the re-exported createTerminalSessionStatusTool is the REAL deps-taking factory (no not_implemented throw)", async () => {
+    const tool = createTerminalSessionStatusTool(makeDeps());
     expect(tool.name).toBe("terminal_session_status");
-    await expect(tool.execute("call-1", { sessionId: "s" } as never)).rejects.toThrow(/^\[not_implemented\]/);
-    await expect(tool.execute("call-1", { sessionId: "s" } as never)).rejects.toThrow(/not yet implemented/);
+    // It returns a jsonResult, NOT a [not_implemented] throw.
+    await expect(tool.execute("call-1", { sessionId: "s" } as never)).resolves.toBeDefined();
   });
 
   it("status carries its canonical name + a non-empty TypeBox object schema", () => {
-    const tool = createTerminalSessionStatusTool();
+    const tool = createTerminalSessionStatusTool(makeDeps());
     const schema = tool.parameters as { type?: string; properties?: Record<string, unknown> };
     expect(schema.type).toBe("object");
     expect(Object.keys(schema.properties ?? {}).length).toBeGreaterThan(0);
@@ -39,29 +65,17 @@ describe("terminal-tools-stubs — status is the only remaining stub", () => {
     expect(tool.description.length).toBeGreaterThan(0);
   });
 
-  it("status's reject message has no no-backward-compat-banned wording", async () => {
-    const tool = createTerminalSessionStatusTool();
-    let message = "";
-    try {
-      await tool.execute("call-1", { sessionId: "s" } as never);
-    } catch (err) {
-      message = err instanceof Error ? err.message : String(err);
-    }
-    expect(message).toMatch(/not yet implemented/);
-    expect(message).not.toMatch(/legacy|backward|fallback|deprecated/i);
-  });
-
-  it("the four interaction factories are NO LONGER exported from the stubs module (they moved to terminal-tools.ts — no dual path)", () => {
-    const removed = [
+  it("the four interaction factories are NOT exported from this module (they live in terminal-tools.ts — no dual path)", () => {
+    const elsewhere = [
       "createTerminalSessionSendTextTool",
       "createTerminalSessionSendKeyTool",
       "createTerminalSessionWaitTool",
       "createTerminalSessionResizeTool",
     ];
-    for (const name of removed) {
+    for (const name of elsewhere) {
       expect((stubsModule as Record<string, unknown>)[name]).toBeUndefined();
     }
-    // status is still here.
+    // status is re-exported here.
     expect(typeof (stubsModule as Record<string, unknown>).createTerminalSessionStatusTool).toBe("function");
   });
 });

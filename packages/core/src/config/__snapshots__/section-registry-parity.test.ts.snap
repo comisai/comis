@@ -2542,6 +2542,92 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
+    "immutable": true,
+    "path": "agents.skills.terminal",
+    "type": "object"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "agents.skills.terminal.allow",
+    "type": "array"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.audit",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.audit.enabled",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.defaults",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.defaults.cols",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.defaults.rows",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.defaults.scrollback",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.enabled",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.redactSecrets",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.worker",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.worker.idleTtlMs",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.worker.maxConcurrentAttentionTurns",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.worker.maxSessions",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.worker.ringBytes",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.worker.stuckMs",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.skills.terminal.worker.tasksMax",
+    "type": "integer"
+  },
+  {
     "default": {
       "minBm25Score": 0.8,
       "minHybridScore": 0.35
@@ -17233,6 +17319,312 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           ],
           "type": "object"
         },
+        "terminal": {
+          "additionalProperties": false,
+          "properties": {
+            "allow": {
+              "default": [],
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "approveOnCreate": {
+                    "type": "boolean"
+                  },
+                  "autoAnswer": {
+                    "default": "safe-only",
+                    "enum": [
+                      "none",
+                      "safe-only",
+                      "all"
+                    ],
+                    "type": "string"
+                  },
+                  "backend": {
+                    "enum": [
+                      "spawn",
+                      "tmux"
+                    ],
+                    "type": "string"
+                  },
+                  "brokerDecoy": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "bindingHostPaths": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "decoyPath": {
+                        "type": "string"
+                      },
+                      "tokenSource": {
+                        "enum": [
+                          "operator",
+                          "comis-oauth"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "bindingHostPaths",
+                      "tokenSource",
+                      "decoyPath"
+                    ],
+                    "type": "object"
+                  },
+                  "consent": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "acknowledgedAt": {
+                        "type": "string"
+                      },
+                      "acknowledgedRisk": {
+                        "const": true,
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "acknowledgedRisk",
+                      "acknowledgedAt"
+                    ],
+                    "type": "object"
+                  },
+                  "hardening": {
+                    "default": "none",
+                    "enum": [
+                      "none",
+                      "broker-decoy"
+                    ],
+                    "type": "string"
+                  },
+                  "hintPatterns": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "limits": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "maxInteractions": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "maxRequestsPerSession": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "maxSessions": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "wallClockMs": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "match": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "argsPrefix": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "hash": {
+                        "type": "string"
+                      },
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "type": "object"
+                  },
+                  "scope": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "credentialHome": {
+                        "default": "exclude",
+                        "enum": [
+                          "exclude",
+                          "include"
+                        ],
+                        "type": "string"
+                      },
+                      "filesystem": {
+                        "default": "workspace",
+                        "enum": [
+                          "workspace",
+                          "listed-paths",
+                          "home",
+                          "full"
+                        ],
+                        "type": "string"
+                      },
+                      "hosts": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "network": {
+                        "default": "none",
+                        "enum": [
+                          "none",
+                          "listed-hosts",
+                          "full"
+                        ],
+                        "type": "string"
+                      },
+                      "paths": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "uid": {
+                        "default": "dedicated",
+                        "enum": [
+                          "dedicated",
+                          "daemon"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "filesystem",
+                      "network",
+                      "credentialHome",
+                      "uid"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "id",
+                  "match",
+                  "scope",
+                  "autoAnswer",
+                  "consent",
+                  "hardening"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "audit": {
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "enabled"
+              ],
+              "type": "object"
+            },
+            "defaults": {
+              "additionalProperties": false,
+              "properties": {
+                "cols": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "rows": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "scrollback": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "cols",
+                "rows",
+                "scrollback"
+              ],
+              "type": "object"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "redactSecrets": {
+              "type": "boolean"
+            },
+            "worker": {
+              "additionalProperties": false,
+              "properties": {
+                "idleTtlMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "maxConcurrentAttentionTurns": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "maxSessions": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "ringBytes": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "stuckMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "tasksMax": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "maxSessions",
+                "idleTtlMs",
+                "ringBytes",
+                "stuckMs",
+                "maxConcurrentAttentionTurns"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "enabled",
+            "worker",
+            "defaults",
+            "allow",
+            "redactSecrets",
+            "audit"
+          ],
+          "type": "object"
+        },
         "toolDiscovery": {
           "additionalProperties": false,
           "default": {
@@ -26916,6 +27308,312 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 },
                 "required": [
                   "enabled"
+                ],
+                "type": "object"
+              },
+              "terminal": {
+                "additionalProperties": false,
+                "properties": {
+                  "allow": {
+                    "default": [],
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "approveOnCreate": {
+                          "type": "boolean"
+                        },
+                        "autoAnswer": {
+                          "default": "safe-only",
+                          "enum": [
+                            "none",
+                            "safe-only",
+                            "all"
+                          ],
+                          "type": "string"
+                        },
+                        "backend": {
+                          "enum": [
+                            "spawn",
+                            "tmux"
+                          ],
+                          "type": "string"
+                        },
+                        "brokerDecoy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "bindingHostPaths": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "decoyPath": {
+                              "type": "string"
+                            },
+                            "tokenSource": {
+                              "enum": [
+                                "operator",
+                                "comis-oauth"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "bindingHostPaths",
+                            "tokenSource",
+                            "decoyPath"
+                          ],
+                          "type": "object"
+                        },
+                        "consent": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "acknowledgedAt": {
+                              "type": "string"
+                            },
+                            "acknowledgedRisk": {
+                              "const": true,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "acknowledgedRisk",
+                            "acknowledgedAt"
+                          ],
+                          "type": "object"
+                        },
+                        "hardening": {
+                          "default": "none",
+                          "enum": [
+                            "none",
+                            "broker-decoy"
+                          ],
+                          "type": "string"
+                        },
+                        "hintPatterns": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "id": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "limits": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "maxInteractions": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "maxRequestsPerSession": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "maxSessions": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "wallClockMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "match": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "argsPrefix": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "hash": {
+                              "type": "string"
+                            },
+                            "path": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "path"
+                          ],
+                          "type": "object"
+                        },
+                        "scope": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "credentialHome": {
+                              "default": "exclude",
+                              "enum": [
+                                "exclude",
+                                "include"
+                              ],
+                              "type": "string"
+                            },
+                            "filesystem": {
+                              "default": "workspace",
+                              "enum": [
+                                "workspace",
+                                "listed-paths",
+                                "home",
+                                "full"
+                              ],
+                              "type": "string"
+                            },
+                            "hosts": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "network": {
+                              "default": "none",
+                              "enum": [
+                                "none",
+                                "listed-hosts",
+                                "full"
+                              ],
+                              "type": "string"
+                            },
+                            "paths": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "uid": {
+                              "default": "dedicated",
+                              "enum": [
+                                "dedicated",
+                                "daemon"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "filesystem",
+                            "network",
+                            "credentialHome",
+                            "uid"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "match",
+                        "scope",
+                        "autoAnswer",
+                        "consent",
+                        "hardening"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "audit": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "enabled"
+                    ],
+                    "type": "object"
+                  },
+                  "defaults": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "cols": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "rows": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "scrollback": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "cols",
+                      "rows",
+                      "scrollback"
+                    ],
+                    "type": "object"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "redactSecrets": {
+                    "type": "boolean"
+                  },
+                  "worker": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "idleTtlMs": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "maxConcurrentAttentionTurns": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "maxSessions": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "ringBytes": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "stuckMs": {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      "tasksMax": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "maxSessions",
+                      "idleTtlMs",
+                      "ringBytes",
+                      "stuckMs",
+                      "maxConcurrentAttentionTurns"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "worker",
+                  "defaults",
+                  "allow",
+                  "redactSecrets",
+                  "audit"
                 ],
                 "type": "object"
               },

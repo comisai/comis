@@ -118,37 +118,6 @@ const ToolDiscoverySchema = z.strictObject({
   minHybridScore: z.number().min(0).max(1).default(0.35),
 });
 
-export const SkillsConfigSchema = z.strictObject({
-    /** Directories to scan for SKILL.md files (relative to data dir) */
-    discoveryPaths: z.array(z.string()).default(["./skills"]),
-
-    /** Built-in tool toggles (enabled/disabled by config) */
-    builtinTools: BuiltinToolsSchema.default(() => BuiltinToolsSchema.parse({})),
-
-    /** Tool policy: controls which tools are available per agent */
-    toolPolicy: ToolPolicySchema.default(() => ToolPolicySchema.parse({})),
-
-    /** Prompt-based skill configuration (Markdown instruction skills) */
-    promptSkills: PromptSkillsConfigSchema.default(() => PromptSkillsConfigSchema.parse({})),
-
-    /** Runtime eligibility filtering: exclude skills whose OS/binary/env prerequisites are not met */
-    runtimeEligibility: RuntimeEligibilitySchema.default(() => RuntimeEligibilitySchema.parse({})),
-
-    /** Content scanning: detect dangerous patterns in skill bodies at load time */
-    contentScanning: ContentScanningSchema.default(() => ContentScanningSchema.parse({})),
-
-    /** Exec tool OS-level sandbox configuration */
-    execSandbox: ExecSandboxSchema.default(() => ExecSandboxSchema.parse({})),
-
-    /** discover_tools score-floor thresholds (BM25 + hybrid). */
-    toolDiscovery: ToolDiscoverySchema.default(() => ToolDiscoverySchema.parse({})),
-
-    /** Enable file watching for automatic skill reload (default: true). */
-    watchEnabled: z.boolean().default(true),
-    /** Debounce interval in milliseconds for file change coalescing (default: 400). */
-    watchDebounceMs: z.number().int().min(100).max(5000).default(400),
-  });
-
 /**
  * One allowlist entry for the interactive terminal driver (spec §6).
  *
@@ -229,6 +198,16 @@ export const TerminalDriverConfigSchema = z.strictObject({
     ringBytes: z.number().int(),
     stuckMs: z.number().int(),
     maxConcurrentAttentionTurns: z.number().int(),
+    /**
+     * The operator-dialable cgroup `TasksMax` ceiling bounding the concurrent-session
+     * subprocess footprint vs. the systemd `TasksMax` (OPS-05; T-124-22). The tmux
+     * backend (124-08) makes a worker's named sessions outlive the worker, so N
+     * memory-hungry sessions share one cgroup; this bounds the fork footprint so an
+     * unbounded fan-out cannot OOM/fork-starve the daemon. Absent ⇒ bounded by
+     * `maxSessions` alone (no extra ceiling). Optional + positive — adding it keeps the
+     * `worker` block a `strictObject` (an unknown/typo'd worker key still rejects, OPS-02).
+     */
+    tasksMax: z.number().int().positive().optional(),
   }),
   defaults: z.strictObject({
     cols: z.number().int(),
@@ -251,6 +230,48 @@ export type TerminalDriverConfig = z.infer<typeof TerminalDriverConfigSchema>;
  * schema (least-privilege), so the mapping is a pure passthrough.
  */
 export type TerminalAllowEntry = TerminalDriverConfig["allow"][number];
+
+export const SkillsConfigSchema = z.strictObject({
+    /** Directories to scan for SKILL.md files (relative to data dir) */
+    discoveryPaths: z.array(z.string()).default(["./skills"]),
+
+    /** Built-in tool toggles (enabled/disabled by config) */
+    builtinTools: BuiltinToolsSchema.default(() => BuiltinToolsSchema.parse({})),
+
+    /** Tool policy: controls which tools are available per agent */
+    toolPolicy: ToolPolicySchema.default(() => ToolPolicySchema.parse({})),
+
+    /** Prompt-based skill configuration (Markdown instruction skills) */
+    promptSkills: PromptSkillsConfigSchema.default(() => PromptSkillsConfigSchema.parse({})),
+
+    /** Runtime eligibility filtering: exclude skills whose OS/binary/env prerequisites are not met */
+    runtimeEligibility: RuntimeEligibilitySchema.default(() => RuntimeEligibilitySchema.parse({})),
+
+    /** Content scanning: detect dangerous patterns in skill bodies at load time */
+    contentScanning: ContentScanningSchema.default(() => ContentScanningSchema.parse({})),
+
+    /** Exec tool OS-level sandbox configuration */
+    execSandbox: ExecSandboxSchema.default(() => ExecSandboxSchema.parse({})),
+
+    /** discover_tools score-floor thresholds (BM25 + hybrid). */
+    toolDiscovery: ToolDiscoverySchema.default(() => ToolDiscoverySchema.parse({})),
+
+    /** Enable file watching for automatic skill reload (default: true). */
+    watchEnabled: z.boolean().default(true),
+    /** Debounce interval in milliseconds for file change coalescing (default: 400). */
+    watchDebounceMs: z.number().int().min(100).max(5000).default(400),
+
+    /**
+     * Interactive terminal driver (v2.11) — the operator allowlist + worker caps + scope
+     * matrix (spec §6). OPTIONAL + fail-closed by construction: when absent (the default),
+     * the daemon wires an EMPTY allow-set (every `terminal_session_create` rejects before
+     * any spawn) and NO reaper. P5/Phase 124 threads this into the daemon's
+     * `TerminalWiringDeps` so the allow-set populates (per-session caps go live) and
+     * `worker.{maxSessions,idleTtlMs,stuckMs}` feed the reaper. The whole shape is a closed
+     * `z.strictObject` (OPS-02): an unknown/typo'd terminal key rejects at config load.
+     */
+    terminal: TerminalDriverConfigSchema.optional(),
+  });
 
 /** Inferred skills configuration type. */
 export type SkillsConfig = z.infer<typeof SkillsConfigSchema>;

@@ -39,19 +39,44 @@ import {
 
 import {
   encodeFrame,
-  createFrameDecoder,
-  correlate,
-  FrameTooLargeError,
+  type TerminalEventFrame,
   type TerminalReplyFrame,
   type TerminalRequestFrame,
 } from "./terminal-ipc.js";
 import type { ReadOptions, SnapshotDiff } from "./terminal-render.js";
+import {
+  notFoundStatus,
+  composeStatusView,
+  type TerminalStatusView,
+  type WorkerStatusPerception,
+} from "./terminal-status-view.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
 import { wireRegistryReaper, type EvictReason, type ReaperCaps } from "./terminal-reaper.js";
+import { wireWorkerSupervision } from "./terminal-worker-supervisor.js";
+// The registry's shared structural contracts the BODY references (deps/handle/worker)
+// type-imported from the neutral leaf terminal-session-types.ts (124-01 cycle break).
+// SessionStatus is no longer referenced in the body (it rides SessionHandle, which moved
+// to the leaf) — it is still re-exported for the public surface below.
+import type {
+  FakeWorkerChild,
+  RegistryLogger,
+  SessionHandle,
+} from "./terminal-session-types.js";
 
 export type { SessionOwner } from "./terminal-session-owner.js";
+// The registry's shared structural contracts moved to the neutral leaf
+// terminal-session-types.ts (124-01) to break the worker-supervisor import cycle
+// (the registry value-imports wireWorkerSupervision, the supervisor needed these
+// types back). RE-EXPORTED here so every existing `from "./terminal-session-registry.js"`
+// importer (tool layer, barrel, round-trip tests) keeps working — type-only, no churn.
+export type {
+  FakeWorkerChild,
+  RegistryLogger,
+  SessionHandle,
+  SessionStatus,
+} from "./terminal-session-types.js";
 
 /**
  * The per-session emulator scrollback depth — the SINGLE source the create tool
@@ -63,30 +88,10 @@ export const DEFAULT_SCROLLBACK = 1000;
 // ---------------------------------------------------------------------------
 // Injected dependency contracts
 // ---------------------------------------------------------------------------
-
-/**
- * A structural logger — the minimal `{ info, debug, warn, error }` surface. NOT
- * `getLogger` from `@comis/infra` (the registry must never value-import infra).
- */
-export interface RegistryLogger {
-  debug(obj: Record<string, unknown>, msg: string): void;
-  info(obj: Record<string, unknown>, msg: string): void;
-  warn(obj: Record<string, unknown>, msg: string): void;
-  error(obj: Record<string, unknown>, msg: string): void;
-}
-
-/**
- * The structural shape of the spawned worker child — a subset of
- * `ChildProcess`. The registry writes request frames to `stdin`, reads reply
- * frames off `stdout`, and supervises via `on("error"/"close")`.
- */
-export interface FakeWorkerChild {
-  pid?: number;
-  stdin: { write(chunk: Buffer): boolean } | null;
-  stdout: { on(event: "data", cb: (chunk: Buffer) => void): void } | null;
-  on(event: string, cb: (arg?: unknown) => void): FakeWorkerChild;
-  kill(signal?: string): void;
-}
+//
+// RegistryLogger + FakeWorkerChild moved to the neutral leaf terminal-session-types.ts
+// (124-01) to break the worker-supervisor import cycle; type-imported above and
+// re-exported so the public surface is unchanged.
 
 /** Details handed to `onSpawnFailed` when the worker reports a failed backend spawn. */
 export interface SpawnFailureInfo {
@@ -120,7 +125,16 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   requestTimeoutMs?: number;
   /** Called when the worker reports a failed backend spawn via an `ok:false` create reply; the daemon binds this to emit `terminal:spawn_failed`. The session is already `lost` before this fires. Injected (not a value-imported bus) so the registry stays infra-decoupled. */
   onSpawnFailed?: (info: SpawnFailureInfo) => void;
-  /** Schedule a one-shot timer for the reply timeout. Default `systemSetTimeout` from `@comis/core` (the sanctioned indirection — no raw `setTimeout` global); the production default `.unref()`s it so a pending timeout never holds the loop open. */
+  /**
+   * Called for each decoded {@link TerminalEventFrame} the worker pushes on fd3 (the
+   * no-poll attention channel, 124-05/TR-11) — the seam the daemon (124-09) binds to
+   * RE-PUBLISH onto its TypedEventBus (adding `agentId`/`timestamp` the worker is
+   * agnostic to). Mirrors {@link onSpawnFailed}: daemon-bound, injected (NOT a
+   * value-imported bus) so the registry stays infra-decoupled. The fd3 reader's HR-02
+   * guard runs BEFORE this — a corrupt frame drops the worker and never reaches the hook.
+   */
+  onTerminalEvent?: (frame: TerminalEventFrame) => void;
+  /** Schedule a one-shot timer for the MR-01 reply timeout. Default `systemSetTimeout` from `@comis/core` (the sanctioned indirection — no raw `setTimeout` global); the production default `.unref()`s it so a pending timeout never holds the loop open. */
   setTimer?: (cb: () => void, ms: number) => unknown;
   /** Cancel a `setTimer` handle (default: `systemClearTimeout`). */
   clearTimer?: (handle: unknown) => void;
@@ -135,28 +149,10 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
-
-/** The lifecycle status of a terminal session. */
-export type SessionStatus = "running" | "exited" | "lost";
-
-/** A daemon-side session record. */
-export interface SessionHandle {
-  sessionId: string;
-  allowId: string;
-  /** The canonical command (bin) the session drives — for `list`/audit display. */
-  command: string;
-  status: SessionStatus;
-  cols: number;
-  rows: number;
-  lastActivity: number;
-  /** Session start epoch ms (stamped at `create`) — the reaper's wall-clock-age signal. */
-  startedAt: number;
-  exitCode?: number;
-  /** The registry-allocated per-session jail workspace dir, removed best-effort on kill so the throwaway dir does not leak. Set ONLY when the registry allocated it (a caller-supplied workspace is the caller's to clean). */
-  workspace?: string;
-  /** The origin that owns this session — `(agentId, sessionKey)`. Stamped at `create`; `list`/`read`/`get`/`kill`/`send*` filter on it (two subagents are mutually invisible). */
-  owner: SessionOwner;
-}
+//
+// SessionStatus + SessionHandle moved to the neutral leaf terminal-session-types.ts
+// (124-01, closure of the worker-supervisor cycle break); type-imported above and
+// re-exported so the public surface is unchanged.
 
 /** A `create` request — the daemon passes buildDirectSpawn's `{bin,argv}`. */
 export interface CreateRequest {
@@ -204,7 +200,21 @@ export interface TerminalView {
 export interface SendResult {
   screen: string;
   cursor: { x: number; y: number };
+  /**
+   * Whether the send was actually FORWARDED to a live worker (WR-05). `true` only
+   * when the owned, running session round-tripped an `ok` reply; absent/falsy on the
+   * degraded path (absent/cross-owner/not-running session OR a wedged worker — the
+   * `{screen:"",cursor:{0,0}}` not-delivered shape). The woken-turn audit reads this
+   * so a keystroke that reached nothing is recorded `outcome:"rejected"`, never
+   * `attempted` — keeping the §2.7 audit trail honest about delivery.
+   */
+  delivered?: boolean;
 }
+
+// The §5 `status` view + its pure composition live in the leaf `terminal-status-view.ts`
+// (extracted to keep this file under the 800-line cap). Re-export the view type (imported
+// above) so the registry's public surface is unchanged.
+export type { TerminalStatusView };
 
 /** The settle snapshot returned by `wait` (spec §5) — `{matched,isComplete,reason}` + the view subset. */
 export interface WaitResult {
@@ -235,7 +245,9 @@ export interface TerminalSessionRegistry {
   create(req: CreateRequest, owner: SessionOwner): Promise<CreateResult>;
   /** Round-trip a `read` (render opts + screen diff). Owner-scoped: absent/cross-owner → not-found view (alive false), never the other owner's bytes. */
   read(sessionId: string, owner: SessionOwner, opts?: ReadOptions): Promise<TerminalView>;
-  /** Forward `send_text` → `{screen,cursor}`. Owner-scoped (defense-in-depth): absent/cross-owner/not-running/wedged → `{screen:"",cursor:{0,0}}`; never hangs. */
+  /** Round-trip a `status` (124-06, spec §5) — the worker's classifier perception composed with `handle.lastActivity`. Owner-scoped (T-124-15): absent/cross-owner/killed → the not-found minimal view (`exited`, not parked) WITHOUT a round-trip, never the other owner's state. The classifier stays single-homed in the worker. */
+  status(sessionId: string, owner: SessionOwner): Promise<TerminalStatusView>;
+  /** Forward `send_text` (TR-03) → `{screen,cursor}`. Owner-scoped (defense-in-depth): absent/cross-owner/not-running/wedged → `{screen:"",cursor:{0,0}}`; never hangs. */
   sendText(
     sessionId: string,
     owner: SessionOwner,
@@ -358,63 +370,21 @@ export function createTerminalSessionRegistry(
     const child = deps.spawnWorker();
     worker = child;
 
-    // Decode reply frames off the worker's stdout and correlate them to waiters.
-    //
-    // Crash-isolation guarantee: decode/correlate is wrapped in try/catch so a
-    // malformed reply frame NEVER throws out of this 'data' listener (a throw on a
-    // stream listener becomes an `uncaughtException` that takes the DAEMON down —
-    // the opposite of "a crash restarts the WORKER, never the daemon"). Throw
-    // sources: `JSON.parse` on non-JSON body bytes (stray console.log / partial
-    // write / post-desync garbage) + the `FrameTooLargeError` on a corrupt
-    // length prefix. On any decode failure we treat the worker as corrupt: WARN,
-    // flip its running sessions to `lost`, clear the handle so the next `create`
-    // re-spawns — never reaching `uncaughtException`.
-    const decoder = createFrameDecoder();
-    child.stdout?.on("data", (chunk: Buffer) => {
-      let frames: TerminalReplyFrame[];
-      try {
-        frames = decoder.push(chunk) as TerminalReplyFrame[];
-      } catch (err) {
-        // A FrameTooLargeError (a corrupt/hostile length prefix) is a distinct,
-        // more-actionable signal than a JSON parse failure — surface it precisely.
-        const hint =
-          err instanceof FrameTooLargeError
-            ? "oversized worker frame length (corrupt/hostile prefix); dropping worker"
-            : "corrupt worker frame on stdout; dropping worker";
-        // errorKind:"validation" — the inbound frame failed structural decode
-        // (the closest closed-union member for a corrupt/malformed wire frame).
-        logger.warn({ err, hint, errorKind: "validation" as const }, "terminal worker frame decode failed");
-        markRunningSessionsLost();
-        clearWorker();
-        return;
-      }
-      for (const frame of frames) correlate(pending, frame);
-    });
-
-    // Crash isolation: a worker error flips its sessions to `lost` and clears the handle.
-    child.on("error", (err) => {
-      logger.warn(
-        { err, hint: "terminal worker error; sessions lost, worker will re-spawn", errorKind: "dependency" as const },
-        "terminal worker error",
-      );
-      markRunningSessionsLost();
-      clearWorker();
-    });
-
-    // Crash isolation: a worker close flips its sessions to `exited(code)` and clears.
-    child.on("close", (code) => {
-      const exitCode = typeof code === "number" ? code : null;
-      logger.info(
-        { exitCode, hint: "terminal worker closed; sessions exited, worker will re-spawn", errorKind: "dependency" as const },
-        "terminal worker closed",
-      );
-      for (const handle of sessions.values()) {
-        if (handle.status === "running") {
-          handle.status = "exited";
-          if (exitCode !== null) handle.exitCode = exitCode;
-        }
-      }
-      clearWorker();
+    // OPS-01 crash-isolation listeners (the HR-02-guarded stdout decoder + error + close)
+    // moved to terminal-worker-supervisor.ts (124-01) so this file keeps headroom under the
+    // 800-line cap. 124-05 (TR-11): the supervisor ALSO installs the guarded fd3 events-push
+    // reader on child.stdio?.[3], dispatching each decoded TerminalEventFrame to the daemon-
+    // injected onTerminalEvent hook (the no-poll attention seam). The closure locals + the
+    // hook ride in as explicit params; the stdout HR-02 try/catch (corrupt frame never
+    // crashes the daemon) is byte-for-byte identical and the fd3 reader copies it.
+    wireWorkerSupervision({
+      child,
+      pending,
+      sessions,
+      logger,
+      markRunningSessionsLost,
+      clearWorker,
+      onTerminalEvent: deps.onTerminalEvent,
     });
 
     return child;
@@ -597,6 +567,25 @@ export function createTerminalSessionRegistry(
     return reply.result as TerminalView;
   }
 
+  async function status(sessionId: string, owner: SessionOwner): Promise<TerminalStatusView> {
+    const handle = ownedHandle(sessionId, owner);
+    // Owner-scoped (T-124-15): a cross-owner / absent / not-running session degrades
+    // to the not-found view WITHOUT round-tripping a `status` frame — a probe with a
+    // guessed sessionId never reaches the worker and never sees another owner's state.
+    if (handle === undefined || handle.status !== "running") {
+      return notFoundStatus(handle);
+    }
+    const reply = await request(sessionId, "status", { sessionId });
+    handle.lastActivity = nowMs();
+    // A wedged worker (MR-01 reply timeout) degrades to the not-found view, never hangs.
+    if (!reply.ok || reply.result === undefined) {
+      return notFoundStatus(handle);
+    }
+    // The classifier state stays single-homed in the worker; compose it with the
+    // daemon-side lastActivity (the leaf helper folds the two — keeps this file lean).
+    return composeStatusView(reply.result as WorkerStatusPerception, handle);
+  }
+
   /**
    * Defensively extract the `{screen,cursor}` subset from a worker reply.result
    * (read the fields rather than trusting the shape blindly — a corrupt reply
@@ -619,10 +608,13 @@ export function createTerminalSessionRegistry(
    */
   function mapSendReply(handle: SessionHandle, reply: TerminalReplyFrame): SendResult {
     if (!reply.ok || reply.result === undefined) {
+      // Not-delivered (WR-05): a wedged worker (the MR-01 reply timeout) — the send
+      // reached no live pane. delivered is left falsy so the audit records "rejected".
       return { screen: "", cursor: { x: 0, y: 0 } };
     }
     handle.lastActivity = nowMs();
-    return toSendResult(reply.result);
+    // The worker round-tripped an ok reply ⇒ the keystroke WAS forwarded (WR-05).
+    return { ...toSendResult(reply.result), delivered: true };
   }
 
   async function sendText(
@@ -791,5 +783,5 @@ export function createTerminalSessionRegistry(
     }
   }
 
-  return { create, read, sendText, sendKey, resize, wait, get, list, kill, evict, size, cleanup };
+  return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, size, cleanup };
 }

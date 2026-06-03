@@ -394,6 +394,85 @@ describe("createTerminalWorker — backend selection", () => {
     expect((reply.result as { backend: string }).backend).toBe("pty");
     expect(fake.spawn).toHaveBeenCalledTimes(1);
   });
+
+  // 124-08 (OPS-05): the THIRD backend selection — a create frame requesting
+  // backend:"tmux" with a wired loadTmux selects the tmux named-session backend (the
+  // survival path), and the tmux handle satisfies the SAME FakePtyLike seam (onData→ring).
+  it("selects the tmux backend and reports backend tmux when backend:tmux is requested + loadTmux is wired", async () => {
+    let onData: ((d: string) => void) | undefined;
+    let receivedArgs: { sessionId: string; bin: string; argv: readonly string[] } | undefined;
+    const tmuxSpawn = vi.fn(
+      (spawnArgs: { sessionId: string; bin: string; argv: readonly string[]; cols: number; rows: number }) => {
+        // The loader receives the per-session COMPOSED plan command — record it for the
+        // post-call assertions (asserting inside the fake would, on mismatch, throw into
+        // dispatch and surface as a generic ok:false rather than a legible diff).
+        receivedArgs = { sessionId: spawnArgs.sessionId, bin: spawnArgs.bin, argv: spawnArgs.argv };
+        const handle: FakePtyLike = {
+          pid: 7373,
+          onData: (cb: (d: string) => void) => {
+            onData = cb;
+          },
+          onExit: vi.fn(),
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+        };
+        return handle;
+      },
+    );
+
+    const worker = createTerminalWorker(
+      baseDeps({
+        // A throwing loadPty proves the tmux branch does NOT touch node-pty.
+        loadPty: () => {
+          throw new Error("loadPty must not be called on the tmux path");
+        },
+        loadTmux: { spawn: tmuxSpawn },
+      }),
+    );
+
+    const reply = await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24, backend: "tmux" }),
+    );
+
+    expect(reply.ok).toBe(true);
+    expect((reply.result as { backend: string }).backend).toBe("tmux");
+    expect(tmuxSpawn).toHaveBeenCalledTimes(1);
+    // The loader received the per-session sessionId (the survival name derives from it) and
+    // the COMPOSED plan command: bwrap is the outer bin (the jail), the driven /bin/bash
+    // rides inside plan.argv after the bwrap `--` — i.e. tmux drives the bwrap-jailed child
+    // (no unjailed path; the jail is still present, 124-08 nesting note).
+    expect(receivedArgs?.sessionId).toBe("s1");
+    expect(receivedArgs?.bin).toBe("/usr/bin/bwrap");
+    expect(receivedArgs?.argv).toContain("/bin/bash");
+
+    // The tmux handle feeds the ring through the SAME seam — emit a chunk + read it back.
+    onData?.("tmux-pane-out\n");
+    await flushEmulator();
+    const read = await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-read-tmux",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "s1" },
+    });
+    expect((read.result as { screen: string }).screen).toContain("tmux-pane-out");
+  });
+
+  // 124-08: a backend:"tmux" request with NO loadTmux wired must NOT crash — it falls back
+  // to the node-pty path (a worker built without the tmux loader cannot drive tmux).
+  it("falls back to pty when backend:tmux is requested but loadTmux is absent (no crash)", async () => {
+    const fake = makeFakeBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: fake.spawn }) }));
+
+    const reply = await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24, backend: "tmux" }),
+    );
+
+    expect(reply.ok).toBe(true);
+    expect((reply.result as { backend: string }).backend).toBe("pty");
+    expect(fake.spawn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("createTerminalWorker — ALS traceId re-establishment", () => {
@@ -1992,5 +2071,287 @@ describe("createTerminalWorker — settle gated on !hasContentBelowFold (load-be
     const r = (await p).result as { reason: string; isComplete: boolean };
     expect(r.reason).toBe("idle");
     expect(r.isComplete).toBe(true);
+  });
+});
+
+// ===========================================================================
+// Wave 2 (124-05): the worker drives classifyFrame on each SETTLED frame and
+// emits an attention TerminalEventFrame on fd3 via the injected writeFd3 — the
+// no-poll mechanism's worker half (TR-11). EDGE-triggered: a settled+parked frame
+// emits terminal:input_needed; a never-parked working stream emits nothing. The
+// injected fd3-writer captures the frames so the wiring is provable on macOS.
+// ===========================================================================
+
+import { decodeFrames, type TerminalEventFrame } from "./terminal-ipc.js";
+
+/** A capturing fake fd3-writer + a decoder over everything written. */
+function makeFd3Capture(): {
+  writeFd3: (b: Buffer) => void;
+  frames: () => TerminalEventFrame[];
+} {
+  const buffers: Buffer[] = [];
+  return {
+    writeFd3: (b: Buffer) => buffers.push(b),
+    frames: () =>
+      buffers.length === 0 ? [] : (decodeFrames(Buffer.concat(buffers)) as TerminalEventFrame[]),
+  };
+}
+
+describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (no poll)", () => {
+  it("driving a session to a settled, cursor-parked prompt emits exactly one terminal:input_needed frame on fd3", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const fd3 = makeFd3Capture();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+        writeFd3: fd3.writeFd3, // 124-05: the injected fd3 push-channel writer
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    // Render a real parked prompt: a boot line + a trailing prompt with NO newline,
+    // so the @xterm cursor lands on the prompt line (the last non-blank row) — parked.
+    rec.emit("boot output line\n");
+    rec.emit("Do you trust this? (y/n) ");
+
+    // A `wait` settle resolves idle on the now-quiet, parked frame; the worker runs
+    // classifyFrame on the settled snapshot and the emitter fires the transition.
+    const p = worker.handle(waitFrame({ forIdleMs: 50 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushEmulator(); // let the @xterm parse land so the snapshot reflects the prompt
+    sched.advance(50);
+    await p;
+    await flushEmulator();
+
+    const frames = fd3.frames();
+    expect(frames).toHaveLength(1);
+    expect(frames[0].sessionId).toBe("s1");
+    expect(frames[0].event).toBe("terminal:input_needed");
+    expect(frames[0].payload).toMatchObject({ state: "awaiting-input" });
+    // Redaction-safe: no screen/text on the wire.
+    expect(frames[0].payload).not.toHaveProperty("screen");
+  });
+
+  it("a settled working stream that never parks (cursor mid-screen, content below) emits NO input_needed frame", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const fd3 = makeFd3Capture();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+        writeFd3: fd3.writeFd3,
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    // A generation-style frame: the cursor is moved UP to mid-screen (CUP) with content
+    // still rendered BELOW it — the thinking-pause shape the classifier reads as working.
+    rec.emit("line one of generated output\n");
+    rec.emit("line two\nline three\nline four\n");
+    rec.emit("\x1b[2;1H"); // move cursor to row 2 col 1 — above the rendered tail (not parked)
+
+    const p = worker.handle(waitFrame({ forIdleMs: 50 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushEmulator();
+    sched.advance(50);
+    await p;
+    await flushEmulator();
+
+    const inputNeeded = fd3.frames().filter((f) => f.event === "terminal:input_needed");
+    expect(inputNeeded).toHaveLength(0);
+  });
+
+  it("a worker with NO writeFd3 injected still settles normally (the emit is best-effort, never required)", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      // No writeFd3 — the worker must not crash; the settle still resolves.
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emit("ready> ");
+
+    const p = worker.handle(waitFrame({ forIdleMs: 50 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushEmulator();
+    sched.advance(50);
+    const reply = await p;
+    expect(reply.ok).toBe(true);
+    expect((reply.result as { reason: string }).reason).toBe("idle");
+  });
+
+  it("a child that exits with NO settle pending still pushes terminal:session_state(exited) on fd3 (the exit wake — TR-11 holds for completion, not just prompts)", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const fd3 = makeFd3Capture();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+        writeFd3: fd3.writeFd3,
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: ["-c", "true"], cols: 80, rows: 24 }));
+
+    // Output, then the child EXITS while the agent has NOTHING in flight — no wait,
+    // no read, no send (the "long command finished while the agent sat idle" shape;
+    // ALSO the `claude --help` soak shape: print + exit, never a prompt). Pre-patch
+    // the ONLY emit site is the settle path, so this exit pushes NOTHING and an
+    // event-driven agent would never be woken — it would have to poll (the exact
+    // anti-pattern TR-11 forbids).
+    rec.emit("done\n");
+    await flushEmulator();
+    rec.emitExit({ exitCode: 0 });
+    // Drain the fire-and-forget exit observe (awaits the emulator parse internally).
+    await flushEmulator();
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushEmulator();
+
+    const exitFrames = fd3.frames().filter((f) => f.event === "terminal:session_state");
+    expect(exitFrames).toHaveLength(1); // the exited transition rode fd3 — push, no poll
+    expect(exitFrames[0]!.sessionId).toBe("s1");
+    expect(exitFrames[0]!.payload).toMatchObject({ state: "exited" });
+    // Redaction-safe: no screen/text on the wire.
+    expect(exitFrames[0]!.payload).not.toHaveProperty("screen");
+  });
+
+  it("an exit that resolves a PENDING settle pushes the exited transition exactly ONCE (the exit observe + the settle observe dedup edge-triggered)", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const fd3 = makeFd3Capture();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+        writeFd3: fd3.writeFd3,
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: ["-c", "true"], cols: 80, rows: 24 }));
+    rec.emit("working...\n");
+
+    // A wait({forExit}) is IN FLIGHT when the child exits: the exit resolves the settle
+    // (whose own observe classifies exited) AND fires the exit-path observe — the
+    // edge-triggered emitter must collapse them into ONE session_state frame.
+    const p = worker.handle(waitFrame({ forExit: true, timeoutMs: 5_000 }));
+    await Promise.resolve();
+    await flushEmulator();
+    rec.emitExit({ exitCode: 0 });
+    await p;
+    await flushEmulator();
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushEmulator();
+
+    const exitFrames = fd3.frames().filter((f) => f.event === "terminal:session_state");
+    expect(exitFrames).toHaveLength(1); // edge-triggered: never a double push for one exit
+    expect(exitFrames[0]!.payload).toMatchObject({ state: "exited" });
+  });
+});
+
+// ===========================================================================
+// 124-06 Task 1 — the worker `status` frame: the classifier stays SINGLE-HOMED
+// in the worker. A `status` request builds a ClassifierFrame from the current
+// emulator snapshot (+ the diff vs the previously-classified frame + the
+// per-session progress clock), runs classifyFrame, and replies the spec §5
+// perception subset {state, cursorParked, screenDiffEmpty, interactions, exitCode?}.
+// RED on pre-patch: there is NO `status` dispatch case → dispatch replies the
+// `unknown method: status` ok:false (the default branch), so `reply.ok` is false
+// and `result` is undefined.
+// ===========================================================================
+
+/** A `status` request frame for the default session id. */
+function statusFrame(): TerminalRequestFrame {
+  return {
+    sessionId: "s1",
+    requestId: "rq-status",
+    traceId: TRACE_ID,
+    method: "status" as TerminalRequestFrame["method"],
+    params: { sessionId: "s1" },
+  };
+}
+
+describe("createTerminalWorker — 124-06 status frame (classifier single-homed in the worker)", () => {
+  it("a settled, cursor-parked prompt → status replies state:'awaiting-input', cursorParked:true, screenDiffEmpty:true", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    // The same parked-prompt shape the fd3 attention suite uses: a boot line + a
+    // trailing prompt with NO newline, so the @xterm cursor lands on the prompt line.
+    rec.emit("boot output line\n");
+    rec.emit("Do you trust this? (y/n) ");
+    await flushEmulator(); // let the @xterm parse land so the snapshot reflects the prompt
+
+    const reply = await worker.handle(statusFrame());
+    expect(reply.ok).toBe(true);
+    const view = reply.result as {
+      state: string;
+      cursorParked: boolean;
+      screenDiffEmpty: boolean;
+      interactions: number;
+    };
+    expect(view.state).toBe("awaiting-input");
+    expect(view.cursorParked).toBe(true);
+    expect(view.screenDiffEmpty).toBe(true);
+    // Redaction-safe: the status reply carries NO raw screen text (structural only).
+    expect(reply.result).not.toHaveProperty("screen");
+    expect(typeof view.interactions).toBe("number");
+  });
+
+  it("an exited session → status reports state:'exited' and the exit code", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emit("done\n");
+    rec.emitExit({ exitCode: 7 }); // the live pty child exits with code 7
+    await flushEmulator();
+
+    const reply = await worker.handle(statusFrame());
+    expect(reply.ok).toBe(true);
+    const view = reply.result as { state: string; exitCode?: number };
+    expect(view.state).toBe("exited");
+    expect(view.exitCode).toBe(7);
+  });
+
+  it("interactions counts the session's send/read/wait/resize interactions", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emit("ready> ");
+    await flushEmulator();
+
+    const before = (await worker.handle(statusFrame())).result as { interactions: number };
+
+    // One send_key interaction (a single keystroke).
+    await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-key",
+      traceId: TRACE_ID,
+      method: "send_key",
+      params: { sessionId: "s1", keys: ["Enter"] },
+    });
+
+    const after = (await worker.handle(statusFrame())).result as { interactions: number };
+    expect(after.interactions).toBe(before.interactions + 1);
   });
 });

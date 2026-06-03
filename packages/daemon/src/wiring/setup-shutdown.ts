@@ -151,6 +151,8 @@ export interface ShutdownDeps {
   mcpClientManagerDisconnectAll?: () => Promise<void>;
   /** Drain background completion runner. */
   bgCompletionRunnerShutdown?: () => Promise<void>;
+  /** Drain the terminal wake-FSM — unsubscribe from the bus + await in-flight woken turns (124-09). */
+  terminalWakeShutdown?: () => Promise<void>;
   /** Cleanup proxy typing controllers + sweep timer (from registerProxyTypingListeners). */
   proxyTypingCleanup?: () => void;
   /** Stop the delivery queue (from setupDeliveryQueue). */
@@ -224,6 +226,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     shutdownBackgroundProcesses,
     mcpClientManagerDisconnectAll,
     bgCompletionRunnerShutdown,
+    terminalWakeShutdown,
     proxyTypingCleanup,
     shutdownDeliveryQueue,
     shutdownDeliveryMirror,
@@ -308,6 +311,16 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           await bgCompletionRunnerShutdown();
           daemonLogger.info({ component: "background-completion-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "background-completion-runner", daemonLogger);
+      }
+
+      // Drain the terminal wake-FSM (124-09): unsubscribe from terminal:input_needed +
+      // await any in-flight woken turn so no auto-answer/escalation outlives shutdown.
+      if (terminalWakeShutdown) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await terminalWakeShutdown();
+          daemonLogger.info({ component: "terminal-wake-dispatch", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "terminal-wake-dispatch", daemonLogger);
       }
 
       // Drain session-scoped trajectory recorders. Each open session's

@@ -7,12 +7,11 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
-import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry } from "@comis/core";
+import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry, TimerPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
   SkillsConfigSchema,
-  sanitizeLogString,
   tryGetContext,
   parseFormattedSessionKey,
   safePath,
@@ -67,8 +66,10 @@ import {
   type MediaPersistenceService,
   type TerminalSessionRegistry,
 } from "@comis/skills/tools";
-// Terminal-driver wiring extracted to setup-terminal-tools.ts (file-size cap).
-import { wireTerminalTools, buildTerminalEgressDeps } from "./setup-terminal-tools.js";
+// Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
+import { wireTerminalTools, buildTerminalEgressDeps, buildTerminalWiringDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
+// Tool-audit DEBUG-line subscription extracted to setup-tool-audit.ts (file-size cap).
+import { setupToolAuditLogging } from "./setup-tool-audit.js";
 
 // Descriptor registry on the `./platform-tools` subpath. Replaces the
 // prior inline 38-call enumeration of `createXTool(agentRpc, ...)`
@@ -165,6 +166,9 @@ export interface ToolsDeps {
    * Absent (undefined) → default open network, no proxy env, no regression.
    */
   brokerContext?: BrokerContextDeps;
+  /** The daemon's injected `TimerPort` — threaded toward the terminal reaper (124-09 WR-01
+   *  closure) so the idle-TTL/max-sessions sweep composes. Absent ⇒ no terminal reaper. */
+  timers?: TimerPort;
 }
 
 /** Options for assembleToolsForAgent controlling platform tool selection. */
@@ -207,6 +211,12 @@ export interface ToolsResult {
    * that silently no-op'd in production.
    */
   shutdownBackgroundProcesses: () => Promise<void>;
+  /** 124-09: the per-agent terminal registries map (closure-local) — the composition root
+   *  wires the one-per-daemon wake-FSM against the SAME registries (owner-scoped active-check). */
+  terminalRegistries: ReadonlyMap<string, TerminalSessionRegistry>;
+  /** 124-09: resolve the per-agent terminal attention config (allow-entry autoAnswer/
+   *  hintPatterns + caps); read per-wake so a config swap applies; undefined ⇒ escalate. */
+  getTerminalAttentionConfig: (agentId: string) => ReturnType<typeof deriveTerminalAttentionConfig>;
 }
 
 // ---------------------------------------------------------------------------
@@ -611,8 +621,13 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // Apply patch tool -- always included, gated by tool policy
       tools.push(createApplyPatchTool(workspaceDirs.get(agentId) ?? defaultWorkspaceDir, effectiveSharedPaths, skillsLogger));
 
-      // Terminal driver: per-agent registry + nine never-export tools (empty allow-set fail-closes); egress via ...terminalEgress. NOTE: the reaper deps (workerCaps + timers + the shared caps) are intentionally NOT passed yet — inert reaper, correct while the allow-set is empty; thread them alongside the allow-set or the reaper ships disabled (see setup-terminal-tools.ts buildTerminalSharedDeps).
-      wireTerminalTools(tools, terminalRegistries, agentId, { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress });
+      // Terminal driver (v2.11): per-agent registry + nine never-export tools. 124-09
+      // (WR-01 closure): buildTerminalWiringDeps folds the operator config (skillsConfig
+      // .terminal) onto the base deps — the allow-set populates (per-session caps live),
+      // workerCaps + the daemon TimerPort thread so the reaper goes LIVE, autoAnswer/
+      // hintPatterns/backend consumed downstream; absent config ⇒ empty set + no reaper.
+      const terminalBase = { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers };
+      wireTerminalTools(tools, terminalRegistries, agentId, buildTerminalWiringDeps(terminalBase, skillsConfig.terminal));
 
       return tools;
     };
@@ -743,32 +758,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     return result.enrichedText;
   }
 
-  // Tool audit event bus subscription — tools are a skills concern
-  function truncateParams(params: Record<string, unknown>, maxLen = 1500): { text: string; truncated: boolean } {
-    const raw = JSON.stringify(params);
-    const sanitized = sanitizeLogString(raw);
-    const truncated = sanitized.length > maxLen;
-    return { text: truncated ? sanitized.slice(0, maxLen) + "..." : sanitized, truncated };
-  }
-
-  eventBus.on("tool:executed", (event) => {
-    const paramResult = event.params ? truncateParams(event.params) : undefined;
-    // Include params preview (1000 chars) in the message string for formatted log output visibility
-    const paramsPreview = paramResult
-      ? ` — ${paramResult.text.length > 1000 ? paramResult.text.slice(0, 1000) + "…" : paramResult.text}`
-      : "";
-    skillsLogger.debug({
-      toolName: event.toolName,
-      durationMs: Math.round(event.durationMs),
-      success: event.success,
-      userId: event.userId,
-      agentId: event.agentId,
-      sessionKey: event.sessionKey,
-      ...(event.description && { description: event.description }),
-      ...(paramResult && { params: paramResult.text }),
-      ...(paramResult?.truncated && { paramsTruncated: true }),
-    }, `Tool audit: ${event.toolName}${event.description ? ` (${event.description})` : ""} ${event.success ? "succeeded" : "failed"} (${Math.round(event.durationMs)}ms)${paramsPreview}`);
-  });
+  // Tool audit event bus subscription — tools are a skills concern. Extracted to
+  // setup-tool-audit.ts (file-size cap; the truncate + sanitize + DEBUG-line logic).
+  setupToolAuditLogging(eventBus, skillsLogger);
 
   // Drain per-agent background-process registries on shutdown.
   // Previously this lived inside an eventBus.on("system:shutdown", ...)
@@ -795,5 +787,13 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     processRegistries.clear();
   }
 
-  return { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses };
+  return {
+    assembleToolsForAgent,
+    preprocessMessageText,
+    shutdownBackgroundProcesses,
+    terminalRegistries,
+    // 124-09: per-agent terminal attention config (allow-entry autoAnswer/hintPatterns + caps); read per-wake.
+    getTerminalAttentionConfig: (agentId: string) =>
+      deriveTerminalAttentionConfig((agents[agentId] ?? agents[defaultAgentId])?.skills?.terminal),
+  };
 }

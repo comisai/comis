@@ -9,10 +9,11 @@ import { TypedEventBus } from "./bus.js";
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
- * The typed `terminal:*` transition + failure events. The base set needs
- * exactly two — a state-transition event and a spawn-failure event; the richer
- * `terminal:input_needed`/`terminal:stuck` set is deferred and is deliberately
- * NOT declared here (RED-first, no speculative payloads).
+ * Open Q2: the typed `terminal:*` transition + failure events. P0/OPS-07 needs
+ * exactly two — a state-transition event and a spawn-failure event. The richer
+ * `terminal:input_needed`/`terminal:stuck`/`terminal:escalated`/
+ * `terminal:auto_answered` attention+audit set is P5 (Phase 124) and is NOW
+ * DECLARED here (124-02 flips the prior negative reservation test below).
  *
  * vitest transpiles via esbuild (types stripped) and `tsc` excludes `*.test.ts`,
  * so a bare type annotation alone is not a runtime-observable RED. These tests
@@ -27,17 +28,6 @@ describe("TerminalEvents source contract", () => {
     expect(src, "TerminalEvents interface must exist").toMatch(/export interface TerminalEvents/);
     expect(src, "terminal:session_state key must exist").toMatch(/"terminal:session_state":/);
     expect(src, "terminal:spawn_failed key must exist").toMatch(/"terminal:spawn_failed":/);
-  });
-
-  it("does NOT declare the speculative deferred payloads (input_needed / stuck)", () => {
-    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
-    // Strip comment lines, then assert no deferred keys leaked in.
-    const codeOnly = src
-      .split("\n")
-      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
-      .join("\n");
-    expect(codeOnly).not.toMatch(/input_needed/);
-    expect(codeOnly).not.toMatch(/"terminal:stuck"/);
   });
 
   it("events.ts folds TerminalEvents into the EventMap extends list", () => {
@@ -265,5 +255,256 @@ describe("TerminalEvents — keystroke + eviction", () => {
     expect(block, "reason union exactly the four EvictReason values").toMatch(
       /reason:\s*"idle"\s*\|\s*"max_sessions"\s*\|\s*"wall_clock"\s*\|\s*"max_interactions"/,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 124 P5 (TR-11 / OPS-04 / SEC-11 / SEC-12) — the attention + audit set:
+// terminal:input_needed + terminal:stuck + terminal:escalated +
+// terminal:auto_answered.
+//
+// These are the four NET-NEW typed bus events the worker classifier (124-05),
+// the wake-FSM (124-07), and the auto-answer policy (124-09) need so they can
+// `emit(...)` against the CLOSED `TypedEventBus` union (an undeclared event
+// fails to typecheck — RESEARCH Pitfall 4 / the "MCP field plumbing 3 paths"
+// bug class). This block REPLACES the prior negative reservation test ("does
+// NOT declare the speculative P5 payloads") and is RED on pre-patch code:
+// `events-terminal.ts` declares only the four P0+P4 keys, so the source-
+// introspection cases below (the genuinely-RED layer — esbuild strips bare type
+// annotations) do not find the four new keys.
+//
+// Payloads are redaction-SAFE BY CONSTRUCTION: counts / ids / a typed reason /
+// a typed state ONLY — NEVER the raw screen text, keystroke, or command (the
+// REDACTED detail rides the structured LOG, never the bus; the file's own doc-
+// comment forbids it). Each new payload block's safe key-set is asserted so a
+// leak field (text/keys/screen/payload) cannot creep in (the T-123-01 / T-124-03
+// precedent). auto_answered carries the matched-pattern INDEX + a keystroke
+// COUNT, never the keystroke itself (mirrors terminal:keystroke).
+// ---------------------------------------------------------------------------
+describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-12)", () => {
+  it("declares input_needed + stuck + escalated + auto_answered on TerminalEvents (source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    expect(src, "terminal:input_needed key must be declared").toMatch(/"terminal:input_needed":/);
+    expect(src, "terminal:stuck key must be declared").toMatch(/"terminal:stuck":/);
+    expect(src, "terminal:escalated key must be declared").toMatch(/"terminal:escalated":/);
+    expect(src, "terminal:auto_answered key must be declared").toMatch(/"terminal:auto_answered":/);
+  });
+
+  it("the P5 reservation comment is GONE — the attention set is no longer 'intentionally NOT declared'", () => {
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    expect(src, "the 'intentionally NOT declared here' reservation must be removed").not.toMatch(
+      /intentionally NOT declared/,
+    );
+  });
+
+  it("terminal:input_needed delivers sessionId/agentId/state/reason — the attention wake (TR-11)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["terminal:input_needed"] = {
+      sessionId: "sess-5",
+      agentId: "agent-1",
+      state: "awaiting-input",
+      reason: "settled_cursor_parked",
+      timestamp: 5,
+    };
+
+    bus.on("terminal:input_needed", handler);
+    bus.emit("terminal:input_needed", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["terminal:input_needed"];
+    expect(received.sessionId).toBe("sess-5");
+    expect(received.agentId).toBe("agent-1");
+    expect(received.state).toBe("awaiting-input");
+    expect(received.reason).toBe("settled_cursor_parked");
+    expect(typeof received.timestamp).toBe("number");
+  });
+
+  it("terminal:input_needed state union accepts awaiting-input | stuck", () => {
+    const bus = new TypedEventBus();
+    const seen: string[] = [];
+    bus.on("terminal:input_needed", (p) => seen.push(p.state));
+    for (const state of ["awaiting-input", "stuck"] as const) {
+      bus.emit("terminal:input_needed", {
+        sessionId: "s",
+        agentId: "a",
+        state,
+        reason: "r",
+        timestamp: 0,
+      });
+    }
+    expect(seen).toEqual(["awaiting-input", "stuck"]);
+  });
+
+  it("terminal:stuck delivers sessionId/agentId/noProgressMs — a duration signal, not content (OPS-04)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["terminal:stuck"] = {
+      sessionId: "sess-6",
+      agentId: "agent-1",
+      noProgressMs: 30_000,
+      timestamp: 6,
+    };
+
+    bus.on("terminal:stuck", handler);
+    bus.emit("terminal:stuck", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["terminal:stuck"];
+    expect(received.sessionId).toBe("sess-6");
+    expect(received.agentId).toBe("agent-1");
+    expect(received.noProgressMs).toBe(30_000);
+    expect(typeof received.timestamp).toBe("number");
+  });
+
+  it("terminal:escalated delivers sessionId/agentId/reason — the SEC-11/SEC-12 audit signal", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["terminal:escalated"] = {
+      sessionId: "sess-7",
+      agentId: "agent-1",
+      reason: "destructive",
+      timestamp: 7,
+    };
+
+    bus.on("terminal:escalated", handler);
+    bus.emit("terminal:escalated", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["terminal:escalated"];
+    expect(received.sessionId).toBe("sess-7");
+    expect(received.reason).toBe("destructive");
+    expect(typeof received.timestamp).toBe("number");
+  });
+
+  it("terminal:escalated reason union is exactly the seven SEC-11/SEC-12 escalation reasons", () => {
+    const bus = new TypedEventBus();
+    const seen: string[] = [];
+    bus.on("terminal:escalated", (p) => seen.push(p.reason));
+    for (const reason of [
+      "destructive",
+      "approval",
+      "auth_login",
+      "loop_detected",
+      "hop_limit",
+      "stuck",
+      "no_safe_match",
+    ] as const) {
+      bus.emit("terminal:escalated", {
+        sessionId: "s",
+        agentId: "a",
+        reason,
+        timestamp: 0,
+      });
+    }
+    expect(seen).toEqual([
+      "destructive",
+      "approval",
+      "auth_login",
+      "loop_detected",
+      "hop_limit",
+      "stuck",
+      "no_safe_match",
+    ]);
+
+    // Source guard: the declared reason union carries exactly those seven members.
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    const match = src.match(/"terminal:escalated":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "terminal:escalated event block must exist").toBeTruthy();
+    // Tolerant of the prettier multiline union form (optional leading `|`).
+    expect(match![0], "reason union exactly the seven escalation reasons").toMatch(
+      /reason:\s*\|?\s*"destructive"\s*\|\s*"approval"\s*\|\s*"auth_login"\s*\|\s*"loop_detected"\s*\|\s*"hop_limit"\s*\|\s*"stuck"\s*\|\s*"no_safe_match"/,
+    );
+  });
+
+  it("terminal:auto_answered delivers matchedPatternIndex + keystrokeCount — the index/count, never the keystroke (SEC-12)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["terminal:auto_answered"] = {
+      sessionId: "sess-8",
+      agentId: "agent-1",
+      matchedPatternIndex: 2,
+      keystrokeCount: 1,
+      timestamp: 8,
+    };
+
+    bus.on("terminal:auto_answered", handler);
+    bus.emit("terminal:auto_answered", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["terminal:auto_answered"];
+    expect(received.matchedPatternIndex).toBe(2);
+    expect(received.keystrokeCount).toBe(1);
+    expect(typeof received.timestamp).toBe("number");
+  });
+
+  it("every P5 payload carries ONLY a redaction-safe key-set — no text/keys/screen/payload/command field", () => {
+    // Object.keys proves no raw-payload field rides the bus (T-124-03). Each
+    // payload is constructed from EventMap so the set tracks the declared type.
+    const inputNeeded: EventMap["terminal:input_needed"] = {
+      sessionId: "s",
+      agentId: "a",
+      state: "awaiting-input",
+      reason: "r",
+      timestamp: 0,
+    };
+    expect(Object.keys(inputNeeded).sort()).toEqual([
+      "agentId",
+      "reason",
+      "sessionId",
+      "state",
+      "timestamp",
+    ]);
+
+    const stuck: EventMap["terminal:stuck"] = {
+      sessionId: "s",
+      agentId: "a",
+      noProgressMs: 0,
+      timestamp: 0,
+    };
+    expect(Object.keys(stuck).sort()).toEqual(["agentId", "noProgressMs", "sessionId", "timestamp"]);
+
+    const escalated: EventMap["terminal:escalated"] = {
+      sessionId: "s",
+      agentId: "a",
+      reason: "stuck",
+      timestamp: 0,
+    };
+    expect(Object.keys(escalated).sort()).toEqual(["agentId", "reason", "sessionId", "timestamp"]);
+
+    const autoAnswered: EventMap["terminal:auto_answered"] = {
+      sessionId: "s",
+      agentId: "a",
+      matchedPatternIndex: 0,
+      keystrokeCount: 0,
+      timestamp: 0,
+    };
+    expect(Object.keys(autoAnswered).sort()).toEqual([
+      "agentId",
+      "keystrokeCount",
+      "matchedPatternIndex",
+      "sessionId",
+      "timestamp",
+    ]);
+
+    // Source-block guard (the counts-only pattern): NONE of the four declared
+    // blocks may contain a raw text/keys/screen/payload/command field. RED on
+    // pre-patch (the blocks do not exist yet).
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    for (const key of [
+      "terminal:input_needed",
+      "terminal:stuck",
+      "terminal:escalated",
+      "terminal:auto_answered",
+    ]) {
+      const match = src.match(new RegExp(`"${key}":\\s*\\{[\\s\\S]*?\\n\\s*\\};`));
+      expect(match, `${key} event block must exist`).toBeTruthy();
+      const block = match![0];
+      expect(block, `${key}: no raw text field`).not.toMatch(/^\s*text[?]?:/m);
+      expect(block, `${key}: no raw keys field`).not.toMatch(/^\s*keys[?]?:/m);
+      expect(block, `${key}: no screen field`).not.toMatch(/^\s*screen[?]?:/m);
+      expect(block, `${key}: no payload field`).not.toMatch(/^\s*payload[?]?:/m);
+      expect(block, `${key}: no command field`).not.toMatch(/^\s*command[?]?:/m);
+    }
   });
 });

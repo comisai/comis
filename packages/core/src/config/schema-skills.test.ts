@@ -33,6 +33,46 @@ describe("SkillsConfigSchema -- toolDiscovery.minBm25Score [.max(1) tightening]"
     const result = SkillsConfigSchema.parse({});
     expect(result.toolDiscovery.minBm25Score).toBe(0.8);
   });
+
+  // 124-09 (WR-01 closure): the interactive terminal driver config is now MOUNTED on
+  // SkillsConfigSchema (it was an orphaned, unmounted schema). Optional + fail-closed:
+  // absent ⇒ undefined (the daemon wires an empty allow-set + no reaper). When present
+  // it round-trips so the daemon threads the allow-set + worker caps into the registry.
+  it("terminal is OPTIONAL and absent by default (fail-closed: no terminal config ⇒ undefined)", () => {
+    const result = SkillsConfigSchema.parse({});
+    expect(result.terminal).toBeUndefined();
+  });
+
+  it("terminal round-trips through SkillsConfigSchema when present (the WR-01 config-plumbing seam)", () => {
+    const result = SkillsConfigSchema.parse({
+      terminal: {
+        enabled: true,
+        worker: { maxSessions: 4, idleTtlMs: 60_000, ringBytes: 65_536, stuckMs: 30_000, maxConcurrentAttentionTurns: 2 },
+        defaults: { cols: 80, rows: 24, scrollback: 1000 },
+        allow: [],
+        redactSecrets: true,
+        audit: { enabled: true },
+      },
+    });
+    expect(result.terminal?.worker.maxSessions).toBe(4);
+    expect(result.terminal?.worker.idleTtlMs).toBe(60_000);
+    expect(result.terminal?.allow).toEqual([]);
+  });
+
+  it("terminal stays a closed strictObject inside skills (a typo'd terminal key rejects, OPS-02)", () => {
+    const result = SkillsConfigSchema.safeParse({
+      terminal: {
+        enabled: true,
+        worker: { maxSessions: 4, idleTtlMs: 60_000, ringBytes: 65_536, stuckMs: 30_000, maxConcurrentAttentionTurns: 2 },
+        defaults: { cols: 80, rows: 24, scrollback: 1000 },
+        allow: [],
+        redactSecrets: true,
+        audit: { enabled: true },
+        bogusTerminalKey: 1,
+      },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 /**
@@ -153,5 +193,58 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
     expect(withEntryDefaults.allow[0]!.scope.filesystem).toBe("workspace");
     expect(withEntryDefaults.allow[0]!.scope.network).toBe("none");
     expect(withEntryDefaults.allow[0]!.hardening).toBe("none");
+  });
+});
+
+/**
+ * OPS-05: the operator-dialable cgroup/`TasksMax` ceiling on the CLOSED `worker`
+ * strictObject. The tmux backend (124-08) makes a worker's named sessions outlive
+ * the worker; N concurrent memory-hungry sessions share one cgroup, so an operator
+ * must be able to bound the concurrent-session subprocess footprint vs the systemd
+ * `TasksMax` (T-124-22). The field is OPTIONAL — absent ⇒ bounded by `maxSessions`
+ * alone — and the addition MUST NOT loosen the strictObject (an unknown worker key
+ * still rejects). The whole `worker` block is the only P5 schema change: every other
+ * attention field (autoAnswer/hintPatterns/backend/stuckMs/maxConcurrentAttentionTurns/
+ * maxInteractions) is already declared.
+ */
+describe("TerminalDriverConfigSchema -- worker.tasksMax cgroup ceiling (OPS-05)", () => {
+  // The minimal-but-valid base config the three tasksMax tests vary.
+  const baseCfg = {
+    enabled: true,
+    worker: {
+      maxSessions: 8,
+      idleTtlMs: 900_000,
+      ringBytes: 262_144,
+      stuckMs: 30_000,
+      maxConcurrentAttentionTurns: 2,
+    },
+    defaults: { cols: 120, rows: 40, scrollback: 1000 },
+    redactSecrets: true,
+    audit: { enabled: true },
+  };
+
+  it("accepts an operator-set worker.tasksMax ceiling (parses + round-trips the value)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({
+      ...baseCfg,
+      worker: { ...baseCfg.worker, tasksMax: 200 },
+    });
+    expect(parsed.worker.tasksMax).toBe(200);
+  });
+
+  it("parses with worker.tasksMax ABSENT (optional — no extra ceiling beyond maxSessions)", () => {
+    const parsed = TerminalDriverConfigSchema.parse(baseCfg);
+    expect(parsed.worker.tasksMax).toBeUndefined();
+  });
+
+  it("still REJECTS an unknown worker key (the tasksMax addition does not loosen the strictObject)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      worker: { ...baseCfg.worker, bogusWorkerKnob: 1 },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // The unrecognized key is reported under the worker path (strictObject closed).
+      expect(result.error.issues.some((i) => i.path.includes("worker"))).toBe(true);
+    }
   });
 });

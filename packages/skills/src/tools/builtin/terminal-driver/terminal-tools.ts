@@ -50,6 +50,20 @@ import {
 } from "@comis/core";
 
 import { jsonResult, throwToolError } from "../../../platform-tools/tool-helpers.js";
+import type {
+  TerminalInputNeededEvent,
+  TerminalStuckEvent,
+  TerminalEscalatedEvent,
+  TerminalAutoAnsweredEvent,
+} from "./terminal-events-attention.js";
+// Re-export the P5 attention/audit event payloads so consumers (and the daemon
+// emit hooks, 124-09) reach them via the tool module alongside TerminalEventBus.
+export type {
+  TerminalInputNeededEvent,
+  TerminalStuckEvent,
+  TerminalEscalatedEvent,
+  TerminalAutoAnsweredEvent,
+} from "./terminal-events-attention.js";
 import { matchAllowEntry, buildDirectSpawn, type AllowEntryLike } from "./allowlist-matcher.js";
 import type { SessionCaps } from "./terminal-caps.js";
 import { enforceSendCapsThenAudit, readDimension } from "./terminal-send-guards.js";
@@ -136,6 +150,12 @@ export interface TerminalEventBus {
   emit(event: "terminal:session_evicted", payload: TerminalEvictedEvent): unknown;
   // The per-send keystroke audit event.
   emit(event: "terminal:keystroke", payload: TerminalKeystrokeEvent): unknown;
+  // P5/124 — the attention + audit overloads (124-02 declared the typed payloads in
+  // events-terminal.ts site 1; the emit call sites land in 124-05/07/09):
+  emit(event: "terminal:input_needed", payload: TerminalInputNeededEvent): unknown;
+  emit(event: "terminal:stuck", payload: TerminalStuckEvent): unknown;
+  emit(event: "terminal:escalated", payload: TerminalEscalatedEvent): unknown;
+  emit(event: "terminal:auto_answered", payload: TerminalAutoAnsweredEvent): unknown;
 }
 
 /** Dependencies shared by all four implemented tools. */
@@ -291,7 +311,7 @@ function readOptInt(p: Record<string, unknown>, key: string): number | undefined
  * (each subagent `channelId` is `"sub-agent:<uuid>"`, session-key.ts:78-79), so a
  * subagent sees ONLY its own sessions and siblings are mutually invisible.
  */
-function resolveOwner(deps: TerminalToolDeps): SessionOwner {
+export function resolveOwner(deps: TerminalToolDeps): SessionOwner {
   const ctx = tryGetContext();
   return { agentId: ctx?.userId ?? deps.agentId, sessionKey: ctx?.sessionKey ?? "" };
 }

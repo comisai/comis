@@ -1,0 +1,8 @@
+[2J[1;1H● Let me analyze the codebase structure.
+
+  Looking at the module graph and the
+  dependency edges to plan the change.
+
+  ⎿ Read packages/skills/src/index.ts
+  ⎿ Read packages/core/src/config.ts
+[3;39H

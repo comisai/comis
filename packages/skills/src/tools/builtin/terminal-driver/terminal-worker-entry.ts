@@ -41,9 +41,8 @@ import {
   systemClearTimeout,
   type SystemTimeoutHandle,
   type EgressControlPort,
-  type EgressMaterialization,
 } from "@comis/core";
-import { isFsyncDisabledByPermissionModel } from "@comis/shared";
+import { isFsyncDisabledByPermissionModel, suppressError } from "@comis/shared";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
 import {
@@ -57,12 +56,26 @@ import { buildEgressRelayLaunch as defaultBuildEgressRelayLaunch } from "./termi
 import type { TerminalReplyFrame, TerminalRequestFrame } from "./terminal-ipc.js";
 import { encodeKeyChord } from "./terminal-key-grammar.js";
 import { sanitizeTraceId, WORKER_TRUST_LEVEL } from "./terminal-worker-context.js";
+import { attachBackend } from "./terminal-worker-backend-attach.js";
+import { createAttentionEmitter } from "./terminal-attention-emitter.js";
+import { observeSettledFrame, statusReplyFromState, type WorkerStatusPerception } from "./terminal-worker-classify.js";
+// The worker's structural contracts the entry BODY references (deps/defaults/closures)
+// type-imported from the neutral leaf terminal-worker-types.ts (124-01 cycle break).
+// FakePtyLike is no longer referenced in the body (its consumers PtyModuleLike +
+// SessionState moved to the leaf) — it is still re-exported for the public surface below.
+import type {
+  PipeChildLike,
+  PtyModuleLike,
+  SessionState,
+  TmuxBackendLike,
+  WorkerBackend,
+  WorkerLogger,
+} from "./terminal-worker-types.js";
 import {
   buildReadResult,
   createSessionEmulator,
   diffSnapshot,
   readSnapshotParams,
-  type EmulatorSnapshot,
   type ReadResult,
   type SessionEmulator,
 } from "./terminal-render.js";
@@ -81,45 +94,23 @@ import {
  */
 const SCROLLBACK_DEFAULT = 1000;
 
+/**
+ * The default operator stuck threshold (OPS-04) the classifier compares to a session's
+ * no-progress window when `deps.stuckMs` is omitted. A settled, no-affordance frame that
+ * has shown no progress for longer than this is classified `stuck`. The daemon threads the
+ * config `worker.stuckMs`; this is the safety-net default.
+ */
+const STUCK_DEFAULT_MS = 30_000;
+
 // ---------------------------------------------------------------------------
 // Injected dependency contracts
 // ---------------------------------------------------------------------------
-
-/** Structural logger — the minimal `{info,debug,warn,error}` surface; NOT `@comis/infra`'s `getLogger` (the worker never value-imports infra); the daemon injects the real logger. */
-export interface WorkerLogger {
-  debug(obj: Record<string, unknown>, msg: string): void;
-  info(obj: Record<string, unknown>, msg: string): void;
-  warn(obj: Record<string, unknown>, msg: string): void;
-  error(obj: Record<string, unknown>, msg: string): void;
-}
-
-/** Structural node-pty session handle (subset of `IPty`): `onData`→ring, `onExit`→markExited (payload ignored — only the exit signal matters), write/resize/kill forwarded. */
-export interface FakePtyLike {
-  pid: number;
-  onData(cb: (data: string) => void): void;
-  onExit(cb: (e: { exitCode: number; signal?: number }) => void): void;
-  write(data: string): void;
-  resize(cols: number, rows: number): void;
-  kill(signal?: string): void;
-}
-
-/** Structural node-pty module shape (only `spawn` is used). */
-export interface PtyModuleLike {
-  spawn(
-    bin: string,
-    argv: string[],
-    opts: { cols: number; rows: number; env: NodeJS.ProcessEnv },
-  ): FakePtyLike;
-}
-
-/** Pipe-backend spawn shape — a structural subset of `child_process.spawn`'s return; `stdout.on("data")`→ring, close/error flip `alive`. */
-export interface PipeChildLike {
-  pid?: number;
-  stdout: { on(event: "data", cb: (chunk: Buffer) => void): void } | null;
-  stdin: { write(data: string): void } | null;
-  on(event: "close" | "error", cb: (arg?: unknown) => void): void;
-  kill(signal?: string): void;
-}
+//
+// WorkerLogger + FakePtyLike + PtyModuleLike + PipeChildLike + WorkerBackend +
+// SessionState moved to the neutral leaf terminal-worker-types.ts (124-01) to break
+// the backend-attach import cycle (the entry value-imports attachBackend, backend-attach
+// needed these types back). Type-imported above; re-exported below so the public surface
+// (TerminalWorkerDeps + the worker tests' structural-type imports) is unchanged.
 
 /** The durable-fs ops the worker uses — injected so the fsync-thrower test runs on macOS. */
 export interface WorkerFsPort {
@@ -131,9 +122,19 @@ export interface WorkerFsPort {
 }
 
 /** Worker dependencies — all injectable for unit tests; production defaults provided. */
+// @optional-field-count: 15 optional fields — TerminalWorkerDeps is the worker's
+// dependency-injection contract: EVERY optional is a genuinely-conditional injectable port
+// (spawnPipe/loadTmux/nowMs/envSnapshot/fs/setTimer/clearTimer/createEmulator/buildScopeArgs/
+// scrubChildEnv/buildEgressRelayLaunch/egressControl/writeFd3/stuckMs/bwrapPath) with a
+// factory default (or daemon-injected), overridden ONLY by a test or the composition root.
+// Tightening any to required would force every call site to fabricate a port it never
+// exercises. The "(a) genuinely conditional" classification, not a cluster-split — one
+// cohesive worker deps bag. 124-05 added writeFd3+stuckMs; 124-08 added loadTmux (OPS-05).
 export interface TerminalWorkerDeps {
   /** Load node-pty. Default: a guarded `createRequire` load in a try — NEVER a top-level static import (crashes module load on a no-prebuild host); a throw → the pipe backend. */
   loadPty: () => PtyModuleLike;
+  /** 124-08 (OPS-05): the tmux named-session backend loader — the 3rd option behind the same FakePtyLike seam as node-pty | pipe. Used ONLY when a create frame requests `backend:"tmux"`; the daemon binds it (resolved tmux path + has-session probe + runTmux). Absent ⇒ a tmux request falls back to pty/pipe. */
+  loadTmux?: TmuxBackendLike;
   /** Spawn the pipe-backend child. Default: `child_process.spawn` with stdio pipes. */
   spawnPipe?: (
     bin: string,
@@ -154,8 +155,22 @@ export interface TerminalWorkerDeps {
   clearTimer?: (handle: unknown) => void;
   /** Construct a per-session @xterm emulator. Default: `createSessionEmulator`. Injectable so a test can assert the wiring (mirrors loadPty/spawnPipe). */
   createEmulator?: (opts: { cols: number; rows: number; scrollback: number }) => SessionEmulator;
-  // -- scope-jail composition (injected; heavy logic is terminal-spawn-plan.ts) --
-  /** Scope->bwrap argv composer. Default: the module export. */
+  /**
+   * Write a length-prefixed frame to fd3 — the no-poll attention push channel (124-05,
+   * TR-11). Production wraps `fs.writeSync(3, b)` (the worker spawns with fd3 reserved,
+   * `terminal-worker-launch.ts`); tests inject a capturing fake. ABSENT ⇒ the attention
+   * emit is a no-op (the worker still settles normally — the emit is best-effort, never
+   * required for correctness). The fd3 frame carries a redaction-safe summary ONLY.
+   */
+  writeFd3?: (b: Buffer) => void;
+  /**
+   * The operator stuck threshold in ms (`worker.stuckMs`, OPS-04) the classifier compares
+   * to a session's no-progress window. Default {@link STUCK_DEFAULT_MS}; the daemon threads
+   * the config value. Stuck is by PROGRESS, never elapsed session wall-clock.
+   */
+  stuckMs?: number;
+  // -- 122-06 scope-jail composition (injected; heavy logic is terminal-spawn-plan.ts) --
+  /** Scope->bwrap argv composer (122-03). Default: the module export. */
   buildScopeArgs?: typeof defaultBuildScopeArgs;
   /** Child-env blocklist scrubber. Default: the module export. */
   scrubChildEnv?: typeof defaultScrubChildEnv;
@@ -168,79 +183,31 @@ export interface TerminalWorkerDeps {
 }
 
 // ---------------------------------------------------------------------------
-// Frame result shapes
+// Frame result shapes + the worker's structural contracts
 // ---------------------------------------------------------------------------
+//
+// WorkerBackend + SessionState + the four per-method reply shapes (CreateResult /
+// SendResult / ResizeResult / WaitResult) live in the neutral leaf
+// terminal-worker-types.ts (the reply shapes moved there in 124-08 to keep this file
+// under the 800-line cap once the tmux seam landed). Type-imported here for the handler
+// bodies + RE-EXPORTED below so every existing `from "./terminal-worker-entry.js"`
+// importer (the worker tests, the render-live harness) keeps working — type-only, no churn.
+import type {
+  CreateResult,
+  ResizeResult,
+  SendResult,
+  WaitResult,
+} from "./terminal-worker-types.js";
 
-/** Which backend a session is driven by — `degraded` is the pipe fallback. */
-export type WorkerBackend = "pty" | "degraded";
-
-/** The create-frame reply payload. */
-interface CreateResult {
-  sessionId: string;
-  backend: WorkerBackend;
-  cols: number;
-  rows: number;
-}
-
-/** Post-action snapshot a mutating handler (send_text/send_key) returns: the SETTLED `{screen,cursor}` subset; `cursor` stays `{0,0}` until the real cursor lands. */
-interface SendResult {
-  screen: string;
-  cursor: { x: number; y: number };
-}
-
-/** The `resize` reply payload (spec §5: `{ ok }`). */
-interface ResizeResult {
-  ok: boolean;
-}
-
-/**
- * The `wait` reply payload (spec §5): the settle outcome plus the
- * post-settle `{screen,cursor}`. `isComplete` is the LOAD-BEARING signal — it
- * flows through from {@link runSettle} VERBATIM (never coerced) so a timeout's
- * `false` survives (the turn ends; the attention model RESUMES it, never
- * finalizes a live session).
- */
-interface WaitResult {
-  matched: boolean;
-  isComplete: boolean;
-  reason: SettleResult["reason"];
-  screen: string;
-  cursor: { x: number; y: number };
-}
-
-/** A closure-local per-session record (NOT module-global). */
-interface SessionState {
-  backend: WorkerBackend;
-  cols: number;
-  rows: number;
-  /** The accumulated stdout ring (initially a growing string; a true ring comes later). */
-  ring: string;
-  alive: boolean;
-  pty?: FakePtyLike;
-  pipe?: PipeChildLike;
-  /** Per-session @xterm emulator — SOURCE OF TRUTH for `read` (grid+cursor+alt). Closure-local; fed by {@link appendRing}, serialized by `handleRead`, resized by `handleResize`. */
-  emu?: SessionEmulator;
-  /** Latest emulator write-parse promise: `appendRing` chains each `emu.write(chunk)` (serialized, @xterm-PARSE-backed); `handleRead` awaits it so a settled frame reflects every byte (§2.4). */
-  writeFlush?: Promise<void>;
-  /** Previous read's emulator snapshot: `handleRead` diffs the new one against this (per-session screen-diff) then stores it. */
-  lastSnapshot?: EmulatorSnapshot;
-  /** Settle ring-grow subscribers ({@link SettleDeps}.onRingChange), closure-local; `appendRing` notifies these. */
-  ringListeners: Set<() => void>;
-  /** Settle exit subscribers (onExit half); the pipe close/error + live pty exit notify these. */
-  exitListeners: Set<() => void>;
-  /** Operator-declared sandbox scope off the create frame — materialized into the bwrap jail by the scope-jail composer. */
-  scope?: TerminalScope;
-  /** Session workspace root (create frame) — the always-bound jail workspace. */
-  workspace?: string;
-  /** Session working directory (create frame) — the jail `--chdir` target. */
-  cwd?: string;
-  /**
-   * The egress materialization for `network: listed-hosts`. Disposed
-   * ONCE on session teardown ({@link markExited}) so the per-session socket is
-   * cleaned up (no leak). Absent for `none`/`full`.
-   */
-  egress?: EgressMaterialization;
-}
+export type {
+  FakePtyLike,
+  PipeChildLike,
+  PtyModuleLike,
+  SessionState,
+  TmuxBackendLike,
+  WorkerBackend,
+  WorkerLogger,
+} from "./terminal-worker-types.js";
 
 /** The worker's public surface — `handle` dispatches a frame; `writeDurable` persists state. */
 export interface TerminalWorker {
@@ -328,7 +295,12 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   // The per-session @xterm emulator factory. Default: the real pure-JS
   // wrapper; a test injects a recording emulator to assert the wiring.
   const createEmulator = deps.createEmulator ?? createSessionEmulator;
-  // The scope-jail composers, threaded into planSpawnFromCreateFrame at the
+  // 124-05: the no-poll attention plumbing. `writeFd3` is the push-channel sink (a
+  // production worker wraps `fs.writeSync(3, …)`; absent ⇒ the emit is a no-op). `stuckMs`
+  // is the operator stuck threshold (OPS-04) the classifier compares no-progress against.
+  const { writeFd3 } = deps;
+  const stuckMs = deps.stuckMs ?? STUCK_DEFAULT_MS;
+  // 122-06: the scope-jail composers, threaded into planSpawnFromCreateFrame at the
   // spawn seam. bwrapPath/egressControl have NO default — the daemon injects them.
   const spawnComposers: SpawnPlanComposers = {
     buildScopeArgs: deps.buildScopeArgs ?? defaultBuildScopeArgs,
@@ -338,39 +310,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     bwrapPath: deps.bwrapPath,
   };
 
-  /**
-   * Append a chunk to the session ring (RAW settle feed + degraded view) AND feed it
-   * into the @xterm emulator (the rendered-`read` source of truth), then notify the
-   * settle's ring-change subscribers. The emu write chains onto
-   * {@link SessionState.writeFlush} (serialized, @xterm-PARSE-backed) so `handleRead`
-   * awaits it before serializing a settled frame.
-   */
-  function appendRing(state: SessionState, chunk: string): void {
-    state.ring += chunk;
-    state.writeFlush = (state.writeFlush ?? Promise.resolve()).then(() => state.emu?.write(chunk));
-    for (const cb of state.ringListeners) cb();
-  }
-
-  /**
-   * Flip a session to not-alive + notify the settle's exit subscribers (onExit half)
-   * so a pending `wait`/settle resolves `exit`. ALSO disposes the `listed-hosts`
-   * egress materialization ONCE (socket cleanup) — nulling the handle first
-   * so a second exit signal (close AND error) cannot double-dispose.
-   */
-  function markExited(state: SessionState): void {
-    state.alive = false;
-    if (state.egress !== undefined) {
-      const { egress } = state;
-      state.egress = undefined; // dispose once, even if close+error both fire
-      void egress.dispose().catch((err: unknown) => {
-        logger.warn(
-          { err, hint: "egress dispose failed on session teardown", errorKind: "internal" as const },
-          "terminal egress dispose failed",
-        );
-      });
-    }
-    for (const cb of state.exitListeners) cb();
-  }
+  // appendRing (ring + emulator feed + settle ring-change notify) and markExited (not-alive
+  // flip + once-only egress dispose + settle exit notify) moved to terminal-worker-backend-attach.ts
+  // (124-01) — their ONLY callers are the backend stream handlers there, so they ride with
+  // attachBackend; behavior is byte-for-byte identical.
 
   /** Resolve the backend write sink: pty.write for the pty backend, else pipe.stdin.write. */
   function writeToBackend(state: SessionState, bytes: string): void {
@@ -387,7 +330,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
    * heart of every act-then-return-SETTLED handler + the explicit `wait`. `params`
    * passes through to {@link runSettle}.
    */
-  function settleSession(state: SessionState, params: SettleParams): Promise<SettleResult> {
+  async function settleSession(state: SessionState, params: SettleParams): Promise<SettleResult> {
     const settleDeps: SettleDeps = {
       setTimer,
       clearTimer,
@@ -406,7 +349,24 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       // forces one (exit/text/timeout unaffected).
       isSettleable: () => !(state.emu?.hasContentBelowFold() ?? false),
     };
-    return runSettle(settleDeps, params);
+    const result = await runSettle(settleDeps, params);
+
+    // 124-05 (TR-11, the no-poll mechanism): after the settle resolves, classify the
+    // settled frame and hand the verdict to the per-session emitter — which writes a fd3
+    // attention frame ONLY on a state TRANSITION. EDGE-triggered (driven by the settle the
+    // worker already runs), NEVER a poll. `settled` is true unless the settle timed out
+    // (output still in flight ⇒ the classifier reads `working`). Best-effort: skipped when
+    // no emitter is wired (no `writeFd3`); a classify/emit failure must not break the settle.
+    if (state.emitter !== undefined) {
+      await observeSettledFrame({
+        state,
+        emitter: state.emitter,
+        settled: result.reason !== "timeout",
+        nowMs,
+        stuckMs,
+      });
+    }
+    return result;
   }
 
   /**
@@ -443,6 +403,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       rows,
       ring: "",
       alive: true,
+      interactions: 0,
       ringListeners: new Set(),
       exitListeners: new Set(),
       scope,
@@ -454,6 +415,33 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // (so the first chunk is rendered). Built for BOTH backends; the
     // scrollback is threaded from the create frame (DEFAULT_SCROLLBACK / config, never agent input).
     state.emu = createEmulator({ cols, rows, scrollback });
+
+    // 124-05 (TR-11): a per-session transition-only attention emitter over the injected
+    // fd3 push channel. Built only when `writeFd3` is wired (the production worker; tests
+    // inject a fake). The worker hands each SETTLED frame's classification to
+    // `emitter.observe` (in settleSession) — which writes a fd3 frame ONLY on a state
+    // transition. No emitter (no writeFd3) ⇒ the classify-and-emit step is skipped.
+    if (writeFd3 !== undefined) {
+      const emitter = createAttentionEmitter({ sessionId, writeFd3 });
+      state.emitter = emitter;
+      // The exit wake (124-05 gap-close): `markExited` fires this so a child that exits
+      // with NO settle pending still pushes its exited transition on fd3 — TR-11's
+      // no-poll wake holds for completion, not just prompts (without it an event-driven
+      // agent whose long command finished while it sat idle is NEVER woken; the
+      // `claude --help` soak run is exactly that shape). Same single-homed classify
+      // seam as the settle path; the edge-triggered emitter dedups a concurrent
+      // settle-resolved observe of the same exit. Fire-and-forget; never throws.
+      state.observeExit = () => {
+        // Best-effort: an emit failure must never break the exit path. `observeSettledFrame`
+        // is documented total, but suppressError (not a bare empty catch — the banned form)
+        // guards the void-promise and routes any rejection through the structural logger.
+        suppressError(
+          observeSettledFrame({ state, emitter, settled: true, nowMs, stuckMs }),
+          "terminal exit-wake fd3 emit",
+          (m) => logger.debug({ submodule: "exit-wake", sessionId, errorKind: "internal" }, m),
+        );
+      };
+    }
 
     // Register the session SYNCHRONOUSLY (before the async spawn-plan await) so a
     // read/resize/wait frame arriving mid-composition finds it; the backend attaches
@@ -480,41 +468,26 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     }
     state.egress = plan.egress; // disposed on teardown (markExited)
 
-    let pty: PtyModuleLike | undefined;
-    try {
-      pty = deps.loadPty();
-    } catch (err) {
-      // node-pty unavailable → the pipe backend, reported as degraded.
-      logger.warn(
-        { err, hint: "node-pty unavailable; pipe fallback", errorKind: "dependency" as const },
-        "terminal worker degraded",
-      );
-      state.backend = "degraded";
-    }
-
-    if (pty !== undefined) {
-      // PTY backend — spawn the bwrap jail; the child rides after the composer's `--`.
-      const handle = pty.spawn(plan.bin, plan.argv, { cols, rows, env: plan.env });
-      handle.onData((d) => appendRing(state, d));
-      // Wire child exit -> markExited (the pty analog of the pipe close/error below;
-      // payload ignored). WITHOUT it a real node-pty child that exits never notifies
-      // an in-flight wait({forExit:true}) (the VPS real-PTY gate).
-      handle.onExit(() => {
-        markExited(state);
-      });
-      state.pty = handle;
-    } else {
-      // Pipe backend (degraded) — ALSO wrapped in bwrap (no unjailed degraded path).
-      const child = spawnPipe(plan.bin, plan.argv, { env: plan.env });
-      child.stdout?.on("data", (chunk: Buffer) => appendRing(state, chunk.toString("utf8")));
-      child.on("close", () => {
-        markExited(state);
-      });
-      child.on("error", () => {
-        markExited(state);
-      });
-      state.pipe = child;
-    }
+    // Attach the backend (PTY or the degraded pipe fallback) — the EXACT try-loadPty /
+    // wire-onData/onExit / pipe-close-error block, lifted into a sibling so this file
+    // keeps headroom under the 800-line cap (124-01). appendRing/markExited moved with it
+    // (their only callers were those stream handlers); the rest ride in as explicit params.
+    // 124-08 (OPS-05): only an explicit create-frame `backend:"tmux"` (allow-entry,
+    // daemon-threaded in 124-09) + a wired `loadTmux` diverges to the tmux survival
+    // backend; everything else takes the node-pty → pipe path (attachBackend decides).
+    const requestedBackend: WorkerBackend | undefined = p["backend"] === "tmux" ? "tmux" : undefined;
+    attachBackend({
+      plan: { bin: plan.bin, argv: plan.argv, env: plan.env },
+      cols,
+      rows,
+      state,
+      loadPty: deps.loadPty,
+      spawnPipe,
+      logger,
+      requestedBackend,
+      loadTmux: deps.loadTmux,
+      sessionId,
+    });
 
     // (The session was registered synchronously above so concurrent frames find it.)
     logger.info(
@@ -561,13 +534,20 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     return { screen: "", cursor: { x: 0, y: 0 } };
   }
 
-  /** §2.7: one bounded INFO line per interaction handler (method + durationMs). */
+  /**
+   * §2.7: one bounded INFO line per interaction handler (method + durationMs). ALSO
+   * the single chokepoint that advances the per-session interaction counter (124-06):
+   * every send_text / send_key / wait / resize lands here (read/status are read-only
+   * and do NOT call this), so `interactions` increments in exactly one place.
+   */
   function logInteraction(
     sessionId: string,
     method: string,
     startedAt: number,
     extra: Record<string, unknown> = {},
   ): void {
+    const state = sessions.get(sessionId);
+    if (state !== undefined) state.interactions += 1;
     logger.info(
       { sessionId, method, durationMs: nowMs() - startedAt, step: "interaction", ...extra },
       "terminal interaction",
@@ -689,6 +669,19 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     };
   }
 
+  /**
+   * Handle a `status` frame (124-06, spec §5; TR-11 perception) — the classifier
+   * stays SINGLE-HOMED in the worker (RESEARCH Open Q2). Delegates to the read-only
+   * {@link statusReplyFromState} (it classifies the CURRENT grid; see its doc). An
+   * absent session is gone → `exited`. `settled:true` (a point-in-time snapshot).
+   */
+  async function handleStatus(frame: TerminalRequestFrame): Promise<WorkerStatusPerception> {
+    const state = sessions.get(String(frame.params["sessionId"] ?? frame.sessionId));
+    // Absent session → gone (`exited`, the safe direction). Else classify the live grid.
+    if (state === undefined) return { state: "exited", cursorParked: false, screenDiffEmpty: true, interactions: 0 };
+    return statusReplyFromState({ state, settled: true, nowMs, stuckMs });
+  }
+
   /** Dispatch a decoded request frame to its method handler. */
   async function dispatch(frame: TerminalRequestFrame): Promise<TerminalReplyFrame> {
     try {
@@ -711,6 +704,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
           break;
         case "wait":
           result = await handleWait(frame); // awaits the bounded settle
+          break;
+        case "status":
+          result = await handleStatus(frame); // awaits the pending emulator write-parse; classifies the current grid
           break;
         default:
           return {

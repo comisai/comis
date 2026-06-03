@@ -30,8 +30,12 @@ export {
   type TerminalEvictedEvent,
 } from "./terminal-tools.js";
 
-// The lone remaining stub tool (registered, never-export, rejects not_implemented).
+// 124-06: terminal_session_status is now a REAL, classifier-backed, owner-scoped tool
+// (the lone P0 not_implemented stub is closed). Its body lives in terminal-status-tool.ts;
+// terminal-tools-stubs.ts re-exports it so this import path is unchanged. Still never-export
+// (the tool-metadata-registry entry is unchanged — default-deny preserved).
 export { createTerminalSessionStatusTool } from "./terminal-tools-stubs.js";
+export type { TerminalStatusView } from "./terminal-session-registry.js";
 
 // The daemon-side session registry.
 export {
@@ -107,4 +111,74 @@ export {
   defaultLoadPty,
   type TerminalWorker,
   type TerminalWorkerDeps,
+  type TmuxBackendLike,
 } from "./terminal-worker-entry.js";
+
+// P5 124-08 (OPS-05, spec §4.6): the tmux worker backend — the THIRD loadBackend option
+// (node-pty | pipe | tmux) for milestone-length runs. tmux owns the PTY in a
+// DETERMINISTICALLY-named session (comis-<sessionId>) so the server outlives the worker and
+// a restart RE-ATTACHES (has-session → read the existing pane) rather than re-creating
+// (RESEARCH Pitfall 6). The daemon (124-09) binds the resolved tmux path + has-session probe
+// + runTmux into the loadTmux seam. Pure command builders + the FakePtyLike-shaped factory;
+// infra-free (only node:child_process). The live survival test is Linux-gated.
+export {
+  createTmuxBackend,
+  defaultRunTmux,
+  tmuxSessionName,
+  buildTmuxSpawnArgv,
+  buildTmuxHasSessionArgv,
+  buildTmuxKillArgv,
+  buildTmuxSendKeysArgv,
+  buildTmuxCaptureArgv,
+  buildTmuxResizeArgv,
+  type TmuxChild,
+  type TmuxBackendDeps,
+} from "./terminal-tmux-backend.js";
+
+// P5 124-03 (spec §4.3, the #1 de-risk): the pure state classifier + the
+// load-bearing cursor-parked gate. The worker (124-05/06) drives classifyFrame each
+// settled frame; the session_status tool surfaces its state. Pure + infra-free + no
+// raw clock — value-imports only node builtins + the render snapshot type.
+export {
+  classifyFrame,
+  isCursorParked,
+  type ClassifierState,
+  type ClassifierFrame,
+  type FrameHistory,
+  type Classification,
+} from "./terminal-classifier.js";
+
+// P5 124-04 (spec §4.5/§4.6, SEC-12): the pure safe-only auto-answer policy. The woken
+// turn (124-09) calls decideAutoAnswer on a settled prompt — a safe-pattern match sends
+// a canned keystroke via the P4 send-guards; everything else (incl. auth/destructive/
+// approval, escalate-always) escalates with no keystroke. Operator-dialable, never
+// model-dialable; pure + infra-free (only @comis/core's scrubSecretsFromText).
+export {
+  decideAutoAnswer,
+  type AutoAnswerMode,
+  type AutoAnswerDecision,
+} from "./terminal-auto-answer.js";
+
+// P5 124-04 (spec §4.6, SEC-11): the normalized region-scoped loop guard. The woken
+// turn (124-09) calls observe() on a settled prompt region — a repeated NORMALIZED
+// prompt (spinner/timestamp/progress-only diff) escalates (terminal:escalated, reason
+// loop_detected) and COMPOSES with the P4 maxInteractions EVICT. Closure-local ring,
+// injected clock, never-throw typed result; infra-free (only node:crypto).
+export {
+  createLoopGuard,
+  type LoopGuard,
+  type LoopGuardDeps,
+} from "./terminal-loop-guard.js";
+
+// P5 124-05 (spec §2.3, TR-11): the transition-only in-worker attention emitter — the
+// WORKER half of the no-poll mechanism. The worker (124-05 Task 2) calls observe() with
+// each settled frame's classification; the emitter writes a redaction-safe
+// TerminalEventFrame to the injected fd3-writer ONLY on a state TRANSITION (edge-, not
+// level-triggered) — NO timer, NO clock. Closure-local last-state; infra-free (only the
+// terminal-ipc framer).
+export {
+  createAttentionEmitter,
+  type AttentionEmitter,
+  type AttentionEmitterDeps,
+  type ObserveOptions,
+} from "./terminal-attention-emitter.js";

@@ -38,6 +38,7 @@ import {
   createFrameDecoder,
   type TerminalRequestFrame,
   type TerminalReplyFrame,
+  type TerminalEventFrame,
 } from "./terminal-ipc.js";
 
 /** A no-op structural logger. */
@@ -856,8 +857,9 @@ describe("createTerminalSessionRegistry — sendText forwarding", () => {
     expect(frame?.params["submit"]).toBe(false);
     expect(frame?.params["bracketedPaste"]).toBe(false);
 
-    // The resolved value is the {screen,cursor} subset, NOT the full view.
-    expect(out).toEqual({ screen: "hello", cursor: { x: 5, y: 0 } });
+    // The resolved value is the {screen,cursor} subset, NOT the full view; a send that
+    // round-trips an ok worker reply is flagged delivered:true (WR-05).
+    expect(out).toEqual({ screen: "hello", cursor: { x: 5, y: 0 }, delivered: true });
   });
 
   it("advances the session handle's lastActivity on a successful send_text", async () => {
@@ -957,7 +959,8 @@ describe("createTerminalSessionRegistry — sendKey forwarding", () => {
     expect(frame?.params["sessionId"]).toBe(sessionId);
     expect(frame?.params["keys"]).toEqual(["C-c"]);
 
-    expect(out).toEqual({ screen: "^C", cursor: { x: 0, y: 1 } });
+    // A send that round-trips an ok worker reply is flagged delivered:true (WR-05).
+    expect(out).toEqual({ screen: "^C", cursor: { x: 0, y: 1 }, delivered: true });
   });
 
   it("degrades a send_key on a reply timeout (ok:false) — no throw, no hang", async () => {
@@ -1279,7 +1282,86 @@ describe("createTerminalSessionRegistry — two subagents are mutually invisible
   });
 });
 
-describe("createTerminalSessionRegistry — kill cannot cross owners", () => {
+// ===========================================================================
+// 124-06 Task 1 — registry.status(sessionId, owner) is owner-scoped (TR-13 /
+// T-124-15): a cross-owner / killed session returns the not-found minimal view,
+// never another owner's real classifier state. The owner's status round-trips a
+// `status` frame to the worker and composes the perception with handle.lastActivity.
+// RED on pre-patch: `registry.status` does not exist (TypeError) — the interface +
+// impl land in GREEN.
+// ===========================================================================
+
+/** A fake worker that answers a `status` frame with the spec §5 perception subset. */
+function makeStatusWorker() {
+  return makeFakeWorker((frame) =>
+    frame.method === "status"
+      ? {
+          sessionId: frame.sessionId,
+          requestId: frame.requestId,
+          ok: true,
+          result: {
+            state: "awaiting-input",
+            cursorParked: true,
+            screenDiffEmpty: true,
+            interactions: 3,
+          },
+        }
+      : { sessionId: frame.sessionId, requestId: frame.requestId, ok: true },
+  );
+}
+
+describe("createTerminalSessionRegistry — 124-06 status is owner-scoped (T-124-15)", () => {
+  const sub1 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-1" };
+  const sub2 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-2" };
+
+  it("the owner's status round-trips the `status` frame and returns the classifier state + lastActivity", async () => {
+    const fake = makeStatusWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const s = await reg.create(bashReq, sub1);
+    const view = await reg.status(s.sessionId, sub1);
+
+    expect(view.state).toBe("awaiting-input");
+    expect(view.cursorParked).toBe(true);
+    expect(view.screenDiffEmpty).toBe(true);
+    expect(view.interactions).toBe(3);
+    expect(typeof view.lastActivity).toBe("number");
+    // The worker received a `status` frame (the classifier stays single-homed there).
+    expect(fake.requestFrames.some((f) => f.method === "status")).toBe(true);
+  });
+
+  it("a cross-owner status returns the not-found minimal view — NEVER the other owner's classifier state (T-124-15)", async () => {
+    const fake = makeStatusWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const s2 = await reg.create(bashReq, sub2);
+
+    // sub1 probes sub2's sessionId → owner mismatch is treated EXACTLY as not-found.
+    const crossView = await reg.status(s2.sessionId, sub1);
+    expect(crossView.state).not.toBe("awaiting-input"); // never the real state
+    expect(crossView.cursorParked).toBe(false);
+    // No `status` frame was sent for the cross-owner probe (degrades WITHOUT a round-trip).
+    expect(fake.requestFrames.some((f) => f.method === "status")).toBe(false);
+
+    // The legitimate owner still sees its real state.
+    const ownView = await reg.status(s2.sessionId, sub2);
+    expect(ownView.state).toBe("awaiting-input");
+  });
+
+  it("a killed/absent session → status returns the not-found minimal view (alive-equivalent exited)", async () => {
+    const fake = makeStatusWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const s = await reg.create(bashReq, sub1);
+    await reg.kill(s.sessionId, sub1);
+
+    const view = await reg.status(s.sessionId, sub1);
+    expect(view.state).not.toBe("awaiting-input");
+    expect(view.cursorParked).toBe(false);
+  });
+});
+
+describe("createTerminalSessionRegistry — TR-13 kill cannot cross owners (T-123-07)", () => {
   const sub1 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-1" };
   const sub2 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-2" };
 
@@ -1433,5 +1515,159 @@ describe("createTerminalSessionRegistry — reaper composition", () => {
     expect(reg.list(subA).map((r) => r.sessionId)).toContain(s.sessionId);
     expect(onEvict).not.toHaveBeenCalled();
     expect(onCapForget).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// 124-05 (TR-11, spec §2.3): the guarded fd3 events-push READER. The registry
+// reads child.stdio[3] with the SAME HR-02 crash-guard as stdout — a decoded
+// TerminalEventFrame (no requestId) is dispatched to the daemon-injected
+// onTerminalEvent hook; a corrupt fd3 byte WARNs + drops the worker, NEVER
+// throws out of the listener (a malformed event frame cannot crash the daemon).
+// This is the no-poll consumer: attention arrives via this reader, not a timer.
+// ===========================================================================
+
+/**
+ * Build a fake worker whose fd3 (`stdio[3]`) can be driven — the events push
+ * channel the registry's new reader attaches to. `emitFd3` pushes bytes onto fd3
+ * (a length-prefixed event frame, or raw/oversized garbage for the HR-02 tests).
+ * stdin/stdout are present so create() round-trips; on/kill complete the surface.
+ */
+function makeFd3DrivableWorker(): {
+  child: FakeWorkerChild;
+  emitFd3: (bytes: Buffer) => void;
+} {
+  const emitter = new EventEmitter();
+  const stdout = new EventEmitter();
+  const fd3 = new EventEmitter();
+  const child = {
+    pid: 6161,
+    stdin: { write: () => true } as unknown as FakeWorkerChild["stdin"],
+    stdout: stdout as unknown as FakeWorkerChild["stdout"],
+    // fd0=stdin, fd1=stdout, fd2=stderr, fd3=the events push channel (124-05).
+    stdio: [null, stdout, null, fd3],
+    on: (event: string, cb: (arg?: unknown) => void) => {
+      emitter.on(event, cb);
+      return child;
+    },
+    kill: vi.fn(),
+  } as unknown as FakeWorkerChild;
+  return { child, emitFd3: (bytes: Buffer) => fd3.emit("data", bytes) };
+}
+
+describe("createTerminalSessionRegistry — 124-05 fd3 events-push reader (TR-11, no poll)", () => {
+  it("a decoded TerminalEventFrame on fd3 is dispatched to the injected onTerminalEvent hook", async () => {
+    const fake = makeFd3DrivableWorker();
+    const events: TerminalEventFrame[] = [];
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { onTerminalEvent: (f) => events.push(f) }),
+    );
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+
+    // The worker emits a transition event on fd3 (no requestId → routed as an EVENT).
+    fake.emitFd3(
+      encodeFrame({ sessionId, event: "terminal:input_needed", payload: { state: "awaiting-input", reason: "settled_cursor_parked" } }),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].sessionId).toBe(sessionId);
+    expect(events[0].event).toBe("terminal:input_needed");
+    expect(events[0].payload).toMatchObject({ state: "awaiting-input" });
+    // The session is untouched — an event is not a crash signal.
+    expect(registry.get(sessionId, OWNER)?.status).toBe("running");
+  });
+
+  it("a corrupt (non-JSON) fd3 byte does NOT crash the daemon — WARN errorKind:'validation', drop the worker, never rethrow (HR-02)", async () => {
+    const fake = makeFd3DrivableWorker();
+    const logger = makeLogger();
+    const onTerminalEvent = vi.fn();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { logger, onTerminalEvent }),
+    );
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+
+    // A length-prefixed frame whose body is NOT valid JSON: JSON.parse throws INSIDE
+    // the fd3 'data' listener. Pre-patch (no fd3 reader) this is never read; once the
+    // reader exists, an UNGUARDED reader would uncaughtException the daemon (the
+    // opposite of OPS-01). The guard must swallow it.
+    const garbage = Buffer.from("{not-json-event", "utf8");
+    const prefix = Buffer.alloc(4);
+    prefix.writeUInt32BE(garbage.length, 0);
+
+    expect(() => fake.emitFd3(Buffer.concat([prefix, garbage]))).not.toThrow();
+
+    // The corrupt worker is dropped (running session → lost), a WARN with the closed-
+    // union errorKind 'validation' was logged, and the hook was never called with junk.
+    expect(registry.get(sessionId, OWNER)?.status).toBe("lost");
+    const warn = logger.warn.mock.calls.find(
+      ([obj]) => (obj as { errorKind?: string }).errorKind === "validation",
+    );
+    expect(warn).toBeDefined();
+    expect(onTerminalEvent).not.toHaveBeenCalled();
+  });
+
+  it("an oversized HR-01 length prefix on fd3 is caught (FrameTooLargeError), not rethrown — daemon survives", async () => {
+    const fake = makeFd3DrivableWorker();
+    const logger = makeLogger();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { logger }));
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+
+    const oversized = Buffer.alloc(4);
+    oversized.writeUInt32BE(0xffffffff, 0); // ~4 GiB declared body → above the framer cap
+
+    expect(() => fake.emitFd3(oversized)).not.toThrow();
+    expect(registry.get(sessionId, OWNER)?.status).toBe("lost");
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("a reply-shaped frame (with requestId) on fd3 is NOT dispatched as an event (routed by the absence of requestId)", async () => {
+    const fake = makeFd3DrivableWorker();
+    const events: TerminalEventFrame[] = [];
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { onTerminalEvent: (f) => events.push(f) }),
+    );
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+
+    // A reply frame (has requestId, no `event`) does not belong on fd3; the reader
+    // routes ONLY event-shaped frames to onTerminalEvent — a reply is ignored there.
+    fake.emitFd3(encodeFrame({ sessionId, requestId: "rq-1", ok: true, result: {} }));
+
+    expect(events).toHaveLength(0);
+    expect(registry.get(sessionId, OWNER)?.status).toBe("running"); // not a corrupt-frame drop
+  });
+
+  it("a worker with NO fd3 stream (stdio[3] absent) does not throw on supervision (the reader is optional-chained)", async () => {
+    // The plain makeFakeWorker has no stdio[3]; wiring supervision must not throw.
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { onTerminalEvent: vi.fn() }),
+    );
+    await expect(
+      registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER),
+    ).resolves.toBeDefined();
   });
 });

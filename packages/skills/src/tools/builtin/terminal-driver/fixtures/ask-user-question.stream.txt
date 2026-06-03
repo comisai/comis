@@ -1,0 +1,6 @@
+[2J[1;1HWhich approach should I take?
+
+❯ Refactor incrementally
+  Rewrite the module
+  Leave as-is
+[3;3H

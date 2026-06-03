@@ -140,6 +140,7 @@ import {
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
+  setupTerminalWake,
   setupMcp,
   setupSkillBundles,
   buildSkillRegistriesForBundles,
@@ -2241,13 +2242,15 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // shutdownBackgroundProcesses returned from setupTools — the
   // previous eventBus.on("system:shutdown", ...) inline closure is now a
   // hoisted function threaded through ShutdownDeps.
-  const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses } = setupTools({
+  const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir,
     dataDir: container.config.dataDir || ".",
     secretManager: container.secretManager, platformSecretNames: container.platformSecretNames,
     eventBus: container.eventBus, skillsLogger, linkRunner,
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     subprocessEnv: handle.execToolEnv, onSuspiciousContent: handle.onSuspiciousContent,
+    // 124-09 (WR-01 closure): the daemon TimerPort drives the terminal-driver reaper sweep.
+    timers: handle.timers,
     mcpClientManager,
     // Fresh accessor for per-server tool filtering — read live so
     // config:mutated server edits surface on the next tool assembly.
@@ -2332,6 +2335,19 @@ async function bootChannels(boot: BootContext): Promise<void> {
   //   bgCompletionRunnerContext.runner.shutdown()) deleted — runner.shutdown
   // is threaded directly into setupShutdown via
   // ShutdownDeps.bgCompletionRunnerShutdown.
+  // 6.6.8.0.2. Terminal-driver wake-FSM (v2.11 / 124-09 — THE KEYSTONE). One-per-daemon:
+  // subscribes the re-published terminal:input_needed (the Task-1 fd3 hook) → dedupe/active-
+  // check/hop-limit → wakes ONE turn that runs the safe-only auto-answer + loop-guard against
+  // the SAME per-agent terminalRegistries the tools drive; escalations route via bgNotifyFn
+  // (§4.7). Drained on shutdown via ShutdownDeps.terminalWakeShutdown.
+  const terminalWakeContext = setupTerminalWake({
+    eventBus: container.eventBus,
+    registries: terminalRegistries,
+    getTerminalAttentionConfig,
+    notify: bgNotifyFn,
+    dataDir: container.config.dataDir || ".",
+    logger: daemonLogger,
+  });
   // 6.6.8.0.3. Recover background tasks NOW (after the runner is subscribed)
   backgroundTaskManager.recoverOnStartup();
 
@@ -2395,7 +2411,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins,
     commandQueue, deliveryService,
     inboundMessageIdResolver, channelHealthMonitor, stopChannelHealthMonitor,
-    notificationContext, bgCompletionRunnerContext,
+    notificationContext, bgCompletionRunnerContext, terminalWakeContext,
     crossSessionSender, subAgentRunner, sendToChannel, announceToParent,
     deadLetterQueue, announcementBatcher, gatewaySendRef,
     sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig,
@@ -2677,7 +2693,7 @@ async function bootShutdown(
     // 9 new teardown handles surfaced through BootContext.
     shutdownBackgroundProcesses, proxyTypingCleanup,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
-    bgCompletionRunnerContext, stopChannelHealthMonitor, mcpClientManager,
+    bgCompletionRunnerContext, terminalWakeContext, stopChannelHealthMonitor, mcpClientManager,
   } = gateway;
   void _execs; void _suspended;
   // Override-derived locals -- only consumed by setupShutdown below.
@@ -2719,6 +2735,8 @@ async function bootShutdown(
     shutdownBackgroundProcesses,
     mcpClientManagerDisconnectAll: () => mcpClientManager.disconnectAll(),
     bgCompletionRunnerShutdown: () => bgCompletionRunnerContext.runner.shutdown(),
+    // 124-09: drain the terminal wake-FSM (unsubscribe + await in-flight woken turns).
+    terminalWakeShutdown: terminalWakeContext ? () => terminalWakeContext.shutdown() : undefined,
     proxyTypingCleanup,
     shutdownDeliveryQueue,
     shutdownDeliveryMirror: shutdownMirror,

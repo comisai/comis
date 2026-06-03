@@ -42,6 +42,7 @@ export { setupDeliveryQueue, type DeliveryQueueResult, setupDeliveryMirror, type
 export { setupNotifications, type NotificationContext } from "./setup-notifications.js";
 export { setupBackgroundTasks, type BackgroundTasksContext } from "./setup-background-tasks.js";
 export { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";
+export { setupTerminalWake, type SetupTerminalWakeDeps, type TerminalWakeContext } from "./setup-terminal-wake.js";
 export type {
   BackgroundCompletionRunnerContext,
   SetupBackgroundCompletionRunnerDeps,
