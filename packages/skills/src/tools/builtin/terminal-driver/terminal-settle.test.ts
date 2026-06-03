@@ -132,6 +132,7 @@ function makeSource(initialRing: string) {
 function makeDeps(
   sched: ReturnType<typeof makeScheduler>,
   source: ReturnType<typeof makeSource>,
+  over: Partial<SettleDeps> = {},
 ): SettleDeps {
   return {
     setTimer: sched.setTimer,
@@ -140,6 +141,7 @@ function makeDeps(
     isAlive: source.isAlive,
     onRingChange: source.onRingChange,
     onExit: source.onExit,
+    ...over,
   };
 }
 
@@ -433,5 +435,72 @@ describe("runSettle — CLEANUP (no leaked timer/subscription)", () => {
     // ...then a stray exit signal must be a no-op (subscriptions already removed).
     expect(() => source.exit()).not.toThrow();
     expect(source.exitSubCount).toBe(0);
+  });
+});
+
+// ===========================================================================
+// Plan 121-03: the OPTIONAL isSettleable gate (the "more content below the fold
+// ⇒ NOT settled" re-arm). The worker wires it to !hasContentBelowFold(); the
+// idle timer RE-ARMS instead of resolving idle while isSettleable() is false.
+// exit/text/timeout paths are UNCHANGED (load-bearing 120-02 semantics).
+// ===========================================================================
+
+describe("runSettle — isSettleable gate (TR-14 below-the-fold re-arm)", () => {
+  it("does NOT resolve idle while isSettleable() returns false; re-arms, then settles once true", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("boot\n");
+    let settleable = false; // content is below the fold → not settleable yet
+    let settled = false;
+    const p = runSettle(makeDeps(sched, source, { isSettleable: () => settleable }), {
+      forIdleMs: 100,
+    }).then((r) => {
+      settled = true;
+      return r;
+    });
+
+    // Cross the idle window — the idle timer FIRES but isSettleable() is false, so
+    // it must RE-ARM (not resolve idle).
+    sched.advance(100);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // Still below the fold after another idle window — still re-arming.
+    sched.advance(100);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // Content scrolled into view: isSettleable() flips true; a ring change re-arms
+    // the idle timer, and the next quiet window resolves idle.
+    settleable = true;
+    source.write("x"); // a ring change re-arms the idle debounce
+    sched.advance(100);
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "idle" });
+  });
+
+  it("a missing isSettleable (the default) resolves idle exactly as before (no-op gate)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("boot\n");
+    // No isSettleable in deps — the gate is absent (default always-settleable).
+    const result = await (async () => {
+      const p = runSettle(makeDeps(sched, source), { forIdleMs: 50 });
+      sched.advance(50);
+      return p;
+    })();
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "idle" });
+  });
+
+  it("isSettleable false does NOT block exit (exit is always terminal)", async () => {
+    const sched = makeScheduler();
+    const source = makeSource("boot\n");
+    const p = runSettle(makeDeps(sched, source, { isSettleable: () => false }), {
+      forExit: true,
+      forIdleMs: 100,
+    });
+
+    // Even with content below the fold, a backend exit terminates the settle.
+    source.exit();
+    const result = await p;
+    expect(result).toEqual({ matched: true, isComplete: true, reason: "exit" });
   });
 });
