@@ -24,12 +24,10 @@
  * @module
  */
 
-import { spawn as childSpawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 import {
   systemNowMs,
-  systemEnvSnapshot,
   systemSetTimeout,
   systemClearTimeout,
   type SystemTimeoutHandle,
@@ -46,6 +44,7 @@ import {
 } from "./terminal-ipc.js";
 import type { ReadOptions, SnapshotDiff } from "./terminal-render.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
+import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
 
 /**
  * The per-session emulator scrollback depth (TR-14) — the SINGLE source the create
@@ -138,6 +137,8 @@ export interface TerminalSessionRegistryDeps {
   bwrapPath?: string;
   /** Daemon-injected no-secret egress port (SEC-07, 122-05) — the daemon->worker-main seam for `listed-hosts`; a live `net` server, so (unlike bwrapPath) NOT frame-serialized. Type-only from @comis/core. */
   egressControl?: EgressControlPort;
+  /** Allocate a real per-session jail workspace dir (gap 2); default {@link allocateSessionWorkspace} (world-rwx mkdtemp under os.tmpdir()). `create` threads it onto the frame as workspace+cwd so the jail binds RW + --chdirs in (else it defaults to HOME, which uid 65534 cannot use). Injectable for a data-dir-rooted daemon allocator; cleanup is the paired {@link cleanupSessionWorkspace}. */
+  allocateWorkspace?: (sessionId: string) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +159,8 @@ export interface SessionHandle {
   rows: number;
   lastActivity: number;
   exitCode?: number;
+  /** The registry-allocated per-session jail workspace dir (gap 2), removed best-effort on kill so the throwaway dir does not leak. Set ONLY when the registry allocated it (a caller-supplied workspace is the caller's to clean). */
+  workspace?: string;
 }
 
 /** A `create` request — the daemon passes buildDirectSpawn's `{bin,argv}` (M-1). */
@@ -282,47 +285,9 @@ export interface TerminalSessionRegistry {
   cleanup(): Promise<void>;
 }
 
-// ---------------------------------------------------------------------------
-// Production worker-launch posture (118-SPIKE-GO.md)
-// ---------------------------------------------------------------------------
-
-/**
- * The 118-proven worker-launch permission posture (the daemon spawns the worker
- * under this via its existing `--allow-child-process`). node-pty `forkpty` was
- * proven to allocate a controlling pty under EXACTLY this posture on the VPS.
- * `--allow-fs-write` scopes are supplied by the production `spawnWorker` (the
- * worker's durable-state dir + /tmp), keyed to the data dir at wiring time.
- */
-export const WORKER_PERMISSION_ARGS: readonly string[] = [
-  "--permission",
-  "--allow-addons",
-  "--allow-worker",
-  "--allow-fs-read=*",
-  "--allow-child-process",
-];
-
-/**
- * Build the production `spawnWorker` default: forks `node <permission-args>
- * <workerJsPath>` with a 4-fd stdio (fd3 is the events push channel per spec
- * §2.3), scoping fs-writes to the worker's durable-state dir + /tmp. The daemon
- * (119-04 wiring) constructs this with the resolved `workerJsPath` + `dataDir`.
- */
-export function buildProductionSpawnWorker(
-  workerJsPath: string,
-  dataDir: string,
-): () => FakeWorkerChild {
-  const args = [
-    ...WORKER_PERMISSION_ARGS,
-    `--allow-fs-write=${dataDir}/terminal-worker`,
-    "--allow-fs-write=/tmp",
-    workerJsPath,
-  ];
-  return () =>
-    childSpawn(process.execPath, args, {
-      stdio: ["pipe", "pipe", "pipe", "pipe"],
-      env: systemEnvSnapshot(),
-    }) as unknown as FakeWorkerChild;
-}
+// The production worker-launch posture (WORKER_PERMISSION_ARGS +
+// buildProductionSpawnWorker) is in ./terminal-worker-launch.ts — extracted so this
+// file stays under the 800-line cap; the barrel re-exports it from there.
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -362,6 +327,8 @@ export function createTerminalSessionRegistry(
     });
   const clearTimer =
     deps.clearTimer ?? ((handle: unknown) => systemClearTimeout(handle as SystemTimeoutHandle));
+  // gap 2: per-session jail workspace allocator (default = the real mkdtemp helper).
+  const allocateWorkspace = deps.allocateWorkspace ?? ((id: string) => allocateSessionWorkspace(id).workspace);
 
   /**
    * Split a `${sessionId}:${requestId}` pending key into its parts. Both halves are
@@ -554,6 +521,11 @@ export function createTerminalSessionRegistry(
     const child = ensureWorker();
     const sessionId = generateSessionId();
 
+    // gap 2: a REAL per-session jail workspace threaded onto the frame as workspace+cwd
+    // (see terminal-workspace.ts); ownedWorkspace is set only when WE allocated it (a
+    // caller override is theirs) so kill rm's exactly what the registry owns.
+    const { workspace, cwd, ownedWorkspace } = resolveCreateWorkspace(req, allocateWorkspace, sessionId);
+
     const handle: SessionHandle = {
       sessionId,
       allowId: req.allowId,
@@ -562,6 +534,7 @@ export function createTerminalSessionRegistry(
       cols: req.cols,
       rows: req.rows,
       lastActivity: nowMs(),
+      workspace: ownedWorkspace,
     };
     sessions.set(sessionId, handle);
 
@@ -584,8 +557,8 @@ export function createTerminalSessionRegistry(
       scrollback: req.scrollback ?? DEFAULT_SCROLLBACK,
       // SEC-02: scope (+ workspace/cwd) rides the frame for the 122-06 jail composer.
       scope: req.scope,
-      workspace: req.workspace,
-      cwd: req.cwd,
+      workspace, // gap 2: the registry-allocated per-session jail dir (or caller override)
+      cwd,
       // SEC-16 (122-06): the daemon-resolved bwrap path rides the frame so the
       // worker's fail-closed branch reads it (undefined ⇒ no spawn, session lost).
       bwrapPath: deps.bwrapPath,
@@ -778,6 +751,9 @@ export function createTerminalSessionRegistry(
     }
     // Drop the killed session so `list()` no longer contains it (supports TR-01).
     sessions.delete(sessionId);
+    // gap 2: best-effort rm the per-session jail workspace we allocated (no leak; never
+    // throws — the kill path completes). Set only when the registry allocated it.
+    if (handle.workspace !== undefined) cleanupSessionWorkspace(handle.workspace);
     logger.info({ sessionId }, "terminal session killed");
   }
 

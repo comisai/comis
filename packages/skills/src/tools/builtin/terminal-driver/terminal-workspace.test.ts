@@ -145,25 +145,10 @@ describe("createTerminalSessionRegistry — threads a real per-session workspace
   });
 
   it("kill cleans up the allocated workspace (no per-session dir leak)", async () => {
-    const allocated: string[] = [];
-    const cleaned: string[] = [];
     const fake = makeFakeWorker();
-    const registry = createTerminalSessionRegistry(
-      baseDeps(() => fake.child, {
-        // Inject the workspace seams so the test asserts the allocate/cleanup
-        // lifecycle without depending on real FS timing — but allocate a REAL dir
-        // so existsSync below is meaningful.
-        allocateWorkspace: (sessionId: string) => {
-          const { workspace } = allocateSessionWorkspace(sessionId);
-          allocated.push(workspace);
-          return workspace;
-        },
-        cleanupWorkspace: (workspace: string) => {
-          cleaned.push(workspace);
-          cleanupSessionWorkspace(workspace);
-        },
-      }),
-    );
+    // Use the REAL default allocator/cleaner (no injection) — a stronger test: the
+    // create frame carries a real dir, and kill must rm that real dir off disk.
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
 
     const { sessionId } = await registry.create({
       allowId: "cat",
@@ -172,13 +157,13 @@ describe("createTerminalSessionRegistry — threads a real per-session workspace
       cols: 80,
       rows: 24,
     });
-    expect(allocated.length).toBe(1);
-    expect(existsSync(allocated[0]!)).toBe(true);
+    const createFrame = fake.requestFrames.find((f) => f.method === "create");
+    const allocated = createFrame?.params["workspace"] as string;
+    expect(existsSync(allocated)).toBe(true);
 
     await registry.kill(sessionId);
 
-    // The killed session's workspace is cleaned up (best-effort rm).
-    expect(cleaned).toContain(allocated[0]);
-    expect(existsSync(allocated[0]!)).toBe(false);
+    // The killed session's real workspace dir is removed off disk (best-effort rm).
+    expect(existsSync(allocated)).toBe(false);
   });
 });

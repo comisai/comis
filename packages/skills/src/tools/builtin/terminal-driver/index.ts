@@ -32,11 +32,9 @@ export {
 // The lone remaining stub tool (registered, never-export, rejects not_implemented → Phase 124).
 export { createTerminalSessionStatusTool } from "./terminal-tools-stubs.js";
 
-// The daemon-side session registry + its production worker-spawn posture helper.
+// The daemon-side session registry.
 export {
   createTerminalSessionRegistry,
-  buildProductionSpawnWorker,
-  WORKER_PERMISSION_ARGS,
   type TerminalSessionRegistry,
   type TerminalSessionRegistryDeps,
   type RegistryLogger,
@@ -48,6 +46,13 @@ export {
   type SessionListing,
   type SessionStatus,
 } from "./terminal-session-registry.js";
+
+// The production worker-spawn posture helper (extracted from the registry to keep it
+// under the 800-line cap; re-exported here so the package surface is unchanged).
+export {
+  buildProductionSpawnWorker,
+  WORKER_PERMISSION_ARGS,
+} from "./terminal-worker-launch.js";
 
 // The length-prefixed IPC framer's max-frame guard (HR-01) — the registry's
 // stdout handler branches on FrameTooLargeError to drop a corrupt worker.
