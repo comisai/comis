@@ -2,41 +2,32 @@
 /**
  * The supervised Terminal Worker entry (spec §2.1/§2.2/§2.3).
  *
- * The worker is the one net-new process boundary: a daemon-supervised child
- * that owns the PTY (node-pty, optional) and the driven CLI. The daemon-side
- * registry (119-03 `terminal-session-registry.ts`) spawns it under the
- * 118-proven `--permission` posture and exchanges length-prefixed JSON frames
- * (119-02 `terminal-ipc.ts`) over its stdio pipes.
- *
- * This module is a FACTORY (`createTerminalWorker(deps)`) so it is fully
- * unit-testable WITHOUT forking a process: the node-pty loader, the structural
- * logger, the clock, the env snapshot, the pipe spawner, and the durable-fs ops
- * are all injected. The default production deps (used only when the worker runs
- * as a real forked process) wire `child_process.spawn`, `node:fs`, and the
- * `@comis/core` system-time ports.
+ * The worker is the one net-new process boundary: a daemon-supervised child that
+ * owns the PTY (node-pty, optional) + the driven CLI. The registry (119-03)
+ * spawns it under the 118-proven `--permission` posture and exchanges
+ * length-prefixed JSON frames (119-02) over stdio. A FACTORY
+ * (`createTerminalWorker(deps)`) so it is fully unit-testable WITHOUT forking:
+ * the node-pty loader, logger, clock, env snapshot, pipe spawner, durable-fs ops,
+ * and the @xterm emulator factory are all injected (production defaults wire
+ * `child_process.spawn`, `node:fs`, the `@comis/core` system-time ports).
  *
  * Architecture invariants enforced here:
- *   - NO top-level static `import … from "node-pty"` — node-pty is loaded via
- *     the INJECTED `loadPty` dep (default: a guarded `createRequire` load inside
- *     a try). A throw selects the PIPE backend and reports `backend:"degraded"`
- *     (TR-08) — never an unhandled module-load / spawn crash.
- *   - NO module-global mutable state — the per-session backend + stdout-ring map
- *     is CLOSURE-local to the factory.
- *   - NO `@comis/infra` value-import — the worker takes an injected structural
- *     logger (`{ info, debug, warn, error }`), like `process-tool.ts`'s
- *     ToolLogger. The daemon (composition root) passes the real logger.
- *   - NO redundant path-canonicalization — the worker spawns from the create
- *     frame's `{bin,argv}` (the daemon canonicalized via `buildDirectSpawn`, the
- *     SOLE canonicalization site, 119-02). argsPrefix is preserved end-to-end
- *     (M-1).
- *   - NO raw wall-clock / timer / env globals — injected/system-time ports only
+ *   - NO top-level static `import … from "node-pty"` — loaded via the INJECTED
+ *     `loadPty` (guarded `createRequire` in a try); a throw selects the PIPE
+ *     backend, `backend:"degraded"` (TR-08), never an unhandled crash.
+ *   - NO module-global mutable state — the per-session map is CLOSURE-local.
+ *   - NO `@comis/infra` value-import — an injected structural logger
+ *     (`{ info, debug, warn, error }`); the daemon passes the real one.
+ *   - NO redundant path-canonicalization — spawns from the create frame's
+ *     `{bin,argv}` (buildDirectSpawn is the SOLE canonicalization site, 119-02);
+ *     argsPrefix preserved end-to-end (M-1).
+ *   - NO raw wall-clock / timer / env globals — injected ports only
  *     (`globals.test.ts`).
  *
  * @module
  */
 
 import { spawn as childSpawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import {
   writeFileSync as fsWriteFileSync,
@@ -58,9 +49,11 @@ import { isFsyncDisabledByPermissionModel } from "@comis/shared";
 
 import type { TerminalReplyFrame, TerminalRequestFrame } from "./terminal-ipc.js";
 import { encodeKeyChord } from "./terminal-key-grammar.js";
+import { sanitizeTraceId, WORKER_TRUST_LEVEL } from "./terminal-worker-context.js";
 import {
   buildReadResult,
   createSessionEmulator,
+  readSnapshotParams,
   type ReadResult,
   type SessionEmulator,
 } from "./terminal-render.js";
@@ -166,12 +159,10 @@ export interface TerminalWorkerDeps {
   /** Durable-fs ops. Default: `node:fs` sync ops. */
   fs?: WorkerFsPort;
   /**
-   * Schedule a one-shot timer. Default (production): wraps `systemSetTimeout`
-   * from `@comis/core` (the sanctioned timer indirection — no raw `setTimeout`
-   * global) and `.unref()`s the handle so a pending in-worker settle timer never
-   * holds the event loop open. Returns an opaque handle for `clearTimer`. The
-   * settle engine (Plan 02) routes EVERY timer through this — mirrors the
-   * registry's MR-01 port shape.
+   * Schedule a one-shot timer. Default: wraps `systemSetTimeout` (the sanctioned
+   * indirection — no raw `setTimeout` global) and `.unref()`s the handle so a
+   * pending settle timer never holds the event loop open. The settle routes EVERY
+   * timer through this (mirrors the registry's MR-01 port shape).
    */
   setTimer?: (cb: () => void, ms: number) => unknown;
   /** Cancel a `setTimer` handle (default: `systemClearTimeout`). */
@@ -246,6 +237,13 @@ interface SessionState {
    */
   emu?: SessionEmulator;
   /**
+   * The latest emulator write-parse promise (P2/121). `appendRing` chains each
+   * `emu.write(chunk)` onto it (a serialized in-order queue resolving on the
+   * @xterm PARSE callback); `handleRead` awaits it before serializing so a
+   * settled frame reflects every emitted byte (§2.4 — NOT a no-op await).
+   */
+  writeFlush?: Promise<void>;
+  /**
    * Settle subscribers notified when this session's ring grows (the
    * `onRingChange` half of {@link SettleDeps}). Closure-local per session — NOT
    * module-global. `appendRing` notifies these.
@@ -304,13 +302,6 @@ const defaultFsPort: WorkerFsPort = {
 };
 
 // ---------------------------------------------------------------------------
-// Inbound-context validation (LR-01)
-// ---------------------------------------------------------------------------
-
-/** UUID (8-4-4-4-12 hex) shape — matches `RequestContextSchema.traceId` (`z.guid()`). */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// ---------------------------------------------------------------------------
 // Bracketed-paste delimiters (spec §5 send_text bracketedPaste)
 // ---------------------------------------------------------------------------
 
@@ -323,35 +314,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const BRACKETED_PASTE_START = "\x1b[200~";
 /** The DECSET 2004 bracketed-paste END marker. */
 const BRACKETED_PASTE_END = "\x1b[201~";
-
-/**
- * Sanitize the inbound wire `traceId` before it becomes the ALS context (LR-01).
- *
- * `runWithContext` does NOT validate against `RequestContextSchema` (whose
- * `traceId` is `z.guid()`), so an arbitrary/attacker-chosen traceId off the wire
- * would be stamped onto every worker log line — log-correlation poisoning (a
- * forged id stitches worker logs to an unrelated turn). We accept a valid UUID
- * verbatim (legitimate correlation preserved) and otherwise REGENERATE a fresh
- * id rather than trusting the wire. The caller logs the substitution.
- */
-function sanitizeTraceId(wire: unknown): { traceId: string; regenerated: boolean } {
-  if (typeof wire === "string" && UUID_RE.test(wire)) {
-    return { traceId: wire, regenerated: false };
-  }
-  return { traceId: randomUUID(), regenerated: true };
-}
-
-/**
- * The least-privileged trust level the worker context runs under (LR-01).
- *
- * The worker performs NO authorization decisions — it only spawns from the
- * already-gated `{bin,argv}` and renders read views. An unconditional
- * `trustLevel:"admin"` was a latent trust-elevation foothold for any future
- * worker-side code that consults `getContext().trustLevel`; `guest` (least
- * privilege) removes it. Worker code MUST NOT make trust decisions — authz lives
- * entirely on the daemon side, before the create frame is ever sent.
- */
-const WORKER_TRUST_LEVEL = "guest" as const;
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -394,12 +356,13 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
    * subscribers (the `onRingChange` half of {@link SettleDeps}). The ring is the
    * RAW byte feed the settle observes + the degraded fallback view; the emulator
    * is the source of truth for the rendered `read` snapshot. The emulator write
-   * is fired un-awaited here (no `void` cast) — Plan 02 wraps it in a write-flush
-   * promise so `read` can await the parse before serializing a settled frame.
+   * is chained onto {@link SessionState.writeFlush} — a serialized in-order queue
+   * resolving on the @xterm PARSE callback (the wrapper's promise is
+   * parse-backed), so `handleRead` awaits it before serializing a settled frame.
    */
   function appendRing(state: SessionState, chunk: string): void {
     state.ring += chunk;
-    state.emu?.write(chunk);
+    state.writeFlush = (state.writeFlush ?? Promise.resolve()).then(() => state.emu?.write(chunk));
     for (const cb of state.ringListeners) cb();
   }
 
@@ -525,19 +488,22 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Handle a `read` frame (H-1). Serializes the per-session @xterm emulator grid
-   * (real cursor + real alt, P2/121) into `{screen,cursor,cols,rows,alt,alive}`.
-   * When the emulator is present it is the SOLE source; the raw ring is the
-   * fallback only for an emulator-absent path (NOT a dual path on the live
-   * backend) — see {@link buildReadResult}.
+   * Handle a `read` frame (H-1). AWAITS the pending emulator write-parse
+   * ({@link SessionState.writeFlush}) so the snapshot reflects every emitted byte
+   * (the §2.4 stability flush — NOT a no-op await; it resolves on the @xterm
+   * parse callback), then serializes the @xterm grid (real cursor + real alt) in
+   * the requested `format`/`scrollback`. When the emulator is present it is the
+   * SOLE source; the raw ring is the emulator-absent fallback (NOT a dual path on
+   * the live backend) — see {@link buildReadResult}.
    */
-  function handleRead(frame: TerminalRequestFrame): ReadResult {
+  async function handleRead(frame: TerminalRequestFrame): Promise<ReadResult> {
     const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
     const state = sessions.get(sessionId);
     if (state === undefined) {
       return { screen: "", cursor: { x: 0, y: 0 }, cols: 0, rows: 0, alt: false, alive: false };
     }
-    return buildReadResult(state.emu?.snapshot(), {
+    await state.writeFlush;
+    return buildReadResult(state.emu?.snapshot(readSnapshotParams(frame.params)), {
       ring: state.ring,
       cols: state.cols,
       rows: state.rows,
@@ -694,7 +660,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
           result = handleCreate(frame);
           break;
         case "read":
-          result = handleRead(frame);
+          // ASYNC: read awaits the pending emulator write-parse before serializing.
+          result = await handleRead(frame);
           break;
         case "send_key":
           result = handleSendKey(frame);

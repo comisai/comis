@@ -1274,10 +1274,13 @@ describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (
     expect(recEmu.lastConstruct()?.rows).toBe(24);
     expect(recEmu.lastConstruct()?.scrollback).toBeGreaterThan(0);
 
-    // Every data chunk is fed into the emulator's write (the grid ingest).
+    // Every data chunk is fed into the emulator's write (the grid ingest). Plan
+    // 02 chains the writes through state.writeFlush (a serialized in-order queue
+    // resolving on the parse callback), so drain it via a read (which awaits the
+    // flush) before asserting the in-order feed.
     rec.emit("first");
     rec.emit("second");
-    await Promise.resolve();
+    await worker.handle(readFrame()); // read awaits writeFlush -> the chain drains
     expect(recEmu.writes).toEqual(["first", "second"]);
   });
 

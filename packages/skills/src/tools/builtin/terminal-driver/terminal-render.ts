@@ -244,6 +244,26 @@ export interface ReadResult {
   alive: boolean;
 }
 
+/**
+ * Parse the `read` frame params into {@link SnapshotOptions}. `format` is
+ * validated to one of `text|ansi|html` (anything else → `text`); `scrollback` is
+ * a non-negative number (anything else → `0`). Kept here so the worker stays
+ * under the 800-line cap. `includeAltBuffer` is ignored for now — alt is captured
+ * by default per §2.4; an explicit alt-exclude is not in TR-02/14 scope.
+ *
+ * @param params - The decoded read-frame params (`frame.params`).
+ * @returns The validated `{format, scrollback}` snapshot options.
+ */
+export function readSnapshotParams(params: Record<string, unknown>): SnapshotOptions {
+  const rawFormat = params["format"];
+  const format: RenderFormat =
+    rawFormat === "ansi" || rawFormat === "html" || rawFormat === "text" ? rawFormat : "text";
+  const rawScrollback = params["scrollback"];
+  const scrollback =
+    typeof rawScrollback === "number" && rawScrollback > 0 ? rawScrollback : 0;
+  return { format, scrollback };
+}
+
 /** The session geometry/liveness the worker pairs with a snapshot to build a read view. */
 export interface ReadResultContext {
   /** The raw stdout ring — the emulator-absent / degraded fallback view. */
