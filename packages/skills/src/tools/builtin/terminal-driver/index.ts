@@ -54,6 +54,16 @@ export {
   WORKER_PERMISSION_ARGS,
 } from "./terminal-worker-launch.js";
 
+// P4 OPS-03/06: the per-session usage-cap primitive (closure-local counters + injected
+// clock). The tool layer (Plan 05) consumes createSessionCaps to REJECT on
+// maxRequestsPerSession and EVICT on maxInteractions/wallClockMs.
+export {
+  createSessionCaps,
+  type SessionCaps,
+  type SessionLimits,
+  type CapBreach,
+} from "./terminal-caps.js";
+
 // The length-prefixed IPC framer's max-frame guard (HR-01) — the registry's
 // stdout handler branches on FrameTooLargeError to drop a corrupt worker.
 export {

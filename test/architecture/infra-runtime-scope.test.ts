@@ -109,7 +109,7 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
   // constraint self-documenting and turns a future infra-import regression into a
   // targeted, legible failure (not a needle in the 1,290-file global haystack).
   // ---------------------------------------------------------------------------
-  it("terminal scope/egress files (scope-args, env-scrub, egress-relay, spawn-plan) value-import zero @comis/infra (SEC-07 boundary)", () => {
+  it("terminal scope/egress + caps files (scope-args, env-scrub, egress-relay, spawn-plan, terminal-caps) value-import zero @comis/infra (SEC-07 boundary)", () => {
     const TERMINAL_EGRESS_DIR = resolve(
       PACKAGES_ROOT,
       "skills/src/tools/builtin/terminal-driver",
@@ -126,6 +126,8 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       // inside the bwrap jail; imports ONLY node builtins (net / child_process) —
       // carries no secret, injects nothing, never @comis/infra.
       "egress-relay-init.ts",
+      // P4 OPS-03/06: per-session caps — closure-local counters + injected clock; node + @comis/core types only, never @comis/infra.
+      "terminal-caps.ts",
     ] as const;
 
     const { violations, checkedFiles } = findForbiddenImports({
@@ -145,7 +147,7 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       namedViolations,
       formatViolations({
         description:
-          "The terminal scope/egress files (terminal-scope-args.ts, terminal-env-scrub.ts, terminal-egress-relay.ts, terminal-spawn-plan.ts, egress-relay-init.ts) MUST NOT value-import @comis/infra — they depend only on the EgressControlPort type in @comis/core + node builtins (SEC-07 trust boundary; worker ↛ infra).",
+          "The terminal scope/egress + caps files (terminal-scope-args.ts, terminal-env-scrub.ts, terminal-egress-relay.ts, terminal-spawn-plan.ts, egress-relay-init.ts, terminal-caps.ts) MUST NOT value-import @comis/infra — they depend only on @comis/core types (the EgressControlPort; or, for terminal-caps, the structural limits shape + injected nowMs) + node builtins (SEC-07 trust boundary; worker ↛ infra).",
         violations: namedViolations.map((v) => ({
           file: v.file,
           line: v.line,
