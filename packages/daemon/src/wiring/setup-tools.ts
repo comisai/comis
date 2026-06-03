@@ -7,6 +7,7 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
 import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
@@ -69,6 +70,7 @@ import {
 } from "@comis/skills/tools";
 // Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
 import { wireTerminalTools } from "./setup-terminal-tools.js";
+import { createTerminalEgressProxy } from "./terminal-egress-proxy.js";
 
 // Descriptor registry on the `./platform-tools` subpath. Replaces the
 // prior inline 38-call enumeration of `createXTool(agentRpc, ...)`
@@ -249,6 +251,27 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
   /** Per-agent TerminalSessionRegistry instances (v2.11); closure-local, lazily built. */
   const terminalRegistries = new Map<string, TerminalSessionRegistry>();
+
+  // SEC-07 (122-05): the host-side no-secret allowlist egress proxy + the
+  // resolved bwrap path — constructed ONCE here (the composition root), injected
+  // into every agent's terminal wiring. The proxy materializes `listed-hosts`
+  // egress on demand (per session) in 122-06; constructing the port once avoids
+  // re-standing-up a server factory per agent/per create. bwrapPath is resolved
+  // only when the provider IS bwrap (Linux); on macOS/no-sandbox it stays
+  // undefined — the create gate already fail-closes there.
+  const terminalEgressControl = createTerminalEgressProxy({ logger: skillsLogger });
+  let terminalBwrapPath: string | undefined;
+  if (sandboxProvider?.name === "bwrap") {
+    try {
+      // Matches BwrapProvider.available()'s resolution (`which bwrap`) so the
+      // terminal scope composer (122-06 buildScopeArgs) binds the SAME binary the
+      // exec sandbox uses. eslint: a one-shot startup resolve, Linux-only.
+      // eslint-disable-next-line no-restricted-syntax -- one-shot bwrap path resolve at daemon startup
+      terminalBwrapPath = execFileSync("which", ["bwrap"], { encoding: "utf8" }).trim();
+    } catch {
+      terminalBwrapPath = undefined; // provider reported bwrap but PATH lost it — fail-closed downstream
+    }
+  }
 
   /** Agents we've already logged the no-sandbox WARN for. Per-agent assembly
    * runs on every session/heartbeat/cron tick; without this guard the WARN
@@ -612,7 +635,17 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // Terminal driver (v2.11, Phase 119 P0): construct the per-agent
       // crash-isolated registry + push all nine never-export tools (the
       // empty allow-set fail-closes every create until config is threaded in).
-      wireTerminalTools(tools, terminalRegistries, agentId, { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate });
+      wireTerminalTools(tools, terminalRegistries, agentId, {
+        dataDir,
+        skillsLogger,
+        eventBus,
+        sandboxProvider,
+        approvalGate,
+        // SEC-07 (122-05): the host-side allowlist egress proxy + the resolved
+        // bwrap path, threaded toward the worker path (composed by 122-06).
+        egressControl: terminalEgressControl,
+        bwrapPath: terminalBwrapPath,
+      });
 
       return tools;
     };

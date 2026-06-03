@@ -56,7 +56,12 @@ import {
   type TerminalScope,
   type SandboxProvider,
 } from "@comis/skills/tools";
-import { systemNowMs, type TerminalAllowEntry, type ApprovalGate } from "@comis/core";
+import {
+  systemNowMs,
+  type TerminalAllowEntry,
+  type ApprovalGate,
+  type EgressControlPort,
+} from "@comis/core";
 
 /** Dependencies the terminal-driver wiring needs from the composition root. */
 export interface TerminalWiringDeps {
@@ -83,6 +88,23 @@ export interface TerminalWiringDeps {
    * fail-closes (reject) — it never runs unauthorized.
    */
   readonly approvalGate?: ApprovalGate;
+  /**
+   * The host-side no-secret allowlist egress proxy (SEC-07), constructed at the
+   * composition root (`createTerminalEgressProxy`) and injected here as the
+   * {@link EgressControlPort}. Threaded toward the worker path so 122-06 can call
+   * `materialize(scope.hosts)` for `network: listed-hosts` and bind-mount the
+   * returned socket. Optional: absent => no `listed-hosts` egress is materialized
+   * (the create gate + scope still enforce `none`/`full`); never a silent open.
+   */
+  readonly egressControl?: EgressControlPort;
+  /**
+   * The resolved `bwrap` binary path (the daemon detects it ONCE at startup, the
+   * same value the sandbox provider resolves via `which bwrap`). Threaded toward
+   * the worker path so 122-06 can pass it to `buildScopeArgs({ bwrapPath, ... })`
+   * (the scope->argv composer needs the explicit path; it is NOT implicit). Made
+   * EXPLICIT here per the W1 plan-checker — do not leave bwrapPath implicit.
+   */
+  readonly bwrapPath?: string;
 }
 
 /**
@@ -175,12 +197,21 @@ function getOrCreateTerminalRegistry(
  * forwarding methods (120-03) — they do not re-gate the allowlist (the session was
  * gated at create). Mirrors how exec/process/apply-patch join the same array.
  */
-export function wireTerminalTools(
-  tools: AgentToolArray,
+/**
+ * Build the shared deps object the nine terminal tools receive — the SINGLE seam
+ * where the per-agent registry, the operator allow-set, the cached sandbox
+ * provider, the approval gate, AND the net-new egress dimensions (the
+ * {@link EgressControlPort} impl + the resolved `bwrapPath`) flow toward the
+ * worker path. Extracted so the egress wiring is testable in isolation (122-05
+ * Task 3) and so 122-06 has one obvious place to read `egressControl` +
+ * `bwrapPath` when composing the `listed-hosts` jail. No module-global state — the
+ * registry map is passed in.
+ */
+export function buildTerminalSharedDeps(
   registries: Map<string, TerminalSessionRegistry>,
   agentId: string,
   deps: TerminalWiringDeps,
-): void {
+) {
   const registry = getOrCreateTerminalRegistry(registries, agentId, deps);
 
   // SEC-01 trust source: the operator allow-set. Empty until the config is
@@ -189,7 +220,7 @@ export function wireTerminalTools(
   // scope (SEC-02) rides along via the single mapping site above (no silent drop).
   const allowEntries: AllowEntryLike[] = [];
 
-  const sharedDeps = {
+  return {
     registry,
     allowEntries,
     // MR-03: reuse the daemon's once-detected cached provider — do NOT re-run the
@@ -206,7 +237,24 @@ export function wireTerminalTools(
     // approveOnCreate (else the create path is unchanged); a demanding entry with no
     // gate fail-closes in the tool.
     approvalGate: deps.approvalGate,
+    // SEC-07 (122-05): the net-new egress dimensions, threaded toward the worker.
+    // The PORT impl (the no-secret allowlist proxy) + the resolved bwrap path; the
+    // worker (122-06) calls `egressControl.materialize(scope.hosts)` for
+    // `listed-hosts` and passes `bwrapPath` to `buildScopeArgs`. EXPLICIT, not
+    // implicit (W1 plan-checker). Today unused by the eight tools — they carry it
+    // through the seam so the worker composer has it.
+    egressControl: deps.egressControl,
+    bwrapPath: deps.bwrapPath,
   };
+}
+
+export function wireTerminalTools(
+  tools: AgentToolArray,
+  registries: Map<string, TerminalSessionRegistry>,
+  agentId: string,
+  deps: TerminalWiringDeps,
+): void {
+  const sharedDeps = buildTerminalSharedDeps(registries, agentId, deps);
 
   tools.push(
     createTerminalSessionCreateTool(sharedDeps),
