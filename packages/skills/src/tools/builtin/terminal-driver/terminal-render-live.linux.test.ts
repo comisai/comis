@@ -32,10 +32,14 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { realpathSync } from "node:fs";
+import { realpathSync, mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import type { TerminalRequestFrame, TerminalReplyFrame } from "./terminal-ipc.js";
+import type { TerminalScope } from "./allowlist-matcher.js";
 
 const isLinux = process.platform === "linux";
 
@@ -48,6 +52,44 @@ const silentLogger = {
   warn: () => {},
   error: () => {},
 };
+
+/**
+ * 122-06: the worker now ALWAYS jails the child (`bwrap [scope args] -- bin argv`;
+ * the unjailed path is gone), so the live worker MUST be given the resolved bwrap
+ * path or create fails closed (SEC-16). vim/bash/seq all run fine in a
+ * `filesystem:workspace` jail (system RO binds supply the interpreter + libs +
+ * terminfo; the workspace + /tmp are RW). Resolved once like `BwrapProvider`.
+ */
+function resolveBwrapPath(): string {
+  return execFileSync("which", ["bwrap"], { encoding: "utf8" }).trim();
+}
+
+/** A real throwaway workspace dir — always --bind RW into the jail (the session cwd). */
+function makeWorkspace(): string {
+  return mkdtempSync(join(tmpdir(), "render-live-ws-"));
+}
+
+/** The least-privilege live scope (SEC-02) the create frame carries so 122-06 jails the child. */
+const LIVE_WORKSPACE_SCOPE: TerminalScope = {
+  filesystem: "workspace",
+  network: "none",
+  credentialHome: "exclude",
+  uid: "dedicated",
+};
+
+/** Build a live worker with the resolved bwrapPath (so create jails, not fail-closes). */
+function makeLiveWorker(): ReturnType<typeof createTerminalWorker> {
+  return createTerminalWorker({
+    loadPty: defaultLoadPty,
+    logger: silentLogger,
+    bwrapPath: resolveBwrapPath(),
+  });
+}
+
+/** Merge the scope + workspace/cwd jail companions into a create frame's params. */
+function withJail(params: Record<string, unknown>, workspace: string): Record<string, unknown> {
+  return { ...params, scope: LIVE_WORKSPACE_SCOPE, workspace, cwd: workspace };
+}
 
 /** The live `read` reply view (the worker's emulator-backed grid). */
 interface LiveView {
@@ -128,12 +170,19 @@ async function readUntil(
 describe.skipIf(!isLinux)("TR-02/14 (Linux) — live-TUI render through the real PTY + emulator", () => {
   it("live vim renders a stable alt-screen grid (alt:true, cols×rows-shaped), then :q! exits", async () => {
     const vim = resolveBin(["/usr/bin/vim", "/bin/vim", "/usr/local/bin/vim"]);
-    const worker = createTerminalWorker({ loadPty: defaultLoadPty, logger: silentLogger });
+    const worker = makeLiveWorker();
+    const workspace = makeWorkspace();
 
-    // create a real-PTY `vim -u NONE -N` session (no host vimrc; deterministic).
+    // create a real-PTY `vim -u NONE -N` session (no host vimrc; deterministic),
+    // jailed inside the workspace (122-06).
     const created = await drive<{ backend: string; cols: number; rows: number }>(
       worker,
-      frame("vim", "create", { sessionId: "vim", bin: vim, argv: ["-u", "NONE", "-N"], cols: 80, rows: 24 }, "rq-create"),
+      frame(
+        "vim",
+        "create",
+        withJail({ sessionId: "vim", bin: vim, argv: ["-u", "NONE", "-N"], cols: 80, rows: 24 }, workspace),
+        "rq-create",
+      ),
     );
     expect(created.backend).toBe("pty"); // a real forkpty succeeded
 
@@ -162,7 +211,8 @@ describe.skipIf(!isLinux)("TR-02/14 (Linux) — live-TUI render through the real
 
   it("live scrollback: read({scrollback:N}) surfaces an early off-screen line the viewport omits (TR-14)", async () => {
     const bash = resolveBin(["/bin/bash", "/usr/bin/bash"]);
-    const worker = createTerminalWorker({ loadPty: defaultLoadPty, logger: silentLogger });
+    const worker = makeLiveWorker();
+    const workspace = makeWorkspace();
 
     // `bash -c 'seq 1 100'` prints 100 lines on a 24-row viewport — ~76 scroll off.
     const created = await drive<{ backend: string }>(
@@ -170,7 +220,10 @@ describe.skipIf(!isLinux)("TR-02/14 (Linux) — live-TUI render through the real
       frame(
         "seq",
         "create",
-        { sessionId: "seq", bin: bash, argv: ["--norc", "--noprofile", "-c", "seq 1 100"], cols: 80, rows: 24, scrollback: 1000 },
+        withJail(
+          { sessionId: "seq", bin: bash, argv: ["--norc", "--noprofile", "-c", "seq 1 100"], cols: 80, rows: 24, scrollback: 1000 },
+          workspace,
+        ),
         "rq-create",
       ),
     );
@@ -199,7 +252,8 @@ describe.skipIf(!isLinux)("TR-02/14 (Linux) — live-TUI render through the real
 
   it("live below-fold ⇒ NOT settled: a slow producer keeps wait({forIdleMs}) from settling idle (TR-14)", async () => {
     const bash = resolveBin(["/bin/bash", "/usr/bin/bash"]);
-    const worker = createTerminalWorker({ loadPty: defaultLoadPty, logger: silentLogger });
+    const worker = makeLiveWorker();
+    const workspace = makeWorkspace();
 
     // A slow producer: print a line every 100ms for ~3s (30 lines) on a 5-row
     // viewport — output keeps scrolling below the fold the whole time.
@@ -208,14 +262,17 @@ describe.skipIf(!isLinux)("TR-02/14 (Linux) — live-TUI render through the real
       frame(
         "slow",
         "create",
-        {
-          sessionId: "slow",
-          bin: bash,
-          argv: ["--norc", "--noprofile", "-c", "for i in $(seq 1 30); do echo line-$i; sleep 0.1; done"],
-          cols: 80,
-          rows: 5,
-          scrollback: 1000,
-        },
+        withJail(
+          {
+            sessionId: "slow",
+            bin: bash,
+            argv: ["--norc", "--noprofile", "-c", "for i in $(seq 1 30); do echo line-$i; sleep 0.1; done"],
+            cols: 80,
+            rows: 5,
+            scrollback: 1000,
+          },
+          workspace,
+        ),
         "rq-create",
       ),
     );

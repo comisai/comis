@@ -19,9 +19,14 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import type { TerminalRequestFrame } from "./terminal-ipc.js";
+import type { TerminalScope } from "./allowlist-matcher.js";
 
 const isLinux = process.platform === "linux";
 
@@ -33,6 +38,34 @@ const silentLogger = {
   info: () => {},
   warn: () => {},
   error: () => {},
+};
+
+/**
+ * 122-06: the worker now ALWAYS spawns `bwrap [scope args] -- bin argv` (the
+ * unjailed path is deleted). So the live worker MUST be given the resolved bwrap
+ * path (the daemon resolves it via `which bwrap`); without it create fails closed
+ * (SEC-16). Resolved once, here, exactly like `BwrapProvider.available()`.
+ */
+function resolveBwrapPath(): string {
+  return execFileSync("which", ["bwrap"], { encoding: "utf8" }).trim();
+}
+
+/** A real throwaway workspace dir — always --bind RW into the jail (the session cwd). */
+function makeWorkspace(): string {
+  return mkdtempSync(join(tmpdir(), "worker-entry-live-ws-"));
+}
+
+/**
+ * The least-privilege live scope (SEC-02): workspace-only fs, deny-all egress, the
+ * net-new uid. `cat`/`bash` run fine in a workspace jail (system RO binds give the
+ * interpreter + libs; the workspace is RW). The create frame carries it (+ the
+ * workspace/cwd companions) so 122-06's buildSpawnPlan jails the child.
+ */
+const LIVE_WORKSPACE_SCOPE: TerminalScope = {
+  filesystem: "workspace",
+  network: "none",
+  credentialHome: "exclude",
+  uid: "dedicated",
 };
 
 /** Build a request frame for the live-PTY interaction assertion. */
@@ -81,17 +114,29 @@ describe.skipIf(!isLinux)("terminal worker posture (Linux only)", () => {
   // ==========================================================================
   it("drives a live program: send_text(submit) echoes, then C-d exits (submit->settle->observe + control key)", async () => {
     // `cat` is a minimal line-buffered interactive program: it echoes each
-    // submitted line and exits on EOF (C-d).
+    // submitted line and exits on EOF (C-d). 122-06: the worker spawns it INSIDE a
+    // bwrap workspace jail, so the worker is given the resolved bwrapPath.
+    const workspace = makeWorkspace();
     const worker = createTerminalWorker({
       loadPty: defaultLoadPty,
       logger: silentLogger,
+      bwrapPath: resolveBwrapPath(),
     });
 
-    // create a real PTY session running `cat`.
+    // create a real PTY session running `cat` INSIDE the workspace jail.
     const created = await worker.handle(
       liveFrame(
         "create",
-        { sessionId: "live", bin: "/bin/cat", argv: [], cols: 80, rows: 24 },
+        {
+          sessionId: "live",
+          bin: "/bin/cat",
+          argv: [],
+          cols: 80,
+          rows: 24,
+          scope: LIVE_WORKSPACE_SCOPE,
+          workspace,
+          cwd: workspace,
+        },
         "rq-create",
       ),
     );
