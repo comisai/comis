@@ -558,3 +558,180 @@ describe("createTerminalSessionRegistry — LR-02 clearWorker preserves waiter i
     expect(obj.requestId).not.toBe("");
   });
 });
+
+// ===========================================================================
+// 120-03 Task 1 — sendText / sendKey forwarding (-> {screen,cursor})
+// ===========================================================================
+
+/** An advancing clock: each call returns a strictly larger value (for lastActivity). */
+function makeAdvancingClock(start = 1_700_000_000_000): () => number {
+  let t = start;
+  return () => (t += 1000);
+}
+
+describe("createTerminalSessionRegistry — TR-03 sendText forwarding", () => {
+  it("forwards a send_text frame and resolves the {screen,cursor} subset", async () => {
+    const fake = makeFakeWorker((req) =>
+      req.method === "send_text"
+        ? {
+            sessionId: req.sessionId,
+            requestId: req.requestId,
+            ok: true,
+            // The worker returns a FULL view; the registry resolves only {screen,cursor}.
+            result: { screen: "hello", cursor: { x: 5, y: 0 }, cols: 80, rows: 24, alt: false, alive: true },
+          }
+        : undefined,
+    );
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    const out = await registry.sendText(sessionId, { text: "hello", submit: false, bracketedPaste: false });
+
+    // The forwarded frame carries the send_text method + the full param set.
+    const frame = fake.requestFrames.find((f) => f.method === "send_text");
+    expect(frame).toBeDefined();
+    expect(frame?.params["sessionId"]).toBe(sessionId);
+    expect(frame?.params["text"]).toBe("hello");
+    expect(frame?.params["submit"]).toBe(false);
+    expect(frame?.params["bracketedPaste"]).toBe(false);
+
+    // The resolved value is the {screen,cursor} subset, NOT the full view.
+    expect(out).toEqual({ screen: "hello", cursor: { x: 5, y: 0 } });
+  });
+
+  it("advances the session handle's lastActivity on a successful send_text", async () => {
+    const fake = makeFakeWorker((req) =>
+      req.method === "send_text"
+        ? {
+            sessionId: req.sessionId,
+            requestId: req.requestId,
+            ok: true,
+            result: { screen: "x", cursor: { x: 1, y: 0 } },
+          }
+        : undefined,
+    );
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { nowMs: makeAdvancingClock() }),
+    );
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+    const created = registry.get(sessionId)?.lastActivity;
+    expect(created).toBeDefined();
+
+    await registry.sendText(sessionId, { text: "x" });
+    const after = registry.get(sessionId)?.lastActivity;
+    expect(after).toBeGreaterThan(created as number);
+  });
+
+  it("degrades a send_text on an MR-01 timeout reply (ok:false) — no throw, no hang", async () => {
+    // A worker that ACCEPTS the frame but never replies; the injected timeout fires.
+    const fake = makeFakeWorker(); // no autoReply
+    let firedCb: (() => void) | undefined;
+    const setTimer = vi.fn((cb: () => void) => {
+      firedCb = cb;
+      return { id: 1 } as unknown;
+    });
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        requestTimeoutMs: 500,
+        setTimer: setTimer as never,
+        clearTimer: vi.fn() as never,
+      }),
+    );
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    const p = registry.sendText(sessionId, { text: "hi" });
+    firedCb?.(); // simulate the reply-timeout expiry
+    const out = await p;
+    expect(out).toEqual({ screen: "", cursor: { x: 0, y: 0 } });
+  });
+
+  it("degrades to the {screen:'',cursor:0,0} shape for an absent session (no throw)", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const out = await registry.sendText("no-such-session", { text: "hi" });
+    expect(out).toEqual({ screen: "", cursor: { x: 0, y: 0 } });
+  });
+});
+
+describe("createTerminalSessionRegistry — TR-03 sendKey forwarding", () => {
+  it("forwards a send_key frame with keys[] and resolves {screen,cursor}", async () => {
+    const fake = makeFakeWorker((req) =>
+      req.method === "send_key"
+        ? {
+            sessionId: req.sessionId,
+            requestId: req.requestId,
+            ok: true,
+            result: { screen: "^C", cursor: { x: 0, y: 1 } },
+          }
+        : undefined,
+    );
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    const out = await registry.sendKey(sessionId, { keys: ["C-c"] });
+
+    const frame = fake.requestFrames.find((f) => f.method === "send_key");
+    expect(frame).toBeDefined();
+    expect(frame?.params["sessionId"]).toBe(sessionId);
+    expect(frame?.params["keys"]).toEqual(["C-c"]);
+
+    expect(out).toEqual({ screen: "^C", cursor: { x: 0, y: 1 } });
+  });
+
+  it("degrades a send_key on an MR-01 timeout reply (ok:false) — no throw, no hang", async () => {
+    const fake = makeFakeWorker(); // no autoReply
+    let firedCb: (() => void) | undefined;
+    const setTimer = vi.fn((cb: () => void) => {
+      firedCb = cb;
+      return { id: 1 } as unknown;
+    });
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        requestTimeoutMs: 500,
+        setTimer: setTimer as never,
+        clearTimer: vi.fn() as never,
+      }),
+    );
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    const p = registry.sendKey(sessionId, { keys: ["Up"] });
+    firedCb?.();
+    const out = await p;
+    expect(out).toEqual({ screen: "", cursor: { x: 0, y: 0 } });
+  });
+});
