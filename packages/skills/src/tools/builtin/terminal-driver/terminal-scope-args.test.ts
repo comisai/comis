@@ -138,6 +138,49 @@ describe("buildScopeArgs — network dimension (SEC-02 / SEC-07 transport seam)"
     expect(args).toContain("--share-net");
     expect(args).not.toContain("--unshare-net");
   });
+
+  // SEC-07 (VPS bug): the in-jail relay-as-init script itself must be RO-bound into
+  // the jail. The worker spawns `bwrap [scope] -- node <relayInit> --socket … -- bin`,
+  // so node inside the jail must be able to READ its own init script (the file exists
+  // on the HOST but is not bound by default → `Cannot find module …/egress-relay-init.js`).
+  // Bind it ONLY for listed-hosts (none/full never run the relay).
+  it("listed-hosts ro-binds the relay-init script path into the jail (so in-jail node can read it)", () => {
+    const args = buildScopeArgs(
+      makeInput({
+        scope: makeScope({ network: "listed-hosts", hosts: ["example.com"] }),
+        relaySocketPath: "/tmp/egress.sock",
+        relayInitScriptPath: "/opt/comis/dist/tools/builtin/terminal-driver/egress-relay-init.js",
+      }),
+    );
+    expect(
+      hasBind(
+        args,
+        "--ro-bind",
+        "/opt/comis/dist/tools/builtin/terminal-driver/egress-relay-init.js",
+        "/opt/comis/dist/tools/builtin/terminal-driver/egress-relay-init.js",
+      ),
+    ).toBe(true);
+  });
+
+  it("none does NOT ro-bind a relay-init script (no relay in the path)", () => {
+    const args = buildScopeArgs(
+      makeInput({
+        scope: makeScope({ network: "none" }),
+        relayInitScriptPath: "/opt/comis/dist/tools/builtin/terminal-driver/egress-relay-init.js",
+      }),
+    );
+    expect(args).not.toContain("/opt/comis/dist/tools/builtin/terminal-driver/egress-relay-init.js");
+  });
+
+  it("full does NOT ro-bind a relay-init script (host net, no relay)", () => {
+    const args = buildScopeArgs(
+      makeInput({
+        scope: makeScope({ network: "full" }),
+        relayInitScriptPath: "/opt/comis/dist/tools/builtin/terminal-driver/egress-relay-init.js",
+      }),
+    );
+    expect(args).not.toContain("/opt/comis/dist/tools/builtin/terminal-driver/egress-relay-init.js");
+  });
 });
 
 describe("buildScopeArgs — credentialHome dimension (SEC-05)", () => {
