@@ -34,7 +34,6 @@ export {
   ActionConfirmationConfigSchema,
   AgentToAgentConfigSchema,
   SkillsConfigSchema,
-  TerminalDriverConfigSchema,
   DaemonConfigSchema,
   LoggingConfigSchema,
   TracingDefaultsSchema,

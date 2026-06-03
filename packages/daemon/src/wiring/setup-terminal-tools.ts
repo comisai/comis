@@ -314,7 +314,7 @@ export function buildTerminalEventHook(
               agentId,
               reason,
               hint: "terminal session escalated to a human (auto-answer declined / loop / hop-limit)",
-              errorKind: "policy" as const,
+              errorKind: "precondition" as const,
             },
             "terminal session escalated",
           );

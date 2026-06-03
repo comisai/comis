@@ -792,8 +792,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     preprocessMessageText,
     shutdownBackgroundProcesses,
     terminalRegistries,
-    // 124-09: resolve the per-agent terminal attention config (matched allow-entry's
-    // autoAnswer/hintPatterns + worker caps); read per-wake so a config swap applies.
+    // 124-09: per-agent terminal attention config (allow-entry autoAnswer/hintPatterns + caps); read per-wake.
     getTerminalAttentionConfig: (agentId: string) =>
       deriveTerminalAttentionConfig((agents[agentId] ?? agents[defaultAgentId])?.skills?.terminal),
   };

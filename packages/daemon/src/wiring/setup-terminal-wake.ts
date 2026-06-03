@@ -123,7 +123,7 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   const escalate = async (opts: { sessionId: string; owner: PersistedWakeOwner; reason: "hop_limit" }): Promise<void> => {
     deps.eventBus.emit("terminal:escalated", { sessionId: opts.sessionId, agentId: opts.owner.agentId, reason: opts.reason, timestamp: nowMs() });
     log.warn(
-      { sessionId: opts.sessionId, agentId: opts.owner.agentId, reason: opts.reason, hint: "wake hop-limit reached; escalating to a human", errorKind: "policy" as const, step: "wake_hop_limit" },
+      { sessionId: opts.sessionId, agentId: opts.owner.agentId, reason: opts.reason, hint: "wake hop-limit reached; escalating to a human", errorKind: "precondition" as const, step: "wake_hop_limit" },
       "terminal wake hop-limit escalation",
     );
     if (deps.notify) {

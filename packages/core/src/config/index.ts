@@ -143,7 +143,7 @@ export {
 export type { ExecutorConfig, ExecutorBrokerConfig } from "./schema-executor.js";
 export { OutputRetentionConfigSchema } from "./schema-output-retention.js";
 export type { OutputRetentionConfig, RetentionClass } from "./schema-output-retention.js";
-export { SkillsConfigSchema, PromptSkillsConfigSchema, TerminalDriverConfigSchema } from "./schema-skills.js";
+export { SkillsConfigSchema, PromptSkillsConfigSchema } from "./schema-skills.js";
 export type { TerminalAllowEntry, TerminalDriverConfig } from "./schema-skills.js";
 export { DaemonConfigSchema, LoggingConfigSchema, TracingDefaultsSchema, ConfigWebhookSchema } from "./schema-daemon.js";
 export { HeartbeatConfigSchema, SchedulerConfigSchema } from "./schema-scheduler.js";

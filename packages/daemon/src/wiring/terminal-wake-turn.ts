@@ -109,7 +109,7 @@ export function buildWokenTurnDriver(
   async function escalate(sessionId: string, owner: PersistedWakeOwner, reason: WokenTurnEscalationReason): Promise<void> {
     deps.eventBus.emit("terminal:escalated", { sessionId, agentId: owner.agentId, reason, timestamp: deps.nowMs() });
     log.warn(
-      { sessionId, agentId: owner.agentId, reason, hint: "terminal woken turn escalated to a human (no auto-answer)", errorKind: "policy" as const, step: "wake_escalate" },
+      { sessionId, agentId: owner.agentId, reason, hint: "terminal woken turn escalated to a human (no auto-answer)", errorKind: "precondition" as const, step: "wake_escalate" },
       "terminal woken turn escalated",
     );
     if (deps.notify) {
