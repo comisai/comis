@@ -38,9 +38,6 @@ import {
 
 import {
   encodeFrame,
-  createFrameDecoder,
-  correlate,
-  FrameTooLargeError,
   type TerminalReplyFrame,
   type TerminalRequestFrame,
 } from "./terminal-ipc.js";
@@ -49,6 +46,7 @@ import type { TerminalScope } from "./allowlist-matcher.js";
 import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
 import { wireRegistryReaper, type EvictReason, type ReaperCaps } from "./terminal-reaper.js";
+import { wireWorkerSupervision } from "./terminal-worker-supervisor.js";
 
 export type { SessionOwner } from "./terminal-session-owner.js";
 
@@ -358,63 +356,19 @@ export function createTerminalSessionRegistry(
     const child = deps.spawnWorker();
     worker = child;
 
-    // Decode reply frames off the worker's stdout and correlate them to waiters.
-    //
-    // HR-02 (OPS-01 guarantee): decode/correlate is wrapped in try/catch so a
-    // malformed reply frame NEVER throws out of this 'data' listener (a throw on a
-    // stream listener becomes an `uncaughtException` that takes the DAEMON down —
-    // the opposite of "a crash restarts the WORKER, never the daemon"). Throw
-    // sources: `JSON.parse` on non-JSON body bytes (stray console.log / partial
-    // write / post-desync garbage) + the HR-01 `FrameTooLargeError` on a corrupt
-    // length prefix. On any decode failure we treat the worker as corrupt: WARN,
-    // flip its running sessions to `lost`, clear the handle so the next `create`
-    // re-spawns — never reaching `uncaughtException`.
-    const decoder = createFrameDecoder();
-    child.stdout?.on("data", (chunk: Buffer) => {
-      let frames: TerminalReplyFrame[];
-      try {
-        frames = decoder.push(chunk) as TerminalReplyFrame[];
-      } catch (err) {
-        // A FrameTooLargeError (HR-01: corrupt/hostile length prefix) is a distinct,
-        // more-actionable signal than a JSON parse failure — surface it precisely.
-        const hint =
-          err instanceof FrameTooLargeError
-            ? "oversized worker frame length (corrupt/hostile prefix); dropping worker"
-            : "corrupt worker frame on stdout; dropping worker";
-        // errorKind:"validation" — the inbound frame failed structural decode
-        // (the closest closed-union member for a corrupt/malformed wire frame).
-        logger.warn({ err, hint, errorKind: "validation" as const }, "terminal worker frame decode failed");
-        markRunningSessionsLost();
-        clearWorker();
-        return;
-      }
-      for (const frame of frames) correlate(pending, frame);
-    });
-
-    // OPS-01: a worker error flips its sessions to `lost` and clears the handle.
-    child.on("error", (err) => {
-      logger.warn(
-        { err, hint: "terminal worker error; sessions lost, worker will re-spawn", errorKind: "dependency" as const },
-        "terminal worker error",
-      );
-      markRunningSessionsLost();
-      clearWorker();
-    });
-
-    // OPS-01: a worker close flips its sessions to `exited(code)` and clears.
-    child.on("close", (code) => {
-      const exitCode = typeof code === "number" ? code : null;
-      logger.info(
-        { exitCode, hint: "terminal worker closed; sessions exited, worker will re-spawn", errorKind: "dependency" as const },
-        "terminal worker closed",
-      );
-      for (const handle of sessions.values()) {
-        if (handle.status === "running") {
-          handle.status = "exited";
-          if (exitCode !== null) handle.exitCode = exitCode;
-        }
-      }
-      clearWorker();
+    // OPS-01 crash-isolation listeners (the HR-02-guarded stdout decoder + error + close)
+    // moved to terminal-worker-supervisor.ts (124-01) so this file keeps headroom under the
+    // 800-line cap before the P5 fd3 reader lands (124-05 wires it onto child.stdio?.[3]
+    // there). The closure locals the block used ride in as explicit params; behavior is
+    // byte-for-byte identical (the HR-02 try/catch that keeps a corrupt frame from crashing
+    // the daemon moved intact).
+    wireWorkerSupervision({
+      child,
+      pending,
+      sessions,
+      logger,
+      markRunningSessionsLost,
+      clearWorker,
     });
 
     return child;
