@@ -49,10 +49,10 @@ function makeScheduler() {
   let nextId = 1;
   const timers: ScheduledTimer[] = [];
   const clearedIds = new Set<number>();
-  let largestDelay = 0;
+  const scheduledDelays: number[] = [];
 
   const setTimer = (cb: () => void, ms: number): unknown => {
-    largestDelay = Math.max(largestDelay, ms);
+    scheduledDelays.push(ms);
     const t: ScheduledTimer = { id: nextId++, cb, fireAt: now + ms, cleared: false };
     timers.push(t);
     return t;
@@ -84,9 +84,8 @@ function makeScheduler() {
     clearTimer,
     advance,
     clearedIds,
-    get largestDelay() {
-      return largestDelay;
-    },
+    /** Every delay (ms) handed to setTimer, in scheduling order. */
+    scheduledDelays,
     get liveTimerCount() {
       return timers.filter((t) => !t.cleared).length;
     },
@@ -272,14 +271,19 @@ describe("runSettle — CAP (DoS bound)", () => {
   it("clamps a > SETTLE_MAX_TIMEOUT_MS request to the cap (the effective scheduled timeout is the cap)", async () => {
     const sched = makeScheduler();
     const source = makeSource("");
-    // Request a 10-minute wait; it must be clamped to SETTLE_MAX_TIMEOUT_MS.
-    const p = runSettle(makeDeps(sched, source), { timeoutMs: 10 * 60 * 1000 });
+    // Request a 10-minute wait with an idle window LONGER than the cap, so only
+    // the (clamped) overall-timeout timer can fire — the cap is the binding bound.
+    const p = runSettle(makeDeps(sched, source), {
+      timeoutMs: 10 * 60 * 1000,
+      forIdleMs: 20 * 60 * 1000,
+    });
 
-    // The largest delay handed to setTimer must be the cap, not 600000.
-    expect(sched.largestDelay).toBe(SETTLE_MAX_TIMEOUT_MS);
-    expect(sched.largestDelay).toBeLessThan(10 * 60 * 1000);
+    // The OVERALL-timeout timer was scheduled at exactly the cap (not the
+    // requested 600000); the requested 600000 never reaches setTimer at all.
+    expect(sched.scheduledDelays).toContain(SETTLE_MAX_TIMEOUT_MS);
+    expect(sched.scheduledDelays).not.toContain(10 * 60 * 1000);
 
-    // Fire the cap → it resolves a timeout (no idle/text/exit configured).
+    // Fire the cap → it resolves a timeout (the 20-min idle window cannot pre-empt it).
     sched.advance(SETTLE_MAX_TIMEOUT_MS);
     const result = await p;
     expect(result.reason).toBe("timeout");
@@ -327,12 +331,12 @@ describe("runSettle — CLEANUP (no leaked timer/subscription)", () => {
   it("is idempotent: a late exit after an idle resolution does not double-resolve or re-fire", async () => {
     const sched = makeScheduler();
     const source = makeSource("boot\n");
-    const result = await runSettle(makeDeps(sched, source), { forIdleMs: 50, forExit: true }).then(
-      (r) => {
-        sched.advance(50);
-        return r;
-      },
-    );
+    const p = runSettle(makeDeps(sched, source), { forIdleMs: 50, forExit: true });
+
+    // Cross the idle window → the engine resolves idle (advance BEFORE awaiting,
+    // or the promise can never resolve and the await deadlocks).
+    sched.advance(50);
+    const result = await p;
 
     // Resolve via idle...
     expect(result.reason).toBe("idle");
