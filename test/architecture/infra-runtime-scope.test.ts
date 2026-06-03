@@ -109,7 +109,7 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
   // constraint self-documenting and turns a future infra-import regression into a
   // targeted, legible failure (not a needle in the 1,290-file global haystack).
   // ---------------------------------------------------------------------------
-  it("terminal scope/egress + caps + reaper + send-guard files (scope-args, env-scrub, egress-relay, spawn-plan, terminal-caps, terminal-reaper, terminal-send-guards) value-import zero @comis/infra (SEC-07 boundary)", () => {
+  it("terminal scope/egress + caps + reaper + send-guard + P5 attention files (scope-args, env-scrub, egress-relay, spawn-plan, terminal-caps, terminal-reaper, terminal-send-guards, terminal-classifier, terminal-auto-answer, terminal-loop-guard, terminal-attention-emitter, terminal-tmux-backend) value-import zero @comis/infra (SEC-07 boundary)", () => {
     const TERMINAL_EGRESS_DIR = resolve(
       PACKAGES_ROOT,
       "skills/src/tools/builtin/terminal-driver",
@@ -135,6 +135,34 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       // value-import only @comis/core's scrubSecretsFromText + the local tool-helpers
       // (throwToolError) + TYPE-ONLY the tool/registry shapes, never @comis/infra/observability.
       "terminal-send-guards.ts",
+      // ---------------------------------------------------------------------
+      // P5/124 (SEC-07): pre-register ALL FIVE net-new skills-side worker files
+      // in ONE place (124-04 is the SOLE P5 plan that edits this file — the
+      // wave-safety note). The test FILTERS real import-scan violations by this
+      // named list, so a name for a not-yet-created file is INERT (contributes
+      // zero violations) until that file exists; naming 05/08's files here now
+      // avoids a cross-wave collision on this shared registration file and makes
+      // a future infra-import regression in any of them a legible, targeted
+      // failure (the house convention). The global rule already forbids the infra
+      // import in all of them.
+      // ---------------------------------------------------------------------
+      // 124-03: the pure state classifier (cursor-parked gate) — node builtins +
+      // the TYPE-ONLY EmulatorSnapshot from terminal-render, never @comis/infra.
+      "terminal-classifier.ts",
+      // 124-04 (SEC-12): the safe-only auto-answer policy — value-imports ONLY
+      // @comis/core's scrubSecretsFromText (+ node builtins), never @comis/infra.
+      "terminal-auto-answer.ts",
+      // 124-04 (SEC-11): the normalized region-scoped loop guard — node:crypto +
+      // an injected clock + a closure-local ring, never @comis/infra.
+      "terminal-loop-guard.ts",
+      // 124-05/06 (TR-11): the in-worker fd3 attention-event emitter — node
+      // builtins + the local terminal-ipc framer, never @comis/infra (NOT YET
+      // CREATED — inert until 124-05/08 add it).
+      "terminal-attention-emitter.ts",
+      // 124-08 (OPS-05): the tmux worker backend (named-session re-attach) — node
+      // builtins behind the same loadBackend seam, never @comis/infra (NOT YET
+      // CREATED — inert until 124-08 adds it).
+      "terminal-tmux-backend.ts",
     ] as const;
 
     const { violations, checkedFiles } = findForbiddenImports({
@@ -154,7 +182,7 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       namedViolations,
       formatViolations({
         description:
-          "The terminal scope/egress + caps + reaper + send-guard files (terminal-scope-args.ts, terminal-env-scrub.ts, terminal-egress-relay.ts, terminal-spawn-plan.ts, egress-relay-init.ts, terminal-caps.ts, terminal-reaper.ts, terminal-send-guards.ts) MUST NOT value-import @comis/infra — they depend only on @comis/core (types + scrubSecretsFromText) + the local tool-helpers + node builtins (SEC-07 trust boundary; worker ↛ infra/observability).",
+          "The terminal scope/egress + caps + reaper + send-guard + P5 attention files (terminal-scope-args.ts, terminal-env-scrub.ts, terminal-egress-relay.ts, terminal-spawn-plan.ts, egress-relay-init.ts, terminal-caps.ts, terminal-reaper.ts, terminal-send-guards.ts, terminal-classifier.ts, terminal-auto-answer.ts, terminal-loop-guard.ts, terminal-attention-emitter.ts, terminal-tmux-backend.ts) MUST NOT value-import @comis/infra — they depend only on @comis/core (types + scrubSecretsFromText) + the local tool-helpers + node builtins (SEC-07 trust boundary; worker ↛ infra/observability).",
         violations: namedViolations.map((v) => ({
           file: v.file,
           line: v.line,
