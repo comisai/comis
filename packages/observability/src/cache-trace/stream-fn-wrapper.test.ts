@@ -247,6 +247,73 @@ describe("buildCacheTraceWrapper", () => {
     }
     // totalCount reflects the assembled array length.
     expect(shape!.totalCount).toBe(3);
+    // WR-01: the count fields mirror the small case (no truncation here). Read
+    // via a raw record so this asserts on what landed on disk regardless of the
+    // typed schema shape.
+    const rawSmall = readLines(filePath).find(
+      (l) => l.stage === "stream:context",
+    ) as unknown as { assembledShape: Record<string, unknown> };
+    expect(rawSmall.assembledShape.toolUseCount).toBe(1);
+    expect(rawSmall.assembledShape.toolResultCount).toBe(1);
+    expect(rawSmall.assembledShape.pairedToolResultCount).toBe(1);
+    expect(rawSmall.assembledShape.idsTruncated).toBe(false);
+  });
+
+  it("wrapper_assembledShape_keeps_pairing_counts_above_the_64_item_array_cap (O2 / WR-01)", async () => {
+    // WR-01: on a large tool fan-out (>64 tool_use / tool_result ids), the
+    // sampled `toolUseIds` / `toolResultIds` arrays must NOT trip the 64-item
+    // payload limiter (which would replace them with an opaque
+    // `{ __bounded__: … }` sentinel and silently defeat the pairing/orphan
+    // check). The descriptor self-bounds the arrays AND carries integer count
+    // fields that survive the bound — so the gate asserts on counts, not on a
+    // possibly-truncated array.
+    const PAIRS = 80; // > PAYLOAD_BOUNDS.maxArrayLength (64)
+    const messages: unknown[] = [
+      { role: "user", content: [{ type: "text", text: "big fan-out" }] },
+    ];
+    for (let i = 0; i < PAIRS; i++) {
+      messages.push({
+        role: "assistant",
+        content: [{ type: "tool_use", id: `tu_${i}`, name: "read", input: {} }],
+      });
+      messages.push({
+        role: "toolResult",
+        toolCallId: `tu_${i}`,
+        content: [{ type: "text", text: "ok" }],
+      });
+    }
+
+    const filePath = join(tmpDir, "fanout.jsonl");
+    const trace = makeTrace({ includeMessages: false, filePath });
+    const next: StreamFn = ((..._args: unknown[]) =>
+      ({}) as ReturnType<StreamFn>) as StreamFn;
+    buildCacheTraceWrapper(trace)(next)(
+      fakeModel() as Parameters<StreamFn>[0],
+      { messages, systemPrompt: "sys" } as Parameters<StreamFn>[1],
+    );
+    await trace.flush();
+
+    // Read the RAW recorded line (post-sanitization, exactly what landed on
+    // disk) so we can prove the arrays were NOT sentinel-replaced.
+    const raw = readFileSync(filePath, "utf8")
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .find((l) => l.stage === "stream:context");
+    expect(raw).toBeDefined();
+    const shape = raw!.assembledShape as Record<string, unknown>;
+
+    // Arrays survive as real string arrays (sampled), never a bounded sentinel.
+    expect(Array.isArray(shape.toolUseIds)).toBe(true);
+    expect(Array.isArray(shape.toolResultIds)).toBe(true);
+    expect((shape.toolUseIds as string[]).length).toBeLessThanOrEqual(64);
+
+    // The pairing signal survives via integer counts at any turn size.
+    expect(shape.toolUseCount).toBe(PAIRS);
+    expect(shape.toolResultCount).toBe(PAIRS);
+    expect(shape.pairedToolResultCount).toBe(PAIRS);
+    expect(shape.idsTruncated).toBe(true);
+    expect(shape.hasToolResult).toBe(true);
   });
 
   it("wrapper_with_includeMessages_false_omits_messages_field but keeps fingerprints + digest", async () => {

@@ -150,6 +150,30 @@ function toolResultMsg(toolCallId: string): AgentMessage {
 }
 
 /**
+ * Drive a raw message array straight through the cache-trace wrapper (no
+ * pipeline), read back the recorded `stream:context` line. Used by the
+ * high-tool-count case: it isolates the `assembledShape` descriptor's
+ * bounding behavior from the pipeline's history-window logic, so the
+ * assertion is purely about whether the pairing/count signal survives the
+ * 64-item sanitizeForPersistence array cap.
+ */
+async function recordRawTurn(
+  messages: AgentMessage[],
+  filePath: string,
+): Promise<CacheTraceEvent> {
+  const trace = makeTrace(filePath);
+  const wrapped = buildCacheTraceWrapper(trace)(fakeNext);
+  wrapped(
+    fakeModel() as Parameters<StreamFn>[0],
+    { messages, systemPrompt: "you are an assistant" } as Parameters<StreamFn>[1],
+  );
+  await trace.flush();
+  const sc = readLines(filePath).find((l) => l.stage === "stream:context");
+  if (sc === undefined) throw new Error("no stream:context line recorded");
+  return sc;
+}
+
+/**
  * Drive one turn through the real pipeline engine + the cache-trace wrapper,
  * read back the recorded `stream:context` line.
  */
@@ -211,5 +235,66 @@ describe("provider-boundary harness — assembled array invariants (O2)", () => 
     expect(turn2.assembledShape!.totalCount).toBeGreaterThan(
       turn1.assembledShape!.totalCount,
     );
+  });
+
+  // ── WR-01: high-tool-count turn — the pairing/orphan signal must SURVIVE the
+  //    64-item sanitizeForPersistence array cap. ──────────────────────────────
+  //
+  // `assembledShape.toolUseIds` / `toolResultIds` are NOT in the cache-trace
+  // exempt set (correct — they must stay bounded). On pre-patch code those are
+  // plain unbounded arrays, so a turn assembling >64 tool_use / tool_result
+  // blocks serializes them as a `{ __bounded__: "bounded-payload-array-length-
+  // limit", originalLength: N }` SENTINEL in the JSONL — and every downstream
+  // pairing/orphan check that iterates `toolResultIds` / indexes `toolUseIds`
+  // becomes a silent no-op exactly on the largest, highest-risk turns. The fix
+  // self-bounds the id arrays at the source AND carries count fields
+  // (`toolUseCount` / `toolResultCount` / `pairedToolResultCount`) that never
+  // vanish under the bound, so the gate asserts on counts instead of reading
+  // through a sentinel.
+  //
+  // Reads the raw JSONL as an untyped record so the test compiles against BOTH
+  // pre- and post-patch schemas; it FAILS on pre-patch behavior (sentinel +
+  // missing count fields), GREEN once the descriptor self-bounds.
+  it("high-tool-count turn keeps the pairing signal under the 64-item array cap", async () => {
+    const PAIRS = 80; // > PAYLOAD_BOUNDS.maxArrayLength (64)
+    const messages: AgentMessage[] = [userMsg("kick off a big fan-out")];
+    for (let i = 0; i < PAIRS; i++) {
+      messages.push(assistantWithToolUse(`tu_${i}`, "read"));
+      messages.push(toolResultMsg(`tu_${i}`));
+    }
+
+    const filePath = join(tmpDir, "fanout.jsonl");
+    await recordRawTurn(messages, filePath);
+
+    // Read the recorded line back as a RAW record (post-sanitization, exactly
+    // what landed on disk).
+    const raw = readFileSync(filePath, "utf8")
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .find((l) => l.stage === "stream:context");
+    expect(raw).toBeDefined();
+
+    const shape = raw!.assembledShape as Record<string, unknown>;
+    expect(shape).toBeDefined();
+
+    // (1) the id arrays must NOT have been replaced by a bounded sentinel — the
+    //     descriptor self-bounds, so they remain real string arrays (capped).
+    expect(Array.isArray(shape.toolUseIds)).toBe(true);
+    expect(Array.isArray(shape.toolResultIds)).toBe(true);
+
+    // (2) the count fields survive the bound and reflect the TRUE totals.
+    expect(shape.toolUseCount).toBe(PAIRS);
+    expect(shape.toolResultCount).toBe(PAIRS);
+
+    // (3) the pairing invariant holds on counts (never vanishes under the cap):
+    //     every tool_result is paired with a tool_use → no orphans.
+    expect(shape.pairedToolResultCount).toBe(PAIRS);
+
+    // (4) overflow is surfaced honestly, not silently dropped.
+    expect(shape.idsTruncated).toBe(true);
+
+    // hasToolResult still true at any turn size.
+    expect(shape.hasToolResult).toBe(true);
   });
 });
