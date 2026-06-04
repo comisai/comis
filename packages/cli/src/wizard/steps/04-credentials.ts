@@ -45,11 +45,15 @@ import {
   // createLogger. CLI does not import from @comis/infra.
   createConsoleLogger,
   AuthSetContract,
+  safePath,
   type OAuthCredentialStorePort,
   type OAuthProfile,
 } from "@comis/core";
+import { homedir } from "node:os";
 import { callTyped, withClient } from "../../client/rpc-client.js";
-import { requireDaemonOrExit } from "../../util/daemon-required.js";
+import { DAEMON_PROBE_TIMEOUT_MS } from "../../util/daemon-required.js";
+import { isDaemonRunning } from "../../sync-tooling/daemon-guard.js";
+import { offlineOAuthProfileSet } from "../../util/offline-secrets-store.js";
 import {
   loadWizardStorageMode,
   openWizardOAuthStore,
@@ -533,13 +537,16 @@ async function handleCodexOAuth(
       break;
   }
 
-  // Encrypted mode: gate on daemon availability BEFORE the OAuth flow so the
-  // user sees a clear error message rather than a partial interactive OAuth
-  // prompt followed by a daemon-unavailable crash.
+  // Encrypted mode: probe the daemon BEFORE the OAuth flow so the persistence
+  // route (daemon RPC vs. offline encrypted write) is decided up front. During
+  // `comis init` the daemon is not yet running — there is no config.yaml — so
+  // we seal the profile directly into secrets.db via offlineOAuthProfileSet.
+  // When the daemon IS running it is the sole writer, so we route through the
+  // auth.set RPC instead (single-writer invariant).
   if (wizardStorage === "encrypted") {
-    await requireDaemonOrExit();
+    const daemonUp = await isDaemonRunning(DAEMON_PROBE_TIMEOUT_MS);
     // Run the OAuth flow locally (browser/device-code — user's interactive
-    // machine). The daemon handles encrypted persistence via the auth.set RPC.
+    // machine).
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       const result = await loginOpenAICodexOAuth({
         prompter,
@@ -551,26 +558,46 @@ async function handleCodexOAuth(
 
       if (result.ok) {
         const v = result.value;
-        try {
-          await withClient((client) =>
-            callTyped(client, AuthSetContract, {
-              provider: "openai-codex",
-              profileId: v.profileId,
-              access: v.access,
-              refresh: v.refresh,
-              expires: v.expires,
-              accountId: v.accountId,
-              email: v.email,
-              displayName: v.displayName,
-              version: 1,
-            }),
-          );
-        } catch (rpcErr) {
-          prompter.log.error(
-            `Failed to persist OAuth profile via daemon: ${rpcErr instanceof Error ? rpcErr.message : String(rpcErr)}`,
-          );
-          if (attempt === maxRetries) return state;
-          continue;
+        const profile: OAuthProfile = {
+          provider: "openai-codex",
+          profileId: v.profileId,
+          access: v.access,
+          refresh: v.refresh,
+          expires: v.expires,
+          accountId: v.accountId,
+          email: v.email,
+          displayName: v.displayName,
+          version: 1,
+        };
+
+        if (daemonUp) {
+          // Daemon is the sole writer when running → persist via auth.set RPC.
+          try {
+            await withClient((client) =>
+              callTyped(client, AuthSetContract, profile),
+            );
+          } catch (rpcErr) {
+            prompter.log.error(
+              `Failed to persist OAuth profile via daemon: ${rpcErr instanceof Error ? rpcErr.message : String(rpcErr)}`,
+            );
+            if (attempt === maxRetries) return state;
+            continue;
+          }
+        } else {
+          // Daemon down (e.g. during `comis init`) → seal the profile directly
+          // into the encrypted secrets.db. NEVER touches the plaintext file store.
+          const res = await offlineOAuthProfileSet({
+            profile,
+            dataDir: safePath(homedir(), ".comis"),
+            envFilePath: safePath(homedir(), ".comis", ".env"),
+          });
+          if (!res.ok) {
+            prompter.log.error(
+              `Failed to persist OAuth profile: ${res.error.message}`,
+            );
+            if (attempt === maxRetries) return state;
+            continue;
+          }
         }
 
         wizardLogger.info(
@@ -582,7 +609,7 @@ async function handleCodexOAuth(
             action: "wizard-login",
             submodule: "wizard-oauth",
           },
-          "OAuth profile stored via daemon RPC",
+          "OAuth profile stored (encrypted)",
         );
 
         prompter.log.info(
