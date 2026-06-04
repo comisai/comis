@@ -39,6 +39,7 @@ import { createLlmCompactionLayer } from "./llm-compaction.js";
 import { createRehydrationLayer } from "./rehydration.js";
 import { createObjectiveReinforcementLayer } from "./objective-reinforcement.js";
 import { createDeadContentEvictorLayer } from "./dead-content-evictor.js";
+import { createLcdContextEngine } from "./lcd-assembler.js";
 import { detectRereads } from "./reread-detector.js";
 import type { Message } from "@earendil-works/pi-ai";
 import { estimateContextCharsWithDualRatio, estimateWithAnchor } from "../safety/token-estimator.js";
@@ -227,19 +228,25 @@ export function createContextEngine(
     return { transformContext: async (msgs) => msgs, lastBreakpointIndex: undefined, lastTrimOffset: 0 };
   }
 
-  // DAG mode stub (Phase 126 demolition): the DAG/LCD engine is being
-  // reimplemented for v2.12 and is NOT currently available. A config still
-  // pinned to version: "dag" must NOT crash the daemon and must NOT resurrect
-  // the deleted engine -- it WARN-logs and falls through to the pipeline
-  // assembly below. Re-enabled in Phase 133.
+  // DAG/LCD mode (Phase 128): when a ContextStorePort + conversationId are wired
+  // (the daemon injects the concrete createLcdStore), return the LCD assembly
+  // engine -- history reconstructed from the store via the codec, verbatim fresh
+  // tail, transcript repair last (the corrected loop fix). With NO store wired
+  // (unit tests / non-daemon callers) it must NOT crash and must NOT no-op: it
+  // WARN-logs (errorKind: "config") and falls through to the pipeline assembly
+  // below (a permanent regression gate -- see context-engine.test.ts c2).
   if (config.version === "dag") {
+    if (deps.contextStore && deps.conversationId) {
+      return createLcdContextEngine(config, deps);
+    }
     deps.logger.warn(
       {
-        hint: "dag/LCD context engine not yet available (v2.12 reimplementation); using pipeline",
+        hint: "dag mode selected but no ContextStorePort wired; using pipeline",
         errorKind: "config" as const,
       },
-      "context engine version 'dag' selected but not yet reimplemented -- using pipeline",
+      "LCD dag engine unavailable without a context store -- using pipeline",
     );
+    // (fall through to the pipeline assembly below -- never crash, never no-op)
   }
 
   // Check model capabilities to determine which layers to activate.

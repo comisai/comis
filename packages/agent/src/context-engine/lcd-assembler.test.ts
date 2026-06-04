@@ -227,22 +227,18 @@ describe("createLcdContextEngine", () => {
   });
 
   it("Test 4: transcript repair runs LAST — an unpaired tool_use gets a synthesized result", async () => {
-    // Store an assistant tool_use with NO matching result (a dangling call).
-    const stored: Message[] = [
+    // A turn whose assistant tool_use NEVER got a matching result (a dangling
+    // call), then a trailing assistant text. Store and live are 1:1 (the 128
+    // no-compaction invariant). freshTailTurns=1 → fresh tail = [assistant("final")],
+    // so the orphan call sits in the reconstructed-from-store HISTORY.
+    const turn: Message[] = [
       userMsg("u0"),
       assistantToolCall("tu_orphan", "read", { path: "/x" }),
+      assistantText("final"),
     ];
-    for (let i = 0; i < stored.length; i++) append(store, stored[i] as Message, i);
+    for (let i = 0; i < turn.length; i++) append(store, turn[i] as Message, i);
 
-    // Live array carries only the trailing assistant text as the fresh tail,
-    // so the orphan call sits in history. freshTailTurns=1.
-    const live: AgentMessage[] = [
-      userMsg("u0") as AgentMessage,
-      assistantToolCall("tu_orphan", "read", { path: "/x" }) as AgentMessage,
-      assistantText("final") as AgentMessage,
-    ];
-    // Note: only the first two are in the store; the assembler reads HISTORY from
-    // the store and the FRESH TAIL from the live array.
+    const live: AgentMessage[] = turn as AgentMessage[];
     const { deps } = makeDeps(store);
     const engine = createLcdContextEngine(dagConfig(1), deps);
     const out = await engine.transformContext(live);
