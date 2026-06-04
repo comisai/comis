@@ -23,6 +23,7 @@ import type {
   TripleStorePort,
   MemoryEmbeddingStore,
   MemoryUsefulnessStore,
+  MemoryPinnedStore,
   TunedAlphaStore,
   UserRepresentationStore,
   RelationshipStore,
@@ -131,6 +132,14 @@ export interface PiExecutorDeps {
    *  -> no usefulness read (recall scoring unchanged). TYPE-only from @comis/core — the agent
    *  never imports the memory package (the agent↛memory cut). */
   usefulnessStore?: MemoryUsefulnessStore;
+  /** Optional pinned-memory store. The SAME `memoryAdapter` (SqliteMemoryAdapter) already
+   *  passed as `memoryPort` — it implements both `MemoryPort` AND `MemoryPinnedStore`. Passed
+   *  separately so prompt-assembly's createMemoryRecall Step-0 pinned-first lane gate
+   *  (`cfg_pinned?.enabled === true && deps.pinnedStore !== undefined`) can fire at runtime.
+   *  Without this forward the pinned lane is a silent no-op in every live agent response
+   *  (the R6 blocker). DEFAULT-OFF BYTE-IDENTITY: with `rag.pinned.enabled=false` or absent,
+   *  no pinnedStore query runs. TYPE-only from @comis/core (the agent↛memory cut). */
+  pinnedStore?: MemoryPinnedStore;
   /** Optional learned-alpha store. Built in the daemon on the shared memory db handle;
    *  threaded into prompt-assembly's deterministic apply overlay (the gated buildScoringAlphas read)
    *  via ToolAssemblyDeps. Absent or flag-off -> no read, the static config.rag.scoring alphas pass

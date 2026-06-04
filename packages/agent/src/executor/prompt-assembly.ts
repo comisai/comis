@@ -296,6 +296,11 @@ export interface PromptAssemblyParams {
     /** Optional usefulness store for createMemoryRecall's usefulness read
      *  (default-OFF via config.rag.feedback). TYPE-only (the agent↛memory build cut). */
     usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+    /** Optional pinned-memory store for createMemoryRecall's Step-0 pinned-first lane.
+     *  DEFAULT-OFF (config.rag.pinned.enabled=false): with the store absent or the flag off,
+     *  no query runs and the pipeline is byte-identical to pre-pinning. Passed from PiExecutorDeps
+     *  → PromptAssemblyParams.deps → createMemoryRecall. TYPE-only (the agent↛memory build cut). */
+    pinnedStore?: import("@comis/core").MemoryPinnedStore;
     /** Optional learned-alpha store for the deterministic apply overlay
      *  (default-OFF via config.rag.onlineTuning). Gated read → buildScoringAlphas overlays
      *  the four non-trust weights; absent / off / no-row ⇒ no read, the static
@@ -822,6 +827,13 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           tripleStore: deps.tripleStore,
           embeddingStore: deps.embeddingStore,
           usefulnessStore: deps.usefulnessStore,
+          // R6: wire the pinned-first lane store so Step 0 of the recall pipeline
+          // (`if (cfg_pinned?.enabled === true && deps.pinnedStore !== undefined)`) can fire
+          // at runtime. The same `memoryAdapter` already passed as `memoryPort` implements
+          // `MemoryPinnedStore`; the daemon composition root threads it here through
+          // PiExecutorDeps.pinnedStore → PromptAssemblyParams.deps.pinnedStore. Default-OFF
+          // byte-identity: with `rag.pinned.enabled=false` (the default) no query runs.
+          ...(deps.pinnedStore !== undefined ? { pinnedStore: deps.pinnedStore } : {}),
           timers: deps.timers,
           clock: deps.clock,
           logger,
@@ -853,6 +865,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           // score.ts forces forgetFactor to exactly 1.0 ⇒ byte-identical recall until an
           // operator opts in (rag.forget.enabled); the neutral byte-identity holds even when on.
           forget: config.rag.forget,
+          // R6: forward the pinned-memory injection config so Step 0 knows the cap.
+          // A fully-defaulted RagConfig field (same posture as mmr/forget), so it passes DIRECTLY.
+          // Default-OFF (`enabled:false`) ⇒ the pinned lane is skipped (byte-identical).
+          pinned: config.rag.pinned,
           ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },
       );
