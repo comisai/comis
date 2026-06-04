@@ -216,9 +216,26 @@ describe("storageStep", () => {
     );
   });
 
-  it("default initialValue is 'file' when no master key and config absent", async () => {
-    // loadWizardStorageMode -> "file" (no key, no config) -> initialValue file.
+  it("default initialValue is 'encrypted' on a fresh data dir (no key, no store)", async () => {
+    // Must-have: accepting the default on a fresh ~/.comis provisions an
+    // encrypted store, so the recommended default must be "encrypted".
     masterKeyState = undefined;
+    const prompter = createMockPrompter("encrypted");
+
+    await storageStep.execute(INITIAL_STATE, prompter);
+
+    const selectArg = vi.mocked(prompter.select).mock.calls[0][0];
+    expect(selectArg.initialValue).toBe("encrypted");
+  });
+
+  it("default initialValue honors an existing file-mode config on re-run", async () => {
+    // A key/store already exists AND the resolved config is file mode ->
+    // preserve the operator's prior explicit "file" choice.
+    masterKeyState = "a".repeat(64);
+    vi.mocked(loadConfigFile).mockReturnValue({
+      ok: true,
+      value: { security: { storage: "file" } },
+    });
     const prompter = createMockPrompter("file");
 
     await storageStep.execute(INITIAL_STATE, prompter);

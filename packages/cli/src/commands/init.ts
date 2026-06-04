@@ -29,6 +29,7 @@ import { buildJsonOutput, buildJsonError } from "../wizard/json-output.js";
 import { welcomeStep } from "../wizard/steps/00-welcome.js";
 import { detectExistingStep } from "../wizard/steps/01-detect-existing.js";
 import { flowSelectStep } from "../wizard/steps/02-flow-select.js";
+import { storageStep } from "../wizard/steps/02b-storage.js";
 import { providerStep } from "../wizard/steps/03-provider.js";
 import { credentialsStep } from "../wizard/steps/04-credentials.js";
 import { agentStep } from "../wizard/steps/05-agent.js";
@@ -44,7 +45,7 @@ import { finishStep } from "../wizard/steps/12-finish.js";
 // ---------- Step Registry ----------
 
 /**
- * Build the full step registry with all 13 wizard steps.
+ * Build the full step registry with all 14 wizard steps.
  *
  * Used by both interactive and non-interactive modes to provide
  * the same step implementations to the wizard runner.
@@ -54,6 +55,7 @@ function buildStepRegistry(): StepRegistry {
   registry.set("welcome", welcomeStep);
   registry.set("detect-existing", detectExistingStep);
   registry.set("flow-select", flowSelectStep);
+  registry.set("storage", storageStep);
   registry.set("provider", providerStep);
   registry.set("credentials", credentialsStep);
   registry.set("agent", agentStep);
@@ -207,7 +209,7 @@ export function registerInitCommand(program: Command): void {
           // Determine flow
           const flow = niOpts.quick ? "quickstart" : "advanced";
 
-          // Build step registry (all 13 steps)
+          // Build step registry (all 14 steps)
           const steps = buildStepRegistry();
 
           // Run wizard flow -- steps already completed in initialState
