@@ -393,6 +393,13 @@ export interface BootContext {
   /** Entity-associative store — threaded into setupAgents (executor recall
    *  read path) + the cron review (write path). Built in setup-memory on the shared db. */
   entityStore: Awaited<ReturnType<typeof setupMemory>>["entityStore"];
+  /** LCD lossless context store (Phase 128) — threaded into setupAgents (the
+   *  executor `contextStore` -> the `dag` branch in context-engine.ts). Built in
+   *  setup-memory on the shared db (`createLcdStore(db)`); injected as the CORE
+   *  `ContextStorePort` TYPE on SingleAgentDeps (agent↛memory cut). The `dag`
+   *  engine is opt-in (`contextEngine.version: "dag"`); the default stays pipeline,
+   *  so absent/unselected this is dormant. */
+  lcdStore: Awaited<ReturnType<typeof setupMemory>>["lcdStore"];
   /** Temporal-spread store — threaded into setupAgents (the executor recall
    *  read path → createMemoryRecall) ONLY. NOT the cron/diagnostic paths. Built in setup-memory
    *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator

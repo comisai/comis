@@ -184,6 +184,12 @@ export async function setupAgents(deps: {
   /** Entity-associative store. Threaded into each per-agent createPiExecutor
    *  like memoryPort (the recall read path). Built in setup-memory on the shared db. */
   entityStore?: import("@comis/core").MemoryEntityStore;
+  /** LCD lossless context store (Phase 128). Threaded into each per-agent
+   *  createPiExecutor like entityStore — as `contextStore` (the dag-mode assembly
+   *  read path -> context-engine.ts `dag` branch). Built in setup-memory on the
+   *  shared db (`createLcdStore(db)`); injected as the core `ContextStorePort` TYPE
+   *  (agent↛memory cut). Opt-in (`contextEngine.version: "dag"`); default pipeline. */
+  lcdStore?: import("@comis/core").ContextStorePort;
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
   temporalStore?: import("@comis/core").MemoryTemporalStore;
@@ -441,6 +447,7 @@ export async function setupAgents(deps: {
     rerankerPort: deps.rerankerPort,
     rerankerModelPresent: deps.rerankerModelPresent,
     entityStore: deps.entityStore,
+    lcdStore: deps.lcdStore,
     temporalStore: deps.temporalStore,
     causalStore: deps.causalStore,
     tripleStore: deps.tripleStore,

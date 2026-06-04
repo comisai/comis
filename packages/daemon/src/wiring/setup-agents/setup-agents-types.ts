@@ -73,6 +73,15 @@ export interface SingleAgentDeps {
    *  shared db handle; the entity lane stays dormant until an operator enables
    *  `agents.<id>.rag.entityLane.enabled` (default OFF). */
   entityStore?: import("@comis/core").MemoryEntityStore;
+  /** LCD lossless context store (Phase 128 dag-mode write-path + assembly).
+   *  Threaded into each per-agent createPiExecutor as `contextStore` (the
+   *  PiExecutorDeps.contextStore landing site) — flows on to setupContextEngine
+   *  -> the `dag` branch in context-engine.ts. Built in setup-memory on the shared
+   *  db handle (`createLcdStore(db)`); the daemon injects the CONCRETE store as the
+   *  CORE `ContextStorePort` TYPE (the agent↛memory cut — the agent never imports
+   *  @comis/memory). Absent ⇒ the `dag` branch falls back to pipeline. The `dag`
+   *  engine is opt-in (`contextEngine.version: "dag"`); the default stays pipeline. */
+  lcdStore?: import("@comis/core").ContextStorePort;
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the shared
    *  db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator enables
