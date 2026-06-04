@@ -37,6 +37,9 @@ import type {
   NamedGraphRow,
   LcdMessageRow,
   LcdMessagePartRow,
+  LcdSummaryRow,
+  LcdSummaryMessageRow,
+  LcdContextItemRow,
 } from "./types.js";
 import type { SessionData, SessionListEntry, SessionDetailedEntry } from "@comis/core";
 import {
@@ -73,6 +76,9 @@ import {
   SpreadNodeRowSchema,
   LcdMessageRowSchema,
   LcdMessagePartRowSchema,
+  LcdSummaryRowSchema,
+  LcdSummaryMessageRowSchema,
+  LcdContextItemRowSchema,
 } from "./row-schemas.js";
 
 // =====================================================================
@@ -107,6 +113,18 @@ describe("row-schemas — type-equality with paired interfaces", () => {
 
   it("LcdMessagePartRowSchema z.infer matches LcdMessagePartRow interface from types.ts", () => {
     expectTypeOf<z.infer<typeof LcdMessagePartRowSchema>>().toEqualTypeOf<LcdMessagePartRow>();
+  });
+
+  it("LcdSummaryRowSchema z.infer matches LcdSummaryRow interface from types.ts", () => {
+    expectTypeOf<z.infer<typeof LcdSummaryRowSchema>>().toEqualTypeOf<LcdSummaryRow>();
+  });
+
+  it("LcdSummaryMessageRowSchema z.infer matches LcdSummaryMessageRow interface from types.ts", () => {
+    expectTypeOf<z.infer<typeof LcdSummaryMessageRowSchema>>().toEqualTypeOf<LcdSummaryMessageRow>();
+  });
+
+  it("LcdContextItemRowSchema z.infer matches LcdContextItemRow interface from types.ts", () => {
+    expectTypeOf<z.infer<typeof LcdContextItemRowSchema>>().toEqualTypeOf<LcdContextItemRow>();
   });
 
   it("SessionDataSchema z.infer matches SessionData DTO from @comis/core", () => {
@@ -790,5 +808,106 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     expect(
       LcdMessagePartRowSchema.safeParse({ ...fullLcdPartRow, rogue_column: "x" }).success,
     ).toBe(false);
+  });
+
+  // --- LCD compaction row schemas (Phase 129, C3) ---
+  // lcd_summaries / lcd_summary_messages / lcd_context_items carry the R4
+  // scoping columns; the strict schema rejects an extra column (drift catch) and
+  // a missing scoping column (a dropped scope column would be a cross-tenant hole
+  // — threat T-129-04).
+
+  const fullLcdSummaryRow = {
+    summary_id: "sum-1",
+    conversation_id: "conv-1",
+    tenant_id: "tenant-1",
+    agent_id: "agent-1",
+    session_key: "sess-1",
+    kind: "leaf",
+    depth: 0,
+    earliest_at: 1700000000000,
+    latest_at: 1700000005000,
+    descendant_count: 3,
+    token_count: 120,
+    content: "a leaf summary",
+    file_ids: "[]",
+    taint: 0,
+    fallback: 0,
+    created_at: 1700000006000,
+  };
+
+  it("LcdSummaryRowSchema parses a fully-populated lcd_summaries row", () => {
+    expect(LcdSummaryRowSchema.safeParse(fullLcdSummaryRow).success).toBe(true);
+  });
+
+  it("LcdSummaryRowSchema accepts taint/fallback as the 0/1 integer bool", () => {
+    const parsed = LcdSummaryRowSchema.safeParse({ ...fullLcdSummaryRow, taint: 1, fallback: 1 });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.taint).toBe(1);
+      expect(parsed.data.fallback).toBe(1);
+    }
+  });
+
+  it("LcdSummaryRowSchema rejects an unexpected extra column (z.strictObject drift catch)", () => {
+    expect(
+      LcdSummaryRowSchema.safeParse({ ...fullLcdSummaryRow, rogue_column: "x" }).success,
+    ).toBe(false);
+  });
+
+  it("LcdSummaryRowSchema rejects a row missing the agent_id scoping column (T-129-04 cross-tenant guard)", () => {
+    const { agent_id: _omit, ...withoutAgentId } = fullLcdSummaryRow;
+    expect(LcdSummaryRowSchema.safeParse(withoutAgentId).success).toBe(false);
+  });
+
+  it("LcdSummaryMessageRowSchema parses the leaf→message link row", () => {
+    expect(
+      LcdSummaryMessageRowSchema.safeParse({ summary_id: "sum-1", message_id: "msg-1" }).success,
+    ).toBe(true);
+  });
+
+  it("LcdSummaryMessageRowSchema rejects an unexpected extra column (z.strictObject keeps the link minimal)", () => {
+    expect(
+      LcdSummaryMessageRowSchema.safeParse({
+        summary_id: "sum-1",
+        message_id: "msg-1",
+        rogue: "x",
+      }).success,
+    ).toBe(false);
+  });
+
+  const fullLcdContextItemRow = {
+    id: "ci-1",
+    conversation_id: "conv-1",
+    tenant_id: "tenant-1",
+    agent_id: "agent-1",
+    session_key: "sess-1",
+    ordinal: 0,
+    ref_kind: "message",
+    ref_id: "msg-1",
+  };
+
+  it("LcdContextItemRowSchema parses a fully-populated lcd_context_items row", () => {
+    expect(LcdContextItemRowSchema.safeParse(fullLcdContextItemRow).success).toBe(true);
+  });
+
+  it("LcdContextItemRowSchema parses a summary-ref row (ref_kind 'summary')", () => {
+    const parsed = LcdContextItemRowSchema.safeParse({
+      ...fullLcdContextItemRow,
+      ref_kind: "summary",
+      ref_id: "sum-1",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.ref_kind).toBe("summary");
+  });
+
+  it("LcdContextItemRowSchema rejects an unexpected extra column (z.strictObject drift catch)", () => {
+    expect(
+      LcdContextItemRowSchema.safeParse({ ...fullLcdContextItemRow, rogue_column: "x" }).success,
+    ).toBe(false);
+  });
+
+  it("LcdContextItemRowSchema rejects a row missing the session_key scoping column (T-129-04 cross-tenant guard)", () => {
+    const { session_key: _omit, ...withoutSessionKey } = fullLcdContextItemRow;
+    expect(LcdContextItemRowSchema.safeParse(withoutSessionKey).success).toBe(false);
   });
 });
