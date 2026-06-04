@@ -234,6 +234,9 @@ export function createMemoryPortabilityHandlers(
             ? rawTags.filter((t): t is string => typeof t === "string")
             : [];
 
+          // Pinned pin state is NOT imported: `pinned` is deliberately absent from storeEntry.
+          // The `pinned` column defaults to 0 at the SQLite level — imported entries are never
+          // pre-pinned. Pin state is local operator curation, not portable across scopes (R6).
           const storeEntry = {
             id: importEntryId,
             tenantId: importTenantId,    // re-stamp to target — NEVER trust envelope's tenantId
