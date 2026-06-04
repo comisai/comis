@@ -265,22 +265,33 @@ Oversized results are saved to disk as JSON files with compact inline references
 <Warning>
 The DAG (LCD) engine is a **working opt-in** engine (the v2.12 "Lossless Context
 DAG" release) — set `contextEngine.version: "dag"` to enable it (the default
-stays `"pipeline"`; DAG becomes the default in a later release). In the current
-release DAG does **lossless verbatim assembly** (described below): it keeps the
-full conversation losslessly and reconstructs it verbatim each turn. The
-**compaction** behavior described in the rest of this section (hierarchical
-summary nodes, on-demand recall tools) lands in a **later phase** — DAG today
-does **not** compact or summarize; it keeps everything verbatim.
+stays `"pipeline"`; DAG becomes the default in a later release). The current
+release stores every message losslessly and assembles the context **under the
+model's token budget**: it resolves the ordered context view (raw messages plus
+any leaf summaries) and **evicts the oldest out-of-tail history** when the budget
+is exceeded — always keeping the verbatim fresh tail. **Automatic** leaf /
+condensed summary creation on every turn (the hierarchical summary nodes and the
+on-demand recall tools described in the rest of this section) lands in a **later
+phase**; until then the budget pass drops the oldest raw history rather than
+summarizing it. Nothing is ever deleted from the store — eviction trims the
+assembled context at read time only, so evicted messages remain recoverable when
+recall lands.
 </Warning>
 
 ### What is DAG mode
 
-DAG mode stores every message and tool result losslessly and reconstructs the
-conversation verbatim each turn — every message, tool call, and tool result
-preserved and paired by id, plus a verbatim fresh tail of the most recent steps.
-Nothing is dropped or masked. In a later phase the DAG will additionally compress
-old content into hierarchical summaries with on-demand recall tools (the design
-described below); in the current release it does lossless verbatim assembly only.
+DAG mode stores every message and tool result losslessly and rebuilds the
+model-facing context each turn from the ordered context view — every surviving
+message, tool call, and tool result preserved and paired by id, plus a verbatim
+fresh tail of the most recent steps. When the assembled history would exceed the
+model's token budget, the **oldest evictable history is dropped** to fit (whole
+tool-use/tool-result steps only — a pair is never split), while the fresh tail is
+always protected. Any leaf summaries present in the store are resolved into the
+context in their original position. Eviction is **read-time only**: the underlying
+messages stay in the lossless store. In a later phase the DAG will additionally
+compress old content into hierarchical summaries automatically on each turn and
+expose on-demand recall tools (the design described below); in the current
+release it does budget-bounded assembly with read-time eviction.
 
 ### How DAG compaction works
 
