@@ -155,7 +155,7 @@ describe("selectLeafChunk picks the oldest out-of-tail chunk capped + pair-safe"
     expect(chunk).toBeDefined();
     // Cap 350 @ 100/msg => at most 3 messages, all from the OLDEST end.
     expect(chunk!.startIndex).toBe(0);
-    expect(chunkTokens(chunk!.messages)).toBeLessThanOrEqual(350);
+    expect(chunk!.tokens).toBeLessThanOrEqual(350);
     expect(chunk!.messages.length).toBeGreaterThanOrEqual(1);
     expect(chunk!.messages.length).toBeLessThanOrEqual(3);
     // descendantCount = number of covered messages; ids cover the chunk.

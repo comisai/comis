@@ -1,0 +1,459 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * LCD leaf summarization unit (Phase 129, C1).
+ *
+ * Two pure-ish responsibilities, both proven by a STUB summarizer (no network):
+ *
+ *  1. {@link selectLeafChunk} — pick the OLDEST contiguous chunk OUTSIDE the
+ *     fresh tail, capped at `leafChunkTokens`, then extend the boundary forward
+ *     to a STEP boundary (never end on an assistant `tool_use` without its
+ *     trailing `toolResult`s — the pair-safe walk mirrors
+ *     `extendHeadForPairSafety` in `llm-compaction.ts`). Returns `undefined`
+ *     when no evictable history exists outside the fresh tail (the pass is a
+ *     no-op).
+ *
+ *  2. {@link summarizeLeafChunk} — run the mandatory 3-level escalation
+ *     (normal → aggressive → deterministic truncation) that ALWAYS reduces
+ *     tokens or falls back deterministically. The structural model is
+ *     `compactWithFallback` (`llm-compaction.ts:545-607`), but C1 ADDS a
+ *     per-level token-reduction assertion (LOSSLESS-CLAW §5: "If output > input,
+ *     retry aggressive then truncate") and a BOUNDED Level-3 output (a count-only
+ *     note prefixed with `LEAF_FALLBACK_SUMMARY_MARKER`, capped at
+ *     `LEAF_FALLBACK_TARGET_TOKENS`) — the guaranteed-shrink terminator. The
+ *     ladder is FINITE (Level 1 ≤ 1+COMPACTION_MAX_RETRIES attempts → Level 2 one
+ *     attempt → Level 3 deterministic); it never loops without a floor.
+ *
+ * The LLM summarizer is INJECTED as ONE function ({@link LeafSummarizer}) so
+ * Phase 132 can wrap it with spend governance / a circuit breaker by swapping a
+ * single seam (the binding constraint; the Security DoS row T-129-08). 129 calls
+ * it inline and non-fatally: an error at Levels 1+2 is caught (WARN, errorKind
+ * `dependency`) and the pass falls through to the deterministic Level 3 — it
+ * NEVER throws out of the pass.
+ *
+ * Architecture cut (agent↛memory): this file imports ONLY the agent-side token
+ * estimators + the escalation constants; it NEVER imports `@comis/memory`. It
+ * also NEVER logs `chunkMessages` content or the summary `content` — ids, counts,
+ * level, and durations only (AGENTS.md §2.2; T-129-10). It reads NO wall clock of
+ * its own — the leaf time-range (`earliestAt`/`latestAt`) is derived purely from
+ * the injected `LeafChunkItem.createdAt` values, so there is no globals-gate
+ * surface here (the caller's injected clock stamps timestamps upstream).
+ *
+ * @module
+ */
+
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
+import type { ComisLogger } from "@comis/core";
+import {
+  COMPACTION_MAX_RETRIES,
+  OVERSIZED_MESSAGE_CHARS_THRESHOLD,
+  CHARS_PER_TOKEN_RATIO,
+  LEAF_FALLBACK_TARGET_TOKENS,
+  LEAF_FALLBACK_SUMMARY_MARKER,
+} from "./constants.js";
+import {
+  estimateMessageTokens,
+  estimateMessageChars,
+} from "../safety/token-estimator.js";
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/**
+ * One message in a leaf chunk, carrying its pre-computed token count, stable id,
+ * and creation timestamp. Keeping the chunk-selection input as a plain array of
+ * these (rather than reaching into a store) keeps {@link selectLeafChunk} pure.
+ *
+ * Token authority (Pitfall 2): the caller sources `tokens` from the STORED
+ * `LcdMessage.tokenCount` for store-sourced history (which counts F3 thinking)
+ * and from `estimateMessageTokens` only for live/fresh-tail messages.
+ */
+export interface LeafChunkItem {
+  /** Stable message id (the LCD `lcd_messages.id`) — covered by the leaf. */
+  id: string;
+  /** The reconstructed canonical message (used for summarization + role reads). */
+  msg: AgentMessage;
+  /** Pre-computed token count for this message (the chunk-budget authority). */
+  tokens: number;
+  /** Unix epoch ms the message was created (the leaf time-range authority). */
+  createdAt: number;
+}
+
+/**
+ * The selected leaf chunk: the oldest contiguous out-of-tail prefix, capped at
+ * `leafChunkTokens` and extended to a STEP boundary.
+ */
+export interface LeafChunk {
+  /** Inclusive start index into the history array (always 0 — the oldest end). */
+  startIndex: number;
+  /** Exclusive end index into the history array (the pair-safe boundary). */
+  endIndex: number;
+  /** The chunk's messages (for summarization), in seq order. */
+  messages: AgentMessage[];
+  /** Number of messages the leaf will cover (= `messages.length`). */
+  descendantCount: number;
+  /** Stable ids of every covered message (the leaf→message link set). */
+  messageIds: string[];
+  /** Minimum `createdAt` over the chunk (the leaf's earliest covered time). */
+  earliestAt: number;
+  /** Maximum `createdAt` over the chunk (the leaf's latest covered time). */
+  latestAt: number;
+  /** Summed pre-computed tokens of the chunk (the before-size authority). */
+  tokens: number;
+}
+
+/**
+ * Options forwarded to the injected summarizer on each call.
+ */
+export interface LeafSummarizeOptions {
+  /** Token target for the summary (= `leafTargetTokens`, the SDK `reserveTokens`). */
+  reserveTokens: number;
+  /** Prior leaf summary content for continuity (the 8th `generateSummary` param). */
+  previousSummary?: string;
+  /** Aggressive (Level-2) hint — best-effort retry over the oversized-filtered set. */
+  aggressive?: boolean;
+}
+
+/**
+ * The ONE injected summarizer seam. Production (Phase 132) supplies a function
+ * that wraps the SDK `generateSummary` behind spend governance + a circuit
+ * breaker; unit tests inject a deterministic stub (no network). Returns the raw
+ * summary string (may be too large — the ladder re-checks size and escalates).
+ */
+export type LeafSummarizer = (
+  messages: AgentMessage[],
+  opts: LeafSummarizeOptions,
+) => Promise<string>;
+
+/**
+ * Dependencies for the leaf summarizer. Mirrors the `CompactionLayerDeps`-style
+ * getters (`getModel` / `getApiKey` / `overrideModel`) so Phase 132 can reuse the
+ * same resolution chain; the LLM call itself lives behind {@link LeafSummarizer}.
+ */
+export interface LeafSummarizerDeps {
+  /** Structured logger (ids/counts/level/durations only — never content). */
+  logger: ComisLogger;
+  /** The injected summarizer (the 132 spend-governance seam). */
+  summarize: LeafSummarizer;
+  /** Getter for the current model's capabilities (for the summarizer call). */
+  getModel: () => { id?: string; provider: string; contextWindow: number; reasoning: boolean };
+  /** Getter for the current model's provider API key. */
+  getApiKey: () => Promise<string>;
+  /** Optional cheaper override model + key for the leaf pass. */
+  overrideModel?: { model: unknown; getApiKey: () => Promise<string> };
+}
+
+/**
+ * Result of a leaf summarization pass.
+ */
+export interface LeafSummaryResult {
+  /** The summary text (a plain string; the assembler wraps it as a user message). */
+  content: string;
+  /** Which escalation level produced the summary. */
+  level: 1 | 2 | 3;
+  /** True only for the deterministic Level-3 truncation (carries the marker). */
+  fallback: boolean;
+  /** Number of covered messages. */
+  descendantCount: number;
+  /** Stable ids of every covered message. */
+  messageIds: string[];
+  /** Earliest covered `createdAt`. */
+  earliestAt: number;
+  /** Latest covered `createdAt`. */
+  latestAt: number;
+  /** Token count of the produced summary (always < the chunk token count). */
+  tokenCount: number;
+}
+
+// ---------------------------------------------------------------------------
+// Chunk selection
+// ---------------------------------------------------------------------------
+
+/**
+ * Select the OLDEST contiguous chunk OUTSIDE the fresh tail, capped at
+ * `leafChunkTokens` and extended forward to a STEP boundary so it never ends on
+ * an assistant `tool_use` without its trailing `toolResult`s.
+ *
+ * The fresh-tail boundary is the index of the Nth-from-last assistant message
+ * (a STEP = one assistant + the tool results it triggered — mirrors
+ * `freshTailBoundaryIndex` in `lcd-assembler.ts`); everything before it is
+ * evictable history. The chunk greedily accumulates the oldest evictable
+ * messages up to the cap, then walks forward past a trailing assistant
+ * `tool_use` and its `toolResult`s (never crossing the fresh-tail boundary).
+ *
+ * @param history - the evictable history items (seq order, oldest first)
+ * @param freshTailSteps - the number of trailing STEPS protected from eviction
+ * @param leafChunkTokens - the chunk token cap
+ * @returns the selected chunk, or `undefined` when nothing is evictable
+ */
+export function selectLeafChunk(
+  history: LeafChunkItem[],
+  freshTailSteps: number,
+  leafChunkTokens: number,
+): LeafChunk | undefined {
+  if (history.length === 0) return undefined;
+
+  // The fresh-tail boundary within `history`: everything at index >= this is
+  // protected. Counting assistant messages from the end mirrors
+  // freshTailBoundaryIndex (a STEP = an assistant + its trailing results).
+  const tailStart = freshTailBoundaryIndexOf(history, freshTailSteps);
+  if (tailStart <= 0) return undefined; // nothing outside the fresh tail — no-op.
+
+  // Greedily take the oldest contiguous prefix up to the cap. Always include at
+  // least one message (so a single oversized message still gets summarized).
+  let endIndex = 0;
+  let tokens = 0;
+  while (endIndex < tailStart) {
+    const next = history[endIndex]!.tokens;
+    if (endIndex > 0 && tokens + next > leafChunkTokens) break;
+    tokens += next;
+    endIndex++;
+  }
+
+  // Extend forward past a trailing assistant `tool_use` to its `toolResult`s so
+  // the boundary never lands mid-pair — but never cross the fresh-tail boundary.
+  endIndex = extendForPairSafety(history, endIndex, tailStart);
+
+  const slice = history.slice(0, endIndex);
+  const messages = slice.map((it) => it.msg);
+  const messageIds = slice.map((it) => it.id);
+  const createdAts = slice.map((it) => it.createdAt);
+  const summed = slice.reduce((acc, it) => acc + it.tokens, 0);
+
+  return {
+    startIndex: 0,
+    endIndex,
+    messages,
+    descendantCount: messages.length,
+    messageIds,
+    earliestAt: Math.min(...createdAts),
+    latestAt: Math.max(...createdAts),
+    tokens: summed,
+  };
+}
+
+/**
+ * The index in `history` where the fresh tail begins: the position of the Nth-
+ * from-last assistant message (mirrors `freshTailBoundaryIndex` in the
+ * assembler). Returns 0 when there are fewer than N assistant steps (everything
+ * is fresh tail → nothing evictable).
+ */
+function freshTailBoundaryIndexOf(history: LeafChunkItem[], freshTailSteps: number): number {
+  let stepsSeen = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (roleOf(history[i]!.msg) === "assistant") {
+      stepsSeen++;
+      if (stepsSeen === freshTailSteps) return i;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Walk the (exclusive) `endIndex` forward so the chunk never ends mid-pair.
+ *
+ * `endIndex` is exclusive, so the LAST INCLUDED message is `history[endIndex-1]`.
+ * When that message is an assistant carrying a `tool_use`, its `toolResult`s sit
+ * at `endIndex`, `endIndex+1`, … — pull them all in (and any further tool_use
+ * the included results chain into), bounded by `limit` (the fresh-tail boundary).
+ * Mirrors `extendHeadForPairSafety` in `llm-compaction.ts`, adapted to an
+ * exclusive end index.
+ */
+function extendForPairSafety(history: LeafChunkItem[], endIndex: number, limit: number): number {
+  let extended = endIndex;
+  // Keep extending while the last INCLUDED message is an assistant tool_use whose
+  // results have not all been pulled in yet.
+  while (extended > 0 && extended < limit) {
+    const lastIncluded = history[extended - 1]!.msg;
+    if (roleOf(lastIncluded) === "assistant" && hasToolUse(lastIncluded)) {
+      // Pull every immediately-following toolResult into the chunk.
+      let advanced = false;
+      while (extended < limit && roleOf(history[extended]!.msg) === "toolResult") {
+        extended++;
+        advanced = true;
+      }
+      if (advanced) continue; // re-check (the new last-included is a toolResult → loop exits).
+    }
+    break;
+  }
+  return extended;
+}
+
+/** True when an assistant message carries a `tool_use` / `toolCall` block. */
+function hasToolUse(msg: AgentMessage): boolean {
+  const content = (msg as unknown as { content?: unknown }).content;
+  if (!Array.isArray(content)) return false;
+  return content.some((block) => {
+    const type = (block as { type?: string }).type;
+    return type === "tool_use" || type === "toolCall";
+  });
+}
+
+/** Read a message's `role` without widening to the concrete pi-ai union. */
+function roleOf(m: AgentMessage): string | undefined {
+  return (m as unknown as { role?: string }).role;
+}
+
+// ---------------------------------------------------------------------------
+// 3-level escalation
+// ---------------------------------------------------------------------------
+
+/**
+ * Summarize a leaf chunk via the mandatory 3-level escalation. ALWAYS returns a
+ * summary whose token count is STRICTLY LESS than the chunk's token count (the
+ * C1 invariant) — accepting an LLM summary only when it actually reduces, and
+ * otherwise falling through to the deterministic, bounded Level-3 truncation.
+ *
+ * @param chunkItems - the chunk's items (pre-computed tokens + ids + timestamps)
+ * @param deps - the injected summarizer + model getters + logger
+ * @param opts - reserveTokens (= leafTargetTokens) + optional previousSummary
+ * @returns the leaf summary + escalation level + coverage metadata
+ */
+export async function summarizeLeafChunk(
+  chunkItems: LeafChunkItem[],
+  deps: LeafSummarizerDeps,
+  opts: { reserveTokens: number; previousSummary?: string },
+): Promise<LeafSummaryResult> {
+  const messages = chunkItems.map((it) => it.msg);
+  const messageIds = chunkItems.map((it) => it.id);
+  const createdAts = chunkItems.map((it) => it.createdAt);
+  // Before-size authority: the caller's pre-computed per-message tokens (counts
+  // F3 thinking on store-sourced rows, which re-estimation would under-count).
+  const chunkTokens = chunkItems.reduce((acc, it) => acc + it.tokens, 0);
+  const earliestAt = createdAts.length > 0 ? Math.min(...createdAts) : 0;
+  const latestAt = createdAts.length > 0 ? Math.max(...createdAts) : 0;
+
+  const base = {
+    descendantCount: chunkItems.length,
+    messageIds,
+    earliestAt,
+    latestAt,
+  };
+
+  // --- Level 1: full summarization, up to 1 + COMPACTION_MAX_RETRIES attempts.
+  //     Accept ONLY when the summary is strictly smaller than the chunk.
+  const maxAttempts = 1 + COMPACTION_MAX_RETRIES;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const accepted = await tryLevel(deps, messages, {
+      reserveTokens: opts.reserveTokens,
+      previousSummary: opts.previousSummary,
+    }, chunkTokens, attempt);
+    if (accepted !== undefined) {
+      return { ...base, content: accepted.content, level: 1, fallback: false, tokenCount: accepted.tokenCount };
+    }
+  }
+
+  // --- Level 2: aggressive — filter oversized messages, one best-effort retry.
+  const filtered = messages.filter(
+    (m) => estimateMessageChars(m as unknown as Message) < OVERSIZED_MESSAGE_CHARS_THRESHOLD,
+  );
+  if (filtered.length > 0) {
+    deps.logger.debug(
+      {
+        step: "lcd-leaf-escalate",
+        level: 2,
+        descendantCount: chunkItems.length,
+        hint: "level-1 summary did not reduce; retrying aggressive (oversized-filtered)",
+      },
+      "lcd leaf escalation",
+    );
+    const accepted = await tryLevel(deps, filtered, {
+      reserveTokens: opts.reserveTokens,
+      previousSummary: opts.previousSummary,
+      aggressive: true,
+    }, chunkTokens, maxAttempts);
+    if (accepted !== undefined) {
+      return { ...base, content: accepted.content, level: 2, fallback: false, tokenCount: accepted.tokenCount };
+    }
+  }
+
+  // --- Level 3: deterministic bounded truncation (the guaranteed terminator).
+  const content = buildDeterministicFallback(chunkItems.length, chunkTokens);
+  const tokenCount = estimateMessageTokens({ role: "user", content } as Message);
+  deps.logger.debug(
+    {
+      step: "lcd-leaf-escalate",
+      level: 3,
+      descendantCount: chunkItems.length,
+      fallback: true,
+      hint: "both LLM levels failed to reduce; using deterministic bounded truncation",
+    },
+    "lcd leaf escalation",
+  );
+  return { ...base, content, level: 3, fallback: true, tokenCount };
+}
+
+/**
+ * Attempt one summarizer call and accept it ONLY when the produced summary is
+ * strictly smaller (in tokens) than the chunk. Non-fatal: a throwing summarizer
+ * is caught (WARN, errorKind `dependency`) and reported as "not accepted" so the
+ * ladder escalates rather than failing.
+ */
+async function tryLevel(
+  deps: LeafSummarizerDeps,
+  messages: AgentMessage[],
+  opts: LeafSummarizeOptions,
+  chunkTokens: number,
+  attempt: number,
+): Promise<{ content: string; tokenCount: number } | undefined> {
+  try {
+    const summary = await deps.summarize(messages, opts);
+    const tokenCount = estimateMessageTokens({ role: "user", content: summary } as Message);
+    if (tokenCount < chunkTokens) return { content: summary, tokenCount };
+    // Non-reduction → escalate (LOSSLESS-CLAW §5).
+    deps.logger.debug(
+      {
+        step: "lcd-leaf-escalate",
+        attempt,
+        hint: "summary not smaller than chunk; escalating",
+      },
+      "lcd leaf escalation",
+    );
+    return undefined;
+  } catch (err) {
+    deps.logger.warn(
+      {
+        err,
+        attempt,
+        errorKind: "dependency" as const,
+        hint: "leaf summarizer call failed; escalating to the next level",
+      },
+      "lcd leaf summarizer failed",
+    );
+    return undefined;
+  }
+}
+
+/**
+ * Build the deterministic Level-3 leaf summary: a count-only note prefixed with
+ * `LEAF_FALLBACK_SUMMARY_MARKER`, hard-capped at `LEAF_FALLBACK_TARGET_TOKENS`
+ * (and additionally clamped strictly below the chunk so even a tiny chunk still
+ * shrinks). This is the guaranteed terminator — it NEVER exceeds the chunk and
+ * NEVER calls an LLM.
+ *
+ * @param messageCount - number of chunk messages (recorded in the note)
+ * @param chunkTokens - the chunk's token count (the strict ceiling to beat)
+ * @returns a bounded, marker-prefixed summary string
+ */
+function buildDeterministicFallback(messageCount: number, chunkTokens: number): string {
+  const note =
+    `${LEAF_FALLBACK_SUMMARY_MARKER} ${messageCount} earlier messages ` +
+    `(~${chunkTokens} tokens) were truncated without an LLM summary; ` +
+    `their content is preserved losslessly in the message store.`;
+
+  // Char ceiling from the fallback token target (4:1 text ratio via the shared
+  // estimator → CHARS_PER_TOKEN_RATIO is the conservative chars-per-token).
+  const targetChars = Math.floor(LEAF_FALLBACK_TARGET_TOKENS * CHARS_PER_TOKEN_RATIO);
+  // Also stay strictly below the chunk: a summary must shrink even a tiny chunk.
+  // Reserve one token of headroom so token-count is strictly less than chunkTokens.
+  const chunkCeilingChars = Math.max(0, (chunkTokens - 1)) * CHARS_PER_TOKEN_RATIO;
+  const maxChars = Math.max(
+    LEAF_FALLBACK_SUMMARY_MARKER.length,
+    Math.floor(Math.min(targetChars, chunkCeilingChars)),
+  );
+
+  if (note.length <= maxChars) return note;
+  // Truncate, keeping the marker identifiable at the head.
+  return note.slice(0, maxChars);
+}
