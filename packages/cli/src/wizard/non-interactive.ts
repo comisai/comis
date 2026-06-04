@@ -392,7 +392,12 @@ export function buildNonInteractiveState(
   }
 
   // Mark all interactive steps as completed so the wizard runner skips
-  // them and only runs write-config, daemon-start, and finish.
+  // them and only runs write-config, daemon-start, and finish. This MUST
+  // list every interactive step registered in buildStepRegistry (init.ts);
+  // any omission lets that step run and hit a prompt -> NonInteractiveError
+  // ("...prompt reached in non-interactive mode -- this is a bug"). The
+  // tool-providers step (08b) calls prompter.password() and was the missing
+  // one. init.test.ts cross-checks this list against the live registry.
   const completedSteps: WizardStepId[] = [
     "welcome",
     "detect-existing",
@@ -404,6 +409,7 @@ export function buildNonInteractiveState(
     "channels",
     "gateway",
     "workspace",
+    "tool-providers",
     "review",
   ];
 
