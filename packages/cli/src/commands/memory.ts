@@ -475,12 +475,18 @@ export function registerMemoryCommand(program: Command): void {
     .option("--output <path>", "Output file path (default: comis-memory-<agentId>-<timestamp>.json)")
     .option("--limit <n>", "Maximum entries to export (default: 10000)", "10000")
     .action(async (options: { agent: string; output?: string; limit: string }) => {
+      // WR-02: guard against non-numeric --limit before the RPC call.
+      const exportLimit = parseInt(options.limit, 10);
+      if (isNaN(exportLimit) || exportLimit < 1) {
+        error("Invalid limit: must be a positive integer");
+        process.exit(1);
+      }
       try {
         const result = await withSpinner("Exporting memory...", () =>
           withClient(async (client) =>
             callTyped(client, MemoryPortabilityExportContract, {
               agent_id: options.agent,
-              limit: Number(options.limit),
+              limit: exportLimit,
             }),
           ),
         );
