@@ -39,6 +39,7 @@ import type {
   ClockPort,
   EnvPort,
   TimerPort,
+  ContextStorePort,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 
@@ -97,6 +98,12 @@ export interface PiExecutorDeps {
   agentDir: string;
   // Optional
   memoryPort?: MemoryPort;
+  /** Optional LCD context store (Phase 128 dag-mode write-path + assembly).
+   *  TYPE-only from @comis/core — the agent never imports the memory package
+   *  (the agent↛memory cut); the daemon injects the concrete createLcdStore.
+   *  Absent ⇒ no afterTurn ingest + the dag branch falls through to the
+   *  pipeline (never crashes, never no-ops). */
+  contextStore?: ContextStorePort;
   /** Optional cross-encoder reranker. Built in the daemon (setup-memory) only when an
    *  agent enables rerank; threaded into prompt-assembly's createMemoryRecall via
    *  ToolAssemblyDeps. Absent -> recall keeps fusion order. */

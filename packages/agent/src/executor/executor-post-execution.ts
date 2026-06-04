@@ -23,6 +23,8 @@ import {
   type TypedEventBus,
   type MemoryPort,
   type ClockPort,
+  type ContextStorePort,
+  type ContextStoreScope,
   tryGetContext,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
@@ -50,6 +52,11 @@ import {
 import { mergeSessionStats } from "./pi-executor/session-stats.js";
 import { recordLastResponseTs } from "./ttl-guard.js";
 import { stripDiscoverySchemas } from "./schema-stripping.js";
+// LCD afterTurn ingest write-path (Phase 128, A1). Body lives in lcd-ingest.ts
+// (this file is already over the 800L cap); the call below is a thin gated
+// invocation. The agent↛memory cut: lcd-ingest imports only the core port type
+// + the core codec — never @comis/memory.
+import { ingestTurn } from "./lcd-ingest.js";
 // In-package pure attribution fn (the agent↛memory cut — core types
 // only; the write-back is the daemon's job, off the recall-used bus event).
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
@@ -204,6 +211,14 @@ export interface PostExecutionParams {
     eventBus: TypedEventBus;
     logger: ComisLogger;
     memoryPort?: MemoryPort;
+    /** Optional LCD context store (Phase 128 dag-mode write-path, A1). Present
+     *  ⇒ the turn's NEW messages are ingested at afterTurn; absent ⇒ skipped
+     *  cleanly. TYPE-only core port (the agent↛memory cut). */
+    contextStore?: ContextStorePort;
+    /** Tenant id for the LCD ingest scope. Threaded from PiExecutorDeps.tenantId
+     *  at the call site so the scope's SECURITY column is never empty
+     *  (T-128-08). Falls back to the session key tenant when absent. */
+    tenantId?: string;
     activeRunRegistry?: ActiveRunRegistry;
     embeddingEnqueue?: (entryId: string, content: string) => void;
     workspaceDir: string;
@@ -838,6 +853,37 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         "Paired memory skipped: content below quality threshold",
       );
     }
+  }
+
+  // LCD afterTurn ingest (Phase 128 dag-mode write-path, A1). Mirrors the
+  // memoryPort persist above: gated on `deps.contextStore` presence, off the
+  // injected clock, non-fatal (ingestTurn wraps each append per-entry). The
+  // body lives in lcd-ingest.ts (this file is over the 800L cap).
+  //
+  // Idempotency (T-128-09): `startSeq = getMessages(conversationId).length` is
+  // the persisted high-water mark (survives restarts); `delta =
+  // live.slice(startSeq)` appends only the not-yet-persisted tail. A retry with
+  // no new messages appends nothing. In 128 the dag store is opt-in and is
+  // written ONLY here, so the store count is the single source of truth and
+  // never diverges from the live array.
+  if (deps.contextStore) {
+    const conversationId = formattedKey;
+    const scope: ContextStoreScope = {
+      conversationId,
+      // The scope's SECURITY columns must never be empty (T-128-08). tenantId
+      // prefers the explicitly-threaded deps.tenantId, falling back to the
+      // session key's tenant (the same source the memoryPort persist uses).
+      tenantId: deps.tenantId ?? sessionKey.tenantId,
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+    };
+    const persisted = deps.contextStore.getMessages(conversationId).length;
+    // The live canonical AgentMessage[] (pi-executor.ts:1118 reads the same
+    // ref). Typed as unknown on AgentSession — no public SDK type for it.
+    const live =
+      (session.agent as unknown as { state?: { messages?: unknown[] } }).state?.messages ?? [];
+    const delta = live.slice(persisted) as Parameters<typeof ingestTurn>[3];
+    ingestTurn(deps.contextStore, scope, persisted, delta, deps.clock.now(), deps.logger);
   }
 
   // Attribute recall usage + emit the recall-used event (flag-gated, non-fatal).

@@ -1449,6 +1449,11 @@ async function runSessionLocked(
         eventBus: deps.eventBus,
         logger: deps.logger,
         memoryPort: deps.memoryPort,
+        // Phase 128 dag-mode afterTurn ingest write-path (A1). Both the store
+        // and tenantId thread through so postExecution's ingest scope has a
+        // real tenant (T-128-08); absent ⇒ ingest skipped cleanly.
+        contextStore: deps.contextStore,
+        tenantId: deps.tenantId,
         activeRunRegistry: deps.activeRunRegistry,
         embeddingEnqueue: deps.embeddingEnqueue,
         workspaceDir: deps.workspaceDir,

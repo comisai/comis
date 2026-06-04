@@ -57,6 +57,12 @@ export interface ContextEngineSetupDeps {
   oauthManager?: OAuthTokenManager;
   /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
+  /** Optional LCD context store (Phase 128 dag-mode assembly). Threaded into
+   *  createContextEngine's deps alongside `conversationId: formattedKey` so the
+   *  dag branch returns the LCD assembler (reads what the afterTurn ingest
+   *  writes). TYPE-only core port (the agent↛memory cut); absent ⇒ the dag
+   *  branch falls through to the pipeline. */
+  contextStore?: import("@comis/core").ContextStorePort;
 }
 
 /** Parameters for context engine creation. */
@@ -408,6 +414,12 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         });
       },
     }),
+    // Phase 128 dag-mode: thread the injected LCD store + the conversation id
+    // (= formattedKey) so context-engine's `dag` branch returns the LCD
+    // assembler, which reconstructs history from what the afterTurn ingest
+    // wrote. Absent ⇒ the branch WARN-falls-through to the pipeline.
+    contextStore: deps.contextStore,
+    conversationId: formattedKey,
   });
 
   // Wire context engine to the mutable holder so requestBodyInjector
