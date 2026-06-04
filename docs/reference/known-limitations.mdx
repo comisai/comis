@@ -5,8 +5,8 @@ icon: "triangle-exclamation"
 ---
 
 <Info>
-  **Source:** `THREAT_MODEL.md` §7 — G1 through G5. These items are candid self-disclosures tracked in the
-  project's living threat model; they are documented gaps, not defects. See
+  **Source:** `THREAT_MODEL.md` §7 — G1, G2, G3, G4, G5, G6. These items are candid self-disclosures
+  tracked in the project's living threat model; they are documented gaps, not defects. See
   [`THREAT_MODEL.md`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md) for full context and
   per-item severity ratings.
 </Info>
@@ -41,12 +41,20 @@ Only `apiKey` and `bearer`-type bindings defined in `security.credentialBroker.b
 intercepted and rewritten at the network boundary. OAuth-authenticated CLIs manage their own
 credential stores.
 
+## DNS-rebinding TOCTOU window in `validateUrl`
+
+`validateUrl` resolves the target hostname and then performs the fetch in a separate
+step. A DNS rebinding attack can change the resolved address between the check and the
+fetch, bypassing the private-range SSRF guard. For tool paths running under broker-only
+egress this window is eliminated; non-sandboxed `web.fetch` paths retain a narrow
+exposure.
+
 ## File-size governance debt
 
 The project enforces a `≤800`-line cap on production TypeScript files, tracked by
-`test/architecture/file-size.test.ts`. Approximately 30 files carry `deferred` allowlist entries
+`test/architecture/file-size.test.ts`. Approximately 35 files carry `deferred` allowlist entries
 that exceed the cap — most are Lit web views with tightly DOM-coupled state, plus the daemon
-composition root (`daemon.ts`, ~2,500 lines) and several executor-adjacent files.
+composition root (`daemon.ts`, ~2,900 lines) and several executor-adjacent files.
 
 These are tracked as shrink-only entries and are not regressions; **new files must stay under 800
 lines**. The allowlist in `test/support/architecture-allowlist.ts` is governed by the
