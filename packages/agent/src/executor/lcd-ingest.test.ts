@@ -37,7 +37,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
 import { initSchema, createLcdStore } from "@comis/memory";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { ingestTurn } from "./lcd-ingest.js";
+import { ingestTurn, ingestTurnGuarded } from "./lcd-ingest.js";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { createLcdContextEngine } from "../context-engine/lcd-assembler.js";
 import type { ContextEngineDeps } from "../context-engine/types.js";
@@ -323,6 +323,89 @@ describe("ingestTurn", () => {
       }),
       expect.any(String),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ingestTurnGuarded — the WR-01 shrink guard: derive the delta defensively and
+// SKIP cleanly (with a WARN) when the live array is shorter than the store's
+// persisted high-water mark, rather than slicing past the end and either
+// persisting nothing forever or re-appending at an existing seq (the unique
+// (conversationId, seq) index would throw, the per-entry catch would swallow it,
+// and the turn's messages would be silently never persisted).
+// ---------------------------------------------------------------------------
+
+/** A recording store whose persisted COUNT is controllable (the high-water mark). */
+function makeStoreWithPersistedCount(persistedCount: number): {
+  store: ContextStorePort;
+  appended: AppendMessageInput[];
+} {
+  const appended: AppendMessageInput[] = [];
+  const store: ContextStorePort = {
+    append(input: AppendMessageInput): void {
+      appended.push(input);
+    },
+    // The assembler/ingest both read `getMessages(id).length` as the high-water
+    // mark; return that many placeholder rows so .length is the mark.
+    getMessages() {
+      return new Array(persistedCount).fill(null) as unknown as ReturnType<ContextStorePort["getMessages"]>;
+    },
+  };
+  return { store, appended };
+}
+
+describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
+  it("Test 9: live array SHORTER than the persisted high-water mark → SKIPS the append and WARNs (no seq collision)", () => {
+    // The store already holds 6 persisted rows; a heal reassigned state.messages
+    // SMALLER (4 < 6). Slicing live[6..] from a length-4 array is empty (or, on a
+    // rewritten tail, re-appends at an existing seq → unique-index throw). The
+    // guard must SKIP and WARN so the divergence is observable, not silent.
+    const { store, appended } = makeStoreWithPersistedCount(6);
+    const logger = createMockLogger();
+    const live: AgentMessage[] = [
+      userMsg("u0") as AgentMessage,
+      assistantText("a0") as AgentMessage,
+      userMsg("u1") as AgentMessage,
+      assistantText("a1") as AgentMessage,
+    ];
+
+    ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger);
+
+    // NOTHING appended (no empty-delta no-op that advances nothing; no collision).
+    expect(appended).toHaveLength(0);
+    // WARN carries the §2.7 fields (hint + a VALID closed-union errorKind) so an
+    // operator can act on the live/store divergence.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "precondition",
+        liveLen: 4,
+        persisted: 6,
+        hint: expect.any(String),
+        conversationId: CONVERSATION_ID,
+      }),
+      expect.any(String),
+    );
+  });
+
+  it("Test 10: live array >= persisted high-water mark → appends only the not-yet-persisted delta", () => {
+    // Normal mid-turn: 2 already persisted, live has 4 → append exactly live[2..4).
+    const { store, appended } = makeStoreWithPersistedCount(2);
+    const logger = createMockLogger();
+    const live: AgentMessage[] = [
+      userMsg("u0") as AgentMessage,
+      assistantText("a0") as AgentMessage,
+      userMsg("u1") as AgentMessage, // seq 2 — the delta
+      assistantText("a1") as AgentMessage, // seq 3 — the delta
+    ];
+
+    ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger);
+
+    // Only the not-yet-persisted tail, at the correct continuing seqs.
+    expect(appended).toHaveLength(2);
+    expect(appended.map((a) => a.seq)).toEqual([2, 3]);
+    expect(appended.map((a) => a.role)).toEqual(["user", "assistant"]);
+    // No divergence → no WARN.
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });
 
