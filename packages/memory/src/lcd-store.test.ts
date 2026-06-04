@@ -237,6 +237,52 @@ describe("createLcdStore", () => {
     expect(toolResult!.isError).toBe(true);
   });
 
+  it("per-row degrade (WR-02) — one corrupt PART row keeps the message's good sibling parts, not []", () => {
+    // An assistant message with three parts (tool_use, reasoning, text); corrupt
+    // exactly ONE part row on disk so it fails schema validation. The message
+    // must come back with its TWO good parts, NOT an empty body — nulling the
+    // whole body would orphan a downstream tool_result (provider rejection).
+    store.append({
+      scope: SCOPE_A,
+      seq: 1,
+      role: "assistant",
+      tokenCount: 1,
+      createdAt: FIXED_CREATED_AT,
+      parts: assistantParts(),
+    });
+
+    // Corrupt one part row: a non-numeric TEXT in the INTEGER `ordinal` column
+    // (SQLite type affinity keeps it TEXT) fails the `ordinal: z.number()`
+    // row-schema check — a realistic on-disk drift / corruption.
+    db.prepare("UPDATE lcd_message_parts SET ordinal = ? WHERE kind = 'reasoning'").run("corrupt");
+
+    expect(() => store.getMessages("conv-a")).not.toThrow();
+    const messages = store.getMessages("conv-a");
+    expect(messages).toHaveLength(1);
+    // The TWO valid parts survive; only the corrupt reasoning part is skipped.
+    const kinds = messages[0]!.parts.map((p) => p.kind);
+    expect(kinds).toEqual(["tool_use", "text"]);
+  });
+
+  it("per-row degrade (WR-02) — one corrupt MESSAGE row keeps the conversation's good messages, not []", () => {
+    // Three messages in the same conversation; corrupt ONE message row so it
+    // fails validation. getMessages must return the OTHER TWO, not [] for the
+    // whole conversation (total context loss on a single bad sibling row).
+    store.append({ scope: SCOPE_A, seq: 1, role: "user", tokenCount: 1, createdAt: FIXED_CREATED_AT, parts: [{ kind: "text", metadata: { raw: { type: "text", text: "one" }, rawType: "text" } }] });
+    store.append({ scope: SCOPE_A, seq: 2, role: "assistant", tokenCount: 1, createdAt: FIXED_CREATED_AT, parts: [{ kind: "text", metadata: { raw: { type: "text", text: "two" }, rawType: "text" } }] });
+    store.append({ scope: SCOPE_A, seq: 3, role: "user", tokenCount: 1, createdAt: FIXED_CREATED_AT, parts: [{ kind: "text", metadata: { raw: { type: "text", text: "three" }, rawType: "text" } }] });
+
+    // Corrupt the seq-2 message row: non-numeric TEXT in the INTEGER `seq`
+    // column fails `seq: z.number()`.
+    db.prepare("UPDATE lcd_messages SET seq = ? WHERE seq = 2").run("corrupt");
+
+    expect(() => store.getMessages("conv-a")).not.toThrow();
+    const messages = store.getMessages("conv-a");
+    // The two intact messages survive (seq 1 and 3); only the corrupt one is skipped.
+    expect(messages).toHaveLength(2);
+    expect(messages.map((m) => m.seq)).toEqual([1, 3]);
+  });
+
   it("AppendMessageInput type is the write-path contract", () => {
     // Compile-time anchor: append accepts the AppendMessageInput DTO.
     const input: AppendMessageInput = {
