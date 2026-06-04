@@ -69,6 +69,7 @@ import {
 } from "../bootstrap/index.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
+import { formatMemorySection } from "../rag/rag-retriever.js";
 import { buildScoringAlphas } from "../rag/scoring-overlay.js";
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { buildUserRepresentationBlock } from "./user-representation-block.js";
@@ -865,7 +866,23 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         const injector = createHybridMemoryInjector({
           onSuspiciousContent: deps.onSuspiciousContent,
         });
-        const injection = injector.split(ranked, config.rag.maxContextChars);
+
+        // Budget accounting: subtract pinnedChars from maxContextChars BEFORE sizing
+        // fused recall. Pinned entries are the head of `ranked` (prepended by the recall
+        // pipeline's Step-0 pinned lane). The pinned set is bounded by
+        // cfg.pinned.maxPinnedInjection; extract them by count and format to measure chars.
+        // pinnedChars is 0 when pinning is disabled (default-off — byte-identical behavior).
+        const maxPinsConfig =
+          config.rag.pinned?.enabled === true ? (config.rag.pinned.maxPinnedInjection ?? 0) : 0;
+        const pinnedSet =
+          maxPinsConfig > 0 ? ranked.slice(0, Math.min(maxPinsConfig, ranked.length)) : [];
+        let pinnedChars = 0;
+        if (pinnedSet.length > 0) {
+          const pinnedSection = formatMemorySection(pinnedSet, config.rag.maxContextChars);
+          pinnedChars = pinnedSection ? pinnedSection.length : 0;
+        }
+        const remainingChars = Math.max(0, config.rag.maxContextChars - pinnedChars);
+        const injection = injector.split(ranked.slice(pinnedSet.length), remainingChars);
 
         inlineMemory = injection.inlineMemory;
         // Own the array — `injection.systemPromptSections` is what telemetry
