@@ -92,6 +92,17 @@ import { defineContract } from "./types.js";
 // MEMORY_CONTRACTS below (the `export { ... } from` re-export further down is
 // type/barrel-only and does not create a usable local value binding).
 import { MEMORY_DIAGNOSTIC_CONTRACTS } from "./memory-diagnostics.js";
+// Portability contracts extracted to keep this file within the 800-line cap.
+export {
+  MemoryPortabilityExportContract,
+  MemoryPortabilityImportContract,
+  MEMORY_PORTABILITY_CONTRACTS,
+} from "./memory-portability.js";
+import {
+  MemoryPortabilityExportContract,
+  MemoryPortabilityImportContract,
+  MEMORY_PORTABILITY_CONTRACTS,
+} from "./memory-portability.js";
 
 // ===========================================================================
 // --- memory-handlers.ts ---
@@ -408,79 +419,6 @@ export const MemoryExportContract = defineContract({
     total: z.number(),
     offset: z.number(),
     limit: z.number(),
-  }),
-  scopes: ["admin"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// memory.portability.export — versioned, secret-scrubbed envelope export
-// ---------------------------------------------------------------------------
-
-/**
- * `memory.portability.export` — export all memory entries for a scope as a
- * versioned `comis-memory-export-v1` envelope, with every content field
- * scrubbed through `scrubSecretsFromText` before inclusion.
- *
- * Admin-gated. Daemon returns the scrubbed payload over RPC; the CLI writes
- * the JSON file locally (avoids the `node --permission` fd-fs restriction on
- * the daemon side).
- *
- * Response: `{ schemaVersion, exportedAt, scope, entryCount, entries[] }`.
- */
-export const MemoryPortabilityExportContract = defineContract({
-  method: "memory.portability.export",
-  request: z.object({
-    agent_id: z.string().optional(),
-    tenant_id: z.string().optional(),
-    limit: z.number().int().positive().optional(),
-  }),
-  response: z.object({
-    schemaVersion: z.literal("comis-memory-export-v1"),
-    exportedAt: z.number(),
-    scope: z.object({
-      tenantId: z.string(),
-      agentId: z.nullable(z.string()),
-    }),
-    entryCount: z.number(),
-    entries: z.array(z.record(z.string(), z.unknown())),
-  }),
-  scopes: ["admin"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// memory.portability.import — firewalled import from comis-memory-export-v1 envelope
-// ---------------------------------------------------------------------------
-
-/**
- * `memory.portability.import` — import entries from a `comis-memory-export-v1`
- * envelope into a target agent scope, routing every entry through
- * `validateMemoryWrite` before storage.
- *
- * Security invariants:
- * - CRITICAL entries are blocked (skipped via `continue`) — never persisted.
- * - WARN entries are stored at `external` trust with a `security-tainted` tag.
- * - `tenantId`/`agentId` are always re-stamped from authenticated RPC params —
- *   the envelope's scope field is never trusted.
- * - Trust cap: imported entries can never land at `"system"` trust.
- * - `dry_run: true` runs the full validator but skips all `memoryAdapter.store`
- *   calls, accumulating accurate blocked/downgraded counts.
- *
- * Admin-gated. Entries array capped at 10,000 (DoS guard).
- */
-export const MemoryPortabilityImportContract = defineContract({
-  method: "memory.portability.import",
-  request: z.object({
-    entries: z.array(z.record(z.string(), z.unknown())).max(10_000),
-    agent_id: z.string().min(1),
-    tenant_id: z.string().optional(),
-    dry_run: z.boolean().optional(),
-  }),
-  response: z.object({
-    imported: z.number(),
-    blocked: z.number(),
-    downgraded: z.number(),
-    total: z.number(),
-    dryRun: z.boolean(),
   }),
   scopes: ["admin"] as const,
 });
@@ -835,8 +773,8 @@ export const MEMORY_CONTRACTS = [
   MemoryDeleteContract,
   MemoryFlushContract,
   MemoryExportContract,
-  MemoryPortabilityExportContract,
-  MemoryPortabilityImportContract,
+  // Portability contracts extracted to memory-portability.ts.
+  ...MEMORY_PORTABILITY_CONTRACTS,
   // --- memory-handlers.ts (diagnostic surface) ---
   ...MEMORY_DIAGNOSTIC_CONTRACTS,
   // --- context-handlers.ts ---
