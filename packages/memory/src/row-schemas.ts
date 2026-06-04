@@ -8,9 +8,10 @@
  *
  * Sectional layout: (1) memory-package-local public rows paired 1:1 with the
  * `./types.js` interfaces (each pair gets an `expectTypeOf` drift guard in
- * `row-schemas.test.ts`); (2) context-store rows (`Ctx*Row` from @comis/core); (3)
- * session-store DTOs; (4) file-internal snake_case row shapes (the SSOT consumers
- * retarget to via `z.infer<typeof XxxRowSchema>`).
+ * `row-schemas.test.ts`); (2) removed in v2.12 — the DAG context-store row
+ * schemas were deleted with the ctx_* schema (Phase 126); (3) session-store
+ * DTOs; (4) file-internal snake_case row shapes (the SSOT consumers retarget to
+ * via `z.infer<typeof XxxRowSchema>`).
  *
  * Conventions: every schema is `z.strictObject(...)` (rejects extra columns);
  * JSON-encoded TEXT → `z.string()` (parsed downstream); SQLite bool INTEGER 0/1 →
@@ -308,139 +309,11 @@ export const NamedGraphRowSchema = z.strictObject({
   deleted_at: z.number().nullable(),
 });
 
-// ─── 2. Context-store rows (paired with @comis/core/ports/context-store-types) ───
-
-/**
- * Schema for the `ctx_conversations` table.
- * Paired with `CtxConversationRow` from `@comis/core`.
- */
-export const CtxConversationRowSchema = z.strictObject({
-  conversation_id: z.string(),
-  tenant_id: z.string(),
-  agent_id: z.string(),
-  session_key: z.string(),
-  title: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
-
-/**
- * Schema for the `ctx_messages` table.
- * Paired with `CtxMessageRow` from `@comis/core`.
- */
-export const CtxMessageRowSchema = z.strictObject({
-  message_id: z.number(),
-  conversation_id: z.string(),
-  seq: z.number(),
-  role: z.string(),
-  content: z.string(),
-  content_hash: z.string(),
-  token_count: z.number(),
-  tool_name: z.string().nullable(),
-  tool_call_id: z.string().nullable(),
-  created_at: z.string(),
-});
-
-/**
- * Schema for the `ctx_message_parts` table.
- * Paired with `CtxMessagePartRow` from `@comis/core`.
- */
-export const CtxMessagePartRowSchema = z.strictObject({
-  part_id: z.number(),
-  message_id: z.number(),
-  ordinal: z.number(),
-  part_type: z.string(),
-  content: z.string().nullable(),
-  metadata: z.string().nullable(),
-});
-
-/**
- * Schema for the `ctx_summaries` table.
- * Paired with `CtxSummaryRow` from `@comis/core`.
- */
-export const CtxSummaryRowSchema = z.strictObject({
-  summary_id: z.string(),
-  conversation_id: z.string(),
-  kind: z.enum(["leaf", "condensed"]),
-  depth: z.number(),
-  content: z.string(),
-  token_count: z.number(),
-  file_ids: z.string(),
-  earliest_at: z.string().nullable(),
-  latest_at: z.string().nullable(),
-  descendant_count: z.number(),
-  descendant_token_count: z.number(),
-  source_token_count: z.number(),
-  counts_dirty: z.number(),
-  quality_score: z.number().nullable(),
-  compaction_level: z.string().nullable(),
-  created_at: z.string(),
-});
-
-/**
- * Schema for the `ctx_summary_messages` link table.
- * Paired with `CtxSummaryMessageRow` from `@comis/core`.
- */
-export const CtxSummaryMessageRowSchema = z.strictObject({
-  summary_id: z.string(),
-  message_id: z.number(),
-  ordinal: z.number(),
-});
-
-/**
- * Schema for the `ctx_summary_parents` link table.
- * Paired with `CtxSummaryParentRow` from `@comis/core`.
- */
-export const CtxSummaryParentRowSchema = z.strictObject({
-  summary_id: z.string(),
-  parent_summary_id: z.string(),
-  ordinal: z.number(),
-});
-
-/**
- * Schema for the `ctx_context_items` table.
- * Paired with `CtxContextItemRow` from `@comis/core`.
- */
-export const CtxContextItemRowSchema = z.strictObject({
-  conversation_id: z.string(),
-  ordinal: z.number(),
-  item_type: z.string(),
-  message_id: z.number().nullable(),
-  summary_id: z.string().nullable(),
-});
-
-/**
- * Schema for the `ctx_large_files` table.
- * Paired with `CtxLargeFileRow` from `@comis/core`.
- */
-export const CtxLargeFileRowSchema = z.strictObject({
-  file_id: z.string(),
-  conversation_id: z.string(),
-  file_name: z.string().nullable(),
-  mime_type: z.string().nullable(),
-  byte_size: z.number().nullable(),
-  content_hash: z.string().nullable(),
-  storage_path: z.string(),
-  exploration_summary: z.string().nullable(),
-  created_at: z.string(),
-});
-
-/**
- * Schema for the `ctx_expansion_grants` table.
- * Paired with `CtxExpansionGrantRow` from `@comis/core`.
- */
-export const CtxExpansionGrantRowSchema = z.strictObject({
-  grant_id: z.string(),
-  issuer_session: z.string(),
-  conversation_ids: z.string(),
-  summary_ids: z.string(),
-  max_depth: z.number(),
-  token_cap: z.number(),
-  tokens_consumed: z.number(),
-  expires_at: z.string(),
-  revoked: z.number(),
-  created_at: z.string(),
-});
+// ─── 2. (removed) Context-store rows ───
+// The DAG context-store row schemas (paired with the @comis/core
+// context-store-types DTOs) were removed in v2.12 (Phase 126, LCD
+// reimplementation) together with the ctx_* schema/store. The LCD store DTOs
+// are reintroduced fresh in a later phase.
 
 // ─── 3. Session-store DTOs (paired with @comis/core/ports/session-store-types) ───
 

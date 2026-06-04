@@ -228,12 +228,6 @@ export type {
   SystemPromptReportRow,
 } from "./observability-store/index.js";
 
-// Context store schema (DAG mode)
-export { initContextSchema } from "./context-schema.js";
-
-// Context store (DAG mode CRUD)
-export { createContextStore } from "./context-store.js";
-
 // Generic Row mapper factory.
 // Consumed via createRowMapper(schema) at every SQLite call-site to
 // replace `db.prepare(...).all() as Foo[]` casts.

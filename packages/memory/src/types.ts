@@ -105,10 +105,11 @@ export interface NamedGraphRow {
   deleted_at: number | null;
 }
 
-// --- Context store row types ---
+// --- Context store row types (removed in v2.12) ---
 //
-// The 9 `Ctx*Row` interfaces previously declared here are now the single
-// source-of-truth in `@comis/core/src/ports/context-store-types.ts`.
-// Memory consumers should import them from `@comis/core` (or transitively
-// re-exported from `@comis/memory`'s public index). Database schema and
-// persisted column layout are unchanged.
+// The 9 `Ctx*Row` interfaces and their `ctx_*` SQLite schema were removed in
+// v2.12 (Phase 126) along with the DAG context engine — the row DTOs, the
+// `context-store-types.ts` port, and the `ctx_*` tables no longer exist. The
+// LCD store and its row model are reintroduced fresh in a later phase. Nothing
+// destructive is written for the removal; existing DBs keep harmless empty
+// `ctx_*` tables that no code reads.

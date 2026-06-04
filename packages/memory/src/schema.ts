@@ -10,7 +10,6 @@
 
 import type Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import { initContextSchema } from "./context-schema.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
 let vecAvailable = false;
@@ -584,8 +583,11 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
   `);
 
-  // --- Context store tables (DAG schema) ---
-  initContextSchema(db);
+  // NOTE: the DAG context-store tables (ctx_*) were removed in v2.12 (Phase 126,
+  // LCD reimplementation). We only delete the schema-create call — nothing
+  // destructive is written and no reverse migration exists (there is no versioned
+  // migration runner). New DBs simply lack ctx_* tables; existing DBs keep
+  // harmless empty/orphaned tables that no code reads (design §9).
 
   // The calls below run in dependency order AFTER the `memories` table (the FK
   // target) exists; each is idempotent, and every `ON DELETE CASCADE` fires via

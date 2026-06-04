@@ -11,7 +11,7 @@
  *
  * 1. **Type-equality tests** — for schemas paired with EXPORTED interfaces
  *    (MemoryRow, SessionRow, VecSearchRow, FtsSearchRow, NamedGraphRow,
- *    Ctx*Row, SessionData/SessionListEntry/SessionDetailedEntry). Uses
+ *    SessionData/SessionListEntry/SessionDetailedEntry). Uses
  *    `expectTypeOf<z.infer<typeof XSchema>>().toEqualTypeOf<XInterface>()`
  *    which is a compile-time check — passes only if the inferred type
  *    matches the interface exactly.
@@ -36,35 +36,13 @@ import type {
   FtsSearchRow,
   NamedGraphRow,
 } from "./types.js";
-import type {
-  CtxConversationRow,
-  CtxMessageRow,
-  CtxMessagePartRow,
-  CtxSummaryRow,
-  CtxSummaryMessageRow,
-  CtxSummaryParentRow,
-  CtxContextItemRow,
-  CtxLargeFileRow,
-  CtxExpansionGrantRow,
-  SessionData,
-  SessionListEntry,
-  SessionDetailedEntry,
-} from "@comis/core";
+import type { SessionData, SessionListEntry, SessionDetailedEntry } from "@comis/core";
 import {
   MemoryRowSchema,
   SessionRowSchema,
   VecSearchRowSchema,
   FtsSearchRowSchema,
   NamedGraphRowSchema,
-  CtxConversationRowSchema,
-  CtxMessageRowSchema,
-  CtxMessagePartRowSchema,
-  CtxSummaryRowSchema,
-  CtxSummaryMessageRowSchema,
-  CtxSummaryParentRowSchema,
-  CtxContextItemRowSchema,
-  CtxLargeFileRowSchema,
-  CtxExpansionGrantRowSchema,
   SessionDataSchema,
   SessionListEntrySchema,
   SessionDetailedEntrySchema,
@@ -117,42 +95,6 @@ describe("row-schemas — type-equality with paired interfaces", () => {
 
   it("NamedGraphRowSchema z.infer matches NamedGraphRow interface from types.ts", () => {
     expectTypeOf<z.infer<typeof NamedGraphRowSchema>>().toEqualTypeOf<NamedGraphRow>();
-  });
-
-  it("CtxConversationRowSchema z.infer matches CtxConversationRow from @comis/core", () => {
-    expectTypeOf<z.infer<typeof CtxConversationRowSchema>>().toEqualTypeOf<CtxConversationRow>();
-  });
-
-  it("CtxMessageRowSchema z.infer matches CtxMessageRow from @comis/core", () => {
-    expectTypeOf<z.infer<typeof CtxMessageRowSchema>>().toEqualTypeOf<CtxMessageRow>();
-  });
-
-  it("CtxMessagePartRowSchema z.infer matches CtxMessagePartRow from @comis/core", () => {
-    expectTypeOf<z.infer<typeof CtxMessagePartRowSchema>>().toEqualTypeOf<CtxMessagePartRow>();
-  });
-
-  it("CtxSummaryRowSchema z.infer matches CtxSummaryRow from @comis/core", () => {
-    expectTypeOf<z.infer<typeof CtxSummaryRowSchema>>().toEqualTypeOf<CtxSummaryRow>();
-  });
-
-  it("CtxSummaryMessageRowSchema z.infer matches CtxSummaryMessageRow from @comis/core", () => {
-    expectTypeOf<z.infer<typeof CtxSummaryMessageRowSchema>>().toEqualTypeOf<CtxSummaryMessageRow>();
-  });
-
-  it("CtxSummaryParentRowSchema z.infer matches CtxSummaryParentRow from @comis/core", () => {
-    expectTypeOf<z.infer<typeof CtxSummaryParentRowSchema>>().toEqualTypeOf<CtxSummaryParentRow>();
-  });
-
-  it("CtxContextItemRowSchema z.infer matches CtxContextItemRow from @comis/core", () => {
-    expectTypeOf<z.infer<typeof CtxContextItemRowSchema>>().toEqualTypeOf<CtxContextItemRow>();
-  });
-
-  it("CtxLargeFileRowSchema z.infer matches CtxLargeFileRow from @comis/core", () => {
-    expectTypeOf<z.infer<typeof CtxLargeFileRowSchema>>().toEqualTypeOf<CtxLargeFileRow>();
-  });
-
-  it("CtxExpansionGrantRowSchema z.infer matches CtxExpansionGrantRow from @comis/core", () => {
-    expectTypeOf<z.infer<typeof CtxExpansionGrantRowSchema>>().toEqualTypeOf<CtxExpansionGrantRow>();
   });
 
   it("SessionDataSchema z.infer matches SessionData DTO from @comis/core", () => {
@@ -524,20 +466,6 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
       attacker_injected_column: "DROP TABLE memories",
     };
     expect(MemoryRowSchema.safeParse(sample).success).toBe(false);
-  });
-
-  it("CtxConversationRowSchema rejects rows with an unexpected extra column", () => {
-    const sample = {
-      conversation_id: "conv-1",
-      tenant_id: "default",
-      agent_id: "default",
-      session_key: "sess-1",
-      title: null,
-      created_at: "2026-05-15T00:00:00Z",
-      updated_at: "2026-05-15T00:00:00Z",
-      attacker_injected: "x",
-    };
-    expect(CtxConversationRowSchema.safeParse(sample).success).toBe(false);
   });
 
   it("TokenUsageDbRowSchema rejects rows missing required fields", () => {
