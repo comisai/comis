@@ -594,7 +594,10 @@ export const daemonStartStep: WizardStep = {
 
       const comisDir = safePath(os.homedir(), ".comis");
       const pidFile = safePath(comisDir, "daemon.pid");
-      const logFile = safePath(comisDir, "daemon.log");
+      // Raw process stdout/stderr capture (boot output + pre-logger FATALs).
+      // Named distinctly from the daemon's structured Pino log at
+      // ~/.comis/logs/daemon.log so the two are never confused.
+      const logFile = safePath(comisDir, "daemon.console.log");
 
       mkdirSync(comisDir, { recursive: true, mode: 0o700 });
 

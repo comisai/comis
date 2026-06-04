@@ -27,7 +27,12 @@ const exec = promisify(execFile);
 
 const COMIS_DIR = safePath(os.homedir(), ".comis");
 const PID_FILE = safePath(COMIS_DIR, "daemon.pid");
-const LOG_FILE = safePath(COMIS_DIR, "daemon.log");
+// Raw process stdout/stderr capture for the detached daemon (boot output +
+// pre-logger FATALs). Named distinctly from the daemon's structured Pino log
+// at ~/.comis/logs/daemon.log so the two are never confused.
+const LOG_FILE = safePath(COMIS_DIR, "daemon.console.log");
+/** Where the daemon's structured (Pino) logs land — for operator guidance. */
+const STRUCTURED_LOG_HINT = "~/.comis/logs/daemon.1.log";
 
 /** Max time to wait for daemon gateway to become ready (ms). */
 const READY_TIMEOUT_MS = 15_000;
@@ -711,6 +716,7 @@ async function streamDirectLogs(options: { follow?: boolean; lines: string; raw?
   if (!existsSync(logPath)) {
     warn(`Log file not found: ${logPath}`);
     info("Set COMIS_LOG_PATH to specify a custom log file location.");
+    info(`Structured daemon logs: ${STRUCTURED_LOG_HINT}`);
     return;
   }
   const args = ["-n", options.lines, logPath];
@@ -737,6 +743,7 @@ async function streamDirectLogs(options: { follow?: boolean; lines: string; raw?
     console.log(options.raw ? stdout : formatLogOutput(stdout));
   } else {
     info("No logs found");
+    info(`Structured daemon logs: ${STRUCTURED_LOG_HINT}`);
   }
 }
 
