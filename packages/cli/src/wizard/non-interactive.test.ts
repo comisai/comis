@@ -458,7 +458,7 @@ describe("buildNonInteractiveState", () => {
     expect(state.dataDir).toBe("/custom/data");
   });
 
-  it("includes all interactive steps (incl. storage) in completedSteps", () => {
+  it("includes all interactive steps (incl. storage + tool-providers) in completedSteps", () => {
     const state = buildNonInteractiveState(validOpts());
     expect(state.completedSteps).toEqual([
       "welcome",
@@ -471,6 +471,7 @@ describe("buildNonInteractiveState", () => {
       "channels",
       "gateway",
       "workspace",
+      "tool-providers",
       "review",
     ]);
   });

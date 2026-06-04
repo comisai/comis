@@ -50,7 +50,7 @@ import { finishStep } from "../wizard/steps/12-finish.js";
  * Used by both interactive and non-interactive modes to provide
  * the same step implementations to the wizard runner.
  */
-function buildStepRegistry(): StepRegistry {
+export function buildStepRegistry(): StepRegistry {
   const registry: StepRegistry = new Map();
   registry.set("welcome", welcomeStep);
   registry.set("detect-existing", detectExistingStep);

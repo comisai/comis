@@ -9,7 +9,9 @@
 
 import { describe, it, expect } from "vitest";
 import { Command } from "commander";
-import { registerInitCommand } from "./init.js";
+import { registerInitCommand, buildStepRegistry } from "./init.js";
+import { buildNonInteractiveState } from "../wizard/non-interactive.js";
+import type { WizardStepId } from "../wizard/types.js";
 
 describe("registerInitCommand", () => {
   it("registers the init command", () => {
@@ -97,5 +99,33 @@ describe("registerInitCommand", () => {
     const portOpt = initCmd.options.find((o) => o.long === "--gateway-port");
     expect(portOpt).toBeDefined();
     expect(portOpt!.parseArg).toBeDefined();
+  });
+});
+
+describe("non-interactive step coverage", () => {
+  // Every step the registry registers is interactive EXCEPT the three terminal
+  // steps the runner always executes itself. Any interactive step missing from
+  // completedSteps runs in non-interactive mode and hits a prompt, throwing
+  // "...prompt reached in non-interactive mode -- this is a bug". This invariant
+  // ties completedSteps to the live registry so the two cannot drift — the
+  // regression guard for the omitted "tool-providers" step.
+  it("non-interactive completedSteps covers every registered interactive step", () => {
+    const TERMINAL = new Set<WizardStepId>([
+      "write-config",
+      "daemon-start",
+      "finish",
+    ]);
+    const registered = [...buildStepRegistry().keys()] as WizardStepId[];
+    const interactive = registered.filter((id) => !TERMINAL.has(id));
+    const completed = new Set(
+      buildNonInteractiveState({
+        nonInteractive: true,
+        acceptRisk: true,
+        provider: "openai",
+        storage: "file",
+      }).completedSteps,
+    );
+    const missing = interactive.filter((id) => !completed.has(id));
+    expect(missing).toEqual([]);
   });
 });
