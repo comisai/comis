@@ -142,7 +142,11 @@ describe("init --quick uses quickstart flow", () => {
 
     const program = createTestProgram();
     registerInitCommand(program);
-    await program.parseAsync(["node", "test", "init", "--quick"]);
+    try {
+      await program.parseAsync(["node", "test", "init", "--quick"]);
+    } catch {
+      /* process.exit(0) on success throws via the exit spy */
+    }
 
     expect(runWizardFlow).toHaveBeenCalledOnce();
     expect(runWizardFlow).toHaveBeenCalledWith(
@@ -158,7 +162,11 @@ describe("init --quick uses quickstart flow", () => {
 
     const program = createTestProgram();
     registerInitCommand(program);
-    await program.parseAsync(["node", "test", "init", "--quick"]);
+    try {
+      await program.parseAsync(["node", "test", "init", "--quick"]);
+    } catch {
+      /* process.exit(0) on success throws via the exit spy */
+    }
 
     const initialState = vi.mocked(runWizardFlow).mock.calls[0][3];
     expect(initialState).toBeDefined();
@@ -196,7 +204,11 @@ describe("init without --quick uses advanced flow", () => {
 
     const program = createTestProgram();
     registerInitCommand(program);
-    await program.parseAsync(["node", "test", "init"]);
+    try {
+      await program.parseAsync(["node", "test", "init"]);
+    } catch {
+      /* process.exit(0) on success throws via the exit spy */
+    }
 
     expect(runWizardFlow).toHaveBeenCalledOnce();
     expect(runWizardFlow).toHaveBeenCalledWith(
@@ -212,7 +224,11 @@ describe("init without --quick uses advanced flow", () => {
 
     const program = createTestProgram();
     registerInitCommand(program);
-    await program.parseAsync(["node", "test", "init"]);
+    try {
+      await program.parseAsync(["node", "test", "init"]);
+    } catch {
+      /* process.exit(0) on success throws via the exit spy */
+    }
 
     const initialState = vi.mocked(runWizardFlow).mock.calls[0][3];
     expect(initialState).toBeUndefined();
