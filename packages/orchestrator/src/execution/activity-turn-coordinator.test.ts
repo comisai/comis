@@ -337,6 +337,28 @@ describe("createActivityTurnCoordinator — delete gate", () => {
     coord.dispose();
   });
 
+  it("reclassify carries the observed failed event's errorKind, never the hardcoded platform default", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    // The failed event carried a non-platform kind — the reclassify must honor it.
+    stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end" }));
+    timer.advance(800);
+
+    await coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_000) });
+
+    expect(renderer.finalizeCalls.length).toBe(1);
+    const outcome = renderer.finalizeCalls[0].outcome;
+    expect(outcome.kind).toBe("failure");
+    if (outcome.kind !== "failure") throw new Error("expected failure");
+    expect(outcome.errorKind).toBe("dependency");
+    expect(outcome.errorKind).not.toBe("platform");
+
+    coord.dispose();
+  });
+
   it("never edits the assistant message — finalize only ever drives the renderer (activity surface)", async () => {
     // The coordinator has no handle to the assistant message; it only holds the
     // renderer (activity surface). This pins the DISTINCT-message invariant: the
