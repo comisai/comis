@@ -72,6 +72,16 @@ export type {
   SessionListEntry,
   SessionDetailedEntry,
 } from "./session-store-types.js";
+export type { ContextStorePort } from "./context-store.js";
+export type {
+  LcdMessage,
+  LcdMessagePart,
+  LcdPartMetadata,
+  LcdPartKind,
+  LcdRole,
+  ContextStoreScope,
+  AppendMessageInput,
+} from "./context-store-types.js";
 export type { FileLockPort, LockOptions, LockError } from "./file-lock.js";
 export type { ClockPort } from "./clock.js";
 export type { EnvPort } from "./env.js";

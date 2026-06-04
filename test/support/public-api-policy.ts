@@ -908,6 +908,24 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SessionData",
       "SessionListEntry",
       "SessionDetailedEntry",
+      // LCD lossless store (v2.12, Phase 127): the ContextStorePort + DTOs +
+      // codec are surfaced on @comis/core but only memory's createLcdStore
+      // (port + DTO typed-import) and Phase 128 ingest consume some of them —
+      // tracked as planned-orphan policy entries (same pattern as
+      // SessionStorePort). The memory adapter (Plan 04) value-consumes the
+      // codec + types; listed here so the gate is green at THIS plan's commit
+      // before Plan 04 lands (over-listing a soon-consumed symbol is the
+      // documented pattern, never under-listing).
+      "ContextStorePort",
+      "LcdMessage",
+      "LcdMessagePart",
+      "LcdPartMetadata",
+      "LcdPartKind",
+      "LcdRole",
+      "ContextStoreScope",
+      "AppendMessageInput",
+      "messageToParts",
+      "partsToMessage",
       // Master-key file helpers extracted from CLI's `secrets init` body
       // into core/src/security/master-key.ts. The three names are surfaced
       // on @comis/core's public barrel without a consumer until the CLI
