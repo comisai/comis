@@ -293,6 +293,11 @@ export function registerInitCommand(program: Command): void {
           steps,
           initialState,
         );
+        // Exit explicitly on success. The clack adapter holds process.stdin in
+        // raw-mode (a TTY), which keeps the event loop alive — without this the
+        // process hangs after the wizard's final message. Mirrors the cancel
+        // and error paths, which already exit explicitly.
+        process.exit(0);
       } catch (err) {
         if (err instanceof CancelError) {
           process.exit(0);
