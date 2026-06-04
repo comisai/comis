@@ -295,6 +295,7 @@ describe("getNextStep", () => {
         "welcome",
         "detect-existing",
         "flow-select",
+        "storage",
         "provider",
         "credentials",
         "agent",

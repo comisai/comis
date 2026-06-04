@@ -8,6 +8,7 @@
  * @module
  */
 
+import type { CredentialStorageMode } from "@comis/core";
 import type { WizardPrompter } from "./prompter.js";
 
 // ---------- Flow & Step Identifiers ----------
@@ -20,6 +21,7 @@ export type WizardStepId =
   | "welcome"
   | "detect-existing"
   | "flow-select"
+  | "storage"
   | "provider"
   | "credentials"
   | "agent"
@@ -134,6 +136,13 @@ export type ProviderConfig = {
 export type WizardState = {
   readonly flow?: FlowType;
   readonly riskAccepted?: boolean;
+  /**
+   * Credential storage mode chosen at the `storage` step. Drives whether
+   * step 04 routes OAuth through the encrypted store and whether step 10
+   * persists collected secrets into `secrets.db` (encrypted) vs. a plaintext
+   * `.env` (file). Emitted as `security.storage` into config.yaml.
+   */
+  readonly storageMode?: CredentialStorageMode;
   readonly existingConfigAction?: "update" | "fresh" | "cancel";
   readonly resetScope?: "config" | "config+creds" | "full";
   readonly provider?: ProviderConfig;

@@ -178,6 +178,7 @@ export const FLOW_STEPS: Record<FlowType, readonly WizardStepId[]> = {
     "welcome",
     "detect-existing",
     "flow-select",
+    "storage",
     "provider",
     "credentials",
     "agent",
@@ -190,6 +191,7 @@ export const FLOW_STEPS: Record<FlowType, readonly WizardStepId[]> = {
     "welcome",
     "detect-existing",
     "flow-select",
+    "storage",
     "provider",
     "credentials",
     "agent",
@@ -228,7 +230,12 @@ const STATE_DEPENDENCIES: Partial<
 > = {
   provider: ["provider", "model", "channels"],
   credentials: [],
-  "flow-select": ["channels", "gateway", "dataDir"],
+  // A flow change re-runs the storage choice (and everything after), so clear
+  // storageMode alongside the downstream fields produced by later steps.
+  "flow-select": ["storageMode", "channels", "gateway", "dataDir"],
+  // Jumping into the storage step clears nothing downstream beyond what later
+  // steps already clear via their own dependency entries.
+  storage: [],
   agent: [],
   channels: [],
   gateway: [],
@@ -393,6 +400,7 @@ export type StepRegistry = Map<WizardStepId, WizardStep>;
 export const NON_SKIPPABLE_STEPS: ReadonlySet<WizardStepId> = new Set([
   "welcome",
   "flow-select",
+  "storage",
   "provider",
   "credentials",
   "channels",
