@@ -303,6 +303,68 @@ describe("parts-codec — O2 stable-id pairing (inline invariant)", () => {
   });
 });
 
+describe("parts-codec — empty-content envelope fidelity (WR-01)", () => {
+  // An aborted/errored assistant turn is a realistic shape: stopReason
+  // "aborted"/"error" with errorMessage and ZERO content blocks
+  // (AssistantMessage.content is (Text|Thinking|ToolCall)[], which admits []).
+  // The message-level envelope (api/provider/model/usage/stopReason/
+  // errorMessage/timestamp) must survive the round-trip even with no blocks —
+  // F2 says the round-trip drops no field.
+
+  it("preserves the full envelope of an empty-content assistant message (content: [])", () => {
+    const empty: AssistantMessage = {
+      role: "assistant",
+      content: [],
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-opus-4",
+      usage: makeUsage(),
+      stopReason: "stop",
+      timestamp: 1_700_000_010_001,
+    };
+    expect(roundTrip(empty)).toEqual(empty);
+  });
+
+  it("preserves stopReason + errorMessage of an aborted/errored empty-content turn", () => {
+    const aborted: AssistantMessage = {
+      role: "assistant",
+      content: [],
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5",
+      usage: makeUsage(),
+      stopReason: "error",
+      errorMessage: "upstream provider 529 — turn aborted before any content block",
+      timestamp: 1_700_000_010_002,
+    };
+    const reconstructed = roundTrip(aborted) as AssistantMessage;
+    expect(reconstructed.content).toEqual([]);
+    expect(reconstructed.stopReason).toBe("error");
+    expect(reconstructed.errorMessage).toBe(
+      "upstream provider 529 — turn aborted before any content block",
+    );
+    expect(reconstructed).toEqual(aborted);
+  });
+
+  it("emits exactly one envelope-carrying part for an empty-content message (so the store row is not empty)", () => {
+    const empty: AssistantMessage = {
+      role: "assistant",
+      content: [],
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-opus-4",
+      usage: makeUsage(),
+      stopReason: "aborted",
+      timestamp: 1_700_000_010_003,
+    };
+    const parts = messageToParts(empty);
+    // A turn always has >=1 part so the envelope has a carrier on read.
+    expect(parts.length).toBe(1);
+    const { content: _content, ...envelope } = empty;
+    expect(parts[0]!.metadata.messageEnvelope).toEqual(envelope);
+  });
+});
+
 describe("parts-codec — isError + tool input fidelity", () => {
   it("round-trips a tool_result with isError:true preserving the boolean (not coerced/dropped)", () => {
     const errored: ToolResultMessage = {
