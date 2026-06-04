@@ -53,7 +53,7 @@ export function readmeViolatesSdkIndependence(
   depNames: Set<string>,
 ): boolean {
   const claimsIndependence =
-    /no external sdk dependency/i.test(sanitizedText) ||
+    /no external sdk dependenc/i.test(sanitizedText) ||    // matches dependency / dependencies / dependence
     /no external [`'"]?pi-coding-agent/i.test(sanitizedText);
   return claimsIndependence && depNames.has("@earendil-works/pi-coding-agent");
 }

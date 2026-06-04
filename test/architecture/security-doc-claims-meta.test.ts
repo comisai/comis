@@ -58,4 +58,11 @@ describe("security-doc-claims guard detects reverted claims", () => {
     const raw = "<!-- old claim: skills ran in isolated-vm -->\nActual corrected prose follows.";
     expect(/isolated-vm/i.test(sanitizeDocText(raw))).toBe(false);
   });
+
+  it("flags plural sdk-independence claim in README when pi-coding-agent is a dependency", () => {
+    const deps = new Set<string>(["@earendil-works/pi-coding-agent"]);
+    expect(
+      readmeViolatesSdkIndependence("Comis has no external SDK dependencies.", deps),
+    ).toBe(true);
+  });
 });
