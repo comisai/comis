@@ -3,7 +3,7 @@
  * Tests for the init CLI command registration.
  *
  * Verifies that the init command is registered with the expected
- * 27 CLI flags covering all mode, provider, gateway, channel,
+ * 25 CLI flags covering all mode, provider, gateway, channel,
  * path, behavior, and reset options.
  */
 
@@ -24,7 +24,7 @@ describe("registerInitCommand", () => {
     );
   });
 
-  it("registers all 27 CLI flags", () => {
+  it("registers all 25 CLI flags", () => {
     const program = new Command();
     registerInitCommand(program);
     const initCmd = program.commands.find((c) => c.name() === "init")!;
@@ -42,12 +42,10 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--agent-name");
     expect(optionLongs).toContain("--model");
 
-    // Gateway (5)
+    // Gateway (3)
     expect(optionLongs).toContain("--gateway-port");
     expect(optionLongs).toContain("--gateway-bind");
-    expect(optionLongs).toContain("--gateway-auth");
     expect(optionLongs).toContain("--gateway-token");
-    expect(optionLongs).toContain("--gateway-password");
 
     // Channels (7)
     expect(optionLongs).toContain("--channels");
@@ -75,11 +73,11 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--reset-scope");
   });
 
-  it("has exactly 28 options", () => {
+  it("has exactly 26 options", () => {
     const program = new Command();
     registerInitCommand(program);
     const initCmd = program.commands.find((c) => c.name() === "init")!;
-    expect(initCmd.options).toHaveLength(28);
+    expect(initCmd.options).toHaveLength(26);
   });
 
   it("parses --channels as comma-separated list", () => {

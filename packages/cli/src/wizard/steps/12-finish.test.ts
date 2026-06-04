@@ -121,7 +121,6 @@ describe("finishStep", () => {
       gateway: {
         port: 9000,
         bindMode: "loopback",
-        authMethod: "token",
         token: "abcdef1234567890abcdef1234567890abcdef1234567890ab",
       },
     };
@@ -157,7 +156,6 @@ describe("finishStep", () => {
       gateway: {
         port: 4766,
         bindMode: "loopback",
-        authMethod: "token",
         token: fullToken,
         webEnabled: true,
       },
@@ -185,7 +183,6 @@ describe("finishStep", () => {
       gateway: {
         port: 4766,
         bindMode: "loopback",
-        authMethod: "token",
         token: "tok",
         webEnabled: true,
       },
@@ -209,7 +206,6 @@ describe("finishStep", () => {
       gateway: {
         port: 4766,
         bindMode: "lan",
-        authMethod: "token",
         token: "tok",
         webEnabled: true,
       },
@@ -223,30 +219,6 @@ describe("finishStep", () => {
       ([msg]) => typeof msg === "string" && msg.includes("ssh -N -L"),
     );
     expect(tunnelNote).toBeUndefined();
-  });
-
-  it("points user at their chosen password when using password auth", async () => {
-    const state: WizardState = {
-      completedSteps: [],
-      gateway: {
-        port: 4766,
-        bindMode: "loopback",
-        authMethod: "password",
-        password: "my-secret-password",
-        webEnabled: true,
-      },
-    };
-    const prompter = createMockPrompter();
-
-    await finishStep.execute(state, prompter);
-
-    const noteCalls = vi.mocked(prompter.note).mock.calls;
-    const tokenNote = noteCalls.find(
-      ([msg]) => typeof msg === "string" && msg.includes("password you set earlier"),
-    );
-    expect(tokenNote).toBeDefined();
-    // Should NOT leak the actual password into the wizard output
-    expect(tokenNote![0]).not.toContain("my-secret-password");
   });
 
   it("outro() called with completion message", async () => {

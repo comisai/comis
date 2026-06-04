@@ -102,7 +102,6 @@ function populatedState(): WizardState {
     gateway: {
       port: 4766,
       bindMode: "loopback",
-      authMethod: "token",
       token: "test-token-value",
     },
     dataDir: "/home/test/.comis/data",
@@ -415,30 +414,6 @@ describe("writeConfigStep", () => {
 
     const configContent = JSON.parse(configWriteCall![1] as string);
     expect(configContent.agents.default.elevatedReply).toBeUndefined();
-  });
-
-  it("gateway password auth writes password env var", async () => {
-    const state: WizardState = {
-      ...populatedState(),
-      gateway: {
-        port: 4766,
-        bindMode: "loopback",
-        authMethod: "password",
-        password: "my-secret-password",
-      },
-    };
-    const prompter = createMockPrompter();
-
-    await writeConfigStep.execute(state, prompter);
-
-    const writeCalls = vi.mocked(writeFileSync).mock.calls;
-    const envWriteCall = writeCalls.find(
-      ([path]) => typeof path === "string" && path.includes(".env"),
-    );
-    expect(envWriteCall).toBeDefined();
-
-    const envContent = envWriteCall![1] as string;
-    expect(envContent).toContain("COMIS_GATEWAY_PASSWORD=my-secret-password");
   });
 
   // ---------- oauthProfiles emission + openai-codex defaults ----------

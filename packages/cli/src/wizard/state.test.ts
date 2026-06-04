@@ -659,7 +659,6 @@ describe("runWizardFlow", () => {
           gateway: {
             port: 4766,
             bindMode: "loopback",
-            authMethod: "token",
           },
         });
       },
@@ -927,7 +926,7 @@ describe("runWizardFlow", () => {
           throw new CancelError();
         }
         return updateState(state, {
-          gateway: { port: 4766, bindMode: "loopback" as const, authMethod: "token" as const },
+          gateway: { port: 4766, bindMode: "loopback" as const },
         });
       },
     };
@@ -1165,7 +1164,7 @@ describe("runWizardFlow", () => {
           });
         }
         return updateState(state, {
-          gateway: { port: 4766, bindMode: "loopback" as const, authMethod: "token" as const },
+          gateway: { port: 4766, bindMode: "loopback" as const },
         });
       },
     };
@@ -1507,7 +1506,7 @@ describe("runWizardFlow", () => {
       id: "gateway",
       label: "Gateway",
       execute: async (state) => updateState(state, {
-        gateway: { port: 4766, bindMode: "loopback" as const, authMethod: "token" as const },
+        gateway: { port: 4766, bindMode: "loopback" as const },
       }),
     };
 

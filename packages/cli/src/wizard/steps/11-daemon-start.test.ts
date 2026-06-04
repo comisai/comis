@@ -107,7 +107,6 @@ function stateWithGateway(): WizardState {
     gateway: {
       port: 4766,
       bindMode: "loopback",
-      authMethod: "token",
       token: "test-token-value",
     },
     provider: { id: "anthropic" },

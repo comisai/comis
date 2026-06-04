@@ -2,8 +2,9 @@
 /**
  * Tests for gateway configuration step (step 07).
  *
- * Verifies port selection, bind mode prompts, auth method flows
- * (token vs password), LAN security warning, and custom IP input.
+ * Verifies port selection, bind mode prompts, unconditional token
+ * generation (token is the only gateway auth method), LAN security
+ * warning, and custom IP input.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -81,10 +82,10 @@ describe("gatewayStep", () => {
     expect(gatewayStep.label).toBe("Gateway Configuration");
   });
 
-  it("default token auth flow sets gateway config correctly", async () => {
+  it("default token flow sets gateway config correctly", async () => {
     const prompter = createMockPrompter({
       text: ["4766"],
-      select: ["loopback", "token"],
+      select: ["loopback"],
     });
 
     const result = await gatewayStep.execute(baseState(), prompter);
@@ -92,15 +93,13 @@ describe("gatewayStep", () => {
     expect(result.gateway).toBeDefined();
     expect(result.gateway!.port).toBe(4766);
     expect(result.gateway!.bindMode).toBe("loopback");
-    expect(result.gateway!.authMethod).toBe("token");
     expect(result.gateway!.token).toBe("a".repeat(48));
-    expect(result.gateway!.password).toBeUndefined();
   });
 
   it("LAN bind mode triggers security warning", async () => {
     const prompter = createMockPrompter({
       text: ["4766"],
-      select: ["lan", "token"],
+      select: ["lan"],
     });
 
     await gatewayStep.execute(baseState(), prompter);
@@ -113,7 +112,7 @@ describe("gatewayStep", () => {
   it("custom bind mode prompts for IP address", async () => {
     const prompter = createMockPrompter({
       text: ["4766", "192.168.1.100"],
-      select: ["custom", "token"],
+      select: ["custom"],
     });
 
     const result = await gatewayStep.execute(baseState(), prompter);
@@ -127,27 +126,10 @@ describe("gatewayStep", () => {
     );
   });
 
-  it("password auth flow prompts for password and does not generate token", async () => {
-    const prompter = createMockPrompter({
-      text: ["4766"],
-      select: ["loopback", "password"],
-      password: ["my-secure-password"],
-    });
-
-    const result = await gatewayStep.execute(baseState(), prompter);
-
-    expect(result.gateway!.authMethod).toBe("password");
-    expect(result.gateway!.password).toBe("my-secure-password");
-    expect(result.gateway!.token).toBeUndefined();
-    expect(prompter.password).toHaveBeenCalledWith(
-      expect.objectContaining({ message: "Gateway password" }),
-    );
-  });
-
   it("port text prompt has validate function", async () => {
     const prompter = createMockPrompter({
       text: ["4766"],
-      select: ["loopback", "token"],
+      select: ["loopback"],
     });
 
     await gatewayStep.execute(baseState(), prompter);
@@ -167,7 +149,7 @@ describe("gatewayStep", () => {
   it("token auth logs the generated token", async () => {
     const prompter = createMockPrompter({
       text: ["4766"],
-      select: ["loopback", "token"],
+      select: ["loopback"],
     });
 
     await gatewayStep.execute(baseState(), prompter);
@@ -180,30 +162,11 @@ describe("gatewayStep", () => {
   it("shows section separator note", async () => {
     const prompter = createMockPrompter({
       text: ["4766"],
-      select: ["loopback", "token"],
+      select: ["loopback"],
     });
 
     await gatewayStep.execute(baseState(), prompter);
 
     expect(prompter.note).toHaveBeenCalled();
-  });
-
-  it("password validate callback rejects short passwords", async () => {
-    const prompter = createMockPrompter({
-      text: ["4766"],
-      select: ["loopback", "password"],
-      password: ["longenoughpassword"],
-    });
-
-    await gatewayStep.execute(baseState(), prompter);
-
-    const passwordCall = vi.mocked(prompter.password).mock.calls[0][0];
-    expect(passwordCall.validate).toBeDefined();
-
-    // Short password should fail
-    expect(passwordCall.validate!("short")).toBe("Password must be at least 8 characters.");
-
-    // Adequate password should pass
-    expect(passwordCall.validate!("longenoughpassword")).toBeUndefined();
   });
 });

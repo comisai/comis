@@ -127,16 +127,6 @@ describe("validateNonInteractiveOptions", () => {
     }
   });
 
-  it("throws NonInteractiveError with field 'gatewayPassword' when auth=password but no password", () => {
-    const opts = validOpts({ gatewayAuth: "password" });
-    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
-    try {
-      validateNonInteractiveOptions(opts);
-    } catch (e) {
-      expect((e as NonInteractiveError).field).toBe("gatewayPassword");
-    }
-  });
-
   it("throws NonInteractiveError with field 'resetScope' when resetScope set without reset=true", () => {
     const opts = validOpts({ resetScope: "full" });
     expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
@@ -358,12 +348,11 @@ describe("buildNonInteractiveState", () => {
     expect(state.model).toBe("default");
   });
 
-  it("uses gateway defaults: port=4766, bindMode='loopback', authMethod='token'", () => {
+  it("uses gateway defaults: port=4766, bindMode='loopback' (token-only)", () => {
     const state = buildNonInteractiveState(validOpts());
     expect(state.gateway).toBeDefined();
     expect(state.gateway!.port).toBe(4766);
     expect(state.gateway!.bindMode).toBe("loopback");
-    expect(state.gateway!.authMethod).toBe("token");
   });
 
   it("auto-generates token (48 hex chars) when no gatewayToken provided", () => {
@@ -376,13 +365,21 @@ describe("buildNonInteractiveState", () => {
     expect(state.gateway!.token).toBe("my-explicit-token");
   });
 
-  it("sets password on gateway config when password auth", () => {
+  it("buildNonInteractiveState never emits gateway.password even if gatewayPassword leaks in", () => {
+    // Gateway password auth is removed entirely: the daemon's GatewayConfigSchema
+    // is a z.strictObject with no `password` key, so emitting one FATAL-crash-loops
+    // the daemon at boot. The wizard must be structurally incapable of emitting it,
+    // even when stray gatewayAuth/gatewayPassword values are forced in (these fields
+    // no longer exist on the type, hence the `as never` cast — this pins RUNTIME
+    // behavior, not the type).
     const state = buildNonInteractiveState(
-      validOpts({ gatewayAuth: "password", gatewayPassword: "secret123" }),
+      validOpts({ gatewayPassword: "x", gatewayAuth: "password" } as never),
     );
-    expect(state.gateway!.authMethod).toBe("password");
-    expect(state.gateway!.password).toBe("secret123");
-    expect(state.gateway!.token).toBeUndefined();
+    const gw = state.gateway as Record<string, unknown>;
+    expect(gw.password).toBeUndefined();
+    expect(gw.authMethod).toBeUndefined();
+    // Token path stays fully intact.
+    expect(gw.token).toBe("ab".repeat(24));
   });
 
   it("builds channels from opts.channels with correct types and tokens", () => {
