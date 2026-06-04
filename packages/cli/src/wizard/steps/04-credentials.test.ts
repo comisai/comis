@@ -35,12 +35,21 @@ vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
 // test never touches ~/.comis/auth-profiles.json on the test host's
 // filesystem. loadConfigFile is also mocked here so the wizard defaults
 // to file storage.
+// Module-level toggle for the mocked systemGetEnv("SECRETS_MASTER_KEY").
+// When truthy, the wizard's encrypted-default fallback resolves "encrypted";
+// when undefined, it resolves "file". COMIS_CONFIG_PATHS / COMIS_DATA_DIR
+// always resolve undefined so the standard ~/.comis paths apply.
+let masterKeyState: string | undefined;
+
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
     loginOpenAICodexOAuth: vi.fn(),
     isRemoteEnvironment: vi.fn().mockReturnValue(false),
+    systemGetEnv: vi.fn((key: string) =>
+      key === "SECRETS_MASTER_KEY" ? masterKeyState : undefined,
+    ),
     selectOAuthCredentialStore: vi.fn().mockImplementation(() => {
       const inMemory = new Map<string, unknown>();
       return {
@@ -82,7 +91,7 @@ vi.mock("../../util/daemon-required.js", () => ({
 
 import { credentialsStep } from "./04-credentials.js";
 import { getModels } from "@earendil-works/pi-ai";
-import { loginOpenAICodexOAuth, isRemoteEnvironment, loadConfigFile, validateConfig } from "@comis/core";
+import { loginOpenAICodexOAuth, isRemoteEnvironment, loadConfigFile, validateConfig, selectOAuthCredentialStore } from "@comis/core";
 import { callTyped, withClient } from "../../client/rpc-client.js";
 import { requireDaemonOrExit } from "../../util/daemon-required.js";
 
@@ -1218,5 +1227,129 @@ describe("loadWizardStorageMode env-ref resolution (Bug 1)", () => {
     expect(callTyped).toHaveBeenCalled();
     const callTypedArgs = vi.mocked(callTyped).mock.calls[0]!;
     expect((callTypedArgs[1] as { method: string }).method).toBe("auth.set");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadWizardStorageMode encrypted-default fallback (init, no config)
+//
+// During `comis init` no config.yaml exists yet (OAuth login runs in step 04,
+// config is written in step 10). loadWizardStorageMode must align with the
+// daemon's encrypted default: when a SECRETS_MASTER_KEY is present, fall back
+// to "encrypted" (the encrypted store is usable); otherwise "file".
+//
+// These tests drive the resolution behaviorally via handleCodexOAuth
+// (loadWizardStorageMode is intentionally not exported standalone):
+//   - config absent + master key present → encrypted branch (callTyped used,
+//     selectOAuthCredentialStore NOT used).
+//   - config absent + no master key      → file branch (selectOAuthCredentialStore
+//     used, callTyped NOT used).
+//
+// PRE-PATCH (RED): both `return "file"` fallbacks return "file" unconditionally,
+// so even with a master key present the file branch is taken → the
+// "encrypted when master key present" test FAILS.
+// ---------------------------------------------------------------------------
+
+describe("loadWizardStorageMode encrypted-default fallback (init, no config)", () => {
+  beforeEach(() => {
+    vi.mocked(loginOpenAICodexOAuth).mockReset();
+    vi.mocked(callTyped).mockReset();
+    vi.mocked(withClient).mockReset();
+    vi.mocked(requireDaemonOrExit).mockReset();
+    vi.mocked(selectOAuthCredentialStore).mockClear();
+    vi.mocked(isRemoteEnvironment).mockReturnValue(false);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+
+    vi.mocked(callTyped).mockResolvedValue({
+      profileId: "openai-codex:test@example.com",
+      stored: true,
+    });
+    vi.mocked(withClient).mockImplementation(async (fn) => fn({}));
+    vi.mocked(requireDaemonOrExit).mockResolvedValue(undefined);
+
+    // Config absent during init → triggers the encrypted-default fallback.
+    vi.mocked(loadConfigFile).mockReturnValue({
+      ok: false,
+      error: new Error("no config"),
+    });
+
+    const okLogin = {
+      ok: true as const,
+      value: {
+        access: "tok_fallback",
+        refresh: "ref_fallback",
+        expires: Date.now() + 3_600_000,
+        accountId: "acct_fallback",
+        email: "fallback@example.com",
+        displayName: "Fallback User",
+        profileId: "openai-codex:fallback@example.com",
+      },
+    };
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue(okLogin);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    masterKeyState = undefined;
+    vi.mocked(loadConfigFile).mockReturnValue({ ok: false, error: new Error("no config") });
+  });
+
+  it("config absent + SECRETS_MASTER_KEY present → encrypted branch (callTyped used, file store NOT opened)", async () => {
+    masterKeyState = "a".repeat(64); // master key present
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    await credentialsStep.execute(startState, prompter);
+
+    // Encrypted branch was taken: daemon RPC path used, file store NOT opened.
+    expect(callTyped).toHaveBeenCalled();
+    expect(selectOAuthCredentialStore).not.toHaveBeenCalled();
+  });
+
+  it("config absent + no SECRETS_MASTER_KEY → file branch (file store opened, callTyped NOT used)", async () => {
+    masterKeyState = undefined; // no master key
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    await credentialsStep.execute(startState, prompter);
+
+    // File branch was taken: the file store adapter is opened, no daemon RPC.
+    expect(selectOAuthCredentialStore).toHaveBeenCalled();
+    expect(callTyped).not.toHaveBeenCalled();
+  });
+
+  it("valid config still wins (security.storage honored regardless of master key)", async () => {
+    masterKeyState = "a".repeat(64);
+    // Valid config explicitly selects file storage → must override the
+    // encrypted-default fallback (the fallback only applies when config is absent).
+    vi.mocked(loadConfigFile).mockReturnValue({
+      ok: true,
+      value: { security: { storage: "file" } },
+    });
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    await credentialsStep.execute(startState, prompter);
+
+    expect(selectOAuthCredentialStore).toHaveBeenCalled();
+    expect(callTyped).not.toHaveBeenCalled();
   });
 });
