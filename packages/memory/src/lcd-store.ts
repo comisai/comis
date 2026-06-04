@@ -173,24 +173,43 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     },
 
     getMessages(conversationId: string): LcdMessage[] {
-      const parsedMsgs = messageRowMapper.parseRows(selectMsgs.all(conversationId));
-      const msgRows = parsedMsgs.ok ? parsedMsgs.value : [];
+      // WR-02: degrade PER ROW, not per result-set. `parseRows` returns err on
+      // the first bad row and discards every already-validated row — so one
+      // corrupt PART row would null a whole message body (orphaning a
+      // downstream tool_result -> provider rejection) and one corrupt MESSAGE
+      // row would drop the whole conversation. Validate each row with
+      // `parseOptionalRow` and skip ONLY the bad row, keeping its good
+      // siblings — the same graceful-degrade granularity `parseMetadata` uses
+      // per field. Ordering is preserved (we iterate the ORDER BY result in
+      // order). The skip is silent by design: the memory package has no
+      // infra-logging dependency (AGENTS.md §2.4 forbids importing getLogger
+      // directly); the boundary observability line lands in Phase 128 with the
+      // injected-logger write path. A schema-violating row is unreachable via
+      // the typed `append` — it requires on-disk corruption / schema drift.
+      const out: LcdMessage[] = [];
 
-      return msgRows.map((row) => {
-        const parsedParts = partRowMapper.parseRows(selectParts.all(row.id));
-        const partRows = parsedParts.ok ? parsedParts.value : [];
+      for (const rawMsg of selectMsgs.all(conversationId)) {
+        const parsedMsg = messageRowMapper.parseOptionalRow(rawMsg);
+        if (!parsedMsg.ok || !parsedMsg.value) continue; // skip only the bad message row
+        const row = parsedMsg.value;
 
-        const parts: LcdMessagePart[] = partRows.map((p) => ({
-          kind: p.kind as LcdPartKind,
-          toolCallId: p.tool_call_id ?? undefined,
-          toolName: p.tool_name ?? undefined,
-          toolInput: parseJsonColumn(p.tool_input),
-          toolOutput: parseJsonColumn(p.tool_output),
-          isError: intToBool(p.is_error),
-          metadata: parseMetadata(p.metadata),
-        }));
+        const parts: LcdMessagePart[] = [];
+        for (const rawPart of selectParts.all(row.id)) {
+          const parsedPart = partRowMapper.parseOptionalRow(rawPart);
+          if (!parsedPart.ok || !parsedPart.value) continue; // skip only the bad part row
+          const p = parsedPart.value;
+          parts.push({
+            kind: p.kind as LcdPartKind,
+            toolCallId: p.tool_call_id ?? undefined,
+            toolName: p.tool_name ?? undefined,
+            toolInput: parseJsonColumn(p.tool_input),
+            toolOutput: parseJsonColumn(p.tool_output),
+            isError: intToBool(p.is_error),
+            metadata: parseMetadata(p.metadata),
+          });
+        }
 
-        return {
+        out.push({
           id: row.id,
           conversationId: row.conversation_id,
           seq: row.seq,
@@ -198,8 +217,10 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
           tokenCount: row.token_count,
           createdAt: row.created_at,
           parts,
-        };
-      });
+        });
+      }
+
+      return out;
     },
   };
 }
