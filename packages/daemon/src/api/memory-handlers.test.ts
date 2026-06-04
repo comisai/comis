@@ -1748,32 +1748,33 @@ describe("memory.portability.import — CRITICAL firewall RED→GREEN", () => {
     expect(result.imported).toBe(0);
   });
 
-  it("VULNERABILITY REGRESSION: with no memoryWriteValidator, secret-bearing entry reaches store (proves validator is the guard)", async () => {
-    // REGRESSION SENTINEL: this test documents the vulnerability that memoryWriteValidator prevents.
-    // When the validator IS wired: the CRITICAL-block test above prevents the store call.
-    // When it is NOT wired (undefined): entry passes through — proving the validator is the sole guard.
+  it("CR-02: import handler fails closed when memoryWriteValidator is absent — no entries stored, error thrown", async () => {
+    // FAIL-CLOSED SENTINEL: the import handler MUST refuse to proceed without a validator.
+    // Absence of the validator is a wiring mistake; silently bypassing the firewall is
+    // more dangerous than refusing the whole batch. This replaced the old "proves validator
+    // is the guard" test that documented the fail-open posture.
     const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
     const deps = makeDeps({
       memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
-      memoryWriteValidator: undefined,  // no validator wired — simulates absent firewall
+      memoryWriteValidator: undefined,  // no validator wired — must fail closed
     });
     const handlers = createMemoryHandlers(deps);
-    // RED: handler absent → TypeError.
-    // GREEN: handler exists; without validator, store IS called (proves validator is the guard).
-    const result = await (handlers["memory.portability.import"] as Function)({
-      entries: [{
-        id: "e1", content: SECRET_CONTENT, trust_level: "learned",
-        memory_type: "semantic", tags: [], source_who: "user",
-        source_channel: null, source_session_key: null, created_at: 1748000000000,
-        occurred_at: null, proof_count: null, source_ids: null,
-        confidence: null, observation_kind: null, pattern_type: null,
-      }],
-      agent_id: "agent1",
-      _trustLevel: "admin",
-    });
-    expect(storeMock).toHaveBeenCalledTimes(1);
-    expect(result.imported).toBe(1);
-    expect(result.blocked).toBe(0);
+    // RED (before fix): handler falls through and calls store.
+    // GREEN (after fix): handler throws before any store call.
+    await expect(
+      (handlers["memory.portability.import"] as Function)({
+        entries: [{
+          id: "e1", content: SECRET_CONTENT, trust_level: "learned",
+          memory_type: "semantic", tags: [], source_who: "user",
+          source_channel: null, source_session_key: null, created_at: 1748000000000,
+          occurred_at: null, proof_count: null, source_ids: null,
+          confidence: null, observation_kind: null, pattern_type: null,
+        }],
+        agent_id: "agent1",
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/memoryWriteValidator/);
+    expect(storeMock).not.toHaveBeenCalled();
   });
 });
 
@@ -1865,5 +1866,116 @@ describe("memory.portability.import — re-stamp scope + dry-run RED→GREEN", (
     expect(result.blocked).toBe(1);
     expect(result.downgraded).toBe(1);
     expect(result.total).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CR-01: Export scrubber applied to source_who, source_channel, source_session_key, tags
+// RED state: these fields are emitted unscrubbed in the pre-fix code.
+// GREEN state: all free-text export fields are scrubbed through scrubSecretsFromText.
+// ---------------------------------------------------------------------------
+
+describe("memory.portability.export — source fields + tags are scrubbed (CR-01)", () => {
+  it("scrubs secret-shaped value in source_who — must not reach the export envelope unscrubbed", async () => {
+    const secretWho = "sk-ant-api03-" + "WHOKEY1234567890abcdef";
+    const deps = makeDeps({
+      memoryApi: {
+        inspect: vi.fn(() => [
+          {
+            id: "mem-cr01-who",
+            content: "harmless content",
+            trustLevel: "learned",
+            tags: [],
+            source: { who: secretWho, channel: undefined, sessionKey: undefined },
+            createdAt: 1748000000000,
+          },
+        ]),
+        search: vi.fn(async () => []),
+        clear: vi.fn(() => 0),
+        stats: vi.fn(() => ({ totalEntries: 1 })),
+      } as never,
+    });
+    const handlers = createMemoryHandlers(deps);
+    // RED: source_who passes through unscrubbed. GREEN: value is [REDACTED].
+    const result = await (handlers["memory.portability.export"] as Function)({
+      agent_id: "agent1",
+      _trustLevel: "admin",
+    });
+    for (const entry of result.entries as Array<Record<string, unknown>>) {
+      expect(entry["source_who"]).not.toContain("sk-ant-api03");
+      expect(entry["source_who"]).toBe("[REDACTED]");
+    }
+  });
+
+  it("scrubs secret-shaped value in a tag — must not reach the export envelope unscrubbed", async () => {
+    const secretTag = "sk-ant-api03-" + "TAGKEY1234567890abcdef";
+    const deps = makeDeps({
+      memoryApi: {
+        inspect: vi.fn(() => [
+          {
+            id: "mem-cr01-tag",
+            content: "harmless content",
+            trustLevel: "learned",
+            tags: [secretTag, "normal-tag"],
+            source: { who: "operator", channel: undefined, sessionKey: undefined },
+            createdAt: 1748000000000,
+          },
+        ]),
+        search: vi.fn(async () => []),
+        clear: vi.fn(() => 0),
+        stats: vi.fn(() => ({ totalEntries: 1 })),
+      } as never,
+    });
+    const handlers = createMemoryHandlers(deps);
+    // RED: secret tag passes through unscrubbed. GREEN: secret tag value is [REDACTED].
+    const result = await (handlers["memory.portability.export"] as Function)({
+      agent_id: "agent1",
+      _trustLevel: "admin",
+    });
+    for (const entry of result.entries as Array<Record<string, unknown>>) {
+      const tags = entry["tags"] as string[];
+      expect(tags).not.toContain(secretTag);
+      expect(tags.some((t) => t.includes("sk-ant-api03"))).toBe(false);
+      expect(tags).toContain("[REDACTED]");
+      expect(tags).toContain("normal-tag");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-03: non-string tag elements are filtered before reaching the store
+// RED state: rawTags cast as string[] lets non-string elements pass through.
+// GREEN state: .filter((t): t is string => typeof t === "string") applied.
+// ---------------------------------------------------------------------------
+
+describe("memory.portability.import — non-string tags are filtered before store (WR-03)", () => {
+  it("filters numeric and null tag elements — only string tags reach memoryAdapter.store", async () => {
+    const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
+    const deps = makeDeps({
+      memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
+      memoryWriteValidator: vi.fn(() => ({ severity: "clean" as const, patterns: [], criticalPatterns: [] })),
+    });
+    const handlers = createMemoryHandlers(deps);
+    // RED: non-string elements pass through to store. GREEN: only strings survive.
+    await (handlers["memory.portability.import"] as Function)({
+      entries: [{
+        id: "e-wr03", content: "clean content", trust_level: "learned",
+        memory_type: "semantic",
+        tags: ["string-tag", 42, null, { nested: true }, "another-string"],
+        source_who: "user", source_channel: null, source_session_key: null,
+        created_at: 1748000000000, occurred_at: null, proof_count: null,
+        source_ids: null, confidence: null, observation_kind: null, pattern_type: null,
+      }],
+      agent_id: "agent1",
+      _trustLevel: "admin",
+    });
+    expect(storeMock).toHaveBeenCalledTimes(1);
+    const stored = storeMock.mock.calls[0]?.[0] as { tags: unknown[] };
+    // Only string elements must survive
+    expect(stored["tags"]).toContain("string-tag");
+    expect(stored["tags"]).toContain("another-string");
+    expect(stored["tags"].every((t) => typeof t === "string")).toBe(true);
+    expect(stored["tags"]).not.toContain(42);
+    expect(stored["tags"]).not.toContain(null);
   });
 });
