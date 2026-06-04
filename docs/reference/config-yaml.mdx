@@ -401,7 +401,7 @@ agents:
       enabled: true                 # opt-in (default false) -- LLM cron, a cost gate
       schedule: "30 3 * * *"
     contextEngine:
-      version: dag                  # the default; set "pipeline" to opt out
+      version: pipeline             # the default; "dag" is accepted but falls back to pipeline until re-enabled
 
 memory:
   rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
@@ -485,14 +485,14 @@ Per-agent configuration for Gemini explicit CachedContent caching. When enabled,
 
 #### Context Engine (agents.*.contextEngine)
 
-Context engine configuration. Controls the system that manages what your agent sees each turn. Supports two operating modes: **dag** (default, the lossless DAG with recall tools) and **pipeline** (opt-out, the 8-step sequential system). See [Compaction](/agents/compaction) for a user-friendly explanation.
+Context engine configuration. Controls the system that manages what your agent sees each turn. The default is **pipeline** (the sequential layered engine). The **dag** value (the lossless DAG with recall tools) is being reimplemented for v2.12 and is not currently available — it is accepted but falls back to pipeline with a logged warning until re-enabled. See [Compaction](/agents/compaction) for a user-friendly explanation.
 
 **Core fields**
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Master toggle for the context engine |
-| `version` | `string` | `"dag"` | Operating mode: `"dag"` (default, lossless DAG with recall tools) or `"pipeline"` (opt-out, the 8-step sequential system) |
+| `version` | `string` | `"pipeline"` | Operating mode: `"pipeline"` (default, the 8-step sequential system) or `"dag"` (the lossless DAG; accepted but currently falls back to pipeline — being reimplemented) |
 
 **Shared fields** (both modes)
 
@@ -517,7 +517,7 @@ Context engine configuration. Controls the system that manages what your agent s
 | `observationDeactivationChars` | `number` | `80000` | Character threshold to deactivate observation masking entirely (20K-500K) |
 | `ephemeralKeepWindow` | `number` | `10` | Recent ephemeral tool results to keep unmasked (1-50) |
 
-**DAG mode fields** (`version: "dag"`)
+**DAG mode fields** (`version: "dag"`) — these keys still parse but are dormant while DAG falls back to pipeline (being reimplemented for v2.12):
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

@@ -42,8 +42,6 @@ import { createDeadContentEvictorLayer } from "./dead-content-evictor.js";
 import { detectRereads } from "./reread-detector.js";
 import type { Message } from "@earendil-works/pi-ai";
 import { estimateContextCharsWithDualRatio, estimateWithAnchor } from "../safety/token-estimator.js";
-import { createDagContextEngine } from "./dag-reconciliation.js";
-import type { DagContextEngineDeps } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Layer Circuit Breaker (internal)
@@ -229,19 +227,18 @@ export function createContextEngine(
     return { transformContext: async (msgs) => msgs, lastBreakpointIndex: undefined, lastTrimOffset: 0 };
   }
 
-  // DAG mode branch -- entirely different layer pipeline
+  // DAG mode stub (Phase 126 demolition): the DAG/LCD engine is being
+  // reimplemented for v2.12 and is NOT currently available. A config still
+  // pinned to version: "dag" must NOT crash the daemon and must NOT resurrect
+  // the deleted engine -- it WARN-logs and falls through to the pipeline
+  // assembly below. Re-enabled in Phase 133.
   if (config.version === "dag") {
-    const dagDeps = deps as DagContextEngineDeps;
-    if (dagDeps.contextStore && dagDeps.conversationId) {
-      return createDagContextEngine(config, dagDeps);
-    }
-    // Fallback: DAG mode requested but deps missing -- log WARN and fall through to pipeline
     deps.logger.warn(
       {
-        hint: "DAG mode configured but contextStore or conversationId not provided; falling back to pipeline mode",
+        hint: "dag/LCD context engine not yet available (v2.12 reimplementation); using pipeline",
         errorKind: "config" as const,
       },
-      "DAG context engine deps missing",
+      "context engine version 'dag' selected but not yet reimplemented -- using pipeline",
     );
   }
 
