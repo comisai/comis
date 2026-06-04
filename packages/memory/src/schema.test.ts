@@ -8,6 +8,7 @@ import {
   ensureEntityTables,
   ensureUsefulnessTable,
   ensureTripleTable,
+  ensureLcdTables,
 } from "./schema.js";
 import { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
 
@@ -220,6 +221,113 @@ describe("initSchema", () => {
       .all() as Array<{ name: string }>;
 
     expect(tables).toHaveLength(2);
+  });
+
+  // ── LCD lossless store: lcd_messages + lcd_message_parts (Phase 127, F1) ──
+  // The schema must persist every structured block with its tool columns + the
+  // verbatim block JSON, and carry the tenant/agent/session isolation columns
+  // NOW (Phase 132 R4 enforces on the same schema, no migration — threat
+  // T-127-06). DDL is forward-only (no down-migration; design §9) and idempotent.
+
+  it("initSchema creates the lcd_messages and lcd_message_parts tables", () => {
+    initSchema(db, 1536);
+
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lcd_%' ORDER BY name")
+      .all() as Array<{ name: string }>;
+
+    const names = tables.map((t) => t.name);
+    expect(names).toContain("lcd_messages");
+    expect(names).toContain("lcd_message_parts");
+  });
+
+  it("lcd_messages carries the tenant/agent/session isolation columns + seq/role/token_count/created_at", () => {
+    initSchema(db, 1536);
+
+    const columns = db.prepare("PRAGMA table_info(lcd_messages)").all() as Array<{ name: string }>;
+    const colNames = columns.map((c) => c.name);
+
+    expect(colNames).toContain("id");
+    // R4 scoping columns (threat T-127-06): present from day 1.
+    expect(colNames).toContain("conversation_id");
+    expect(colNames).toContain("tenant_id");
+    expect(colNames).toContain("agent_id");
+    expect(colNames).toContain("session_key");
+    expect(colNames).toContain("seq");
+    expect(colNames).toContain("role");
+    expect(colNames).toContain("token_count");
+    expect(colNames).toContain("created_at");
+  });
+
+  it("lcd_message_parts carries the F1 block columns (kind + tool fields + metadata)", () => {
+    initSchema(db, 1536);
+
+    const columns = db
+      .prepare("PRAGMA table_info(lcd_message_parts)")
+      .all() as Array<{ name: string }>;
+    const colNames = columns.map((c) => c.name);
+
+    expect(colNames).toContain("id");
+    expect(colNames).toContain("message_id");
+    expect(colNames).toContain("ordinal");
+    expect(colNames).toContain("kind");
+    expect(colNames).toContain("tool_call_id");
+    expect(colNames).toContain("tool_name");
+    expect(colNames).toContain("tool_input");
+    expect(colNames).toContain("tool_output");
+    expect(colNames).toContain("is_error");
+    // The verbatim-block JSON column (carries metadata.raw + messageEnvelope, F1/F2).
+    expect(colNames).toContain("metadata");
+  });
+
+  it("lcd_messages has the (conversation_id, seq) unique index", () => {
+    initSchema(db, 1536);
+
+    const indexes = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='lcd_messages'")
+      .all() as Array<{ name: string }>;
+
+    expect(indexes.map((i) => i.name)).toContain("idx_lcd_messages_conv_seq");
+  });
+
+  it("ensureLcdTables is idempotent -- calling twice does not throw", () => {
+    initSchema(db, 1536);
+    expect(() => ensureLcdTables(db)).not.toThrow();
+    expect(() => ensureLcdTables(db)).not.toThrow();
+
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lcd_%'")
+      .all() as Array<{ name: string }>;
+    expect(tables).toHaveLength(2);
+  });
+
+  it("deleting an lcd_messages row cascades to its lcd_message_parts (ON DELETE CASCADE)", () => {
+    initSchema(db, 1536);
+    // The bare `:memory:` test db is NOT opened via openSqliteDatabase (which
+    // sets PRAGMA foreign_keys = ON in production, sqlite-adapter-base.ts:52),
+    // so enable it here to exercise the cascade the production wiring guarantees.
+    db.pragma("foreign_keys = ON");
+
+    db.prepare(
+      `INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
+       VALUES ('msg-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 0, 'assistant', 12, 1700000000000)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO lcd_message_parts (id, message_id, ordinal, kind, metadata)
+       VALUES ('part-1', 'msg-1', 0, 'text', '{}')`,
+    ).run();
+
+    expect(
+      (db.prepare("SELECT COUNT(*) AS count FROM lcd_message_parts").get() as { count: number })
+        .count,
+    ).toBe(1);
+
+    db.prepare("DELETE FROM lcd_messages WHERE id = 'msg-1'").run();
+
+    expect(
+      (db.prepare("SELECT COUNT(*) AS count FROM lcd_message_parts").get() as { count: number })
+        .count,
+    ).toBe(0);
   });
 
   // ── occurred_at additive column ──────────────────────────

@@ -35,6 +35,8 @@ import type {
   VecSearchRow,
   FtsSearchRow,
   NamedGraphRow,
+  LcdMessageRow,
+  LcdMessagePartRow,
 } from "./types.js";
 import type { SessionData, SessionListEntry, SessionDetailedEntry } from "@comis/core";
 import {
@@ -69,6 +71,8 @@ import {
   CausalLaneRowSchema,
   MemoryTripleRowSchema,
   SpreadNodeRowSchema,
+  LcdMessageRowSchema,
+  LcdMessagePartRowSchema,
 } from "./row-schemas.js";
 
 // =====================================================================
@@ -95,6 +99,14 @@ describe("row-schemas — type-equality with paired interfaces", () => {
 
   it("NamedGraphRowSchema z.infer matches NamedGraphRow interface from types.ts", () => {
     expectTypeOf<z.infer<typeof NamedGraphRowSchema>>().toEqualTypeOf<NamedGraphRow>();
+  });
+
+  it("LcdMessageRowSchema z.infer matches LcdMessageRow interface from types.ts", () => {
+    expectTypeOf<z.infer<typeof LcdMessageRowSchema>>().toEqualTypeOf<LcdMessageRow>();
+  });
+
+  it("LcdMessagePartRowSchema z.infer matches LcdMessagePartRow interface from types.ts", () => {
+    expectTypeOf<z.infer<typeof LcdMessagePartRowSchema>>().toEqualTypeOf<LcdMessagePartRow>();
   });
 
   it("SessionDataSchema z.infer matches SessionData DTO from @comis/core", () => {
@@ -697,6 +709,86 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
   it("SpreadNodeRowSchema rejects an unexpected extra column (z.strictObject keeps the projection minimal)", () => {
     expect(
       SpreadNodeRowSchema.safeParse({ node: "berlin", depth: 1, rogue: "x" }).success,
+    ).toBe(false);
+  });
+
+  // --- LCD store row schemas (Phase 127, F1) ---
+  // lcd_messages carries the tenant/agent/session isolation columns; the strict
+  // schema rejects an extra column (drift catch) and accepts NULL on the
+  // nullable tool columns (SQLite NULL ≠ undefined for non-tool_result parts).
+
+  const fullLcdMessageRow = {
+    id: "msg-1",
+    conversation_id: "conv-1",
+    tenant_id: "tenant-1",
+    agent_id: "agent-1",
+    session_key: "sess-1",
+    seq: 0,
+    role: "assistant",
+    token_count: 12,
+    created_at: 1700000000000,
+  };
+
+  it("LcdMessageRowSchema parses a fully-populated lcd_messages row", () => {
+    expect(LcdMessageRowSchema.safeParse(fullLcdMessageRow).success).toBe(true);
+  });
+
+  it("LcdMessageRowSchema rejects an unexpected extra column (z.strictObject drift catch)", () => {
+    expect(
+      LcdMessageRowSchema.safeParse({ ...fullLcdMessageRow, rogue_column: "x" }).success,
+    ).toBe(false);
+  });
+
+  it("LcdMessageRowSchema rejects a row missing the session_key isolation column", () => {
+    const { session_key: _omit, ...withoutSessionKey } = fullLcdMessageRow;
+    expect(LcdMessageRowSchema.safeParse(withoutSessionKey).success).toBe(false);
+  });
+
+  const fullLcdPartRow = {
+    id: "part-1",
+    message_id: "msg-1",
+    ordinal: 0,
+    kind: "tool_use",
+    tool_call_id: "call-1",
+    tool_name: "search",
+    tool_input: '{"q":"berlin"}',
+    tool_output: null,
+    is_error: null,
+    metadata: '{"raw":{"type":"toolCall"}}',
+  };
+
+  it("LcdMessagePartRowSchema parses a fully-populated tool_use part row", () => {
+    expect(LcdMessagePartRowSchema.safeParse(fullLcdPartRow).success).toBe(true);
+  });
+
+  it("LcdMessagePartRowSchema accepts a NULL is_error (nullable for non-tool_result parts)", () => {
+    const textPart = {
+      id: "part-2",
+      message_id: "msg-1",
+      ordinal: 1,
+      kind: "text",
+      tool_call_id: null,
+      tool_name: null,
+      tool_input: null,
+      tool_output: null,
+      is_error: null,
+      metadata: '{"raw":{"type":"text","text":"hi"}}',
+    };
+    const parsed = LcdMessagePartRowSchema.safeParse(textPart);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.is_error).toBeNull();
+  });
+
+  it("LcdMessagePartRowSchema accepts a 0/1 is_error on a tool_result part", () => {
+    const errPart = { ...fullLcdPartRow, kind: "tool_result", tool_output: "[]", is_error: 1 };
+    const parsed = LcdMessagePartRowSchema.safeParse(errPart);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.is_error).toBe(1);
+  });
+
+  it("LcdMessagePartRowSchema rejects an unexpected extra column (z.strictObject drift catch)", () => {
+    expect(
+      LcdMessagePartRowSchema.safeParse({ ...fullLcdPartRow, rogue_column: "x" }).success,
     ).toBe(false);
   });
 });
