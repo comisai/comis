@@ -185,6 +185,16 @@ export interface ContextEngineDeps {
    *  static value is used. Used by idle thinking clear to strip all thinking
    *  blocks when the cache is cold (>1h idle). */
   getThinkingKeepTurnsOverride?: () => number | undefined;
+
+  // --- LCD dag-mode assembly (Phase 128) ---
+  /** Injected core ContextStorePort (the LCD lossless store) for dag-mode
+   *  assembly. TYPE-only from `@comis/core` — the agent NEVER imports
+   *  `@comis/memory` (the agent↛memory architecture cut); the daemon injects
+   *  the concrete `createLcdStore`. Absent ⇒ dag falls back to the pipeline. */
+  contextStore?: import("@comis/core").ContextStorePort;
+  /** Conversation id for the dag-mode store read (= `formatSessionKey(sessionKey)`).
+   *  Absent ⇒ dag falls back to the pipeline. */
+  conversationId?: string;
 }
 
 // ---------------------------------------------------------------------------
