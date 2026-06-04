@@ -279,6 +279,44 @@ export const SessionRowSchema = z.strictObject({
   metadata: z.string(), // JSON-encoded Record<string, unknown>
 });
 
+/**
+ * Schema for the `lcd_messages` table (LCD lossless store, Phase 127, F1).
+ * Paired with `LcdMessageRow` exported from `./types.js`. The R4 isolation
+ * columns are strict-required so a SELECT that drops one fails loudly (threat
+ * T-127-06 — a silent scoping gap would be a cross-tenant hole).
+ */
+export const LcdMessageRowSchema = z.strictObject({
+  id: z.string(),
+  conversation_id: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  session_key: z.string(),
+  seq: z.number(), // monotonic per conversation
+  role: z.string(), // pi-ai role: user | assistant | toolResult
+  token_count: z.number(),
+  created_at: z.number(), // Unix ms
+});
+
+/**
+ * Schema for the `lcd_message_parts` table (LCD lossless store, Phase 127, F1).
+ * Paired with `LcdMessagePartRow` exported from `./types.js`. Tool columns are
+ * nullable (SQLite NULL ≠ undefined — absent for non-tool blocks); `is_error`
+ * is the SQLite bool 0/1 integer; `tool_input`/`tool_output`/`metadata` are
+ * JSON-encoded TEXT parsed (graceful-degrade `safeParse`) on the read path.
+ */
+export const LcdMessagePartRowSchema = z.strictObject({
+  id: z.string(),
+  message_id: z.string(),
+  ordinal: z.number(),
+  kind: z.string(), // text | tool_use | tool_result | reasoning | file
+  tool_call_id: z.string().nullable(),
+  tool_name: z.string().nullable(),
+  tool_input: z.string().nullable(), // JSON
+  tool_output: z.string().nullable(), // JSON
+  is_error: z.number().int().nullable(), // 0/1; null for non-tool_result
+  metadata: z.string(), // JSON-encoded LcdPartMetadata (raw + messageEnvelope + reasoning marker)
+});
+
 // Schema for sqlite-vec KNN query results. Paired with `VecSearchRow` (./types.js).
 export const VecSearchRowSchema = z.strictObject({
   memory_id: z.string(),
