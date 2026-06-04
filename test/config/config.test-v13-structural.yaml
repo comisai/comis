@@ -59,6 +59,14 @@ scheduler:
     enabled: false
     criticalBypass: true
 
+# Embedding OFF: the local provider downloads a GGUF manifest from
+# HuggingFace at daemon startup; when HF throttles CI runner IPs the
+# resulting "No embedding provider available" warn fails this suite's
+# clean-startup-logs assertions. These tests assert log hygiene, not
+# embedding behavior -- keep them network-independent (rag is already off).
+embedding:
+  enabled: false
+
 memory:
   dbPath: "test-memory-180-v13-structural.db"
 
