@@ -644,7 +644,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         if (profileTools) {
           for (const t of profileTools) allowedNames.add(t);
         }
-        // Also check TOOL_GROUPS (e.g., "context_expand" -> ["ctx_expand", "ctx_inspect"])
+        // Also check TOOL_GROUPS (e.g., "web" -> ["web_fetch", "web_search", "browser"])
         const groupKey = group.startsWith("group:") ? group : `group:${group}`;
         const groupTools = TOOL_GROUPS[groupKey];
         if (groupTools) {

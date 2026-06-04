@@ -94,11 +94,6 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   telegram_action: "Perform actions on Telegram platform",
   slack_action: "Perform actions on Slack platform",
   whatsapp_action: "Perform actions on WhatsApp platform",
-  // Context
-  ctx_search: "Search current context window entries",
-  ctx_inspect: "Inspect individual context entry details",
-  ctx_expand: "Expand compressed or summarized entries",
-  ctx_recall: "Recall evicted context by query",
   // Privileged / Supervisor
   agents_manage: "Manage full agent fleet (admin)",
   obs_query: "Query platform diagnostics data (admin)",
@@ -177,12 +172,6 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   slack_action: "Slack actions: pin, topic, archive, channels, invites.",
   whatsapp_action: "WhatsApp actions: group management, participants, settings.",
 
-  // ----- Context -----
-  ctx_search: "Search context window for matching entries by query.",
-  ctx_inspect: "Inspect detailed metadata of a context entry by ID.",
-  ctx_expand: "Expand a compressed or summarized context entry to full content.",
-  ctx_recall: "Recall evicted context entries by semantic query.",
-
   // ----- Privileged / Supervisor (dynamic: admin suffix) -----
   agents_manage: (ctx: ToolDescriptionContext): string => {
     const base = "Manage agent fleet: list, create, get, update, delete, suspend, resume. For batch creation, pass workspace.role/identity inline to skip the 2-step write flow.";
@@ -244,11 +233,10 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
 export const TOOL_ORDER: string[] = [
   // Start (high-frequency): file ops, messaging, memory, web
   "read", "edit", "notebook_edit", "write", "exec", "message", "memory_search", "web_search",
-  // Middle (low-frequency): platform actions, privileged, context, media
+  // Middle (low-frequency): platform actions, privileged, media
   "discord_action", "telegram_action", "slack_action", "whatsapp_action",
   "agents_manage", "obs_query", "sessions_manage", "memory_manage",
   "channels_manage", "tokens_manage", "models_manage", "providers_manage", "skills_manage", "mcp_manage", "heartbeat_manage",
-  "ctx_search", "ctx_inspect", "ctx_expand", "ctx_recall",
   "image_analyze", "tts_synthesize", "transcribe_audio", "describe_video", "extract_document",
   "browser", "gateway",
   // End (medium-frequency): file nav, sessions, process, cron

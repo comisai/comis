@@ -24,8 +24,8 @@ describe("LEAN_TOOL_DESCRIPTIONS", () => {
     }
   });
 
-  it("has entries for all 46 tools (excludes 6 native file tools)", () => {
-    expect(Object.keys(LEAN_TOOL_DESCRIPTIONS).length).toBe(46);
+  it("has entries for all 42 tools (excludes 6 native file tools)", () => {
+    expect(Object.keys(LEAN_TOOL_DESCRIPTIONS).length).toBe(42);
   });
 });
 
@@ -38,8 +38,8 @@ describe("TOOL_SUMMARIES", () => {
     }
   });
 
-  it("has entries for all 52 tools", () => {
-    expect(Object.keys(TOOL_SUMMARIES).length).toBe(52);
+  it("has entries for all 48 tools", () => {
+    expect(Object.keys(TOOL_SUMMARIES).length).toBe(48);
   });
 });
 
