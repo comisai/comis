@@ -112,7 +112,13 @@ function collectLockfileNames(): Set<string> {
   const RE = /^  '?(@?[^@'(]+)@/;
   for (const line of text.split("\n")) {
     const m = RE.exec(line);
-    if (m && m[1]) names.add(m[1].trim());
+    if (m && m[1]) {
+      // pnpm v5/v6 path-style keys ("/package-name@version:") carry a
+      // leading slash that would cause depNames.has("isolated-vm") to miss
+      // a path-style entry captured as "/isolated-vm". Strip it.
+      const name = m[1].trim().replace(/^\//, "");
+      if (name) names.add(name);
+    }
   }
   return names;
 }

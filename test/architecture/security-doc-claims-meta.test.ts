@@ -119,4 +119,17 @@ describe("security-doc-claims guard detects reverted claims", () => {
       ),
     ).toBe(false);
   });
+
+  it("lockfile name normalization strips leading slash from pnpm v5/v6 path-style entries", () => {
+    // collectLockfileNames is private but we can verify the normalization logic
+    // that was added to it: a path-style entry "/isolated-vm@2.3.1:" must be
+    // captured as "isolated-vm" not "/isolated-vm".
+    const RE = /^  '?(@?[^@'(]+)@/;
+    const pathStyleLine = "  '/isolated-vm@2.3.1':";
+    const m = RE.exec(pathStyleLine);
+    const rawCapture = m ? m[1].trim() : "";
+    const normalized = rawCapture.replace(/^\//, "");
+    expect(rawCapture).toBe("/isolated-vm"); // confirms the raw regex captures the slash
+    expect(normalized).toBe("isolated-vm");  // confirms normalization removes it
+  });
 });
