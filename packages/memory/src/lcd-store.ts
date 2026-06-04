@@ -12,6 +12,15 @@
  * reconstruction delegates to @comis/core's `partsToMessage` codec (F2/F3) — the
  * single pi-ai-typed seam, consumed by Phase 128 assembly.
  *
+ * Phase 129 (C3) extends the store with the depth-0 leaf-compaction surface:
+ * `appendLeafSummary` (ONE `db.transaction` that persists the `lcd_summaries`
+ * row, links every covered message via `lcd_summary_messages`, and
+ * range-replaces the covered `lcd_context_items` message-refs with one
+ * summary-ref — keeping ordinals dense, gap-free and ordered) and
+ * `getContextItems` (the ordered model-facing view, lazily seeded 1:1 from
+ * `lcd_messages` on first read; no migration). `lcd_messages` is NEVER deleted
+ * (FK RESTRICT enforces losslessness). The store NEVER logs summary `content`.
+ *
  * NO module-level logger in Phase 127 (mirrors createSessionStore exactly): the
  * memory package has no infra-logging dependency and AGENTS.md §2.4 forbids
  * importing the infra logger directly (inject the logger via Deps). The boundary
@@ -28,18 +37,25 @@ import type Database from "better-sqlite3";
 import {
   partsToMessage,
   type AppendMessageInput,
+  type AppendSummaryInput,
   type ContextStorePort,
+  type LcdContextItem,
   type LcdMessage,
   type LcdMessagePart,
   type LcdPartMetadata,
   type LcdPartKind,
+  type LcdRefKind,
   type LcdRole,
 } from "@comis/core";
 import type { Message } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { createRowMapper } from "./row-mapper.js";
-import { LcdMessageRowSchema, LcdMessagePartRowSchema } from "./row-schemas.js";
+import {
+  LcdContextItemRowSchema,
+  LcdMessageRowSchema,
+  LcdMessagePartRowSchema,
+} from "./row-schemas.js";
 
 /**
  * The named pi-ai reconstruction entry point for the LCD store (F2/F3).
@@ -59,6 +75,15 @@ export function reconstructLcdMessage(message: LcdMessage): Message {
 // failure, never throw; strictObject rejects extra columns = drift detection).
 const messageRowMapper = createRowMapper(LcdMessageRowSchema);
 const partRowMapper = createRowMapper(LcdMessagePartRowSchema);
+const ctxItemRowMapper = createRowMapper(LcdContextItemRowSchema);
+
+/** Projection for the lazy-seed / range-coverage read: message id + createdAt, seq-ordered. */
+const MessageSeedRowSchema = z.strictObject({ id: z.string(), created_at: z.number() });
+const messageSeedRowMapper = createRowMapper(MessageSeedRowSchema);
+
+/** Single-column ordinal projection for the dense-shift pass (no `as` cast — untyped-sqlite rule). */
+const CtxOrdinalRowSchema = z.strictObject({ ordinal: z.number() });
+const ctxOrdinalRowMapper = createRowMapper(CtxOrdinalRowSchema);
 
 /** The verbatim canonical block is opaque at the row layer (F1). */
 const LcdPartMetadataSchema = z.looseObject({
@@ -133,6 +158,198 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   const selectParts = db.prepare(
     "SELECT * FROM lcd_message_parts WHERE message_id = ? ORDER BY ordinal",
   );
+
+  // ── Phase 129 (C3) statements: summaries + context_items range-replace ──
+  // Static SQL, bound params, no interpolated identifiers (T-129-03).
+
+  // The seq-ordered (id, created_at) projection — the lazy seed AND the
+  // range-coverage / time-range source. (We re-select created_at by ordinal
+  // range below rather than re-deriving it from getMessages, keeping it pure SQL.)
+  const selectMsgSeed = db.prepare(
+    "SELECT id, created_at FROM lcd_messages WHERE conversation_id = ? ORDER BY seq",
+  );
+
+  const insertSummary = db.prepare(`
+    INSERT INTO lcd_summaries
+      (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+       earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+    VALUES (?, ?, ?, ?, ?, 'leaf', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertSummaryMessage = db.prepare(
+    "INSERT OR IGNORE INTO lcd_summary_messages (summary_id, message_id) VALUES (?, ?)",
+  );
+
+  const insertCtxItem = db.prepare(`
+    INSERT INTO lcd_context_items
+      (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const selectCtxItems = db.prepare(
+    "SELECT * FROM lcd_context_items WHERE conversation_id = ? ORDER BY ordinal",
+  );
+
+  // The covered run [start,end] (inclusive), ordinal-ascending — used to gather
+  // the message refIds the new summary links + to count descendants.
+  const selectCtxItemsInRange = db.prepare(
+    "SELECT * FROM lcd_context_items WHERE conversation_id = ? AND ordinal >= ? AND ordinal <= ? ORDER BY ordinal",
+  );
+
+  const deleteCtxItemsInRange = db.prepare(
+    "DELETE FROM lcd_context_items WHERE conversation_id = ? AND ordinal >= ? AND ordinal <= ?",
+  );
+
+  // The ordinals strictly above the replaced range, ascending — shifted DOWN
+  // one row at a time (smallest source first → smallest, already-vacated target
+  // first) so the UNIQUE (conversation_id, ordinal) index never sees a transient
+  // duplicate (the delete above already vacated the [start,end] slots).
+  const selectCtxOrdinalsAbove = db.prepare(
+    "SELECT ordinal FROM lcd_context_items WHERE conversation_id = ? AND ordinal > ? ORDER BY ordinal",
+  );
+
+  const updateCtxItemOrdinal = db.prepare(
+    "UPDATE lcd_context_items SET ordinal = ? WHERE conversation_id = ? AND ordinal = ?",
+  );
+
+  const countCtxItems = db.prepare(
+    "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ?",
+  );
+
+  /**
+   * Lazily seed context_items 1:1 from lcd_messages for a conversation with zero
+   * rows (A4 — no migration). One message-ref per message, ordinal = seq index,
+   * refId = message id. Scope columns come from the first matching message row's
+   * scope (the scope is conversation-uniform). Caller runs this inside a txn.
+   * Skips silently on a conversation with no messages (nothing to seed).
+   */
+  function seedContextItems(conversationId: string): void {
+    if ((countCtxItems.get(conversationId) as { c: number }).c > 0) return;
+    // The full scoped message rows (need tenant/agent/session for the ctx rows).
+    let ordinal = 0;
+    for (const rawMsg of selectMsgs.all(conversationId)) {
+      const parsed = messageRowMapper.parseOptionalRow(rawMsg);
+      if (!parsed.ok || !parsed.value) continue; // skip only the bad message row (WR-02)
+      const row = parsed.value;
+      insertCtxItem.run(
+        randomUUID(),
+        row.conversation_id,
+        row.tenant_id,
+        row.agent_id,
+        row.session_key,
+        ordinal,
+        "message" satisfies LcdRefKind,
+        row.id,
+      );
+      ordinal++;
+    }
+  }
+
+  const seedTxn = db.transaction((conversationId: string) => {
+    seedContextItems(conversationId);
+  });
+
+  // One atomic write: persist the leaf summary, link every covered message, and
+  // range-replace the covered context_items message-refs with one summary-ref —
+  // ordinals stay dense, gap-free, ordered (C3). NEVER deletes lcd_messages
+  // (Pitfall 5 — FK RESTRICT enforces losslessness; expansion in Phase 131
+  // recovers the underlying rows).
+  const appendLeafSummaryTxn = db.transaction((input: AppendSummaryInput): string => {
+    const conversationId = input.scope.conversationId;
+    // Ensure the model-facing view exists before range-replacing it (auto-seed
+    // so a leaf pass works even if getContextItems was never called first).
+    seedContextItems(conversationId);
+
+    // The covered run [start,end]: gather the message refIds it covers (only
+    // `message`-refs link to lcd_messages — a `summary`-ref over a prior leaf is
+    // possible in later phases but in 129 the eviction selects a message run).
+    const coveredItems: LcdContextItem[] = [];
+    for (const raw of selectCtxItemsInRange.all(conversationId, input.startOrdinal, input.endOrdinal)) {
+      const parsed = ctxItemRowMapper.parseOptionalRow(raw);
+      if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
+      coveredItems.push({
+        ordinal: parsed.value.ordinal,
+        refKind: parsed.value.ref_kind as LcdRefKind,
+        refId: parsed.value.ref_id,
+      });
+    }
+    const coveredMessageIds = coveredItems
+      .filter((it) => it.refKind === "message")
+      .map((it) => it.refId);
+
+    // Recompute descendantCount + time-range from the COVERED messages (the
+    // store is the authority — the input's descendantCount/earliest/latest are
+    // advisory; C3 correctness requires they match the actual covered run).
+    const coveredSet = new Set(coveredMessageIds);
+    let earliestAt = Number.POSITIVE_INFINITY;
+    let latestAt = Number.NEGATIVE_INFINITY;
+    for (const rawMsg of selectMsgSeed.all(conversationId)) {
+      const parsed = messageSeedRowMapper.parseOptionalRow(rawMsg);
+      if (!parsed.ok || !parsed.value) continue;
+      if (!coveredSet.has(parsed.value.id)) continue;
+      if (parsed.value.created_at < earliestAt) earliestAt = parsed.value.created_at;
+      if (parsed.value.created_at > latestAt) latestAt = parsed.value.created_at;
+    }
+    const descendantCount = coveredMessageIds.length;
+    // Degrade to the caller-supplied range when nothing matched (defensive; an
+    // empty covered run yields a zero-descendant summary, never NaN bounds).
+    const resolvedEarliest = Number.isFinite(earliestAt) ? earliestAt : input.earliestAt;
+    const resolvedLatest = Number.isFinite(latestAt) ? latestAt : input.latestAt;
+
+    // 1. Persist the leaf summary row (depth 0, kind 'leaf', taint/fallback 0/1).
+    const summaryId = randomUUID();
+    insertSummary.run(
+      summaryId,
+      conversationId,
+      input.scope.tenantId,
+      input.scope.agentId,
+      input.scope.sessionKey,
+      resolvedEarliest,
+      resolvedLatest,
+      descendantCount,
+      input.tokenCount,
+      input.content,
+      JSON.stringify(input.fileIds),
+      input.taint ? 1 : 0,
+      input.fallback ? 1 : 0,
+      input.createdAt,
+    );
+
+    // 2. Link one row per covered message id (losslessness ledger).
+    for (const messageId of coveredMessageIds) {
+      insertSummaryMessage.run(summaryId, messageId);
+    }
+
+    // 3. Delete the [start,end] context_items rows (vacates those ordinals).
+    deleteCtxItemsInRange.run(conversationId, input.startOrdinal, input.endOrdinal);
+
+    // 4. Insert the summary-ref at ordinal = startOrdinal (a now-vacated slot).
+    insertCtxItem.run(
+      randomUUID(),
+      conversationId,
+      input.scope.tenantId,
+      input.scope.agentId,
+      input.scope.sessionKey,
+      input.startOrdinal,
+      "summary" satisfies LcdRefKind,
+      summaryId,
+    );
+
+    // 5. Shift every ordinal strictly above the replaced range DOWN by
+    //    (endOrdinal - startOrdinal), one row at a time in ascending order so
+    //    each target slot is already vacated (no transient UNIQUE-index dup).
+    const shift = input.endOrdinal - input.startOrdinal;
+    if (shift > 0) {
+      for (const raw of selectCtxOrdinalsAbove.all(conversationId, input.endOrdinal)) {
+        const parsed = ctxOrdinalRowMapper.parseOptionalRow(raw);
+        if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
+        const ordinal = parsed.value.ordinal;
+        updateCtxItemOrdinal.run(ordinal - shift, conversationId, ordinal);
+      }
+    }
+
+    return summaryId;
+  });
 
   // One atomic write: the message row + its N part rows commit together (F1).
   const appendTxn = db.transaction((input: AppendMessageInput) => {
@@ -220,6 +437,36 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
         });
       }
 
+      return out;
+    },
+
+    appendLeafSummary(input: AppendSummaryInput): string {
+      return appendLeafSummaryTxn(input);
+    },
+
+    getContextItems(conversationId: string): LcdContextItem[] {
+      // Lazy-seed 1:1 from lcd_messages on first read (A4 — no migration). The
+      // seed runs in its own txn so the SELECT below sees the inserted rows.
+      if ((countCtxItems.get(conversationId) as { c: number }).c === 0) {
+        seedTxn(conversationId);
+      }
+
+      // WR-02: degrade PER ROW, not per result-set — a corrupt/ drifted
+      // context_items row is skipped, its siblings survive (NEVER `parseRows`,
+      // which would discard every already-validated row). Ordering is preserved
+      // (we iterate the ORDER BY ordinal result in order). The skip is silent by
+      // design: the memory package has no infra-logging dependency (AGENTS.md
+      // §2.4); the boundary observability line is agent-side (Plan 05).
+      const out: LcdContextItem[] = [];
+      for (const raw of selectCtxItems.all(conversationId)) {
+        const parsed = ctxItemRowMapper.parseOptionalRow(raw);
+        if (!parsed.ok || !parsed.value) continue; // skip only the bad row
+        out.push({
+          ordinal: parsed.value.ordinal,
+          refKind: parsed.value.ref_kind as LcdRefKind,
+          refId: parsed.value.ref_id,
+        });
+      }
       return out;
     },
   };
