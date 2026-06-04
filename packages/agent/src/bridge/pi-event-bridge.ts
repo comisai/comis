@@ -73,7 +73,8 @@ import * as pathModule from "node:path";
 import { appendSessionIndexEntry } from "@comis/observability";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
-import { checkStepLimit, emitStepLimitAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
+import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
+import type { LoopStateReporter } from "./bridge-safety-controls.js";
 import {
   computeThinkingBlockHashes,
   diffThinkingBlocksAgainstPersisted,
@@ -156,6 +157,13 @@ export interface PiEventBridgeDeps {
   costTracker: CostTracker;
   stepCounter: StepCounter;
   circuitBreaker: CircuitBreaker;
+  /**
+   * Per-execution loop detector (FIX #2). When present, the bridge breaks the
+   * turn early with finishReason "loop_detected" once it reports a no-progress
+   * / empty-turn loop — well before the step limit. Satisfied by the executor's
+   * TurnLoopDetector.
+   */
+  turnLoopDetector?: LoopStateReporter;
   sessionKey: SessionKey;
   agentId: string;
   channelId: string;
@@ -842,6 +850,19 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               m.finishReason = stepCheck.finishReason!;
               m.aborted = true;
               emitStepLimitAbort(deps);
+            }
+          }
+
+          // Safety: break a runaway repeating-tool loop early (FIX #2) — fires
+          // at the detector's no-progress threshold, well before the step limit.
+          // finishReason "loop_detected" flows to the orchestrator's
+          // mapAbortToTurnOutcome (FIX #3) for a truthful status.
+          if (deps.turnLoopDetector) {
+            const loopCheck = checkLoopLimit(deps.turnLoopDetector, m.aborted);
+            if (loopCheck.shouldAbort) {
+              m.finishReason = loopCheck.finishReason!;
+              m.aborted = true;
+              emitLoopAbort(deps);
             }
           }
 
