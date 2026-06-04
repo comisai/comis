@@ -145,7 +145,6 @@ function makeDeps(container: AppContainer): SingleAgentDeps {
     clock: { now: () => 0, monotonicNnow: () => 0 } as any,
     env: { get: vi.fn() } as any,
     timers: { setTimeout: vi.fn(), setInterval: vi.fn() } as any,
-    pendingModeSwitches: new Map(),
     trajectoryRegistry: { closeAll: vi.fn() } as any,
   } as unknown as SingleAgentDeps;
 }

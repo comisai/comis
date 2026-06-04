@@ -112,7 +112,6 @@ import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/i
 import {
   setupSecrets as _setupSecretsImpl,
   createNamedGraphStore,
-  createContextStore,
   createObservabilityStore,
   selectSecretStore,
 } from "@comis/memory";
@@ -1000,12 +999,6 @@ function buildRpcDispatchDeps(deps: {
           logger: c.skillsLogger,
           getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
         };
-  // Inlined buildContextEngineConfig: read default agent's contextEngine sub-tree with fallbacks.
-  const contextEngineConfig = {
-    maxRecallsPerDay: c.agentsConfig[c.defaultAgentId]?.contextEngine?.maxRecallsPerDay ?? 10,
-    maxExpandTokens: c.agentsConfig[c.defaultAgentId]?.contextEngine?.maxExpandTokens ?? 4000,
-    recallTimeoutMs: c.agentsConfig[c.defaultAgentId]?.contextEngine?.recallTimeoutMs ?? 120000,
-  };
   // Inlined buildTokenStoreMutators.
   const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
   const removeFromTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["removeFromTokenStore"] = (id) => {
@@ -1070,8 +1063,7 @@ function buildRpcDispatchDeps(deps: {
     // MemoryApiDeps.eventBus accepts the full AppContainer["eventBus"] type;
     // no down-cast to `{ emit }` is needed.
     eventBus: c.container.eventBus,
-    mcpClientManager: c.mcpClientManager, contextStore: c.contextStore,
-    contextEngineConfig,
+    mcpClientManager: c.mcpClientManager,
     obsStore: c.obsStore, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
     contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
     deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
@@ -1640,8 +1632,7 @@ async function bootFoundation(
   const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
 
-  // Create context store + daemon-level runtime registries
-  const contextStore = createContextStore(db);
+  // Create daemon-level runtime registries
   const activeRunRegistry = createActiveRunRegistry();
   const sessionResolver = createBackgroundSessionResolver({ activeRunRegistry });
   const canaryFallbackSecret = (await import("node:crypto")).createHmac("sha256", container.config.tenantId)
@@ -1763,7 +1754,7 @@ async function bootFoundation(
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
     embeddingCircuitBreakerState, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
-    obsStore, obsPersistence, contextStore,
+    obsStore, obsPersistence,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
     geminiCacheManager,
@@ -1824,7 +1815,6 @@ async function bootAgents(
     causalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
     tripleStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
     embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, // the MMR re-rank's scoped embedding read + recall usefulness read + the LLM-free <user_profile> standing-block read + the LLM-free <channel_relationships> standing-block read (dormant until the offline builder writes rows + the social-modeling sign-off) + the buildScoringAlphas tuned-vector read (dormant until rag.onlineTuning.enabled + the bandit cron) -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut)
-    contextStore,
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
@@ -1951,9 +1941,6 @@ async function bootAgents(
     canaryFallbackSecret,  // Deterministic canary fallback
     injectionRateLimiter,  // Per-user injection rate limiting
     embeddingQueue,  // Conversation memory persistence in executor
-    // DAG context engine deps
-    contextStore,
-    db,
     embeddingPort: cachedPort,  // Semantic search in discover_tools
     // Session mirroring -- mirror port + injection budget config
     deliveryMirror,

@@ -97,7 +97,6 @@ import type {
 } from "./wiring/index.js";
 import type { BrokerHandle } from "./wiring/setup-broker.js";
 import type { createNamedGraphStore } from "@comis/memory";
-import type { createContextStore } from "@comis/memory";
 import type { createTokenRegistry } from "./api/token-handlers.js";
 import type { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import type { ObsPersistenceResult } from "./observability/obs-persistence-wiring.js";
@@ -457,7 +456,6 @@ export interface BootContext {
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;
-  contextStore: ReturnType<typeof createContextStore>;
   // Runtime registries (4 fields)
   activeRunRegistry: ReturnType<typeof createActiveRunRegistry>;
   sessionResolver: ReturnType<typeof createBackgroundSessionResolver>;

@@ -893,13 +893,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "TranscriptToolCallIdMode",
       "createNoOpCapabilityPort",
       "PROFILE_ID_RE",
-      // ContextStorePort is declared but not yet consumed by agent —
-      // tracked as a planned-orphan policy entry mirrored from the
-      // FileLockPort pattern. Preserved this entry through the split:
-      // ContextStorePort is now a type alias
-      // (`type ContextStorePort = ContextEngineStore & ContextAdminStore`)
-      // and remains an in-codebase symbol consumed primarily by the
-      // daemon's context-handlers + the memory contract test.
+      // ContextStorePort is a type alias
+      // (`type ContextStorePort = ContextEngineStore & ContextAdminStore`).
+      // Its daemon consumers (context-handlers + api/types.ts) were deleted
+      // in Phase 126 Plan 03 (DAG RPC demolition); the only remaining
+      // top-level consumer is memory's createContextStore factory return
+      // type + the memory contract test. Planned-orphan until Plan 04
+      // removes the core ports + the memory context-store outright.
+      // [removedIn: phase-126-plan-04]
       "ContextStorePort",
       // ContextEngineStore (34 per-session read/write methods). Its only
       // top-level `import type` consumers were the agent's dag-triggers.ts /
@@ -913,14 +914,26 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ContextEngineStore",
       // ContextAdminStore (4 admin/cleanup methods). The admin half of
       // ContextStorePort. No production consumer imports this name as a
-      // value-typed annotation today — the daemon's context-handlers +
-      // api/types.ts consume the wider intersection alias
-      // `ContextStorePort` (which still resolves structurally through
-      // the alias to the union of Engine + Admin methods). Tracked as a
+      // value-typed annotation today — its former daemon consumers
+      // (context-handlers + api/types.ts) were deleted in Phase 126 Plan 03;
+      // memory's createContextStore factory still composes the wider
+      // intersection alias `ContextStorePort` structurally. Tracked as a
       // planned-orphan policy entry mirroring the ContextStorePort
       // pattern above; the memory contract test gates the type contract
       // via `.toExtend<ContextAdminStore>()`.
       "ContextAdminStore",
+      // DAG ctx_* RPC contracts (api-contracts/memory.ts). Their sole
+      // top-level consumer was the daemon's context-handlers.ts, deleted in
+      // Phase 126 Plan 03 (DAG RPC demolition). The 2 still-consumed
+      // contracts (ContextSearchContract / ContextInspectContract — routed by
+      // cli/src/commands/memory.ts) are NOT listed here; these 5 are now
+      // orphaned and tracked as planned-orphans until Plan 04 deletes the
+      // contract definitions outright. [removedIn: phase-126-plan-04]
+      "ContextRecallContract",
+      "ContextExpandContract",
+      "ContextConversationsContract",
+      "ContextTreeContract",
+      "ContextSearchByConversationContract",
       // Row DTOs for ContextStorePort moved from @comis/memory into
       // core/src/ports/context-store-types.ts. The 2 link-table types
       // (CtxSummaryMessageRow, CtxSummaryParentRow) were already orphans
@@ -1807,9 +1820,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // orphan export that shrinks when a real cross-package consumer materializes.
       "StorageModePreRead",
     ])],
-    // @comis/daemon: baseline orphans tracked here. All four
+    // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
-    // createContextHandlers, createAgentHandlers, createTracingLogger)
+    // createAgentHandlers, createTracingLogger)
     // DO have real test consumers — they are tracked here only because
     // the public-export-consumers AST walker excludes `test/**` and
     // ignores dynamic `require("@comis/daemon")` patterns (it walks
@@ -1821,8 +1834,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // Consumer audit (2026-05-21):
     //   - createAnnouncementDeadLetterQueue / AnnouncementDeadLetterQueue / DeadLetterEntry
     //     → test/integration/resilience-e2e-dead-letter.test.ts:22 (static import)
-    //   - createContextHandlers / ContextHandlerDeps
-    //     → test/integration/context-dag-integration.test.ts:52-53 (static import)
     //   - createAgentHandlers / AgentHandlerDeps
     //     → test/integration/oauth-multi-account.test.ts:80,580 (static import +
     //       direct factory call — drives the agents.update RPC handler against a
@@ -1845,8 +1856,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createAnnouncementDeadLetterQueue",
       "AnnouncementDeadLetterQueue",
       "DeadLetterEntry",
-      "createContextHandlers",
-      "ContextHandlerDeps",
       "createAgentHandlers",
       "AgentHandlerDeps",
       // MCP install persistence — re-exported so the integration test at
@@ -2036,6 +2045,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // barrel anymore. The 5 entries below document this transient state.
     ["@comis/memory", new Set<string>([
       "initSchema",
+      // createContextStore: the DAG context-store factory. Its sole top-level
+      // consumer was daemon.ts, deleted in Phase 126 Plan 03 (DAG RPC
+      // demolition). Tracked as a planned-orphan until Plan 04 deletes
+      // context-store.ts + this barrel re-export outright.
+      // [removedIn: phase-126-plan-04]
+      "createContextStore",
       "SessionData",
       "SessionListEntry",
       "InspectFilters",

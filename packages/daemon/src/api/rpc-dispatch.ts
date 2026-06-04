@@ -42,7 +42,6 @@ import { createTokenHandlers } from "./token-handlers.js";
 import { createDaemonHandlers } from "./daemon-handlers.js";
 import { createMcpHandlers } from "./mcp-handlers.js";
 import { createMcpOauthHandlers } from "./mcp-oauth-handlers.js";
-import { createContextHandlers } from "./context-handlers.js";
 import { createGraphHandlers } from "./graph-handlers/index.js";
 import { createWorkspaceHandlers } from "./workspace-handlers.js";
 import { createHeartbeatHandlers } from "./heartbeat-handlers.js";
@@ -375,19 +374,6 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     ...(deps.imageHandlerDeps
       ? createImageHandlers(deps.imageHandlerDeps)
       : {}),
-    // Context DAG recall handlers (conditional on contextStore) — consumes
-    // MemoryApiDeps. Spread `...deps` so cluster slice's required fields
-    // (memoryApi, memoryAdapter, etc.) are present.
-    ...(deps.contextStore ? createContextHandlers({
-      ...deps,
-      store: deps.contextStore,
-      tenantId: deps.tenantId,
-      resolveConversationId: (sessionKey: string) =>
-        deps.contextStore!.getConversationBySession(deps.tenantId, sessionKey)?.conversation_id,
-      rpcCall: async (method, params) => selfDispatch(method, params),
-      config: deps.contextEngineConfig ?? { maxRecallsPerDay: 5, maxExpandTokens: 4000, recallTimeoutMs: 120000 },
-      logger: deps.logger,
-    }) : {}),
   };
 
   // Return the dispatch function

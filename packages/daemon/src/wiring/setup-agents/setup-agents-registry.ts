@@ -172,14 +172,6 @@ export async function setupAgents(deps: {
   injectionRateLimiter?: InjectionRateLimiter;
   /** Embedding queue for async vector generation. Wired into executor for conversation persistence. */
   embeddingQueue?: { enqueue(entryId: string, content: string): void };
-  /** Context store for DAG mode context engine. Narrowed to ContextEngineStore
-   *  (the engine half of ContextStorePort) — the agent never calls admin
-   *  methods (listConversations, cleanupExpiredGrants, deleteConversation,
-   *  touchConversation), so the narrower view prevents structural misuse at
-   *  compile time. */
-  contextStore?: import("@comis/core").ContextEngineStore;
-  /** Raw better-sqlite3 database handle for DAG transactions */
-  db?: unknown;
   /** Optional embedding port for discover_tools semantic search. */
   embeddingPort?: import("@comis/core").EmbeddingPort;
   /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
@@ -443,8 +435,6 @@ export async function setupAgents(deps: {
     canaryFallbackSecret: deps.canaryFallbackSecret,
     injectionRateLimiter: deps.injectionRateLimiter,
     embeddingQueue: deps.embeddingQueue,
-    contextStore: deps.contextStore,
-    db: deps.db,
     providerHealth,
     lastKnownModel,
     embeddingPort: deps.embeddingPort,
@@ -486,11 +476,6 @@ export async function setupAgents(deps: {
     // Session-scoped trajectory recorder registry — threaded into every
     // per-agent executor so the same registry is shared across agents.
     trajectoryRegistry,
-    // Single shared pending-switch carrier. Built ONCE here and reused
-    // for every setupSingleAgent call (incl. config-reload re-invocations with
-    // the SAME deps object), so a contextEngine.version switch recorded at the
-    // rebuild seam survives until the DAG engine consumes it at the next reconcile.
-    pendingModeSwitches: new Map(),
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
