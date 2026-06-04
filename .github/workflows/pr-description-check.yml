@@ -7,7 +7,8 @@ on:
 # Least-privilege: only write access needed is to post/edit a PR comment.
 # NEVER add contents: write or packages: write here.
 permissions:
-  pull-requests: write
+  contents: read          # required by actions/checkout
+  pull-requests: write    # required to post/update PR comments
 
 jobs:
   check-pr-description:
