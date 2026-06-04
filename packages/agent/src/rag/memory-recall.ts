@@ -80,6 +80,36 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const recallStart = deps.clock.now();
       const degradations: RecallDegradation[] = [];
 
+      // 0. PINNED-FIRST LANE — fetch pinned entries for this scope BEFORE fused search.
+      //    DEFAULT-OFF BYTE-IDENTITY: with pinned.enabled=false, no pinnedStore, or no
+      //    pinned entries, this block is SKIPPED — no query runs, pinnedResults stays [].
+      //    Bounded by cfg.pinned.maxPinnedInjection (cap from config, never exceeded).
+      //    Pinned IDs are removed from the fused candidate set BEFORE mmrRerank (Step 5b-pre)
+      //    to prevent double-injection. WARN-on-failure never errors the recall hot path.
+      //    TYPE-only pinnedStore from @comis/core (the agent↛memory build cut).
+      const pinnedResults: ReturnType<typeof deduplicateResults> = [];
+      const cfg_pinned = cfg.pinned;
+      if (cfg_pinned?.enabled === true && deps.pinnedStore !== undefined) {
+        const scope = {
+          tenantId: sessionKey.tenantId,
+          agentId: agentId ?? sessionKey.agentId ?? "default",
+        };
+        const p = await deps.pinnedStore.listPinned(scope, cfg_pinned.maxPinnedInjection);
+        if (p.ok && p.value.length > 0) {
+          pinnedResults.push(...p.value);
+        } else if (!p.ok) {
+          deps.logger.warn(
+            {
+              agentId,
+              errorKind: "internal" as const,
+              hint: "pinned lane read failed; proceeding without pinned memories",
+            },
+            "pinned lane fallback",
+          );
+        }
+      }
+      const pinnedIds = new Set(pinnedResults.map((r) => r.entry.id));
+
       // Query understanding (DEFAULT-OFF byte-identity per knob). All three are pure
       // fns over the query string + the injected clock — NO LLM, NO globals (Date.now()).
       const qu = cfg.queryUnderstanding;
@@ -547,6 +577,13 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const trustFilteredIds = ranked.filter((r) => !allowed.has(r.entry.trustLevel)).map((r) => r.entry.id);
       ranked = ranked.filter((r) => allowed.has(r.entry.trustLevel));
 
+      // 5b-pre. Remove pinned IDs from fused ranked BEFORE MMR to prevent double-injection.
+      //         Pinned entries will be prepended to the final set AFTER dedup (Step 6).
+      //         DEFAULT-OFF: when pinnedIds is empty (no pinned lane or no pins) this is a no-op.
+      if (pinnedIds.size > 0) {
+        ranked = ranked.filter((r) => !pinnedIds.has(r.entry.id));
+      }
+
       // 5b. MMR — diversity re-rank over the post-trust-filter candidates' embeddings.
       //     DEFAULT-OFF BYTE-IDENTITY: with mmr.enabled=false, no embeddingStore, or <2 candidates,
       //     this block is SKIPPED — readEmbeddings is NEVER called (the spy proves it) and `ranked`
@@ -585,6 +622,14 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const finalIdSet = new Set(finalRanked.map((r) => r.entry.id));
       const dedupedIds = preDedupIds.filter((id) => !finalIdSet.has(id));
 
+      // PREPEND pinned entries — bounded, already fetched at Step 0.
+      // Pinned entries are ALWAYS returned first, regardless of fused score.
+      // They were excluded from the MMR/dedup pipeline above (Step 5b-pre).
+      // DEFAULT-OFF: when pinnedResults is empty this is a no-op (no prepend).
+      const finalRankedWithPins = pinnedResults.length > 0
+        ? [...pinnedResults, ...finalRanked]
+        : finalRanked;
+
       // Observability tail. ADDITIVE + NON-FATAL: assemble ONE trace record
       // and emit the counts-only events. Skipped cleanly when neither sink is present.
       if (deps.recallTrace !== undefined || deps.eventBus !== undefined) {
@@ -606,7 +651,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           rerankCandidateCount,
           preScores,
           postScores,
-          finalRanked,
+          finalRanked: finalRankedWithPins,
           trustFilteredIds,
           dedupedIds,
           breakdownById,
@@ -615,7 +660,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         });
       }
 
-      return ok(finalRanked);
+      return ok(finalRankedWithPins);
     },
   };
 }

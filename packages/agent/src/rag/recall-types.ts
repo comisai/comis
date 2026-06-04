@@ -21,6 +21,7 @@ import type {
   MemoryCausalStore,
   MemoryEmbeddingStore,
   MemoryUsefulnessStore,
+  MemoryPinnedStore,
   RerankerPort,
   TrustLevel,
   TimerPort,
@@ -93,6 +94,17 @@ export interface MemoryRecallDeps {
    * build cut); the daemon injects the concrete adapter.
    */
   usefulnessStore?: MemoryUsefulnessStore;
+  /**
+   * Optional pinned-memory read store. When present AND cfg.pinned.enabled,
+   * recall fetches pinned entries for the scope BEFORE the fused search and
+   * prepends them (bounded by cfg.pinned.maxPinnedInjection) to the final result.
+   * Pinned IDs are removed from the fused candidate set BEFORE mmrRerank (Step 5b-pre)
+   * to prevent double-injection. DEFAULT-OFF BYTE-IDENTITY: with pinned.enabled=false,
+   * no pinnedStore, or no pinned entries, this block is SKIPPED — no query runs.
+   * TYPE-only from @comis/core — the agent never imports @comis/memory (the
+   * agent↛memory build cut); the daemon injects the concrete adapter.
+   */
+  pinnedStore?: MemoryPinnedStore;
   /** Timer port for the rerank wall-clock deadline. Absent -> no timeout wrap. */
   timers?: TimerPort;
   /** Wall-clock reads for the recency boost (never Date.now()). */
@@ -176,6 +188,12 @@ export interface MemoryRecallConfig {
    *  identity. Optional so a caller predating the field (or the daemon before the MMR wiring)
    *  leaves it absent → off. */
   mmr?: { enabled: boolean; lambda: number };
+  /** Pinned-memory injection knobs (sourced from RagConfig.pinned). Default-OFF
+   *  (`enabled:false`) → no pinned-first lane runs (byte-identical). Optional so a caller
+   *  predating the field (or the daemon before the pinning wiring) leaves it absent → off.
+   *  `maxPinnedInjection` caps the bounded set — only this many pinned entries are fetched
+   *  and prepended to the final result, preventing context budget exhaustion. */
+  pinned?: { enabled: boolean; maxPinnedInjection: number };
   /** FadeMem per-type decay gate (sourced from RagConfig.forget). The toggle ONLY —
    *  there is NO forgetAlpha here. The decay MAGNITUDE is the single canonical
    *  `rag.scoring.forgetAlpha` (on {@link MemoryRecallConfig.scoring}, exactly like the other
