@@ -195,6 +195,12 @@ export interface ContextEngineDeps {
   /** Conversation id for the dag-mode store read (= `formatSessionKey(sessionKey)`).
    *  Absent ⇒ dag falls back to the pipeline. */
   conversationId?: string;
+  /** Injected wall-clock for the dag-mode assembler's timestamps (assembly
+   *  duration + the synthesized-tool-result `timestamp` in transcript repair).
+   *  Production code never calls `Date.now()` directly (the globals gate); the
+   *  daemon threads its `ClockPort` here via setupContextEngine. Falls back to
+   *  `Date.now()` only when absent (a unit context with no injected clock). */
+  clock?: import("@comis/core").ClockPort;
 }
 
 // ---------------------------------------------------------------------------

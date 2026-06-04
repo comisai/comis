@@ -37,7 +37,7 @@
  * @module
  */
 
-import { partsToMessage } from "@comis/core";
+import { partsToMessage, systemNowMs } from "@comis/core";
 import type { ContextStorePort, LcdMessage } from "@comis/core";
 import type { ContextEngineConfig } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -60,12 +60,16 @@ export function createLcdContextEngine(
   // Guaranteed present by the caller branch (context-engine.ts dag seam).
   const store = deps.contextStore as ContextStorePort;
   const conversationId = deps.conversationId as string;
+  // Injected wall-clock (the daemon threads its ClockPort via setupContextEngine).
+  // Production never calls Date.now() directly (the globals gate); `systemNowMs`
+  // is the sanctioned system-clock wrapper for the no-injected-clock unit case.
+  const now = (): number => (deps.clock ? deps.clock.now() : systemNowMs());
 
   return {
     lastBreakpointIndex: undefined,
     lastTrimOffset: 0,
     async transformContext(liveMessages: AgentMessage[]): Promise<AgentMessage[]> {
-      const startMs = Date.now();
+      const startMs = now();
 
       // 1+2. HISTORY: faithful reconstruction from the STORE via the core codec.
       //      `getMessages` returns rows ordered by seq (F2); `partsToMessage`
@@ -112,12 +116,12 @@ export function createLcdContextEngine(
       // 6. TRANSCRIPT REPAIR — the FINAL step (A2). Provider-valid pairing on
       //    ANY input: out-of-order results re-placed, unpaired calls get a marked
       //    synthesized result, orphan/duplicate results dropped.
-      const repaired = sanitizeToolUseResultPairing(normalized, Date.now());
+      const repaired = sanitizeToolUseResultPairing(normalized, now());
 
       deps.logger.info(
         {
           step: "lcd-assemble",
-          durationMs: Date.now() - startMs,
+          durationMs: now() - startMs,
           historyCount: history.length,
           freshTailCount: freshTail.length,
           assembledCount: repaired.length,

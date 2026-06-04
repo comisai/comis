@@ -420,6 +420,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // wrote. Absent ⇒ the branch WARN-falls-through to the pipeline.
     contextStore: deps.contextStore,
     conversationId: formattedKey,
+    // The dag assembler stamps assembly duration + synthesized-tool-result
+    // timestamps via this injected clock (production never calls Date.now()).
+    clock: deps.clock,
   });
 
   // Wire context engine to the mutable holder so requestBodyInjector
