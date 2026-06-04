@@ -61,7 +61,8 @@ export function ensureLcdTables(db: Database.Database): void {
       agent_id        TEXT NOT NULL,
       session_key     TEXT NOT NULL,
       seq             INTEGER NOT NULL,         -- monotonic PER conversation
-      role            TEXT NOT NULL,            -- pi-ai role: user | assistant | toolResult
+      role            TEXT NOT NULL
+        CHECK (role IN ('user', 'assistant', 'toolResult')),  -- IN-01: defense-in-depth; matches LcdRole + the unchecked read-path cast
       token_count     INTEGER NOT NULL,         -- pre-computed agent-side; the store never computes it
       created_at      INTEGER NOT NULL          -- caller-supplied epoch ms (the store does not stamp it)
     );
@@ -72,7 +73,8 @@ export function ensureLcdTables(db: Database.Database): void {
       id           TEXT PRIMARY KEY,
       message_id   TEXT NOT NULL REFERENCES lcd_messages(id) ON DELETE CASCADE,
       ordinal      INTEGER NOT NULL,            -- block order within the message
-      kind         TEXT NOT NULL,               -- text | tool_use | tool_result | reasoning | file
+      kind         TEXT NOT NULL
+        CHECK (kind IN ('text', 'tool_use', 'tool_result', 'reasoning', 'file')),  -- IN-01: defense-in-depth; matches LcdPartKind + the unchecked read-path cast
       tool_call_id TEXT,                         -- ToolCall.id / ToolResultMessage.toolCallId (NULL for non-tool)
       tool_name    TEXT,                         -- ToolCall.name / ToolResultMessage.toolName
       tool_input   TEXT,                         -- JSON: ToolCall.arguments
