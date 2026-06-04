@@ -102,6 +102,7 @@ export {
 export { welcomeStep } from "./steps/00-welcome.js";
 export { detectExistingStep } from "./steps/01-detect-existing.js";
 export { flowSelectStep } from "./steps/02-flow-select.js";
+export { storageStep } from "./steps/02b-storage.js";
 export { providerStep } from "./steps/03-provider.js";
 export { credentialsStep } from "./steps/04-credentials.js";
 export { agentStep } from "./steps/05-agent.js";

@@ -414,6 +414,23 @@ describe("daemon logs", () => {
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("Log file not found");
   });
+
+  it("missing-log warning names daemon.console.log and points to the structured log", async () => {
+    vi.mocked(fs.existsSync).mockImplementation((p: unknown) => {
+      const path = String(p);
+      if (path === "/run/systemd/system") return false;
+      return false;
+    });
+
+    await parseDaemon(["node", "test", "daemon", "logs"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    // The launcher capture is now daemon.console.log (not the bare daemon.log
+    // that collides with the structured Pino log in logs/).
+    expect(output).toContain("daemon.console.log");
+    // Operators should be pointed at the structured logs too.
+    expect(output).toContain("logs/daemon.1.log");
+  });
 });
 
 describe("daemon logs --follow", () => {

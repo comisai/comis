@@ -44,11 +44,16 @@ export async function loadWizardStorageMode(): Promise<
     getSecret: (k) => systemGetEnv(k),
   });
   if (!loadResult.ok) {
-    return "file";
+    // No config.yaml yet (e.g. during `comis init`, before step 10 writes it).
+    // Align with the daemon's encrypted default when the encrypted store is
+    // actually usable — i.e. a SECRETS_MASTER_KEY exists. Without a master key
+    // there is no encrypted store to write to, so fall back to file mode.
+    return systemGetEnv("SECRETS_MASTER_KEY") ? "encrypted" : "file";
   }
   const validated = validateConfig(loadResult.value);
   if (!validated.ok) {
-    return "file";
+    // Same rationale as the config-absent branch above.
+    return systemGetEnv("SECRETS_MASTER_KEY") ? "encrypted" : "file";
   }
   // security.storage is always present on a valid config
   // (SecurityConfigSchema gives it .default("encrypted") and AppConfigSchema

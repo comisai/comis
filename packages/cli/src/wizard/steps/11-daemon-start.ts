@@ -396,6 +396,20 @@ export const daemonStartStep: WizardStep = {
   async execute(state: WizardState, prompter: WizardPrompter): Promise<WizardState> {
     prompter.note(sectionSeparator("Start Daemon"));
 
+    // Refuse to auto-start when write-config flagged config ${VAR}s that won't
+    // resolve at boot. Starting now would FATAL-crash-loop the daemon, so bail
+    // out early with the exact `comis secrets set` remediation instead.
+    if (state.unresolvedSecretRefs && state.unresolvedSecretRefs.length > 0) {
+      prompter.log.warn(
+        `Not starting: config references secret(s) that are not set: ${state.unresolvedSecretRefs.join(", ")}`,
+      );
+      for (const name of state.unresolvedSecretRefs) {
+        prompter.log.warn(`  comis secrets set ${name}`);
+      }
+      prompter.log.info("Then start the daemon with: comis daemon start");
+      return updateState(state, {});
+    }
+
     // 0. Check if daemon is already running
     const { host, port } = resolveGateway(state);
     let daemonRunning = false;
@@ -580,7 +594,10 @@ export const daemonStartStep: WizardStep = {
 
       const comisDir = safePath(os.homedir(), ".comis");
       const pidFile = safePath(comisDir, "daemon.pid");
-      const logFile = safePath(comisDir, "daemon.log");
+      // Raw process stdout/stderr capture (boot output + pre-logger FATALs).
+      // Named distinctly from the daemon's structured Pino log at
+      // ~/.comis/logs/daemon.log so the two are never confused.
+      const logFile = safePath(comisDir, "daemon.console.log");
 
       mkdirSync(comisDir, { recursive: true, mode: 0o700 });
 

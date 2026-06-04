@@ -9,6 +9,7 @@ import {
   isStepComplete,
   getCompletedStepCount,
   FLOW_STEPS,
+  NON_SKIPPABLE_STEPS,
   runWizardFlow,
   DOUBLE_ESCAPE_MS,
   SKIP_SENTINEL,
@@ -51,12 +52,12 @@ function createMockPrompter(): WizardPrompter {
 // ---------- FLOW_STEPS constants ----------
 
 describe("FLOW_STEPS", () => {
-  it("quickstart has 10 steps", () => {
-    expect(FLOW_STEPS.quickstart).toHaveLength(10);
+  it("quickstart has 11 steps", () => {
+    expect(FLOW_STEPS.quickstart).toHaveLength(11);
   });
 
-  it("advanced has 14 steps", () => {
-    expect(FLOW_STEPS.advanced).toHaveLength(14);
+  it("advanced has 15 steps", () => {
+    expect(FLOW_STEPS.advanced).toHaveLength(15);
   });
 
   it("declares the remote wizard flow has exactly 7 step transitions", () => {
@@ -69,10 +70,36 @@ describe("FLOW_STEPS", () => {
     expect(FLOW_STEPS.quickstart).not.toContain("workspace");
   });
 
-  it("advanced includes all 13 steps", () => {
+  it("advanced includes channels, gateway, and workspace", () => {
     expect(FLOW_STEPS.advanced).toContain("channels");
     expect(FLOW_STEPS.advanced).toContain("gateway");
     expect(FLOW_STEPS.advanced).toContain("workspace");
+  });
+
+  it("sequences the storage step immediately after flow-select and before provider in quickstart", () => {
+    const seq = FLOW_STEPS.quickstart;
+    const flowIdx = seq.indexOf("flow-select");
+    const storageIdx = seq.indexOf("storage");
+    const providerIdx = seq.indexOf("provider");
+    expect(storageIdx).toBe(flowIdx + 1);
+    expect(storageIdx).toBeLessThan(providerIdx);
+  });
+
+  it("sequences the storage step immediately after flow-select and before provider in advanced", () => {
+    const seq = FLOW_STEPS.advanced;
+    const flowIdx = seq.indexOf("flow-select");
+    const storageIdx = seq.indexOf("storage");
+    const providerIdx = seq.indexOf("provider");
+    expect(storageIdx).toBe(flowIdx + 1);
+    expect(storageIdx).toBeLessThan(providerIdx);
+  });
+
+  it("omits the storage step from the remote flow (no provider/credentials to encrypt)", () => {
+    expect(FLOW_STEPS.remote).not.toContain("storage");
+  });
+
+  it("treats the storage step as non-skippable (master key must be provisioned)", () => {
+    expect(NON_SKIPPABLE_STEPS.has("storage")).toBe(true);
   });
 });
 
@@ -268,6 +295,7 @@ describe("getNextStep", () => {
         "welcome",
         "detect-existing",
         "flow-select",
+        "storage",
         "provider",
         "credentials",
         "agent",
@@ -297,7 +325,7 @@ describe("getStepIndex", () => {
   });
 
   it("returns correct index for finish in quickstart", () => {
-    expect(getStepIndex("finish", "quickstart")).toBe(9);
+    expect(getStepIndex("finish", "quickstart")).toBe(10);
   });
 
   it("returns -1 for channels in quickstart", () => {
@@ -305,7 +333,7 @@ describe("getStepIndex", () => {
   });
 
   it("returns correct index for channels in advanced", () => {
-    expect(getStepIndex("channels", "advanced")).toBe(6);
+    expect(getStepIndex("channels", "advanced")).toBe(7);
   });
 
   it("returns -1 for gateway in quickstart", () => {
@@ -342,13 +370,13 @@ describe("getCompletedStepCount", () => {
 
     const result = getCompletedStepCount(state, "quickstart");
     expect(result.completed).toBe(3);
-    expect(result.total).toBe(10);
+    expect(result.total).toBe(11);
   });
 
   it("returns 0/total for initial state", () => {
     const result = getCompletedStepCount(INITIAL_STATE, "advanced");
     expect(result.completed).toBe(0);
-    expect(result.total).toBe(14);
+    expect(result.total).toBe(15);
   });
 
   it("returns total/total when all complete", () => {
@@ -631,7 +659,6 @@ describe("runWizardFlow", () => {
           gateway: {
             port: 4766,
             bindMode: "loopback",
-            authMethod: "token",
           },
         });
       },
@@ -899,7 +926,7 @@ describe("runWizardFlow", () => {
           throw new CancelError();
         }
         return updateState(state, {
-          gateway: { port: 4766, bindMode: "loopback" as const, authMethod: "token" as const },
+          gateway: { port: 4766, bindMode: "loopback" as const },
         });
       },
     };
@@ -1137,7 +1164,7 @@ describe("runWizardFlow", () => {
           });
         }
         return updateState(state, {
-          gateway: { port: 4766, bindMode: "loopback" as const, authMethod: "token" as const },
+          gateway: { port: 4766, bindMode: "loopback" as const },
         });
       },
     };
@@ -1479,7 +1506,7 @@ describe("runWizardFlow", () => {
       id: "gateway",
       label: "Gateway",
       execute: async (state) => updateState(state, {
-        gateway: { port: 4766, bindMode: "loopback" as const, authMethod: "token" as const },
+        gateway: { port: 4766, bindMode: "loopback" as const },
       }),
     };
 

@@ -102,21 +102,6 @@ Source: `packages/core/src/config/env-layer.ts:28`
 export COMIS_GATEWAY_PORT=4766
 ```
 
-### `COMIS_GATEWAY_PASSWORD`
-
-| Property | Value |
-|----------|-------|
-| **Used by** | Config substitution |
-| **Format** | String |
-| **Default** | (none) |
-
-Gateway password for password-based authentication. Set during `comis init` when the gateway auth mode is `password`. Referenced in the config file via `${COMIS_GATEWAY_PASSWORD}` substitution. Stored in `~/.comis/.env` alongside other managed credentials.
-
-```bash
-# Typically set automatically by comis init, not manually
-export COMIS_GATEWAY_PASSWORD="my-gateway-password"
-```
-
 ### `COMIS_INSECURE`
 
 | Property | Value |
@@ -139,12 +124,12 @@ export COMIS_INSECURE=1
 |----------|-------|
 | **Used by** | CLI (`daemon logs` command) |
 | **Format** | Absolute file path |
-| **Default** | `~/.comis/logs/daemon.log` |
+| **Default** | `~/.comis/daemon.console.log` |
 
-Overrides the log file path that the `comis daemon logs` command reads from when systemd is not available. The daemon itself always writes logs to its standard output (redirected to the log file during direct-mode startup).
+Overrides the file that the `comis daemon logs` command reads from when systemd is not available. That file is the daemon's **raw stdout/stderr capture** (`daemon.console.log`), written by the CLI when it spawns the daemon in direct mode — not the structured JSON log. For the structured application logs, read `~/.comis/logs/daemon.1.log` directly.
 
 ```bash
-export COMIS_LOG_PATH="/var/log/comis/daemon.log"
+export COMIS_LOG_PATH="/var/log/comis/daemon.console.log"
 ```
 
 ### `COMIS_OFFLINE`

@@ -17,7 +17,7 @@
 
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
-import { safePath } from "@comis/core";
+import { safePath, writeMasterKeyIfAbsent } from "@comis/core";
 import { createModelCatalog } from "@comis/core";
 import type {
   WizardState,
@@ -54,12 +54,10 @@ export type NonInteractiveOptions = {
   apiKey?: string;
   agentName?: string;
   model?: string;
-  // Gateway
+  // Gateway (token is the only supported auth method)
   gatewayPort?: number;
   gatewayBind?: "loopback" | "lan" | "custom";
-  gatewayAuth?: "token" | "password";
   gatewayToken?: string;
-  gatewayPassword?: string;
   // Channels
   channels?: string[];
   telegramToken?: string;
@@ -71,6 +69,8 @@ export type NonInteractiveOptions = {
   // Paths
   dataDir?: string;
   configDir?: string;
+  // Credential storage
+  storage?: "encrypted" | "file";
   // Behavior
   startDaemon?: boolean;
   skipHealth?: boolean;
@@ -190,19 +190,19 @@ export function validateNonInteractiveOptions(
     }
   }
 
-  // Password auth requires a password
-  if (opts.gatewayAuth === "password" && !opts.gatewayPassword) {
-    throw new NonInteractiveError(
-      "--gateway-password is required when --gateway-auth is 'password'",
-      "gatewayPassword",
-    );
-  }
-
   // --reset-scope requires --reset
   if (opts.resetScope && !opts.reset) {
     throw new NonInteractiveError(
       "--reset-scope requires --reset to be set",
       "resetScope",
+    );
+  }
+
+  // --storage, when provided, must be one of encrypted|file
+  if (opts.storage !== undefined && opts.storage !== "encrypted" && opts.storage !== "file") {
+    throw new NonInteractiveError(
+      "--storage must be 'encrypted' or 'file'",
+      "storage",
     );
   }
 
@@ -344,24 +344,14 @@ export function buildNonInteractiveState(
     }
   }
 
-  // Gateway config
-  const gatewayAuth = opts.gatewayAuth ?? "token";
-  let gatewayToken: string | undefined;
-  let gatewayPassword: string | undefined;
-
-  if (gatewayAuth === "token") {
-    // Auto-generate 48-char hex token when none provided (same as step 07)
-    gatewayToken = opts.gatewayToken ?? randomBytes(24).toString("hex");
-  } else {
-    gatewayPassword = opts.gatewayPassword;
-  }
+  // Gateway config — token is the only supported gateway auth method.
+  // Auto-generate a 48-char hex token when none provided (same as step 07).
+  const gatewayToken = opts.gatewayToken ?? randomBytes(24).toString("hex");
 
   const gateway: GatewayConfig = {
     port: opts.gatewayPort ?? 4766,
     bindMode: opts.gatewayBind ?? "loopback",
-    authMethod: gatewayAuth,
-    ...(gatewayToken !== undefined && { token: gatewayToken }),
-    ...(gatewayPassword !== undefined && { password: gatewayPassword }),
+    token: gatewayToken,
     webEnabled: true,
   };
 
@@ -369,18 +359,37 @@ export function buildNonInteractiveState(
   const dataDir =
     opts.dataDir ?? safePath(homedir(), ".comis", "data");
 
+  // Credential storage mode -- encrypted by default. When encrypted, provision
+  // the master key headlessly so the encrypted store is usable without a
+  // separate `comis secrets init`. The key belongs at the CONFIG dir
+  // (~/.comis/.env), NOT the /data subdir -- same place step 02b + step 10
+  // read it from. writeMasterKeyIfAbsent is idempotent (never clobbers an
+  // existing key).
+  const storageMode = opts.storage ?? "encrypted";
+  const configDir = opts.configDir ?? safePath(homedir(), ".comis");
+  if (storageMode === "encrypted") {
+    writeMasterKeyIfAbsent(configDir);
+  }
+
   // Mark all interactive steps as completed so the wizard runner skips
-  // them and only runs write-config, daemon-start, and finish.
+  // them and only runs write-config, daemon-start, and finish. This MUST
+  // list every interactive step registered in buildStepRegistry (init.ts);
+  // any omission lets that step run and hit a prompt -> NonInteractiveError
+  // ("...prompt reached in non-interactive mode -- this is a bug"). The
+  // tool-providers step (08b) calls prompter.password() and was the missing
+  // one. init.test.ts cross-checks this list against the live registry.
   const completedSteps: WizardStepId[] = [
     "welcome",
     "detect-existing",
     "flow-select",
+    "storage",
     "provider",
     "credentials",
     "agent",
     "channels",
     "gateway",
     "workspace",
+    "tool-providers",
     "review",
   ];
 
@@ -390,6 +399,7 @@ export function buildNonInteractiveState(
     existingConfigAction: opts.reset ? "fresh" : undefined,
     resetScope: opts.reset ? (opts.resetScope ?? "config") : undefined,
     provider,
+    storageMode,
     agentName: opts.agentName ?? "comis-agent",
     model,
     channels,

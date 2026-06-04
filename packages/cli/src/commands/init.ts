@@ -29,6 +29,7 @@ import { buildJsonOutput, buildJsonError } from "../wizard/json-output.js";
 import { welcomeStep } from "../wizard/steps/00-welcome.js";
 import { detectExistingStep } from "../wizard/steps/01-detect-existing.js";
 import { flowSelectStep } from "../wizard/steps/02-flow-select.js";
+import { storageStep } from "../wizard/steps/02b-storage.js";
 import { providerStep } from "../wizard/steps/03-provider.js";
 import { credentialsStep } from "../wizard/steps/04-credentials.js";
 import { agentStep } from "../wizard/steps/05-agent.js";
@@ -44,16 +45,17 @@ import { finishStep } from "../wizard/steps/12-finish.js";
 // ---------- Step Registry ----------
 
 /**
- * Build the full step registry with all 13 wizard steps.
+ * Build the full step registry with all 14 wizard steps.
  *
  * Used by both interactive and non-interactive modes to provide
  * the same step implementations to the wizard runner.
  */
-function buildStepRegistry(): StepRegistry {
+export function buildStepRegistry(): StepRegistry {
   const registry: StepRegistry = new Map();
   registry.set("welcome", welcomeStep);
   registry.set("detect-existing", detectExistingStep);
   registry.set("flow-select", flowSelectStep);
+  registry.set("storage", storageStep);
   registry.set("provider", providerStep);
   registry.set("credentials", credentialsStep);
   registry.set("agent", agentStep);
@@ -93,9 +95,7 @@ function buildNonInteractiveOptionsFromCommander(
       | "lan"
       | "custom"
       | undefined,
-    gatewayAuth: options.gatewayAuth as "token" | "password" | undefined,
     gatewayToken: options.gatewayToken as string | undefined,
-    gatewayPassword: options.gatewayPassword as string | undefined,
     channels: options.channels as string[] | undefined,
     telegramToken: options.telegramToken as string | undefined,
     discordToken: options.discordToken as string | undefined,
@@ -105,6 +105,7 @@ function buildNonInteractiveOptionsFromCommander(
     lineSecret: options.lineSecret as string | undefined,
     dataDir: options.dataDir as string | undefined,
     configDir: options.configDir as string | undefined,
+    storage: options.storage as "encrypted" | "file" | undefined,
     startDaemon: !!options.startDaemon,
     skipHealth: !!options.skipHealth,
     skipValidation: !!options.skipValidation,
@@ -151,9 +152,7 @@ export function registerInitCommand(program: Command): void {
       "--gateway-bind <mode>",
       "loopback|lan|custom (default: loopback)",
     )
-    .option("--gateway-auth <mode>", "token|password (default: token)")
     .option("--gateway-token <tok>", "Explicit gateway token")
-    .option("--gateway-password <pw>", "Gateway password (if auth=password)")
     // Channels
     .option(
       "--channels <list>",
@@ -173,6 +172,8 @@ export function registerInitCommand(program: Command): void {
     // Paths
     .option("--data-dir <path>", "Workspace directory")
     .option("--config-dir <dir>", "Override config directory")
+    // Credential storage
+    .option("--storage <mode>", "encrypted|file (default: encrypted)")
     // Post-setup behavior
     .option("--start-daemon", "Auto-start daemon after config")
     .option("--skip-health", "Skip post-setup health check")
@@ -207,7 +208,7 @@ export function registerInitCommand(program: Command): void {
           // Determine flow
           const flow = niOpts.quick ? "quickstart" : "advanced";
 
-          // Build step registry (all 13 steps)
+          // Build step registry (all 14 steps)
           const steps = buildStepRegistry();
 
           // Run wizard flow -- steps already completed in initialState

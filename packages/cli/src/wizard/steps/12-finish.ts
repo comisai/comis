@@ -73,20 +73,10 @@ function buildGatewayInfo(state: WizardState): string | undefined {
 /**
  * Access token block — prints the full token on its own line so
  * copy-paste works cleanly, plus a prominent "keep secret" warning
- * and storage guidance. For password auth, points the user at the
- * password they already chose.
+ * and storage guidance. Token is the only supported gateway auth method.
  */
 function buildAccessTokenBlock(state: WizardState): string | undefined {
   if (!state.gateway) return undefined;
-
-  if (state.gateway.authMethod === "password") {
-    return [
-      "You chose a password for gateway access.",
-      "",
-      info("Use the password you set earlier when the dashboard asks for it."),
-      info("It is also stored in ~/.comis/.env — keep that file private."),
-    ].join("\n");
-  }
 
   if (!state.gateway.token) return undefined;
 

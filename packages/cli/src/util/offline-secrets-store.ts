@@ -13,6 +13,7 @@
 import {
   offlineSecretSet as _offlineSecretSet,
   offlineSecretsList as _offlineSecretsList,
+  offlineOAuthProfileSet as _offlineOAuthProfileSet,
 } from "@comis/memory";
 import type { SecretMetadata } from "@comis/core";
 import type { Result } from "@comis/shared";
@@ -22,3 +23,6 @@ export type { Result };
 
 export const offlineSecretSet = _offlineSecretSet;
 export const offlineSecretsList = _offlineSecretsList;
+// OAuth profiles collected during `comis init` (encrypted mode, daemon down)
+// are sealed into secrets.db through this same L11-allowed re-open site.
+export const offlineOAuthProfileSet = _offlineOAuthProfileSet;

@@ -3,10 +3,11 @@
  * Gateway configuration step -- step 07 of the init wizard.
  *
  * Collects network and security settings for the daemon gateway:
- * port (default 4766), bind mode (loopback/LAN/custom IP), and
- * authentication method (auto-generated token or user-chosen password).
+ * port (default 4766) and bind mode (loopback/LAN/custom IP). Token is
+ * the only supported gateway auth method, so the step always generates
+ * a 48-char hex token via crypto.randomBytes (the daemon's
+ * GatewayConfigSchema has no password field).
  *
- * Token auth generates a 48-char hex token via crypto.randomBytes.
  * Custom IP bind mode validates the address via validateIpAddress.
  *
  * @module
@@ -75,36 +76,10 @@ export const gatewayStep: WizardStep = {
       });
     }
 
-    // 4. Auth method prompt
-    const authMethod = await prompter.select<string>({
-      message: "Authentication method",
-      options: [
-        { value: "token", label: "Token (recommended)", hint: "Auto-generated 48-char hex token" },
-        { value: "password", label: "Password", hint: "You choose a password" },
-      ],
-      initialValue: state.gateway?.authMethod ?? "token",
-    });
-
-    // 5. Token generation or password prompt
-    let token: string | undefined;
-    let password: string | undefined;
-
-    if (authMethod === "token") {
-      token = randomBytes(24).toString("hex");
-      prompter.log.info(`Gateway token: ${token}`);
-      prompter.log.info("Save this token -- you'll need it for remote access.");
-    } else {
-      password = await prompter.password({
-        message: "Gateway password",
-        validate: (value: string) => {
-          if (typeof value !== "string") return undefined;
-          if (value.length < 8) {
-            return "Password must be at least 8 characters.";
-          }
-          return undefined;
-        },
-      });
-    }
+    // 4. Generate the gateway token -- token is the only supported gateway auth method.
+    const token = randomBytes(24).toString("hex");
+    prompter.log.info(`Gateway token: ${token}`);
+    prompter.log.info("Save this token -- you'll need it for remote access.");
 
     // 5b. Web dashboard prompt
     const webEnabled = await prompter.confirm({
@@ -123,9 +98,7 @@ export const gatewayStep: WizardStep = {
       port,
       bindMode: bindMode as GatewayConfig["bindMode"],
       ...(customIp !== undefined && { customIp }),
-      authMethod: authMethod as GatewayConfig["authMethod"],
-      ...(token !== undefined && { token }),
-      ...(password !== undefined && { password }),
+      token,
       webEnabled,
     };
 

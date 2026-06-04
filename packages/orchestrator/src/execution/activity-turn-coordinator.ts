@@ -270,6 +270,26 @@ function renderErrorKind(e: ActivityRenderError): ErrorKind {
   }
 }
 
+/**
+ * Honest fallback errorKind when a reclassified failure carries no failed event
+ * with a classified `errorKind`. An unclassified failure is an internal one —
+ * never "platform" (which falsely blames the chat platform). This is the
+ * documented default for the reclassify path (FIX #3 / T-hbe-04).
+ */
+const RECLASSIFY_FALLBACK_ERROR_KIND: ErrorKind = "internal";
+
+/**
+ * Derive the reclassify `errorKind` from the observed failed events: the first
+ * failed event that carries a classified `errorKind` wins; otherwise the honest
+ * internal fallback. Never returns the hardcoded "platform" default.
+ */
+function deriveReclassifyErrorKind(failedEvents: readonly ActivityEvent[]): ErrorKind {
+  for (const e of failedEvents) {
+    if (e.errorKind !== undefined) return e.errorKind;
+  }
+  return RECLASSIFY_FALLBACK_ERROR_KIND;
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -512,10 +532,11 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     // (§19.3). Already-failure / silent / aborted outcomes are left as-is.
     let effective = outcome;
     if (sawFailedEvent && (outcome.kind === "success" || outcome.kind === "success_with_recovered_failures")) {
+      const failedEvents = events.filter((e) => e.status === "failed");
       effective = {
         kind: "failure",
-        errorKind: "platform",
-        failedEvents: events.filter((e) => e.status === "failed"),
+        errorKind: deriveReclassifyErrorKind(failedEvents),
+        failedEvents,
       };
     }
 

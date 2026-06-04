@@ -315,7 +315,7 @@ export interface MessagingEvents {
   /** Execution aborted by user /stop command or programmatic abort */
   "execution:aborted": {
     sessionKey: SessionKey;
-    reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout";
+    reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected";
     agentId: string;
     timestamp: number;
   };

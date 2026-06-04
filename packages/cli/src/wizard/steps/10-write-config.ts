@@ -4,8 +4,11 @@
  * Write-config step -- step 10 of the init wizard.
  *
  * Atomically writes config.yaml and .env files from accumulated
- * WizardState. Creates the data directory. Offers secrets store
- * integration when secrets.db exists.
+ * WizardState. Creates the data directory. The credential storage mode is
+ * chosen earlier (step 02b) and carried on state.storageMode: "encrypted"
+ * persists collected secrets into the encrypted secrets.db and writes a
+ * placeholder .env, "file" writes a plaintext .env. The resolved mode is
+ * emitted as security.storage into config.yaml.
  *
  * @module
  */
@@ -26,6 +29,10 @@ import {
 import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
 import { heading, success as themeSuccess } from "../theme.js";
+import { offlineSecretSet } from "../../util/offline-secrets-store.js";
+
+/** Matches `${VAR}` env-substitution references in serialized config. */
+const SECRET_REF_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
 // ---------- Helpers ----------
 
@@ -103,6 +110,14 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
 
   config.agents = { default: agentConfig };
 
+  // Security section -- emit the resolved credential storage mode chosen at
+  // step 02b so the daemon's storage mode is explicit + auditable in
+  // config.yaml (init previously never wrote security.storage). AppConfig
+  // accepts a top-level security object with a storage enum.
+  if (state.storageMode) {
+    config.security = { storage: state.storageMode };
+  }
+
   // Gateway section
   if (state.gateway) {
     let host: string;
@@ -126,13 +141,10 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
       port: state.gateway.port ?? 4766,
     };
 
-    if (state.gateway.authMethod === "token") {
-      gatewayConfig.tokens = [
-        { id: "default", secret: "${COMIS_GATEWAY_TOKEN}", scopes: ["*"] },
-      ];
-    } else if (state.gateway.authMethod === "password") {
-      gatewayConfig.password = "${COMIS_GATEWAY_PASSWORD}";
-    }
+    // Token is the only supported gateway auth method.
+    gatewayConfig.tokens = [
+      { id: "default", secret: "${COMIS_GATEWAY_TOKEN}", scopes: ["*"] },
+    ];
 
     // Web dashboard -- default true; wizard always sets this explicitly
     gatewayConfig.web = { enabled: state.gateway.webEnabled };
@@ -185,17 +197,16 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
 }
 
 /**
- * Build .env file content lines from WizardState.
+ * Collect the secret values the wizard gathered, keyed by the env-var name
+ * the generated config.yaml references them under (e.g. COMIS_GATEWAY_TOKEN,
+ * TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY).
  *
- * Contains actual credentials -- never appears in config.yaml.
- * Merges with existingEnv to preserve keys the wizard doesn't manage
- * (e.g. tool provider keys survive a quickstart re-run).
+ * This is the single source of truth for "what credentials must be persisted
+ * for the config to resolve" — consumed by BOTH the .env writer and the
+ * secrets-store writer so the two paths can never drift. A `${VAR}` emitted
+ * into config.yaml without a matching entry here is a latent boot failure.
  */
-function buildEnvLines(
-  state: WizardState,
-  existingEnv: Record<string, string | undefined> = {},
-): string[] {
-  // Collect all keys the wizard will explicitly write
+function collectManagedSecrets(state: WizardState): Map<string, string> {
   const managed = new Map<string, string>();
 
   // Provider API key
@@ -226,14 +237,26 @@ function buildEnvLines(
     }
   }
 
-  // Gateway credentials
-  if (state.gateway) {
-    if (state.gateway.authMethod === "token" && state.gateway.token) {
-      managed.set("COMIS_GATEWAY_TOKEN", state.gateway.token);
-    } else if (state.gateway.authMethod === "password" && state.gateway.password) {
-      managed.set("COMIS_GATEWAY_PASSWORD", state.gateway.password);
-    }
+  // Gateway credentials -- token is the only supported gateway auth method.
+  if (state.gateway?.token) {
+    managed.set("COMIS_GATEWAY_TOKEN", state.gateway.token);
   }
+
+  return managed;
+}
+
+/**
+ * Build .env file content lines from WizardState.
+ *
+ * Contains actual credentials -- never appears in config.yaml.
+ * Merges with existingEnv to preserve keys the wizard doesn't manage
+ * (e.g. tool provider keys survive a quickstart re-run).
+ */
+function buildEnvLines(
+  state: WizardState,
+  existingEnv: Record<string, string | undefined> = {},
+): string[] {
+  const managed = collectManagedSecrets(state);
 
   // Merge: start with existing keys, then overlay managed keys
   const merged = new Map<string, string>();
@@ -252,6 +275,24 @@ function buildEnvLines(
   return lines;
 }
 
+/**
+ * Return the distinct `${VAR}` references in the serialized config that are
+ * NOT covered by `available` (the union of names written to .env and names
+ * persisted into the encrypted store). A non-empty result means the daemon
+ * would abort at boot with "Missing env var <name>".
+ */
+function findUnresolvedSecretRefs(
+  serializedConfig: string,
+  available: ReadonlySet<string>,
+): string[] {
+  const referenced = new Set<string>();
+  for (const match of serializedConfig.matchAll(SECRET_REF_PATTERN)) {
+    const name = match[1];
+    if (name) referenced.add(name);
+  }
+  return [...referenced].filter((name) => !available.has(name));
+}
+
 // ---------- Step Implementation ----------
 
 export const writeConfigStep: WizardStep = {
@@ -268,20 +309,11 @@ export const writeConfigStep: WizardStep = {
     const envPath = safePath(configDir, ".env");
     const dataDir = state.dataDir ?? safePath(homedir(), ".comis", "data");
 
-    // 3. Check for secrets store
-    let useSecretsStore = false;
-    const secretsDbPath = safePath(configDir, "secrets.db");
-
-    if (existsSync(secretsDbPath)) {
-      const choice = await prompter.select<string>({
-        message: "Your secrets store is active. Store API keys there instead of .env?",
-        options: [
-          { value: "secrets", label: "Yes -- encrypted at rest (recommended)" },
-          { value: "env", label: "No -- keep in .env (plaintext)" },
-        ],
-      });
-      useSecretsStore = choice === "secrets";
-    }
+    // 3. Storage mode is decided at step 02b and carried on state.storageMode.
+    // "encrypted" routes collected secrets into the encrypted secrets.db (and
+    // writes a placeholder .env); anything else writes a plaintext .env. The
+    // old secrets.db-gated prompt was removed — the choice happens once, early.
+    const useSecretsStore = state.storageMode === "encrypted";
 
     // 4. Build config object
     const configObj = buildConfigObject(state);
@@ -292,6 +324,11 @@ export const writeConfigStep: WizardStep = {
     // 6. Create spinner
     const spinner = prompter.spinner();
     spinner.start("Writing configuration...");
+
+    // Populated by the post-write guard; surfaced to the daemon-start step so
+    // it refuses to auto-start a config that would FATAL on a missing ${VAR}.
+    // Always assigned before the (post-try) return — the catch always rethrows.
+    let unresolvedSecretRefs: string[];
 
     try {
       // 7. Create config directory
@@ -331,10 +368,23 @@ export const writeConfigStep: WizardStep = {
         loadEnvFile(envPath, existingEnv);
       }
 
+      // The credentials the wizard collected, keyed by the ${VAR} name the
+      // config references. The set of names the daemon will be able to resolve
+      // at boot — used by the post-write guard below.
+      const managed = collectManagedSecrets(state);
+      const availableNames = new Set<string>();
+      for (const [key, val] of Object.entries(existingEnv)) {
+        if (val !== undefined && val !== "") availableNames.add(key);
+      }
+      const storeFailures: Array<{ name: string; message: string }> = [];
+      let storedCount = 0;
+
       if (!useSecretsStore) {
         const envContent = buildEnvLines(state, existingEnv).join("\n") + "\n";
         writeFileSync(envPath, envContent, { mode: 0o600 });
         spinner.update(".env written (0600)");
+        // Every collected secret is now in .env -> resolvable at boot.
+        for (const name of managed.keys()) availableNames.add(name);
       } else {
         // 10. Secrets store mode: minimal .env — but NEVER drop an existing
         // SECRETS_MASTER_KEY. The encrypted secrets.db is sealed with it; if
@@ -354,6 +404,28 @@ export const writeConfigStep: WizardStep = {
         }
         writeFileSync(envPath, secretsEnvLines.join("\n") + "\n", { mode: 0o600 });
         spinner.update(".env written (secrets store mode)");
+
+        // 10a. PERSIST the collected secrets into the encrypted store. The
+        // wizard used to merely PRINT `comis secrets set …` and discard the
+        // values it already held — so the config it wrote referenced ${VAR}s
+        // that were never stored, and the daemon FATAL-crash-looped on boot.
+        // The .env (with SECRETS_MASTER_KEY) is already written above, so the
+        // offline store write can decrypt/seal correctly. The daemon is not
+        // running during init, so the daemon-free direct-store path is correct.
+        for (const [name, value] of managed) {
+          const res = offlineSecretSet({ name, value, dataDir: configDir, envFilePath: envPath });
+          if (res.ok) {
+            availableNames.add(name);
+            storedCount += 1;
+          } else {
+            storeFailures.push({ name, message: res.error.message });
+          }
+        }
+        spinner.update(
+          storeFailures.length === 0
+            ? `${storedCount} secret(s) stored in encrypted store`
+            : `${storedCount} stored, ${storeFailures.length} failed`,
+        );
       }
 
       // 11. Create data directory
@@ -377,24 +449,34 @@ export const writeConfigStep: WizardStep = {
         prompter.log.success(themeSuccess(`${dataDir}/ created`));
       }
 
-      // Secrets store guidance
+      // Secrets store summary: the wizard now PERSISTS the keys it collected
+      // (see step 10a) rather than asking the user to re-enter them.
       if (useSecretsStore) {
-        prompter.log.info("Run these commands to store your keys:");
-        if (state.provider?.id) {
-          const envKey = PROVIDER_ENV_KEYS[state.provider.id];
-          if (envKey) {
-            prompter.log.info(`  comis secrets set ${envKey}`);
-          }
+        if (storedCount > 0) {
+          prompter.log.success(
+            themeSuccess(`${storedCount} secret(s) stored in the encrypted store`),
+          );
         }
-        if (state.channels) {
-          for (const ch of state.channels) {
-            const envKeys = CHANNEL_ENV_KEYS[ch.type];
-            if (envKeys) {
-              for (const key of envKeys) {
-                prompter.log.info(`  comis secrets set ${key}`);
-              }
-            }
-          }
+        for (const failure of storeFailures) {
+          prompter.log.error(`Failed to store ${failure.name}: ${failure.message}`);
+          prompter.log.info(`  Set it manually: comis secrets set ${failure.name}`);
+        }
+      }
+
+      // 14. Post-write guard: every ${VAR} the config references must resolve
+      // from .env or the encrypted store, or the daemon aborts at boot with
+      // "Missing env var <name>". Surface the gap loudly here and signal the
+      // daemon-start step (via state) so it does not auto-start into a crash
+      // loop. This is the safety net behind step 10a — it catches a failed
+      // store write or any reference the wizard emitted without a value.
+      unresolvedSecretRefs = findUnresolvedSecretRefs(yaml, availableNames);
+      if (unresolvedSecretRefs.length > 0) {
+        prompter.log.error(
+          `config.yaml references ${unresolvedSecretRefs.length} secret(s) that are not set: ${unresolvedSecretRefs.join(", ")}`,
+        );
+        prompter.log.error("The daemon will not start until these are stored:");
+        for (const name of unresolvedSecretRefs) {
+          prompter.log.info(`  comis secrets set ${name}`);
         }
       }
     } catch (writeErr) {
@@ -413,7 +495,10 @@ export const writeConfigStep: WizardStep = {
       throw writeErr;
     }
 
-    // 14. Return updated state
-    return updateState(state, {});
+    // 15. Return updated state, carrying any unresolved secret refs forward.
+    return updateState(
+      state,
+      unresolvedSecretRefs.length > 0 ? { unresolvedSecretRefs } : {},
+    );
   },
 };

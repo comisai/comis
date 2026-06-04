@@ -122,6 +122,7 @@ import { runSafetyGates } from "./safety-gate.js";
 import { applyPromptRunOutcome, handleEnvelopeException } from "./message-envelope.js";
 import { finalizeLockResult } from "./executor-error-mapping.js";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
+import { createTurnLoopDetector } from "../turn-loop-detector.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import type { PiExecutorDeps } from "./pi-executor-types.js";
 export type { PiExecutorDeps } from "./pi-executor-types.js";
@@ -753,6 +754,10 @@ async function runSessionLocked(
     maxSendsPerExecution: deps.maxSendsPerExecution ?? 3,
   });
 
+  // Per-execution turn-loop detector (FIX #2): dedup idempotent reads + break a
+  // runaway repeating-tool loop early. Closure-local, one per run.
+  const turnLoopDetector = createTurnLoopDetector();
+
   // Proactive safety -- block tool execution before it starts when
   // safety limits are already reached. Existing reactive checks in
   // pi-event-bridge remain as fallback for limits crossed during execution.
@@ -760,12 +765,16 @@ async function runSessionLocked(
   // not load pi-mono extensions, so this override is safe.
   // v0.65.0: setBeforeToolCall() removed; beforeToolCall is now a direct property.
   session.agent.beforeToolCall =
-    createBeforeToolCallGuard(activeStepCounter, deps.budgetGuard, deps.circuitBreaker, toolRetryBreaker, messageSendLimiter);
+    createBeforeToolCallGuard(activeStepCounter, deps.budgetGuard, deps.circuitBreaker, toolRetryBreaker, messageSendLimiter, turnLoopDetector);
 
   // Mid-turn tool injection -- when discover_tools returns sideEffects.discoveredTools,
   // inject the full ToolDefinitions into the live agentic loop tools array so the LLM can
   // call them in the same turn (not just the next message).
   session.agent.afterToolCall = async (callCtx) => {
+    // FIX #2: populate the loop detector cache on EVERY tool result (before the
+    // discovery early-return) so normal reads fill it; mutations clear it.
+    turnLoopDetector.recordCall(callCtx.toolCall.name, callCtx.args, callCtx.result);
+
     const sideEffects = (callCtx.result as unknown as Record<string, unknown>)?.sideEffects as
       { discoveredTools?: string[] } | undefined;
     if (!sideEffects?.discoveredTools?.length) return undefined;
@@ -1081,6 +1090,7 @@ async function runSessionLocked(
     costTracker: deps.costTracker,
     stepCounter: activeStepCounter,
     circuitBreaker: deps.circuitBreaker,
+    turnLoopDetector,
     sessionKey,
     agentId: agentId ?? "default",
     channelId: msg.channelId ?? "",

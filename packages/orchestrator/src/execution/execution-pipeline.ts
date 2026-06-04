@@ -56,6 +56,7 @@ import type { RetryEngine } from "@comis/core";
 import { executeLlm } from "./execution-execute.js";
 import { filterExecutionResponse } from "./execution-filter.js";
 import { deliverExecutionResponse } from "./execution-deliver.js";
+import { mapAbortToTurnOutcome } from "./turn-outcome-mapper.js";
 
 // ---------------------------------------------------------------------------
 // Platform-specific configuration
@@ -440,6 +441,17 @@ export async function executeAndDeliver(
       typingLifecycle.markRunComplete();
     }
 
+    // A resource abort (max_steps / loop_detected) maps to a TRUTHFUL failure —
+    // never a bare "❌ platform" mislabel and never a silent delete that hides
+    // the stop from the operator (FIX #3 / T-hbe-04). Computed once here and
+    // applied on BOTH the no-deliver (silent) and delivery branches. The mapper
+    // returns undefined for a normal finish, leaving every existing branch as-is.
+    const abortOutcome = mapAbortToTurnOutcome({
+      finishReason: execResult.finishReason,
+      resourceAborted: execResult.resourceAborted,
+      abortReason: execResult.abortReason,
+    });
+
     // Stage 3: Response sanitization, filtering, media, voice, prefix
     const filterResult = await filterExecutionResponse(
       deps, adapter, effectiveMsg, originalMsg, sessionKey, agentId,
@@ -461,7 +473,10 @@ export async function executeAndDeliver(
       } else {
         emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason);
       }
-      await finalizeCoordinator({ kind: "silent", reason: silentReason });
+      // A resource abort that produced no deliverable text is a TRUTHFUL
+      // failure, not a silent delete — the operator must see the stop (the
+      // ~150-read loop incident produced no useful reply and was hidden).
+      await finalizeCoordinator(abortOutcome ?? { kind: "silent", reason: silentReason });
       return;
     }
 
@@ -492,7 +507,11 @@ export async function executeAndDeliver(
     // delete until deliveredAtMs; any observed status:"failed" event reclassifies
     // to failure (no delete). A delivery failure receipt → kind:"failure" so the
     // diagnostic trail is kept.
-    if (deliveryReceipt.ok) {
+    if (abortOutcome) {
+      // Partial text may have delivered, but the run was stopped — render the
+      // truthful failure, not a success.
+      await finalizeCoordinator(abortOutcome);
+    } else if (deliveryReceipt.ok) {
       await finalizeCoordinator({
         kind: "success",
         trivial: false,

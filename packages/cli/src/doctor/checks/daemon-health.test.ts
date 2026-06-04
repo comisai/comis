@@ -86,4 +86,48 @@ describe("daemonHealthCheck", () => {
     expect(findings[0].status).toBe("pass");
     expect(findings[0].message).toContain("running");
   });
+
+  it("produces pass via .daemon.lock when daemon.pid is absent (service-managed daemon)", async () => {
+    // A systemd / direct-`node` daemon (the installer's production path) never
+    // writes daemon.pid -- only the CLI launcher does. The daemon DOES write
+    // <dataDir>/.daemon.lock (acquireDataDirLock) on every boot. Doctor must
+    // fall back to that authoritative lock instead of declaring the daemon down.
+    vi.mocked(readFileSync).mockImplementation(((p: string) => {
+      if (p === "/tmp/test-comis/daemon.pid") {
+        throw new Error("ENOENT: no such file or directory");
+      }
+      if (p === "/tmp/test-comis/.daemon.lock") {
+        return String(process.pid); // own PID -> alive
+      }
+      throw new Error("ENOENT: no such file or directory");
+    }) as never);
+
+    const findings = await daemonHealthCheck.run(baseContext);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].status).toBe("pass");
+    expect(findings[0].message).toContain("running");
+  });
+
+  it("warns when .daemon.lock holds a dead PID and no daemon.pid exists", async () => {
+    vi.mocked(readFileSync).mockImplementation(((p: string) => {
+      if (p === "/tmp/test-comis/daemon.pid") {
+        throw new Error("ENOENT: no such file or directory");
+      }
+      if (p === "/tmp/test-comis/.daemon.lock") {
+        return "99999999"; // implausible PID
+      }
+      throw new Error("ENOENT: no such file or directory");
+    }) as never);
+
+    killSpy = vi.spyOn(process, "kill").mockImplementation((() => {
+      throw new Error("ESRCH: no such process");
+    }) as never);
+
+    const findings = await daemonHealthCheck.run(baseContext);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].status).toBe("warn");
+    expect(findings[0].message).toContain("PID file not found");
+  });
 });

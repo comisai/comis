@@ -3,13 +3,15 @@
  * Tests for the init CLI command registration.
  *
  * Verifies that the init command is registered with the expected
- * 27 CLI flags covering all mode, provider, gateway, channel,
+ * 25 CLI flags covering all mode, provider, gateway, channel,
  * path, behavior, and reset options.
  */
 
 import { describe, it, expect } from "vitest";
 import { Command } from "commander";
-import { registerInitCommand } from "./init.js";
+import { registerInitCommand, buildStepRegistry } from "./init.js";
+import { buildNonInteractiveState } from "../wizard/non-interactive.js";
+import type { WizardStepId } from "../wizard/types.js";
 
 describe("registerInitCommand", () => {
   it("registers the init command", () => {
@@ -22,7 +24,7 @@ describe("registerInitCommand", () => {
     );
   });
 
-  it("registers all 27 CLI flags", () => {
+  it("registers all 25 CLI flags", () => {
     const program = new Command();
     registerInitCommand(program);
     const initCmd = program.commands.find((c) => c.name() === "init")!;
@@ -40,12 +42,10 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--agent-name");
     expect(optionLongs).toContain("--model");
 
-    // Gateway (5)
+    // Gateway (3)
     expect(optionLongs).toContain("--gateway-port");
     expect(optionLongs).toContain("--gateway-bind");
-    expect(optionLongs).toContain("--gateway-auth");
     expect(optionLongs).toContain("--gateway-token");
-    expect(optionLongs).toContain("--gateway-password");
 
     // Channels (7)
     expect(optionLongs).toContain("--channels");
@@ -60,6 +60,9 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--data-dir");
     expect(optionLongs).toContain("--config-dir");
 
+    // Credential storage (1)
+    expect(optionLongs).toContain("--storage");
+
     // Post-setup behavior (3)
     expect(optionLongs).toContain("--start-daemon");
     expect(optionLongs).toContain("--skip-health");
@@ -70,11 +73,11 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--reset-scope");
   });
 
-  it("has exactly 27 options", () => {
+  it("has exactly 26 options", () => {
     const program = new Command();
     registerInitCommand(program);
     const initCmd = program.commands.find((c) => c.name() === "init")!;
-    expect(initCmd.options).toHaveLength(27);
+    expect(initCmd.options).toHaveLength(26);
   });
 
   it("parses --channels as comma-separated list", () => {
@@ -94,5 +97,33 @@ describe("registerInitCommand", () => {
     const portOpt = initCmd.options.find((o) => o.long === "--gateway-port");
     expect(portOpt).toBeDefined();
     expect(portOpt!.parseArg).toBeDefined();
+  });
+});
+
+describe("non-interactive step coverage", () => {
+  // Every step the registry registers is interactive EXCEPT the three terminal
+  // steps the runner always executes itself. Any interactive step missing from
+  // completedSteps runs in non-interactive mode and hits a prompt, throwing
+  // "...prompt reached in non-interactive mode -- this is a bug". This invariant
+  // ties completedSteps to the live registry so the two cannot drift — the
+  // regression guard for the omitted "tool-providers" step.
+  it("non-interactive completedSteps covers every registered interactive step", () => {
+    const TERMINAL = new Set<WizardStepId>([
+      "write-config",
+      "daemon-start",
+      "finish",
+    ]);
+    const registered = [...buildStepRegistry().keys()] as WizardStepId[];
+    const interactive = registered.filter((id) => !TERMINAL.has(id));
+    const completed = new Set(
+      buildNonInteractiveState({
+        nonInteractive: true,
+        acceptRisk: true,
+        provider: "openai",
+        storage: "file",
+      }).completedSteps,
+    );
+    const missing = interactive.filter((id) => !completed.has(id));
+    expect(missing).toEqual([]);
   });
 });

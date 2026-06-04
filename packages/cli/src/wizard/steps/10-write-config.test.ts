@@ -39,8 +39,13 @@ vi.mock("@comis/core", async (importOriginal) => {
   };
 });
 
+vi.mock("../../util/offline-secrets-store.js", () => ({
+  offlineSecretSet: vi.fn(() => ({ ok: true, value: undefined })),
+}));
+
 import { existsSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
 import { loadEnvFile } from "@comis/core";
+import { offlineSecretSet } from "../../util/offline-secrets-store.js";
 import type { WizardPrompter, WizardState, Spinner } from "../index.js";
 import { writeConfigStep } from "./10-write-config.js";
 
@@ -97,7 +102,6 @@ function populatedState(): WizardState {
     gateway: {
       port: 4766,
       bindMode: "loopback",
-      authMethod: "token",
       token: "test-token-value",
     },
     dataDir: "/home/test/.comis/data",
@@ -195,33 +199,33 @@ describe("writeConfigStep", () => {
     expect(envContent).toContain("COMIS_GATEWAY_TOKEN=test-token-value");
   });
 
-  it("secrets store offer shown when secrets.db exists", async () => {
-    // First call (secrets.db check) returns true, second call (dataDir check) returns false
-    vi.mocked(existsSync)
-      .mockReturnValueOnce(true)  // secrets.db exists
-      .mockReturnValue(false);    // dataDir doesn't exist
+  it("never prompts for a storage choice (the storage prompt moved to step 02b)", async () => {
+    // The secrets.db-gated "Your secrets store is active…" select was removed:
+    // storage mode is now driven by state.storageMode (set by step 02b), so
+    // step 10 never prompts — even when secrets.db exists on disk.
+    vi.mocked(existsSync).mockReturnValue(true); // secrets.db + everything "exists"
+    const prompter = createMockPrompter();
 
-    const prompter = createMockPrompter({
-      select: ["env"],  // user declines secrets store
-    });
-
-    await writeConfigStep.execute(populatedState(), prompter);
-
-    // select should have been called for secrets store choice
-    expect(prompter.select).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: expect.stringContaining("secrets store"),
-      }),
+    await writeConfigStep.execute(
+      { ...populatedState(), storageMode: "encrypted" },
+      prompter,
     );
+
+    expect(prompter.select).not.toHaveBeenCalled();
   });
 
-  it("no secrets store prompt when secrets.db does not exist", async () => {
+  it("uses the encrypted secrets-store path regardless of whether secrets.db already exists", async () => {
+    // storageMode="encrypted" drives the store path even when existsSync is
+    // false for secrets.db (the old code gated this on the file existing).
     vi.mocked(existsSync).mockReturnValue(false);
     const prompter = createMockPrompter();
 
-    await writeConfigStep.execute(populatedState(), prompter);
+    await writeConfigStep.execute(
+      { ...populatedState(), storageMode: "encrypted" },
+      prompter,
+    );
 
-    // select should NOT have been called (no secrets store prompt)
+    expect(offlineSecretSet).toHaveBeenCalled();
     expect(prompter.select).not.toHaveBeenCalled();
   });
 
@@ -291,16 +295,14 @@ describe("writeConfigStep", () => {
     expect(opts.mode).toBe(0o600);
   });
 
-  it("secrets store mode writes placeholder .env", async () => {
-    vi.mocked(existsSync)
-      .mockReturnValueOnce(true)  // secrets.db exists
-      .mockReturnValue(false);
+  it("secrets store mode (storageMode=encrypted) writes placeholder .env", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    const prompter = createMockPrompter();
 
-    const prompter = createMockPrompter({
-      select: ["secrets"],  // user accepts secrets store
-    });
-
-    await writeConfigStep.execute(populatedState(), prompter);
+    await writeConfigStep.execute(
+      { ...populatedState(), storageMode: "encrypted" },
+      prompter,
+    );
 
     const writeCalls = vi.mocked(writeFileSync).mock.calls;
     const envWriteCall = writeCalls.find(
@@ -312,6 +314,67 @@ describe("writeConfigStep", () => {
     expect(envContent).toContain("secrets store");
     // Should NOT contain actual API key
     expect(envContent).not.toContain("sk-test-key-123");
+  });
+
+  // ---------- security.storage emission into config.yaml ----------
+
+  it("emits security.storage=encrypted into config.yaml when storageMode is encrypted", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(
+      { ...populatedState(), storageMode: "encrypted" },
+      prompter,
+    );
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    expect(configWriteCall).toBeDefined();
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.security).toEqual({ storage: "encrypted" });
+  });
+
+  it("emits security.storage=file into config.yaml when storageMode is file", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(
+      { ...populatedState(), storageMode: "file" },
+      prompter,
+    );
+
+    // Plaintext path: offlineSecretSet must NOT run, plaintext key in .env.
+    expect(offlineSecretSet).not.toHaveBeenCalled();
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    expect(configWriteCall).toBeDefined();
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.security).toEqual({ storage: "file" });
+
+    const envWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    const envContent = envWriteCall![1] as string;
+    expect(envContent).toContain("ANTHROPIC_API_KEY=sk-test-key-123");
+  });
+
+  it("omits security from config.yaml when storageMode is unset", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(populatedState(), prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.security).toBeUndefined();
   });
 
   it("includes elevatedReply in config when senderTrustEntries present", async () => {
@@ -351,30 +414,6 @@ describe("writeConfigStep", () => {
 
     const configContent = JSON.parse(configWriteCall![1] as string);
     expect(configContent.agents.default.elevatedReply).toBeUndefined();
-  });
-
-  it("gateway password auth writes password env var", async () => {
-    const state: WizardState = {
-      ...populatedState(),
-      gateway: {
-        port: 4766,
-        bindMode: "loopback",
-        authMethod: "password",
-        password: "my-secret-password",
-      },
-    };
-    const prompter = createMockPrompter();
-
-    await writeConfigStep.execute(state, prompter);
-
-    const writeCalls = vi.mocked(writeFileSync).mock.calls;
-    const envWriteCall = writeCalls.find(
-      ([path]) => typeof path === "string" && path.includes(".env"),
-    );
-    expect(envWriteCall).toBeDefined();
-
-    const envContent = envWriteCall![1] as string;
-    expect(envContent).toContain("COMIS_GATEWAY_PASSWORD=my-secret-password");
   });
 
   // ---------- oauthProfiles emission + openai-codex defaults ----------
@@ -469,7 +508,6 @@ describe("writeConfigStep", () => {
     // The next boot regenerated a new key that no longer matched the already-
     // sealed secrets.db -> DECRYPTION_FAILED, and every stored secret was lost.
     vi.mocked(existsSync)
-      .mockReturnValueOnce(true) // secrets.db exists -> offer secrets store
       .mockReturnValueOnce(true) // .env exists -> load existing keys
       .mockReturnValue(false); // dataDir, etc.
     vi.mocked(loadEnvFile).mockImplementation(
@@ -477,9 +515,12 @@ describe("writeConfigStep", () => {
         env.SECRETS_MASTER_KEY = "a".repeat(64);
       },
     );
-    const prompter = createMockPrompter({ select: ["secrets"] });
+    const prompter = createMockPrompter();
 
-    await writeConfigStep.execute(populatedState(), prompter);
+    await writeConfigStep.execute(
+      { ...populatedState(), storageMode: "encrypted" },
+      prompter,
+    );
 
     const envWriteCall = vi.mocked(writeFileSync).mock.calls.find(
       ([path]) => typeof path === "string" && path.includes(".env"),
@@ -490,5 +531,72 @@ describe("writeConfigStep", () => {
     expect(envContent).toContain(`SECRETS_MASTER_KEY=${"a".repeat(64)}`);
     // Still secrets-store mode: no plaintext API key leaked into .env.
     expect(envContent).not.toContain("sk-test-key-123");
+  });
+
+  // ---------- Root-cause fix: secrets-store mode must PERSIST collected secrets ----------
+
+  describe("secrets-store mode persists collected secrets", () => {
+    // storageMode="encrypted" drives the store path; nothing exists on disk.
+    function encryptedState(): WizardState {
+      vi.mocked(existsSync).mockReturnValue(false);
+      return { ...populatedState(), storageMode: "encrypted" };
+    }
+
+    it("writes the collected gateway + channel secrets into the encrypted store", async () => {
+      // Regression: the wizard used to emit ${COMIS_GATEWAY_TOKEN}/${TELEGRAM_BOT_TOKEN}
+      // references but DISCARD the values it already had, then merely print
+      // `comis secrets set …`. If the user never ran those, the daemon boots
+      // against unresolvable ${VAR}s and FATAL-crash-loops.
+      const prompter = createMockPrompter();
+
+      await writeConfigStep.execute(encryptedState(), prompter);
+
+      const calls = vi.mocked(offlineSecretSet).mock.calls.map((c) => c[0]);
+      const byName = new Map(calls.map((o) => [o.name, o.value]));
+      expect(byName.get("COMIS_GATEWAY_TOKEN")).toBe("test-token-value");
+      expect(byName.get("TELEGRAM_BOT_TOKEN")).toBe("123:ABC");
+      // Every write targets the ~/.comis store and reads the master key from .env.
+      for (const o of calls) {
+        expect(o.dataDir).toContain(".comis");
+        expect(o.envFilePath).toContain(".env");
+      }
+    });
+
+    it("does NOT touch the encrypted store in plaintext .env mode (storageMode=file)", async () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+      const prompter = createMockPrompter();
+
+      await writeConfigStep.execute(
+        { ...populatedState(), storageMode: "file" },
+        prompter,
+      );
+
+      expect(offlineSecretSet).not.toHaveBeenCalled();
+    });
+
+    it("flags unresolved secret refs (and logs an error) when a store write fails", async () => {
+      // Gateway token fails to persist -> ${COMIS_GATEWAY_TOKEN} stays unresolvable.
+      vi.mocked(offlineSecretSet).mockImplementation((opts: { name: string }) =>
+        opts.name === "COMIS_GATEWAY_TOKEN"
+          ? { ok: false, error: new Error("store write failed") }
+          : { ok: true, value: undefined },
+      );
+      const prompter = createMockPrompter();
+
+      const result = await writeConfigStep.execute(encryptedState(), prompter);
+
+      expect(result.unresolvedSecretRefs).toContain("COMIS_GATEWAY_TOKEN");
+      expect(prompter.log.error).toHaveBeenCalled();
+    });
+
+    it("reports no unresolved refs on the happy path (storageMode=file)", async () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+      const prompter = createMockPrompter(); // file mode, all secrets present
+      const result = await writeConfigStep.execute(
+        { ...populatedState(), storageMode: "file" },
+        prompter,
+      );
+      expect(result.unresolvedSecretRefs ?? []).toHaveLength(0);
+    });
   });
 });

@@ -26,6 +26,11 @@ import { dirname, resolve } from "node:path";
 // (and pulling the full module would break unrelated workspace helpers).
 vi.mock("@comis/core", () => ({
   safePath: vi.fn((...parts: string[]) => parts.join("/")),
+  writeMasterKeyIfAbsent: vi.fn(() => ({
+    written: true,
+    path: "/home/test/.comis/.env",
+    keyHex: "f".repeat(64),
+  })),
   createModelCatalog: vi.fn(() => ({
     loadStatic: vi.fn(),
     getAll: vi.fn(() => [
@@ -45,6 +50,7 @@ vi.mock("node:crypto", () => ({
   randomBytes: vi.fn(() => ({ toString: () => "ab".repeat(24) })),
 }));
 
+import { writeMasterKeyIfAbsent } from "@comis/core";
 import {
   validateNonInteractiveOptions,
   buildNonInteractiveState,
@@ -118,16 +124,6 @@ describe("validateNonInteractiveOptions", () => {
       validateNonInteractiveOptions(opts);
     } catch (e) {
       expect((e as NonInteractiveError).field).toBe("agentName");
-    }
-  });
-
-  it("throws NonInteractiveError with field 'gatewayPassword' when auth=password but no password", () => {
-    const opts = validOpts({ gatewayAuth: "password" });
-    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
-    try {
-      validateNonInteractiveOptions(opts);
-    } catch (e) {
-      expect((e as NonInteractiveError).field).toBe("gatewayPassword");
     }
   });
 
@@ -352,12 +348,11 @@ describe("buildNonInteractiveState", () => {
     expect(state.model).toBe("default");
   });
 
-  it("uses gateway defaults: port=4766, bindMode='loopback', authMethod='token'", () => {
+  it("uses gateway defaults: port=4766, bindMode='loopback' (token-only)", () => {
     const state = buildNonInteractiveState(validOpts());
     expect(state.gateway).toBeDefined();
     expect(state.gateway!.port).toBe(4766);
     expect(state.gateway!.bindMode).toBe("loopback");
-    expect(state.gateway!.authMethod).toBe("token");
   });
 
   it("auto-generates token (48 hex chars) when no gatewayToken provided", () => {
@@ -370,13 +365,21 @@ describe("buildNonInteractiveState", () => {
     expect(state.gateway!.token).toBe("my-explicit-token");
   });
 
-  it("sets password on gateway config when password auth", () => {
+  it("buildNonInteractiveState never emits gateway.password even if gatewayPassword leaks in", () => {
+    // Gateway password auth is removed entirely: the daemon's GatewayConfigSchema
+    // is a z.strictObject with no `password` key, so emitting one FATAL-crash-loops
+    // the daemon at boot. The wizard must be structurally incapable of emitting it,
+    // even when stray gatewayAuth/gatewayPassword values are forced in (these fields
+    // no longer exist on the type, hence the `as never` cast — this pins RUNTIME
+    // behavior, not the type).
     const state = buildNonInteractiveState(
-      validOpts({ gatewayAuth: "password", gatewayPassword: "secret123" }),
+      validOpts({ gatewayPassword: "x", gatewayAuth: "password" } as never),
     );
-    expect(state.gateway!.authMethod).toBe("password");
-    expect(state.gateway!.password).toBe("secret123");
-    expect(state.gateway!.token).toBeUndefined();
+    const gw = state.gateway as Record<string, unknown>;
+    expect(gw.password).toBeUndefined();
+    expect(gw.authMethod).toBeUndefined();
+    // Token path stays fully intact.
+    expect(gw.token).toBe("ab".repeat(24));
   });
 
   it("builds channels from opts.channels with correct types and tokens", () => {
@@ -452,18 +455,20 @@ describe("buildNonInteractiveState", () => {
     expect(state.dataDir).toBe("/custom/data");
   });
 
-  it("includes all 10 interactive steps in completedSteps", () => {
+  it("includes all interactive steps (incl. storage + tool-providers) in completedSteps", () => {
     const state = buildNonInteractiveState(validOpts());
     expect(state.completedSteps).toEqual([
       "welcome",
       "detect-existing",
       "flow-select",
+      "storage",
       "provider",
       "credentials",
       "agent",
       "channels",
       "gateway",
       "workspace",
+      "tool-providers",
       "review",
     ]);
   });
@@ -506,6 +511,47 @@ describe("buildNonInteractiveState", () => {
 
     const stateNotSkipped = buildNonInteractiveState(validOpts({ skipValidation: false }));
     expect(stateNotSkipped.provider!.validated).toBe(false);
+  });
+
+  // ---------- storage mode default + headless master-key bootstrap ----------
+
+  describe("storage mode", () => {
+    beforeEach(() => {
+      vi.mocked(writeMasterKeyIfAbsent).mockClear();
+    });
+
+    it("defaults storageMode to 'encrypted' and provisions the master key headless", () => {
+      const state = buildNonInteractiveState(validOpts());
+      expect(state.storageMode).toBe("encrypted");
+      // The master key is provisioned at the CONFIG dir (~/.comis), NOT the
+      // /data subdir.
+      expect(writeMasterKeyIfAbsent).toHaveBeenCalledTimes(1);
+      const dir = vi.mocked(writeMasterKeyIfAbsent).mock.calls[0][0];
+      expect(dir).toBe("/home/test/.comis");
+      expect(dir).not.toContain("/data");
+    });
+
+    it("--storage file opts out: storageMode 'file' and NO master-key write", () => {
+      const state = buildNonInteractiveState(validOpts({ storage: "file" }));
+      expect(state.storageMode).toBe("file");
+      expect(writeMasterKeyIfAbsent).not.toHaveBeenCalled();
+    });
+
+    it("explicit --storage encrypted provisions the key", () => {
+      const state = buildNonInteractiveState(validOpts({ storage: "encrypted" }));
+      expect(state.storageMode).toBe("encrypted");
+      expect(writeMasterKeyIfAbsent).toHaveBeenCalledTimes(1);
+    });
+
+    it("provisions the key at opts.configDir when set (still not /data)", () => {
+      buildNonInteractiveState(validOpts({ configDir: "/custom/config" }));
+      expect(writeMasterKeyIfAbsent).toHaveBeenCalledWith("/custom/config");
+    });
+
+    it("includes 'storage' in completedSteps so the runner skips the interactive step", () => {
+      const state = buildNonInteractiveState(validOpts());
+      expect(state.completedSteps).toContain("storage");
+    });
   });
 });
 

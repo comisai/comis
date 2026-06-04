@@ -8,6 +8,7 @@
  * @module
  */
 
+import type { CredentialStorageMode } from "@comis/core";
 import type { WizardPrompter } from "./prompter.js";
 
 // ---------- Flow & Step Identifiers ----------
@@ -20,6 +21,7 @@ export type WizardStepId =
   | "welcome"
   | "detect-existing"
   | "flow-select"
+  | "storage"
   | "provider"
   | "credentials"
   | "agent"
@@ -88,14 +90,14 @@ export type ToolProviderConfig = {
   validated?: boolean;
 };
 
-/** Gateway settings collected during the wizard. */
+/** Gateway settings collected during the wizard. Token is the only supported
+ *  gateway auth method (the daemon's GatewayConfigSchema is a z.strictObject
+ *  whose only auth keys are tokens[]/tls — there is no password field). */
 export type GatewayConfig = {
   port: number;
   bindMode: "loopback" | "lan" | "custom";
   customIp?: string;
-  authMethod: "token" | "password";
   token?: string;
-  password?: string;
   webEnabled: boolean;
 };
 
@@ -134,6 +136,13 @@ export type ProviderConfig = {
 export type WizardState = {
   readonly flow?: FlowType;
   readonly riskAccepted?: boolean;
+  /**
+   * Credential storage mode chosen at the `storage` step. Drives whether
+   * step 04 routes OAuth through the encrypted store and whether step 10
+   * persists collected secrets into `secrets.db` (encrypted) vs. a plaintext
+   * `.env` (file). Emitted as `security.storage` into config.yaml.
+   */
+  readonly storageMode?: CredentialStorageMode;
   readonly existingConfigAction?: "update" | "fresh" | "cancel";
   readonly resetScope?: "config" | "config+creds" | "full";
   readonly provider?: ProviderConfig;
@@ -146,6 +155,13 @@ export type WizardState = {
   readonly dataDir?: string;
   /** When true, skip post-setup health checks (set by --skip-health in non-interactive mode). */
   readonly skipHealth?: boolean;
+  /**
+   * Config `${VAR}` references the write-config step could not satisfy from the
+   * `.env` or the encrypted secrets store. When non-empty, the daemon would
+   * FATAL-crash-loop on boot, so the daemon-start step refuses to auto-start
+   * and surfaces `comis secrets set` remediation instead.
+   */
+  readonly unresolvedSecretRefs?: readonly string[];
   /** Tracks which steps have completed (for jump-to from review). */
   readonly completedSteps: readonly WizardStepId[];
   /**

@@ -35,12 +35,21 @@ vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
 // test never touches ~/.comis/auth-profiles.json on the test host's
 // filesystem. loadConfigFile is also mocked here so the wizard defaults
 // to file storage.
+// Module-level toggle for the mocked systemGetEnv("SECRETS_MASTER_KEY").
+// When truthy, the wizard's encrypted-default fallback resolves "encrypted";
+// when undefined, it resolves "file". COMIS_CONFIG_PATHS / COMIS_DATA_DIR
+// always resolve undefined so the standard ~/.comis paths apply.
+let masterKeyState: string | undefined;
+
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
     loginOpenAICodexOAuth: vi.fn(),
     isRemoteEnvironment: vi.fn().mockReturnValue(false),
+    systemGetEnv: vi.fn((key: string) =>
+      key === "SECRETS_MASTER_KEY" ? masterKeyState : undefined,
+    ),
     selectOAuthCredentialStore: vi.fn().mockImplementation(() => {
       const inMemory = new Map<string, unknown>();
       return {
@@ -74,17 +83,32 @@ vi.mock("../../client/rpc-client.js", () => ({
   callTyped: vi.fn(async () => ({ profileId: "openai-codex:test@example.com", stored: true })),
 }));
 
-// Mock requireDaemonOrExit so encrypted-mode wizard tests can assert
-// it is called without requiring a running daemon.
+// Mock requireDaemonOrExit + DAEMON_PROBE_TIMEOUT_MS. requireDaemonOrExit is
+// no longer used by the encrypted branch (it now probes isDaemonRunning and
+// routes daemon-up->RPC / daemon-down->offline); the harmless stub is retained.
 vi.mock("../../util/daemon-required.js", () => ({
   requireDaemonOrExit: vi.fn(async () => undefined),
+  DAEMON_PROBE_TIMEOUT_MS: 200,
+}));
+
+// Mock the daemon guard so encrypted-mode tests can toggle daemon up/down.
+vi.mock("../../sync-tooling/daemon-guard.js", () => ({
+  isDaemonRunning: vi.fn(),
+}));
+
+// Mock the L11 offline store so the daemon-down encrypted path is observable
+// without touching a real secrets.db.
+vi.mock("../../util/offline-secrets-store.js", () => ({
+  offlineOAuthProfileSet: vi.fn(async () => ({ ok: true })),
 }));
 
 import { credentialsStep } from "./04-credentials.js";
 import { getModels } from "@earendil-works/pi-ai";
-import { loginOpenAICodexOAuth, isRemoteEnvironment, loadConfigFile, validateConfig } from "@comis/core";
+import { loginOpenAICodexOAuth, isRemoteEnvironment, loadConfigFile, validateConfig, selectOAuthCredentialStore } from "@comis/core";
 import { callTyped, withClient } from "../../client/rpc-client.js";
 import { requireDaemonOrExit } from "../../util/daemon-required.js";
+import { isDaemonRunning } from "../../sync-tooling/daemon-guard.js";
+import { offlineOAuthProfileSet } from "../../util/offline-secrets-store.js";
 
 // Capture the un-mocked `getModels` so the composed-URL regression tests
 // can compose URLs against the real pi-ai catalog (the module-level
@@ -762,6 +786,44 @@ describe("credentialsStep — OAuth dispatch", () => {
     expect(result.provider?.apiKey).toBe("test_access_token");
   });
 
+  it("does not leak wizard-oauth JSON logs onto the interactive console", async () => {
+    // Regression: the wizard's OAuth logger wrote structured JSON to stderr
+    // during the interactive init wizard, interleaving with the @clack prompt
+    // UI. The operational logger must be quiet (warn-gated) so a successful
+    // OAuth login emits nothing to the console.
+    const writes: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        writes.push(String(chunk));
+        return true;
+      });
+    try {
+      vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+        ok: true,
+        value: {
+          access: "tok",
+          refresh: "ref",
+          expires: Date.now() + 3_600_000,
+          accountId: "acct",
+          email: "alice@example.com",
+          displayName: "Alice",
+          profileId: "openai-codex:alice@example.com",
+        },
+      });
+      const prompter = createMockPrompter();
+      vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+      await credentialsStep.execute(
+        { ...INITIAL_STATE, provider: { id: "openai-codex" } as ProviderConfig },
+        prompter,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    const leaked = writes.filter((w) => w.includes("wizard-oauth"));
+    expect(leaked).toEqual([]);
+  });
+
   it("openai-codex device-code dispatch (isRemote=true)", async () => {
     vi.mocked(isRemoteEnvironment).mockReturnValueOnce(true);
     vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
@@ -931,6 +993,8 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
     vi.mocked(callTyped).mockReset();
     vi.mocked(withClient).mockReset();
     vi.mocked(requireDaemonOrExit).mockReset();
+    vi.mocked(isDaemonRunning).mockReset();
+    vi.mocked(offlineOAuthProfileSet).mockReset();
     vi.mocked(isRemoteEnvironment).mockReturnValue(false);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
 
@@ -940,6 +1004,9 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => fn({}));
     // Default: requireDaemonOrExit resolves (daemon is running)
     vi.mocked(requireDaemonOrExit).mockResolvedValue(undefined);
+    // Default: daemon is UP → encrypted branch routes through the daemon RPC.
+    vi.mocked(isDaemonRunning).mockResolvedValue(true);
+    vi.mocked(offlineOAuthProfileSet).mockResolvedValue({ ok: true, value: undefined });
   });
 
   afterEach(() => {
@@ -993,16 +1060,19 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
     });
   });
 
-  it("encrypted mode: requireDaemonOrExit is called before loginOpenAICodexOAuth", async () => {
+  it("encrypted mode: isDaemonRunning is consulted before persistence", async () => {
+    // requireDaemonOrExit was removed from the encrypted branch; the branch now
+    // probes isDaemonRunning to decide RPC (up) vs. offline write (down).
     vi.mocked(loadConfigFile).mockReturnValue({
       ok: true,
       value: { security: { storage: "encrypted" } },
     });
 
-    // Track call order
+    // Track call order: isDaemonRunning must be consulted before login persists.
     const callOrder: string[] = [];
-    vi.mocked(requireDaemonOrExit).mockImplementation(async () => {
-      callOrder.push("requireDaemonOrExit");
+    vi.mocked(isDaemonRunning).mockImplementation(async () => {
+      callOrder.push("isDaemonRunning");
+      return true;
     });
     vi.mocked(loginOpenAICodexOAuth).mockImplementation(async () => {
       callOrder.push("loginOpenAICodexOAuth");
@@ -1030,11 +1100,149 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
 
     await credentialsStep.execute(startState, prompter);
 
-    const daemonIdx = callOrder.indexOf("requireDaemonOrExit");
+    expect(isDaemonRunning).toHaveBeenCalled();
+    const daemonIdx = callOrder.indexOf("isDaemonRunning");
     const oauthIdx = callOrder.indexOf("loginOpenAICodexOAuth");
     expect(daemonIdx).toBeGreaterThanOrEqual(0);
     expect(oauthIdx).toBeGreaterThanOrEqual(0);
     expect(daemonIdx).toBeLessThan(oauthIdx);
+  });
+
+  it("encrypted + daemon DOWN: persists via offlineOAuthProfileSet, NOT RPC", async () => {
+    vi.mocked(loadConfigFile).mockReturnValue({
+      ok: true,
+      value: { security: { storage: "encrypted" } },
+    });
+    vi.mocked(isDaemonRunning).mockResolvedValue(false);
+
+    const expiresAt = Date.now() + 3_600_000;
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+      ok: true,
+      value: {
+        access: "tok_offline",
+        refresh: "ref_offline",
+        expires: expiresAt,
+        accountId: "acct_offline",
+        email: "offline@example.com",
+        displayName: "Offline User",
+        profileId: "openai-codex:offline@example.com",
+      },
+    });
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    const result = await credentialsStep.execute(startState, prompter);
+
+    // Offline encrypted write used; daemon RPC NOT used.
+    expect(callTyped).not.toHaveBeenCalled();
+    expect(offlineOAuthProfileSet).toHaveBeenCalledTimes(1);
+    const arg = vi.mocked(offlineOAuthProfileSet).mock.calls[0]![0] as {
+      profile: Record<string, unknown>;
+      dataDir: string;
+      envFilePath: string;
+    };
+    expect(arg.profile).toMatchObject({
+      provider: "openai-codex",
+      profileId: "openai-codex:offline@example.com",
+      access: "tok_offline",
+      refresh: "ref_offline",
+      expires: expiresAt,
+      accountId: "acct_offline",
+      email: "offline@example.com",
+      displayName: "Offline User",
+      version: 1,
+    });
+    expect(arg.dataDir.endsWith("/.comis")).toBe(true);
+    expect(arg.envFilePath.endsWith("/.comis/.env")).toBe(true);
+
+    // Success state returned (validated + profile id), no apiKey in state.
+    expect(result.provider?.validated).toBe(true);
+    expect(result.provider?.oauthProfileId).toBe("openai-codex:offline@example.com");
+    expect(result.provider?.apiKey).toBeUndefined();
+  });
+
+  it("encrypted + daemon DOWN + offlineOAuthProfileSet err: surfaces error + skip", async () => {
+    vi.mocked(loadConfigFile).mockReturnValue({
+      ok: true,
+      value: { security: { storage: "encrypted" } },
+    });
+    vi.mocked(isDaemonRunning).mockResolvedValue(false);
+    vi.mocked(offlineOAuthProfileSet).mockResolvedValue({
+      ok: false,
+      error: new Error("boom"),
+    });
+
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+      ok: true,
+      value: {
+        access: "tok_err",
+        refresh: "ref_err",
+        expires: Date.now() + 3_600_000,
+        accountId: "acct_err",
+        email: "err@example.com",
+        displayName: "Err User",
+        profileId: "openai-codex:err@example.com",
+      },
+    });
+
+    const prompter = createMockPrompter();
+    // method picker = browser-auto, then recovery choice = skip
+    vi.mocked(prompter.select)
+      .mockResolvedValueOnce("browser-auto")
+      .mockResolvedValueOnce("skip");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    await credentialsStep.execute(startState, prompter);
+
+    const errorCalls = vi.mocked(prompter.log.error).mock.calls.map(([m]) => String(m));
+    expect(errorCalls.some((m) => m.includes("boom"))).toBe(true);
+    expect(callTyped).not.toHaveBeenCalled();
+  });
+
+  it("encrypted + daemon UP: uses RPC (callTyped auth.set), offline NOT called", async () => {
+    vi.mocked(loadConfigFile).mockReturnValue({
+      ok: true,
+      value: { security: { storage: "encrypted" } },
+    });
+    vi.mocked(isDaemonRunning).mockResolvedValue(true);
+
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+      ok: true,
+      value: {
+        access: "tok_up",
+        refresh: "ref_up",
+        expires: Date.now() + 3_600_000,
+        accountId: "acct_up",
+        email: "up@example.com",
+        displayName: "Up User",
+        profileId: "openai-codex:up@example.com",
+      },
+    });
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    await credentialsStep.execute(startState, prompter);
+
+    expect(callTyped).toHaveBeenCalledTimes(1);
+    const callTypedArgs = vi.mocked(callTyped).mock.calls[0]!;
+    expect((callTypedArgs[1] as { method: string }).method).toBe("auth.set");
+    expect(offlineOAuthProfileSet).not.toHaveBeenCalled();
   });
 
   it("env mode: wizard credential step surfaces actionable rejection containing 'env' and 'read-only'", async () => {
@@ -1068,6 +1276,51 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
 
     // State must NOT advance to validated=true (env-mode rejection returns early)
     expect(result.provider?.validated).not.toBe(true);
+  });
+
+  it("state.storageMode=encrypted forces the encrypted branch even when loadWizardStorageMode yields file", async () => {
+    // Fresh-init scenario: the storage step provisioned the master key earlier
+    // in this same wizard run, but the in-process env snapshot consulted by
+    // loadWizardStorageMode does not reflect it (no key, no config -> "file").
+    // state.storageMode="encrypted" must take precedence so the encrypted
+    // persistence path runs (daemon-down -> offlineOAuthProfileSet) instead of
+    // opening the file store.
+    masterKeyState = undefined;
+    vi.mocked(selectOAuthCredentialStore).mockClear();
+    vi.mocked(loadConfigFile).mockReturnValue({
+      ok: false,
+      error: new Error("no config"),
+    });
+    vi.mocked(isDaemonRunning).mockResolvedValue(false); // daemon down -> offline write
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+      ok: true,
+      value: {
+        access: "tok_precedence",
+        refresh: "ref_precedence",
+        expires: Date.now() + 3_600_000,
+        accountId: "acct_precedence",
+        email: "prec@example.com",
+        displayName: "Prec User",
+        profileId: "openai-codex:prec@example.com",
+      },
+    });
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      storageMode: "encrypted",
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    const result = await credentialsStep.execute(startState, prompter);
+
+    // Encrypted branch taken: offline encrypted write used, file store NOT opened.
+    expect(offlineOAuthProfileSet).toHaveBeenCalledTimes(1);
+    expect(selectOAuthCredentialStore).not.toHaveBeenCalled();
+    expect(result.provider?.validated).toBe(true);
+    expect(result.provider?.oauthProfileId).toBe("openai-codex:prec@example.com");
   });
 
   it("file mode: wizard uses existing store.set() path (selectOAuthCredentialStore called, callTyped NOT called)", async () => {
@@ -1125,6 +1378,8 @@ describe("loadWizardStorageMode env-ref resolution (Bug 1)", () => {
     vi.mocked(callTyped).mockReset();
     vi.mocked(withClient).mockReset();
     vi.mocked(requireDaemonOrExit).mockReset();
+    vi.mocked(isDaemonRunning).mockReset();
+    vi.mocked(offlineOAuthProfileSet).mockReset();
     vi.mocked(isRemoteEnvironment).mockReturnValue(false);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
 
@@ -1132,6 +1387,9 @@ describe("loadWizardStorageMode env-ref resolution (Bug 1)", () => {
     vi.mocked(callTyped).mockResolvedValue({ profileId: "openai-codex:test@example.com", stored: true });
     vi.mocked(withClient).mockImplementation(async (fn) => fn({}));
     vi.mocked(requireDaemonOrExit).mockResolvedValue(undefined);
+    // Daemon UP by default → encrypted branch uses the daemon RPC path.
+    vi.mocked(isDaemonRunning).mockResolvedValue(true);
+    vi.mocked(offlineOAuthProfileSet).mockResolvedValue({ ok: true, value: undefined });
   });
 
   afterEach(() => {
@@ -1210,13 +1468,143 @@ describe("loadWizardStorageMode env-ref resolution (Bug 1)", () => {
 
     await credentialsStep.execute(startState, prompter);
 
-    // POST-FIX: loadWizardStorageMode must detect "encrypted" and call
-    // requireDaemonOrExit before the OAuth flow proceeds.
-    // PRE-FIX: falls back to "file" → requireDaemonOrExit NOT called → test FAILS (RED).
-    expect(requireDaemonOrExit).toHaveBeenCalled();
+    // POST-FIX: loadWizardStorageMode must detect "encrypted" and the branch
+    // probes isDaemonRunning before persisting (daemon UP → RPC path).
+    // PRE-FIX: falls back to "file" → encrypted branch never runs → test FAILS.
+    expect(isDaemonRunning).toHaveBeenCalled();
     // And the profile must be persisted via daemon RPC (callTyped), not file store
     expect(callTyped).toHaveBeenCalled();
     const callTypedArgs = vi.mocked(callTyped).mock.calls[0]!;
     expect((callTypedArgs[1] as { method: string }).method).toBe("auth.set");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadWizardStorageMode encrypted-default fallback (init, no config)
+//
+// During `comis init` no config.yaml exists yet (OAuth login runs in step 04,
+// config is written in step 10). loadWizardStorageMode must align with the
+// daemon's encrypted default: when a SECRETS_MASTER_KEY is present, fall back
+// to "encrypted" (the encrypted store is usable); otherwise "file".
+//
+// These tests drive the resolution behaviorally via handleCodexOAuth
+// (loadWizardStorageMode is intentionally not exported standalone):
+//   - config absent + master key present → encrypted branch (callTyped used,
+//     selectOAuthCredentialStore NOT used).
+//   - config absent + no master key      → file branch (selectOAuthCredentialStore
+//     used, callTyped NOT used).
+//
+// PRE-PATCH (RED): both `return "file"` fallbacks return "file" unconditionally,
+// so even with a master key present the file branch is taken → the
+// "encrypted when master key present" test FAILS.
+// ---------------------------------------------------------------------------
+
+describe("loadWizardStorageMode encrypted-default fallback (init, no config)", () => {
+  beforeEach(() => {
+    vi.mocked(loginOpenAICodexOAuth).mockReset();
+    vi.mocked(callTyped).mockReset();
+    vi.mocked(withClient).mockReset();
+    vi.mocked(requireDaemonOrExit).mockReset();
+    vi.mocked(isDaemonRunning).mockReset();
+    vi.mocked(offlineOAuthProfileSet).mockReset();
+    vi.mocked(selectOAuthCredentialStore).mockClear();
+    vi.mocked(isRemoteEnvironment).mockReturnValue(false);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+
+    vi.mocked(callTyped).mockResolvedValue({
+      profileId: "openai-codex:test@example.com",
+      stored: true,
+    });
+    vi.mocked(withClient).mockImplementation(async (fn) => fn({}));
+    vi.mocked(requireDaemonOrExit).mockResolvedValue(undefined);
+    // Daemon UP by default → encrypted branch uses the daemon RPC path so the
+    // "callTyped used" assertion holds when the fallback resolves "encrypted".
+    vi.mocked(isDaemonRunning).mockResolvedValue(true);
+    vi.mocked(offlineOAuthProfileSet).mockResolvedValue({ ok: true, value: undefined });
+
+    // Config absent during init → triggers the encrypted-default fallback.
+    vi.mocked(loadConfigFile).mockReturnValue({
+      ok: false,
+      error: new Error("no config"),
+    });
+
+    const okLogin = {
+      ok: true as const,
+      value: {
+        access: "tok_fallback",
+        refresh: "ref_fallback",
+        expires: Date.now() + 3_600_000,
+        accountId: "acct_fallback",
+        email: "fallback@example.com",
+        displayName: "Fallback User",
+        profileId: "openai-codex:fallback@example.com",
+      },
+    };
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue(okLogin);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    masterKeyState = undefined;
+    vi.mocked(loadConfigFile).mockReturnValue({ ok: false, error: new Error("no config") });
+  });
+
+  it("config absent + SECRETS_MASTER_KEY present → encrypted branch (callTyped used, file store NOT opened)", async () => {
+    masterKeyState = "a".repeat(64); // master key present
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    await credentialsStep.execute(startState, prompter);
+
+    // Encrypted branch was taken: daemon RPC path used, file store NOT opened.
+    expect(callTyped).toHaveBeenCalled();
+    expect(selectOAuthCredentialStore).not.toHaveBeenCalled();
+  });
+
+  it("config absent + no SECRETS_MASTER_KEY → file branch (file store opened, callTyped NOT used)", async () => {
+    masterKeyState = undefined; // no master key
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    await credentialsStep.execute(startState, prompter);
+
+    // File branch was taken: the file store adapter is opened, no daemon RPC.
+    expect(selectOAuthCredentialStore).toHaveBeenCalled();
+    expect(callTyped).not.toHaveBeenCalled();
+  });
+
+  it("valid config still wins (security.storage honored regardless of master key)", async () => {
+    masterKeyState = "a".repeat(64);
+    // Valid config explicitly selects file storage → must override the
+    // encrypted-default fallback (the fallback only applies when config is absent).
+    vi.mocked(loadConfigFile).mockReturnValue({
+      ok: true,
+      value: { security: { storage: "file" } },
+    });
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    await credentialsStep.execute(startState, prompter);
+
+    expect(selectOAuthCredentialStore).toHaveBeenCalled();
+    expect(callTyped).not.toHaveBeenCalled();
   });
 });

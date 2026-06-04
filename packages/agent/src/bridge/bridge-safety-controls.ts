@@ -87,6 +87,72 @@ export function emitStepLimitAbort(
 }
 
 // ---------------------------------------------------------------------------
+// Loop-detected check (FIX #2 — the programmatic loop-breaker)
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal loop-state reporter consulted by the bridge. The per-turn
+ * `TurnLoopDetector` (executor/turn-loop-detector.ts) satisfies this shape;
+ * the bridge depends only on the boolean verdict, not the detector internals.
+ */
+export interface LoopStateReporter {
+  /** True once the no-progress / empty-turn thresholds break the turn early. */
+  shouldBreakLoop(): boolean;
+}
+
+/**
+ * Check if the per-turn loop detector wants to break the turn early.
+ * Returns a loop_detected abort descriptor when it does (and the run is not
+ * already aborted). Fires well before the step limit (the detector's
+ * no-progress threshold is far under maxSteps) so a runaway repeating-tool
+ * loop is bounded without burning the whole step budget.
+ */
+export function checkLoopLimit(
+  detector: LoopStateReporter,
+  aborted: boolean,
+): SafetyCheckResult {
+  if (detector.shouldBreakLoop() && !aborted) {
+    return {
+      shouldAbort: true,
+      finishReason: "loop_detected",
+      eventReason: "loop_detected",
+    };
+  }
+  return { shouldAbort: false };
+}
+
+/**
+ * Emit loop-detected abort events and log a warning. Mirrors
+ * emitStepLimitAbort: errorKind "resource", an actionable operator hint, and
+ * the execution:aborted{reason:"loop_detected"} health event so the stop is
+ * reconstructable from logs + events (T-hbe-04).
+ */
+export function emitLoopAbort(
+  deps: {
+    eventBus: TypedEventBus;
+    sessionKey: SessionKey;
+    agentId: string;
+    logger: ComisLogger;
+    onAbort?: () => void;
+  },
+): void {
+  deps.onAbort?.();
+  deps.eventBus.emit("execution:aborted", {
+    sessionKey: deps.sessionKey,
+    reason: "loop_detected",
+    agentId: deps.agentId,
+    timestamp: systemNowMs(),
+  });
+  deps.logger.warn(
+    {
+      hint: "Agent repeated identical no-progress tool calls; broke the turn early -- review the task or the tool args",
+      errorKind: "resource" as const,
+    },
+    "Repeating-tool loop detected, aborting execution",
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Budget guard check
 // ---------------------------------------------------------------------------
 

@@ -15,11 +15,44 @@
 import type { ComisLogger, LogMethod } from "./log-fields.js";
 import { systemNowMs } from "../runtime/system-time.js";
 
+/**
+ * Numeric severity per level — mirrors Pino's ordering (audit = 35, between
+ * info and warn, matching @comis/infra's AUDIT_LEVEL_VALUE). `silent` is the
+ * suppress-everything sentinel. A message emits only when its severity is at
+ * or above the configured level's severity.
+ */
+const LEVEL_SEVERITY: Record<string, number> = {
+  trace: 10,
+  debug: 20,
+  info: 30,
+  audit: 35,
+  warn: 40,
+  error: 50,
+  fatal: 60,
+  silent: Number.POSITIVE_INFINITY,
+};
+
+/**
+ * Resolve a level name to its numeric severity. An unknown CONFIGURED level
+ * resolves to 0 (fail-open — never silently drop logs because of a typo'd
+ * level); message levels are always one of the fixed method names above.
+ */
+function severityOf(level: string): number {
+  return LEVEL_SEVERITY[level] ?? 0;
+}
+
 function emit(
   level: string,
+  configuredLevel: string,
   bindings: Record<string, unknown>,
   args: readonly unknown[],
 ): void {
+  // Severity gate: drop messages below the configured level (e.g. debug/info
+  // when the logger is set to "warn"). Reads the CURRENT configured level on
+  // every call so runtime `.level` changes take effect immediately.
+  if (severityOf(level) < severityOf(configuredLevel)) {
+    return;
+  }
   let obj: Record<string, unknown> = {};
   let msg: string | undefined;
   if (args.length > 0 && typeof args[0] === "object" && args[0] !== null) {
@@ -38,8 +71,12 @@ function emit(
   process.stderr.write(line + "\n");
 }
 
-function method(level: string, bindings: Record<string, unknown>): LogMethod {
-  return (...args: unknown[]) => emit(level, bindings, args);
+function method(
+  level: string,
+  getConfiguredLevel: () => string,
+  bindings: Record<string, unknown>,
+): LogMethod {
+  return (...args: unknown[]) => emit(level, getConfiguredLevel(), bindings, args);
 }
 
 export function createConsoleLogger(
@@ -56,13 +93,13 @@ export function createConsoleLogger(
     set level(l: string) {
       level = l;
     },
-    trace: method("trace", bindings),
-    debug: method("debug", bindings),
-    info: method("info", bindings),
-    warn: method("warn", bindings),
-    error: method("error", bindings),
-    fatal: method("fatal", bindings),
-    audit: method("audit", bindings),
+    trace: method("trace", () => level, bindings),
+    debug: method("debug", () => level, bindings),
+    info: method("info", () => level, bindings),
+    warn: method("warn", () => level, bindings),
+    error: method("error", () => level, bindings),
+    fatal: method("fatal", () => level, bindings),
+    audit: method("audit", () => level, bindings),
     child(extraBindings: Record<string, unknown>): ComisLogger {
       return createConsoleLogger(level, { ...bindings, ...extraBindings });
     },

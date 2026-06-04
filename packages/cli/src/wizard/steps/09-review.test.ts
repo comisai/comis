@@ -63,7 +63,6 @@ function populatedState(): WizardState {
     gateway: {
       port: 4766,
       bindMode: "loopback",
-      authMethod: "token",
       token: "abc123token",
     },
     dataDir: "/home/test/.comis/data",

@@ -531,6 +531,26 @@ describe("failureLabel", () => {
       "[ERR] dependency",
     );
   });
+
+  it("appends the one-line reason for a resource abort so the label reads truthfully (never platform)", () => {
+    // A max_steps / loop abort carries a fixed one-line reason; the label must
+    // read "❌ resource — <reason>", never the bare "❌ platform" mislabel.
+    const out = failureLabel({
+      kind: "failure",
+      errorKind: "resource",
+      failedEvents: [],
+      reason: "stopped — hit step limit",
+    });
+    expect(out).toBe("❌ resource — stopped — hit step limit");
+    expect(out).not.toContain("platform");
+  });
+
+  it("omits the reason separator when no reason is present (byte parity preserved)", () => {
+    // A failure with no reason must be byte-identical to the historical output.
+    expect(failureLabel({ kind: "failure", errorKind: "timeout", failedEvents: [] })).toBe(
+      "❌ timeout",
+    );
+  });
 });
 
 describe("successLabel", () => {

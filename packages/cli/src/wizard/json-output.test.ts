@@ -55,7 +55,6 @@ describe("buildJsonOutput", () => {
         gateway: {
           port: 4766,
           bindMode: "loopback",
-          authMethod: "token",
         },
       });
       const result = buildJsonOutput(state);
@@ -67,7 +66,6 @@ describe("buildJsonOutput", () => {
         gateway: {
           port: 9000,
           bindMode: "lan",
-          authMethod: "token",
         },
       });
       const result = buildJsonOutput(state);
@@ -80,7 +78,6 @@ describe("buildJsonOutput", () => {
           port: 3000,
           bindMode: "custom",
           customIp: "192.168.1.50",
-          authMethod: "token",
         },
       });
       const result = buildJsonOutput(state);
@@ -92,7 +89,6 @@ describe("buildJsonOutput", () => {
         gateway: {
           port: 3000,
           bindMode: "custom",
-          authMethod: "token",
         },
       });
       const result = buildJsonOutput(state);
@@ -103,7 +99,6 @@ describe("buildJsonOutput", () => {
       const state = makeState({
         gateway: {
           bindMode: "loopback",
-          authMethod: "token",
         } as GatewayConfig,
       });
       const result = buildJsonOutput(state);
@@ -112,12 +107,11 @@ describe("buildJsonOutput", () => {
   });
 
   describe("gateway token", () => {
-    it("includes token when authMethod is 'token'", () => {
+    it("includes the gateway token when a token value is set", () => {
       const state = makeState({
         gateway: {
           port: 4766,
           bindMode: "loopback",
-          authMethod: "token",
           token: "my-secret-token",
         },
       });
@@ -125,26 +119,11 @@ describe("buildJsonOutput", () => {
       expect(result.gateway?.token).toBe("my-secret-token");
     });
 
-    it("omits token when authMethod is 'password'", () => {
+    it("omits token when no token value is set", () => {
       const state = makeState({
         gateway: {
           port: 4766,
           bindMode: "loopback",
-          authMethod: "password",
-          password: "my-password",
-          token: "should-not-appear",
-        },
-      });
-      const result = buildJsonOutput(state);
-      expect(result.gateway?.token).toBeUndefined();
-    });
-
-    it("omits token when authMethod is 'token' but no token value", () => {
-      const state = makeState({
-        gateway: {
-          port: 4766,
-          bindMode: "loopback",
-          authMethod: "token",
         },
       });
       const result = buildJsonOutput(state);

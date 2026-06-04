@@ -15,6 +15,7 @@ import type { StepCounter } from "../step-counter.js";
 import type { CircuitBreaker } from "../../safety/circuit-breaker.js";
 import type { ToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
 import type { MessageSendLimiter } from "../../safety/message-send-limiter.js";
+import type { TurnLoopDetector } from "../turn-loop-detector.js";
 
 /**
  * Create a beforeToolCall guard that proactively blocks tool execution when
@@ -35,6 +36,7 @@ export function createBeforeToolCallGuard(
   circuitBreaker: CircuitBreaker,
   toolRetryBreaker?: ToolRetryBreaker,
   messageSendLimiter?: MessageSendLimiter,
+  turnLoopDetector?: TurnLoopDetector,
 ) {
   return async (context: unknown, _signal?: AbortSignal) => {
     // Proactive step limit check
@@ -49,6 +51,24 @@ export function createBeforeToolCallGuard(
     // Proactive circuit breaker check
     if (circuitBreaker.isOpen()) {
       return { block: true, reason: "Provider circuit breaker open" };
+    }
+
+    // FIX #2c -- short-circuit a repeat idempotent read (the loop-breaker seam).
+    // The SDK's BeforeToolCallResult has only {block, reason} -- no content
+    // channel -- so a short-circuit blocks the wasteful re-execution and
+    // surfaces the one-line steer as the tool-result reason text the model
+    // sees; the cached content is already in the model's context (it ran the
+    // read earlier this turn). Placed AFTER the hard safety stops so step /
+    // budget / circuit limits still take priority (they are reactive aborts).
+    if (turnLoopDetector && context && typeof context === "object") {
+      const ctx = context as { toolCall?: { name?: string }; args?: unknown };
+      const toolName = ctx.toolCall?.name;
+      if (toolName) {
+        const verdict = turnLoopDetector.beforeCall(toolName, ctx.args);
+        if (verdict.kind === "short_circuit") {
+          return { block: true, reason: verdict.steer };
+        }
+      }
     }
 
     // Tool retry breaker check -- block tools after repeated failures
