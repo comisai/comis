@@ -20,6 +20,8 @@
 
 import type {
   AppendMessageInput,
+  AppendSummaryInput,
+  LcdContextItem,
   LcdMessage,
 } from "./context-store-types.js";
 
@@ -28,9 +30,9 @@ import type {
  * for the LCD engine.
  *
  * All operations are synchronous (better-sqlite3 is synchronous), matching
- * the SessionStorePort precedent. The 127 surface is intentionally minimal —
- * write + read only. Assembly / eviction / summary methods belong to Phases
- * 128-130 and are NOT declared here.
+ * the SessionStorePort precedent. The 127 surface was intentionally minimal —
+ * write + read only. Phase 129 adds the sanctioned summary + context_items
+ * extension (the depth-0 LEAF half; condensation is Phase 130).
  */
 export interface ContextStorePort {
   /**
@@ -45,4 +47,17 @@ export interface ContextStorePort {
    * is pi-ai's job downstream — this port returns the faithful canonical rows.
    */
   getMessages(conversationId: string): LcdMessage[];
+  /**
+   * Compaction write path (C3): persist one leaf summary, link it to the
+   * covered messages (FK RESTRICT — losslessness), and range-replace the
+   * covered [startOrdinal, endOrdinal] message-refs in context_items with
+   * one summary-ref — ALL in one transaction. Returns the new summaryId.
+   */
+  appendLeafSummary(input: AppendSummaryInput): string;
+  /**
+   * Read path: the ordered model-facing context_items view (dense, gap-free
+   * ordinals). Lazily seeded 1:1 from lcd_messages on first read for a
+   * conversation with no context_items rows (no migration — design §9).
+   */
+  getContextItems(conversationId: string): LcdContextItem[];
 }
