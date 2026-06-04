@@ -11,6 +11,7 @@
  */
 import {
   type AppendMessageInput,
+  type AppendSummaryInput,
   type ContextStoreScope,
   type LcdMessagePart,
   messageToParts,
@@ -343,5 +344,316 @@ describe("createLcdStore", () => {
     };
     expect(() => store.append(input)).not.toThrow();
     expect(store.getMessages("conv-a")[0]!.seq).toBe(99);
+  });
+});
+
+// =====================================================================
+// createLcdStore — appendLeafSummary + getContextItems (Phase 129, C3)
+//
+// context_items is the ordered model-facing view: lazily seeded 1:1 from
+// lcd_messages on first read, then range-replaced by appendLeafSummary —
+// swapping a contiguous run of message-refs for one summary-ref while keeping
+// ordinals DENSE, GAP-FREE and ORDERED. lcd_messages is NEVER deleted (FK
+// RESTRICT enforces losslessness; getMessages length is invariant across a
+// leaf pass).
+// =====================================================================
+
+describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createLcdStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON"); // production sets this via openSqliteDatabase
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Append N plain user text messages (seq 0..N-1) at distinct createdAt. */
+  function seedMessages(count: number, scope: ContextStoreScope = SCOPE_A): void {
+    for (let i = 0; i < count; i++) {
+      store.append({
+        scope,
+        seq: i,
+        role: "user",
+        tokenCount: 1,
+        // distinct createdAt per message so earliest/latest are meaningful.
+        createdAt: 1000 + i * 10,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `m${i}` }, rawType: "text" } }],
+      });
+    }
+  }
+
+  /** The message ids of a conversation, in seq order. */
+  function messageIdsInSeqOrder(conversationId: string): string[] {
+    return store.getMessages(conversationId).map((m) => m.id);
+  }
+
+  /** A minimal valid AppendSummaryInput over [start,end]. */
+  function summaryInput(
+    startOrdinal: number,
+    endOrdinal: number,
+    overrides: Partial<AppendSummaryInput> = {},
+  ): AppendSummaryInput {
+    return {
+      scope: SCOPE_A,
+      tokenCount: 5,
+      content: "leaf summary text",
+      descendantCount: 0, // the store recomputes from the covered refs
+      earliestAt: 0,
+      latestAt: 0,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9999,
+      startOrdinal,
+      endOrdinal,
+      ...overrides,
+    };
+  }
+
+  it("getContextItems lazily seeds 1:1 from lcd_messages on first read (ordinal 0..N-1, message-refs in seq order)", () => {
+    seedMessages(3);
+    const ids = messageIdsInSeqOrder("conv-a");
+
+    const items = store.getContextItems("conv-a");
+
+    expect(items).toHaveLength(3);
+    expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2]);
+    expect(items.every((i) => i.refKind === "message")).toBe(true);
+    // Each ref points at the corresponding message id, in seq order.
+    expect(items.map((i) => i.refId)).toEqual(ids);
+  });
+
+  it("getContextItems is stable across calls — a second read returns the same seeded view, not a re-seed/duplication", () => {
+    seedMessages(2);
+    const first = store.getContextItems("conv-a");
+    const second = store.getContextItems("conv-a");
+
+    expect(second).toHaveLength(2);
+    expect(second.map((i) => i.refId)).toEqual(first.map((i) => i.refId));
+    // No duplicate context_items rows were written by the second read.
+    const rowCount = (
+      db.prepare("SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ?").get("conv-a") as {
+        c: number;
+      }
+    ).c;
+    expect(rowCount).toBe(2);
+  });
+
+  it("getContextItems returns [] for a conversation with no messages (nothing to seed)", () => {
+    expect(store.getContextItems("conv-empty")).toHaveLength(0);
+  });
+
+  it("appendLeafSummary range-replaces [start,end] with ONE summary-ref; ordinals stay dense, gap-free and ordered", () => {
+    seedMessages(5); // ordinals 0..4, all message-refs
+    store.getContextItems("conv-a"); // seed
+
+    // Replace the middle run [1,3] (m1,m2,m3) with one summary.
+    const summaryId = store.appendLeafSummary(summaryInput(1, 3));
+
+    const items = store.getContextItems("conv-a");
+    // 5 messages → 3 collapsed into 1 summary → 3 items remain (m0, SUMMARY, m4).
+    expect(items).toHaveLength(3);
+    // Ordinals are dense + gap-free + ordered: 0,1,2.
+    expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2]);
+    // Item shape: [message m0] [summary] [message m4].
+    expect(items[0]!.refKind).toBe("message");
+    expect(items[1]!.refKind).toBe("summary");
+    expect(items[1]!.refId).toBe(summaryId);
+    expect(items[2]!.refKind).toBe("message");
+  });
+
+  it("appendLeafSummary recomputes descendantCount = covered message count and earliest/latest = min/max covered createdAt", () => {
+    seedMessages(5); // createdAt: 1000,1010,1020,1030,1040 for m0..m4
+    store.getContextItems("conv-a");
+
+    const summaryId = store.appendLeafSummary(summaryInput(1, 3)); // covers m1,m2,m3
+
+    const row = db
+      .prepare(
+        "SELECT descendant_count, earliest_at, latest_at FROM lcd_summaries WHERE summary_id = ?",
+      )
+      .get(summaryId) as { descendant_count: number; earliest_at: number; latest_at: number };
+
+    // 3 messages covered.
+    expect(row.descendant_count).toBe(3);
+    // Time-range = min/max covered createdAt (m1=1010 .. m3=1030).
+    expect(row.earliest_at).toBe(1010);
+    expect(row.latest_at).toBe(1030);
+  });
+
+  it("appendLeafSummary persists the lcd_summaries row (content/tokenCount/fileIds/taint/fallback) + the per-covered-message links in ONE go", () => {
+    seedMessages(4);
+    store.getContextItems("conv-a");
+    const idsBefore = messageIdsInSeqOrder("conv-a");
+
+    const summaryId = store.appendLeafSummary(
+      summaryInput(0, 2, {
+        content: "the leaf content",
+        tokenCount: 77,
+        fileIds: ["file-1", "file-2"],
+        taint: true,
+        fallback: true,
+      }),
+    );
+
+    const summaryRow = db
+      .prepare(
+        "SELECT kind, depth, token_count, content, file_ids, taint, fallback FROM lcd_summaries WHERE summary_id = ?",
+      )
+      .get(summaryId) as {
+      kind: string;
+      depth: number;
+      token_count: number;
+      content: string;
+      file_ids: string;
+      taint: number;
+      fallback: number;
+    };
+    expect(summaryRow.kind).toBe("leaf");
+    expect(summaryRow.depth).toBe(0);
+    expect(summaryRow.token_count).toBe(77);
+    expect(summaryRow.content).toBe("the leaf content");
+    expect(JSON.parse(summaryRow.file_ids)).toEqual(["file-1", "file-2"]);
+    expect(summaryRow.taint).toBe(1);
+    expect(summaryRow.fallback).toBe(1);
+
+    // One link row per covered message id (m0,m1,m2 = the first three).
+    const linkedIds = (
+      db
+        .prepare("SELECT message_id FROM lcd_summary_messages WHERE summary_id = ? ORDER BY message_id")
+        .all(summaryId) as Array<{ message_id: string }>
+    ).map((r) => r.message_id);
+    expect(linkedIds.sort()).toEqual([idsBefore[0]!, idsBefore[1]!, idsBefore[2]!].sort());
+  });
+
+  it("appendLeafSummary NEVER deletes lcd_messages — getMessages length is unchanged after a leaf pass (losslessness)", () => {
+    seedMessages(5);
+    store.getContextItems("conv-a");
+    expect(store.getMessages("conv-a")).toHaveLength(5);
+
+    store.appendLeafSummary(summaryInput(1, 3));
+
+    // The underlying messages are all still present (FK RESTRICT + no DELETE).
+    expect(store.getMessages("conv-a")).toHaveLength(5);
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM lcd_messages WHERE conversation_id = 'conv-a'").get() as {
+        c: number;
+      }).c,
+    ).toBe(5);
+  });
+
+  it("appendLeafSummary auto-seeds context_items if the conversation has not been read yet (range-replace works without an explicit getContextItems)", () => {
+    seedMessages(4); // never call getContextItems first
+
+    const summaryId = store.appendLeafSummary(summaryInput(0, 1));
+
+    const items = store.getContextItems("conv-a");
+    // 4 messages → [0,1] collapsed → 3 items (SUMMARY, m2, m3).
+    expect(items).toHaveLength(3);
+    expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2]);
+    expect(items[0]!.refKind).toBe("summary");
+    expect(items[0]!.refId).toBe(summaryId);
+  });
+
+  it("successive leaf passes — a second appendLeafSummary over the now-shorter range range-replaces correctly", () => {
+    seedMessages(6); // ordinals 0..5
+    store.getContextItems("conv-a");
+
+    // First pass: collapse [0,1] → now items: [S0, m2, m3, m4, m5] (5 items, ordinals 0..4).
+    const s0 = store.appendLeafSummary(summaryInput(0, 1));
+    let items = store.getContextItems("conv-a");
+    expect(items).toHaveLength(5);
+    expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2, 3, 4]);
+
+    // Second pass over the now-shorter view: collapse [2,4] (m3,m4,m5) → [S0, m2, S1] (3 items).
+    const s1 = store.appendLeafSummary(summaryInput(2, 4));
+    items = store.getContextItems("conv-a");
+    expect(items).toHaveLength(3);
+    expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2]);
+    expect(items[0]!.refKind).toBe("summary");
+    expect(items[0]!.refId).toBe(s0);
+    expect(items[1]!.refKind).toBe("message");
+    expect(items[2]!.refKind).toBe("summary");
+    expect(items[2]!.refId).toBe(s1);
+
+    // The second summary covers exactly the 3 messages it range-replaced.
+    expect(
+      (db.prepare("SELECT descendant_count FROM lcd_summaries WHERE summary_id = ?").get(s1) as {
+        descendant_count: number;
+      }).descendant_count,
+    ).toBe(3);
+  });
+
+  it("appendLeafSummary collapsing a single-message range [k,k] replaces exactly that one ref (boundary)", () => {
+    seedMessages(3);
+    store.getContextItems("conv-a");
+
+    const summaryId = store.appendLeafSummary(summaryInput(1, 1)); // just m1
+
+    const items = store.getContextItems("conv-a");
+    expect(items).toHaveLength(3); // 3 messages → m1 swapped for a summary → still 3 items
+    expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2]);
+    expect(items[1]!.refKind).toBe("summary");
+    expect(items[1]!.refId).toBe(summaryId);
+    expect(
+      (db.prepare("SELECT descendant_count FROM lcd_summaries WHERE summary_id = ?").get(summaryId) as {
+        descendant_count: number;
+      }).descendant_count,
+    ).toBe(1);
+  });
+
+  it("appendLeafSummary returns a non-empty summaryId that matches the persisted lcd_summaries row", () => {
+    seedMessages(2);
+    store.getContextItems("conv-a");
+
+    const summaryId = store.appendLeafSummary(summaryInput(0, 0));
+    expect(summaryId).toBeTruthy();
+    expect(typeof summaryId).toBe("string");
+
+    const row = db
+      .prepare("SELECT summary_id FROM lcd_summaries WHERE summary_id = ?")
+      .get(summaryId) as { summary_id: string } | undefined;
+    expect(row).toBeDefined();
+    expect(row!.summary_id).toBe(summaryId);
+  });
+
+  it("getContextItems degrades per-row (WR-02) — a corrupt context_items row is skipped, its siblings survive and never throw", () => {
+    seedMessages(3);
+    store.getContextItems("conv-a"); // seed 3 message-refs (ordinals 0,1,2)
+
+    // Corrupt ONE context_items row on disk: a non-numeric TEXT in the INTEGER
+    // `ordinal` column fails the `ordinal: z.number()` row-schema check (a
+    // realistic on-disk drift). The read must NOT throw and must keep the other two.
+    db.prepare("UPDATE lcd_context_items SET ordinal = ? WHERE ordinal = 1").run("corrupt");
+
+    expect(() => store.getContextItems("conv-a")).not.toThrow();
+    const items = store.getContextItems("conv-a");
+    // The corrupt middle row is skipped; the two valid siblings survive (not []).
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => i.ordinal)).toEqual([0, 2]);
+  });
+
+  it("scoping/isolation — getContextItems(convA) seeds + returns only convA's items", () => {
+    seedMessages(2, SCOPE_A);
+    seedMessages(3, SCOPE_B);
+
+    const a = store.getContextItems("conv-a");
+    const b = store.getContextItems("conv-b");
+    expect(a).toHaveLength(2);
+    expect(b).toHaveLength(3);
+
+    // A leaf pass on conv-a does not touch conv-b's view.
+    store.appendLeafSummary(summaryInput(0, 1, { scope: SCOPE_A }));
+    expect(store.getContextItems("conv-a")).toHaveLength(1);
+    expect(store.getContextItems("conv-b")).toHaveLength(3);
+  });
+
+  it("AppendSummaryInput type is the compaction write-path contract", () => {
+    seedMessages(2);
+    store.getContextItems("conv-a");
+    const input: AppendSummaryInput = summaryInput(0, 0);
+    expect(() => store.appendLeafSummary(input)).not.toThrow();
   });
 });
