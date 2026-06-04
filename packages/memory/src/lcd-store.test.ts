@@ -283,6 +283,54 @@ describe("createLcdStore", () => {
     expect(messages.map((m) => m.seq)).toEqual([1, 3]);
   });
 
+  it("DDL CHECK (IN-01) — an out-of-enum role is rejected by the lcd_messages constraint", () => {
+    // Defense-in-depth: the read path casts `row.role as LcdRole` unchecked, so
+    // an out-of-set on-disk role (e.g. "system") would flow through
+    // partsToMessage as a non-toolResult message. A CHECK (role IN (...))
+    // constraint rejects such a value at write time. The typed `append` can
+    // never produce one, so we drive a raw out-of-enum INSERT directly.
+    const insertBadRole = () =>
+      db
+        .prepare(
+          "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("m_bad", "conv-a", "tenant_a", "agent_a", "sess-a", 1, "system", 0, FIXED_CREATED_AT);
+    expect(insertBadRole).toThrow(/CHECK constraint/i);
+
+    // A valid role still inserts (the constraint is not over-broad).
+    const insertGoodRole = () =>
+      db
+        .prepare(
+          "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("m_ok", "conv-a", "tenant_a", "agent_a", "sess-a", 2, "assistant", 0, FIXED_CREATED_AT);
+    expect(insertGoodRole).not.toThrow();
+  });
+
+  it("DDL CHECK (IN-01) — an out-of-enum part kind is rejected by the lcd_message_parts constraint", () => {
+    // Seed a valid parent message so the FK is satisfiable.
+    db.prepare(
+      "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("m_parent", "conv-a", "tenant_a", "agent_a", "sess-a", 1, "assistant", 0, FIXED_CREATED_AT);
+
+    const insertBadKind = () =>
+      db
+        .prepare(
+          "INSERT INTO lcd_message_parts (id, message_id, ordinal, kind, metadata) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run("p_bad", "m_parent", 0, "bogus_kind", "{}");
+    expect(insertBadKind).toThrow(/CHECK constraint/i);
+
+    // A valid kind still inserts.
+    const insertGoodKind = () =>
+      db
+        .prepare(
+          "INSERT INTO lcd_message_parts (id, message_id, ordinal, kind, metadata) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run("p_ok", "m_parent", 1, "text", "{}");
+    expect(insertGoodKind).not.toThrow();
+  });
+
   it("AppendMessageInput type is the write-path contract", () => {
     // Compile-time anchor: append accepts the AppendMessageInput DTO.
     const input: AppendMessageInput = {
