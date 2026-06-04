@@ -243,6 +243,25 @@ export const DEFAULT_COMPACTION_PREFIX_ANCHOR_TURNS = 2;
 export const MIN_MIDDLE_MESSAGES_FOR_COMPACTION = 3;
 
 // ---------------------------------------------------------------------------
+// LCD Leaf Summarization Escalation (Phase 129, C1)
+// ---------------------------------------------------------------------------
+
+/** Bounded token target for the deterministic Level-3 leaf-summary truncation —
+ *  the guaranteed-shrink floor (LOSSLESS-CLAW §5). When both LLM summarization
+ *  levels fail to reduce the chunk (oversized output or throws), Level 3 builds a
+ *  count-only note capped at this size so the leaf summary ALWAYS ends up strictly
+ *  smaller than the chunk it replaces (the escalation terminator — never loops).
+ *  Used by: lcd-leaf-summarizer (Level-3 deterministic truncation). */
+export const LEAF_FALLBACK_TARGET_TOKENS = 512;
+
+/** Marker string prefixed onto the deterministic Level-3 leaf truncation output so
+ *  a fallback (non-LLM) leaf summary is identifiable downstream (Phase 132
+ *  taint-escapes it; the assembler/store record `fallback: true`). The two LLM
+ *  levels never emit this marker — its presence means the deterministic floor ran.
+ *  Used by: lcd-leaf-summarizer (Level-3 marker). */
+export const LEAF_FALLBACK_SUMMARY_MARKER = "[lcd-leaf-fallback]";
+
+// ---------------------------------------------------------------------------
 // Post-Compaction Rehydration (Layer 6)
 // ---------------------------------------------------------------------------
 
