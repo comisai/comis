@@ -1278,6 +1278,50 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
     expect(result.provider?.validated).not.toBe(true);
   });
 
+  it("state.storageMode=encrypted forces the encrypted branch even when loadWizardStorageMode yields file", async () => {
+    // Fresh-init scenario: the storage step provisioned the master key earlier
+    // in this same wizard run, but the in-process env snapshot consulted by
+    // loadWizardStorageMode does not reflect it (no key, no config -> "file").
+    // state.storageMode="encrypted" must take precedence so the encrypted
+    // persistence path runs (daemon-down -> offlineOAuthProfileSet) instead of
+    // opening the file store.
+    masterKeyState = undefined;
+    vi.mocked(loadConfigFile).mockReturnValue({
+      ok: false,
+      error: new Error("no config"),
+    });
+    vi.mocked(isDaemonRunning).mockResolvedValue(false); // daemon down -> offline write
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+      ok: true,
+      value: {
+        access: "tok_precedence",
+        refresh: "ref_precedence",
+        expires: Date.now() + 3_600_000,
+        accountId: "acct_precedence",
+        email: "prec@example.com",
+        displayName: "Prec User",
+        profileId: "openai-codex:prec@example.com",
+      },
+    });
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      storageMode: "encrypted",
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    const result = await credentialsStep.execute(startState, prompter);
+
+    // Encrypted branch taken: offline encrypted write used, file store NOT opened.
+    expect(offlineOAuthProfileSet).toHaveBeenCalledTimes(1);
+    expect(selectOAuthCredentialStore).not.toHaveBeenCalled();
+    expect(result.provider?.validated).toBe(true);
+    expect(result.provider?.oauthProfileId).toBe("openai-codex:prec@example.com");
+  });
+
   it("file mode: wizard uses existing store.set() path (selectOAuthCredentialStore called, callTyped NOT called)", async () => {
     // Default: loadConfigFile returns error → falls back to file storage
     vi.mocked(loadConfigFile).mockReturnValue({ ok: false, error: new Error("no config") });
