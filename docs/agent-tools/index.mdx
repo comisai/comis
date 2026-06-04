@@ -148,10 +148,11 @@ Memory tools give agents access to their long-term memory. Agents automatically 
 In the default **pipeline** mode, the `session_search` tool searches the raw
 session history (see [Sessions](/agent-tools/sessions)). The in-session context
 inspection/recall tools (`ctx_search`, `ctx_inspect`, `ctx_recall`, `ctx_expand`)
-belonged to the DAG context engine, which is being reimplemented for the v2.12
-"Lossless Context DAG" release; those tools were removed pending the
-reimplementation and return with the LCD engine. See
-[Context Management](/agents/context-management).
+belong to the DAG (LCD) context engine. That engine is available as an opt-in mode
+(`contextEngine.version: "dag"`), but these on-demand recall tools land in a later
+phase and are **not** present yet — the current release does lossless verbatim
+assembly without recall tools. See
+[Context Management](/agents/context-management#dag-mode-opt-in).
 
 ### Infrastructure
 

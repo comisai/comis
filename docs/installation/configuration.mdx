@@ -284,11 +284,12 @@ agents:
 ```
 
 <Note>
-  The DAG mode (the `dag` engine version) — a lossless conversation graph with
-  recall tools — is being reimplemented for the v2.12 "Lossless Context DAG"
-  release and is **not currently available**. Selecting the `dag` version is
-  accepted but falls back to the pipeline engine with a logged warning until DAG
-  is re-enabled. See [Compaction](/agents/compaction) for details.
+  The DAG mode (the `dag` engine version) — the v2.12 "Lossless Context DAG"
+  lossless engine — is available as an **opt-in** mode: set `version: "dag"` to
+  use it (the default stays `"pipeline"` until a later release). In the current
+  release DAG does lossless verbatim assembly (full faithful history + a verbatim
+  fresh tail + transcript repair); compaction, summarization, and the on-demand
+  recall tools land in later phases. See [Compaction](/agents/compaction) for details.
 </Note>
 
 See [Config Reference](/reference/config-yaml) for the complete list of all 27

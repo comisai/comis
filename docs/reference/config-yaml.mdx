@@ -401,7 +401,7 @@ agents:
       enabled: true                 # opt-in (default false) -- LLM cron, a cost gate
       schedule: "30 3 * * *"
     contextEngine:
-      version: pipeline             # the default; "dag" is accepted but falls back to pipeline until re-enabled
+      version: pipeline             # the default; set "dag" to opt into the lossless LCD engine
 
 memory:
   rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
@@ -485,14 +485,14 @@ Per-agent configuration for Gemini explicit CachedContent caching. When enabled,
 
 #### Context Engine (agents.*.contextEngine)
 
-Context engine configuration. Controls the system that manages what your agent sees each turn. The default is **pipeline** (the sequential layered engine). The **dag** value (the lossless DAG with recall tools) is being reimplemented for v2.12 and is not currently available — it is accepted but falls back to pipeline with a logged warning until re-enabled. See [Compaction](/agents/compaction) for a user-friendly explanation.
+Context engine configuration. Controls the system that manages what your agent sees each turn. The default is **pipeline** (the sequential layered engine). The **dag** value (the v2.12 lossless LCD engine) is available as an **opt-in** mode — set `version: "dag"` to use it (the default stays `"pipeline"` until a later release). In the current release DAG does lossless verbatim assembly (full faithful history + a verbatim fresh tail of the most recent steps + transcript repair); compaction, summarization, and the on-demand recall tools land in later phases. See [Compaction](/agents/compaction) for a user-friendly explanation.
 
 **Core fields**
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Master toggle for the context engine |
-| `version` | `string` | `"pipeline"` | Operating mode: `"pipeline"` (default, the 8-step sequential system) or `"dag"` (the lossless DAG; accepted but currently falls back to pipeline — being reimplemented) |
+| `version` | `string` | `"pipeline"` | Operating mode: `"pipeline"` (default, the sequential layered system) or `"dag"` (opt-in lossless LCD engine — lossless verbatim assembly; compaction/recall land later) |
 
 **Shared fields** (both modes)
 
@@ -517,12 +517,12 @@ Context engine configuration. Controls the system that manages what your agent s
 | `observationDeactivationChars` | `number` | `80000` | Character threshold to deactivate observation masking entirely (20K-500K) |
 | `ephemeralKeepWindow` | `number` | `10` | Recent ephemeral tool results to keep unmasked (1-50) |
 
-**DAG mode fields** (`version: "dag"`) — these keys still parse but are dormant while DAG falls back to pipeline (being reimplemented for v2.12):
+**DAG mode fields** (`version: "dag"`) — `freshTailTurns` is active in the current release (lossless verbatim assembly); the compaction/recall keys below it still parse but are **reserved and dormant** until those features land in a later phase (DAG today keeps everything verbatim with no compaction):
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `freshTailTurns` | `number` | `8` | Recent user-assistant turn cycles protected from compaction (1-50) |
-| `contextThreshold` | `number` | `0.75` | Budget utilization ratio that triggers compaction (0.1-0.95) |
+| `freshTailTurns` | `number` | `8` | Recent **steps** (assistant + tool round-trips, not user-turns) always kept verbatim and never evicted (1-50) |
+| `contextThreshold` | `number` | `0.75` | Budget utilization ratio that triggers compaction (0.1-0.95) — reserved; no compaction yet |
 | `leafMinFanout` | `number` | `8` | Minimum raw messages before creating a leaf summary (2-20) |
 | `condensedMinFanout` | `number` | `4` | Minimum leaf summaries before creating a condensed summary (2-20) |
 | `condensedMinFanoutHard` | `number` | `2` | Absolute minimum fanout for condensed summaries under pressure (2-10) |

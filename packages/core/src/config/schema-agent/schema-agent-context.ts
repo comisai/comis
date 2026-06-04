@@ -173,11 +173,16 @@ export const ContextEngineConfigSchema = z.strictObject({
   /** Master toggle for the context engine pipeline (enabled by default). */
   enabled: z.boolean().default(true),
   /** Operating mode: "pipeline" for sequential layer composition (the default
-   *  sequential-layer engine). "dag" (= the v2.12 LCD engine) is being
-   *  reimplemented and is NOT currently available — selecting it falls back to
-   *  the pipeline engine with a logged warning until it is re-enabled
-   *  (Phase 133). The value is retained in the enum as a stub so a config
-   *  pinned to "dag" still parses and boots cleanly on pipeline. */
+   *  sequential-layer engine). "dag" (= the v2.12 LCD engine) is a WORKING
+   *  OPT-IN engine: it keeps a lossless verbatim history (full faithful
+   *  reconstruction via the parts codec + a verbatim fresh tail of the last N
+   *  steps + transcript repair) instead of dropping/masking old content. The
+   *  DEFAULT remains "pipeline"; "dag" becomes the default in a later release
+   *  (Phase 133). Selecting "dag" activates the LCD engine when a context store
+   *  is wired (the daemon injects it); without a store it falls back to pipeline
+   *  with a logged warning (e.g. a non-daemon unit context). Compaction /
+   *  summarization / recall tools land in later phases — "dag" in this release is
+   *  lossless verbatim assembly only. */
   version: z.enum(["pipeline", "dag"]).default("pipeline"),
 
   // --- Shared (both modes) ---
@@ -233,9 +238,16 @@ export const ContextEngineConfigSchema = z.strictObject({
 
   // --- DAG mode ---
 
-  /** Number of most recent turns always included verbatim in DAG context. */
+  /** Number of most recent STEPS (assistant + tool round-trips, NOT user-turns)
+   *  always included verbatim in the dag/LCD context (A1). A step = one assistant
+   *  message plus the tool results it triggered; the last N steps are kept as the
+   *  ORIGINAL structured blocks (never reconstructed-from-text) and are never
+   *  evicted. Default 8 is a safe production floor; the tuned value comes from
+   *  real-LLM measurement in a later phase. */
   freshTailTurns: z.number().int().min(1).max(50).default(8),
-  /** Context utilization fraction that triggers DAG compaction (0.1 to 0.95). */
+  /** Context utilization fraction that triggers DAG compaction (0.1 to 0.95).
+   *  Reserved for the dag/LCD budget-eviction pass (a later phase); inert in this
+   *  release — "dag" does lossless verbatim assembly with no compaction yet. */
   contextThreshold: z.number().min(0.1).max(0.95).default(0.75),
   /** Minimum fan-out for leaf nodes in the DAG. */
   leafMinFanout: z.number().int().min(2).max(20).default(8),

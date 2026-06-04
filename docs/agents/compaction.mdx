@@ -260,23 +260,27 @@ A write-time guard that intercepts oversized tool results before they are saved 
 
 Oversized results are saved to disk as JSON files with compact inline references in the conversation. This is different from step 5 (masking old tool results), which operates at read time -- the microcompaction guard operates at write time, preventing large results from ever entering the conversation file.
 
-## DAG mode (being reimplemented — not currently available)
+## DAG mode (opt-in)
 
 <Warning>
-The DAG engine is being reimplemented for the v2.12 "Lossless Context DAG"
-release and is **not currently available**. `contextEngine.version` defaults to
-`"pipeline"`; setting it to `"dag"` is accepted but falls back to the pipeline
-engine with a logged warning until DAG is re-enabled in a later release. The
-sections below describe the DAG engine's intended design for reference.
+The DAG (LCD) engine is a **working opt-in** engine (the v2.12 "Lossless Context
+DAG" release) — set `contextEngine.version: "dag"` to enable it (the default
+stays `"pipeline"`; DAG becomes the default in a later release). In the current
+release DAG does **lossless verbatim assembly** (described below): it keeps the
+full conversation losslessly and reconstructs it verbatim each turn. The
+**compaction** behavior described in the rest of this section (hierarchical
+summary nodes, on-demand recall tools) lands in a **later phase** — DAG today
+does **not** compact or summarize; it keeps everything verbatim.
 </Warning>
 
 ### What is DAG mode
 
-DAG mode stores every message and tool result in a directed acyclic graph (DAG).
-Instead of discarding old content, the DAG compresses it into hierarchical
-summaries. Your agent can recall any past content through search and inspection
-tools -- nothing is ever truly lost. Until DAG is re-enabled, selecting
-`version: "dag"` runs the pipeline engine instead.
+DAG mode stores every message and tool result losslessly and reconstructs the
+conversation verbatim each turn — every message, tool call, and tool result
+preserved and paired by id, plus a verbatim fresh tail of the most recent steps.
+Nothing is dropped or masked. In a later phase the DAG will additionally compress
+old content into hierarchical summaries with on-demand recall tools (the design
+described below); in the current release it does lossless verbatim assembly only.
 
 ### How DAG compaction works
 
@@ -314,15 +318,15 @@ reference documentation.
 
 ### Switching modes
 
-Pipeline is the default. `contextEngine.version` accepts `"pipeline"` and `"dag"`,
-but `"dag"` currently falls back to pipeline (DAG is being reimplemented), so the
-pipeline engine runs either way:
+Pipeline is the default. `contextEngine.version` accepts `"pipeline"` and `"dag"`;
+set `"dag"` to opt into the lossless LCD engine (the default stays `"pipeline"`
+until a later release):
 
 ```yaml title="~/.comis/config.yaml"
 agents:
   default:
     contextEngine:
-      version: "pipeline"   # the default; "dag" is accepted but falls back to pipeline until re-enabled
+      version: "dag"        # opt into the lossless LCD engine; omit (or "pipeline") for the default
 ```
 
 `contextEngine.version` is operator-only — an agent cannot switch its own engine
@@ -337,7 +341,7 @@ change anything.
 | Option | Type | Default | What it does |
 |--------|------|---------|--------------|
 | `contextEngine.enabled` | boolean | `true` | Master toggle for the context engine |
-| `contextEngine.version` | string | `"pipeline"` | Context engine mode: `"pipeline"` (default) or `"dag"` (accepted but currently falls back to pipeline; being reimplemented) |
+| `contextEngine.version` | string | `"pipeline"` | Context engine mode: `"pipeline"` (default) or `"dag"` (opt-in lossless LCD engine) |
 | `contextEngine.thinkingKeepTurns` | number | `10` | Recent turns that keep AI reasoning notes (1-50) |
 | `contextEngine.compactionModel` | string | `""` | Model used for summarization (empty = runtime-resolved default) |
 | `contextEngine.evictionMinAge` | number | `15` | Minimum turn age before stale errors are evicted (3-50) |
@@ -357,7 +361,7 @@ agents:
   default:
     contextEngine:
       enabled: true
-      # version: "pipeline"  # the default; "dag" is accepted but falls back to pipeline until re-enabled
+      # version: "pipeline"  # the default; set "dag" to opt into the lossless LCD engine
       thinkingKeepTurns: 10
       historyTurns: 15
       historyTurnOverrides:
