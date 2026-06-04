@@ -16,8 +16,12 @@ import type Database from "better-sqlite3";
 /**
  * Idempotently create the LCD (Lossless Context DAG) lossless message store
  * (Phase 127, F1): `lcd_messages` (one row per turn) + `lcd_message_parts` (one
- * row per structured block). Forward-only, re-run-safe — `CREATE … IF NOT
- * EXISTS` only; NO `DROP TABLE` / down-migration (design §9).
+ * row per structured block) — plus the Phase-129 (C3) compaction tables:
+ * `lcd_summaries` (one row per depth-0 leaf summary), `lcd_summary_messages`
+ * (the leaf→message link, `ON DELETE RESTRICT` on the message FK to ENFORCE
+ * losslessness) and `lcd_context_items` (the ordered, dense model-facing view).
+ * Forward-only, re-run-safe — `CREATE … IF NOT EXISTS` only; NO `DROP TABLE` /
+ * down-migration (design §9).
  *
  * ## What it persists (F1)
  *
@@ -83,5 +87,55 @@ export function ensureLcdTables(db: Database.Database): void {
       metadata     TEXT NOT NULL DEFAULT '{}'   -- JSON LcdPartMetadata: { raw, rawType, topLevelReasoningOnly, messageEnvelope }
     );
     CREATE INDEX IF NOT EXISTS idx_lcd_parts_msg ON lcd_message_parts(message_id, ordinal);
+
+    -- ── LCD compaction tables (Phase 129, C3) ──────────────────────────────
+    -- The depth-0 leaf-summary half of the contract. lcd_summaries holds one
+    -- row per leaf summary (a condensation of a contiguous run of messages);
+    -- lcd_summary_messages links a summary to the messages it covers; and
+    -- lcd_context_items is the ordered model-facing view the assembler walks
+    -- (each item references either a raw message or a leaf summary). Condensed
+    -- kinds (depth>0) are Phase 130. Forward-only, re-run-safe (CREATE … IF NOT
+    -- EXISTS only); NO DROP / down-migration (design §9).
+
+    CREATE TABLE IF NOT EXISTS lcd_summaries (
+      summary_id       TEXT PRIMARY KEY,
+      conversation_id  TEXT NOT NULL,            -- tenant+agent+session composite (R4 scoping; enforce Phase 132)
+      tenant_id        TEXT NOT NULL,
+      agent_id         TEXT NOT NULL,
+      session_key      TEXT NOT NULL,
+      kind             TEXT NOT NULL
+        CHECK (kind IN ('leaf')),                -- closed union; condensed kinds = Phase 130
+      depth            INTEGER NOT NULL,         -- 0 for 129 (leaf)
+      earliest_at      INTEGER NOT NULL,         -- min created_at of the covered messages
+      latest_at        INTEGER NOT NULL,         -- max created_at of the covered messages
+      descendant_count INTEGER NOT NULL,         -- count of covered messages
+      token_count      INTEGER NOT NULL,         -- pre-computed agent-side; the store never computes it
+      content          TEXT NOT NULL,            -- leaf summary plaintext (never logged)
+      file_ids         TEXT NOT NULL DEFAULT '[]', -- JSON string[]
+      taint            INTEGER NOT NULL DEFAULT 0, -- 0/1 untrusted-content flag (enforced Phase 132)
+      fallback         INTEGER NOT NULL DEFAULT 0, -- 0/1 Level-3 deterministic-truncation marker
+      created_at       INTEGER NOT NULL          -- caller-supplied epoch ms (the store does not stamp it)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lcd_summaries_conv ON lcd_summaries(conversation_id);
+
+    CREATE TABLE IF NOT EXISTS lcd_summary_messages (
+      summary_id TEXT NOT NULL REFERENCES lcd_summaries(summary_id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES lcd_messages(id) ON DELETE RESTRICT,  -- RESTRICT ENFORCES losslessness (Pitfall 5)
+      PRIMARY KEY (summary_id, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lcd_summary_messages_msg ON lcd_summary_messages(message_id);
+
+    CREATE TABLE IF NOT EXISTS lcd_context_items (
+      id              TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,             -- tenant+agent+session composite (R4 scoping; enforce Phase 132)
+      tenant_id       TEXT NOT NULL,
+      agent_id        TEXT NOT NULL,
+      session_key     TEXT NOT NULL,
+      ordinal         INTEGER NOT NULL,          -- dense, gap-free position in the model-facing order
+      ref_kind        TEXT NOT NULL
+        CHECK (ref_kind IN ('message','summary')),  -- closed discriminator (AGENTS.md §2.8)
+      ref_id          TEXT NOT NULL              -- lcd_messages.id OR lcd_summaries.summary_id
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_lcd_ctx_items_conv_ord ON lcd_context_items(conversation_id, ordinal);
   `);
 }

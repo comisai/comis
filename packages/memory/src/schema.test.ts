@@ -295,10 +295,12 @@ describe("initSchema", () => {
     expect(() => ensureLcdTables(db)).not.toThrow();
     expect(() => ensureLcdTables(db)).not.toThrow();
 
+    // The five LCD tables: lcd_messages + lcd_message_parts (Phase 127) plus the
+    // three Phase-129 compaction tables (summaries / summary_messages / context_items).
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lcd_%'")
       .all() as Array<{ name: string }>;
-    expect(tables).toHaveLength(2);
+    expect(tables).toHaveLength(5);
   });
 
   it("deleting an lcd_messages row cascades to its lcd_message_parts (ON DELETE CASCADE)", () => {

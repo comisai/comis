@@ -317,6 +317,59 @@ export const LcdMessagePartRowSchema = z.strictObject({
   metadata: z.string(), // JSON-encoded LcdPartMetadata (raw + messageEnvelope + reasoning marker)
 });
 
+/**
+ * Schema for the `lcd_summaries` table (LCD compaction store, Phase 129, C3).
+ * Paired with `LcdSummaryRow` exported from `./types.js`. The R4 isolation
+ * columns are strict-required so a SELECT that drops one fails loudly (threat
+ * T-129-04). `kind` is the closed-union TEXT (`leaf` for 129); `taint`/
+ * `fallback` are the SQLite bool 0/1 integers; `file_ids` is JSON-encoded TEXT.
+ */
+export const LcdSummaryRowSchema = z.strictObject({
+  summary_id: z.string(),
+  conversation_id: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  session_key: z.string(),
+  kind: z.string(), // leaf (closed union; condensed kinds = Phase 130)
+  depth: z.number(),
+  earliest_at: z.number(),
+  latest_at: z.number(),
+  descendant_count: z.number(),
+  token_count: z.number(),
+  content: z.string(),
+  file_ids: z.string(), // JSON string[]
+  taint: z.number().int(), // 0/1
+  fallback: z.number().int(), // 0/1
+  created_at: z.number(),
+});
+
+/**
+ * Schema for the `lcd_summary_messages` table (LCD compaction store, Phase 129,
+ * C3). Paired with `LcdSummaryMessageRow` exported from `./types.js`. The
+ * leaf→message link; strict (no extra column) keeps the projection minimal.
+ */
+export const LcdSummaryMessageRowSchema = z.strictObject({
+  summary_id: z.string(),
+  message_id: z.string(),
+});
+
+/**
+ * Schema for the `lcd_context_items` table (LCD compaction store, Phase 129,
+ * C3). Paired with `LcdContextItemRow` exported from `./types.js`. The R4
+ * isolation columns are strict-required (threat T-129-04); `ref_kind` is the
+ * closed `message`|`summary` discriminator TEXT.
+ */
+export const LcdContextItemRowSchema = z.strictObject({
+  id: z.string(),
+  conversation_id: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  session_key: z.string(),
+  ordinal: z.number(),
+  ref_kind: z.string(), // message | summary
+  ref_id: z.string(),
+});
+
 // Schema for sqlite-vec KNN query results. Paired with `VecSearchRow` (./types.js).
 export const VecSearchRowSchema = z.strictObject({
   memory_id: z.string(),

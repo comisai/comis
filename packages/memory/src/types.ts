@@ -161,11 +161,84 @@ export interface NamedGraphRow {
   deleted_at: number | null;
 }
 
-// --- Context store row types (removed in v2.12) ---
-//
-// The 9 `Ctx*Row` interfaces and their `ctx_*` SQLite schema were removed in
-// v2.12 (Phase 126) along with the DAG context engine — the row DTOs, the
-// `context-store-types.ts` port, and the `ctx_*` tables no longer exist. The
-// LCD store and its row model are reintroduced fresh in a later phase. Nothing
-// destructive is written for the removal; existing DBs keep harmless empty
-// `ctx_*` tables that no code reads.
+/**
+ * Raw row shape for the `lcd_summaries` table (LCD compaction store, Phase 129, C3).
+ *
+ * Snake_case DB-row shape — NOT the public API (consumers use the `LcdSummary`
+ * DTO from `@comis/core`). One row per depth-0 LEAF summary; carries the R4
+ * tenant/agent/session isolation columns so Phase 132 filters on the SAME
+ * schema with no migration (threat T-129-04). `taint`/`fallback` are the SQLite
+ * bool 0/1 integers; `file_ids` is JSON-encoded TEXT. Paired 1:1 with
+ * `LcdSummaryRowSchema` in `./row-schemas.js` via the `row-schemas.test.ts`
+ * drift guard.
+ */
+export interface LcdSummaryRow {
+  summary_id: string;
+  /** tenant+agent+session composite scope key (R4; enforced Phase 132). */
+  conversation_id: string;
+  tenant_id: string;
+  agent_id: string;
+  session_key: string;
+  /** Closed union TEXT: `leaf` (depth-0) for 129. */
+  kind: string;
+  /** 0 for 129 (leaf); depth>0 is Phase 130. */
+  depth: number;
+  /** Min `created_at` of the covered messages. */
+  earliest_at: number;
+  /** Max `created_at` of the covered messages. */
+  latest_at: number;
+  /** Count of messages this summary covers. */
+  descendant_count: number;
+  /** Pre-computed agent-side; the store never computes tokens. */
+  token_count: number;
+  /** Leaf summary plaintext (never logged). */
+  content: string;
+  /** JSON-encoded string[] of covered file references. */
+  file_ids: string;
+  /** 0/1 untrusted-content flag (enforcement is Phase 132). */
+  taint: number;
+  /** 0/1 deterministic Level-3-truncation marker. */
+  fallback: number;
+  /** Unix timestamp in milliseconds (caller-supplied; the store does not stamp it). */
+  created_at: number;
+}
+
+/**
+ * Raw row shape for the `lcd_summary_messages` table (LCD compaction store,
+ * Phase 129, C3).
+ *
+ * The leaf→message link — one row per (summary, covered message). The
+ * `message_id` FK is `ON DELETE RESTRICT` so a summarized `lcd_messages` row can
+ * never be deleted (losslessness; Pitfall 5). Paired 1:1 with
+ * `LcdSummaryMessageRowSchema` via the drift guard.
+ */
+export interface LcdSummaryMessageRow {
+  summary_id: string;
+  message_id: string;
+}
+
+/**
+ * Raw row shape for the `lcd_context_items` table (LCD compaction store,
+ * Phase 129, C3).
+ *
+ * One row per item of the ordered model-facing view; carries the R4 scoping
+ * columns. `ordinal` is dense + gap-free per conversation (a UNIQUE
+ * `(conversation_id, ordinal)` index enforces it); `ref_kind` is the closed
+ * `message`|`summary` discriminator; `ref_id` points at the referenced
+ * `lcd_messages.id` or `lcd_summaries.summary_id`. Paired 1:1 with
+ * `LcdContextItemRowSchema` via the drift guard.
+ */
+export interface LcdContextItemRow {
+  id: string;
+  /** tenant+agent+session composite scope key (R4; enforced Phase 132). */
+  conversation_id: string;
+  tenant_id: string;
+  agent_id: string;
+  session_key: string;
+  /** Dense, gap-free position in the model-facing order. */
+  ordinal: number;
+  /** Closed discriminator TEXT: `message` | `summary`. */
+  ref_kind: string;
+  /** `lcd_messages.id` OR `lcd_summaries.summary_id`. */
+  ref_id: string;
+}
