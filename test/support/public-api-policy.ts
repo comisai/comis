@@ -1749,6 +1749,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryConsolidationStore",
       "ConsolidationCandidate",
       "ConsolidationPlan",
+      // ── Memory pinning (interface-first foundation) ──
+      // The segregated MemoryPinnedStore port is the agent↛memory build-cut
+      // type: recall-types.ts imports this from @comis/core; the concrete
+      // adapter lives in @comis/memory. In-repo consumers land across plans
+      // 03-02..03-05. Shrink this entry as each consumer lands.
+      "MemoryPinnedStore",
       // Provider-catalog symbols. The broker
       // in @comis/infra imports resolveBinding, applyInjections, normalizeHost,
       // BrokerBinding, InjectionRule, HostRule, InjectionInput — all consumed.
