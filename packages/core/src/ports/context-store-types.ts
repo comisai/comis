@@ -54,6 +54,17 @@ export interface LcdPartMetadata {
    * never as a visible content block.
    */
   topLevelReasoningOnly?: boolean;
+  /**
+   * Verbatim message-level envelope (F2 exact round-trip): the source pi-ai
+   * `Message` with its `content` blocks stripped — i.e. `role` plus the
+   * per-role envelope fields (`UserMessage.timestamp`; `AssistantMessage.api`/
+   * `provider`/`model`/`usage`/`stopReason`/`timestamp`/…). Carried on the
+   * FIRST part of a message so `partsToMessage` can restore every top-level
+   * field no content block holds; absent on subsequent parts. A top-level
+   * `ToolResultMessage` keeps its whole message in `raw`, so it needs no
+   * separate envelope. Opaque at the DTO layer (the codec is the pi-ai seam).
+   */
+  messageEnvelope?: unknown;
 }
 
 /**
