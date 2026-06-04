@@ -824,8 +824,33 @@ describe("memory stats recall-counter overlay", () => {
 
     await program.parseAsync(["node", "test", "memory", "stats"]);
 
-    // Base stats still rendered; the recall overlay is silently skipped.
+    // Fail-open: base stats still rendered, no non-zero exit.
     const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Total Entries");
+    expect(exitSpy.spy).not.toHaveBeenCalled();
+  });
+
+  // WR-02: the recall overlay must NOT swallow the error silently — it leaves a
+  // breadcrumb so an operator debugging "blank recall counters" can see the
+  // call was attempted and why it was skipped (the failure is otherwise
+  // indistinguishable from "counters not wired"). Still fail-open (no exit).
+  it("surfaces a non-fatal breadcrumb when memory.recall_stats fails, without exiting", async () => {
+    callSpy = vi.fn().mockImplementation(async (method: string) => {
+      if (method === "memory.stats") return STATS_DATA;
+      throw new Error("Admin access required for memory recall stats");
+    });
+    vi.mocked(withClient).mockImplementation(async (fn) => fn({ call: callSpy, close: vi.fn() }));
+
+    const program = createTestProgram();
+    registerMemoryCommand(program);
+
+    await program.parseAsync(["node", "test", "memory", "stats"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    // Breadcrumb surfaced (info() → console.log), carrying the underlying cause.
+    expect(output).toContain("Recall counters unavailable");
+    expect(output).toContain("Admin access required for memory recall stats");
+    // Still fail-open: base stats rendered, no non-zero exit.
     expect(output).toContain("Total Entries");
     expect(exitSpy.spy).not.toHaveBeenCalled();
   });
