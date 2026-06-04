@@ -60,7 +60,7 @@
     "@comis/memory": "workspace:*",
     "@types/better-sqlite3": "7.6.13",
     "@types/proper-lockfile": "4.1.4",
-    "better-sqlite3": "12.9.0",
+    "better-sqlite3": "12.10.0",
     "proper-lockfile": "4.1.2",
     "typescript": "5.9.3",
     "vitest": "4.1.5"
