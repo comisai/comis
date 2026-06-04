@@ -8,6 +8,9 @@ export { initSchema, isVecAvailable } from "./schema.js";
 // Session store
 export { createSessionStore } from "./session-store.js";
 
+// LCD lossless context store (ContextStorePort impl — Phase 127)
+export { createLcdStore, reconstructLcdMessage } from "./lcd-store.js";
+
 // SQLite memory adapter (MemoryPort implementation)
 export { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 

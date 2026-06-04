@@ -2013,6 +2013,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // NOTE (v2.12, Phase 126 Plan 04): createContextStore (the DAG
       // context-store factory) was deleted here along with context-store.ts +
       // its barrel re-export — no longer an orphaned export to track.
+      // LCD lossless store (v2.12, Phase 127 Plan 04). createLcdStore is the
+      // ContextStorePort SQLite adapter; its daemon composition-root consumer
+      // (setup-memory) lands in the SAME plan's Task 3 — TRANSIENT factory-orphan
+      // here, REMOVED when the construction lands (the factory-orphan dance;
+      // allowlist-shrink enforces shrink-only). reconstructLcdMessage is the named
+      // pi-ai reconstruction seam (delegates to the @comis/core parts-codec); its
+      // consumer is Phase-128 assembly, so it is a planned orphan until that
+      // wiring lands (mirrors the SessionStorePort planned-orphan pattern).
+      "createLcdStore",
+      "reconstructLcdMessage",
       "SessionData",
       "SessionListEntry",
       "InspectFilters",
@@ -2208,6 +2218,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "EntityListRowSchema",
       "SessionRowSchema",
       "SessionRowFromSchema",
+      // LCD lossless-store row schemas (v2.12, Phase 127). Consumed
+      // intra-package by lcd-store.ts via createRowMapper (and paired 1:1 with the
+      // LcdMessageRow/LcdMessagePartRow interfaces in types.ts via the
+      // row-schemas.test.ts drift guard); barrel-surfaced through `export *` so
+      // tracked here like the sibling row schemas (the checker counts cross-package
+      // barrel consumers only). No *RowFromSchema inferred types are exported —
+      // the row interfaces live in types.ts.
+      "LcdMessageRowSchema",
+      "LcdMessagePartRowSchema",
       "VecSearchRowSchema",
       "VecSearchRowFromSchema",
       "FtsSearchRowSchema",
