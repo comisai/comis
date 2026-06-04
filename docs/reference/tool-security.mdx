@@ -136,8 +136,12 @@ Groups provide convenient bulk operations using `group:xxx` syntax in allow/deny
 | `group:sessions` | `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `session_status`, `session_search`, `subagents`, `pipeline` |
 | `group:platform_actions` | `discord_action`, `telegram_action`, `slack_action`, `whatsapp_action` |
 | `group:supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` |
-| `group:context` | `ctx_search`, `ctx_inspect`, `ctx_recall` |
-| `group:context_expand` | `ctx_expand`, `ctx_inspect` |
+
+<Note>
+The `group:context` / `group:context_expand` groups bundled the DAG context
+engine's `ctx_*` recall tools. Those tools and groups were removed pending the
+v2.12 "Lossless Context DAG" reimplementation and return with the LCD engine.
+</Note>
 
 ### Resolution Precedence
 

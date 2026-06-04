@@ -301,19 +301,16 @@ exchanges.
 
 ### Recall tools
 
-DAG mode replaces the pipeline's `session_search` tool with four recall tools:
-
-- **`ctx_search`** -- Full-text or regex search across all messages and
-  summaries in the DAG.
-- **`ctx_inspect`** -- View the full content of a specific summary or stored
-  file.
-- **`ctx_expand`** -- Expand a compressed summary back into the underlying
-  messages it was condensed from.
-- **`ctx_recall`** -- Spawn a recall sub-agent to find and expand information
-  from compressed summaries.
+When DAG mode is re-enabled it will replace the pipeline's `session_search` tool
+with a set of recall tools (full-text/regex search across messages and summaries,
+summary/file inspection, summary expansion, and a recall sub-agent). Those `ctx_*`
+recall tools were removed pending the v2.12 reimplementation and are not currently
+available; they return with the LCD engine. Until then, the default pipeline mode
+uses `session_search` over the raw session history.
 
 See [Built-in Tools](/skills/built-in-tools) and
-[Platform Tools](/skills/platform-tools) for full tool reference documentation.
+[Platform Tools](/skills/platform-tools) for the current (pipeline-mode) tool
+reference documentation.
 
 ### Switching modes
 

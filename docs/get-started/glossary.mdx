@@ -80,7 +80,7 @@ The system that manages what your agent sees each turn. The context engine runs 
 
 ## Context Threshold
 
-The budget utilization percentage at which DAG compaction triggers. When the assembled context window exceeds this fraction of the model's token budget (default 75%), the DAG engine compresses older content into summaries. Configured via `contextEngine.contextThreshold`. See [Compaction](/agents/compaction).
+The budget utilization percentage at which DAG compaction triggers. Configured via `contextEngine.contextThreshold` (default 75%). This field belongs to the DAG context engine, which is being reimplemented for the v2.12 "Lossless Context DAG" release and is not currently active — the field is reserved and inert until DAG is re-enabled. See [Compaction](/agents/compaction).
 
 ## Context Window
 
@@ -132,7 +132,7 @@ When an agent uses a tool, it may need another thinking step to process the tool
 
 ## Fresh Tail
 
-The most recent turns in a DAG-mode conversation that are always protected from compaction. The fresh tail ensures the agent has full, uncompressed access to the latest exchanges. The number of protected turns is configured via `contextEngine.freshTailTurns` (default 8). See [Compaction](/agents/compaction).
+The most recent turns in a DAG-mode conversation that are always protected from compaction, configured via `contextEngine.freshTailTurns` (default 8). This is a DAG context engine concept; the DAG engine is being reimplemented for the v2.12 "Lossless Context DAG" release and is not currently active, so the field is reserved and inert until DAG is re-enabled. See [Compaction](/agents/compaction).
 
 ## Gateway
 
@@ -252,7 +252,7 @@ A technique where the agent searches its long-term memory for relevant informati
 
 ## Recall Grant
 
-A time-limited authorization token that allows a recall sub-agent to expand and inspect DAG summaries. When an agent uses the `ctx_recall` tool, Comis creates a recall grant that controls which summaries the sub-agent can access, how many tokens it can read, and when the grant expires. A daily quota (`contextEngine.maxRecallsPerDay`, default 10) limits how many recall grants can be issued per agent per day. See [Compaction](/agents/compaction).
+A time-limited authorization token that allows a recall sub-agent to expand and inspect DAG summaries, governed by a daily quota (`contextEngine.maxRecallsPerDay`, default 10). Recall grants and the `ctx_recall` tool belong to the DAG context engine, which is being reimplemented for the v2.12 "Lossless Context DAG" release; they were removed pending the reimplementation and return with the LCD engine. See [Compaction](/agents/compaction).
 
 ## Result Type
 

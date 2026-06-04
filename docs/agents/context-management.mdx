@@ -15,23 +15,19 @@ A long conversation is a problem for two reasons:
 1. The model has a hard limit on how much text it can read at once (its "context window"). Push past it and the call fails.
 2. Every token you send costs money. Sending the entire chat history on every turn gets expensive fast.
 
-Comis ships **two context engines**, and `contextEngine.version` defaults to **`"dag"`** — so out of the box your agent runs the lossless DAG engine, which keeps the whole conversation as a directed acyclic graph and lets the agent recall older nodes on demand. The alternative is **pipeline** mode (`version: "pipeline"`), a fixed chain of layers that drops and masks old content before each call. Pipeline is the **opt-out** engine: lighter and fully deterministic, but lossy by design.
+Comis ships the **pipeline** context engine as the default — `contextEngine.version` defaults to **`"pipeline"`**. Pipeline mode is a fixed chain of layers that drops, masks, and (as a last resort) summarizes old content before each call: lighter and fully deterministic. A second engine — the lossless **DAG** engine, which keeps the whole conversation as a directed acyclic graph and lets the agent recall older nodes on demand — is being reimplemented for the v2.12 "Lossless Context DAG" release and is **not currently available**. Setting `version: "dag"` is accepted but falls back to the pipeline engine with a logged warning until DAG is re-enabled.
 
-This page explains both engines, starting with the DAG default, then the pipeline opt-out, then how to switch between them safely. For the prompt-cache mechanics that keep cached reads stable across these transformations, see [Cache](/agents/cache). For the LLM-backed summarization step in detail, see [Compaction](/agents/compaction).
+This page explains the pipeline engine. For the prompt-cache mechanics that keep cached reads stable across these transformations, see [Cache](/agents/cache). For the LLM-backed summarization step in detail, see [Compaction](/agents/compaction).
 
-## DAG mode (default)
-
-DAG mode is what you get out of the box (`contextEngine.version` defaults to `"dag"`). Instead of discarding old turns, the conversation is stored as a directed acyclic graph: older spans are compressed into hierarchical summaries, but nothing is thrown away — the agent can pull any past node back through recall tools (`ctx_search`, `ctx_inspect`, `ctx_expand`, `ctx_recall`) exactly when it needs it. The most recent turns (the "fresh tail") are always kept verbatim.
-
-DAG is the right default for agents that live in a chat channel for days, schedule their own work, or keep returning to the same project — anywhere losing an old detail would hurt. It is heavier than pipeline (the model decides what to recall), so for short, stateless agents you may prefer the pipeline opt-out below. The full DAG configuration (compaction thresholds, summary tokens, recall limits) and the recall-tool reference live in [Compaction](/agents/compaction#dag-mode) and the [config-yaml reference](/reference/config-yaml).
+## DAG mode (being reimplemented — not currently available)
 
 <Note>
-Under restricted tool profiles, DAG mode still **force-includes** the `ctx_*` recall tools — recall stays available even when a profile would otherwise trim the toolset, so the agent is never left unable to retrieve its own history.
+The DAG engine (a lossless directed acyclic graph with recall tools) is being reimplemented for the v2.12 "Lossless Context DAG" release and is **not currently available**. Until it is re-enabled, `contextEngine.version` defaults to `"pipeline"`, and selecting `version: "dag"` falls back to the pipeline engine with a logged warning. The DAG recall tools (`ctx_search`, `ctx_inspect`, `ctx_expand`, `ctx_recall`) were removed pending the reimplementation and return with the LCD engine; in pipeline mode, `session_search` searches the raw session history instead. The full DAG design is described for reference in [Compaction](/agents/compaction#dag-mode-being-reimplemented--not-currently-available).
 </Note>
 
-## The ten layers (pipeline mode, opt-out)
+## The ten layers (pipeline mode, the default engine)
 
-Pipeline mode is the **opt-out** engine (set `version: "pipeline"`). When enabled, Comis runs ten layers in fixed order before every LLM call. Layers further up the list run first; later layers see whatever the earlier ones produced.
+Pipeline mode is the **default** engine (`contextEngine.version` defaults to `"pipeline"`). Comis runs ten layers in fixed order before every LLM call. Layers further up the list run first; later layers see whatever the earlier ones produced.
 
 | # | Layer | What it does |
 |---|-------|--------------|
@@ -57,9 +53,9 @@ agents:
   default:
     contextEngine:
       enabled: true
-      version: dag            # DEFAULT — set "pipeline" to opt out (see below)
+      version: pipeline       # DEFAULT — "dag" is accepted but falls back to pipeline until re-enabled
       thinkingKeepTurns: 10
-      historyTurns: 15        # pipeline-mode knob (ignored in DAG mode)
+      historyTurns: 15        # recent user turns kept in full
       evictionMinAge: 15
       observationKeepWindow: 25
       observationTriggerChars: 120000
@@ -111,26 +107,19 @@ A common shape: a 60-message Telegram conversation that has been picking up tool
 
 The agent reading the third version still knows what its job is, still has the file references it needs, and the prompt fits comfortably inside Sonnet's 200K window with room for the response.
 
-## Switching context modes (operator-safe)
+## Context engine mode (operator-only)
 
-DAG is the default; pipeline is the opt-out. Switching either direction (`dag` ⇄ `pipeline`) is designed to be safe to run on a live agent — you change one config key:
+Pipeline is the default and currently the only available engine. `contextEngine.version` accepts `"pipeline"` and `"dag"`, but `"dag"` falls back to the pipeline engine until the DAG/LCD engine is re-enabled (see the note above):
 
 ```yaml title="~/.comis/config.yaml"
 agents:
   default:
     contextEngine:
-      version: pipeline   # opt out of the DAG default; remove the key (or set "dag") to switch back
+      version: pipeline   # the default; "dag" is accepted but currently falls back to pipeline
 ```
 
-What happens when you switch:
-
-- **Config reload, no daemon restart.** The new mode is picked up on the next configuration reload — you do not restart the daemon or interrupt other agents.
-- **Applied at the next turn boundary, never mid-turn.** A turn that is already in flight finishes on the executor it started with; the new engine takes effect from the *next* turn. There is no half-switched turn.
-- **Reversible and non-destructive in both directions.** No history is deleted on a switch. Going `pipeline` → `dag` reconciles the existing JSONL conversation into the DAG (a one-time import); going `dag` → `pipeline` re-reads the full conversation content for the pipeline layers. The DAG's `ctx_*` tables are left intact across a `dag` → `pipeline` switch, so switching back to DAG is immediate and lossless — and no orphaned `ctx_inspect` placeholders are left behind in either direction.
-- **A switch emits a `context:mode_switched` event** recording the direction (`from` → `to`) and any one-time import cost, so the change is visible in your observability stream.
-
 <Warning>
-`contextEngine.version` is **operator-only**. It is immutable to the agent's `config.patch` RPC — an agent cannot switch its own engine mode. This is a deliberate security boundary: because the engine mode governs which recall/context tools an agent is exposed to, allowing an agent to self-switch into DAG mode would let it change its own tool exposure. Only an operator editing the config (the path above) can change the engine.
+`contextEngine.version` is **operator-only**. It is immutable to the agent's `config.patch` RPC — an agent cannot switch its own engine mode. This is a deliberate security boundary: because the engine mode governs which recall/context tools an agent is exposed to, letting an agent self-switch the engine would let it change its own tool exposure. Only an operator editing the config (the path above) can change the engine.
 </Warning>
 
 ## How it interacts with the cache

@@ -284,11 +284,11 @@ agents:
 ```
 
 <Note>
-  The DAG mode (`version: "dag"`) — a lossless conversation graph with recall
-  tools — is being reimplemented for the v2.12 "Lossless Context DAG" release and
-  is **not currently available**. Setting `version: "dag"` is accepted but falls
-  back to the pipeline engine with a logged warning until DAG is re-enabled. See
-  [Compaction](/agents/compaction) for details.
+  The DAG mode (the `dag` engine version) — a lossless conversation graph with
+  recall tools — is being reimplemented for the v2.12 "Lossless Context DAG"
+  release and is **not currently available**. Selecting the `dag` version is
+  accepted but falls back to the pipeline engine with a logged warning until DAG
+  is re-enabled. See [Compaction](/agents/compaction) for details.
 </Note>
 
 See [Config Reference](/reference/config-yaml) for the complete list of all 27

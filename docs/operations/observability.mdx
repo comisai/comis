@@ -464,7 +464,7 @@ Every payload is **counts, booleans, and IDs only** — never query text, memory
 | `memory:consolidated` | After a consolidation run (consolidation job) | `clustersProcessed`, `observationsCreated`, `dedupHits`, `durationMs` |
 | `context:mode_switched` | On an actual `pipeline`⇄`dag` engine direction change | `from`, `to`, `fullImport`, `importedCount`, `durationMs` |
 
-`memory:recalled.finalCount == 0` means recall returned nothing for that turn. `memory:reranked.fellBack` / `.timedOut` flag the graceful-degradation paths (see below). `context:mode_switched` fires only on a real direction change — never on a brand-new DAG-default conversation — and reports the one-time reconciliation `importedCount`.
+`memory:recalled.finalCount == 0` means recall returned nothing for that turn. `memory:reranked.fellBack` / `.timedOut` flag the graceful-degradation paths (see below). `context:mode_switched` fires only on a real engine-mode direction change and reports the one-time reconciliation `importedCount` (with the DAG/LCD engine being reimplemented in v2.12, the pipeline engine is the only active mode, so this event is currently dormant).
 
 ### 15.3 No-silent-degradation signals (`errorKind` + `hint`)
 

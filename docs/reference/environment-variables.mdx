@@ -277,6 +277,57 @@ Standard Node.js environment variable. Affects behavior of some dependencies and
 export NODE_ENV=production
 ```
 
+## Development and Regression Variables
+
+These variables gate an **optional** developer regression suite. They are **never
+required for normal operation** — when they are unset the suite self-skips, so a
+default `pnpm test` / `pnpm validate` run makes no provider call and incurs no
+cost. They are read only at the test boundary; provider keys live in a git-ignored
+`scripts/lcd-regression.env` (the committed `scripts/lcd-regression.env.example`
+documents them) and are never logged or committed.
+
+### `COMIS_LCD_REGRESSION`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | The env-gated real-LLM regression driver (`real-llm-regression.bench.test.ts`) |
+| **Format** | `1` to enable, unset to skip |
+| **Default** | (unset → the suite is skipped) |
+
+Master gate for the v2.12 "Lossless Context DAG" real-LLM regression driver. When
+unset, the entire suite is skipped (no provider call, no network). When set, the
+driver runs a tool-free baseline probe + a single-read probe and records the
+`stream:context` cache-trace.
+
+```bash
+export COMIS_LCD_REGRESSION=1
+```
+
+### `COMIS_LCD_ANSWER_PROVIDER` / `COMIS_LCD_ANSWER_MODEL` / `COMIS_LCD_ANSWER_API_KEY`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | The env-gated real-LLM regression driver |
+| **Format** | Provider id / model id / API key strings |
+| **Default** | (unset → the provider-backed probes self-skip) |
+
+The answer-model lane for the regression driver. All three must be set for the
+provider-backed probes to run; absent any one, the probes self-skip even when
+`COMIS_LCD_REGRESSION` is set. The key is forwarded to the provider's typed
+`apiKey` option and is never stored, logged, or echoed.
+
+### `COMIS_LCD_LIMIT`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | The env-gated real-LLM regression driver |
+| **Format** | Non-negative integer |
+| **Default** | (unset → the default probe count) |
+
+Cost bound for the regression driver. Caps the number of real provider calls when
+the suite is enabled; set to `0` for a record-only (`$0`) run that still executes
+the structural `stream:context` / `assembledShape` assertions without a live call.
+
 ## LLM Provider Keys
 
 At least one provider key is required. Each provider is detected at startup; missing keys disable the matching provider gracefully. All keys can also be stored encrypted via [`comis secrets set`](/reference/cli#comis-secrets) instead of plaintext in `.env`.
