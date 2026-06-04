@@ -12,6 +12,11 @@
  * entities. Type-only, NO zod: the zod row schemas live consumer-side in
  * memory's row-schemas.ts (core ports are zero-runtime-zod by rule).
  *
+ * Phase 129 adds the summary/context_items half of the contract: the
+ * `LcdSummary` row, the ordered model-facing `LcdContextItem` view row, and
+ * the `AppendSummaryInput` compaction write-path DTO. These are depth-0 LEAF
+ * summaries only — condensation (depth>0 / condensed kinds) is Phase 130.
+ *
  * @module
  */
 
@@ -151,4 +156,104 @@ export interface AppendMessageInput {
   /** Injected wall-clock epoch milliseconds (the caller supplies it). */
   createdAt: number;
   parts: LcdMessagePart[];
+}
+
+/**
+ * The kind of an LCD summary. Closed string-literal union (AGENTS.md §2.8).
+ *
+ * Phase 129 is LEAF-only: a `"leaf"` summary is a depth-0 condensation of a
+ * contiguous run of messages. Condensed kinds (summaries-of-summaries at
+ * depth>0) are Phase 130 and will extend this union then — declaring it closed
+ * now keeps the discriminator exhaustive.
+ */
+export type LcdSummaryKind = "leaf";
+
+/**
+ * A reconstructed LCD summary (one row of `lcd_summaries`). Returned by the
+ * summary read paths. Mirrors `LcdMessage` shape + comment style.
+ *
+ * Like `LcdMessage`, `tokenCount` is PRE-COMPUTED agent-side — the store NEVER
+ * computes tokens. `content` is the leaf summary plaintext and is never logged
+ * (lossless store; sanitization happens at assembly/presentation).
+ */
+export interface LcdSummary {
+  summaryId: string;
+  conversationId: string;
+  /** `"leaf"` (depth-0) for 129. */
+  kind: LcdSummaryKind;
+  /** 0 for 129 (leaf); depth>0 is Phase 130. */
+  depth: number;
+  /** Min `createdAt` of the covered messages. */
+  earliestAt: number;
+  /** Max `createdAt` of the covered messages. */
+  latestAt: number;
+  /** Count of messages this summary covers. */
+  descendantCount: number;
+  /** Pre-computed agent-side; the store NEVER computes tokens. */
+  tokenCount: number;
+  /** The leaf summary text (plaintext; never logged). */
+  content: string;
+  /** File references covered by the chunk (JSON-stored). */
+  fileIds: string[];
+  /** Untrusted-content flag (enforcement is Phase 132). */
+  taint: boolean;
+  /** True ⇒ deterministic Level-3 truncation produced this summary. */
+  fallback: boolean;
+  /** Injected wall-clock epoch milliseconds (the store does not stamp it). */
+  createdAt: number;
+}
+
+/**
+ * The ref kind of an `LcdContextItem`. Closed string-literal discriminator
+ * (AGENTS.md §2.8): a context item points either at a raw message or at a
+ * leaf summary.
+ */
+export type LcdRefKind = "message" | "summary";
+
+/**
+ * One row of the ordered model-facing `context_items` view. The view is the
+ * dense, gap-free sequence the assembler walks to build the model-facing
+ * context; each item references either an `lcd_messages` row or an
+ * `lcd_summaries` row.
+ */
+export interface LcdContextItem {
+  /** Position in the model-facing order (dense, gap-free). */
+  ordinal: number;
+  /** `"message"` | `"summary"`. */
+  refKind: LcdRefKind;
+  /** `lcd_messages.id` OR `lcd_summaries.summaryId`. */
+  refId: string;
+}
+
+/**
+ * The write-path DTO for the compaction transaction (C3): persist one leaf
+ * summary, link it to the covered messages, and range-replace the covered
+ * context_items message-refs with one summary-ref — all atomically.
+ *
+ * Mirrors `AppendMessageInput`: scope-first + a PRE-COMPUTED `tokenCount` (the
+ * store NEVER computes tokens). The `[startOrdinal, endOrdinal]` inclusive
+ * range names the contiguous run of message-refs the new summary-ref replaces.
+ */
+export interface AppendSummaryInput {
+  scope: ContextStoreScope;
+  /** Pre-computed agent-side via `estimateMessageTokens`; the store NEVER computes tokens. */
+  tokenCount: number;
+  content: string;
+  descendantCount: number;
+  earliestAt: number;
+  latestAt: number;
+  fileIds: string[];
+  /** Level-3 deterministic-truncation marker; default false. */
+  fallback: boolean;
+  /** Untrusted-content flag (enforcement is Phase 132); default false. */
+  taint: boolean;
+  /** Injected wall-clock epoch milliseconds (the caller supplies it). */
+  createdAt: number;
+  /**
+   * The contiguous context_items ordinal range [startOrdinal, endOrdinal]
+   * (inclusive) of message-refs to replace with one summary-ref
+   * (C3 range-replacement).
+   */
+  startOrdinal: number;
+  endOrdinal: number;
 }
