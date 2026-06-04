@@ -8,6 +8,10 @@ This file is a Claude-specific operational supplement. If anything here conflict
 
 Every fix and every feature in `packages/*/src/**` starts with a failing test that fails on the pre-patch code, then a production patch that flips it to green. Commit the test first when practical so the failing state is reproducible from that commit alone. Exempt only: pure docs, comments, formatting, and build-tooling/CI/config edits — when in doubt, write the test.
 
+## Docs-Current
+
+Keep `docs/**/*.mdx` up to date in the **same change** that alters anything they describe — user-facing behavior, config keys/defaults, CLI commands/flags, file paths and the `~/.comis` data-dir layout (`docs/operations/data-directory.mdx`), env vars (`docs/reference/environment-variables.mdx`), logging, and install/release steps. A patch that leaves the docs describing the old behavior is incomplete. Run `pnpm docs:check` (cheap, no build needed; also part of `validate`) to catch MDX errors. The docs sit **outside** the build/lint/coverage gates, so drift fails silently rather than breaking a gate: e.g. `COMIS_LOG_PATH`'s documented default was wrong (`~/.comis/logs/daemon.log`) for ages because nothing checked it. When you rename or move a path/flag/key, `grep -rn '<old-name>' docs/` and fix every hit.
+
 ## Project
 
 Comis is a security-first AI agent platform connecting agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). TypeScript monorepo, 15 packages, hexagonal architecture (ports + adapters). Node.js >= 22, Linux-only.
