@@ -66,6 +66,7 @@ const LcdPartMetadataSchema = z.looseObject({
   rawType: z.string().optional(),
   topLevelReasoningOnly: z.boolean().optional(),
   messageEnvelope: z.unknown().optional(),
+  envelopeCarrier: z.boolean().optional(),
 });
 
 /**

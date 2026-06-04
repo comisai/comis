@@ -72,13 +72,29 @@ export function messageToParts(msg: Message): LcdMessagePart[] {
       ? [{ type: "text", text: msg.content } satisfies TextContent]
       : msg.content;
 
-  return blocks.map((block, index) => {
+  const parts = blocks.map((block, index) => {
     const part = blockToPart(block);
     if (index === 0) {
       part.metadata.messageEnvelope = envelope;
     }
     return part;
   });
+
+  // WR-01: an empty-content message (e.g. an aborted/errored assistant turn,
+  // `content: []`) would otherwise emit zero parts, so the `index === 0`
+  // envelope-attachment above never runs and the whole envelope
+  // (api/provider/model/usage/stopReason/errorMessage/timestamp) is lost on
+  // round-trip — a direct F2 violation. Emit a single envelope-carrier part
+  // (no `raw` block) so the envelope always has a carrier; `partsToMessage`
+  // restores the envelope from it and excludes it from the reconstructed
+  // visible content, faithfully rebuilding an empty-content message.
+  if (parts.length === 0) {
+    parts.push({
+      kind: "text",
+      metadata: { raw: undefined, envelopeCarrier: true, messageEnvelope: envelope },
+    });
+  }
+  return parts;
 }
 
 /**
@@ -94,10 +110,13 @@ export function partsToMessage(row: LcdMessage): Message {
   }
 
   // user | assistant: restore the envelope from the first part, then rebuild
-  // the visible content blocks (F3: skip topLevelReasoningOnly reasoning).
+  // the visible content blocks (F3: skip topLevelReasoningOnly reasoning;
+  // WR-01: skip an envelope-carrier placeholder — it holds the envelope of an
+  // empty-content message, not a real block, so it must not become content).
   const envelope = (row.parts[0]?.metadata.messageEnvelope ?? {}) as Record<string, unknown>;
   const content = row.parts
     .filter((part) => !(part.kind === "reasoning" && part.metadata.topLevelReasoningOnly === true))
+    .filter((part) => part.metadata.envelopeCarrier !== true)
     .map((part) => blockFromPart(part));
 
   return { ...envelope, role: row.role, content } as Message;

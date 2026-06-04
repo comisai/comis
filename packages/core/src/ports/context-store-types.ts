@@ -65,6 +65,16 @@ export interface LcdPartMetadata {
    * separate envelope. Opaque at the DTO layer (the codec is the pi-ai seam).
    */
   messageEnvelope?: unknown;
+  /**
+   * F2 marker (WR-01): when true, this part exists ONLY to carry the
+   * `messageEnvelope` of an empty-content message (a realistic aborted/errored
+   * assistant turn: `content: []`). Without a carrier such a turn would emit
+   * zero parts and lose its whole envelope on round-trip. It holds NO real
+   * content block (`raw` is absent), so `partsToMessage` restores the envelope
+   * from it but EXCLUDES it from the reconstructed visible content —
+   * reconstructing a faithful empty-content message.
+   */
+  envelopeCarrier?: boolean;
 }
 
 /**
