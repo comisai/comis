@@ -39,8 +39,13 @@ vi.mock("@comis/core", async (importOriginal) => {
   };
 });
 
+vi.mock("../../util/offline-secrets-store.js", () => ({
+  offlineSecretSet: vi.fn(() => ({ ok: true, value: undefined })),
+}));
+
 import { existsSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
 import { loadEnvFile } from "@comis/core";
+import { offlineSecretSet } from "../../util/offline-secrets-store.js";
 import type { WizardPrompter, WizardState, Spinner } from "../index.js";
 import { writeConfigStep } from "./10-write-config.js";
 
@@ -490,5 +495,70 @@ describe("writeConfigStep", () => {
     expect(envContent).toContain(`SECRETS_MASTER_KEY=${"a".repeat(64)}`);
     // Still secrets-store mode: no plaintext API key leaked into .env.
     expect(envContent).not.toContain("sk-test-key-123");
+  });
+
+  // ---------- Root-cause fix: secrets-store mode must PERSIST collected secrets ----------
+
+  describe("secrets-store mode persists collected secrets", () => {
+    // secrets.db exists -> offer; .env + dataDir absent.
+    function enterStoreMode(): void {
+      vi.mocked(existsSync)
+        .mockReturnValueOnce(true) // secrets.db exists -> offer secrets store
+        .mockReturnValue(false); // .env absent, dataDir absent
+    }
+
+    it("writes the collected gateway + channel secrets into the encrypted store", async () => {
+      // Regression: the wizard used to emit ${COMIS_GATEWAY_TOKEN}/${TELEGRAM_BOT_TOKEN}
+      // references but DISCARD the values it already had, then merely print
+      // `comis secrets set …`. If the user never ran those, the daemon boots
+      // against unresolvable ${VAR}s and FATAL-crash-loops.
+      enterStoreMode();
+      const prompter = createMockPrompter({ select: ["secrets"] });
+
+      await writeConfigStep.execute(populatedState(), prompter);
+
+      const calls = vi.mocked(offlineSecretSet).mock.calls.map((c) => c[0]);
+      const byName = new Map(calls.map((o) => [o.name, o.value]));
+      expect(byName.get("COMIS_GATEWAY_TOKEN")).toBe("test-token-value");
+      expect(byName.get("TELEGRAM_BOT_TOKEN")).toBe("123:ABC");
+      // Every write targets the ~/.comis store and reads the master key from .env.
+      for (const o of calls) {
+        expect(o.dataDir).toContain(".comis");
+        expect(o.envFilePath).toContain(".env");
+      }
+    });
+
+    it("does NOT touch the encrypted store in plaintext .env mode", async () => {
+      vi.mocked(existsSync)
+        .mockReturnValueOnce(true) // secrets.db exists -> offer
+        .mockReturnValue(false);
+      const prompter = createMockPrompter({ select: ["env"] }); // user declines store
+
+      await writeConfigStep.execute(populatedState(), prompter);
+
+      expect(offlineSecretSet).not.toHaveBeenCalled();
+    });
+
+    it("flags unresolved secret refs (and logs an error) when a store write fails", async () => {
+      enterStoreMode();
+      // Gateway token fails to persist -> ${COMIS_GATEWAY_TOKEN} stays unresolvable.
+      vi.mocked(offlineSecretSet).mockImplementation((opts: { name: string }) =>
+        opts.name === "COMIS_GATEWAY_TOKEN"
+          ? { ok: false, error: new Error("store write failed") }
+          : { ok: true, value: undefined },
+      );
+      const prompter = createMockPrompter({ select: ["secrets"] });
+
+      const result = await writeConfigStep.execute(populatedState(), prompter);
+
+      expect(result.unresolvedSecretRefs).toContain("COMIS_GATEWAY_TOKEN");
+      expect(prompter.log.error).toHaveBeenCalled();
+    });
+
+    it("reports no unresolved refs on the happy path", async () => {
+      const prompter = createMockPrompter(); // .env mode, all secrets present
+      const result = await writeConfigStep.execute(populatedState(), prompter);
+      expect(result.unresolvedSecretRefs ?? []).toHaveLength(0);
+    });
   });
 });

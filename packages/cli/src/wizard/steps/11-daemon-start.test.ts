@@ -153,6 +153,25 @@ describe("daemonStartStep", () => {
     );
   });
 
+  it("refuses to start (or prompt) when config has unresolved secret refs", async () => {
+    // The wizard's write-config step flags ${VAR}s that won't resolve at boot.
+    // Auto-starting here would FATAL-crash-loop the daemon, so the step must
+    // bail out early with remediation instead.
+    const prompter = createMockPrompter({ select: ["yes"] });
+    const state: WizardState = {
+      ...stateWithGateway(),
+      unresolvedSecretRefs: ["COMIS_GATEWAY_TOKEN"],
+    };
+
+    await daemonStartStep.execute(state, prompter);
+
+    expect(prompter.select).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+    expect(prompter.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("comis secrets set"),
+    );
+  });
+
   it("user accepts daemon start -> spawn called, health check runs", async () => {
     const prompter = createMockPrompter({
       select: ["yes"],

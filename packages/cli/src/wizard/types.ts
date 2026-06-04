@@ -146,6 +146,13 @@ export type WizardState = {
   readonly dataDir?: string;
   /** When true, skip post-setup health checks (set by --skip-health in non-interactive mode). */
   readonly skipHealth?: boolean;
+  /**
+   * Config `${VAR}` references the write-config step could not satisfy from the
+   * `.env` or the encrypted secrets store. When non-empty, the daemon would
+   * FATAL-crash-loop on boot, so the daemon-start step refuses to auto-start
+   * and surfaces `comis secrets set` remediation instead.
+   */
+  readonly unresolvedSecretRefs?: readonly string[];
   /** Tracks which steps have completed (for jump-to from review). */
   readonly completedSteps: readonly WizardStepId[];
   /**
