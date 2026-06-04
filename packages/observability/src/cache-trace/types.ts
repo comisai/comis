@@ -129,6 +129,14 @@ export const CacheTraceEventSchema = z.object({
   // 32 KB bound and rides sanitizeForPersistence unchanged (it is NOT added
   // to the exempt set). The permanent provider-boundary regression gate
   // asserts against this (see provider-boundary-harness.test.ts).
+  //
+  // WR-01 (Phase 126): the `toolUseIds` / `toolResultIds` arrays are a SAMPLE
+  // (capped at MAX_SAMPLED_IDS, below the 64-item array bound) so the limiter
+  // never replaces them with an opaque sentinel on large tool fan-outs. The
+  // authoritative pairing/growth signal lives in the integer count fields
+  // (`toolUseCount` / `toolResultCount` / `pairedToolResultCount`), which
+  // cannot vanish under the bound; `idsTruncated` flags when the arrays are a
+  // partial sample.
   assembledShape: z
     .object({
       totalCount: z.number().int().nonnegative(),
@@ -136,6 +144,10 @@ export const CacheTraceEventSchema = z.object({
       hasToolResult: z.boolean(),
       toolUseIds: z.array(z.string()),
       toolResultIds: z.array(z.string()),
+      toolUseCount: z.number().int().nonnegative(),
+      toolResultCount: z.number().int().nonnegative(),
+      pairedToolResultCount: z.number().int().nonnegative(),
+      idsTruncated: z.boolean(),
     })
     .optional(),
   messageFingerprints: z.array(z.string()).optional(),

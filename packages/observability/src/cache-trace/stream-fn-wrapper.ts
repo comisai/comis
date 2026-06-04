@@ -67,6 +67,18 @@ function sha256(s: string): string {
 }
 
 /**
+ * Self-bounding cap on the sampled id arrays. Kept strictly BELOW the
+ * cache-trace 64-item array cap (`PAYLOAD_BOUNDS.maxArrayLength`) so the
+ * sampled `toolUseIds` / `toolResultIds` arrays NEVER trip the limiter and
+ * get replaced by an opaque `{ __bounded__: … }` sentinel. The full picture
+ * survives in the count fields (`toolUseCount` / `toolResultCount` /
+ * `pairedToolResultCount`) which are plain integers and cannot vanish under
+ * the bound — so the pairing/orphan invariant the descriptor feeds holds at
+ * ANY turn size, including large parallel-tool fan-outs. WR-01 (Phase 126).
+ */
+const MAX_SAMPLED_IDS = 32;
+
+/**
  * O2: the SMALL assembled-array shape descriptor recorded on
  * `stream:context`. Counts/flags + opaque toolCallId strings ONLY — never
  * block bodies — so it stays well under the 32 KB bound and is NOT in the
@@ -79,10 +91,35 @@ interface AssembledShape {
   blockKindCounts: Record<string, number>;
   /** True when the array carries any tool_result (block or top-level role). */
   hasToolResult: boolean;
-  /** Opaque call ids of every tool_use / toolCall block. */
+  /**
+   * Opaque call ids of every tool_use / toolCall block, SAMPLED to the first
+   * `MAX_SAMPLED_IDS` so the array stays under the cache-trace 64-item cap.
+   * Use `toolUseCount` for the true total.
+   */
   toolUseIds: string[];
-  /** Opaque call ids of every tool_result block AND top-level toolResult msg. */
+  /**
+   * Opaque call ids of every tool_result block AND top-level toolResult msg,
+   * SAMPLED to the first `MAX_SAMPLED_IDS`. Use `toolResultCount` for the
+   * true total.
+   */
   toolResultIds: string[];
+  /** True count of tool_use ids (never sampled away — survives the bound). */
+  toolUseCount: number;
+  /** True count of tool_result ids (never sampled away — survives the bound). */
+  toolResultCount: number;
+  /**
+   * Count of tool_result ids that pair with a tool_use id (computed over the
+   * FULL id sets before sampling) — the orphan-detection signal the
+   * provider-boundary regression gate asserts on. `pairedToolResultCount ===
+   * toolResultCount` ⇒ no orphans, at any turn size.
+   */
+  pairedToolResultCount: number;
+  /**
+   * True when either id list exceeded `MAX_SAMPLED_IDS` and the `*Ids` arrays
+   * are therefore a sample rather than the complete set. Surfaces the
+   * truncation honestly instead of letting the limiter nuke the array.
+   */
+  idsTruncated: boolean;
 }
 
 function asString(v: unknown): string | undefined {
@@ -100,8 +137,11 @@ function asString(v: unknown): string | undefined {
  *     pi-ai top-level `{ role: "toolResult", toolCallId }` message.
  *
  * The pairing assertion (every toolResultId has a matching toolUseId) is what
- * the provider-boundary harness rides — the descriptor itself only records the
- * ids; it does not enforce pairing.
+ * the provider-boundary harness rides. The descriptor records a SAMPLE of the
+ * ids (capped at `MAX_SAMPLED_IDS`, below the 64-item payload bound) plus the
+ * TRUE counts (`toolUseCount` / `toolResultCount`) and a precomputed
+ * `pairedToolResultCount` — so the gate asserts on integer counts that survive
+ * the bound rather than reading through a possibly-truncated array.
  */
 function computeAssembledShape(
   messages: ReadonlyArray<unknown>,
@@ -140,12 +180,28 @@ function computeAssembledShape(
     }
   }
 
+  // Pairing/orphan signal computed over the FULL id sets BEFORE sampling, so
+  // the count never depends on the sampled arrays surviving the 64-item cap.
+  // (WR-01: large fan-outs used to defeat the array-based pairing check.)
+  const toolUseIdSet = new Set(toolUseIds);
+  const pairedToolResultCount = toolResultIds.reduce(
+    (n, rid) => (toolUseIdSet.has(rid) ? n + 1 : n),
+    0,
+  );
+
   return {
     totalCount: messages.length,
     blockKindCounts,
     hasToolResult: toolResultIds.length > 0 || messageRoles.includes("toolResult"),
-    toolUseIds,
-    toolResultIds,
+    // Sample the id arrays at the source so the limiter never replaces them
+    // with an opaque sentinel; the true totals live in the count fields.
+    toolUseIds: toolUseIds.slice(0, MAX_SAMPLED_IDS),
+    toolResultIds: toolResultIds.slice(0, MAX_SAMPLED_IDS),
+    toolUseCount: toolUseIds.length,
+    toolResultCount: toolResultIds.length,
+    pairedToolResultCount,
+    idsTruncated:
+      toolUseIds.length > MAX_SAMPLED_IDS || toolResultIds.length > MAX_SAMPLED_IDS,
   };
 }
 
