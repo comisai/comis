@@ -121,9 +121,9 @@ any conventions specific to your setup.
 
 ## Every Session
 
-1. Read SOUL.md -- this is who you are
-2. Read USER.md -- this is who you're helping
-3. Read IDENTITY.md -- your name, creature, vibe, emoji
+SOUL.md, USER.md, and IDENTITY.md are already in your context -- they're
+inlined into the system prompt at session start. Reference them directly;
+don't re-read them with the `read` tool.
 
 ## Safety
 
@@ -271,26 +271,24 @@ interrupted work.
 
 ## How identity loads
 
-When a session starts, Comis reads **AGENTS.md** from the workspace and
-injects it directly into the agent's system prompt. AGENTS.md is the
-operating manual -- it instructs the agent to read the other workspace files
-(SOUL.md, IDENTITY.md, USER.md, ROLE.md, TOOLS.md) on its own using the
-`read` tool when they are needed.
+When a session starts, Comis reads the workspace files
+(AGENTS.md, SOUL.md, IDENTITY.md, USER.md, ROLE.md, TOOLS.md, and -- on the
+first run -- BOOTSTRAP.md) and injects them **directly into the agent's
+system prompt**. They are inlined at session start, before the agent takes a
+single turn.
 
-This split keeps the cached system prompt small and stable -- only AGENTS.md
-is paid for on every turn. The other files are loaded on demand and
-benefit from prompt caching once read. You can confirm this by inspecting
-your agent's first-turn log line:
+Because the files are already in context, the agent should reference them
+directly and must **not** re-read them with the `read` tool. Re-reading an
+already-inlined identity file wastes a turn and returns content the agent
+already has -- the templates instruct the agent accordingly.
 
-```text
-DEBUG [identity.loader] loaded { agents: true, sizeChars: 8842 }
-```
+The inlined files are snapshotted on the first turn so the cached system
+prompt stays stable across the session (a mid-session edit is picked up on
+the next new session, not mid-conversation). The
+`bootstrap.maxChars` setting below bounds how much of each file is included.
 
-Only the `agents` field is populated. SOUL.md, IDENTITY.md, USER.md and the
-rest live on disk in your workspace folder until the agent decides to read
-them.
-
-The implementation is in `packages/agent/src/identity/identity-loader.ts`.
+The implementation is in `packages/agent/src/bootstrap/workspace-loader.ts`
+(`loadWorkspaceBootstrapFiles`) and `packages/agent/src/executor/prompt-assembly.ts`.
 
 The bootstrap configuration controls how much workspace content is included:
 
