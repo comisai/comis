@@ -74,14 +74,55 @@ pnpm lint:security
 
 This runs ESLint with `eslint-plugin-security` rules that catch common security issues in JavaScript and TypeScript code.
 
+### Contribution Bar
+
+Every fix and every feature in `packages/*/src/**` starts with a failing test that
+fails on the pre-patch code, then a production patch that flips it to green. The
+failing test output (test name + assertion error) goes in the **RED Test Proof**
+section of the PR template — it is the proof of the red state. Exempt from TDD:
+pure docs, comments, formatting, and build-tooling/CI/config edits.
+
+Before opening a PR, run the full validation suite:
+
+```bash
+pnpm validate
+```
+
+This runs: `docs:check && build:clean && cycles && cycles:refs && lint:security && test:coverage`.
+All gates must pass. Do not use `git push --no-verify` to skip the pre-push hook.
+
+**Allowlists are shrink-only.** If a PR adds a new entry to any architecture allowlist
+(`test/support/architecture-allowlist.ts`, lint suppression comments, etc.), it will
+not be merged. Remove an allowlist entry only when you have fixed the underlying issue.
+
 ## Pull Requests
 
 1. Create your branch from `main`
-2. Fill out the [PR template](.github/PULL_REQUEST_TEMPLATE.md) completely
-3. Ensure all tests pass (`pnpm test`)
-4. Ensure linting passes (`pnpm lint:security`)
-5. Keep PRs focused -- one feature or fix per pull request
-6. Security-sensitive changes require additional review from maintainers
+2. Fill out the [PR template](.github/PULL_REQUEST_TEMPLATE.md) completely, including
+   the **RED Test Proof** section (paste failing test output, or write `EXEMPT: <reason>`
+   for docs/CI/config-only changes)
+3. `pnpm validate` passes (clean build, cycles, lint:security, test:coverage)
+4. Keep PRs focused -- one feature or fix per pull request
+5. Security-sensitive changes require additional review from maintainers
+6. Link to the GitHub issue this PR addresses (required — see AI-Generated and Bulk PRs below)
+
+## AI-Generated and Bulk PRs
+
+AI assistance is welcome for research, drafting, and understanding the codebase.
+However:
+
+- **File an issue first.** Before opening any PR — AI-generated or otherwise — open
+  a GitHub issue describing the problem or feature. PRs that arrive without a linked
+  issue will be closed pending one.
+- **Bulk agent PRs are closed unreviewed.** PRs that appear to be auto-generated in
+  bulk (multiple PRs from the same account in a short window, boilerplate descriptions,
+  no linked issue) will be closed without review.
+- **Quality bar is the same regardless of authorship.** An AI-assisted PR must meet
+  the same contribution bar as a human-authored one: tests-first RED with proof,
+  shrink-only allowlists, `pnpm lint:security`, `pnpm validate`.
+
+The intent is not to block AI assistance but to prevent low-effort submissions that
+consume reviewer time without meeting the project's quality standards.
 
 ## Reporting Bugs
 
