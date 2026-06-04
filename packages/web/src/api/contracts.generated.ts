@@ -6153,16 +6153,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "boolean",
           "const": true
         },
-        "found": {
-          "type": "boolean"
-        },
         "id": {
           "type": "string"
         }
       },
       "required": [
         "pinned",
-        "found",
         "id"
       ],
       "additionalProperties": false
