@@ -601,7 +601,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureRelationshipTable(db); // directional relationships
   ensureTunedAlphaTable(db); // tuned ranking alphas
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
-
   // --- Observation partial indexes (design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).
   // `idx_memories_unconsol` serves the candidate scan (WHERE consolidated_at IS NULL);
