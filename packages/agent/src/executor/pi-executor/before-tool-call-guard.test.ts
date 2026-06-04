@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import { ok, err } from "@comis/shared";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
+import { createTurnLoopDetector } from "../turn-loop-detector.js";
 
 describe("createBeforeToolCallGuard", () => {
   it("blocks when step counter is exhausted", async () => {
@@ -100,5 +101,58 @@ describe("createBeforeToolCallGuard", () => {
     const result = await guard({ toolCall: { name: "web_search" }, args: { query: "test" } });
 
     expect(result).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // FIX #2c — the turn-loop detector short-circuits a repeat idempotent read.
+  // The SDK's beforeToolCall can only block-with-reason (BeforeToolCallResult
+  // is {block?, reason?} — no content channel), so a short-circuit blocks the
+  // re-execution and surfaces the one-line steer as the tool-result reason text
+  // the model sees. The cached content is already in context.
+  // -------------------------------------------------------------------------
+
+  const passThroughSafety = () => ({
+    stepCounter: { shouldHalt: () => false, increment: () => 1, reset: () => {}, getCount: () => 0 },
+    budgetGuard: { checkBudget: () => ok(undefined), estimateCost: () => 0, recordUsage: () => {}, resetExecution: () => {}, getSnapshot: () => ({ perExecution: 0, perHour: 0, perDay: 0 }) } as any,
+    circuitBreaker: { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} },
+  });
+
+  it("short-circuits a repeat idempotent read with the steer surfaced as the block reason", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const detector = createTurnLoopDetector();
+    detector.recordCall("read", { path: "/a" }, { content: [{ type: "text", text: "body" }] });
+
+    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker, undefined, undefined, detector);
+    const result = await guard({ toolCall: { name: "read" }, args: { path: "/a" } });
+
+    expect(result).toBeDefined();
+    expect(result?.block).toBe(true);
+    // The one-line steer is the reason text the model sees (read-tool referenced).
+    expect(result?.reason).toContain("read");
+    expect(result?.reason).toMatch(/already ran/i);
+  });
+
+  it("a non-cached idempotent read falls through to the normal allow path", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const detector = createTurnLoopDetector();
+
+    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker, undefined, undefined, detector);
+    const result = await guard({ toolCall: { name: "read" }, args: { path: "/never-seen" } });
+
+    expect(result).toBeUndefined();
+  });
+
+  it("the step limit still takes priority over the loop detector", async () => {
+    const detector = createTurnLoopDetector();
+    detector.recordCall("read", { path: "/a" }, { content: [{ type: "text", text: "body" }] });
+    const stepCounter = { shouldHalt: () => true, increment: () => 1, reset: () => {}, getCount: () => 50 };
+    const budgetGuard = { checkBudget: () => ok(undefined), estimateCost: () => 0, recordUsage: () => {}, resetExecution: () => {}, getSnapshot: () => ({ perExecution: 0, perHour: 0, perDay: 0 }) } as any;
+    const circuitBreaker = { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} };
+
+    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker, undefined, undefined, detector);
+    const result = await guard({ toolCall: { name: "read" }, args: { path: "/a" } });
+
+    // Step-limit reason wins — the safety blocks stay first in priority.
+    expect(result?.reason).toContain("Step limit");
   });
 });
