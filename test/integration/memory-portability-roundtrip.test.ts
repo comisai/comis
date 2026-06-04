@@ -3,10 +3,15 @@
  * Integration test: memory portability export → import round-trip.
  *
  * Tests the full CLI→daemon→adapter path:
- * 1. Store a clean entry via memory.store RPC
- * 2. Export via memory.portability.export RPC (secret-scrubbed envelope)
- * 3. Import to a different agentId via memory.portability.import RPC
+ * 1. Store a clean entry via memory.store RPC (default agent scope)
+ * 2. Export via memory.portability.export RPC (no agent_id filter = all entries)
+ * 3. Import to a specific target agentId via memory.portability.import RPC
  * 4. Verify the imported entry preserves trust_level, memory_type, tags, provenance
+ *
+ * Note: memory.store uses _agentId injected by the dispatcher (from the
+ * authenticated session), NOT an agent_id request param — extra params are
+ * stripped by the contract Zod parse. Exports without agent_id filter return
+ * all tenant-scoped entries, ensuring the stored entry is included.
  *
  * Requires: pnpm build (imports @comis/* from dist/)
  * Pool: forks (maxConcurrency: 1)
@@ -62,29 +67,23 @@ describe("memory portability round-trip (export → import, CLI→daemon→adapt
   }, 30_000);
 
   it("exports a stored entry and import preserves trust_level, memory_type, tags, and provenance", async () => {
-    const SOURCE_AGENT = "portability-source-agent";
+    // memory.store scopes to the dispatcher-injected _agentId (not a contract param).
+    // Export without agent_id returns all tenant-scope entries, which includes this entry.
     const TARGET_AGENT = "portability-target-agent";
     const TEST_CONTENT = "The capital of France is Paris — a test memory for portability round-trip";
     const TEST_TAGS = ["geography", "europe", "portability-test"];
-    const TEST_OCCURRED_AT = 1748000000000;
 
-    // Step 1: Store a test entry in the source agent scope
+    // Step 1: Store a test entry (scoped to default agent via dispatcher _agentId)
     await withClient(async (client) =>
       callTyped(client, MemoryStoreContract, {
         content: TEST_CONTENT,
-        agent_id: SOURCE_AGENT,
-        trust_level: "learned",
-        memory_type: "semantic",
         tags: TEST_TAGS,
-        occurred_at: TEST_OCCURRED_AT,
       }),
     );
 
-    // Step 2: Export source agent memory
+    // Step 2: Export all memory (no agent_id filter = full tenant scope)
     const exportResult = await withClient(async (client) =>
-      callTyped(client, MemoryPortabilityExportContract, {
-        agent_id: SOURCE_AGENT,
-      }),
+      callTyped(client, MemoryPortabilityExportContract, {}),
     );
 
     expect(exportResult.schemaVersion).toBe("comis-memory-export-v1");
@@ -108,7 +107,7 @@ describe("memory portability round-trip (export → import, CLI→daemon→adapt
     expect(importResult.blocked).toBe(0);
     expect(importResult.dryRun).toBe(false);
 
-    // Step 4: Browse target agent memory and verify field preservation
+    // Step 4: Export target agent memory and verify field preservation
     const verifyResult = await withClient(async (client) =>
       callTyped(client, MemoryPortabilityExportContract, {
         agent_id: TARGET_AGENT,
@@ -119,21 +118,20 @@ describe("memory portability round-trip (export → import, CLI→daemon→adapt
       typeof e["content"] === "string" && (e["content"] as string).includes("Paris"),
     );
     expect(imported).toBeDefined();
+    // trust_level, memory_type, tags, and source provenance must survive the round-trip
     expect(imported!["trust_level"]).toBe("learned");
     expect(imported!["memory_type"]).toBe("semantic");
     expect(imported!["tags"]).toEqual(expect.arrayContaining(TEST_TAGS));
     expect(imported!["source_who"]).toBeDefined();
-    // agentId must be TARGET_AGENT (re-stamped, not SOURCE_AGENT)
-    // (Verified indirectly: the entry appears in TARGET_AGENT's export scope)
+    // agentId is re-stamped to TARGET_AGENT (verified indirectly: entry appears in TARGET_AGENT scope)
   });
 
   it("dry-run import reports counts without persisting any entries", async () => {
     const DRY_AGENT = "portability-dry-run-agent";
 
+    // Export all tenant-scope entries (includes the previously stored test entry)
     const exportResult = await withClient(async (client) =>
-      callTyped(client, MemoryPortabilityExportContract, {
-        agent_id: "portability-source-agent",
-      }),
+      callTyped(client, MemoryPortabilityExportContract, {}),
     );
     expect(exportResult.entryCount).toBeGreaterThanOrEqual(1);
 
