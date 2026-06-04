@@ -528,6 +528,52 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     expect(linkedIds.sort()).toEqual([idsBefore[0]!, idsBefore[1]!, idsBefore[2]!].sort());
   });
 
+  it("getSummaries returns the persisted leaf summary as the LcdSummary DTO (content/tokenCount/fileIds/taint/fallback/kind/depth) — the assembler's summary-ref resolution source", () => {
+    seedMessages(4); // createdAt 1000,1010,1020,1030
+    store.getContextItems("conv-a");
+
+    const summaryId = store.appendLeafSummary(
+      summaryInput(0, 2, {
+        content: "the resolvable leaf content",
+        tokenCount: 77,
+        fileIds: ["file-1", "file-2"],
+        taint: true,
+        fallback: true,
+        createdAt: 4242,
+      }),
+    );
+
+    const summaries = store.getSummaries("conv-a");
+    expect(summaries).toHaveLength(1);
+    const s = summaries[0]!;
+    // The full DTO the assembler keys by summaryId to resolve a summary-ref into
+    // a user-role text message + its token authority (Pitfall 2).
+    expect(s.summaryId).toBe(summaryId);
+    expect(s.conversationId).toBe("conv-a");
+    expect(s.kind).toBe("leaf");
+    expect(s.depth).toBe(0);
+    expect(s.content).toBe("the resolvable leaf content");
+    expect(s.tokenCount).toBe(77); // the budget authority for the summary-ref
+    expect(s.fileIds).toEqual(["file-1", "file-2"]);
+    expect(s.taint).toBe(true);
+    expect(s.fallback).toBe(true);
+    expect(s.descendantCount).toBe(3); // recomputed from the covered run (m0,m1,m2)
+    expect(s.earliestAt).toBe(1000); // min covered createdAt
+    expect(s.latestAt).toBe(1020); // max covered createdAt
+    expect(s.createdAt).toBe(4242);
+  });
+
+  it("getSummaries returns [] for a conversation with no summaries, and is scoped per conversation", () => {
+    seedMessages(3); // messages but NO leaf pass
+    expect(store.getSummaries("conv-a")).toHaveLength(0);
+
+    // A leaf pass on conv-a must not leak into a sibling conversation's read.
+    store.getContextItems("conv-a");
+    store.appendLeafSummary(summaryInput(0, 1));
+    expect(store.getSummaries("conv-a")).toHaveLength(1);
+    expect(store.getSummaries("conv-b")).toHaveLength(0);
+  });
+
   it("appendLeafSummary NEVER deletes lcd_messages — getMessages length is unchanged after a leaf pass (losslessness)", () => {
     seedMessages(5);
     store.getContextItems("conv-a");

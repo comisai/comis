@@ -23,6 +23,7 @@ import type {
   AppendSummaryInput,
   LcdContextItem,
   LcdMessage,
+  LcdSummary,
 } from "./context-store-types.js";
 
 /**
@@ -60,4 +61,12 @@ export interface ContextStorePort {
    * conversation with no context_items rows (no migration — design §9).
    */
   getContextItems(conversationId: string): LcdContextItem[];
+  /**
+   * Read path: every leaf summary for a conversation. The dag assembler joins
+   * these (by `summaryId`) to resolve a context_items `summary`-ref into its
+   * `content` + pre-computed `tokenCount` when assembling the model-facing
+   * context. Returned in insertion order; the assembler keys by id, not order.
+   * `content` is the leaf plaintext and is NEVER logged (lossless store).
+   */
+  getSummaries(conversationId: string): LcdSummary[];
 }

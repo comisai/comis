@@ -46,6 +46,8 @@ import {
   type LcdPartKind,
   type LcdRefKind,
   type LcdRole,
+  type LcdSummary,
+  type LcdSummaryKind,
 } from "@comis/core";
 import type { Message } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
@@ -55,6 +57,7 @@ import {
   LcdContextItemRowSchema,
   LcdMessageRowSchema,
   LcdMessagePartRowSchema,
+  LcdSummaryRowSchema,
 } from "./row-schemas.js";
 
 /**
@@ -76,6 +79,7 @@ export function reconstructLcdMessage(message: LcdMessage): Message {
 const messageRowMapper = createRowMapper(LcdMessageRowSchema);
 const partRowMapper = createRowMapper(LcdMessagePartRowSchema);
 const ctxItemRowMapper = createRowMapper(LcdContextItemRowSchema);
+const summaryRowMapper = createRowMapper(LcdSummaryRowSchema);
 
 /** Projection for the lazy-seed / range-coverage read: message id + createdAt, seq-ordered. */
 const MessageSeedRowSchema = z.strictObject({ id: z.string(), created_at: z.number() });
@@ -188,6 +192,12 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
 
   const selectCtxItems = db.prepare(
     "SELECT * FROM lcd_context_items WHERE conversation_id = ? ORDER BY ordinal",
+  );
+
+  // Every leaf summary for a conversation, oldest-first — the assembler keys the
+  // result by summaryId to resolve a context_items `summary`-ref to its content.
+  const selectSummaries = db.prepare(
+    "SELECT * FROM lcd_summaries WHERE conversation_id = ? ORDER BY created_at, summary_id",
   );
 
   // The covered run [start,end] (inclusive), ordinal-ascending — used to gather
@@ -469,5 +479,46 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       }
       return out;
     },
+
+    getSummaries(conversationId: string): LcdSummary[] {
+      // WR-02: degrade PER ROW, not per result-set — a corrupt/drifted summary
+      // row is skipped, its siblings survive (NEVER `parseRows`, which would
+      // discard every already-validated row). The skip is silent by design (the
+      // memory package has no infra-logging dependency, AGENTS.md §2.4); the
+      // boundary observability line is agent-side (the assembler, Plan 05). The
+      // store NEVER logs the summary `content` (lossless store; T-129-10).
+      const out: LcdSummary[] = [];
+      for (const raw of selectSummaries.all(conversationId)) {
+        const parsed = summaryRowMapper.parseOptionalRow(raw);
+        if (!parsed.ok || !parsed.value) continue; // skip only the bad row
+        const row = parsed.value;
+        out.push({
+          summaryId: row.summary_id,
+          conversationId: row.conversation_id,
+          kind: row.kind as LcdSummaryKind,
+          depth: row.depth,
+          earliestAt: row.earliest_at,
+          latestAt: row.latest_at,
+          descendantCount: row.descendant_count,
+          tokenCount: row.token_count,
+          content: row.content,
+          fileIds: parseFileIds(row.file_ids),
+          taint: row.taint !== 0,
+          fallback: row.fallback !== 0,
+          createdAt: row.created_at,
+        });
+      }
+      return out;
+    },
   };
+}
+
+/** Parse the JSON `file_ids` column to a string[] — degrade to [] on corruption. */
+function parseFileIds(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
 }
