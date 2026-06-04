@@ -50,12 +50,12 @@
     "@comis/skills": "workspace:*",
     "@earendil-works/pi-ai": "0.78.0",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "better-sqlite3": "12.9.0",
+    "better-sqlite3": "12.10.0",
     "hono": "4.12.23",
     "pino": "10.3.1",
     "pino-roll": "4.0.0",
     "reflect-metadata": "0.2.2",
-    "yaml": "2.8.4",
+    "yaml": "2.9.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
