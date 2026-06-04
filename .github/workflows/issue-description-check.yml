@@ -30,7 +30,23 @@ jobs:
             const hasContent = body.replace(/^##.*/gm, '').trim().length >= 30;
             const isComplete = hasHeading && hasContent;
 
-            if (isComplete) return; // nothing to do — don't post an unnecessary comment
+            if (isComplete) {
+              // Clean up any prior "needs detail" comment if the issue is now complete
+              const { data: existingComments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+              });
+              const prior = existingComments.find(c => c.body.includes(MARKER));
+              if (prior) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: prior.id,
+                });
+              }
+              return;
+            }
 
             const commentBody = `${MARKER}\n### Issue description needs more detail\n\n` +
               `Please fill out the issue template sections with enough detail for ` +
