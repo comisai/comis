@@ -243,13 +243,21 @@ export function appendPrompt(text: string, prompt?: string): string {
  * markers are supplied. With no markers (or the default theme's markers) the
  * output is byte-identical to the historical cross-prefixed `"<marker> {errorKind}"`;
  * the ascii theme yields `"[ERR] {errorKind}"` with no emoji. Interpolates
- * ONLY the closed-union `errorKind` — never raw outcome internals.
+ * ONLY the closed-union `errorKind` plus the fixed one-line `reason` (a
+ * named-constant string from the abort mapper) — never raw outcome internals.
+ *
+ * When `outcome.reason` is present (a resource abort: step limit / loop), the
+ * label reads `"<marker> {errorKind} — {reason}"` so a stopped turn renders
+ * truthfully instead of the bare errorKind. Absent reason → byte-identical to
+ * the historical output (preserves every prior failure render).
  */
 export function failureLabel(
   outcome: Extract<TurnOutcome, { kind: "failure" }>,
   markers?: Pick<ActivityStatusMarkers, "failure">,
 ): string {
-  return `${markers?.failure ?? DEFAULT_MARKERS.failure} ${outcome.errorKind}`;
+  const base = `${markers?.failure ?? DEFAULT_MARKERS.failure} ${outcome.errorKind}`;
+  if (outcome.reason === undefined || outcome.reason.length === 0) return base;
+  return `${base} — ${outcome.reason}`;
 }
 
 /**

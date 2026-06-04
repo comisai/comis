@@ -55,7 +55,14 @@ export type TurnOutcome =
       delivery: FinalDeliveryReceipt; recoveredFailures: readonly [ActivityEvent, ...ActivityEvent[]] }
   | { kind: "failure"; errorKind: ErrorKind; failedEvents: readonly ActivityEvent[];
       /** Present if delivery (not tool) was the failure source. */
-      deliveryReceipt?: DeliveryFailureReceipt }
+      deliveryReceipt?: DeliveryFailureReceipt;
+      /**
+       * Fixed one-line human reason for the failure (e.g. "stopped — hit step
+       * limit"). Surfaced by a resource abort (max_steps / loop_detected) so the
+       * rendered status reads truthfully instead of the bare errorKind. A
+       * closed-vocabulary named-constant string — never raw provider/internal text.
+       */
+      reason?: string }
   | { kind: "silent"; reason: "SILENT" | "HEARTBEAT_OK" | "NO_REPLY" }
   | { kind: "aborted"; reason: "user_cancel" | "timeout" | "fatal" };
 
