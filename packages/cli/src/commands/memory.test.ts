@@ -78,9 +78,11 @@ describe("registerMemoryCommand", () => {
       "import",
       "inspect",
       "observations",
+      "pin",
       "recall-trace",
       "search",
       "stats",
+      "unpin",
     ]);
   });
 

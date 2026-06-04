@@ -25,6 +25,8 @@ import {
   MemoryRecallStatsContract,
   MemoryPortabilityExportContract,
   MemoryPortabilityImportContract,
+  MemoryPinContract,
+  MemoryUnpinContract,
   parseMemoryExportEnvelope,
 } from "@comis/core";
 import { callTyped, withClient } from "../client/rpc-client.js";
@@ -566,6 +568,56 @@ export function registerMemoryCommand(program: Command): void {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to import memory: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // memory pin <id> — mark a memory entry as always-injected in recall. Admin-gated.
+  memory
+    .command("pin <id>")
+    .description("Pin a memory entry (always inject in recall) — admin")
+    .option("--agent <agentId>", "Agent scope")
+    .option("--tenant <tenantId>", "Tenant scope")
+    .action(async (id: string, options: { agent?: string; tenant?: string }) => {
+      try {
+        const result = await withSpinner("Pinning memory...", () =>
+          withClient(async (client) =>
+            callTyped(client, MemoryPinContract, {
+              id,
+              ...(options.agent ? { agent_id: options.agent } : {}),
+              ...(options.tenant ? { tenant_id: options.tenant } : {}),
+            }),
+          ),
+        );
+        success(`Pinned memory entry: ${result.id}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error(`Failed to pin memory: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // memory unpin <id> — remove the always-inject mark from a memory entry. Admin-gated.
+  memory
+    .command("unpin <id>")
+    .description("Unpin a memory entry — admin")
+    .option("--agent <agentId>", "Agent scope")
+    .option("--tenant <tenantId>", "Tenant scope")
+    .action(async (id: string, options: { agent?: string; tenant?: string }) => {
+      try {
+        const result = await withSpinner("Unpinning memory...", () =>
+          withClient(async (client) =>
+            callTyped(client, MemoryUnpinContract, {
+              id,
+              ...(options.agent ? { agent_id: options.agent } : {}),
+              ...(options.tenant ? { tenant_id: options.tenant } : {}),
+            }),
+          ),
+        );
+        success(`Unpinned memory entry: ${result.id}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error(`Failed to unpin memory: ${msg}`);
         process.exit(1);
       }
     });

@@ -679,9 +679,11 @@ Memory management and recall-diagnostics commands for searching, inspecting, and
 | `memory clear` | Clear memory entries matching a filter |
 | `memory export` | Export agent memory to a secret-scrubbed versioned JSON file — **admin** |
 | `memory import <file>` | Import memory from a `comis-memory-export-v1` JSON envelope — **admin** |
+| `memory pin <id>` | Pin a memory entry so it is always injected in recall — **admin** |
+| `memory unpin <id>` | Remove the always-inject pin from a memory entry — **admin** |
 
 <Note>
-`memory recall-trace`, `memory observations`, and `memory entities` are **admin-gated** and **(tenant, agent)-scoped** — they require an admin-scoped gateway token and operate within the caller's tenant/agent scope.
+`memory recall-trace`, `memory observations`, `memory entities`, `memory pin`, and `memory unpin` are **admin-gated** and **(tenant, agent)-scoped** — they require an admin-scoped gateway token and operate within the caller's tenant/agent scope.
 </Note>
 
 #### `memory search <query>`
@@ -801,6 +803,36 @@ is metadata only and is never used for writes.
 | `--agent <agentId>` | `string` | — | Target agent to import into (required) |
 | `--dry-run` | `boolean` | `false` | Report blocked/downgraded counts without writing |
 
+#### `memory pin <id>`
+
+Mark a memory entry as always-injected in recall — the entry is prepended to every recall result regardless of fused score. **Admin-gated.**
+
+```
+comis memory pin <entryId> [--agent <agentId>] [--tenant <tenantId>]
+```
+
+Idempotent: pinning an already-pinned entry is a no-op. The entry must exist in the target (tenant, agent) scope.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--agent <agentId>` | `string` | — | Agent scope |
+| `--tenant <tenantId>` | `string` | — | Tenant scope |
+
+#### `memory unpin <id>`
+
+Remove the always-inject pin from a memory entry. **Admin-gated.**
+
+```
+comis memory unpin <entryId> [--agent <agentId>] [--tenant <tenantId>]
+```
+
+Idempotent: unpinning an already-unpinned entry is a no-op.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--agent <agentId>` | `string` | — | Agent scope |
+| `--tenant <tenantId>` | `string` | — | Tenant scope |
+
 ```bash
 # Search memory
 comis memory search "project requirements" --limit 5
@@ -827,6 +859,12 @@ comis memory export --agent default --output backup.json
 # Import from a backup envelope (dry-run first to preview firewall counts)
 comis memory import backup.json --agent default --dry-run
 comis memory import backup.json --agent default
+
+# Pin a memory entry so it is always injected in recall (admin)
+comis memory pin <entryId> --agent default
+
+# Unpin a previously-pinned memory entry (admin)
+comis memory unpin <entryId> --agent default
 ```
 
 <Note>
