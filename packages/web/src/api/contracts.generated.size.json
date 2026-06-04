@@ -1,6 +1,6 @@
 {
-  "totalMinified": 113701,
-  "totalGzipped": 10567,
+  "totalMinified": 109163,
+  "totalGzipped": 10064,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -54,13 +54,6 @@
     "config.read": 280,
     "config.rollback": 500,
     "config.schema": 466,
-    "context.conversations": 471,
-    "context.expand": 921,
-    "context.inspect": 307,
-    "context.recall": 592,
-    "context.search": 755,
-    "context.searchByConversation": 676,
-    "context.tree": 924,
     "cron.add": 1225,
     "cron.list": 367,
     "cron.remove": 377,

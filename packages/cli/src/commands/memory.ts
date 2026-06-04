@@ -37,11 +37,10 @@ export function registerMemoryCommand(program: Command): void {
   // This subcommand previously borrowed the daemon's context.search RPC
   // (via the DAG context-search contract). The DAG context engine was
   // demolished in v2.12 (Phase 126): the daemon no longer mounts
-  // context.search and there is no memory.search handler. Per
-  // no-backward-compat we fail closed with an explicit message + non-zero
-  // exit rather than calling a deleted contract (which would hang or error
-  // opaquely against an unmounted method). Full-text context search returns
-  // with the LCD engine (Phase 131).
+  // context.search and there is no memory.search handler. We fail closed
+  // with an explicit message + non-zero exit rather than calling a deleted
+  // contract (which would hang or error opaquely against an unmounted
+  // method). Full-text context search returns with the LCD engine (Phase 131).
   memory
     .command("search <query>")
     .description("Search memory entries")
@@ -59,9 +58,8 @@ export function registerMemoryCommand(program: Command): void {
   // Previously borrowed the daemon's context.inspect RPC (via the DAG
   // context-inspect contract). That handler was demolished with the DAG
   // context engine in v2.12 (Phase 126) and there is no memory.inspect
-  // handler. Per no-backward-compat we fail closed with an explicit message
-  // + non-zero exit. Context entry inspection returns with the LCD engine
-  // (Phase 131).
+  // handler. We fail closed with an explicit message + non-zero exit.
+  // Context entry inspection returns with the LCD engine (Phase 131).
   memory
     .command("inspect <id>")
     .description("Display full details of a memory entry")

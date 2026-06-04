@@ -584,10 +584,8 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   `);
 
   // NOTE: the DAG context-store tables (ctx_*) were removed in v2.12 (Phase 126,
-  // LCD reimplementation). We only delete the schema-create call — nothing
-  // destructive is written and no reverse migration exists (there is no versioned
-  // migration runner). New DBs simply lack ctx_* tables; existing DBs keep
-  // harmless empty/orphaned tables that no code reads (design §9).
+  // LCD reimplementation) — only the schema-create call is deleted (no reverse
+  // migration exists); existing DBs keep harmless orphaned tables (design §9).
 
   // The calls below run in dependency order AFTER the `memories` table (the FK
   // target) exists; each is idempotent, and every `ON DELETE CASCADE` fires via

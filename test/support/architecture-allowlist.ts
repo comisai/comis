@@ -1922,34 +1922,35 @@ export const testNamingAllowlist: readonly TestNamingAllowlistEntry[] = [
   { file: "packages/core/src/config/schema-agent-model.test.ts", line: 104, kind: "it", text: "allows empty object", reason: "Captured(min-length=19); shrink in follow-on work"},
   { file: "packages/core/src/config/schema-agent-model.test.ts", line: 240, kind: "it", text: "rejects zero values", reason: "Captured(min-length=19); shrink in follow-on work"},
   { file: "packages/core/src/config/schema-agent.test.ts", line: 1404, kind: "it", text: "rejects empty id", reason: "Captured(min-length=16); shrink in follow-on work; line re-synced after the rag.lanes + rag.lanes.temporal inserts, then the rag.lanes.causal insert, then the rag.lanes.graphSpread insert, then the rag.mmr + rag.queryUnderstanding inserts, then the rag.forget + rag.scoring.forgetAlpha inserts, then the increment-2 opt-out-defaults re-baseline comments"},
-  // NOTE: line numbers re-synced after the change that flipped the version
-  // default (pipeline -> dag) and inserted the opt-out parse test, shifting
-  // every it() below the `version` describe by +2 lines. The former
-  // `it("defaults to 'pipeline'")` (22 chars, passing) was renamed to a
-  // descriptive >=20-char name in the test file rather than allowlisted, so
-  // this list stays at 22 entries (shrink-only honored — no growth).
+  // NOTE: line numbers re-synced (D-126-A) after Phase 126 Plan 01 flipped the
+  // version default to "pipeline" and renamed the short version tests to
+  // descriptive >=20-char names, shifting every generic-named it() below by
+  // ~1-2 lines. The former `it("accepts 'dag'")` was also renamed to a
+  // descriptive name (`guard: explicit version 'dag' still parses to 'dag'...`),
+  // so its allowlist entry was DROPPED (count 22 -> 21; shrink-only honored — no
+  // growth, the entry was removed, not re-added). The remaining entries are
+  // re-pinned to their current lines.
   { file: "packages/core/src/config/schema-context-engine.test.ts", line: 169, kind: "it", text: "rejects non-integer", reason: "Captured(min-length=19); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 201, kind: "it", text: "accepts 'pipeline'", reason: "Captured(min-length=18); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 213, kind: "it", text: "accepts 'dag'", reason: "Captured(min-length=13); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 229, kind: "it", text: "defaults to 10", reason: "Captured(min-length=14); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 323, kind: "it", text: "defaults to 15", reason: "Captured(min-length=14); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 467, kind: "it", text: "defaults to 5", reason: "Captured(min-length=13); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 506, kind: "it", text: "defaults to 2", reason: "Captured(min-length=13); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 530, kind: "it", text: "defaults to 8", reason: "Captured(min-length=13); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 559, kind: "it", text: "defaults to 0.75", reason: "Captured(min-length=16); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 588, kind: "it", text: "defaults to 8", reason: "Captured(min-length=13); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 617, kind: "it", text: "defaults to 4", reason: "Captured(min-length=13); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 646, kind: "it", text: "defaults to 2", reason: "Captured(min-length=13); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 675, kind: "it", text: "defaults to 0", reason: "Captured(min-length=13); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 704, kind: "it", text: "defaults to 20000", reason: "Captured(min-length=17); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 733, kind: "it", text: "defaults to 1200", reason: "Captured(min-length=16); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 762, kind: "it", text: "defaults to 2000", reason: "Captured(min-length=16); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 791, kind: "it", text: "defaults to 4000", reason: "Captured(min-length=16); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 820, kind: "it", text: "defaults to 10", reason: "Captured(min-length=14); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 849, kind: "it", text: "defaults to 120000", reason: "Captured(min-length=18); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 878, kind: "it", text: "defaults to 25000", reason: "Captured(min-length=17); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 907, kind: "it", text: "defaults to 15", reason: "Captured(min-length=14); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 936, kind: "it", text: "defaults to 200000", reason: "Captured(min-length=18); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 203, kind: "it", text: "accepts 'pipeline'", reason: "Captured(min-length=18); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 230, kind: "it", text: "defaults to 10", reason: "Captured(min-length=14); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 324, kind: "it", text: "defaults to 15", reason: "Captured(min-length=14); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 468, kind: "it", text: "defaults to 5", reason: "Captured(min-length=13); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 507, kind: "it", text: "defaults to 2", reason: "Captured(min-length=13); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 531, kind: "it", text: "defaults to 8", reason: "Captured(min-length=13); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 560, kind: "it", text: "defaults to 0.75", reason: "Captured(min-length=16); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 589, kind: "it", text: "defaults to 8", reason: "Captured(min-length=13); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 618, kind: "it", text: "defaults to 4", reason: "Captured(min-length=13); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 647, kind: "it", text: "defaults to 2", reason: "Captured(min-length=13); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 676, kind: "it", text: "defaults to 0", reason: "Captured(min-length=13); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 705, kind: "it", text: "defaults to 20000", reason: "Captured(min-length=17); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 734, kind: "it", text: "defaults to 1200", reason: "Captured(min-length=16); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 763, kind: "it", text: "defaults to 2000", reason: "Captured(min-length=16); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 792, kind: "it", text: "defaults to 4000", reason: "Captured(min-length=16); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 821, kind: "it", text: "defaults to 10", reason: "Captured(min-length=14); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 850, kind: "it", text: "defaults to 120000", reason: "Captured(min-length=18); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 879, kind: "it", text: "defaults to 25000", reason: "Captured(min-length=17); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 908, kind: "it", text: "defaults to 15", reason: "Captured(min-length=14); shrink in follow-on work"},
+  { file: "packages/core/src/config/schema-context-engine.test.ts", line: 937, kind: "it", text: "defaults to 200000", reason: "Captured(min-length=18); shrink in follow-on work"},
   { file: "packages/core/src/config/schema-gateway.test.ts", line: 187, kind: "it", text: "rejects empty id", reason: "Captured(min-length=16); shrink in follow-on work"},
   { file: "packages/core/src/config/schema-queue.test.ts", line: 163, kind: "it", text: "rejects empty name", reason: "Captured(min-length=18); shrink in follow-on work"},
   { file: "packages/core/src/config/section-registry-parity.test.ts", line: 38, kind: "it", text: "getConfigSections()", reason: "Captured (min-length=19; use-case-shape heuristic miss); shrink in follow-on work. Line shifted from 51 → 38 by stableStringify extraction (inline function removed in favor of test/support/stable-stringify.ts import)." },

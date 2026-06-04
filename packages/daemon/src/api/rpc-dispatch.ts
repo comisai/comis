@@ -111,9 +111,6 @@ export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: st
  * @returns RpcCall function that dispatches to domain handlers
  */
 export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
-  // Late-binding ref for context.recall -> session.spawn self-dispatch
-  let selfDispatch: RpcCall = async () => { throw new Error("dispatch not ready"); };
-
   // Build handler maps from each domain factory
   const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
     ...createCronHandlers(deps),
@@ -421,9 +418,6 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       throw err;
     }
   };
-
-  // Wire self-dispatch for context.recall -> session.spawn delegation
-  selfDispatch = dispatch;
 
   return dispatch;
 }
