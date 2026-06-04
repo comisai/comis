@@ -78,8 +78,8 @@ export function buildJsonOutput(
     const port = state.gateway.port ?? 4766;
     gatewayUrl = `ws://${connectIp}:${port}`;
 
-    // Only include token when auth method is token
-    if (state.gateway.authMethod === "token" && state.gateway.token) {
+    // Token is the only supported gateway auth method.
+    if (state.gateway.token) {
       gatewayToken = state.gateway.token;
     }
   }

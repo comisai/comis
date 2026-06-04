@@ -90,14 +90,14 @@ export type ToolProviderConfig = {
   validated?: boolean;
 };
 
-/** Gateway settings collected during the wizard. */
+/** Gateway settings collected during the wizard. Token is the only supported
+ *  gateway auth method (the daemon's GatewayConfigSchema is a z.strictObject
+ *  whose only auth keys are tokens[]/tls — there is no password field). */
 export type GatewayConfig = {
   port: number;
   bindMode: "loopback" | "lan" | "custom";
   customIp?: string;
-  authMethod: "token" | "password";
   token?: string;
-  password?: string;
   webEnabled: boolean;
 };
 

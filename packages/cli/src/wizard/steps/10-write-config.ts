@@ -141,13 +141,10 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
       port: state.gateway.port ?? 4766,
     };
 
-    if (state.gateway.authMethod === "token") {
-      gatewayConfig.tokens = [
-        { id: "default", secret: "${COMIS_GATEWAY_TOKEN}", scopes: ["*"] },
-      ];
-    } else if (state.gateway.authMethod === "password") {
-      gatewayConfig.password = "${COMIS_GATEWAY_PASSWORD}";
-    }
+    // Token is the only supported gateway auth method.
+    gatewayConfig.tokens = [
+      { id: "default", secret: "${COMIS_GATEWAY_TOKEN}", scopes: ["*"] },
+    ];
 
     // Web dashboard -- default true; wizard always sets this explicitly
     gatewayConfig.web = { enabled: state.gateway.webEnabled };
@@ -240,13 +237,9 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
     }
   }
 
-  // Gateway credentials
-  if (state.gateway) {
-    if (state.gateway.authMethod === "token" && state.gateway.token) {
-      managed.set("COMIS_GATEWAY_TOKEN", state.gateway.token);
-    } else if (state.gateway.authMethod === "password" && state.gateway.password) {
-      managed.set("COMIS_GATEWAY_PASSWORD", state.gateway.password);
-    }
+  // Gateway credentials -- token is the only supported gateway auth method.
+  if (state.gateway?.token) {
+    managed.set("COMIS_GATEWAY_TOKEN", state.gateway.token);
   }
 
   return managed;

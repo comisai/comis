@@ -99,7 +99,6 @@ function extractStateFromConfig(
         port,
         bindMode,
         ...(customIp !== undefined && { customIp }),
-        authMethod: "token" as const,
         webEnabled: typeof webRaw?.["enabled"] === "boolean" ? webRaw["enabled"] : true,
       };
     }

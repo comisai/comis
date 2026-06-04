@@ -95,9 +95,7 @@ function buildNonInteractiveOptionsFromCommander(
       | "lan"
       | "custom"
       | undefined,
-    gatewayAuth: options.gatewayAuth as "token" | "password" | undefined,
     gatewayToken: options.gatewayToken as string | undefined,
-    gatewayPassword: options.gatewayPassword as string | undefined,
     channels: options.channels as string[] | undefined,
     telegramToken: options.telegramToken as string | undefined,
     discordToken: options.discordToken as string | undefined,
@@ -154,9 +152,7 @@ export function registerInitCommand(program: Command): void {
       "--gateway-bind <mode>",
       "loopback|lan|custom (default: loopback)",
     )
-    .option("--gateway-auth <mode>", "token|password (default: token)")
     .option("--gateway-token <tok>", "Explicit gateway token")
-    .option("--gateway-password <pw>", "Gateway password (if auth=password)")
     // Channels
     .option(
       "--channels <list>",

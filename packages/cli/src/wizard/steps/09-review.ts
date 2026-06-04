@@ -66,7 +66,7 @@ function buildSummary(state: WizardState): string {
         bindAddress = "127.0.0.1";
     }
     lines.push("");
-    lines.push(`Gateway:    ws://${bindAddress}:${state.gateway.port} (${state.gateway.authMethod} auth)`);
+    lines.push(`Gateway:    ws://${bindAddress}:${state.gateway.port} (token auth)`);
   }
 
   // Channels section

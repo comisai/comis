@@ -54,12 +54,10 @@ export type NonInteractiveOptions = {
   apiKey?: string;
   agentName?: string;
   model?: string;
-  // Gateway
+  // Gateway (token is the only supported auth method)
   gatewayPort?: number;
   gatewayBind?: "loopback" | "lan" | "custom";
-  gatewayAuth?: "token" | "password";
   gatewayToken?: string;
-  gatewayPassword?: string;
   // Channels
   channels?: string[];
   telegramToken?: string;
@@ -190,14 +188,6 @@ export function validateNonInteractiveOptions(
         "agentName",
       );
     }
-  }
-
-  // Password auth requires a password
-  if (opts.gatewayAuth === "password" && !opts.gatewayPassword) {
-    throw new NonInteractiveError(
-      "--gateway-password is required when --gateway-auth is 'password'",
-      "gatewayPassword",
-    );
   }
 
   // --reset-scope requires --reset
@@ -354,24 +344,14 @@ export function buildNonInteractiveState(
     }
   }
 
-  // Gateway config
-  const gatewayAuth = opts.gatewayAuth ?? "token";
-  let gatewayToken: string | undefined;
-  let gatewayPassword: string | undefined;
-
-  if (gatewayAuth === "token") {
-    // Auto-generate 48-char hex token when none provided (same as step 07)
-    gatewayToken = opts.gatewayToken ?? randomBytes(24).toString("hex");
-  } else {
-    gatewayPassword = opts.gatewayPassword;
-  }
+  // Gateway config — token is the only supported gateway auth method.
+  // Auto-generate a 48-char hex token when none provided (same as step 07).
+  const gatewayToken = opts.gatewayToken ?? randomBytes(24).toString("hex");
 
   const gateway: GatewayConfig = {
     port: opts.gatewayPort ?? 4766,
     bindMode: opts.gatewayBind ?? "loopback",
-    authMethod: gatewayAuth,
-    ...(gatewayToken !== undefined && { token: gatewayToken }),
-    ...(gatewayPassword !== undefined && { password: gatewayPassword }),
+    token: gatewayToken,
     webEnabled: true,
   };
 
