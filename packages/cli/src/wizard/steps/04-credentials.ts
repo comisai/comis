@@ -470,11 +470,10 @@ async function handleCodexOAuth(
   const isRemoteDefault = isRemoteEnvironment({ env: systemEnvSnapshot() });
   const maxRetries = 3;
 
-  // Resolve storage mode FIRST — before prompting for method or calling OAuth,
-  // so env/encrypted branches return early without opening a store. The 02b
-  // storage step's state.storageMode takes precedence over loadWizardStorageMode
-  // (on a fresh init the master key was just provisioned but the in-process env
-  // snapshot may not reflect it, so the encrypted choice must not fall back to file).
+  // Resolve storage mode FIRST so env/encrypted branches return early without
+  // opening a store. state.storageMode (set by step 02b) takes precedence: on a
+  // fresh init the key was just provisioned but loadWizardStorageMode's env
+  // snapshot may not reflect it, so encrypted must not fall back to file.
   const wizardStorage = state.storageMode ?? await loadWizardStorageMode();
 
   if (wizardStorage === "env") {

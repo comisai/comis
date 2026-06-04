@@ -60,6 +60,9 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--data-dir");
     expect(optionLongs).toContain("--config-dir");
 
+    // Credential storage (1)
+    expect(optionLongs).toContain("--storage");
+
     // Post-setup behavior (3)
     expect(optionLongs).toContain("--start-daemon");
     expect(optionLongs).toContain("--skip-health");
@@ -70,11 +73,11 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--reset-scope");
   });
 
-  it("has exactly 27 options", () => {
+  it("has exactly 28 options", () => {
     const program = new Command();
     registerInitCommand(program);
     const initCmd = program.commands.find((c) => c.name() === "init")!;
-    expect(initCmd.options).toHaveLength(27);
+    expect(initCmd.options).toHaveLength(28);
   });
 
   it("parses --channels as comma-separated list", () => {
