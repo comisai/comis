@@ -2226,6 +2226,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // the row interfaces live in types.ts.
       "LcdMessageRowSchema",
       "LcdMessagePartRowSchema",
+      // LCD compaction row schemas (v2.12, Phase 129). LcdSummaryRowSchema +
+      // LcdContextItemRowSchema are consumed intra-package by lcd-store.ts via
+      // createRowMapper (the getSummaries / getContextItems graceful-degrade reads);
+      // LcdSummaryMessageRowSchema is the leaf→message link schema paired 1:1 with
+      // its LcdSummaryMessageRow interface via the row-schemas.test.ts drift guard.
+      // All three are barrel-surfaced through `export *` so tracked here like the
+      // sibling row schemas above (the checker counts cross-package barrel consumers
+      // only; an intra-file createRowMapper reference is not a cross-file import).
+      "LcdSummaryRowSchema",
+      "LcdSummaryMessageRowSchema",
+      "LcdContextItemRowSchema",
       "VecSearchRowSchema",
       "VecSearchRowFromSchema",
       "FtsSearchRowSchema",
