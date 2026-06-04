@@ -2013,15 +2013,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // NOTE (v2.12, Phase 126 Plan 04): createContextStore (the DAG
       // context-store factory) was deleted here along with context-store.ts +
       // its barrel re-export — no longer an orphaned export to track.
-      // LCD lossless store (v2.12, Phase 127 Plan 04). createLcdStore is the
-      // ContextStorePort SQLite adapter; its daemon composition-root consumer
-      // (setup-memory) lands in the SAME plan's Task 3 — TRANSIENT factory-orphan
-      // here, REMOVED when the construction lands (the factory-orphan dance;
-      // allowlist-shrink enforces shrink-only). reconstructLcdMessage is the named
-      // pi-ai reconstruction seam (delegates to the @comis/core parts-codec); its
-      // consumer is Phase-128 assembly, so it is a planned orphan until that
-      // wiring lands (mirrors the SessionStorePort planned-orphan pattern).
-      "createLcdStore",
+      // LCD lossless store (v2.12, Phase 127 Plan 04). createLcdStore (the
+      // ContextStorePort SQLite adapter) has a production consumer — the daemon
+      // composition root constructs it on the shared memory db (setup-memory) — so
+      // the factory is NOT listed here (the factory-orphan dance shrank on
+      // schedule; allowlist-shrink enforces shrink-only). reconstructLcdMessage is
+      // the named pi-ai reconstruction seam (delegates to the @comis/core
+      // parts-codec); its consumer is Phase-128 assembly, so it is a planned
+      // orphan until that wiring lands (mirrors the SessionStorePort pattern).
       "reconstructLcdMessage",
       "SessionData",
       "SessionListEntry",

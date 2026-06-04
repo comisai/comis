@@ -17,6 +17,7 @@ import { err, type Result } from "@comis/shared";
 import {
   SqliteMemoryAdapter,
   createSessionStore,
+  createLcdStore,
   createMemoryApi,
   createEmbeddingProvider,
   createCachedEmbeddingPort,
@@ -61,6 +62,8 @@ export interface MemoryResult {
   db: ReturnType<SqliteMemoryAdapter["getDb"]>;
   /** Session persistence store. */
   sessionStore: ReturnType<typeof createSessionStore>;
+  /** LCD lossless context store (Phase 127); the live append-on-turn write-path is wired in Phase 128. */
+  lcdStore: ReturnType<typeof createLcdStore>;
   /** High-level memory query/store API. */
   memoryApi: MemoryApi;
   /** Background embedding queue for new entries (optional). */
@@ -692,6 +695,8 @@ export async function setupMemory(deps: {
   }
 
   const sessionStore = createSessionStore(db);
+  // LCD lossless store (Phase 127); live append-on-turn wiring lands in Phase 128.
+  const lcdStore = createLcdStore(db);
   const memoryApi: MemoryApi = createMemoryApi(db, memoryAdapter, sessionStore, memoryConfig);
   memoryLogger.debug(
     { dbPath: memoryConfig.dbPath, embedding: !!cachedPort },
@@ -722,6 +727,7 @@ export async function setupMemory(deps: {
     memoryAdapter,
     db,
     sessionStore,
+    lcdStore,
     memoryApi,
     embeddingQueue,
     backgroundIndexingPromise,

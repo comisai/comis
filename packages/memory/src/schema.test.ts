@@ -8,8 +8,8 @@ import {
   ensureEntityTables,
   ensureUsefulnessTable,
   ensureTripleTable,
-  ensureLcdTables,
 } from "./schema.js";
+import { ensureLcdTables } from "./schema-lcd.js";
 import { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
 
 describe("initSchema", () => {
