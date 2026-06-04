@@ -65,6 +65,11 @@ export const MemoryRowSchema = z.strictObject({
   evicted_at: z.number().nullable(),
   /** Computed lifecycle strength 0..1; null = not yet computed. */
   strength: z.number().nullable(),
+  /** Always-inject pin marker. 0 = not pinned, 1 = pinned.
+   *  NOT NULL DEFAULT 0 — every row carries it after ensurePinnedColumn().
+   *  z.default(0): Zod parse-level default for test environments predating the migration.
+   *  NEVER use ?? 0 fallback in runtime code — the column is NOT NULL. */
+  pinned: z.number().int().default(0),
   /** Unix timestamp in milliseconds, null if never updated. */
   updated_at: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if no expiry. */
