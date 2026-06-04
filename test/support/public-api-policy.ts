@@ -428,26 +428,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ContextEngineMetrics",
       "AssembledContext",
       "LayerCircuitBreaker",
-      "reconcileJsonlToDag",
-      "installDagIngestionHook",
-      "createDagContextEngine",
-      "runLeafPass",
-      "runCondensedPass",
-      "resolveFreshTailBoundary",
-      "shouldCompact",
-      "markAncestorsDirty",
-      "recomputeDescendantCounts",
-      "runDagCompaction",
-      "checkIntegrity",
       "CHARS_PER_TOKEN_RATIO",
-      "ReconciliationResult",
-      "DagContextEngineDeps",
-      "CompactionDeps",
-      "DagCompactionConfig",
-      "DagCompactionDeps",
-      "IntegrityCheckDeps",
-      "IntegrityReport",
-      "IntegrityIssue",
       "PROVIDER_CAPABILITY_DEFAULTS",
       "resolveProviderCapabilities",
       "normalizeProviderId",
@@ -920,11 +901,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // and remains an in-codebase symbol consumed primarily by the
       // daemon's context-handlers + the memory contract test.
       "ContextStorePort",
-      // ContextEngineStore (34 per-session read/write methods). Consumed
-      // by the agent context-engine + the executor injection-deps types;
-      // the public-export-consumers test resolves the consumer files (so
-      // a runtime consumer entry is not required here for Engine).
-      // Tracked alongside ContextAdminStore for documentation symmetry.
+      // ContextEngineStore (34 per-session read/write methods). Its only
+      // top-level `import type` consumers were the agent's dag-triggers.ts /
+      // dag-reconciliation.ts / types-dag.ts / types-integrity.ts, deleted in
+      // Phase 126 Plan 02 (DAG engine demolition). The surviving agent +
+      // daemon references use inline `import("@comis/core").ContextEngineStore`
+      // type annotations, which the public-export-consumers AST scanner does
+      // not bucket as consumers — so the symbol is now a planned-orphan until
+      // Plan 04 removes the ContextStorePort/ContextEngineStore core ports
+      // outright (same posture as ContextStorePort above). [removedIn: phase-126-plan-04]
+      "ContextEngineStore",
       // ContextAdminStore (4 admin/cleanup methods). The admin half of
       // ContextStorePort. No production consumer imports this name as a
       // value-typed annotation today — the daemon's context-handlers +

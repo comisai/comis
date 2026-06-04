@@ -228,21 +228,6 @@ export interface PiExecutorDeps {
   senderTrustDisplayConfig?: SenderTrustDisplayConfig;
   /** Documentation config from AppConfig. */
   documentationConfig?: import("@comis/core").DocumentationConfig;
-  /** Context store for DAG mode. Optional -- only present when DAG tables exist. */
-  contextStore?: import("@comis/core").ContextEngineStore;
-  /** Raw database handle for DAG transactions. */
-  db?: unknown;
-  /**
-   * One-shot consumer of a pending engine-mode switch for this agent.
-   * Threaded from the daemon rebuild seam (setup-agents-runtime.ts) through
-   * setupContextEngine into the DAG engine, which calls it at the reconcile
-   * seam to emit context:mode_switched once and clear the pending flag. Returns
-   * undefined when there is no pending switch (e.g. a brand-new DAG-default
-   * conversation). Optional — non-DAG and test paths are unaffected.
-   */
-  consumePendingModeSwitch?: (
-    agentId: string,
-  ) => { from: "pipeline" | "dag"; to: "pipeline" | "dag" } | undefined;
   /** Tenant ID for conversation creation. */
   tenantId?: string;
   /** Delivery mirror port for session mirroring injection. */

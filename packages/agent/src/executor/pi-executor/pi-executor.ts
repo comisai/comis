@@ -58,7 +58,6 @@ import {
   formatSessionKey,
   safePath,
   tryGetContext,
-  ContextEngineConfigSchema,
   type SessionKey,
   type NormalizedMessage,
   type PerAgentConfig,
@@ -103,9 +102,8 @@ import { normalizeModelCompat } from "../../provider/model-compat.js";
 import { normalizeModelId } from "../../provider/model-id-normalize.js";
 import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
-import { installDagIngestionHook, validateRoleAttribution } from "../../context-engine/index.js";
+import { validateRoleAttribution } from "../../context-engine/index.js";
 import type { TokenAnchor } from "../../context-engine/types.js";
-import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
 import { getElapsedSinceLastResponse } from "../ttl-guard.js";
 import { clearSessionBlockStability } from "../block-stability-tracker.js";
 import { wrapToolForAutoBackground } from "../../background/index.js";
@@ -483,35 +481,6 @@ async function runSessionLocked(
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
   const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories } = promptResult;
-
-  // DAG ingestion hook -- install BEFORE microcompaction
-  // so microcompaction is the outer wrapper. Execution order: microcompaction first -> DAG ingest second.
-  // DAG ingest receives the post-microcompaction message (with disk offload references).
-  const baseContextEngineConfigForHook = config.contextEngine ?? ContextEngineConfigSchema.parse({});
-  if (baseContextEngineConfigForHook.version === "dag" && deps.contextStore) {
-    const tenantId = deps.tenantId ?? "default";
-    const hookFormattedKey = formatSessionKey(sessionKey);
-    const existingConv = deps.contextStore.getConversationBySession(tenantId, hookFormattedKey);
-    let hookConversationId: string;
-    if (existingConv) {
-      hookConversationId = existingConv.conversation_id;
-    } else {
-      hookConversationId = deps.contextStore.createConversation({
-        tenantId,
-        agentId: agentId ?? config.name,
-        sessionKey: hookFormattedKey,
-      });
-    }
-    // Store for later use by context engine
-    (sm as unknown as Record<string, string>).__dagConversationId = hookConversationId;
-    installDagIngestionHook(
-      sm,
-      deps.contextStore,
-      hookConversationId,
-      deps.logger,
-      (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN_RATIO),
-    );
-  }
 
   const resourceLoader = new DefaultResourceLoader(resourceLoaderOptions);
   await resourceLoader.reload();

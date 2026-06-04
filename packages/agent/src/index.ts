@@ -520,31 +520,9 @@ export type {
   LayerCircuitBreaker,
 } from "./context-engine/index.js";
 
-// DAG reconciliation, compaction, integrity, and assembler
-export {
-  reconcileJsonlToDag,
-  installDagIngestionHook,
-  createDagContextEngine,
-  runLeafPass,
-  runCondensedPass,
-  resolveFreshTailBoundary,
-  shouldCompact,
-  markAncestorsDirty,
-  recomputeDescendantCounts,
-  runDagCompaction,
-  checkIntegrity,
-  CHARS_PER_TOKEN_RATIO,
-} from "./context-engine/index.js";
-export type {
-  ReconciliationResult,
-  DagContextEngineDeps,
-  CompactionDeps,
-  DagCompactionConfig,
-  DagCompactionDeps,
-  IntegrityCheckDeps,
-  IntegrityReport,
-  IntegrityIssue,
-} from "./context-engine/index.js";
+// Shared token-estimation ratio (non-DAG; consumed by tool-schema-safety.ts,
+// executor-tool-assembly.ts, et al.)
+export { CHARS_PER_TOKEN_RATIO } from "./context-engine/index.js";
 
 // Provider capabilities
 export {
