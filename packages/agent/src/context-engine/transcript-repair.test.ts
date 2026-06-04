@@ -276,6 +276,24 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
     assertEveryResultFollowsItsCall(out);
   });
 
+  it("Test 9 — non-array input passes through unchanged (WR-02): never nuke the whole context", () => {
+    // The SDK contract for the transformContext pipeline is "must not throw …
+    // return the original messages or another safe fallback" — NOT discard the
+    // context. A malformed non-array input must degrade to a PASS-THROUGH, never
+    // be replaced by [] (which would silently drop the entire conversation).
+    const notAnArray = { role: "assistant", content: "oops not an array" } as unknown as AgentMessage[];
+
+    const out = sanitizeToolUseResultPairing(notAnArray, NOW);
+
+    // Returned unchanged (referentially the same object), not emptied.
+    expect(out).toBe(notAnArray);
+  });
+
+  it("Test 10 — empty array still returns an empty array (the well-formed empty case is unchanged)", () => {
+    const out = sanitizeToolUseResultPairing([], NOW);
+    expect(out).toEqual([]);
+  });
+
   it("Test 8 — multi-call turn: results follow the turn in tool_use block order", () => {
     const input = [
       userMsg("hi"),
