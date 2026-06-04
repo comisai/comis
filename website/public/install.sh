@@ -1478,29 +1478,54 @@ repair_comisai_bundled_deps() {
         return 0
     fi
 
-    # Detect the broken state: bindings/ exists but is empty.
+    # `npm install -g comisai(.tgz)` has two known failure modes around the
+    # package's bundledDependencies, both of which leave the daemon unable to
+    # boot (ERR_MODULE_NOT_FOUND at startup):
+    #   1. A bundled native-dep dir (bindings) lands EMPTY.
+    #   2. Transitive deps of a NON-bundled direct dep get skipped entirely —
+    #      e.g. @earendil-works/pi-coding-agent's `glob`. This is especially
+    #      likely on a reinstall/upgrade over an existing global prefix, where
+    #      npm prunes them. The narrow "empty bindings" heuristic misses this.
+    # A full reify inside the install dir nests the missing deps correctly and
+    # is idempotent (a near-no-op on an already-complete tree). Detect either
+    # symptom and reify; the reify never runs when the tree is already healthy.
     local bindings_dir="${comisai_dir}/node_modules/bindings"
+    local pca_dir="${comisai_dir}/node_modules/@earendil-works/pi-coding-agent"
+    local needs_repair=false
     if [[ -d "$bindings_dir" && -z "$(ls -A "$bindings_dir" 2>/dev/null)" ]]; then
-        ui_info "Repairing bundled native dep tree (one-time fix)"
-        # Targeted install is faster and more reliable than a full reify
-        if ( cd "$comisai_dir" && npm install bindings@'^1.5.0' --no-save --no-fund --no-audit >/dev/null 2>&1 ); then
-            # Verify the repair actually worked
-            if [[ -f "${bindings_dir}/bindings.js" ]]; then
-                ui_success "Native deps repaired"
-            else
-                ui_warn "Native dep repair incomplete; falling back to full reify"
-                ( cd "$comisai_dir" && npm install --no-save --no-fund --no-audit >/dev/null 2>&1 ) || true
-                if [[ -f "${bindings_dir}/bindings.js" ]]; then
-                    ui_success "Native deps repaired (full reify)"
-                else
-                    ui_warn "Native dep repair failed; daemon may not start correctly"
-                    ui_info "Manually: cd ${comisai_dir} && npm install"
-                fi
-            fi
+        needs_repair=true
+    fi
+    # `glob` is a representative transitive dep of pi-coding-agent; its absence
+    # signals the broader pruning. Check both hoisted and nested locations.
+    if [[ -d "$pca_dir" \
+          && ! -d "${comisai_dir}/node_modules/glob" \
+          && ! -d "${pca_dir}/node_modules/glob" ]]; then
+        needs_repair=true
+    fi
+    if [[ "$needs_repair" != "true" ]]; then
+        return 0
+    fi
+
+    ui_info "Repairing bundled dependency tree (one-time fix)"
+    if ( cd "$comisai_dir" && npm install --no-save --no-fund --no-audit >/dev/null 2>&1 ); then
+        local repair_ok=true
+        if [[ -d "$bindings_dir" && ! -f "${bindings_dir}/bindings.js" ]]; then
+            repair_ok=false
+        fi
+        if [[ -d "$pca_dir" \
+              && ! -d "${comisai_dir}/node_modules/glob" \
+              && ! -d "${pca_dir}/node_modules/glob" ]]; then
+            repair_ok=false
+        fi
+        if [[ "$repair_ok" == "true" ]]; then
+            ui_success "Dependency tree repaired"
         else
-            ui_warn "Native dep repair failed; daemon may not start correctly"
+            ui_warn "Dependency tree repair incomplete; daemon may not start correctly"
             ui_info "Manually: cd ${comisai_dir} && npm install"
         fi
+    else
+        ui_warn "Dependency tree repair failed; daemon may not start correctly"
+        ui_info "Manually: cd ${comisai_dir} && npm install"
     fi
 }
 
@@ -4046,15 +4071,31 @@ register_service_systemd() {
     maybe_seed_browser_config
 
     # Allow the comis user to manage its own systemd service without a password.
+    # Grant BOTH the bare unit name and the explicit `.service` form: the
+    # installer and operators invoke `systemctl restart comis.service`, while
+    # `restart comis` is the shorthand. sudo matches the literal argv against the
+    # Cmnd_Spec, so a rule listing only `restart comis` silently fails to match
+    # `restart comis.service` and falls through to a password prompt (which, in
+    # the non-interactive service-user context, just errors out). List both.
+    #
+    # Rewritten every run (validated with `visudo -cf` first) so an older,
+    # narrower rule from a prior install self-heals on upgrade. If validation
+    # fails we leave any existing rule untouched rather than risk a broken
+    # sudoers drop-in; if visudo is somehow absent we still write (old behavior).
     local sudoers_file="/etc/sudoers.d/comis"
-    if [[ ! -f "$sudoers_file" ]]; then
-        local systemctl_bin
-        systemctl_bin="$(command -v systemctl)"
-        cat > "$sudoers_file" <<SUDOERS
+    local systemctl_bin
+    systemctl_bin="$(command -v systemctl)"
+    local sudoers_tmp
+    sudoers_tmp="$(mktempfile)"
+    cat > "$sudoers_tmp" <<SUDOERS
 # Allow the comis service user to manage the comis daemon
-${COMIS_SVC_USER} ALL=(root) NOPASSWD: ${systemctl_bin} start comis, ${systemctl_bin} stop comis, ${systemctl_bin} restart comis, ${systemctl_bin} reload comis
+${COMIS_SVC_USER} ALL=(root) NOPASSWD: ${systemctl_bin} start comis, ${systemctl_bin} start comis.service, ${systemctl_bin} stop comis, ${systemctl_bin} stop comis.service, ${systemctl_bin} restart comis, ${systemctl_bin} restart comis.service, ${systemctl_bin} reload comis, ${systemctl_bin} reload comis.service
 SUDOERS
-        chmod 0440 "$sudoers_file"
+    chmod 0440 "$sudoers_tmp"
+    if command -v visudo >/dev/null 2>&1 && ! visudo -cf "$sudoers_tmp" >/dev/null 2>&1; then
+        ui_warn "Generated sudoers rule failed validation; leaving existing rule untouched"
+    elif [[ ! -f "$sudoers_file" ]] || ! cmp -s "$sudoers_tmp" "$sudoers_file"; then
+        maybe_sudo install -m 0440 -o root -g root "$sudoers_tmp" "$sudoers_file"
         ui_success "Sudoers rule installed for '${COMIS_SVC_USER}'"
     fi
 
