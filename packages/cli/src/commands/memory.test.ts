@@ -479,3 +479,48 @@ describe("memory import subcommand", () => {
     );
   });
 });
+
+// ============================================================================
+// WR-02: export --limit NaN guard
+// RED: passing --limit abc calls callTyped with NaN (no guard before RPC)
+// GREEN: CLI exits with clear error message before invoking callTyped
+// ============================================================================
+
+describe("memory export --limit NaN guard (WR-02)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockWithClient.mockImplementation(async (fn) => fn({ call: vi.fn(), close: vi.fn(), onNotification: vi.fn() }));
+    mockCallTyped.mockResolvedValue(FAKE_ENVELOPE);
+    mockWriteFile.mockResolvedValue(undefined);
+  });
+
+  it("exits with a clear error message when --limit is non-numeric, before calling callTyped", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+
+    const consoleErrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as never);
+
+    try {
+      await program.parseAsync([
+        "node", "test", "memory", "export", "--agent", "test-agent", "--limit", "abc",
+      ]);
+    } catch (e) {
+      // RED: no guard → callTyped called with NaN; process.exit never triggered.
+      // GREEN: process.exit called with error message before callTyped.
+      expect((e as Error).message).toBe("process.exit called");
+      const errOutput = consoleErrSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(errOutput).toMatch(/[Ii]nvalid.*limit|limit.*invalid|positive integer/i);
+    } finally {
+      consoleSpy.mockRestore();
+      consoleErrSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    expect(mockCallTyped).not.toHaveBeenCalled();
+  });
+});

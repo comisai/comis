@@ -77,3 +77,47 @@ describe("MemoryExportEnvelopeSchema — DoS cap enforcement", () => {
     expect(result.success).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// IN-01: entryCount must equal entries.length — mismatch is a data-integrity signal
+// RED: parseMemoryExportEnvelope returns ok even when entryCount disagrees with array length.
+// GREEN: parseMemoryExportEnvelope returns err when entryCount !== entries.length.
+// ---------------------------------------------------------------------------
+
+describe("parseMemoryExportEnvelope — entryCount cross-validation (IN-01)", () => {
+  it("returns err when entryCount is greater than entries.length", () => {
+    // RED: current implementation returns ok(env) without checking count.
+    // GREEN: returns err with mismatch message.
+    const result = parseMemoryExportEnvelope({ ...VALID_ENVELOPE, entryCount: 999 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/entryCount|mismatch|entries/i);
+    }
+  });
+
+  it("returns err when entryCount is less than entries.length", () => {
+    const multiEntryEnvelope = {
+      ...VALID_ENVELOPE,
+      entryCount: 0,
+      entries: [VALID_ENTRY],
+    };
+    const result = parseMemoryExportEnvelope(multiEntryEnvelope);
+    expect(result.ok).toBe(false);
+  });
+
+  it("returns ok when entryCount exactly matches entries.length", () => {
+    // This should still pass — the happy path must not regress.
+    const result = parseMemoryExportEnvelope(VALID_ENVELOPE);
+    expect(result.ok).toBe(true);
+  });
+
+  it("returns ok for an empty entries array when entryCount is 0", () => {
+    const emptyEnvelope = {
+      ...VALID_ENVELOPE,
+      entryCount: 0,
+      entries: [],
+    };
+    const result = parseMemoryExportEnvelope(emptyEnvelope);
+    expect(result.ok).toBe(true);
+  });
+});
