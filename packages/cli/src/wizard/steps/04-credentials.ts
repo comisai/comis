@@ -443,7 +443,9 @@ async function handleStandardProvider(
 
 // ---------- Branch D: openai-codex OAuth ----------
 
-const wizardLogger = createConsoleLogger("info", { name: "wizard-oauth" });
+// `warn` (not `info`): interactive wizard shares the TTY with the @clack UI;
+// info/debug JSON would interleave with prompts. Progress uses prompter.log.*.
+const wizardLogger = createConsoleLogger("warn", { name: "wizard-oauth" });
 
 /**
  * Branch D: openai-codex OAuth — interactive method picker + runner dispatch.
