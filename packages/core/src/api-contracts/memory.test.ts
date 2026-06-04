@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-contract test for the memory + context domain contracts.
+ * Per-contract test for the memory domain contracts.
  *
- * Covers the 15 contracts spanning the two daemon handler-factory files
- * that share the `MemoryApiDeps` cluster slice:
- *   - memory-handlers.ts (8 methods)
- *   - context-handlers.ts (7 methods)
+ * Covers the memory-handlers.ts contracts (8 methods) + the 4 admin-scoped
+ * diagnostic contracts that share the `MemoryApiDeps` cluster slice.
+ *
+ * NOTE (v2.12, Phase 126): the 7 `context.*` contracts (context-handlers.ts)
+ * were removed with the DAG context engine; their per-contract tests were
+ * deleted here.
  *
  * @module
  */
@@ -19,13 +21,6 @@ import {
   MemoryDeleteContract,
   MemoryFlushContract,
   MemoryExportContract,
-  ContextSearchContract,
-  ContextInspectContract,
-  ContextRecallContract,
-  ContextExpandContract,
-  ContextConversationsContract,
-  ContextTreeContract,
-  ContextSearchByConversationContract,
   MemoryAskContract,
   MEMORY_CONTRACTS,
   MemoryRecallTraceContract,
@@ -41,12 +36,13 @@ describe("memory + context domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("MEMORY_CONTRACTS has exactly 20 entries (9 memory + 4 diagnostics + 7 context)", () => {
+  it("MEMORY_CONTRACTS has exactly 13 entries (9 memory + 4 diagnostics)", () => {
     // The diagnostics cross-wave seam was closed (the 4 MEMORY_DIAGNOSTIC_CONTRACTS).
     // The memory.ask cross-wave seam was closed too: MemoryAskContract is
-    // now spread in (9 + 4 + 7 = 20), in the same diff that landed its daemon handler,
-    // so the registry ↔ handler set stays 1:1.
-    expect(MEMORY_CONTRACTS.length).toBe(20);
+    // now spread in (9 + 4 = 13), in the same diff that landed its daemon handler,
+    // so the registry ↔ handler set stays 1:1. The 7 context.* contracts were
+    // removed in v2.12 (Phase 126) with the DAG context engine.
+    expect(MEMORY_CONTRACTS.length).toBe(13);
   });
 
   it("MEMORY_CONTRACTS method names cover every handler-factory method", () => {
@@ -61,14 +57,9 @@ describe("memory + context domain contracts", () => {
     expect(methods.has("memory.delete")).toBe(true);
     expect(methods.has("memory.flush")).toBe(true);
     expect(methods.has("memory.export")).toBe(true);
-    // context-handlers.ts (7):
-    expect(methods.has("context.search")).toBe(true);
-    expect(methods.has("context.inspect")).toBe(true);
-    expect(methods.has("context.recall")).toBe(true);
-    expect(methods.has("context.expand")).toBe(true);
-    expect(methods.has("context.conversations")).toBe(true);
-    expect(methods.has("context.tree")).toBe(true);
-    expect(methods.has("context.searchByConversation")).toBe(true);
+    // context.* methods were removed in v2.12 (Phase 126).
+    expect(methods.has("context.search")).toBe(false);
+    expect(methods.has("context.recall")).toBe(false);
   });
 
   it("scope assignments mirror setup-gateway-api.ts registrations", () => {
@@ -81,14 +72,6 @@ describe("memory + context domain contracts", () => {
     expect(MemoryDeleteContract.scopes).toEqual(["admin"]);
     expect(MemoryFlushContract.scopes).toEqual(["admin"]);
     expect(MemoryExportContract.scopes).toEqual(["admin"]);
-    // context-handlers.ts scopes
-    expect(ContextSearchContract.scopes).toEqual(["rpc"]);
-    expect(ContextInspectContract.scopes).toEqual(["rpc"]);
-    expect(ContextRecallContract.scopes).toEqual(["rpc"]);
-    expect(ContextExpandContract.scopes).toEqual(["rpc"]);
-    expect(ContextConversationsContract.scopes).toEqual(["admin"]);
-    expect(ContextTreeContract.scopes).toEqual(["admin"]);
-    expect(ContextSearchByConversationContract.scopes).toEqual(["admin"]);
   });
 
   // -------------------------------------------------------------------------
@@ -316,242 +299,11 @@ describe("memory + context domain contracts", () => {
     ).not.toThrow();
   });
 
-  // -------------------------------------------------------------------------
-  // context.search
-  // -------------------------------------------------------------------------
-
-  it("context.search: request requires query", () => {
-    expect(() => ContextSearchContract.request.parse({})).toThrow();
-  });
-
-  it("context.search: request accepts mode + scope + limit (enum-bounded)", () => {
-    expect(() =>
-      ContextSearchContract.request.parse({
-        query: "alpha",
-        mode: "fts",
-        scope: "both",
-        limit: 20,
-      }),
-    ).not.toThrow();
-    expect(() =>
-      ContextSearchContract.request.parse({
-        query: "alpha",
-        mode: "regex",
-        scope: "messages",
-      }),
-    ).not.toThrow();
-    expect(() =>
-      ContextSearchContract.request.parse({
-        query: "alpha",
-        mode: "unknown",
-      }),
-    ).toThrow();
-  });
-
-  it("context.search: response requires results[] + total", () => {
-    expect(() =>
-      ContextSearchContract.response.parse({
-        results: [
-          { id: "42", content: "msg", type: "message", rank: 0.1 },
-          { id: "sum_1", content: "summary", type: "summary" },
-        ],
-        total: 2,
-      }),
-    ).not.toThrow();
-  });
-
-  // -------------------------------------------------------------------------
-  // context.inspect
-  // -------------------------------------------------------------------------
-
-  it("context.inspect: request requires non-empty id", () => {
-    expect(() => ContextInspectContract.request.parse({})).toThrow();
-    expect(() => ContextInspectContract.request.parse({ id: "" })).toThrow();
-  });
-
-  it("context.inspect: response is a loose record", () => {
-    expect(() =>
-      ContextInspectContract.response.parse({
-        type: "summary",
-        summaryId: "sum_1",
-        content: "...",
-        depth: 0,
-        kind: "leaf",
-        tokenCount: 100,
-        descendantCount: 0,
-        parentIds: [],
-        childIds: [],
-        sourceMessageCount: 5,
-      }),
-    ).not.toThrow();
-    expect(() =>
-      ContextInspectContract.response.parse({
-        type: "file",
-        fileId: "file_1",
-        content: "file contents",
-      }),
-    ).not.toThrow();
-  });
-
-  // -------------------------------------------------------------------------
-  // context.recall
-  // -------------------------------------------------------------------------
-
-  it("context.recall: request requires prompt", () => {
-    expect(() => ContextRecallContract.request.parse({})).toThrow();
-    expect(() => ContextRecallContract.request.parse({ prompt: "" })).toThrow();
-  });
-
-  it("context.recall: response carries answer + citations + optional grantId/tokens", () => {
-    expect(() =>
-      ContextRecallContract.response.parse({
-        answer: "Here is the summary.",
-        citations: ["sum_1"],
-        grantId: "grant_abc",
-        tokensConsumed: 150,
-      }),
-    ).not.toThrow();
-    expect(() =>
-      ContextRecallContract.response.parse({
-        answer: "No relevant summaries found.",
-        citations: [],
-      }),
-    ).not.toThrow();
-  });
-
-  // -------------------------------------------------------------------------
-  // context.expand
-  // -------------------------------------------------------------------------
-
-  it("context.expand: request requires both grant_id and summary_id", () => {
-    expect(() => ContextExpandContract.request.parse({})).toThrow();
-    expect(() =>
-      ContextExpandContract.request.parse({ grant_id: "g1" }),
-    ).toThrow();
-    expect(() =>
-      ContextExpandContract.request.parse({ summary_id: "s1" }),
-    ).toThrow();
-    expect(() =>
-      ContextExpandContract.request.parse({
-        grant_id: "g1",
-        summary_id: "s1",
-      }),
-    ).not.toThrow();
-  });
-
-  it("context.expand: response children[] discriminated by type enum", () => {
-    expect(() =>
-      ContextExpandContract.response.parse({
-        summaryId: "sum_1",
-        depth: 1,
-        kind: "leaf",
-        children: [
-          { type: "message", id: 42, content: "msg", tokenCount: 25 },
-          { type: "summary", id: "sum_2", content: "sub", tokenCount: 75 },
-        ],
-        tokensExpanded: 100,
-        tokenBudgetRemaining: 900,
-      }),
-    ).not.toThrow();
-  });
-
-  // -------------------------------------------------------------------------
-  // context.conversations
-  // -------------------------------------------------------------------------
-
-  it("context.conversations: request accepts empty + limit + offset", () => {
-    expect(() =>
-      ContextConversationsContract.request.parse({}),
-    ).not.toThrow();
-    expect(() =>
-      ContextConversationsContract.request.parse({ limit: 25, offset: 0 }),
-    ).not.toThrow();
-  });
-
-  it("context.conversations: response carries conversations[] + total", () => {
-    expect(() =>
-      ContextConversationsContract.response.parse({
-        conversations: [
-          {
-            conversation_id: "conv-1",
-            tenant_id: "t1",
-            session_key: "s1",
-            created_at: "2026-05-13T00:00:00Z",
-          },
-        ],
-        total: 1,
-      }),
-    ).not.toThrow();
-  });
-
-  // -------------------------------------------------------------------------
-  // context.tree
-  // -------------------------------------------------------------------------
-
-  it("context.tree: request requires conversation_id", () => {
-    expect(() => ContextTreeContract.request.parse({})).toThrow();
-    expect(() =>
-      ContextTreeContract.request.parse({ conversation_id: "" }),
-    ).toThrow();
-  });
-
-  it("context.tree: response carries conversationId + nodes[] + messageCount", () => {
-    expect(() =>
-      ContextTreeContract.response.parse({
-        conversationId: "conv-1",
-        nodes: [
-          {
-            summaryId: "sum_1",
-            kind: "leaf",
-            depth: 0,
-            tokenCount: 100,
-            contentPreview: "preview",
-            childIds: [],
-            parentIds: ["sum_root"],
-            createdAt: "2026-05-13T00:00:00Z",
-          },
-        ],
-        messageCount: 42,
-      }),
-    ).not.toThrow();
-  });
-
-  // -------------------------------------------------------------------------
-  // context.searchByConversation
-  // -------------------------------------------------------------------------
-
-  it("context.searchByConversation: request requires both conversation_id + query", () => {
-    expect(() =>
-      ContextSearchByConversationContract.request.parse({}),
-    ).toThrow();
-    expect(() =>
-      ContextSearchByConversationContract.request.parse({
-        conversation_id: "conv-1",
-      }),
-    ).toThrow();
-    expect(() =>
-      ContextSearchByConversationContract.request.parse({
-        query: "alpha",
-      }),
-    ).toThrow();
-    expect(() =>
-      ContextSearchByConversationContract.request.parse({
-        conversation_id: "conv-1",
-        query: "alpha",
-      }),
-    ).not.toThrow();
-  });
-
-  it("context.searchByConversation: response carries results[] (message|summary)", () => {
-    expect(() =>
-      ContextSearchByConversationContract.response.parse({
-        results: [
-          { id: "42", type: "message", content: "msg", rank: 0.1 },
-          { id: "sum_1", type: "summary", content: "summary" },
-        ],
-      }),
-    ).not.toThrow();
-  });
+  // NOTE (v2.12, Phase 126): the per-contract tests for the 7 context.*
+  // contracts (context.search / .inspect / .recall / .expand / .conversations /
+  // .tree / .searchByConversation) were removed here — those contracts were
+  // deleted with the DAG context engine. The LCD engine reintroduces a fresh
+  // context-expansion contract surface in Phase 131.
 });
 
 // ===========================================================================

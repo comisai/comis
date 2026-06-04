@@ -66,20 +66,6 @@ export type {
   ConsolidationPlan,
   ConsolidationFoldPlan,
 } from "./memory-consolidation.js";
-export type { ContextStorePort } from "./context-store.js";
-export type { ContextEngineStore } from "./context-engine-store.js";
-export type { ContextAdminStore } from "./context-admin-store.js";
-export type {
-  CtxConversationRow,
-  CtxMessageRow,
-  CtxMessagePartRow,
-  CtxSummaryRow,
-  CtxSummaryMessageRow,
-  CtxSummaryParentRow,
-  CtxContextItemRow,
-  CtxLargeFileRow,
-  CtxExpansionGrantRow,
-} from "./context-store-types.js";
 export type { SessionStorePort } from "./session-store.js";
 export type {
   SessionData,

@@ -893,66 +893,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "TranscriptToolCallIdMode",
       "createNoOpCapabilityPort",
       "PROFILE_ID_RE",
-      // ContextStorePort is a type alias
-      // (`type ContextStorePort = ContextEngineStore & ContextAdminStore`).
-      // Its daemon consumers (context-handlers + api/types.ts) were deleted
-      // in Phase 126 Plan 03 (DAG RPC demolition); the only remaining
-      // top-level consumer is memory's createContextStore factory return
-      // type + the memory contract test. Planned-orphan until Plan 04
-      // removes the core ports + the memory context-store outright.
-      // [removedIn: phase-126-plan-04]
-      "ContextStorePort",
-      // ContextEngineStore (34 per-session read/write methods). Its only
-      // top-level `import type` consumers were the agent's dag-triggers.ts /
-      // dag-reconciliation.ts / types-dag.ts / types-integrity.ts, deleted in
-      // Phase 126 Plan 02 (DAG engine demolition). The surviving agent +
-      // daemon references use inline `import("@comis/core").ContextEngineStore`
-      // type annotations, which the public-export-consumers AST scanner does
-      // not bucket as consumers — so the symbol is now a planned-orphan until
-      // Plan 04 removes the ContextStorePort/ContextEngineStore core ports
-      // outright (same posture as ContextStorePort above). [removedIn: phase-126-plan-04]
-      "ContextEngineStore",
-      // ContextAdminStore (4 admin/cleanup methods). The admin half of
-      // ContextStorePort. No production consumer imports this name as a
-      // value-typed annotation today — its former daemon consumers
-      // (context-handlers + api/types.ts) were deleted in Phase 126 Plan 03;
-      // memory's createContextStore factory still composes the wider
-      // intersection alias `ContextStorePort` structurally. Tracked as a
-      // planned-orphan policy entry mirroring the ContextStorePort
-      // pattern above; the memory contract test gates the type contract
-      // via `.toExtend<ContextAdminStore>()`.
-      "ContextAdminStore",
-      // DAG ctx_* RPC contracts (api-contracts/memory.ts). Their sole
-      // top-level consumer was the daemon's context-handlers.ts, deleted in
-      // Phase 126 Plan 03 (DAG RPC demolition). The 2 still-consumed
-      // contracts (ContextSearchContract / ContextInspectContract — routed by
-      // cli/src/commands/memory.ts) are NOT listed here; these 5 are now
-      // orphaned and tracked as planned-orphans until Plan 04 deletes the
-      // contract definitions outright. [removedIn: phase-126-plan-04]
-      "ContextRecallContract",
-      "ContextExpandContract",
-      "ContextConversationsContract",
-      "ContextTreeContract",
-      "ContextSearchByConversationContract",
-      // Row DTOs for ContextStorePort moved from @comis/memory into
-      // core/src/ports/context-store-types.ts. The 2 link-table types
-      // (CtxSummaryMessageRow, CtxSummaryParentRow) were already orphans
-      // under @comis/memory; the 7 method-signature types
-      // (CtxConversationRow, CtxMessageRow, CtxMessagePartRow,
-      // CtxSummaryRow, CtxContextItemRow, CtxLargeFileRow,
-      // CtxExpansionGrantRow) are surfaced on @comis/core but consumed by
-      // agent only after the agent imports are retargeted from
-      // @comis/memory → @comis/core (mirrors the ContextStorePort
-      // planned-orphan posture above).
-      "CtxConversationRow",
-      "CtxMessageRow",
-      "CtxMessagePartRow",
-      "CtxSummaryRow",
-      "CtxSummaryMessageRow",
-      "CtxSummaryParentRow",
-      "CtxContextItemRow",
-      "CtxLargeFileRow",
-      "CtxExpansionGrantRow",
+      // NOTE (v2.12, Phase 126 Plan 04): the DAG context-store planned-orphan
+      // cluster — ContextStorePort / ContextEngineStore / ContextAdminStore, the
+      // 5 remaining Context*Contract definitions (ContextRecall/Expand/
+      // Conversations/Tree/SearchByConversation), and the 9 Ctx*Row DTOs — was
+      // removed here. The core ports + the contract definitions were deleted
+      // outright in this plan (the last consumers went in Plans 02/03 + the CLI
+      // rewire), so they are no longer orphaned exports to track.
       // SessionStorePort + its 3 row DTOs are declared in
       // core/src/ports/{session-store,session-store-types}.ts but not yet
       // consumed by agent/cli value-import retargets — tracked as
@@ -2045,12 +1992,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // barrel anymore. The 5 entries below document this transient state.
     ["@comis/memory", new Set<string>([
       "initSchema",
-      // createContextStore: the DAG context-store factory. Its sole top-level
-      // consumer was daemon.ts, deleted in Phase 126 Plan 03 (DAG RPC
-      // demolition). Tracked as a planned-orphan until Plan 04 deletes
-      // context-store.ts + this barrel re-export outright.
-      // [removedIn: phase-126-plan-04]
-      "createContextStore",
+      // NOTE (v2.12, Phase 126 Plan 04): createContextStore (the DAG
+      // context-store factory) was deleted here along with context-store.ts +
+      // its barrel re-export — no longer an orphaned export to track.
       "SessionData",
       "SessionListEntry",
       "InspectFilters",
@@ -2198,23 +2142,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ObsTableName",
       "ResetResult",
       "PruneResult",
-      "initContextSchema",
-      "CtxConversationRow",
-      "CtxMessagePartRow",
-      "CtxSummaryMessageRow",
-      "CtxSummaryParentRow",
-      "CtxLargeFileRow",
-      "CtxExpansionGrantRow",
-      // Agent retargeted these 5 names from @comis/memory → @comis/core.
-      // Memory's barrel still re-exports them (SessionStore is now a type
-      // alias of SessionStorePort). No in-repo production consumer remains
-      // until the alias re-exports are retired entirely from
-      // packages/memory/src/index.ts.
+      // NOTE (v2.12, Phase 126 Plan 04): initContextSchema + the 9 Ctx*Row DTOs
+      // (CtxConversationRow … CtxExpansionGrantRow) were removed here — the ctx_*
+      // schema/store + the @comis/core context-store-types port were deleted, so
+      // memory's barrel no longer re-exports them.
+      // Agent retargeted these 2 names from @comis/memory → @comis/core.
+      // Memory's barrel still re-exports them (SessionStore is a type alias of
+      // SessionStorePort). No in-repo production consumer remains until the alias
+      // re-exports are retired entirely from packages/memory/src/index.ts.
       "SessionStore",
       "SessionDetailedEntry",
-      "CtxMessageRow",
-      "CtxSummaryRow",
-      "CtxContextItemRow",
       // Generic RowMapper factory + per-row Zod schemas. Surfaced before
       // consumption at SQLite call sites — tracked here as transient
       // orphans for the gap. Removed wholesale when call sites import
@@ -2259,25 +2196,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "FtsSearchRowFromSchema",
       "NamedGraphRowSchema",
       "NamedGraphRowFromSchema",
-      // Context-store row schemas + inferred types (9 × 2 = 18 entries):
-      "CtxConversationRowSchema",
-      "CtxConversationRowFromSchema",
-      "CtxMessageRowSchema",
-      "CtxMessageRowFromSchema",
-      "CtxMessagePartRowSchema",
-      "CtxMessagePartRowFromSchema",
-      "CtxSummaryRowSchema",
-      "CtxSummaryRowFromSchema",
-      "CtxSummaryMessageRowSchema",
-      "CtxSummaryMessageRowFromSchema",
-      "CtxSummaryParentRowSchema",
-      "CtxSummaryParentRowFromSchema",
-      "CtxContextItemRowSchema",
-      "CtxContextItemRowFromSchema",
-      "CtxLargeFileRowSchema",
-      "CtxLargeFileRowFromSchema",
-      "CtxExpansionGrantRowSchema",
-      "CtxExpansionGrantRowFromSchema",
+      // NOTE (v2.12, Phase 126 Plan 04): the 9 Ctx*RowSchema + their inferred
+      // Ctx*RowFromSchema types were removed here — the section-2 ctx_* row
+      // schemas were deleted from packages/memory/src/row-schemas.ts with the
+      // ctx_* schema/store.
       // Session-store DTO schemas + inferred types (3 × 2 = 6 entries):
       "SessionDataSchema",
       "SessionDataFromSchema",

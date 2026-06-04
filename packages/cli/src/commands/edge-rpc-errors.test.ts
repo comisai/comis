@@ -216,7 +216,10 @@ describe("RPC failure exit code 1", () => {
 
   // -- Memory commands ------------------------------------------------------
 
-  it("memory search exits 1 on RPC failure", async () => {
+  // NOTE (v2.12, Phase 126): memory search/inspect fail closed before any RPC
+  // (DAG context engine demolished), so there is no "RPC failure" path — they
+  // exit 1 with the not-available message regardless of daemon state.
+  it("memory search exits 1 (fail-closed, not-available)", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
@@ -228,10 +231,10 @@ describe("RPC failure exit code 1", () => {
 
     expect(exitSpy.spy).toHaveBeenCalledWith(1);
     const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("Failed to search memory");
+    expect(errOutput).toContain("memory search is unavailable");
   });
 
-  it("memory inspect exits 1 on RPC failure", async () => {
+  it("memory inspect exits 1 (fail-closed, not-available)", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
@@ -243,7 +246,7 @@ describe("RPC failure exit code 1", () => {
 
     expect(exitSpy.spy).toHaveBeenCalledWith(1);
     const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("Failed to inspect memory");
+    expect(errOutput).toContain("memory inspect is unavailable");
   });
 
   it("memory stats exits 1 on RPC failure", async () => {
@@ -426,50 +429,34 @@ describe("null/empty RPC response handling", () => {
   //    surface as RPC errors (caught by the catch block) — see
   //    sessions-behavior.test.ts for the inspect tests.
 
-  // -- Memory search empty/null ---------------------------------------------
+  // -- Memory search/inspect fail closed (v2.12) ----------------------------
+  //
+  // NOTE (v2.12, Phase 126): `memory search` / `memory inspect` borrowed the
+  // now-removed context.search / context.inspect RPCs. With the DAG context
+  // engine demolished they fail closed (non-zero exit) before any RPC, so the
+  // former RPC-edge cases ("empty results" / "empty response") no longer apply.
+  // The fail-closed contract is asserted in memory-behavior.test.ts.
 
-  it("memory search with empty results shows 'No matching entries found'", async () => {
-    // ContextSearchContract.response = { results: SearchResult[], total }
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("context.search", { results: [], total: 0 })
-        .build();
-      return fn(mockClient);
-    });
-
+  it("memory search fails closed (exit 1) — no RPC edge to exercise", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
-    await program.parseAsync(["node", "test", "memory", "search", "test"]);
-
-    expect(exitSpy.spy).not.toHaveBeenCalled();
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("No matching entries found");
+    try {
+      await program.parseAsync(["node", "test", "memory", "search", "test"]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+    expect(exitSpy.spy).toHaveBeenCalledWith(1);
   });
 
-  // NOTE: "memory search with { results: null } does not crash" deleted in 55-04 —
-  // ContextSearchContract.response requires `results: z.array(...)` and `total`;
-  // raw `{ results: null }` is rejected by always-on response.parse, making the
-  // pre-validation dead path structurally unreachable.
-
-  // -- Memory inspect null --------------------------------------------------
-
-  it("memory inspect with empty response shows 'No entry found'", async () => {
-    // Targets context.inspect (returns the entry directly; empty record
-    // = not found).
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("context.inspect", {})
-        .build();
-      return fn(mockClient);
-    });
-
+  it("memory inspect fails closed (exit 1) — no RPC edge to exercise", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
-    await program.parseAsync(["node", "test", "memory", "inspect", "abc-123"]);
-
-    expect(exitSpy.spy).not.toHaveBeenCalled();
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("No entry found");
+    try {
+      await program.parseAsync(["node", "test", "memory", "inspect", "abc-123"]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+    expect(exitSpy.spy).toHaveBeenCalledWith(1);
   });
 
   // -- Memory stats null/empty ----------------------------------------------

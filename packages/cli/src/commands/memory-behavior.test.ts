@@ -39,54 +39,6 @@ const { registerMemoryCommand } = await import("./memory.js");
 const { withClient } = await import("../client/rpc-client.js");
 
 /**
- * Sample search results matching ContextSearchContract.response shape:
- * `{ id, content, type, rank? }` + top-level `total`. Note: the contract
- * does NOT carry `score` or `createdAt` — those fields are stripped by
- * always-on response.parse, so they cannot be asserted on the display
- * output.
- */
-const SEARCH_RESULTS = {
-  results: [
-    {
-      id: "mem-001",
-      content:
-        "User prefers dark mode and compact layout settings for the dashboard interface",
-      type: "message" as const,
-      rank: -1.0,
-    },
-    {
-      id: "mem-002",
-      content: "Project deadline is March 15",
-      type: "message" as const,
-      rank: -0.8,
-    },
-    {
-      id: "mem-003",
-      content: "API key rotation scheduled",
-      type: "summary" as const,
-      rank: -0.5,
-    },
-  ],
-  total: 3,
-};
-
-/**
- * Full memory entry for inspect tests. Targets ContextInspectContract,
- * which returns the entry directly (no `entry: {...}` wrapper).
- */
-const INSPECT_ENTRY = {
-  id: "mem-001",
-  content: "User prefers dark mode",
-  memoryType: "conversation",
-  trustLevel: "high",
-  tenantId: "test-tenant",
-  sessionKey: "discord:guild-123:chan-456:user-789",
-  createdAt: "2026-01-15T11:00:00Z",
-  updatedAt: "2026-01-15T12:00:00Z",
-  metadata: { source: "extraction" },
-};
-
-/**
  * Stats object for stats display tests. Targets MemoryStatsContract,
  * which returns the stats directly (no `stats: {...}` wrapper).
  */
@@ -113,88 +65,16 @@ const RECALL_STATS_DATA = {
   recallHitRate: 0.75,
 };
 
-// ── memory search table output ──────────────────────────────────
+// ── memory search/inspect fail closed (DAG context engine demolished, v2.12) ──
+//
+// The `memory search` / `memory inspect` subcommands previously borrowed the
+// daemon's context.search / context.inspect RPCs. Those handlers were removed
+// in v2.12 (Phase 126) with the DAG context engine; per no-backward-compat the
+// commands fail closed (explicit message + non-zero exit) BEFORE any RPC — they
+// no longer call withClient/callTyped at all. The RPC-payload + table/json
+// rendering behavior tests were deleted; these assert the fail-closed contract.
 
-describe("memory search table output", () => {
-  let consoleSpy: ReturnType<typeof createConsoleSpy>;
-  let exitSpy: ReturnType<typeof createProcessExitSpy>;
-
-  beforeEach(() => {
-    vi.mocked(withClient).mockReset();
-    consoleSpy = createConsoleSpy();
-    exitSpy = createProcessExitSpy();
-
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("context.search", SEARCH_RESULTS)
-        .build();
-      return fn(mockClient);
-    });
-  });
-
-  afterEach(() => {
-    consoleSpy.restore();
-    exitSpy.restore();
-  });
-
-  it("renders search results in table with truncated content and result count", async () => {
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-
-    await program.parseAsync(["node", "test", "memory", "search", "dark mode"]);
-
-    const output = getSpyOutput(consoleSpy.log);
-
-    // First result content is >60 chars, should be truncated with "..."
-    expect(output).toContain("...");
-    // Should NOT contain the full untruncated content
-    expect(output).not.toContain(
-      "User prefers dark mode and compact layout settings for the dashboard interface",
-    );
-
-    // Result count
-    expect(output).toContain("3 results found");
-  });
-});
-
-// ── memory search no results ───────────────────────────────────
-
-describe("memory search no results", () => {
-  let consoleSpy: ReturnType<typeof createConsoleSpy>;
-  let exitSpy: ReturnType<typeof createProcessExitSpy>;
-
-  beforeEach(() => {
-    vi.mocked(withClient).mockReset();
-    consoleSpy = createConsoleSpy();
-    exitSpy = createProcessExitSpy();
-
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("context.search", { results: [], total: 0 })
-        .build();
-      return fn(mockClient);
-    });
-  });
-
-  afterEach(() => {
-    consoleSpy.restore();
-    exitSpy.restore();
-  });
-
-  it("shows info message when no results found", async () => {
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-
-    await program.parseAsync(["node", "test", "memory", "search", "nonexistent"]);
-
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("No matching entries found");
-  });
-});
-
-// ── memory search invalid limit ────────────────────────────────
-
-describe("memory search invalid limit", () => {
+describe("memory search/inspect fail closed", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -209,236 +89,37 @@ describe("memory search invalid limit", () => {
     exitSpy.restore();
   });
 
-  it("exits with error when limit is negative", async () => {
+  it("memory search exits 1 with a not-available message and makes no RPC", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
     try {
-      await program.parseAsync([
-        "node", "test", "memory", "search", "test", "--limit", "-1",
-      ]);
+      await program.parseAsync(["node", "test", "memory", "search", "dark mode"]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
 
     expect(exitSpy.spy).toHaveBeenCalledWith(1);
     const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("Invalid limit");
-  });
-});
-
-// ── memory search --limit constrains result count ───────────────
-
-describe("memory search --limit constrains result count", () => {
-  let consoleSpy: ReturnType<typeof createConsoleSpy>;
-  let exitSpy: ReturnType<typeof createProcessExitSpy>;
-  let callSpy: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    vi.mocked(withClient).mockReset();
-    consoleSpy = createConsoleSpy();
-    exitSpy = createProcessExitSpy();
-
-    // ContextSearchContract.response = { results: [...], total }
-    callSpy = vi.fn().mockResolvedValue({ results: [], total: 0 });
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      return fn({ call: callSpy, close: vi.fn() });
-    });
+    expect(errOutput).toContain("memory search is unavailable");
+    // Fail-closed BEFORE any RPC: withClient must never be invoked.
+    expect(vi.mocked(withClient)).not.toHaveBeenCalled();
   });
 
-  afterEach(() => {
-    consoleSpy.restore();
-    exitSpy.restore();
-  });
-
-  it("passes limit parameter to memory.search RPC call", async () => {
+  it("memory inspect exits 1 with a not-available message and makes no RPC", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    await program.parseAsync([
-      "node", "test", "memory", "search", "test query", "--limit", "5",
-    ]);
+    try {
+      await program.parseAsync(["node", "test", "memory", "inspect", "mem-001"]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
 
-    // `context.search` is the actual full-text search surface.
-    expect(callSpy).toHaveBeenCalledWith("context.search", {
-      query: "test query",
-      limit: 5,
-    });
-  });
-});
-
-// ── memory search --format json ─────────────────────────────────
-
-describe("memory search --format json", () => {
-  let consoleSpy: ReturnType<typeof createConsoleSpy>;
-  let exitSpy: ReturnType<typeof createProcessExitSpy>;
-
-  beforeEach(() => {
-    vi.mocked(withClient).mockReset();
-    consoleSpy = createConsoleSpy();
-    exitSpy = createProcessExitSpy();
-
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("context.search", SEARCH_RESULTS)
-        .build();
-      return fn(mockClient);
-    });
-  });
-
-  afterEach(() => {
-    consoleSpy.restore();
-    exitSpy.restore();
-  });
-
-  it("outputs valid JSON array of search results", async () => {
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-
-    await program.parseAsync([
-      "node", "test", "memory", "search", "test", "--format", "json",
-    ]);
-
-    const output = getSpyOutput(consoleSpy.log);
-    const parsed = JSON.parse(output) as Array<{
-      id: string;
-      content: string;
-      type: "message" | "summary";
-      rank?: number;
-    }>;
-
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed).toHaveLength(3);
-    expect(parsed[0]!.id).toBe("mem-001");
-    expect(parsed[0]!.content).toContain("dark mode");
-    expect(parsed[0]!.type).toBe("message");
-    expect(parsed[1]!.id).toBe("mem-002");
-    expect(parsed[2]!.id).toBe("mem-003");
-  });
-});
-
-// ── memory inspect full details ─────────────────────────────────
-
-describe("memory inspect full details", () => {
-  let consoleSpy: ReturnType<typeof createConsoleSpy>;
-  let exitSpy: ReturnType<typeof createProcessExitSpy>;
-
-  beforeEach(() => {
-    vi.mocked(withClient).mockReset();
-    consoleSpy = createConsoleSpy();
-    exitSpy = createProcessExitSpy();
-
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      // context.inspect returns the entry directly (no `entry: {...}` wrapper).
-      const mockClient = createMockRpcClient()
-        .onCall("context.inspect", INSPECT_ENTRY)
-        .build();
-      return fn(mockClient);
-    });
-  });
-
-  afterEach(() => {
-    consoleSpy.restore();
-    exitSpy.restore();
-  });
-
-  it("displays full entry details as key-value pairs", async () => {
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-
-    await program.parseAsync(["node", "test", "memory", "inspect", "mem-001"]);
-
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("mem-001");
-    expect(output).toContain("User prefers dark mode");
-    expect(output).toContain("conversation");
-    expect(output).toContain("high");
-    expect(output).toContain("test-tenant");
-    expect(output).toContain("discord:guild-123:chan-456:user-789");
-    expect(output).toContain("extraction");
-  });
-});
-
-// ── memory inspect --format json ───────────────────────────────
-
-describe("memory inspect --format json", () => {
-  let consoleSpy: ReturnType<typeof createConsoleSpy>;
-  let exitSpy: ReturnType<typeof createProcessExitSpy>;
-
-  beforeEach(() => {
-    vi.mocked(withClient).mockReset();
-    consoleSpy = createConsoleSpy();
-    exitSpy = createProcessExitSpy();
-
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("context.inspect", INSPECT_ENTRY)
-        .build();
-      return fn(mockClient);
-    });
-  });
-
-  afterEach(() => {
-    consoleSpy.restore();
-    exitSpy.restore();
-  });
-
-  it("outputs valid JSON of the full entry", async () => {
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-
-    await program.parseAsync([
-      "node", "test", "memory", "inspect", "mem-001", "--format", "json",
-    ]);
-
-    const output = getSpyOutput(consoleSpy.log);
-    const parsed = JSON.parse(output) as Record<string, unknown>;
-
-    expect(parsed.id).toBe("mem-001");
-    expect(parsed.content).toBe("User prefers dark mode");
-    expect(parsed.memoryType).toBe("conversation");
-    expect(parsed.trustLevel).toBe("high");
-    expect(parsed.tenantId).toBe("test-tenant");
-    expect(parsed.sessionKey).toBe("discord:guild-123:chan-456:user-789");
-    expect(parsed.metadata).toEqual({ source: "extraction" });
-  });
-});
-
-// ── memory inspect non-existent ────────────────────────────────
-
-describe("memory inspect non-existent", () => {
-  let consoleSpy: ReturnType<typeof createConsoleSpy>;
-  let exitSpy: ReturnType<typeof createProcessExitSpy>;
-
-  beforeEach(() => {
-    vi.mocked(withClient).mockReset();
-    consoleSpy = createConsoleSpy();
-    exitSpy = createProcessExitSpy();
-
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      // context.inspect "not found" signal is an empty record.
-      const mockClient = createMockRpcClient()
-        .onCall("context.inspect", {})
-        .build();
-      return fn(mockClient);
-    });
-  });
-
-  afterEach(() => {
-    consoleSpy.restore();
-    exitSpy.restore();
-  });
-
-  it("shows warning when entry not found", async () => {
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-
-    await program.parseAsync([
-      "node", "test", "memory", "inspect", "nonexistent-id",
-    ]);
-
-    const output = getSpyOutput(consoleSpy.log);
-    expect(output).toContain("No entry found with ID: nonexistent-id");
+    expect(exitSpy.spy).toHaveBeenCalledWith(1);
+    const errOutput = getSpyOutput(consoleSpy.error);
+    expect(errOutput).toContain("memory inspect is unavailable");
+    expect(vi.mocked(withClient)).not.toHaveBeenCalled();
   });
 });
 
@@ -874,35 +555,9 @@ describe("memory commands handle daemon offline", () => {
     exitSpy.restore();
   });
 
-  it("memory search exits 1 with descriptive error when daemon is offline", async () => {
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-
-    try {
-      await program.parseAsync(["node", "test", "memory", "search", "test"]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-    }
-
-    expect(exitSpy.spy).toHaveBeenCalledWith(1);
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("Failed to search memory");
-  });
-
-  it("memory inspect exits 1 with descriptive error when daemon is offline", async () => {
-    const program = createTestProgram();
-    registerMemoryCommand(program);
-
-    try {
-      await program.parseAsync(["node", "test", "memory", "inspect", "abc-123"]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-    }
-
-    expect(exitSpy.spy).toHaveBeenCalledWith(1);
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("Failed to inspect memory entry");
-  });
+  // NOTE (v2.12, Phase 126): memory search/inspect no longer reach the daemon
+  // (they fail closed before any RPC), so the daemon-offline cases for them were
+  // removed — see the "memory search/inspect fail closed" describe above.
 
   it("memory stats exits 1 with descriptive error when daemon is offline", async () => {
     const program = createTestProgram();
