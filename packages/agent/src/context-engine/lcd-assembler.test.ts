@@ -436,6 +436,172 @@ describe("createLcdContextEngine", () => {
   });
 });
 
+describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () => {
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Seed N completed user/assistant text turns into the store (seq 0..2N-1). */
+  function seedTextTurns(count: number): Message[] {
+    const msgs: Message[] = [];
+    for (let i = 0; i < count; i++) {
+      msgs.push(userMsg(`u${i}`));
+      msgs.push(assistantText(`a${i}`));
+    }
+    for (let i = 0; i < msgs.length; i++) append(store, msgs[i] as Message, i);
+    return msgs;
+  }
+
+  it("Plan05 Test A: a leaf summary surfaces as a user-role text message at the replaced ordinal, in order", async () => {
+    // 6 turns (12 messages, seq 0..11). Lazy-seed makes context_items 1:1.
+    const msgs = seedTextTurns(6);
+    expect(msgs.length).toBe(12);
+    // Force the lazy seed (1:1 context_items), then range-replace ordinals [0,3]
+    // (the oldest two turns: u0,a0,u1,a1) with ONE leaf summary-ref.
+    store.getContextItems(CONVERSATION_ID);
+    const SUMMARY_TEXT = "LEAF-SUMMARY-OF-FIRST-TWO-TURNS";
+    store.appendLeafSummary({
+      scope: SCOPE,
+      tokenCount: 5,
+      content: SUMMARY_TEXT,
+      descendantCount: 4,
+      earliestAt: FIXED_CREATED_AT,
+      latestAt: FIXED_CREATED_AT,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_CREATED_AT,
+      startOrdinal: 0,
+      endOrdinal: 3,
+    });
+
+    // The LIVE array is the full 12-message conversation. freshTailTurns=1 keeps
+    // only the trailing assistant("a5") in the fresh tail, so the WHOLE summary
+    // sits in the reconstructed-from-store history prefix.
+    const live: AgentMessage[] = msgs as AgentMessage[];
+    const { deps } = makeDeps(store);
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    const out = await engine.transformContext(live);
+
+    // The summary content surfaces as a USER-role text message (the 130 swap
+    // point — NEVER system/assistant; untrusted-by-role per T-129-14).
+    const summaryMsg = out.find(
+      (m) =>
+        roleOf(m) === "user" &&
+        (m as unknown as { content: unknown }).content !== undefined &&
+        JSON.stringify((m as unknown as { content: unknown }).content).includes(SUMMARY_TEXT),
+    );
+    expect(summaryMsg).toBeDefined();
+    expect(roleOf(summaryMsg as AgentMessage)).toBe("user");
+
+    // Order preserved: the summary sits where the replaced range began (ordinal 0),
+    // BEFORE the surviving u2/a2 turn. Project to text and assert the sequence.
+    const texts = out.map((m) => {
+      const c = (m as unknown as { content: unknown }).content;
+      if (typeof c === "string") return c;
+      const arr = c as { type: string; text?: string }[];
+      return arr.find((b) => b.type === "text")?.text ?? "";
+    });
+    const summaryIdx = texts.findIndex((t) => t.includes(SUMMARY_TEXT));
+    const u2Idx = texts.indexOf("u2");
+    expect(summaryIdx).toBeGreaterThanOrEqual(0);
+    expect(u2Idx).toBeGreaterThan(summaryIdx); // summary-ref replaced the OLDEST range
+    // The replaced raw messages (u0,a0,u1,a1) are GONE — replaced by the one ref.
+    expect(texts).not.toContain("u0");
+    expect(texts).not.toContain("a0");
+    expect(texts).not.toContain("u1");
+    expect(texts).not.toContain("a1");
+  });
+
+  it("Plan05 Test B: over-budget eviction drops the OLDEST evictable steps; the fresh tail is intact even when H is tiny", async () => {
+    // 10 turns (20 messages). Each store message tokenCount=1 (append() default),
+    // so the evictable prefix is cheap per message; we force a TINY model window
+    // so the H budget allows only a couple of steps.
+    const msgs = seedTextTurns(10);
+    const live: AgentMessage[] = msgs as AgentMessage[];
+
+    const logger = createMockLogger();
+    // A SMALL context window: with computeTokenBudget's O+M+R reserves this
+    // produces H = 0 (everything reserved) — the eviction must drop the entire
+    // evictable prefix while the fresh tail STILL ships (A3 unconditional concat).
+    const deps: ContextEngineDeps = {
+      logger: logger as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: true, contextWindow: 1_000, maxTokens: 256 }),
+      getSystemTokensEstimate: () => 0,
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      sessionKey: "sess-a",
+    };
+    // freshTailTurns=2 → fresh tail = last two assistant steps (a8-onward region).
+    const engine = createLcdContextEngine(dagConfig(2), deps);
+    const out = await engine.transformContext(live);
+
+    const texts = out.map((m) => {
+      const c = (m as unknown as { content: unknown }).content;
+      if (typeof c === "string") return c;
+      const arr = c as { type: string; text?: string }[];
+      return arr.find((b) => b.type === "text")?.text ?? "";
+    });
+
+    // FRESH TAIL INTACT: the last freshTailTurns assistant steps are present
+    // verbatim at the END even though H forced the prefix to drop. With
+    // freshTailTurns=2 the fresh tail covers [a8 .. a9] region → a8 and a9 survive.
+    expect(texts).toContain("a9");
+    expect(texts).toContain("a8");
+    expect(texts[texts.length - 1]).toBe("a9"); // the live tail rides last
+    // The trailing fresh-tail objects are the LIVE objects verbatim (never evicted).
+    expect(out[out.length - 1]).toBe(live[live.length - 1]);
+
+    // OLDEST EVICTED: with H=0 the whole evictable prefix is dropped — the oldest
+    // turns are gone (only the fresh tail remains).
+    expect(texts).not.toContain("u0");
+    expect(texts).not.toContain("a0");
+    // The assembled array is no larger than the fresh-tail span (prefix fully dropped).
+    expect(out.length).toBeLessThan(live.length);
+  });
+
+  it("Plan05 Test C: no-summary path still assembles 1:1 (the 128 round-trip invariant holds under context_items resolution)", async () => {
+    // A plain 3-turn conversation, NO leaf pass. Lazy-seeded context_items are
+    // 1:1 with messages → the assembled output must equal the 128 behavior
+    // (every message present once, paired, in order) with a generous budget.
+    const persisted: Message[] = [
+      userMsg("u0"),
+      assistantToolCall("tu_1", "read", { path: "/a" }),
+      toolResult("tu_1", "read", "contents"),
+      assistantText("done"),
+    ];
+    for (let i = 0; i < persisted.length; i++) append(store, persisted[i] as Message, i);
+
+    const live: AgentMessage[] = persisted as AgentMessage[];
+    const { deps } = makeDeps(store);
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    const out = await engine.transformContext(live);
+
+    // The user message, the tool_use BLOCK with stable id tu_1, and its paired
+    // top-level toolResult all survive (codec round-trip, NOT flattened).
+    expect(out.some((m) => roleOf(m) === "user")).toBe(true);
+    const historyAssistant = out.find(
+      (m) => roleOf(m) === "assistant" && (m as unknown as { content: unknown[] }).content.some(isToolCallBlock),
+    );
+    expect(historyAssistant).toBeDefined();
+    const tc = (historyAssistant as unknown as { content: unknown[] }).content.find(isToolCallBlock);
+    expect(tc).toMatchObject({ id: "tu_1", name: "read" });
+    const tr = out.find((m) => roleOf(m) === "toolResult");
+    expect(tr).toBeDefined();
+    expect((tr as unknown as { toolCallId: string }).toolCallId).toBe("tu_1");
+    // No summary text appears anywhere (no leaf pass ran).
+    const anyFallback = out.some((m) =>
+      JSON.stringify((m as unknown as { content?: unknown }).content ?? "").includes("[lcd-leaf-fallback]"),
+    );
+    expect(anyFallback).toBe(false);
+  });
+});
+
 describe("createContextEngine dag fallback (Test 6)", () => {
   it("Test 6: version 'dag' with NO store wired falls through to the pipeline with a config WARN", async () => {
     const logger = createMockLogger();
