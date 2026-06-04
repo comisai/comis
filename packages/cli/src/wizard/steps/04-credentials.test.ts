@@ -786,6 +786,44 @@ describe("credentialsStep — OAuth dispatch", () => {
     expect(result.provider?.apiKey).toBe("test_access_token");
   });
 
+  it("does not leak wizard-oauth JSON logs onto the interactive console", async () => {
+    // Regression: the wizard's OAuth logger wrote structured JSON to stderr
+    // during the interactive init wizard, interleaving with the @clack prompt
+    // UI. The operational logger must be quiet (warn-gated) so a successful
+    // OAuth login emits nothing to the console.
+    const writes: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        writes.push(String(chunk));
+        return true;
+      });
+    try {
+      vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+        ok: true,
+        value: {
+          access: "tok",
+          refresh: "ref",
+          expires: Date.now() + 3_600_000,
+          accountId: "acct",
+          email: "alice@example.com",
+          displayName: "Alice",
+          profileId: "openai-codex:alice@example.com",
+        },
+      });
+      const prompter = createMockPrompter();
+      vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
+      await credentialsStep.execute(
+        { ...INITIAL_STATE, provider: { id: "openai-codex" } as ProviderConfig },
+        prompter,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    const leaked = writes.filter((w) => w.includes("wizard-oauth"));
+    expect(leaked).toEqual([]);
+  });
+
   it("openai-codex device-code dispatch (isRemote=true)", async () => {
     vi.mocked(isRemoteEnvironment).mockReturnValueOnce(true);
     vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
