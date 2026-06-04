@@ -337,10 +337,9 @@ describe("MemoryApi", () => {
       expect(removed).toBe(0);
     });
 
-    it("clear() currently deletes pinned memories (RED: no immunity predicate yet — Wave 2 adds pinned!=1)", async () => {
-      // Store an entry in the default tenant, then manually set pinned=1 via direct SQL.
-      // Pre-patch (Wave 1): clear() has no pinned!=1 predicate, so the row is deleted.
-      // Post-patch (Wave 2): the row survives — the assertion flips to toHaveLength(1).
+    it("clear() does not delete pinned memories (immune like system trust)", async () => {
+      // Pinned memories must survive scoped clear() — same immunity as system-trust entries.
+      // The WHERE clause must carry `AND pinned != 1` so clear() skips pinned rows.
       const id = crypto.randomUUID();
       adapter.getDb().prepare(
         `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
@@ -351,7 +350,7 @@ describe("MemoryApi", () => {
       api.clear({ tenantId: "default", agentId: "default" });
 
       const rows = adapter.getDb().prepare("SELECT id FROM memories WHERE id = ?").all(id) as { id: string }[];
-      expect(rows).toHaveLength(0); // RED: no immunity = row deleted; Wave 2 flips to toHaveLength(1)
+      expect(rows).toHaveLength(1); // GREEN: immunity predicate added → row survives clear()
     });
   });
 

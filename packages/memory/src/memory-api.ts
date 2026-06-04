@@ -244,6 +244,7 @@ export function createMemoryApi(
       // (unless specifically scoped to a non-system trust level)
       if (!scope.trustLevel) {
         conditions.push("trust_level != 'system'");
+        conditions.push("pinned != 1"); // pinned memories survive scoped clear (like system trust)
       }
 
       const whereClause = conditions.join(" AND ");

@@ -212,10 +212,9 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(bare?.embedding).toBeUndefined();
     });
 
-    it("listConsolidationCandidates currently includes pinned memories (RED: no pinned!=1 predicate yet — Wave 2 adds exclusion)", async () => {
-      // Store a raw memory (consolidated_at IS NULL, proof_count IS NULL), then pin it via direct SQL.
-      // Pre-patch (Wave 1): no pinned!=1 predicate exists, so the pinned row IS returned.
-      // Post-patch (Wave 2 adds AND m.pinned != 1): pinned row is ABSENT — assertion flips to not.toContain.
+    it("listConsolidationCandidates excludes pinned memories from candidate set", async () => {
+      // Pinned memories must NOT appear in the consolidation candidate set.
+      // The candidate SELECT must carry `AND m.pinned != 1` so pinned rows are excluded.
       const id = await seedMemory({ content: "pinned standing instruction", createdAt: 100 });
       db.prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(id);
 
@@ -224,7 +223,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       if (!result.ok) return;
 
       const ids = result.value.map((c) => c.entry.id);
-      expect(ids).toContain(id); // RED: no exclusion = pinned row included; Wave 2 flips to not.toContain
+      expect(ids).not.toContain(id); // GREEN: exclusion predicate added → pinned row absent from candidates
     });
   });
 
