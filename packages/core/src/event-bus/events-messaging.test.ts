@@ -202,6 +202,7 @@ describe("MessagingEvents payload structure", () => {
       "max_steps",
       "context_exhausted",
       "pipeline_timeout",
+      "loop_detected",
     ] as const;
 
     for (const reason of reasons) {
@@ -216,10 +217,11 @@ describe("MessagingEvents payload structure", () => {
       bus.removeAllListeners("execution:aborted");
     }
 
-    expect(handler).toHaveBeenCalledTimes(6);
+    expect(handler).toHaveBeenCalledTimes(7);
     expect(handler.mock.calls[0]![0].reason).toBe("user_stop");
     expect(handler.mock.calls[4]![0].reason).toBe("context_exhausted");
     expect(handler.mock.calls[5]![0].reason).toBe("pipeline_timeout");
+    expect(handler.mock.calls[6]![0].reason).toBe("loop_detected");
   });
 
   it("execution:prompt_timeout delivers agentId, sessionKey, timeoutMs", () => {
