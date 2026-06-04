@@ -44,9 +44,19 @@ export type MemoryExportEntry = z.infer<typeof MemoryExportEntrySchema>;
  * Parse an unknown JSON value as a memory export envelope.
  * Fail-closed: any schemaVersion other than "comis-memory-export-v1" returns err().
  * No multi-version reader — z.literal enforces the single accepted version.
+ * IN-01: cross-validates entryCount against entries.length — a mismatch is a
+ * data-integrity signal (crafted envelope) and is rejected rather than silently accepted.
  */
-export function parseMemoryExportEnvelope(raw: unknown): Result<MemoryExportEnvelope, z.ZodError> {
+export function parseMemoryExportEnvelope(raw: unknown): Result<MemoryExportEnvelope, z.ZodError | Error> {
   const result = MemoryExportEnvelopeSchema.safeParse(raw);
-  if (result.success) return ok(result.data);
-  return err(result.error);
+  if (!result.success) return err(result.error);
+  const env = result.data;
+  if (env.entryCount !== env.entries.length) {
+    return err(
+      new Error(
+        `Envelope entryCount (${env.entryCount}) does not match entries array length (${env.entries.length})`,
+      ),
+    );
+  }
+  return ok(env);
 }
