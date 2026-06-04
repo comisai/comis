@@ -26,6 +26,10 @@ export const MemoryPinContract = defineContract({
   }),
   response: z.object({
     pinned: z.literal(true),
+    // IN-02: `found` surfaces whether the memory row existed in the caller's scope.
+    // found=true: row found and pinned. found=false: id not found (pin was a no-op).
+    // Callers that only inspect `pinned` are unaffected (additive field).
+    found: z.boolean(),
     id: z.string(),
   }),
   scopes: ["admin"] as const,

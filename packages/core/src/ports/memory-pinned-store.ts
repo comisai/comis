@@ -23,14 +23,16 @@ export interface MemoryPinnedStore {
    * Idempotent: pin an already-pinned entry is a no-op.
    * Returns true if the row exists (and was pinned or was already pinned),
    * false if the id is not found in the scope.
+   * `agentId` further scopes the UPDATE so cross-agent pinning within a tenant is impossible.
    */
-  pin(id: string, tenantId?: string): Promise<Result<boolean, Error>>;
+  pin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>>;
 
   /**
    * Unpin a memory entry. Idempotent: unpin of an unpinned entry is a no-op.
    * Returns true if the row exists, false if not found in the scope.
+   * `agentId` further scopes the UPDATE so cross-agent unpinning within a tenant is impossible.
    */
-  unpin(id: string, tenantId?: string): Promise<Result<boolean, Error>>;
+  unpin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>>;
 
   /**
    * List all pinned memory entries for a scope, ordered by created_at DESC,

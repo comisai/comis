@@ -549,5 +549,62 @@ describe("MemoryApi", () => {
       expect(result.ok).toBe(true);
       expect(result.ok && result.value).toBe(false);
     });
+
+    it("CR-01: pin with agentId does NOT pin a same-tenant entry owned by a different agent", async () => {
+      // Two entries: same tenant, different agents. Pinning for agent-a must not pin agent-b's entry.
+      const entryA = makeEntry({ tenantId: "t-cr01", agentId: "agent-a" });
+      const entryB = makeEntry({ tenantId: "t-cr01", agentId: "agent-b" });
+      await adapter.store(entryA as MemoryEntry);
+      await adapter.store(entryB as MemoryEntry);
+
+      // Pin entryA scoped to agent-a.
+      const r = await api.pin(entryA.id, "t-cr01", "agent-a");
+      expect(r.ok).toBe(true);
+      expect(r.ok && r.value).toBe(true);
+
+      // entryB (agent-b) must remain unpinned.
+      const rowB = adapter.getDb()
+        .prepare("SELECT pinned FROM memories WHERE id = ?")
+        .get(entryB.id) as { pinned: number } | undefined;
+      expect(rowB?.pinned).toBe(0);
+    });
+
+    it("CR-01: pin with wrong agentId returns ok(false) and leaves the row unpinned", async () => {
+      const entry = makeEntry({ tenantId: "t-cr01b", agentId: "agent-b" });
+      await adapter.store(entry as MemoryEntry);
+
+      // Try to pin using the wrong agentId → must return false (not found in scope).
+      const r = await api.pin(entry.id, "t-cr01b", "agent-a");
+      expect(r.ok).toBe(true);
+      expect(r.ok && r.value).toBe(false);
+
+      const row = adapter.getDb()
+        .prepare("SELECT pinned FROM memories WHERE id = ?")
+        .get(entry.id) as { pinned: number } | undefined;
+      expect(row?.pinned).toBe(0);
+    });
+  });
+
+  // ── WR-01: clear() pin immunity unconditional ──────────────────────────────
+  describe("WR-01: clear() pin immunity is unconditional (not bypassed by trustLevel scope)", () => {
+    it("WR-01: clear() with trustLevel:'external' still spares pinned entries", async () => {
+      // The pin immunity `AND pinned != 1` must apply even when scope.trustLevel is set.
+      // Pre-patch: the condition is gated on !scope.trustLevel, so clear({ trustLevel: 'external' })
+      // deletes the pinned external-trust entry. Post-patch: immunity is unconditional.
+      const db = adapter.getDb();
+      const pinnedExternalId = crypto.randomUUID();
+      db.prepare(
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type,
+          source_who, tags, created_at, has_embedding)
+         VALUES (?, 'default', 'default', 'user-1', 'pinned external', 'external', 'semantic', 'agent', '[]', ?, 0)`,
+      ).run(pinnedExternalId, Date.now());
+      db.prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(pinnedExternalId);
+
+      // clear() scoped to external trust — must NOT delete the pinned entry.
+      api.clear({ tenantId: "default", trustLevel: "external" });
+
+      const rows = db.prepare("SELECT id FROM memories WHERE id = ?").all(pinnedExternalId) as { id: string }[];
+      expect(rows).toHaveLength(1); // pinned entry survives regardless of trustLevel scope
+    });
   });
 });

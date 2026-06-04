@@ -454,28 +454,40 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
 
   // ── pin ──────────────────────────────────────────────────────────
 
-  async pin(id: string, tenantId?: string): Promise<Result<boolean, Error>> {
+  async pin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>> {
     return fromPromise((async () => {
-      const sql = tenantId !== undefined
-        ? "UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ?"
-        : "UPDATE memories SET pinned = 1 WHERE id = ?";
-      const info = tenantId !== undefined
-        ? this.db.prepare(sql).run(id, tenantId)
-        : this.db.prepare(sql).run(id);
+      const sql =
+        tenantId !== undefined && agentId !== undefined
+          ? "UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ? AND agent_id = ?"
+          : tenantId !== undefined
+          ? "UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ?"
+          : "UPDATE memories SET pinned = 1 WHERE id = ?";
+      const info =
+        tenantId !== undefined && agentId !== undefined
+          ? this.db.prepare(sql).run(id, tenantId, agentId)
+          : tenantId !== undefined
+          ? this.db.prepare(sql).run(id, tenantId)
+          : this.db.prepare(sql).run(id);
       return info.changes > 0;
     })());
   }
 
   // ── unpin ────────────────────────────────────────────────────────
 
-  async unpin(id: string, tenantId?: string): Promise<Result<boolean, Error>> {
+  async unpin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>> {
     return fromPromise((async () => {
-      const sql = tenantId !== undefined
-        ? "UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ?"
-        : "UPDATE memories SET pinned = 0 WHERE id = ?";
-      const info = tenantId !== undefined
-        ? this.db.prepare(sql).run(id, tenantId)
-        : this.db.prepare(sql).run(id);
+      const sql =
+        tenantId !== undefined && agentId !== undefined
+          ? "UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ? AND agent_id = ?"
+          : tenantId !== undefined
+          ? "UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ?"
+          : "UPDATE memories SET pinned = 0 WHERE id = ?";
+      const info =
+        tenantId !== undefined && agentId !== undefined
+          ? this.db.prepare(sql).run(id, tenantId, agentId)
+          : tenantId !== undefined
+          ? this.db.prepare(sql).run(id, tenantId)
+          : this.db.prepare(sql).run(id);
       return info.changes > 0;
     })());
   }
@@ -487,14 +499,18 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     limit: number,
   ): Promise<Result<MemorySearchResult[], Error>> {
     return fromPromise((async () => {
+      // CR-02 fix: exclude expired entries (mirrors the other read paths in
+      // hydrateLane and search — `expires_at IS NULL OR expires_at > nowMs`).
+      const nowMs = systemNowMs();
       const parsed = memoryRowMapper.parseRows(
         this.db
           .prepare(
             "SELECT * FROM memories " +
               "WHERE tenant_id = ? AND agent_id = ? AND pinned = 1 " +
+              "AND (expires_at IS NULL OR expires_at > ?) " +
               "ORDER BY created_at DESC LIMIT ?",
           )
-          .all(scope.tenantId, scope.agentId, limit),
+          .all(scope.tenantId, scope.agentId, nowMs, limit),
       );
       if (!parsed.ok) return [];
       return parsed.value.map((row) => ({

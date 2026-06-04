@@ -4038,12 +4038,13 @@ describe("assembleExecutionPrompt — SC2-budget: pinnedChars deducted from maxC
     // injector.split must be called with MAX_CONTEXT_CHARS - 500 = 3500.
     // Pre-patch (no budget accounting): injector.split called with full 4000.
     // Post-patch: injector.split called with 3500.
+    // entry.pinned=true is required so the CR-03 fix identifies this as a real pin.
     const pinnedEntry = {
-      entry: { id: "pinned-001", tenantId: "t", content: "pinned content", createdAt: Date.now(), tags: [], trustLevel: "system", source: { channel: "test" } },
+      entry: { id: "pinned-001", tenantId: "t", content: "pinned content", createdAt: Date.now(), tags: [], trustLevel: "system" as const, source: { channel: "test" }, pinned: true as const },
       score: 1.0,
     };
     const fusedEntry = {
-      entry: { id: "fused-001", tenantId: "t", content: "fused content", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
+      entry: { id: "fused-001", tenantId: "t", content: "fused content", createdAt: Date.now(), tags: [], trustLevel: "learned" as const, source: { channel: "test" } },
       score: 0.8,
     };
     // Recall returns: pinnedEntry first (as head), then fusedEntry
@@ -4103,5 +4104,82 @@ describe("assembleExecutionPrompt — SC2-budget: pinnedChars deducted from maxC
     expect(mockHybridSplit).toHaveBeenCalledOnce();
     const splitMaxChars = mockHybridSplit.mock.calls[0][1] as number;
     expect(splitMaxChars).toBe(MAX_CONTEXT_CHARS);
+  });
+});
+
+// CR-03: prompt-assembly budget split uses entry.pinned not positional slice
+// When 2 pins exist with cap=5, injector.split must receive the 0 FUSED entries
+// (not the 5-item positional slice that includes fused entries as fake "pins").
+describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinned, not positional slice", () => {
+  const MAX_CONTEXT_CHARS = 4000;
+  const PINNED_SECTION_CHARS = 200;
+
+  beforeEach(() => {
+    mockFormatMemorySection.mockReturnValue(undefined);
+    mockRecall.mockResolvedValue({ ok: false, error: new Error("no recall") });
+    mockHybridSplit.mockClear();
+    mockCreateMemoryRecall.mockClear();
+  });
+
+  it("CR-03: injector.split receives only fused entries (not pinned ones) when 2 pins < cap=5", async () => {
+    // 2 pinned + 3 fused entries in recall. maxPinnedInjection=5 (cap > actual pins).
+    // Pre-patch: positional slice(0, 5) grabs all 5 entries as "pinnedSet" →
+    //   injector.split receives [] (empty) → the 3 fused entries are DROPPED.
+    // Post-patch: entry.pinned===true identifies exactly 2 pins →
+    //   injector.split receives the 3 fused entries (none dropped).
+    const pinnedEntry1 = {
+      entry: { id: "pin-1", tenantId: "t", content: "pin one", createdAt: Date.now(), tags: [], trustLevel: "system" as const, source: { channel: "test" }, pinned: true as const },
+      score: 1.0,
+    };
+    const pinnedEntry2 = {
+      entry: { id: "pin-2", tenantId: "t", content: "pin two", createdAt: Date.now(), tags: [], trustLevel: "system" as const, source: { channel: "test" }, pinned: true as const },
+      score: 1.0,
+    };
+    const fusedEntry1 = {
+      entry: { id: "fused-1", tenantId: "t", content: "fused one", createdAt: Date.now(), tags: [], trustLevel: "learned" as const, source: { channel: "test" } },
+      score: 0.9,
+    };
+    const fusedEntry2 = {
+      entry: { id: "fused-2", tenantId: "t", content: "fused two", createdAt: Date.now(), tags: [], trustLevel: "learned" as const, source: { channel: "test" } },
+      score: 0.8,
+    };
+    const fusedEntry3 = {
+      entry: { id: "fused-3", tenantId: "t", content: "fused three", createdAt: Date.now(), tags: [], trustLevel: "learned" as const, source: { channel: "test" } },
+      score: 0.7,
+    };
+    // Recall returns 2 pinned (pinned===true) + 3 fused (no pinned field).
+    mockRecall.mockResolvedValue({ ok: true, value: [pinnedEntry1, pinnedEntry2, fusedEntry1, fusedEntry2, fusedEntry3] });
+    // formatMemorySection returns a 200-char string for the pinned section.
+    mockFormatMemorySection.mockReturnValue("x".repeat(PINNED_SECTION_CHARS));
+
+    const memoryPort = { search: vi.fn().mockResolvedValue({ ok: true, value: [] }), store: vi.fn() } as any;
+    const params = makeParams({
+      config: makeConfig({
+        rag: {
+          enabled: true,
+          maxResults: 5,
+          minScore: 0.3,
+          includeTrustLevels: ["learned", "system"],
+          maxContextChars: MAX_CONTEXT_CHARS,
+          pinned: { enabled: true, maxPinnedInjection: 5 }, // cap=5, but only 2 real pins
+        },
+      }),
+      deps: { workspaceDir: "/workspace", memoryPort },
+    });
+    await assembleExecutionPrompt(params);
+
+    expect(mockHybridSplit).toHaveBeenCalledOnce();
+    const splitArg = mockHybridSplit.mock.calls[0][0] as Array<{ entry: { id: string } }>;
+    const splitIds = splitArg.map((r) => r.entry.id);
+    // All 3 fused entries must be passed to injector.split (none dropped).
+    expect(splitIds).toContain("fused-1");
+    expect(splitIds).toContain("fused-2");
+    expect(splitIds).toContain("fused-3");
+    // Pinned entries must NOT be passed to injector.split.
+    expect(splitIds).not.toContain("pin-1");
+    expect(splitIds).not.toContain("pin-2");
+    // Budget: 2 pins measured (200 chars) → split gets 4000 - 200 = 3800.
+    const splitMaxChars = mockHybridSplit.mock.calls[0][1] as number;
+    expect(splitMaxChars).toBe(MAX_CONTEXT_CHARS - PINNED_SECTION_CHARS);
   });
 });

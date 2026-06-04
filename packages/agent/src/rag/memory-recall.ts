@@ -90,6 +90,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const pinnedResults: ReturnType<typeof deduplicateResults> = [];
       const cfg_pinned = cfg.pinned;
       if (cfg_pinned?.enabled === true && deps.pinnedStore !== undefined) {
+        const pinnedStart = deps.clock.now();
         const scope = {
           tenantId: sessionKey.tenantId,
           agentId: agentId ?? sessionKey.agentId ?? "default",
@@ -101,6 +102,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           deps.logger.warn(
             {
               agentId,
+              // WR-03: durationMs required per AGENTS.md §2.7 on every WARN at a boundary crossing.
+              durationMs: deps.clock.now() - pinnedStart,
               errorKind: "internal" as const,
               hint: "pinned lane read failed; proceeding without pinned memories",
             },
@@ -625,9 +628,14 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // PREPEND pinned entries — bounded, already fetched at Step 0.
       // Pinned entries are ALWAYS returned first, regardless of fused score.
       // They were excluded from the MMR/dedup pipeline above (Step 5b-pre).
+      // CR-04: filter pinned entries through the trust allowlist BEFORE prepending.
+      // A pinned entry with a trustLevel outside cfg.includeTrustLevels must NOT inject.
       // DEFAULT-OFF: when pinnedResults is empty this is a no-op (no prepend).
-      const finalRankedWithPins = pinnedResults.length > 0
-        ? [...pinnedResults, ...finalRanked]
+      const filteredPinnedResults = pinnedResults.length > 0
+        ? pinnedResults.filter((r) => allowed.has(r.entry.trustLevel))
+        : pinnedResults;
+      const finalRankedWithPins = filteredPinnedResults.length > 0
+        ? [...filteredPinnedResults, ...finalRanked]
         : finalRanked;
 
       // Observability tail. ADDITIVE + NON-FATAL: assemble ONE trace record

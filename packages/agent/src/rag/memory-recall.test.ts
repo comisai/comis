@@ -3230,4 +3230,84 @@ describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", (
     if (!result.ok) return;
     expect(result.value.map((r) => r.entry.id)).toEqual(["a", "b"]);
   });
+
+  it("CR-04: pinned entry with a disallowed trustLevel is filtered out before prepend", async () => {
+    // CR-04: pinned entries bypass the trust filter. A pinned entry whose trustLevel
+    // is NOT in cfg.includeTrustLevels must be excluded from finalRanked.
+    // Pre-patch: the entry is prepended unconditionally → it appears in results.
+    // Post-patch: filtered → it does NOT appear in results.
+    const disallowedPinnedId = "pinned-external-001";
+    const disallowedTrustStore: MemoryPinnedStore = {
+      async pin() { return ok(true); },
+      async unpin() { return ok(true); },
+      async listPinned(_scope, _limit) {
+        return ok([
+          {
+            entry: {
+              id: disallowedPinnedId,
+              tenantId: "t",
+              agentId: "default",
+              userId: "u",
+              content: "disallowed pinned content",
+              trustLevel: "external" as const,
+              source: { who: "agent" },
+              tags: [],
+              createdAt: NOW,
+            } as unknown as MemorySearchResult["entry"],
+            score: 1.0,
+          },
+        ]);
+      },
+    };
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort([]),
+        pinnedStore: disallowedTrustStore,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL_SCORING,
+        // Only "learned" and "system" are allowed — "external" is NOT.
+        includeTrustLevels: ["learned", "system"],
+        pinned: { enabled: true, maxPinnedInjection: 5 },
+      }),
+    );
+    const result = await recall.recall("query", SESSION_KEY_OBJ, "default");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const ids = result.value.map((r) => r.entry.id);
+    expect(ids).not.toContain(disallowedPinnedId); // external-trust pinned entry must be filtered
+  });
+
+  it("WR-03: pinned lane WARN log on failure includes durationMs", async () => {
+    // WR-03: the WARN emitted when listPinned fails must include durationMs per AGENTS.md §2.7.
+    // Pre-patch: the WARN omits durationMs.
+    // Post-patch: durationMs is present.
+    const warnMock = vi.fn();
+    const failingPinnedStore: MemoryPinnedStore = {
+      async pin() { return ok(true); },
+      async unpin() { return ok(true); },
+      async listPinned() {
+        return { ok: false, error: new Error("simulated listPinned failure") } as Awaited<ReturnType<MemoryPinnedStore["listPinned"]>>;
+      },
+    };
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort([]),
+        pinnedStore: failingPinnedStore,
+        clock: fixedClock,
+        logger: { info: vi.fn(), warn: warnMock, debug: vi.fn() },
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL_SCORING,
+        pinned: { enabled: true, maxPinnedInjection: 5 },
+      }),
+    );
+    await recall.recall("query", SESSION_KEY_OBJ, "default");
+    expect(warnMock).toHaveBeenCalledOnce();
+    const warnPayload = warnMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(warnPayload).toHaveProperty("durationMs"); // AGENTS.md §2.7 requirement
+    expect(typeof warnPayload.durationMs).toBe("number");
+  });
 });

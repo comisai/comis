@@ -27,6 +27,11 @@ export function ensurePinnedColumn(db: Database.Database): void {
   // Partial index: serves listPinned() SELECT WHERE pinned = 1.
   // CREATE INDEX IF NOT EXISTS is safe regardless of whether the column existed.
   // MUST be called AFTER the ALTER (the column must exist for the index expression).
+  //
+  // WR-02: `created_at DESC` in the partial index expression requires SQLite >= 3.38.0
+  // for full covering-index use (DESC in index expressions). The bundled better-sqlite3
+  // v12.10.0 ships SQLite 3.53.0 (verified 2026-06-04), well above 3.38.0 — the sort
+  // is covered and no performance concern exists. This comment is the verification receipt.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_memories_pinned
       ON memories(tenant_id, agent_id, created_at DESC)

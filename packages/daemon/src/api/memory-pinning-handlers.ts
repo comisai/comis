@@ -40,8 +40,11 @@ export function createMemoryPinningHandlers(
       const start = systemNowMs();
       const p = MemoryPinContract.request.parse(stripInternalFields(rawParams));
       const tenantId = p.tenant_id ?? deps.tenantId;
+      // CR-01: forward agent_id from the request so the UPDATE is scoped
+      // to (id, tenant_id, agent_id) — cross-agent pinning within a tenant is impossible.
+      const agentId = p.agent_id;
 
-      const r = await deps.memoryApi.pin(p.id, tenantId);
+      const r = await deps.memoryApi.pin(p.id, tenantId, agentId);
       if (!r.ok) {
         deps.logger?.warn(
           {
@@ -60,6 +63,7 @@ export function createMemoryPinningHandlers(
         {
           id: p.id,
           tenantId,
+          agentId,
           found: r.value,
           durationMs: systemNowMs() - start,
           step: "memory-pin",
@@ -67,7 +71,9 @@ export function createMemoryPinningHandlers(
         "Memory pin complete",
       );
 
-      return { pinned: true as const, id: p.id };
+      // IN-02: surface `found` in the wire response so callers can distinguish
+      // "pinned" from "id not found". found=true: row existed; found=false: not found.
+      return { pinned: true as const, found: r.value, id: p.id };
     },
 
     // -----------------------------------------------------------------------
@@ -83,8 +89,10 @@ export function createMemoryPinningHandlers(
       const start = systemNowMs();
       const p = MemoryUnpinContract.request.parse(stripInternalFields(rawParams));
       const tenantId = p.tenant_id ?? deps.tenantId;
+      // CR-01: forward agent_id from the request.
+      const agentId = p.agent_id;
 
-      const r = await deps.memoryApi.unpin(p.id, tenantId);
+      const r = await deps.memoryApi.unpin(p.id, tenantId, agentId);
       if (!r.ok) {
         deps.logger?.warn(
           {
@@ -103,6 +111,7 @@ export function createMemoryPinningHandlers(
         {
           id: p.id,
           tenantId,
+          agentId,
           found: r.value,
           durationMs: systemNowMs() - start,
           step: "memory-unpin",

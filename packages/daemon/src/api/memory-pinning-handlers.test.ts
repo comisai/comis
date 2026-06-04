@@ -53,7 +53,7 @@ describe("createMemoryPinningHandlers", () => {
   // -------------------------------------------------------------------------
 
   describe("memory.pin", () => {
-    it("memory.pin handler returns {pinned: true} for a valid admin request", async () => {
+    it("memory.pin handler returns {pinned: true, found: true} for a valid admin request", async () => {
       const deps = makeDeps();
       const handlers = createMemoryPinningHandlers(deps);
 
@@ -62,7 +62,8 @@ describe("createMemoryPinningHandlers", () => {
         _trustLevel: "admin",
       });
 
-      expect(result).toEqual({ pinned: true, id: "mem-123" });
+      // IN-02: response now includes `found` to distinguish pinned vs id not found.
+      expect(result).toEqual({ pinned: true, found: true, id: "mem-123" });
     });
 
     it("memory.pin handler throws on non-admin trust level request", async () => {
@@ -99,6 +100,89 @@ describe("createMemoryPinningHandlers", () => {
       await expect(
         handlers["memory.unpin"]!({ id: "mem-456", _trustLevel: "user" }),
       ).rejects.toThrow("Admin access required for memory unpin");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // CR-01: handler must forward agent_id to memoryApi.pin / unpin
+  // -------------------------------------------------------------------------
+
+  describe("CR-01: handler forwards agent_id from request params", () => {
+    it("memory.pin forwards agent_id to memoryApi.pin when provided", async () => {
+      const pinMock = vi.fn(async () => ok(true));
+      const deps = makeDeps({
+        memoryApi: {
+          inspect: vi.fn(() => []),
+          search: vi.fn(async () => []),
+          clear: vi.fn(() => 0),
+          stats: vi.fn(() => ({ totalEntries: 0, byType: {}, byTrustLevel: {}, byAgent: {}, totalSessions: 0, embeddedEntries: 0, dbSizeBytes: 0, oldestCreatedAt: null })),
+          pin: pinMock,
+          unpin: vi.fn(async () => ok(true)),
+        } as never,
+      });
+      const handlers = createMemoryPinningHandlers(deps);
+
+      await handlers["memory.pin"]!({ id: "mem-789", agent_id: "agent-x", _trustLevel: "admin" });
+
+      // The third argument to pin() must be the agent_id from the request.
+      expect(pinMock).toHaveBeenCalledWith("mem-789", expect.anything(), "agent-x");
+    });
+
+    it("memory.unpin forwards agent_id to memoryApi.unpin when provided", async () => {
+      const unpinMock = vi.fn(async () => ok(true));
+      const deps = makeDeps({
+        memoryApi: {
+          inspect: vi.fn(() => []),
+          search: vi.fn(async () => []),
+          clear: vi.fn(() => 0),
+          stats: vi.fn(() => ({ totalEntries: 0, byType: {}, byTrustLevel: {}, byAgent: {}, totalSessions: 0, embeddedEntries: 0, dbSizeBytes: 0, oldestCreatedAt: null })),
+          pin: vi.fn(async () => ok(true)),
+          unpin: unpinMock,
+        } as never,
+      });
+      const handlers = createMemoryPinningHandlers(deps);
+
+      await handlers["memory.unpin"]!({ id: "mem-789", agent_id: "agent-x", _trustLevel: "admin" });
+
+      expect(unpinMock).toHaveBeenCalledWith("mem-789", expect.anything(), "agent-x");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // IN-02: response surfaces found flag
+  // -------------------------------------------------------------------------
+
+  describe("IN-02: pin/unpin response surfaces found flag", () => {
+    it("memory.pin response includes found:true when memoryApi.pin returns ok(true)", async () => {
+      const deps = makeDeps({
+        memoryApi: {
+          inspect: vi.fn(() => []),
+          search: vi.fn(async () => []),
+          clear: vi.fn(() => 0),
+          stats: vi.fn(() => ({ totalEntries: 0, byType: {}, byTrustLevel: {}, byAgent: {}, totalSessions: 0, embeddedEntries: 0, dbSizeBytes: 0, oldestCreatedAt: null })),
+          pin: vi.fn(async () => ok(true)),
+          unpin: vi.fn(async () => ok(true)),
+        } as never,
+      });
+      const handlers = createMemoryPinningHandlers(deps);
+      const result = await handlers["memory.pin"]!({ id: "mem-found", _trustLevel: "admin" });
+      expect(result).toMatchObject({ pinned: true, found: true, id: "mem-found" });
+    });
+
+    it("memory.pin response includes found:false when memoryApi.pin returns ok(false) (id not found)", async () => {
+      const deps = makeDeps({
+        memoryApi: {
+          inspect: vi.fn(() => []),
+          search: vi.fn(async () => []),
+          clear: vi.fn(() => 0),
+          stats: vi.fn(() => ({ totalEntries: 0, byType: {}, byTrustLevel: {}, byAgent: {}, totalSessions: 0, embeddedEntries: 0, dbSizeBytes: 0, oldestCreatedAt: null })),
+          pin: vi.fn(async () => ok(false)),
+          unpin: vi.fn(async () => ok(true)),
+        } as never,
+      });
+      const handlers = createMemoryPinningHandlers(deps);
+      const result = await handlers["memory.pin"]!({ id: "mem-not-found", _trustLevel: "admin" });
+      expect(result).toMatchObject({ pinned: true, found: false, id: "mem-not-found" });
     });
   });
 });

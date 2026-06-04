@@ -868,21 +868,25 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         });
 
         // Budget accounting: subtract pinnedChars from maxContextChars BEFORE sizing
-        // fused recall. Pinned entries are the head of `ranked` (prepended by the recall
-        // pipeline's Step-0 pinned lane). The pinned set is bounded by
-        // cfg.pinned.maxPinnedInjection; extract them by count and format to measure chars.
+        // fused recall. Pinned entries are identified by entry.pinned===true (set by
+        // rowToEntry from the DB column; the recall pipeline's Step-0 lane prepends them).
+        // CR-03: use entry.pinned to identify actual pinned entries rather than a positional
+        // slice(0, maxPinnedInjection). When real pins < cap, the positional slice over-counts
+        // and incorrectly measures fused entries in pinnedChars, silently dropping them from
+        // injector.split. The entry.pinned filter deducts only real-pin chars.
         // pinnedChars is 0 when pinning is disabled (default-off — byte-identical behavior).
-        const maxPinsConfig =
-          config.rag.pinned?.enabled === true ? (config.rag.pinned.maxPinnedInjection ?? 0) : 0;
         const pinnedSet =
-          maxPinsConfig > 0 ? ranked.slice(0, Math.min(maxPinsConfig, ranked.length)) : [];
+          config.rag.pinned?.enabled === true
+            ? ranked.filter((r) => r.entry.pinned === true)
+            : [];
+        const fusedSet = ranked.filter((r) => r.entry.pinned !== true);
         let pinnedChars = 0;
         if (pinnedSet.length > 0) {
           const pinnedSection = formatMemorySection(pinnedSet, config.rag.maxContextChars);
           pinnedChars = pinnedSection ? pinnedSection.length : 0;
         }
         const remainingChars = Math.max(0, config.rag.maxContextChars - pinnedChars);
-        const injection = injector.split(ranked.slice(pinnedSet.length), remainingChars);
+        const injection = injector.split(fusedSet, remainingChars);
 
         inlineMemory = injection.inlineMemory;
         // Own the array — `injection.systemPromptSections` is what telemetry
