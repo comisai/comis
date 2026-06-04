@@ -7,10 +7,10 @@
  * by the memory system. Uses better-sqlite3 for synchronous DDL and
  * sqlite-vec for vector search support (with graceful degradation).
  */
-
 import type Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { initContextSchema } from "./context-schema.js";
+import { ensurePinnedColumn } from "./schema-pinned.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
 let vecAvailable = false;
@@ -600,6 +600,7 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureUserRepresentationTable(db); // per-user representation
   ensureRelationshipTable(db); // directional relationships
   ensureTunedAlphaTable(db); // tuned ranking alphas
+  ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
 
   // --- Observation partial indexes (design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).
