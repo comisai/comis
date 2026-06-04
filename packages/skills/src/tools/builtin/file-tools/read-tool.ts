@@ -242,7 +242,8 @@ async function extractPdfText(
 
     const loadingTask = pdfjs.getDocument({
       data: new Uint8Array(buffer),
-      isEvalSupported: false,
+      // isEvalSupported was removed in pdfjs-dist 5.7: the JS-eval PostScript
+      // path (CVE-2024-4367 surface) no longer exists upstream.
       verbosity: 0,
     });
     const pdf = await loadingTask.promise;
