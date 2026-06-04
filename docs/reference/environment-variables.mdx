@@ -139,12 +139,12 @@ export COMIS_INSECURE=1
 |----------|-------|
 | **Used by** | CLI (`daemon logs` command) |
 | **Format** | Absolute file path |
-| **Default** | `~/.comis/logs/daemon.log` |
+| **Default** | `~/.comis/daemon.console.log` |
 
-Overrides the log file path that the `comis daemon logs` command reads from when systemd is not available. The daemon itself always writes logs to its standard output (redirected to the log file during direct-mode startup).
+Overrides the file that the `comis daemon logs` command reads from when systemd is not available. That file is the daemon's **raw stdout/stderr capture** (`daemon.console.log`), written by the CLI when it spawns the daemon in direct mode — not the structured JSON log. For the structured application logs, read `~/.comis/logs/daemon.1.log` directly.
 
 ```bash
-export COMIS_LOG_PATH="/var/log/comis/daemon.log"
+export COMIS_LOG_PATH="/var/log/comis/daemon.console.log"
 ```
 
 ### `COMIS_OFFLINE`
