@@ -52,6 +52,9 @@ export function createMemoryPortabilityHandlers(
       const exportAgentId = exportParams.agent_id;
       const exportLimit = exportParams.limit ?? 10_000;
 
+      // WR-01: capture start time for accurate durationMs in the completion log.
+      const exportStart = systemNowMs();
+
       const exportEntries = deps.memoryApi.inspect({
         tenantId: exportTenantId,
         agentId: exportAgentId,
@@ -60,16 +63,32 @@ export function createMemoryPortabilityHandlers(
       });
 
       const exportedEntries = exportEntries.map((e) => {
+        // CR-01: scrub ALL free-text fields — not just content — to prevent secret exfil
+        // via source provenance or tags. scrubSecretsFromText only redacts secret-shaped values;
+        // non-secret text (e.g. "operator", "discord") passes through unchanged.
         const { text: scrubbedContent } = scrubSecretsFromText(e.content);
+        const { text: scrubbedSourceWho } = scrubSecretsFromText(
+          typeof e.source.who === "string" ? e.source.who : "",
+        );
+        const rawChannel = (e.source as unknown as { channel?: string }).channel ?? null;
+        const { text: scrubbedChannel } = rawChannel !== null
+          ? scrubSecretsFromText(rawChannel)
+          : { text: null };
+        const rawSessionKey = (e.source as unknown as { sessionKey?: string }).sessionKey ?? null;
+        const { text: scrubbedSessionKey } = rawSessionKey !== null
+          ? scrubSecretsFromText(rawSessionKey)
+          : { text: null };
+        const scrubbedTags = e.tags.map((t) => scrubSecretsFromText(t).text);
+
         return {
           id: e.id,
           content: scrubbedContent,
           trust_level: e.trustLevel,
           memory_type: (e as unknown as { memoryType?: string }).memoryType ?? "semantic",
-          tags: e.tags,
-          source_who: e.source.who,
-          source_channel: (e.source as unknown as { channel?: string }).channel ?? null,
-          source_session_key: (e.source as unknown as { sessionKey?: string }).sessionKey ?? null,
+          tags: scrubbedTags,
+          source_who: scrubbedSourceWho,
+          source_channel: scrubbedChannel,
+          source_session_key: scrubbedSessionKey,
           created_at: e.createdAt,
           occurred_at: (e as unknown as { occurredAt?: number }).occurredAt ?? null,
           proof_count: (e as unknown as { proofCount?: number }).proofCount ?? null,
@@ -97,7 +116,7 @@ export function createMemoryPortabilityHandlers(
           agentId: exportAgentId ?? "all",
           tenantId: exportTenantId,
           entryCount: exportedEntries.length,
-          durationMs: 0,
+          durationMs: systemNowMs() - exportStart,
           step: "memory-portability-export",
         },
         "Memory portability export complete",
@@ -127,6 +146,19 @@ export function createMemoryPortabilityHandlers(
       const importAgentId = importParams.agent_id;
       const importDryRun = importParams.dry_run ?? false;
 
+      // CR-02: fail-closed firewall guard — a missing validator is a wiring mistake.
+      // Silently bypassing the security firewall is more dangerous than refusing the batch.
+      // Production daemon always wires validateMemoryWrite (daemon.ts); this protects against
+      // test-harness wiring errors and future DI mistakes.
+      if (!deps.memoryWriteValidator) {
+        throw new Error(
+          "Memory import requires a memoryWriteValidator — refusing to import without security firewall",
+        );
+      }
+
+      // WR-01: capture start time for accurate durationMs in the completion log.
+      const importStart = systemNowMs();
+
       let importCount = 0;
       let blockedCount = 0;
       let downgradedCount = 0;
@@ -140,65 +172,67 @@ export function createMemoryPortabilityHandlers(
         let entryTrustLevel: "learned" | "external" = "learned";
         const entryExtraTags: string[] = [];
 
-        if (deps.memoryWriteValidator) {
-          const importValidation = deps.memoryWriteValidator(entryContent);
+        const importValidation = deps.memoryWriteValidator(entryContent);
 
-          if (importValidation.severity === "critical") {
-            blockedCount++;
-            deps.logger?.info(
-              {
-                agentId: importAgentId,
-                contentLength: entryContent.length,
-                patterns: importValidation.criticalPatterns,
-                step: "memory-portability-import",
-              },
-              "Memory import blocked: critical security patterns detected",
-            );
-            deps.eventBus?.emit("security:memory_tainted", {
-              timestamp: systemNowMs(),
+        if (importValidation.severity === "critical") {
+          blockedCount++;
+          deps.logger?.info(
+            {
               agentId: importAgentId,
-              originalTrustLevel: String(rawEntry["trust_level"] ?? "learned"),
-              adjustedTrustLevel: "blocked",
+              contentLength: entryContent.length,
               patterns: importValidation.criticalPatterns,
-              blocked: true,
-            });
-            continue;  // skip this entry — do NOT persist; batch continues
-          }
+              step: "memory-portability-import",
+            },
+            "Memory import blocked: critical security patterns detected",
+          );
+          deps.eventBus?.emit("security:memory_tainted", {
+            timestamp: systemNowMs(),
+            agentId: importAgentId,
+            originalTrustLevel: String(rawEntry["trust_level"] ?? "learned"),
+            adjustedTrustLevel: "blocked",
+            patterns: importValidation.criticalPatterns,
+            blocked: true,
+          });
+          continue;  // skip this entry — do NOT persist; batch continues
+        }
 
-          if (importValidation.severity === "warn") {
-            entryTrustLevel = "external";
-            entryExtraTags.push("security-tainted");
-            downgradedCount++;
-            deps.logger?.warn(
-              {
-                agentId: importAgentId,
-                contentLength: entryContent.length,
-                patterns: importValidation.patterns,
-                hint: "Imported memory tainted: trust downgraded to external",
-                errorKind: "validation" as const,
-                step: "memory-portability-import",
-              },
-              "Memory import tainted: suspicious patterns detected",
-            );
-            deps.eventBus?.emit("security:memory_tainted", {
-              timestamp: systemNowMs(),
+        if (importValidation.severity === "warn") {
+          entryTrustLevel = "external";
+          entryExtraTags.push("security-tainted");
+          downgradedCount++;
+          deps.logger?.warn(
+            {
               agentId: importAgentId,
-              originalTrustLevel: String(rawEntry["trust_level"] ?? "learned"),
-              adjustedTrustLevel: "external",
+              contentLength: entryContent.length,
               patterns: importValidation.patterns,
-              blocked: false,
-            });
-          } else {
-            // Clean: use envelope's trust_level, cap at "learned" — never allow "system" via import.
-            const envelopeTrust = String(rawEntry["trust_level"] ?? "learned");
-            entryTrustLevel = envelopeTrust === "external" ? "external" : "learned";
-          }
+              hint: "Imported memory tainted: trust downgraded to external",
+              errorKind: "validation" as const,
+              step: "memory-portability-import",
+            },
+            "Memory import tainted: suspicious patterns detected",
+          );
+          deps.eventBus?.emit("security:memory_tainted", {
+            timestamp: systemNowMs(),
+            agentId: importAgentId,
+            originalTrustLevel: String(rawEntry["trust_level"] ?? "learned"),
+            adjustedTrustLevel: "external",
+            patterns: importValidation.patterns,
+            blocked: false,
+          });
+        } else {
+          // Clean: use envelope's trust_level, cap at "learned" — never allow "system" via import.
+          const envelopeTrust = String(rawEntry["trust_level"] ?? "learned");
+          entryTrustLevel = envelopeTrust === "external" ? "external" : "learned";
         }
 
         if (!importDryRun) {
           const importEntryId = randomUUID();
           const rawTags = rawEntry["tags"];
-          const envelopeTags = Array.isArray(rawTags) ? (rawTags as string[]) : [];
+          // WR-03: filter to string elements only — z.record(z.string(), z.unknown()) allows
+          // non-string array elements in the imported payload; they must not reach the store.
+          const envelopeTags = Array.isArray(rawTags)
+            ? rawTags.filter((t): t is string => typeof t === "string")
+            : [];
 
           const storeEntry = {
             id: importEntryId,
@@ -295,7 +329,7 @@ export function createMemoryPortabilityHandlers(
           downgraded: downgradedCount,
           total: importResult.total,
           dryRun: importDryRun,
-          durationMs: 0,
+          durationMs: systemNowMs() - importStart,
           step: "memory-portability-import",
         },
         "Memory portability import complete",
