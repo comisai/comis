@@ -15,6 +15,7 @@ import {
   sanitizeDocText,
   securityMdViolatesIsolatedVm,
   readmeViolatesSdkIndependence,
+  claimsDocNamesAbsentIsolationLibrary,
 } from "./security-doc-claims.test.js";
 
 describe("security-doc-claims guard detects reverted claims", () => {
@@ -84,5 +85,38 @@ describe("security-doc-claims guard detects reverted claims", () => {
   it("sanitizeDocText strips content from an unclosed tilde fence to end of string", () => {
     const raw = "Normal prose.\n~~~\nisolated-vm example\n(intentionally unclosed tilde fence)";
     expect(/isolated-vm/i.test(sanitizeDocText(raw))).toBe(false);
+  });
+
+  it("claimsDocNamesAbsentIsolationLibrary flags a named library that is absent from deps", () => {
+    const depsWithout = new Set<string>(["bubblewrap"]);
+    expect(
+      claimsDocNamesAbsentIsolationLibrary(
+        "Skills run in isolated-vm sandboxes.",
+        "isolated-vm",
+        depsWithout,
+      ),
+    ).toBe(true);
+  });
+
+  it("claimsDocNamesAbsentIsolationLibrary does not flag a library present in deps", () => {
+    const depsWith = new Set<string>(["isolated-vm"]);
+    expect(
+      claimsDocNamesAbsentIsolationLibrary(
+        "Skills run in isolated-vm sandboxes.",
+        "isolated-vm",
+        depsWith,
+      ),
+    ).toBe(false);
+  });
+
+  it("claimsDocNamesAbsentIsolationLibrary does not flag when library name absent from claims text", () => {
+    const depsWithout = new Set<string>(["bubblewrap"]);
+    expect(
+      claimsDocNamesAbsentIsolationLibrary(
+        "Skills run in bubblewrap OS sandboxes.",
+        "isolated-vm",
+        depsWithout,
+      ),
+    ).toBe(false);
   });
 });

@@ -121,6 +121,22 @@ function escapeRegex(literal: string): string {
   return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Returns true if the combined claims text names `library` as an isolation
+ * mechanism while `library` is absent from the dependency graph.
+ *
+ * This is the per-library check powering the third guard test. Exporting it
+ * allows the meta-test suite to assert RED-state (accidental logic inversion
+ * would go undetected otherwise).
+ */
+export function claimsDocNamesAbsentIsolationLibrary(
+  claimsText: string,
+  library: string,
+  depNames: Set<string>,
+): boolean {
+  return new RegExp(escapeRegex(library), "i").test(claimsText) && !depNames.has(library);
+}
+
 const SECURITY_MD = sanitizeDocText(readDoc("SECURITY.md"));
 const README_MD   = sanitizeDocText(readDoc("README.md"));
 const dependencyNames = collectDependencyNames();
@@ -146,12 +162,10 @@ describe("security documentation claims match the codebase", () => {
     const claimsDocs = `${SECURITY_MD}\n${README_MD}`;
     const isolationLibraries = ["isolated-vm", "vm2"];
     for (const library of isolationLibraries) {
-      if (new RegExp(escapeRegex(library), "i").test(claimsDocs)) {
-        expect(
-          dependencyNames.has(library),
-          `A security claims doc names "${library}" as an isolation mechanism, but it is not a dependency.`,
-        ).toBe(true);
-      }
+      expect(
+        claimsDocNamesAbsentIsolationLibrary(claimsDocs, library, dependencyNames),
+        `A security claims doc names "${library}" as an isolation mechanism, but it is not a dependency.`,
+      ).toBe(false);
     }
   });
 
