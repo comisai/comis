@@ -200,6 +200,25 @@ describe("selectLeafChunk picks the oldest out-of-tail chunk capped + pair-safe"
   it("returns undefined for an empty history", () => {
     expect(selectLeafChunk([], 8, 20_000)).toBeUndefined();
   });
+
+  it("does not treat an assistant with non-array (string) content as a tool_use at the boundary", () => {
+    // An assistant whose content is a bare string (no tool_use blocks) sits at the
+    // chunk boundary — the pair-safety walk must NOT try to pull trailing results.
+    const stringAssistant = { role: "assistant", content: "plain text reply", timestamp: 1000 } as unknown as Message;
+    const history: LeafChunkItem[] = [
+      item("m0", userMsg("u0"), 100, 100),
+      item("m1", stringAssistant, 100, 101),
+      item("m2", userMsg("u2"), 100, 102),
+      item("m3", assistantText("a3"), 100, 103),
+      item("m4", userMsg("u4"), 100, 104),
+      item("m5", assistantText("a5"), 100, 105),
+    ];
+    // Cap 200 stops after 2 messages (u0 + the string assistant). The string
+    // assistant has no tool_use, so the boundary stays at index 2 (no extension).
+    const chunk = selectLeafChunk(history, /*freshTailSteps*/ 2, /*leafChunkTokens*/ 200);
+    expect(chunk).toBeDefined();
+    expect(chunk!.endIndex).toBe(2);
+  });
 });
 
 // ===========================================================================
@@ -295,5 +314,32 @@ describe("summarizeLeafChunk always reduces tokens or falls back deterministical
         .concat((logger.warn as ReturnType<typeof vi.fn>).mock.calls),
     );
     expect(serialized).not.toContain("SECRET-SUMMARY-BODY");
+  });
+
+  it("accepts a Level-2 (aggressive) summary when filtering oversized messages enables reduction", async () => {
+    // One genuinely oversized message (> OVERSIZED_MESSAGE_CHARS_THRESHOLD = 50_000 chars)
+    // plus four normal ones. The stub returns an OVERSIZED string while the huge
+    // message is present (Level 1 fails to reduce), but a SHORT string once the
+    // Level-2 filter has dropped it — so the pass accepts at Level 2.
+    const huge = item("big", userMsg("Z".repeat(60_000)), 20_000, 100);
+    const normal = textHistory(4, 100, 101);
+    const withOversized = [huge, ...normal];
+    const before = chunkTokens(withOversized);
+    // Size-aware stub: reduces only when the oversized message has been filtered out.
+    const summarize: LeafSummarizer = vi.fn(async (messages) => {
+      const hasHuge = messages.some(
+        (m) => JSON.stringify((m as unknown as { content?: unknown }).content ?? "").length > 50_000,
+      );
+      return hasHuge ? "X".repeat(500_000) : "SHORT-L2";
+    });
+    const { deps } = makeDeps(summarize);
+    const result = await summarizeLeafChunk(withOversized, deps, { reserveTokens: 1_200 });
+    expect(result.level).toBe(2);
+    expect(result.fallback).toBe(false);
+    expect(result.content).toBe("SHORT-L2");
+    expect(summaryTokens(result.content)).toBeLessThan(before);
+    // descendantCount still reflects the WHOLE chunk (the leaf covers every message),
+    // even though Level 2 summarized only the filtered subset.
+    expect(result.descendantCount).toBe(withOversized.length);
   });
 });
