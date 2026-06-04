@@ -4,8 +4,11 @@
  * Write-config step -- step 10 of the init wizard.
  *
  * Atomically writes config.yaml and .env files from accumulated
- * WizardState. Creates the data directory. Offers secrets store
- * integration when secrets.db exists.
+ * WizardState. Creates the data directory. The credential storage mode is
+ * chosen earlier (step 02b) and carried on state.storageMode: "encrypted"
+ * persists collected secrets into the encrypted secrets.db and writes a
+ * placeholder .env, "file" writes a plaintext .env. The resolved mode is
+ * emitted as security.storage into config.yaml.
  *
  * @module
  */
@@ -106,6 +109,14 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
   }
 
   config.agents = { default: agentConfig };
+
+  // Security section -- emit the resolved credential storage mode chosen at
+  // step 02b so the daemon's storage mode is explicit + auditable in
+  // config.yaml (init previously never wrote security.storage). AppConfig
+  // accepts a top-level security object with a storage enum.
+  if (state.storageMode) {
+    config.security = { storage: state.storageMode };
+  }
 
   // Gateway section
   if (state.gateway) {
@@ -305,20 +316,11 @@ export const writeConfigStep: WizardStep = {
     const envPath = safePath(configDir, ".env");
     const dataDir = state.dataDir ?? safePath(homedir(), ".comis", "data");
 
-    // 3. Check for secrets store
-    let useSecretsStore = false;
-    const secretsDbPath = safePath(configDir, "secrets.db");
-
-    if (existsSync(secretsDbPath)) {
-      const choice = await prompter.select<string>({
-        message: "Your secrets store is active. Store API keys there instead of .env?",
-        options: [
-          { value: "secrets", label: "Yes -- encrypted at rest (recommended)" },
-          { value: "env", label: "No -- keep in .env (plaintext)" },
-        ],
-      });
-      useSecretsStore = choice === "secrets";
-    }
+    // 3. Storage mode is decided at step 02b and carried on state.storageMode.
+    // "encrypted" routes collected secrets into the encrypted secrets.db (and
+    // writes a placeholder .env); anything else writes a plaintext .env. The
+    // old secrets.db-gated prompt was removed — the choice happens once, early.
+    const useSecretsStore = state.storageMode === "encrypted";
 
     // 4. Build config object
     const configObj = buildConfigObject(state);
