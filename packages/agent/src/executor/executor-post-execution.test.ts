@@ -557,3 +557,197 @@ describe("modelAcknowledgedFailure word-boundary regression", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// LCD afterTurn leaf-pass wiring (Plan 129-06, C1/C3) — RED-first
+//
+// The wiring is PRODUCTION source in packages/agent/src/** (CLAUDE.md
+// Tests-First). It activates the inert contextThreshold config: at the
+// afterTurn boundary, INSIDE the same `if (deps.contextStore)` block as the
+// 128-03 ingest, a thin gated call fires `maybeRunLeafPass` (body in
+// lcd-compaction-trigger.ts) when a `getSummarizerDeps` getter is present.
+//
+// The behavioral proof exercises the call-site wiring helper directly
+// (`runLeafPassAfterTurn`) — scaffolding all 30+ postExecution deps for the full
+// path is impractical (see the markRead block above), so the helper that the
+// `if (deps.contextStore)` block invokes is the testable seam. With a real
+// :memory: store (over-threshold) + a STUB getSummarizerDeps, a leaf summary
+// persists; with getSummarizerDeps absent it is gated off (no summary). Both
+// FAIL on pre-patch code (the helper does not exist) — RED-first. A source-grep
+// locks the call into the `if (deps.contextStore)` block.
+// ---------------------------------------------------------------------------
+describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
+  function readPostExec(): { src: string; stripped: string } {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    return { src, stripped };
+  }
+
+  it("source-grep — the thin gated call to maybeRunLeafPass/runLeafPassAfterTurn lives inside the if (deps.contextStore) block", () => {
+    const { stripped } = readPostExec();
+    // The call site must reference the trigger (via the wiring helper or directly).
+    expect(stripped).toMatch(/maybeRunLeafPass|runLeafPassAfterTurn/);
+    // … and it must sit INSIDE the `if (deps.contextStore)` block: between the
+    // block open and the next top-level statement after the ingest. We slice from
+    // the `if (deps.contextStore)` to the recall-attribution block that follows it.
+    const blockStart = stripped.indexOf("if (deps.contextStore)");
+    expect(blockStart).toBeGreaterThan(-1);
+    const afterBlock = stripped.indexOf("attributeRecallUsage", blockStart);
+    const block = stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
+    expect(block).toMatch(/maybeRunLeafPass|runLeafPassAfterTurn/);
+    // The ingest call is still there too (the leaf call comes AFTER it).
+    expect(block).toMatch(/ingestTurnGuarded/);
+  });
+
+  it("behavior — runLeafPassAfterTurn fires the trigger (a leaf summary persists) when getSummarizerDeps is populated + over threshold", async () => {
+    const [{ default: Database }, memory, core, trigger, summarizerMod, mockLoggerMod] =
+      await Promise.all([
+        import("better-sqlite3"),
+        import("@comis/memory"),
+        import("@comis/core"),
+        import("./lcd-compaction-trigger.js"),
+        import("../context-engine/lcd-leaf-summarizer.js"),
+        import("../../../../test/support/mock-logger.js"),
+      ]);
+    const { initSchema, createLcdStore } = memory as unknown as {
+      initSchema: (db: unknown, dim: number) => void;
+      createLcdStore: (db: unknown) => import("@comis/core").ContextStorePort;
+    };
+    const { messageToParts } = core as unknown as {
+      messageToParts: (m: unknown) => import("@comis/core").LcdMessagePart[];
+    };
+    const { runLeafPassAfterTurn } = trigger as unknown as {
+      runLeafPassAfterTurn: (params: Record<string, unknown>) => Promise<void>;
+    };
+    const createMockLogger = (mockLoggerMod as { createMockLogger: () => unknown }).createMockLogger;
+    type SummarizerDeps = import("../context-engine/lcd-leaf-summarizer.js").LeafSummarizerDeps;
+
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const scope: import("@comis/core").ContextStoreScope = {
+      conversationId: "conv-wire",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "sess-a",
+    };
+
+    // Seed an over-threshold history (40 msgs × 100 stored tokens = 4000;
+    // windowTokens 1000 → utilization 4.0 ≫ 0.75).
+    for (let i = 0; i < 40; i++) {
+      const msg =
+        i % 2 === 0
+          ? ({ role: "user", content: `u${i}`, timestamp: 1000 } as unknown)
+          : ({
+              role: "assistant",
+              content: [{ type: "text", text: `a${i}` }],
+              api: "anthropic.messages",
+              provider: "anthropic",
+              model: "claude-test",
+              usage: { inputTokens: 1, outputTokens: 1 },
+              stopReason: "stop",
+              timestamp: 1000,
+            } as unknown);
+      store.append({
+        scope,
+        seq: i,
+        role: (msg as { role: import("@comis/core").LcdRole }).role,
+        tokenCount: 100,
+        createdAt: 1000 + i,
+        parts: messageToParts(msg),
+      });
+    }
+
+    const logger = createMockLogger();
+    // STUB summarizer (no network) returning a fixed short string.
+    const getSummarizerDeps = (): SummarizerDeps => ({
+      logger: logger as unknown as SummarizerDeps["logger"],
+      summarize: async () => "WIRED-LEAF-SUMMARY",
+      getModel: () => ({ provider: "anthropic", contextWindow: 1_000, reasoning: true }),
+      getApiKey: async () => "test-key",
+    });
+
+    await runLeafPassAfterTurn({
+      store,
+      scope,
+      // config.contextEngine — undefined is allowed (the helper defaults it),
+      // but pass the activated knobs explicitly so the assertion is hermetic.
+      contextEngine: {
+        contextThreshold: 0.75,
+        leafChunkTokens: 20_000,
+        leafTargetTokens: 1_200,
+        freshTailTurns: 8,
+      },
+      getSummarizerDeps,
+      now: 7000,
+      logger,
+      eventBus: undefined,
+    });
+
+    const summaries = store.getSummaries("conv-wire");
+    expect(summaries.length).toBe(1);
+    expect(summaries[0]!.kind).toBe("leaf");
+    expect(summaries[0]!.createdAt).toBe(7000);
+  });
+
+  it("behavior — gated off: no getSummarizerDeps → the post-execution path runs cleanly and persists NO summary", async () => {
+    const [{ default: Database }, memory, core, trigger, mockLoggerMod] = await Promise.all([
+      import("better-sqlite3"),
+      import("@comis/memory"),
+      import("@comis/core"),
+      import("./lcd-compaction-trigger.js"),
+      import("../../../../test/support/mock-logger.js"),
+    ]);
+    const { initSchema, createLcdStore } = memory as unknown as {
+      initSchema: (db: unknown, dim: number) => void;
+      createLcdStore: (db: unknown) => import("@comis/core").ContextStorePort;
+    };
+    const { messageToParts } = core as unknown as {
+      messageToParts: (m: unknown) => import("@comis/core").LcdMessagePart[];
+    };
+    const { runLeafPassAfterTurn } = trigger as unknown as {
+      runLeafPassAfterTurn: (params: Record<string, unknown>) => Promise<void>;
+    };
+    const createMockLogger = (mockLoggerMod as { createMockLogger: () => unknown }).createMockLogger;
+
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const scope: import("@comis/core").ContextStoreScope = {
+      conversationId: "conv-gated",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "sess-a",
+    };
+    for (let i = 0; i < 40; i++) {
+      store.append({
+        scope,
+        seq: i,
+        role: "user",
+        tokenCount: 100,
+        createdAt: 1000 + i,
+        parts: messageToParts({ role: "user", content: `u${i}`, timestamp: 1000 }),
+      });
+    }
+
+    const logger = createMockLogger();
+    // No getSummarizerDeps → the wiring helper must NOT fire the trigger.
+    await expect(
+      runLeafPassAfterTurn({
+        store,
+        scope,
+        contextEngine: undefined,
+        getSummarizerDeps: undefined,
+        now: 7000,
+        logger,
+        eventBus: undefined,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(store.getSummaries("conv-gated").length).toBe(0);
+  });
+});
