@@ -102,21 +102,6 @@ Source: `packages/core/src/config/env-layer.ts:28`
 export COMIS_GATEWAY_PORT=4766
 ```
 
-### `COMIS_GATEWAY_PASSWORD`
-
-| Property | Value |
-|----------|-------|
-| **Used by** | Config substitution |
-| **Format** | String |
-| **Default** | (none) |
-
-Gateway password for password-based authentication. Set during `comis init` when the gateway auth mode is `password`. Referenced in the config file via `${COMIS_GATEWAY_PASSWORD}` substitution. Stored in `~/.comis/.env` alongside other managed credentials.
-
-```bash
-# Typically set automatically by comis init, not manually
-export COMIS_GATEWAY_PASSWORD="my-gateway-password"
-```
-
 ### `COMIS_INSECURE`
 
 | Property | Value |
