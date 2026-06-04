@@ -89,7 +89,9 @@ pnpm validate
 ```
 
 This runs: `docs:check && build:clean && cycles && cycles:refs && lint:security && test:coverage`.
-All gates must pass. Do not use `git push --no-verify` to skip the pre-push hook.
+All gates must pass. Use `git push --no-verify` only for pure-docs, formatting, or
+build-tooling pushes where running the full validate suite adds no value — for all
+code changes it must pass before pushing.
 
 **Allowlists are shrink-only.** If a PR adds a new entry to any architecture allowlist
 (`test/support/architecture-allowlist.ts`, lint suppression comments, etc.), it will
@@ -149,23 +151,26 @@ Do **not** open public GitHub issues for security vulnerabilities. Instead, foll
 
 ## Project Structure
 
-Comis is a pnpm monorepo with 13 packages in the `packages/` directory. Each package has its own `package.json`, source code, and tests. See the [Developer Guide](https://docs.comis.ai/developer-guide) for detailed architecture documentation and package descriptions.
+Comis is a pnpm monorepo with 15 packages in the `packages/` directory. Each package has its own `package.json`, source code, and tests. See the [Developer Guide](https://docs.comis.ai/developer-guide) for detailed architecture documentation and package descriptions.
 
 ```
 comis/
   packages/
-    core/        # Core domain logic, event bus, ports
-    shared/      # Shared types, utilities, constants
-    cli/         # Command-line interface
-    agent/       # AI agent lifecycle and routing
-    memory/      # Storage, embeddings, RAG
-    channels/    # Chat platform adapters
-    skills/      # Skill system and sandbox
-    gateway/     # HTTP gateway and API
-    daemon/      # Background process management
-    scheduler/   # Task scheduling
-    infra/       # Infrastructure utilities
-    web/         # Web UI
+    core/          # Core domain logic, event bus, ports
+    shared/        # Shared types, utilities, constants
+    cli/           # Command-line interface
+    agent/         # AI agent lifecycle and routing
+    memory/        # Storage, embeddings, RAG
+    channels/      # Chat platform adapters
+    skills/        # Skill system and sandbox
+    gateway/       # HTTP gateway and API
+    daemon/        # Background process management
+    scheduler/     # Task scheduling
+    infra/         # Infrastructure utilities
+    web/           # Web UI
+    comis/         # Umbrella published package (bundles all @comis/* deps)
+    observability/ # Telemetry, tracing, metrics
+    orchestrator/  # Execution-graph orchestration
 ```
 
 ## License
