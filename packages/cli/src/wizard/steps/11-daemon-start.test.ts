@@ -56,7 +56,7 @@ vi.mock("@comis/core", async (importOriginal) => {
 });
 
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, openSync } from "node:fs";
 import type { WizardPrompter, WizardState, Spinner } from "../index.js";
 import { daemonStartStep } from "./11-daemon-start.js";
 
@@ -189,6 +189,18 @@ describe("daemonStartStep", () => {
     const spinner = prompter.spinner();
     expect(spinner.start).toHaveBeenCalled();
     expect(spinner.stop).toHaveBeenCalled();
+  });
+
+  it("captures the spawned daemon's stdout/stderr to daemon.console.log (not daemon.log)", async () => {
+    // The launcher's raw process-output capture must NOT collide in name with
+    // the daemon's structured Pino log at ~/.comis/logs/daemon.log.
+    const prompter = createMockPrompter({ select: ["yes"] });
+
+    await daemonStartStep.execute(stateWithGateway(), prompter);
+
+    const openedPaths = vi.mocked(openSync).mock.calls.map((c) => String(c[0]));
+    expect(openedPaths.some((p) => p.endsWith("daemon.console.log"))).toBe(true);
+    expect(openedPaths.some((p) => p.endsWith("/daemon.log"))).toBe(false);
   });
 
   it("health check success -> spinner stops with ready message", async () => {
