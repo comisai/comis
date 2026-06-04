@@ -56,7 +56,7 @@ import { stripDiscoverySchemas } from "./schema-stripping.js";
 // (this file is already over the 800L cap); the call below is a thin gated
 // invocation. The agent↛memory cut: lcd-ingest imports only the core port type
 // + the core codec — never @comis/memory.
-import { ingestTurn } from "./lcd-ingest.js";
+import { ingestTurnGuarded } from "./lcd-ingest.js";
 // In-package pure attribution fn (the agent↛memory cut — core types
 // only; the write-back is the daemon's job, off the recall-used bus event).
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
@@ -860,12 +860,14 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // injected clock, non-fatal (ingestTurn wraps each append per-entry). The
   // body lives in lcd-ingest.ts (this file is over the 800L cap).
   //
-  // Idempotency (T-128-09): `startSeq = getMessages(conversationId).length` is
-  // the persisted high-water mark (survives restarts); `delta =
-  // live.slice(startSeq)` appends only the not-yet-persisted tail. A retry with
-  // no new messages appends nothing. In 128 the dag store is opt-in and is
-  // written ONLY here, so the store count is the single source of truth and
-  // never diverges from the live array.
+  // Idempotency (T-128-09): the high-water mark `getMessages(conversationId).length`
+  // is the persisted count (survives restarts); the delta `live.slice(persisted)`
+  // appends only the not-yet-persisted tail. A retry with no new messages appends
+  // nothing. `ingestTurnGuarded` also guards the WR-01 shrink edge: if a heal ever
+  // reassigns `state.messages` SHORTER than the store, it skips the append and
+  // WARNs (errorKind `precondition`) rather than slicing past the end and either
+  // persisting nothing forever or colliding on the unique (conversationId, seq)
+  // index.
   if (deps.contextStore) {
     const conversationId = formattedKey;
     const scope: ContextStoreScope = {
@@ -877,13 +879,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
     };
-    const persisted = deps.contextStore.getMessages(conversationId).length;
     // The live canonical AgentMessage[] (pi-executor.ts:1118 reads the same
     // ref). Typed as unknown on AgentSession — no public SDK type for it.
     const live =
-      (session.agent as unknown as { state?: { messages?: unknown[] } }).state?.messages ?? [];
-    const delta = live.slice(persisted) as Parameters<typeof ingestTurn>[3];
-    ingestTurn(deps.contextStore, scope, persisted, delta, deps.clock.now(), deps.logger);
+      ((session.agent as unknown as { state?: { messages?: unknown[] } }).state?.messages ??
+        []) as Parameters<typeof ingestTurnGuarded>[2];
+    ingestTurnGuarded(deps.contextStore, scope, live, deps.clock.now(), deps.logger);
   }
 
   // Attribute recall usage + emit the recall-used event (flag-gated, non-fatal).

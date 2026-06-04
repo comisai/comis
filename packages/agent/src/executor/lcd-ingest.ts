@@ -110,3 +110,54 @@ export function ingestTurn(
     );
   }
 }
+
+/**
+ * Guarded afterTurn ingest: derive the not-yet-persisted delta from the store's
+ * persisted high-water mark and append it — but SKIP cleanly (with a WARN) when
+ * the live array is SHORTER than the high-water mark (WR-01).
+ *
+ * The store is strictly append-only, so its count only grows; in steady state
+ * the live array (`session.agent.state.messages`) is the full conversation and
+ * leads the store by the in-flight turn's delta (`live.length >= persisted`),
+ * and `delta = live.slice(persisted)` is the not-yet-persisted tail. But if a
+ * future heal/compaction ever reassigns `state.messages` SMALLER than the store,
+ * `live.slice(persisted)` is empty (a permanent history gap — the turn's real
+ * messages are never persisted) or, on a rewritten tail, re-appends at a `seq`
+ * that already exists — the unique `(conversationId, seq)` index throws, the
+ * per-entry catch in {@link ingestTurn} swallows it, and the high-water mark
+ * never advances past the collision. We detect that divergence and skip the
+ * append, WARNing (errorKind `precondition` — an unmet guard-state, §2.7) so the
+ * divergence is observable rather than silent.
+ *
+ * @param store    The injected core ContextStorePort.
+ * @param scope    The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
+ * @param live     The live canonical AgentMessage[] (the full conversation).
+ * @param now      Injected wall-clock ms (`deps.clock.now()`).
+ * @param logger   For the divergence WARN + the delegated ingest logs.
+ */
+export function ingestTurnGuarded(
+  store: ContextStorePort,
+  scope: ContextStoreScope,
+  live: AgentMessage[],
+  now: number,
+  logger: ComisLogger,
+): void {
+  const persisted = store.getMessages(scope.conversationId).length;
+  if (live.length < persisted) {
+    logger.warn(
+      {
+        conversationId: scope.conversationId,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        liveLen: live.length,
+        persisted,
+        hint: "live array shorter than the LCD store high-water mark — skipping ingest this turn to avoid a seq collision / silent history gap; investigate any heal/compaction that shrank state.messages",
+        errorKind: "precondition" as ErrorKind,
+      },
+      "LCD ingest skipped: live/store divergence",
+    );
+    return;
+  }
+  const delta = live.slice(persisted);
+  ingestTurn(store, scope, persisted, delta, now, logger);
+}
