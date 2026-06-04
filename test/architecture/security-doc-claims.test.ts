@@ -36,6 +36,10 @@ export function sanitizeDocText(raw: string): string {
   text = text.replace(/`{3}[\s\S]*?`{3}/g, "");
   // Strip tilde fenced code blocks
   text = text.replace(/~{3}[\s\S]*?~{3}/g, "");
+  // Strip inline code spans: double-backtick before single-backtick to
+  // avoid partial matches (e.g. ``isolated-vm`` must not leave a stray `)
+  text = text.replace(/``[^`]*``/g, "");
+  text = text.replace(/`[^`\n]+`/g, "");
   return text;
 }
 

@@ -65,4 +65,14 @@ describe("security-doc-claims guard detects reverted claims", () => {
       readmeViolatesSdkIndependence("Comis has no external SDK dependencies.", deps),
     ).toBe(true);
   });
+
+  it("sanitizeDocText strips inline backtick spans so isolated-vm in code syntax does not trigger guard", () => {
+    const raw = "We replaced `isolated-vm` with bubblewrap — see the migration notes.";
+    expect(/isolated-vm/i.test(sanitizeDocText(raw))).toBe(false);
+  });
+
+  it("sanitizeDocText strips double-backtick inline spans containing claim keywords", () => {
+    const raw = "The old sandbox was ``isolated-vm`` — we no longer use it.";
+    expect(/isolated-vm/i.test(sanitizeDocText(raw))).toBe(false);
+  });
 });
