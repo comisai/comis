@@ -35,7 +35,6 @@ import type { ComisLogger, WrapExternalContentOptions } from "@comis/core";
 // Import every platform-tool factory function. Local relative paths because
 // the factory files live under `./tools/`.
 import { createCronTool } from "./tools/cron-tool.js";
-import { createUnifiedContextTool } from "./tools/unified-context-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createDiscordActionTool } from "./tools/discord-action-tool.js";
 import { createTelegramActionTool } from "./tools/telegram-action-tool.js";
@@ -74,10 +73,6 @@ import { createSessionStatusTool } from "./tools/session-status-tool.js";
 import { createSessionsListTool } from "./tools/sessions-list-tool.js";
 import { createSessionsHistoryTool } from "./tools/sessions-history-tool.js";
 import { createSessionSearchTool } from "./tools/session-search-tool.js";
-import { createCtxExpandTool } from "./tools/ctx-expand-tool.js";
-import { createCtxInspectTool } from "./tools/ctx-inspect-tool.js";
-import { createCtxRecallTool } from "./tools/ctx-recall-tool.js";
-import { createCtxSearchTool } from "./tools/ctx-search-tool.js";
 import { createBrowserTool } from "./tools/browser-tool.js";
 import { createListResourcesTool, createReadResourceTool } from "./tools/mcp-resources-tool.js";
 import { createListPromptsTool, createGetPromptTool } from "./tools/mcp-prompts-tool.js";
@@ -152,7 +147,11 @@ export interface PlatformToolBuildContext {
   readonly backgroundTaskManager?: unknown;
   /** Per-agent tool capability port (resolved via daemon's deps map). */
   readonly toolCapabilityPort?: unknown;
-  /** `unified_context` tool's conditional predicate (`"dag"` enables). */
+  /** Per-agent context-engine version signal (`"pipeline"` | `"dag"`). Set by
+   *  setup-tools but currently unconsumed — its only reader, the `unified_context`
+   *  conditional, was removed in Phase 126 (DAG demolition). Retained as a
+   *  harmless optional so the daemon's BuildContext literal stays valid; a
+   *  governed LCD expansion surface re-reads it in Phase 131. */
   readonly contextEngineVersion?: string;
   /** `browser` tool's conditional predicate. */
   readonly builtinToolsBrowserEnabled?: boolean;
@@ -286,34 +285,6 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
         }),
     },
 
-    // ---- context ----
-    {
-      name: "ctx_expand",
-      category: "context",
-      build: (ctx) => createCtxExpandTool(ctx.rpcCall as never),
-    },
-    {
-      name: "ctx_inspect",
-      category: "context",
-      build: (ctx) => createCtxInspectTool(ctx.rpcCall as never),
-    },
-    {
-      name: "ctx_recall",
-      category: "context",
-      build: (ctx) => createCtxRecallTool(ctx.rpcCall as never),
-    },
-    {
-      name: "ctx_search",
-      category: "context",
-      build: (ctx) => createCtxSearchTool(ctx.rpcCall as never),
-    },
-    {
-      name: "unified_context",
-      category: "context",
-      conditional: (ctx) => ctx.contextEngineVersion === "dag",
-      build: (ctx) => createUnifiedContextTool(ctx.rpcCall as never),
-    },
-
     // ---- gateway / observability ----
     {
       name: "gateway",
@@ -416,7 +387,7 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       // an absent/off knob ⇒ the daemon filters it out BEFORE build (the cost gate, the
       // default-OFF byte-identity). `build` always constructs the tool (the schema is
       // static — the parity snapshot captures it regardless of the gate), exactly like
-      // `browser` / `unified_context` / `background_tasks`.
+      // `browser` / `background_tasks`.
       name: "memory_ask",
       category: "memory",
       conditional: (ctx) => ctx.dialecticEnabled === true,

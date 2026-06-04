@@ -80,15 +80,6 @@ export { createExtractDocumentTool } from "./tools/extract-document-tool.js";
 export { createGatewayTool } from "./tools/gateway-tool.js";
 export { createBrowserTool } from "./tools/browser-tool.js";
 
-// Context DAG tools
-export { createCtxSearchTool } from "./tools/ctx-search-tool.js";
-export { createCtxInspectTool } from "./tools/ctx-inspect-tool.js";
-export { createCtxRecallTool } from "./tools/ctx-recall-tool.js";
-export { createCtxExpandTool } from "./tools/ctx-expand-tool.js";
-
-// Unified tools (action dispatch -- consolidates individual tools above)
-export { createUnifiedContextTool } from "./tools/unified-context-tool.js";
-
 // Notifications
 export { createNotifyTool } from "./tools/notify-tool.js";
 

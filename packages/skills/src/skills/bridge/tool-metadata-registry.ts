@@ -82,10 +82,6 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("sessions_list",    { isReadOnly: true });
   registerToolMetadata("session_status",   { isReadOnly: true });
   registerToolMetadata("sessions_history", { isReadOnly: true });
-  registerToolMetadata("ctx_search",  { isReadOnly: true });
-  registerToolMetadata("ctx_inspect", { isReadOnly: true });
-  registerToolMetadata("ctx_expand",  { isReadOnly: true });
-  registerToolMetadata("ctx_recall",  { isReadOnly: true });
 
   registerToolMetadata("image_analyze",    { isReadOnly: true });
   registerToolMetadata("describe_video",   { isReadOnly: true });
@@ -542,12 +538,6 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("extract_document", { searchHint: "pdf csv docx xlsx parse text content extract spreadsheet" });
   registerToolMetadata("browser",          { searchHint: "chrome headless puppeteer navigate click screenshot scrape" });
 
-  // --- Context tools ---
-  registerToolMetadata("ctx_search",  { searchHint: "rag context knowledge semantic embedding retrieve similar" });
-  registerToolMetadata("ctx_inspect", { searchHint: "context detail metadata source provenance inspect entry" });
-  registerToolMetadata("ctx_expand",  { searchHint: "context expand elaborate detail follow-up deeper related" });
-  registerToolMetadata("ctx_recall",  { searchHint: "memory recall remember fact previous mentioned earlier" });
-
   // --- Platform channel actions ---
   registerToolMetadata("discord_action",  { searchHint: "pin kick ban roles threads channels guild server discord" });
   registerToolMetadata("telegram_action", { searchHint: "pin poll sticker admin topics group supergroup telegram" });
@@ -635,11 +625,6 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("session_status",   { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_list",    { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_history", { mcpExportPolicy: "permission-gated" });
-  // Context-engine reads (4) — read-only RAG / embedding views.
-  registerToolMetadata("ctx_search",  { mcpExportPolicy: "permission-gated" });
-  registerToolMetadata("ctx_inspect", { mcpExportPolicy: "permission-gated" });
-  registerToolMetadata("ctx_expand",  { mcpExportPolicy: "permission-gated" });
-  registerToolMetadata("ctx_recall",  { mcpExportPolicy: "permission-gated" });
   // Observability read (1) — operator allowlists by query scope.
   registerToolMetadata("obs_query", { mcpExportPolicy: "permission-gated" });
   // Meta-tool (1) — reveals registered-tools attack surface; per-client allowlist required.

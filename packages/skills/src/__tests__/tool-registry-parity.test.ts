@@ -48,10 +48,6 @@ describe("platform-tool registry parity", () => {
       "browser",
       "channels_manage",
       "cron",
-      "ctx_expand",
-      "ctx_inspect",
-      "ctx_recall",
-      "ctx_search",
       "describe_video",
       "discord_action",
       "extract_document",
@@ -67,7 +63,7 @@ describe("platform-tool registry parity", () => {
       // The opt-in, default-OFF dialectic tool. Registered as a
       // CONDITIONAL descriptor (gated on ctx.dialecticEnabled === true, fed from
       // agentConfig.dialectic.enabled). The parity set pins it exactly as the other
-      // feature-gated conditionals (browser / unified_context / background_tasks) —
+      // feature-gated conditionals (browser / background_tasks) —
       // its presence in the registry's single-source-of-truth set is intentional, and
       // the daemon filters on `conditional` BEFORE build so it is ABSENT from the built
       // tool set when the knob is off (default-OFF byte-identity, the cost gate).
@@ -97,7 +93,6 @@ describe("platform-tool registry parity", () => {
       "tokens_manage",
       "transcribe_audio",
       "tts",
-      "unified_context",
       "whatsapp_action",
     ]);
   });

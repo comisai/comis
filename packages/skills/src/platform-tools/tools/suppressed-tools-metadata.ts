@@ -10,8 +10,8 @@
  * explicitly classified: either a registered LabelSpec OR `suppressActivity:true`.
  * This module supplies the suppress side of that contract, keyed on the EMITTED
  * `AgentTool.name` (which equals the descriptor name for every tool listed here —
- * the four descriptor≠emitted mismatches, `notify`/`unified_context`/`image`/
- * `tts`, all live in the §17.6 set and get a spec instead).
+ * the three descriptor≠emitted mismatches, `notify`/`image`/`tts`, all live in
+ * the §17.6 set and get a spec instead).
  *
  * Imported for its side-effects by `registry.ts` so the metadata is registered
  * at module load, before any registry walk (the gate, or the daemon's tool
@@ -37,12 +37,6 @@ const SUPPRESSED_TOOL_NAMES: readonly string[] = [
   "pipeline",
   "subagents",
   "background_tasks",
-  // context DAG read tools (the unified `context_tool` IS labelled; these
-  // individual read accessors are internal)
-  "ctx_expand",
-  "ctx_inspect",
-  "ctx_recall",
-  "ctx_search",
   // gateway / observability (internal query surfaces)
   "gateway",
   "obs_query",
