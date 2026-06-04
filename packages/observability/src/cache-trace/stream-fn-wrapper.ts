@@ -67,6 +67,89 @@ function sha256(s: string): string {
 }
 
 /**
+ * O2: the SMALL assembled-array shape descriptor recorded on
+ * `stream:context`. Counts/flags + opaque toolCallId strings ONLY — never
+ * block bodies — so it stays well under the 32 KB bound and is NOT in the
+ * sanitizeForPersistence exempt set.
+ */
+interface AssembledShape {
+  /** Number of messages in the assembled provider array. */
+  totalCount: number;
+  /** Count of content blocks bucketed by block `.type` (unknown → "other"). */
+  blockKindCounts: Record<string, number>;
+  /** True when the array carries any tool_result (block or top-level role). */
+  hasToolResult: boolean;
+  /** Opaque call ids of every tool_use / toolCall block. */
+  toolUseIds: string[];
+  /** Opaque call ids of every tool_result block AND top-level toolResult msg. */
+  toolResultIds: string[];
+}
+
+function asString(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
+/**
+ * Walk the assembled provider array and derive its shape descriptor.
+ *
+ * Handles both in-repo content-block conventions defensively:
+ *   - assistant tool calls: `{ type: "tool_use", id }` OR
+ *     `{ type: "toolCall", id | toolCallId }`;
+ *   - tool results: `{ type: "tool_result", tool_use_id | toolCallId }` /
+ *     `{ type: "toolResult", toolCallId }` content blocks, AND the canonical
+ *     pi-ai top-level `{ role: "toolResult", toolCallId }` message.
+ *
+ * The pairing assertion (every toolResultId has a matching toolUseId) is what
+ * the provider-boundary harness rides — the descriptor itself only records the
+ * ids; it does not enforce pairing.
+ */
+function computeAssembledShape(
+  messages: ReadonlyArray<unknown>,
+  messageRoles: ReadonlyArray<string>,
+): AssembledShape {
+  const blockKindCounts: Record<string, number> = {};
+  const toolUseIds: string[] = [];
+  const toolResultIds: string[] = [];
+
+  for (const message of messages) {
+    const role = asString((message as { role?: unknown }).role);
+
+    // Top-level toolResult message (pi-ai ToolResultMessage): the result is
+    // the whole message, keyed by `toolCallId` — there is no content block.
+    if (role === "toolResult") {
+      const tcid = asString((message as { toolCallId?: unknown }).toolCallId);
+      if (tcid !== undefined) toolResultIds.push(tcid);
+    }
+
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      const kind = asString((block as { type?: unknown }).type) ?? "other";
+      blockKindCounts[kind] = (blockKindCounts[kind] ?? 0) + 1;
+      if (kind === "tool_use" || kind === "toolCall") {
+        const id =
+          asString((block as { id?: unknown }).id) ??
+          asString((block as { toolCallId?: unknown }).toolCallId);
+        if (id !== undefined) toolUseIds.push(id);
+      } else if (kind === "tool_result" || kind === "toolResult") {
+        const id =
+          asString((block as { tool_use_id?: unknown }).tool_use_id) ??
+          asString((block as { toolCallId?: unknown }).toolCallId);
+        if (id !== undefined) toolResultIds.push(id);
+      }
+    }
+  }
+
+  return {
+    totalCount: messages.length,
+    blockKindCounts,
+    hasToolResult: toolResultIds.length > 0 || messageRoles.includes("toolResult"),
+    toolUseIds,
+    toolResultIds,
+  };
+}
+
+/**
  * Build a StreamFn wrapper that records `stream:context` BEFORE the
  * call and `model:after` AFTER the call (when the stream's final
  * result resolves).
@@ -93,16 +176,23 @@ export function buildCacheTraceWrapper(trace: CacheTrace): StreamFnWrapper {
           : stableStringify(context.systemPrompt ?? "");
       const systemDigest = sha256(systemPromptText);
 
+      const messageRoles = messages.map((m: unknown) => {
+        const role = (m as { role?: unknown }).role;
+        return typeof role === "string" ? role : "unknown";
+      });
+
       const preCallPayload: Record<string, unknown> = {
         messageCount: messages.length,
-        messageRoles: messages.map((m: unknown) => {
-          const role = (m as { role?: unknown }).role;
-          return typeof role === "string" ? role : "unknown";
-        }),
+        messageRoles,
         messageFingerprints,
         messagesDigest,
         systemDigest,
       };
+      // O2: the SMALL assembled-array shape descriptor (counts/flags + tool
+      // id pairing). Emitted OUTSIDE the includeMessages guard so it is
+      // present even when the full messages array is gated off — it is not a
+      // body dump, so it survives the 32 KB sanitizeForPersistence bound.
+      preCallPayload.assembledShape = computeAssembledShape(messages, messageRoles);
       if (trace.includeMessages) {
         preCallPayload.messages = messages;
       }

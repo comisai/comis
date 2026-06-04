@@ -120,6 +120,24 @@ export const CacheTraceEventSchema = z.object({
   messages: z.array(z.unknown()).optional(),
   messageCount: z.number().int().nonnegative().optional(),
   messageRoles: z.array(z.string()).optional(),
+  // O2 (Phase 126): a SMALL assembled-array shape descriptor — per-message
+  // block-kind counts + a `hasToolResult` flag + tool_use/tool_result
+  // id-pairing summary. It lets a test assert tool_use<->tool_result pairing
+  // + array growth WITHOUT shipping the full `messages` array, so it is
+  // present even when includeMessages is OFF. Counts/flags + opaque
+  // toolCallId strings ONLY — never block bodies — so it stays well under the
+  // 32 KB bound and rides sanitizeForPersistence unchanged (it is NOT added
+  // to the exempt set). The permanent provider-boundary regression gate
+  // asserts against this (see provider-boundary-harness.test.ts).
+  assembledShape: z
+    .object({
+      totalCount: z.number().int().nonnegative(),
+      blockKindCounts: z.record(z.string(), z.number().int().nonnegative()),
+      hasToolResult: z.boolean(),
+      toolUseIds: z.array(z.string()),
+      toolResultIds: z.array(z.string()),
+    })
+    .optional(),
   messageFingerprints: z.array(z.string()).optional(),
   messagesDigest: z.string().optional(),
   system: z.unknown().optional(),
