@@ -204,6 +204,51 @@ describe("buildCacheTraceWrapper", () => {
     ).toThrow("synchronous-throw-from-streamfn");
   });
 
+  it("wrapper_emits_assembledShape_with_toolResult_pairing_even_when_includeMessages_false (O2)", async () => {
+    // O2: the stream:context payload must carry a SMALL assembled-array
+    // shape descriptor (counts/flags + tool_use<->tool_result id pairing)
+    // that survives even when includeMessages is OFF — so a test can assert
+    // tool_use<->tool_result pairing WITHOUT shipping the full messages array.
+    const filePath = join(tmpDir, "trace.jsonl");
+    const trace = makeTrace({ includeMessages: false, filePath });
+    const wrap = buildCacheTraceWrapper(trace);
+
+    // Context whose messages include a tool_use block on an assistant
+    // message and a top-level toolResult message keyed to the same call id.
+    const toolContext: unknown = {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "go" }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "tu_1", name: "read", input: {} }] },
+        { role: "toolResult", toolCallId: "tu_1", content: [{ type: "text", text: "ok" }] },
+      ],
+      systemPrompt: "you are an assistant",
+    };
+
+    const next: StreamFn = ((..._args: unknown[]) =>
+      ({}) as ReturnType<StreamFn>) as StreamFn;
+    const wrapped = wrap(next);
+    wrapped(fakeModel() as Parameters<StreamFn>[0], toolContext as Parameters<StreamFn>[1]);
+
+    await trace.flush();
+    const lines = readLines(filePath);
+    const preCall = lines.find((l) => l.stage === "stream:context");
+    expect(preCall).toBeDefined();
+    // The full messages array stays absent (includeMessages off) — unchanged.
+    expect(preCall!.messages).toBeUndefined();
+    // The small shape descriptor is present even with includeMessages off.
+    const shape = preCall!.assembledShape;
+    expect(shape).toBeDefined();
+    expect(shape!.hasToolResult).toBe(true);
+    expect(shape!.toolUseIds).toContain("tu_1");
+    expect(shape!.toolResultIds).toContain("tu_1");
+    // Pairing invariant: every toolResultId has a matching toolUseId (no orphan).
+    for (const rid of shape!.toolResultIds) {
+      expect(shape!.toolUseIds).toContain(rid);
+    }
+    // totalCount reflects the assembled array length.
+    expect(shape!.totalCount).toBe(3);
+  });
+
   it("wrapper_with_includeMessages_false_omits_messages_field but keeps fingerprints + digest", async () => {
     const filePath = join(tmpDir, "trace.jsonl");
     const trace = makeTrace({ includeMessages: false, filePath });
