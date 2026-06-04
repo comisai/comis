@@ -280,6 +280,8 @@ import * as fsPromises from "node:fs/promises";
 import {
   MemoryPortabilityExportContract,
   MemoryPortabilityImportContract,
+  MemoryPinContract,
+  MemoryUnpinContract,
   type MemoryExportEnvelope,
 } from "@comis/core";
 
@@ -522,5 +524,93 @@ describe("memory export --limit NaN guard (WR-02)", () => {
     }
 
     expect(mockCallTyped).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// memory pin + unpin subcommand behavioral tests (W4)
+// ============================================================================
+
+describe("memory pin subcommand", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockWithClient.mockImplementation(async (fn) => fn({ call: vi.fn(), close: vi.fn(), onNotification: vi.fn() }));
+    mockCallTyped.mockResolvedValue({ pinned: true, id: "mem-test-001" });
+  });
+
+  it("memory pin subcommand calls MemoryPinContract via callTyped", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await program.parseAsync([
+        "node", "test", "memory", "pin", "mem-test-001",
+      ]);
+    } catch {
+      // ignore spinner/output noise
+    } finally {
+      consoleSpy.mockRestore();
+    }
+
+    expect(mockCallTyped).toHaveBeenCalledWith(
+      expect.anything(),
+      MemoryPinContract,
+      expect.objectContaining({ id: "mem-test-001" }),
+    );
+  });
+
+  it("memory pin subcommand registers with --agent and --tenant options", () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+    const memoryCmd = program.commands.find((c) => c.name() === "memory");
+    const pinCmd = memoryCmd!.commands.find((c) => c.name() === "pin");
+    expect(pinCmd).toBeDefined();
+    expect(pinCmd!.options.find((o) => o.long === "--agent")).toBeDefined();
+    expect(pinCmd!.options.find((o) => o.long === "--tenant")).toBeDefined();
+  });
+});
+
+describe("memory unpin subcommand", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockWithClient.mockImplementation(async (fn) => fn({ call: vi.fn(), close: vi.fn(), onNotification: vi.fn() }));
+    mockCallTyped.mockResolvedValue({ unpinned: true, id: "mem-test-002" });
+  });
+
+  it("memory unpin subcommand calls MemoryUnpinContract via callTyped", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await program.parseAsync([
+        "node", "test", "memory", "unpin", "mem-test-002",
+      ]);
+    } catch {
+      // ignore spinner/output noise
+    } finally {
+      consoleSpy.mockRestore();
+    }
+
+    expect(mockCallTyped).toHaveBeenCalledWith(
+      expect.anything(),
+      MemoryUnpinContract,
+      expect.objectContaining({ id: "mem-test-002" }),
+    );
+  });
+
+  it("memory unpin subcommand registers with --agent and --tenant options", () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+    const memoryCmd = program.commands.find((c) => c.name() === "memory");
+    const unpinCmd = memoryCmd!.commands.find((c) => c.name() === "unpin");
+    expect(unpinCmd).toBeDefined();
+    expect(unpinCmd!.options.find((o) => o.long === "--agent")).toBeDefined();
+    expect(unpinCmd!.options.find((o) => o.long === "--tenant")).toBeDefined();
   });
 });
