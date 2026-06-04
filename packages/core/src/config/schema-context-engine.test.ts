@@ -16,7 +16,7 @@ describe("ContextEngineConfigSchema", () => {
     expect(result).toEqual({
       // Core
       enabled: true,
-      version: "dag",
+      version: "pipeline",
       // Shared
       thinkingKeepTurns: 10,
       replayDriftIdleMs: 30 * 60_000,
@@ -191,11 +191,13 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("version", () => {
-    it("version defaults to 'dag' when unset (first-class default)", () => {
-      // DAG is the first-class default engine. New conversations use
-      // the graph-based context engine unless an operator opts out explicitly.
+    it("version defaults to 'pipeline' when unset (Phase 126: pipeline is the live default engine)", () => {
+      // Phase 126 demolition flips the default dag -> pipeline. The working
+      // sequential-layer pipeline engine is now the live default; the dag/LCD
+      // engine is being reimplemented (re-enabled Phase 133) and is not the
+      // default. This is the durable regression gate for the keystone flip.
       const result = ContextEngineConfigSchema.parse({});
-      expect(result.version).toBe("dag");
+      expect(result.version).toBe("pipeline");
     });
 
     it("accepts 'pipeline'", () => {
@@ -203,14 +205,13 @@ describe("ContextEngineConfigSchema", () => {
       expect(result.version).toBe("pipeline");
     });
 
-    it("opt-out: explicit version 'pipeline' still parses to 'pipeline'", () => {
-      // The default flipped pipeline -> dag, but pipeline remains a valid
-      // opt-out: an operator who sets it explicitly keeps the pipeline engine.
-      const result = ContextEngineConfigSchema.parse({ version: "pipeline" });
-      expect(result.version).toBe("pipeline");
-    });
-
-    it("accepts 'dag'", () => {
+    it("guard: explicit version 'dag' still parses to 'dag' (Q2 stub value retained, not narrowed)", () => {
+      // Phase 126 keeps "dag" in the enum as a stub value (NOT narrowed to
+      // ["pipeline"]) so the pipeline|dag mode-switch types stay intact and
+      // the Phase-133 re-enable is a one-line flip. Selecting it does not throw;
+      // the factory falls back to pipeline with a logged warning (see Test C in
+      // packages/agent/src/context-engine/context-engine.test.ts).
+      expect(() => ContextEngineConfigSchema.parse({ version: "dag" })).not.toThrow();
       const result = ContextEngineConfigSchema.parse({ version: "dag" });
       expect(result.version).toBe("dag");
     });
