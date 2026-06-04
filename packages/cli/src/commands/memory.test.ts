@@ -124,8 +124,8 @@ describe("registerMemoryCommand", () => {
   });
 });
 
-describe("memory search error handling", () => {
-  it("handles daemon not running gracefully", async () => {
+describe("memory search fail-closed (DAG context engine demolished, v2.12)", () => {
+  it("fails closed with a not-available message and non-zero exit", async () => {
     const program = new Command();
     program.exitOverride();
     registerMemoryCommand(program);
@@ -141,7 +141,7 @@ describe("memory search error handling", () => {
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
       const errOutput = consoleErrSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-      expect(errOutput).toContain("Failed to search memory");
+      expect(errOutput).toContain("memory search is unavailable");
     } finally {
       consoleSpy.mockRestore();
       consoleErrSpy.mockRestore();
@@ -207,8 +207,8 @@ describe("memory clear safety checks", () => {
   });
 });
 
-describe("memory inspect error handling", () => {
-  it("handles daemon not running gracefully", async () => {
+describe("memory inspect fail-closed (DAG context engine demolished, v2.12)", () => {
+  it("fails closed with a not-available message and non-zero exit", async () => {
     const program = new Command();
     program.exitOverride();
     registerMemoryCommand(program);
@@ -224,7 +224,7 @@ describe("memory inspect error handling", () => {
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
       const errOutput = consoleErrSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-      expect(errOutput).toContain("Failed to inspect memory entry");
+      expect(errOutput).toContain("memory inspect is unavailable");
     } finally {
       consoleSpy.mockRestore();
       consoleErrSpy.mockRestore();
