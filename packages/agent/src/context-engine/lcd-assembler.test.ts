@@ -202,11 +202,17 @@ describe("createLcdContextEngine", () => {
     ];
     for (let i = 0; i < persisted.length; i++) append(store, persisted[i] as Message, i);
 
-    // The LIVE array carries ONLY the trailing assistant("done") (the fresh tail).
-    // The tu_1 tool_use + its result exist ONLY in the store — so finding them in
-    // the output PROVES history was reconstructed from the store (an identity
-    // pass-through of the live array could not produce them).
-    const live: AgentMessage[] = [assistantText("done") as AgentMessage];
+    // The LIVE array is the FULL canonical conversation (the SDK passes
+    // `session.agent.state.messages`, never a tail-only slice). With
+    // freshTailTurns=1 the fresh tail is just the trailing assistant("done")
+    // (index 3), so the tu_1 tool_use + its result fall in the history prefix
+    // [0,3) — which the assembler takes from the STORE rows (`history[i]`), NOT
+    // from the live array. The live tu_1/toolResult blocks here are plain
+    // `tool_use`/top-level casts; the store rows are codec-reconstructed canonical
+    // blocks, so finding the STRUCTURED `toolCall` block + paired top-level
+    // toolResult in the output PROVES the history prefix was reconstructed from
+    // the store via the codec.
+    const live: AgentMessage[] = persisted as AgentMessage[];
     const { deps } = makeDeps(store);
     const engine = createLcdContextEngine(dagConfig(1), deps);
     const out = await engine.transformContext(live);
@@ -224,6 +230,12 @@ describe("createLcdContextEngine", () => {
     expect((tr as unknown as { toolCallId: string }).toolCallId).toBe("tu_1");
     // And the user message from history is present (store-sourced).
     expect(out.some((m) => roleOf(m) === "user")).toBe(true);
+    // Store-source proof (codec read path): the emitted history-prefix assistant
+    // is the codec-RECONSTRUCTED row, NOT the live array's object at that index —
+    // a referentially-DISTINCT message. (If the assembler had passed the live
+    // prefix through instead of reconstructing from the store, this would be the
+    // SAME object and the round-trip the loop bug broke would be untested.)
+    expect(historyAssistant).not.toBe(live[1]);
   });
 
   it("Test 4: transcript repair runs LAST — an unpaired tool_use gets a synthesized result", async () => {

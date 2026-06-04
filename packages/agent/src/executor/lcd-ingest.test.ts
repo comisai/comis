@@ -274,8 +274,12 @@ describe("ingestTurn", () => {
     // WRITE-PATH: ingest the whole turn at afterTurn (startSeq 0 — empty store).
     ingestTurn(store, SCOPE, 0, turn, FIXED_NOW, logger);
 
-    // READ-PATH: the Plan-02 assembler reconstructs history FROM THE STORE. Pass an
-    // empty live array so EVERYTHING the assembler emits came from what ingest wrote.
+    // READ-PATH: the Plan-02 assembler reconstructs history FROM THE STORE. The
+    // live array is the FULL canonical conversation (the SDK passes
+    // `state.messages`, never a tail-only slice — CR-01); with freshTailTurns=1
+    // the fresh tail is just the trailing assistant, so the tu_1 step falls in the
+    // history prefix [0,3) which the assembler takes from the STORE rows (the
+    // codec round-trip), proving the write→read→assemble path the loop bug broke.
     const mockLogger = createMockLogger();
     const deps: ContextEngineDeps = {
       logger: mockLogger as unknown as ContextEngineDeps["logger"],
@@ -286,7 +290,7 @@ describe("ingestTurn", () => {
       sessionKey: "sess-a",
     };
     const engine = createLcdContextEngine(dagConfig(1), deps);
-    const out = await engine.transformContext([assistantText("here is the file") as AgentMessage]);
+    const out = await engine.transformContext(turn);
 
     // The tool_use BLOCK survives with its stable id (the codec round-trip — NOT
     // flattened to text), and the top-level toolResult is paired to it.

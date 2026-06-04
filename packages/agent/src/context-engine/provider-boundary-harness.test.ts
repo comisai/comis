@@ -444,9 +444,14 @@ describe("provider-boundary harness — assembled array invariants (O2)", () => 
 
     // ── Sub-case B: exercise the CODEC READ path — with freshTailTurns=1 only
     //    the trailing assistant("done") is the fresh tail, so the tu_1 tool_use
-    //    + its toolResult come back from the STORE-reconstructed history (not the
-    //    live array). The pairing + presence invariants must STILL hold — this is
-    //    the round-trip the flatten-to-text loop bug broke. ───────────────────
+    //    + its toolResult fall in the history prefix [0,tailStart), which the
+    //    assembler reconstructs from the STORE rows (the codec round-trip), NOT
+    //    from the live array's tail. The live array is the FULL conversation
+    //    (the SDK passes `state.messages`, never a tail-only slice — CR-01); with
+    //    freshTailTurns=1 the boundary lands at the trailing assistant so the
+    //    earlier tu_1 step is store-sourced. The pairing + presence invariants
+    //    must STILL hold — this is the round-trip the flatten-to-text loop bug
+    //    broke. ─────────────────────────────────────────────────────────────
     const dbB = new Database(":memory:");
     initSchema(dbB, 1536);
     const storeB = createLcdStore(dbB);
@@ -455,7 +460,7 @@ describe("provider-boundary harness — assembled array invariants (O2)", () => 
 
     const turnFromHistory = await recordTurnWith(
       engineB,
-      [dagAssistantText("done")], // ONLY the fresh tail is live; history is store-sourced
+      toolTurn, // full conversation live; history prefix [0,3) is store-sourced
       join(tmpDir, "dag-from-history.jsonl"),
     );
 

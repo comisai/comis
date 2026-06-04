@@ -19,8 +19,11 @@
  *       stay DISTINCT variables: the Phase-129 budget pass slots a
  *       `compactHistoryUnderBudget(history, …)` call between steps 2 and 4 and
  *       touches ONLY `history`, never `freshTail` (the A3 structural seam). The
- *       overlap is de-duped by count so a message present in BOTH the store and
- *       the fresh-tail slice does not double (the fresh tail is authoritative).
+ *       history prefix is bounded by the LIVE array's own fresh-tail boundary
+ *       (`tailStart`), reconstructed-from-store where a row exists — drop-free
+ *       and double-free whether the live array leads the store (the normal
+ *       mid-turn case) or has been shrunk by a heal (the fresh tail is
+ *       authoritative for its range).
  *  5.   NORMALIZE — assistant string content -> `[{ type: "text", text }]`
  *       (pure, non-mutating; tool blocks untouched).
  *  6.   TRANSCRIPT REPAIR — `sanitizeToolUseResultPairing` runs LAST (A2), so the
@@ -105,10 +108,15 @@ export function createLcdContextEngine(
       );
 
       // 4. CONCAT — NO compaction in 128. Keep `history` (evictable prefix) and
-      //    `freshTail` (protected suffix) DISTINCT (the 129 seam). De-dup the
-      //    overlap so a message in BOTH the store and the fresh tail does not
-      //    double; transcript repair (step 6) re-pairs the seam regardless.
-      const assembled = [...historyBeforeTail(history, freshTail), ...freshTail];
+      //    `freshTail` (protected suffix) DISTINCT (the 129 seam). The fresh tail
+      //    covers live[tailStart..]; the history prefix is live[0..tailStart),
+      //    reconstructed-from-store where a row exists. Bounding off the LIVE
+      //    array's own boundary (not a count subtraction against a differently-
+      //    sized store) is drop-free and double-free for BOTH L>H (mid-turn: the
+      //    store lags the live array by the in-flight turn's delta — CR-01) and
+      //    L<=H (a heal/compaction shrank the live array — WR-01). Transcript
+      //    repair (step 6) re-pairs the seam regardless.
+      const assembled = [...historyPrefixForTail(history, liveMessages, tailStart), ...freshTail];
 
       // 5. NORMALIZE assistant string content to array blocks.
       const normalized = assembled.map(normalizeAssistantContent);
@@ -162,16 +170,46 @@ export function freshTailBoundaryIndex(messages: AgentMessage[], freshTailSteps:
 // ---------------------------------------------------------------------------
 
 /**
- * The history-prefix NOT covered by the fresh-tail slice. The fresh-tail slice
- * (the live array) is authoritative for its range, so we exclude the reconstructed
- * history rows that overlap it. The live array carries no `seq`, so we reconcile
- * by COUNT: in 128 there is no compaction, so the store history and the live array
- * are 1:1 — `history` covers `[0, history.length - freshTail.length)`. A boundary
- * that lands mid-pair cannot reach the provider unpaired because transcript repair
- * (step 6) re-pairs the final array regardless (T-128-06).
+ * The history prefix NOT covered by the fresh-tail slice, bounded by the LIVE
+ * array's own boundary (`tailStart`) rather than a count subtraction against a
+ * differently-sized store.
+ *
+ * The fresh tail covers `live[tailStart..]`; this prefix is `live[0..tailStart)`,
+ * reconstructed-from-store (verbatim codec, stable ids) where a row exists for
+ * that index, falling back to the live message when the store has not yet
+ * persisted it. Keying off the live boundary (not `history.length − freshTail.length`)
+ * is what makes the seam drop-free and double-free regardless of how `live.length`
+ * relates to `store.length`:
+ *
+ *  - **L > H (the normal mid-turn case, CR-01):** `transformContext` runs before
+ *    every LLM call but the store is written only at afterTurn, so the live array
+ *    leads the store by the in-flight turn's not-yet-persisted delta. The store
+ *    rows cover `[0, history.length)`; indices in `[history.length, tailStart)`
+ *    fall back to the live message — no contiguous mid-history block is dropped.
+ *  - **L <= H (a heal/compaction shrank the live array, WR-01):** the loop runs
+ *    only up to `tailStart < live.length`, so the store's EXTRA tail rows are
+ *    never over-included and nothing doubles at the seam.
+ *
+ * Positional alignment assumption: `live[0..tailStart)` lines up with
+ * `store[0..tailStart)` while the store is strictly append-only and the live
+ * prefix is the persisted prefix (the WR-01 shrink guard on the ingest side keeps
+ * the store from advancing past a shrunk live array). A boundary that lands
+ * mid-pair cannot reach the provider unpaired because transcript repair (step 6)
+ * re-pairs the final array regardless (T-128-06).
  */
-function historyBeforeTail(history: AgentMessage[], freshTail: AgentMessage[]): AgentMessage[] {
-  return history.slice(0, Math.max(0, history.length - freshTail.length));
+function historyPrefixForTail(
+  history: AgentMessage[],
+  liveMessages: AgentMessage[],
+  tailStart: number,
+): AgentMessage[] {
+  const prefix: AgentMessage[] = [];
+  for (let i = 0; i < tailStart; i++) {
+    // Store row if persisted for this index, else the live message (the store
+    // lags the live array mid-turn). `as AgentMessage` narrows the reconstructed
+    // codec row, identical to step 1+2's `history` typing.
+    prefix.push((i < history.length ? history[i] : liveMessages[i]) as AgentMessage);
+  }
+  return prefix;
 }
 
 /**
