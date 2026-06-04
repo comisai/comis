@@ -39,6 +39,40 @@ describe("DEFAULT_TEMPLATES workspace prose invariants", () => {
     expect(agentsMd).toContain("projects/<name>/.venv");
   });
 
+  // -------------------------------------------------------------------------
+  // 2026-06-04 fix: the workspace templates used to instruct the agent to
+  // `read` the four identity files (SOUL/IDENTITY/USER/BOOTSTRAP) that are
+  // ALREADY inlined into the system prompt. A model took that literally and
+  // looped ~150 identical reads in one turn until it hit maxSteps. These
+  // invariants lock the reworded prose: reference the inlined files in
+  // context, never tool-read them; still WRITE IDENTITY.md / USER.md.
+  // -------------------------------------------------------------------------
+
+  it("AGENTS.md template must not instruct reading the inlined identity files with the read tool", () => {
+    const agentsMd = DEFAULT_TEMPLATES["AGENTS.md"];
+    expect(agentsMd).not.toContain("Read `SOUL.md`");
+    expect(agentsMd).not.toContain("Read `USER.md`");
+    expect(agentsMd).not.toContain("Read `IDENTITY.md`");
+  });
+
+  it("AGENTS.md template must state the identity files are already in context (inlined)", () => {
+    const agentsMd = DEFAULT_TEMPLATES["AGENTS.md"];
+    expect(agentsMd).toContain("already in your context");
+  });
+
+  it("BOOTSTRAP.md template must not instruct reading or opening SOUL.md with a tool", () => {
+    const bootstrapMd = DEFAULT_TEMPLATES["BOOTSTRAP.md"];
+    expect(bootstrapMd).not.toContain("Read SOUL.md's");
+    expect(bootstrapMd).not.toContain("open `SOUL.md`");
+  });
+
+  it("BOOTSTRAP.md template must still instruct writing IDENTITY.md and USER.md during onboarding", () => {
+    const bootstrapMd = DEFAULT_TEMPLATES["BOOTSTRAP.md"];
+    expect(bootstrapMd).toContain("update\nIDENTITY.md and USER.md");
+    expect(bootstrapMd).toContain("`IDENTITY.md` -- your name");
+    expect(bootstrapMd).toContain("`USER.md` -- their name");
+  });
+
   it("PLATFORM_OWNED_FILES union USER_OWNED_FILES equals WORKSPACE_FILE_NAMES (exhaustive partition)", () => {
     const union = [...PLATFORM_OWNED_FILES, ...USER_OWNED_FILES].slice().sort();
     const all = [...WORKSPACE_FILE_NAMES].slice().sort();
