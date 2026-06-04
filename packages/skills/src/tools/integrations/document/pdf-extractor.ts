@@ -6,7 +6,8 @@
  * Extracts text page-by-page with maxPages limit, encrypted PDF detection,
  * AbortController timeout protection, and lazy loading of pdfjs-dist.
  *
- * Security: isEvalSupported set to false (CVE-2024-4367 mitigation).
+ * Security: pdfjs-dist >= 5.7 removed the JS-eval PostScript path entirely
+ * (formerly mitigated here via isEvalSupported: false for CVE-2024-4367).
  *
  * @module
  */
@@ -74,7 +75,7 @@ const VISION_PROMPT =
  * 2. Size check against config.maxBytes
  * 3. Lazy load pdfjs-dist via dynamic import
  * 4. AbortController timeout setup
- * 5. Load PDF document (isEvalSupported: false, verbosity: 0)
+ * 5. Load PDF document (verbosity: 0)
  * 6. Page-by-page text extraction (sequential, respects maxPages)
  * 7. Concatenate pages with "\n\n", truncate at maxChars
  * 8. Return FileExtractionResult with pageCount and totalPages
@@ -128,7 +129,8 @@ export function createPdfExtractor(deps: PdfExtractorDeps): FileExtractionPort {
         // 5. Load PDF document
         const loadingTask = pdfjs.getDocument({
           data: new Uint8Array(buffer),
-          isEvalSupported: false, // SECURITY: CVE-2024-4367 mitigation
+          // SECURITY: isEvalSupported was removed in pdfjs-dist 5.7 — the
+          // JS-eval PostScript path (CVE-2024-4367 surface) no longer exists.
           verbosity: 0, // Suppress "Setting up fake worker" warning
         });
         const pdf = await loadingTask.promise;
