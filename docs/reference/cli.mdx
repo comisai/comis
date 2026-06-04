@@ -677,6 +677,8 @@ Memory management and recall-diagnostics commands for searching, inspecting, and
 | `memory observations` | List observation provenance (sources + history) — **admin** |
 | `memory entities` | List an agent's entity graph, most-mentioned first — **admin** |
 | `memory clear` | Clear memory entries matching a filter |
+| `memory export` | Export agent memory to a secret-scrubbed versioned JSON file — **admin** |
+| `memory import <file>` | Import memory from a `comis-memory-export-v1` JSON envelope — **admin** |
 
 <Note>
 `memory recall-trace`, `memory observations`, and `memory entities` are **admin-gated** and **(tenant, agent)-scoped** — they require an admin-scoped gateway token and operate within the caller's tenant/agent scope.
@@ -750,6 +752,55 @@ List an agent's entity graph, most-mentioned first. **Admin-gated** and (tenant,
 
 <Warning>At least one filter (`--filter` or `--tenant`) is required. This safety check prevents accidental blanket clears.</Warning>
 
+#### `memory export`
+
+Export an agent's memory to a versioned, secret-scrubbed JSON file. **Admin-gated.**
+
+```
+comis memory export --agent <agentId> [--output <path>] [--limit <n>]
+```
+
+The output file uses the `comis-memory-export-v1` envelope format. Every `content` field is
+run through the secret scrubber before being written — secrets matching known patterns (API
+keys, tokens) are replaced with `[REDACTED]`. The file is written with permissions `0600`
+(owner read/write only).
+
+The daemon returns the scrubbed payload over RPC; the CLI writes the file locally. This design
+means `memory export` works correctly even when the daemon runs under `node --permission` (which
+disables fd-based filesystem APIs on the daemon side).
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--agent <agentId>` | `string` | — | Agent whose memory to export (required) |
+| `--output <path>` | `string` | `comis-memory-<agentId>-<timestamp>.json` | Output file path |
+| `--limit <n>` | `string` | `10000` | Maximum entries to export |
+
+#### `memory import`
+
+Import memory from a `comis-memory-export-v1` JSON envelope into a target agent scope. **Admin-gated.**
+
+```
+comis memory import <file> --agent <agentId> [--dry-run]
+```
+
+The CLI validates the envelope's `schemaVersion` before sending anything to the daemon.
+Files with a mismatched or missing `schemaVersion` are rejected with a non-zero exit code
+(fail-closed: no data is sent to the daemon).
+
+Every entry is routed through the memory-poisoning firewall on the daemon:
+- **CRITICAL** entries (secret-bearing content) are blocked — not persisted, counted in `blocked`.
+- **WARN** entries (jailbreak-pattern content) are stored at downgraded `external` trust with
+  a `security-tainted` tag, counted in `downgraded`.
+- **Clean** entries are stored at `learned` trust (capped — `system` trust cannot be imported).
+
+Import re-stamps `tenantId` and `agentId` to the target scope. The envelope's `scope` field
+is metadata only and is never used for writes.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--agent <agentId>` | `string` | — | Target agent to import into (required) |
+| `--dry-run` | `boolean` | `false` | Report blocked/downgraded counts without writing |
+
 ```bash
 # Search memory
 comis memory search "project requirements" --limit 5
@@ -769,6 +820,13 @@ comis memory entities --agent default --limit 100
 
 # Clear conversation memory for a specific tenant
 comis memory clear --tenant default --filter memoryType=conversation --yes
+
+# Export an agent's memory to a file (secrets scrubbed, 0600 permissions)
+comis memory export --agent default --output backup.json
+
+# Import from a backup envelope (dry-run first to preview firewall counts)
+comis memory import backup.json --agent default --dry-run
+comis memory import backup.json --agent default
 ```
 
 <Note>
