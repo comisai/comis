@@ -73,6 +73,13 @@ export type { InjectionType, CredentialMapping } from "./credential-mapping.js";
 export { SecretRefSchema, isSecretRef, SecretRefOrStringSchema } from "./secret-ref.js";
 export type { SecretRef } from "./secret-ref.js";
 
+export {
+  MemoryExportEnvelopeSchema,
+  MemoryExportEntrySchema,
+  parseMemoryExportEnvelope,
+} from "./memory-export-envelope.js";
+export type { MemoryExportEnvelope, MemoryExportEntry } from "./memory-export-envelope.js";
+
 export { DeliveryOriginSchema, createDeliveryOrigin } from "./delivery-origin.js";
 export type { DeliveryOrigin } from "./delivery-origin.js";
 
