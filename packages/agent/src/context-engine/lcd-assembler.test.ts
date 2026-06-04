@@ -327,6 +327,101 @@ describe("createLcdContextEngine", () => {
     expect(tu1Calls).toBe(1);
     expect(tu1Results).toBe(1);
   });
+
+  it("Test 8: mid-turn (live LONGER than store) drops NO middle-history message and doubles NONE (CR-01)", async () => {
+    // THE PRODUCTION STATE the count-subtraction de-dup got wrong. `transformContext`
+    // runs BEFORE every LLM call mid-turn, but the store is written only at
+    // afterTurn — so the live array always carries the current turn's
+    // not-yet-persisted messages and `live.length (L) > store.length (H)`.
+    //
+    // Persist the PERSISTED PREFIX ONLY: 9 completed messages (u0..a3 then u4).
+    const persistedPrefix: Message[] = [
+      userMsg("u0"),
+      assistantText("a0"),
+      userMsg("u1"),
+      assistantText("a1"),
+      userMsg("u2"),
+      assistantText("a2"),
+      userMsg("u3"),
+      assistantText("a3"),
+      userMsg("u4"),
+    ];
+    for (let i = 0; i < persistedPrefix.length; i++) append(store, persistedPrefix[i] as Message, i);
+
+    // The LIVE array = the persisted prefix (9) PLUS the in-flight turn's 3
+    // not-yet-persisted messages (a4, u5, a5). L=12, H=9, L−H=3.
+    const live: AgentMessage[] = [
+      ...(persistedPrefix as AgentMessage[]),
+      assistantText("a4") as AgentMessage,
+      userMsg("u5") as AgentMessage,
+      assistantText("a5") as AgentMessage,
+    ];
+
+    const { deps } = makeDeps(store);
+    // freshTailTurns=2 → tailStart = 2nd-from-last assistant = index 9 (a4),
+    // freshTail=[a4,u5,a5] (len 3). The buggy slice keeps history[0..H−F)=
+    // history[0..6) and DROPS the contiguous mid-history block [u3,a3,u4]
+    // (store indices 6,7,8) — the fresh tail does NOT re-add them.
+    const engine = createLcdContextEngine(dagConfig(2), deps);
+    const out = await engine.transformContext(live);
+
+    // Every conversation message appears EXACTLY ONCE — no middle-block drop,
+    // no double at the seam. Project to the user/assistant text payloads.
+    const texts = out.map((m) => {
+      const c = (m as unknown as { content: unknown }).content;
+      if (typeof c === "string") return c;
+      const arr = c as { type: string; text?: string }[];
+      const t = arr.find((b) => b.type === "text");
+      return t?.text ?? "";
+    });
+    expect(texts).toEqual(["u0", "a0", "u1", "a1", "u2", "a2", "u3", "a3", "u4", "a4", "u5", "a5"]);
+
+    // The fresh tail is the LIVE tail: the trailing 3 are the live objects verbatim.
+    expect(out[9]).toBe(live[9]);
+    expect(out[10]).toBe(live[10]);
+    expect(out[11]).toBe(live[11]);
+  });
+
+  it("Test 9: live array SHRINKS below the store count — assembler over-includes nothing, doubles nothing (WR-01)", async () => {
+    // A future heal/compaction could reassign state.messages SMALLER than the
+    // append-only store. The assembler seam must stay robust to live.length <=
+    // store.length: no negative slice, no double at the join.
+    const persisted: Message[] = [
+      userMsg("u0"),
+      assistantText("a0"),
+      userMsg("u1"),
+      assistantText("a1"),
+      userMsg("u2"),
+      assistantText("a2"),
+    ];
+    for (let i = 0; i < persisted.length; i++) append(store, persisted[i] as Message, i);
+
+    // Live array is SHORTER than the store (4 < 6).
+    const live: AgentMessage[] = [
+      userMsg("u0") as AgentMessage,
+      assistantText("a0") as AgentMessage,
+      userMsg("u1") as AgentMessage,
+      assistantText("a1") as AgentMessage,
+    ];
+
+    const { deps } = makeDeps(store);
+    // freshTailTurns=1 → tailStart = last assistant = index 3 (a1); freshTail=[a1].
+    // historyPrefix = live[0..3) reconstructed from store rows (all persisted).
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    const out = await engine.transformContext(live);
+
+    const texts = out.map((m) => {
+      const c = (m as unknown as { content: unknown }).content;
+      if (typeof c === "string") return c;
+      const arr = c as { type: string; text?: string }[];
+      const t = arr.find((b) => b.type === "text");
+      return t?.text ?? "";
+    });
+    // Exactly the live array's own conversation, each message once — the store's
+    // EXTRA rows (u2,a2) are NOT over-included, and a1 is NOT doubled at the seam.
+    expect(texts).toEqual(["u0", "a0", "u1", "a1"]);
+    expect(texts.filter((t) => t === "a1")).toHaveLength(1);
+  });
 });
 
 describe("createContextEngine dag fallback (Test 6)", () => {
