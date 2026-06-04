@@ -26,6 +26,11 @@ import { dirname, resolve } from "node:path";
 // (and pulling the full module would break unrelated workspace helpers).
 vi.mock("@comis/core", () => ({
   safePath: vi.fn((...parts: string[]) => parts.join("/")),
+  writeMasterKeyIfAbsent: vi.fn(() => ({
+    written: true,
+    path: "/home/test/.comis/.env",
+    keyHex: "f".repeat(64),
+  })),
   createModelCatalog: vi.fn(() => ({
     loadStatic: vi.fn(),
     getAll: vi.fn(() => [
@@ -45,6 +50,7 @@ vi.mock("node:crypto", () => ({
   randomBytes: vi.fn(() => ({ toString: () => "ab".repeat(24) })),
 }));
 
+import { writeMasterKeyIfAbsent } from "@comis/core";
 import {
   validateNonInteractiveOptions,
   buildNonInteractiveState,
@@ -452,12 +458,13 @@ describe("buildNonInteractiveState", () => {
     expect(state.dataDir).toBe("/custom/data");
   });
 
-  it("includes all 10 interactive steps in completedSteps", () => {
+  it("includes all interactive steps (incl. storage) in completedSteps", () => {
     const state = buildNonInteractiveState(validOpts());
     expect(state.completedSteps).toEqual([
       "welcome",
       "detect-existing",
       "flow-select",
+      "storage",
       "provider",
       "credentials",
       "agent",
@@ -506,6 +513,47 @@ describe("buildNonInteractiveState", () => {
 
     const stateNotSkipped = buildNonInteractiveState(validOpts({ skipValidation: false }));
     expect(stateNotSkipped.provider!.validated).toBe(false);
+  });
+
+  // ---------- storage mode default + headless master-key bootstrap ----------
+
+  describe("storage mode", () => {
+    beforeEach(() => {
+      vi.mocked(writeMasterKeyIfAbsent).mockClear();
+    });
+
+    it("defaults storageMode to 'encrypted' and provisions the master key headless", () => {
+      const state = buildNonInteractiveState(validOpts());
+      expect(state.storageMode).toBe("encrypted");
+      // The master key is provisioned at the CONFIG dir (~/.comis), NOT the
+      // /data subdir.
+      expect(writeMasterKeyIfAbsent).toHaveBeenCalledTimes(1);
+      const dir = vi.mocked(writeMasterKeyIfAbsent).mock.calls[0][0];
+      expect(dir).toBe("/home/test/.comis");
+      expect(dir).not.toContain("/data");
+    });
+
+    it("--storage file opts out: storageMode 'file' and NO master-key write", () => {
+      const state = buildNonInteractiveState(validOpts({ storage: "file" }));
+      expect(state.storageMode).toBe("file");
+      expect(writeMasterKeyIfAbsent).not.toHaveBeenCalled();
+    });
+
+    it("explicit --storage encrypted provisions the key", () => {
+      const state = buildNonInteractiveState(validOpts({ storage: "encrypted" }));
+      expect(state.storageMode).toBe("encrypted");
+      expect(writeMasterKeyIfAbsent).toHaveBeenCalledTimes(1);
+    });
+
+    it("provisions the key at opts.configDir when set (still not /data)", () => {
+      buildNonInteractiveState(validOpts({ configDir: "/custom/config" }));
+      expect(writeMasterKeyIfAbsent).toHaveBeenCalledWith("/custom/config");
+    });
+
+    it("includes 'storage' in completedSteps so the runner skips the interactive step", () => {
+      const state = buildNonInteractiveState(validOpts());
+      expect(state.completedSteps).toContain("storage");
+    });
   });
 });
 
