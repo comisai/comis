@@ -1286,6 +1286,7 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
     // persistence path runs (daemon-down -> offlineOAuthProfileSet) instead of
     // opening the file store.
     masterKeyState = undefined;
+    vi.mocked(selectOAuthCredentialStore).mockClear();
     vi.mocked(loadConfigFile).mockReturnValue({
       ok: false,
       error: new Error("no config"),
