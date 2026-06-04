@@ -67,4 +67,59 @@ describe("createConsoleLogger", () => {
     log.level = "debug";
     expect(log.level).toBe("debug");
   });
+
+  describe("level gating", () => {
+    it("suppresses messages below the configured level", () => {
+      const log = createConsoleLogger("info");
+      log.trace("t");
+      log.debug("d");
+      expect(writes).toHaveLength(0);
+      log.info("i");
+      log.warn("w");
+      log.error("e");
+      expect(writes).toHaveLength(3);
+    });
+
+    it("default level (info) suppresses debug and trace", () => {
+      const log = createConsoleLogger();
+      log.debug("x");
+      log.trace("y");
+      expect(writes).toHaveLength(0);
+    });
+
+    it("warn level suppresses info", () => {
+      const log = createConsoleLogger("warn");
+      log.info("nope");
+      expect(writes).toHaveLength(0);
+      log.warn("yes");
+      expect(writes).toHaveLength(1);
+    });
+
+    it("respects a runtime level change via the setter", () => {
+      const log = createConsoleLogger("warn");
+      log.info("suppressed");
+      expect(writes).toHaveLength(0);
+      log.level = "debug";
+      log.debug("now-visible");
+      log.info("also-visible");
+      expect(writes).toHaveLength(2);
+    });
+
+    it("silent suppresses everything, including error/fatal", () => {
+      const log = createConsoleLogger("silent");
+      log.error("x");
+      log.fatal("y");
+      expect(writes).toHaveLength(0);
+    });
+
+    it("child() inherits the configured level so gating applies", () => {
+      const child = createConsoleLogger("warn", { module: "m" }).child({
+        submodule: "s",
+      });
+      child.info("suppressed");
+      expect(writes).toHaveLength(0);
+      child.warn("shown");
+      expect(writes).toHaveLength(1);
+    });
+  });
 });
