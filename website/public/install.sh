@@ -4415,6 +4415,16 @@ detect_active_service_manager() {
 
 # Restart (or start) the daemon under whichever manager already owns it.
 restart_service_if_running() {
+    # No-op in the re-exec'd comis-user child. That child runs unprivileged in
+    # the "Finalizing setup" stage, BEFORE the root parent's register_service
+    # writes the systemd unit and the sudoers rule — so `sudo systemctl restart`
+    # here has no matching NOPASSWD grant and, with no tty, errors out with a
+    # spurious "sudo: a password is required". The root parent owns service
+    # registration AND the restart (it calls this again as root after the child
+    # returns), so the child must not touch the service at all.
+    if [[ "${COMIS_REEXEC:-0}" == "1" ]]; then
+        return 0
+    fi
     local active
     active="$(detect_active_service_manager)"
     case "$active" in
