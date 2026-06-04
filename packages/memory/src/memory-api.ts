@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: MemoryApi.clear() requires non-empty scope to prevent accidental blanket wipe; throw is a guard rail consumed by the daemon RPC handler boundary (memory-handlers is @allow-throw).
+// @allow-throw: MemoryApi.pin/unpin — fromPromise wraps the synchronous SQLite update; throw within the async wrapper is caught and returned as err().
 /**
  * MemoryApi: Programmatic interface for memory inspection, search,
  * management, and guardrail enforcement.
@@ -12,6 +13,8 @@
  */
 
 import type { MemoryEntry, MemorySearchResult, MemoryConfig, SessionKey, SessionStorePort } from "@comis/core";
+import type { Result } from "@comis/shared";
+import { fromPromise } from "@comis/shared";
 import type Database from "better-sqlite3";
 import type { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 import { rowToEntry, buildFilterClause, countRows, groupCountRows, createRowMapper } from "./row-mapper.js";
@@ -86,6 +89,15 @@ export interface MemoryApi {
 
   /** Get aggregate statistics about the memory system. */
   stats(tenantId?: string, agentId?: string): MemoryStats;
+
+  /** Pin a memory entry (always-inject in recall). Idempotent.
+   *  Returns ok(true) if row found, ok(false) if not found (not an error).
+   *  tenantId scopes the update — cross-scope IDs are a no-op (fail-closed). */
+  pin(id: string, tenantId?: string): Promise<Result<boolean, Error>>;
+
+  /** Unpin a memory entry. Idempotent.
+   *  Returns ok(true) if row found, ok(false) if not found. */
+  unpin(id: string, tenantId?: string): Promise<Result<boolean, Error>>;
 }
 
 // ── Factory ──────────────────────────────────────────────────────────
@@ -307,6 +319,34 @@ export function createMemoryApi(
         dbSizeBytes: pageCount.page_count * pageSize.page_size,
         oldestCreatedAt: oldestRow.oldest,
       };
+    },
+
+    // ── pin ─────────────────────────────────────────────────────
+
+    async pin(id: string, tenantId?: string): Promise<Result<boolean, Error>> {
+      return fromPromise((async () => {
+        const sql = tenantId !== undefined
+          ? "UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ?"
+          : "UPDATE memories SET pinned = 1 WHERE id = ?";
+        const info = tenantId !== undefined
+          ? db.prepare(sql).run(id, tenantId)
+          : db.prepare(sql).run(id);
+        return info.changes > 0;
+      })());
+    },
+
+    // ── unpin ────────────────────────────────────────────────────
+
+    async unpin(id: string, tenantId?: string): Promise<Result<boolean, Error>> {
+      return fromPromise((async () => {
+        const sql = tenantId !== undefined
+          ? "UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ?"
+          : "UPDATE memories SET pinned = 0 WHERE id = ?";
+        const info = tenantId !== undefined
+          ? db.prepare(sql).run(id, tenantId)
+          : db.prepare(sql).run(id);
+        return info.changes > 0;
+      })());
     },
 
   };

@@ -519,4 +519,36 @@ describe("MemoryApi", () => {
   // along with the MemoryApi.enforceGuardrails method + GuardrailResult interface
   // + RetentionConfigSchema.maxEntries Zod field. Retention is now governed only
   // by RetentionConfigSchema.maxAgeDays (whose enforcement path lives elsewhere).
+
+  // ── pin / unpin ────────────────────────────────────────────────────────────
+  describe("pin and unpin", () => {
+    it("pin returns ok(true) when the memory entry exists in scope", async () => {
+      const entry = makeEntry({ tenantId: "tenant-a", agentId: "agent-1" });
+      await adapter.store(entry as MemoryEntry);
+      const result = await api.pin(entry.id, "tenant-a");
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).toBe(true);
+    });
+
+    it("pin returns ok(false) when the id is not found (idempotent no-op)", async () => {
+      const result = await api.pin("nonexistent-id-99", "tenant-a");
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).toBe(false);
+    });
+
+    it("unpin returns ok(true) when a pinned memory entry is unpinned", async () => {
+      const entry = makeEntry({ tenantId: "tenant-b", agentId: "agent-2" });
+      await adapter.store(entry as MemoryEntry);
+      await api.pin(entry.id, "tenant-b");
+      const result = await api.unpin(entry.id, "tenant-b");
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).toBe(true);
+    });
+
+    it("unpin returns ok(false) when the id is not found (idempotent no-op)", async () => {
+      const result = await api.unpin("nonexistent-id-99", "tenant-b");
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).toBe(false);
+    });
+  });
 });
