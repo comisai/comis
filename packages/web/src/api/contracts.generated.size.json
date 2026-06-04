@@ -1,6 +1,6 @@
 {
-  "totalMinified": 116130,
-  "totalGzipped": 10788,
+  "totalMinified": 116161,
+  "totalGzipped": 10803,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -121,7 +121,7 @@
     "memory.flush": 609,
     "memory.get_file": 546,
     "memory.observations": 761,
-    "memory.pin": 441,
+    "memory.pin": 476,
     "memory.portability.export": 874,
     "memory.portability.import": 708,
     "memory.recall_stats": 937,
