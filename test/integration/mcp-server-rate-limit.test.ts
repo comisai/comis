@@ -79,6 +79,10 @@ async function connectMcpClient(
 describe("MCP tools/call per-client per-tool rate limit", () => {
   let handle: TestDaemonHandle;
   let baseUrl: string;
+  // Survives vitest retries (module state persists across re-runs of the
+  // test fn): a retry must wait for a fresh minute — the failed attempt
+  // already consumed the current bucket. See the runway guard in the test.
+  let burstAttempted = false;
 
   beforeAll(async () => {
     handle = await startTestDaemon({ configPath: CONFIG_PATH });
@@ -106,6 +110,20 @@ describe("MCP tools/call per-client per-tool rate limit", () => {
         MCP_RATELIMIT_SECRET,
       );
       try {
+        // The dispatcher's bucket is keyed by wall-clock minute, and the 100
+        // sequential round-trips take 5-15s — a burst started late in a
+        // minute straddles the boundary, the bucket resets mid-burst, and
+        // ~2x the ceiling succeeds (observed on CI: 54). A vitest retry
+        // within the same minute then finds the bucket already exhausted by
+        // the first attempt and sees 0 successes. Start at a fresh minute
+        // whenever the runway is short OR a previous attempt already
+        // consumed this minute's bucket.
+        const msIntoMinute = Date.now() % 60_000;
+        if (msIntoMinute > 35_000 || burstAttempted) {
+          await new Promise((r) => setTimeout(r, 60_000 - msIntoMinute + 250));
+        }
+        burstAttempted = true;
+
         // Fire 100 calls SEQUENTIALLY (or in parallel via Promise.all -- both
         // are valid; sequential keeps the failure mode easier to reason about
         // when something goes wrong). The dispatcher's minute-bucket counts
@@ -148,6 +166,6 @@ describe("MCP tools/call per-client per-tool rate limit", () => {
         await close();
       }
     },
-    60_000, // 100 sequential round-trips can take 5-15s with logging
+    150_000, // up to 60s fresh-window wait + 100 sequential round-trips (5-15s)
   );
 });

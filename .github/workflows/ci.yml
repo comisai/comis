@@ -15,9 +15,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      - uses: pnpm/action-setup@8912a9102ac27614460f54aedde9e1e7f9aec20d # v6
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
@@ -32,6 +32,17 @@ jobs:
         # an "unexpected warning". Installing them keeps the runner aligned
         # with the production Linux target.
         run: sudo apt-get update && sudo apt-get install -y ffmpeg bubblewrap
+
+      - name: Allow unprivileged user namespaces (bubblewrap sandbox tests)
+        # Runner image 20260525.161+ enforces Ubuntu 24.04's
+        # kernel.apparmor_restrict_unprivileged_userns=1, which strips
+        # CAP_NET_ADMIN from bwrap's user namespace. Every --unshare-net
+        # invocation then dies with "bwrap: loopback: Failed RTM_NEWADDR:
+        # Operation not permitted", failing the credential-broker /
+        # terminal-driver sandbox suites (green on image 20260518.149).
+        # Relaxing the sysctl restores the pre-20260525 runner behavior so
+        # the sandbox tests actually run instead of being skipped.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Configure git identity for daemon config-versioning tests
         # config-apply-e2e and config-git-lifecycle-e2e drive the daemon's

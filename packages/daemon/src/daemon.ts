@@ -2723,6 +2723,7 @@ async function bootShutdown(
     injectionRateLimiter,  // clear rate limiter timers on shutdown
     lockCleanupTimer,  // clear periodic lock cleanup timer
     dataDir: container.config.dataDir || dataDir,
+    lockDataDir: dataDir,  // D14 lock release — must match acquireDataDirLock's boot path
     continuationTracker,
     lifecycleReactors,  // destroy lifecycle reactors on shutdown
     obsPersistence,  // drain write buffers before db.close

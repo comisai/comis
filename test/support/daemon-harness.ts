@@ -10,7 +10,9 @@
 
 import type { Writable } from "node:stream";
 import { createConnection } from "node:net";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanupDatabase } from "./db-cleanup.js";
@@ -119,6 +121,30 @@ const DUMMY_API_KEY_VALUE = "test-fixture-not-a-real-key";
 
 /** Tracks the currently active test daemon handle to prevent double-start. */
 let activeHandle: TestDaemonHandle | null = null;
+
+// ---------------------------------------------------------------------------
+// Per-fork data-dir isolation
+// ---------------------------------------------------------------------------
+
+/**
+ * One throwaway dataDir per vitest fork (= per test file under pool:"forks").
+ *
+ * The daemon's D14 data-dir singleton lock (.daemon.lock) makes two daemons
+ * on the same dataDir a hard boot failure. Integration test files run in
+ * parallel forks, each booting its own in-process daemon — on the shared
+ * default (~/.comis) they race the lock and fail with EEXIST. It also keeps
+ * test daemons' lock/.env/master-key files out of the developer's real
+ * ~/.comis, where they can collide with a locally running dev daemon.
+ *
+ * Memoized per fork so sequential daemon restarts within one test file
+ * (persist-restart-e2e) keep their persisted state.
+ */
+let forkDataDir: string | undefined;
+
+function getForkDataDir(): string {
+  forkDataDir ??= mkdtempSync(join(tmpdir(), "comis-test-data-"));
+  return forkDataDir;
+}
 
 // ---------------------------------------------------------------------------
 // Port availability helper
@@ -273,8 +299,28 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
   // Import daemon dynamically to avoid import-time side effects
   const { main } = await import("@comis/daemon");
 
+  // Start the daemon with a per-fork COMIS_DATA_DIR (see getForkDataDir) so
+  // parallel test files don't race the D14 .daemon.lock on a shared ~/.comis.
+  // Set just-in-time and restored right after boot: the daemon reads the env
+  // var exactly once at boot, and leaving it set would leak into CLI
+  // subprocesses tests spawn with `...process.env` + a HOME override
+  // (oauth-login et al. expect the child to resolve <tmpHome>/.comis).
+  // Tests that pre-set COMIS_DATA_DIR themselves (credential-storage-modes,
+  // daemon-lifecycle, …) keep their value — we only fill the default.
+  const hadDataDirEnv = process.env["COMIS_DATA_DIR"] !== undefined;
+  if (!hadDataDirEnv) {
+    process.env["COMIS_DATA_DIR"] = getForkDataDir();
+  }
+
   // Start the daemon
-  const daemon = await main(overrides as unknown as Parameters<typeof main>[0]);
+  let daemon: DaemonInstance;
+  try {
+    daemon = await main(overrides as unknown as Parameters<typeof main>[0]);
+  } finally {
+    if (!hadDataDirEnv) {
+      delete process.env["COMIS_DATA_DIR"];
+    }
+  }
 
   // Re-seed dummy provider keys AFTER boot. The daemon's bootstrap snapshots
   // sensitive env vars into the SecretManager and then scrubs them from
