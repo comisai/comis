@@ -1521,9 +1521,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MEMORY_PORTABILITY_CONTRACTS is the portability-methods slice array
       // (extracted to keep memory.ts ≤ 800 lines); spread into MEMORY_CONTRACTS
       // intra-package — same pattern as MEMORY_DIAGNOSTIC_CONTRACTS.
+      // MEMORY_PINNING_CONTRACTS is the pinning-methods slice array (memory.pin/
+      // memory.unpin), extracted to memory-pinning.ts and spread into
+      // MEMORY_CONTRACTS intra-package — same pattern as the arrays above.
       "MEMORY_CONTRACTS",
       "MEMORY_DIAGNOSTIC_CONTRACTS",
       "MEMORY_PORTABILITY_CONTRACTS",
+      "MEMORY_PINNING_CONTRACTS",
       // (The memory.ask cross-wave seam is now closed: MemoryAskContract
       // is spread into MEMORY_CONTRACTS in the same diff that landed its daemon
       // handler in memory-handlers.ts — its in-repo consumer now exists — so it was
