@@ -7,8 +7,20 @@
  * path, behavior, and reset options.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Command } from "commander";
+
+// Short-circuit the wizard run so the interactive action reaches its
+// terminal exit path without driving real prompts/IO.
+vi.mock("../wizard/state.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../wizard/state.js")>()),
+  runWizardFlow: vi.fn().mockResolvedValue({ completedSteps: [] }),
+}));
+// The interactive branch dynamically imports the clack adapter — stub it.
+vi.mock("../wizard/clack-adapter.js", () => ({
+  createClackAdapter: vi.fn(() => ({})),
+}));
+
 import { registerInitCommand, buildStepRegistry } from "./init.js";
 import { buildNonInteractiveState } from "../wizard/non-interactive.js";
 import type { WizardStepId } from "../wizard/types.js";
@@ -125,5 +137,46 @@ describe("non-interactive step coverage", () => {
     );
     const missing = interactive.filter((id) => !completed.has(id));
     expect(missing).toEqual([]);
+  });
+});
+
+describe("interactive completion exits the process", () => {
+  it("calls process.exit(0) after the interactive wizard succeeds", async () => {
+    // Regression: the interactive success path fell off the end of the action
+    // without exiting. The clack adapter holds the raw-mode TTY stdin handle,
+    // so the event loop never drains and `comis init` hangs after "Happy
+    // building!". The success path must exit explicitly like the cancel/error
+    // paths already do.
+    const program = new Command();
+    registerInitCommand(program);
+
+    const origTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: true,
+      configurable: true,
+    });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation(((code?: number): never => {
+        throw new Error(`__exit__:${code ?? 0}`);
+      }) as never);
+
+    try {
+      await expect(
+        program.parseAsync(["node", "comis", "init"]),
+      ).rejects.toThrow("__exit__:0");
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      exitSpy.mockRestore();
+      if (origTTY) {
+        Object.defineProperty(process.stdin, "isTTY", origTTY);
+      } else {
+        // restore to the original (vitest default: not a TTY)
+        Object.defineProperty(process.stdin, "isTTY", {
+          value: undefined,
+          configurable: true,
+        });
+      }
+    }
   });
 });
