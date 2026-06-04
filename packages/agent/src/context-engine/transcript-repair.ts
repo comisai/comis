@@ -189,9 +189,13 @@ export function sanitizeToolUseResultPairing(
   messages: AgentMessage[],
   now: number,
 ): AgentMessage[] {
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return [];
-  }
+  // A non-array input degrades to a PASS-THROUGH, never an empty array: the SDK
+  // transformContext contract is "return the original messages or another safe
+  // fallback" (context-engine.ts's "never no-op the whole context" stance), so
+  // nuking a malformed shape to [] would silently drop the entire conversation
+  // (WR-02). An EMPTY well-formed array is a genuine no-op and returns [].
+  if (!Array.isArray(messages)) return messages;
+  if (messages.length === 0) return [];
 
   // Pass A — index every tool_use id an assistant turn emitted.
   const toolUseSeen = new Set<string>();
