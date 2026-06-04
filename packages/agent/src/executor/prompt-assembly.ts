@@ -918,6 +918,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
               hitCount: ranked.length,
               charsInjected,
               trustTags,
+              pinnedCount: pinnedSet.length,
               timestamp: systemNowMs(),
             });
           } catch (emitErr) {
