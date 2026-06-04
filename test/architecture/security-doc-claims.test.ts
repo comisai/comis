@@ -32,10 +32,13 @@ const REPO_ROOT = resolve(here, "../..");
 export function sanitizeDocText(raw: string): string {
   // Strip all HTML comments (including multiline)
   let text = raw.replace(/<!--[\s\S]*?-->/g, "");
-  // Strip triple-backtick fenced code blocks (non-greedy — handles adjacent fences)
+  // Strip triple-backtick fenced code blocks (non-greedy — handles adjacent fences).
+  // First pass: matched (closed) fences. Second pass: unclosed fence to end-of-string.
   text = text.replace(/`{3}[\s\S]*?`{3}/g, "");
-  // Strip tilde fenced code blocks
+  text = text.replace(/`{3}[\s\S]*$/g, "");
+  // Strip tilde fenced code blocks (closed then unclosed).
   text = text.replace(/~{3}[\s\S]*?~{3}/g, "");
+  text = text.replace(/~{3}[\s\S]*$/g, "");
   // Strip inline code spans: double-backtick before single-backtick to
   // avoid partial matches (e.g. ``isolated-vm`` must not leave a stray `)
   text = text.replace(/``[^`]*``/g, "");

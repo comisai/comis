@@ -75,4 +75,14 @@ describe("security-doc-claims guard detects reverted claims", () => {
     const raw = "The old sandbox was ``isolated-vm`` — we no longer use it.";
     expect(/isolated-vm/i.test(sanitizeDocText(raw))).toBe(false);
   });
+
+  it("sanitizeDocText strips content from an unclosed triple-backtick fence to end of string", () => {
+    const raw = "Normal prose.\n```\nisolated-vm example\n(intentionally unclosed — no closing fence)";
+    expect(/isolated-vm/i.test(sanitizeDocText(raw))).toBe(false);
+  });
+
+  it("sanitizeDocText strips content from an unclosed tilde fence to end of string", () => {
+    const raw = "Normal prose.\n~~~\nisolated-vm example\n(intentionally unclosed tilde fence)";
+    expect(/isolated-vm/i.test(sanitizeDocText(raw))).toBe(false);
+  });
 });
