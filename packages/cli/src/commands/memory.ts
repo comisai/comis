@@ -98,14 +98,22 @@ export function registerMemoryCommand(program: Command): void {
           return;
         }
 
-        // Best-effort recall-counter overlay. Failures (counters not
-        // wired, non-admin caller) are swallowed — base stats still render.
+        // Best-effort recall-counter overlay: a daemon that has not wired the
+        // counters (or a non-admin caller) is tolerated — base stats still
+        // render. But do NOT swallow the failure silently: leave a non-fatal
+        // breadcrumb carrying the cause so an operator debugging "blank recall
+        // counters" can tell the call was attempted and why it was skipped
+        // (connection reset, auth expiry, serialization bug all look identical
+        // otherwise). The overlay stays fail-open — no non-zero exit.
         let recallStats: Record<string, unknown> | undefined;
         try {
           recallStats = (await withClient(async (client) =>
             callTyped(client, MemoryRecallStatsContract, {}),
           )) as unknown as Record<string, unknown>;
-        } catch {
+        } catch (overlayErr) {
+          const overlayMsg =
+            overlayErr instanceof Error ? overlayErr.message : String(overlayErr);
+          info(`Recall counters unavailable (skipped): ${overlayMsg}`);
           recallStats = undefined;
         }
 
