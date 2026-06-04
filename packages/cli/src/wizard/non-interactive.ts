@@ -17,7 +17,7 @@
 
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
-import { safePath } from "@comis/core";
+import { safePath, writeMasterKeyIfAbsent } from "@comis/core";
 import { createModelCatalog } from "@comis/core";
 import type {
   WizardState,
@@ -71,6 +71,8 @@ export type NonInteractiveOptions = {
   // Paths
   dataDir?: string;
   configDir?: string;
+  // Credential storage
+  storage?: "encrypted" | "file";
   // Behavior
   startDaemon?: boolean;
   skipHealth?: boolean;
@@ -203,6 +205,14 @@ export function validateNonInteractiveOptions(
     throw new NonInteractiveError(
       "--reset-scope requires --reset to be set",
       "resetScope",
+    );
+  }
+
+  // --storage, when provided, must be one of encrypted|file
+  if (opts.storage !== undefined && opts.storage !== "encrypted" && opts.storage !== "file") {
+    throw new NonInteractiveError(
+      "--storage must be 'encrypted' or 'file'",
+      "storage",
     );
   }
 
@@ -369,12 +379,25 @@ export function buildNonInteractiveState(
   const dataDir =
     opts.dataDir ?? safePath(homedir(), ".comis", "data");
 
+  // Credential storage mode -- encrypted by default. When encrypted, provision
+  // the master key headlessly so the encrypted store is usable without a
+  // separate `comis secrets init`. The key belongs at the CONFIG dir
+  // (~/.comis/.env), NOT the /data subdir -- same place step 02b + step 10
+  // read it from. writeMasterKeyIfAbsent is idempotent (never clobbers an
+  // existing key).
+  const storageMode = opts.storage ?? "encrypted";
+  const configDir = opts.configDir ?? safePath(homedir(), ".comis");
+  if (storageMode === "encrypted") {
+    writeMasterKeyIfAbsent(configDir);
+  }
+
   // Mark all interactive steps as completed so the wizard runner skips
   // them and only runs write-config, daemon-start, and finish.
   const completedSteps: WizardStepId[] = [
     "welcome",
     "detect-existing",
     "flow-select",
+    "storage",
     "provider",
     "credentials",
     "agent",
@@ -390,6 +413,7 @@ export function buildNonInteractiveState(
     existingConfigAction: opts.reset ? "fresh" : undefined,
     resetScope: opts.reset ? (opts.resetScope ?? "config") : undefined,
     provider,
+    storageMode,
     agentName: opts.agentName ?? "comis-agent",
     model,
     channels,

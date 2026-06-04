@@ -107,6 +107,7 @@ function buildNonInteractiveOptionsFromCommander(
     lineSecret: options.lineSecret as string | undefined,
     dataDir: options.dataDir as string | undefined,
     configDir: options.configDir as string | undefined,
+    storage: options.storage as "encrypted" | "file" | undefined,
     startDaemon: !!options.startDaemon,
     skipHealth: !!options.skipHealth,
     skipValidation: !!options.skipValidation,
@@ -175,6 +176,8 @@ export function registerInitCommand(program: Command): void {
     // Paths
     .option("--data-dir <path>", "Workspace directory")
     .option("--config-dir <dir>", "Override config directory")
+    // Credential storage
+    .option("--storage <mode>", "encrypted|file (default: encrypted)")
     // Post-setup behavior
     .option("--start-daemon", "Auto-start daemon after config")
     .option("--skip-health", "Skip post-setup health check")
