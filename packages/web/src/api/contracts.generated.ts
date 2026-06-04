@@ -6124,6 +6124,49 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "admin"
     ]
   },
+  "memory.pin": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "pinned": {
+          "type": "boolean",
+          "const": true
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pinned",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "memory.portability.export": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -6528,6 +6571,49 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       },
       "required": [
         "stored",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "memory.unpin": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "unpinned": {
+          "type": "boolean",
+          "const": true
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "unpinned",
         "id"
       ],
       "additionalProperties": false

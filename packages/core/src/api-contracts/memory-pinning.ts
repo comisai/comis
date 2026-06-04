@@ -7,19 +7,16 @@
  *   - `memory.pin`   — mark a memory entry as always-injected in recall.
  *   - `memory.unpin` — remove the always-inject mark.
  *
- * Cross-wave seam: these contracts are defined here in Wave 1 (plan 03-02) but
- * their daemon handlers land in Wave 2 (plan 03-03). They carry
- * `@contract-deferred-handler` annotations to exempt them from
- * contract-handler-parity until the seam is closed. The spread into
- * MEMORY_CONTRACTS and the pnpm contracts:generate run happen in plan 03-03 in
- * the SAME diff as the handler — mirroring the memory-diagnostics pattern.
+ * Seam closed in plan 03-03 (same diff as handler creation): the
+ * `@contract-deferred-handler` annotations were removed, the spread into
+ * MEMORY_CONTRACTS was added to memory.ts, and pnpm contracts:generate was run —
+ * mirroring the memory-diagnostics pattern.
  *
  * @module
  */
 import { z } from "zod";
 import { defineContract } from "./types.js";
 
-// @contract-deferred-handler: plan 03-03
 export const MemoryPinContract = defineContract({
   method: "memory.pin",
   request: z.object({
@@ -34,7 +31,6 @@ export const MemoryPinContract = defineContract({
   scopes: ["admin"] as const,
 });
 
-// @contract-deferred-handler: plan 03-03
 export const MemoryUnpinContract = defineContract({
   method: "memory.unpin",
   request: z.object({

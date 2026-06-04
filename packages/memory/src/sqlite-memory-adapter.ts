@@ -487,15 +487,17 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     limit: number,
   ): Promise<Result<MemorySearchResult[], Error>> {
     return fromPromise((async () => {
-      const rows = this.db
-        .prepare(
-          "SELECT * FROM memories " +
-            "WHERE tenant_id = ? AND agent_id = ? AND pinned = 1 " +
-            "ORDER BY created_at DESC LIMIT ?",
-        )
-        .all(scope.tenantId, scope.agentId, limit) as unknown[];
-      const parsed = rows.map((r) => MemoryRowSchema.parse(r));
-      return parsed.map((row) => ({
+      const parsed = memoryRowMapper.parseRows(
+        this.db
+          .prepare(
+            "SELECT * FROM memories " +
+              "WHERE tenant_id = ? AND agent_id = ? AND pinned = 1 " +
+              "ORDER BY created_at DESC LIMIT ?",
+          )
+          .all(scope.tenantId, scope.agentId, limit),
+      );
+      if (!parsed.ok) return [];
+      return parsed.value.map((row) => ({
         entry: rowToEntry(row),
         score: 1.0,
       }));

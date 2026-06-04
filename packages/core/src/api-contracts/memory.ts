@@ -104,6 +104,15 @@ import {
   MEMORY_PORTABILITY_CONTRACTS,
 } from "./memory-portability.js";
 
+// Pinning contracts extracted to memory-pinning.ts (file-size cap §4.1).
+// @contract-deferred-handler annotations removed in plan 03-03 (same diff as handler creation).
+export {
+  MemoryPinContract,
+  MemoryUnpinContract,
+  MEMORY_PINNING_CONTRACTS,
+} from "./memory-pinning.js";
+import { MEMORY_PINNING_CONTRACTS } from "./memory-pinning.js";
+
 // ===========================================================================
 // --- memory-handlers.ts ---
 // ===========================================================================
@@ -775,6 +784,8 @@ export const MEMORY_CONTRACTS = [
   MemoryExportContract,
   // Portability contracts extracted to memory-portability.ts.
   ...MEMORY_PORTABILITY_CONTRACTS,
+  // Pinning contracts extracted to memory-pinning.ts.
+  ...MEMORY_PINNING_CONTRACTS,
   // --- memory-handlers.ts (diagnostic surface) ---
   ...MEMORY_DIAGNOSTIC_CONTRACTS,
   // --- context-handlers.ts ---

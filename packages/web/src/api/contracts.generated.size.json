@@ -1,6 +1,6 @@
 {
-  "totalMinified": 115244,
-  "totalGzipped": 10728,
+  "totalMinified": 116130,
+  "totalGzipped": 10788,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -121,6 +121,7 @@
     "memory.flush": 609,
     "memory.get_file": 546,
     "memory.observations": 761,
+    "memory.pin": 441,
     "memory.portability.export": 874,
     "memory.portability.import": 708,
     "memory.recall_stats": 937,
@@ -128,6 +129,7 @@
     "memory.search_files": 641,
     "memory.stats": 311,
     "memory.store": 473,
+    "memory.unpin": 445,
     "message.attach": 654,
     "message.delete": 534,
     "message.edit": 564,

@@ -58,10 +58,9 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import * as os from "node:os";
-
 import type { RpcHandler } from "./types.js";
 import { createMemoryPortabilityHandlers } from "./memory-portability-handlers.js";
-
+import { createMemoryPinningHandlers } from "./memory-pinning-handlers.js";
 /** Max chars of an observation body surfaced as a provenance PREVIEW
  *  (never the full body unbounded; mirrors memory.search_files). */
 const OBSERVATION_PREVIEW_MAX = 500;
@@ -94,6 +93,7 @@ export type { MemoryHandlerDeps };
 export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, RpcHandler> {
   return {
     ...createMemoryPortabilityHandlers(deps),
+    ...createMemoryPinningHandlers(deps),
     [MemorySearchFilesContract.method]: async (rawParams) => {
       const userParams = stripInternalFields(rawParams);
       const params = MemorySearchFilesContract.request.parse(userParams);
