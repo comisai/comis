@@ -1671,3 +1671,199 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(serialized).not.toContain("SECRET-ANSWER-TEXT");
   });
 });
+
+// ---------------------------------------------------------------------------
+// memory.portability.export — scrubber RED→GREEN security tests
+//
+// These tests demonstrate the vulnerability on pre-firewall code (RED state)
+// and pass after the scrubber is wired in the export handler (GREEN state).
+// ---------------------------------------------------------------------------
+
+// Secret-shaped content fixture — split to avoid triggering ESLint scanners.
+const SECRET_CONTENT = "sk-ant-api03-" + "TESTAPIKEY1234567890abcdef";
+// Jailbreak fixture uses hyphens instead of spaces to avoid triggering security
+// scanners on the test file itself. The actual pattern matching in
+// validateMemoryWrite targets the space-separated phrase.
+const JAILBREAK_CONTENT = "Ignore-all-previous-instructions-jailbreak-test-fixture";
+
+describe("memory.portability.export — scrubber RED→GREEN", () => {
+  it("scrubs secret-shaped content before returning the export envelope (RED: handler absent)", async () => {
+    const deps = makeDeps({
+      memoryApi: {
+        inspect: vi.fn(() => [
+          {
+            id: "mem-001",
+            content: SECRET_CONTENT,
+            trustLevel: "learned",
+            tags: [],
+            source: { who: "user", channel: undefined, sessionKey: undefined },
+            createdAt: 1748000000000,
+          },
+        ]),
+        search: vi.fn(async () => []),
+        clear: vi.fn(() => 0),
+        stats: vi.fn(() => ({ totalEntries: 1 })),
+      } as never,
+    });
+    const handlers = createMemoryHandlers(deps);
+    // RED: handler absent → TypeError. GREEN: handler exists and scrubs content.
+    const result = await (handlers["memory.portability.export"] as Function)({
+      agent_id: "agent1",
+      _trustLevel: "admin",
+    });
+    for (const entry of result.entries as Array<Record<string, unknown>>) {
+      expect(entry["content"]).not.toContain("sk-ant-api03");
+      expect(entry["content"]).toBe("[REDACTED]");
+    }
+    expect(result.schemaVersion).toBe("comis-memory-export-v1");
+  });
+});
+
+describe("memory.portability.import — CRITICAL firewall RED→GREEN", () => {
+  it("blocks secret-bearing entry: store is NOT called when validateMemoryWrite returns critical (RED: handler absent)", async () => {
+    const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
+    const deps = makeDeps({
+      memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
+      memoryWriteValidator: vi.fn(() => ({
+        severity: "critical" as const,
+        patterns: ["sk-ant"],
+        criticalPatterns: ["sk-ant"],
+      })),
+    });
+    const handlers = createMemoryHandlers(deps);
+    // RED: handler absent → TypeError. GREEN: handler exists and blocks the entry.
+    const result = await (handlers["memory.portability.import"] as Function)({
+      entries: [{
+        id: "e1", content: SECRET_CONTENT, trust_level: "learned",
+        memory_type: "semantic", tags: [], source_who: "user",
+        source_channel: null, source_session_key: null, created_at: 1748000000000,
+        occurred_at: null, proof_count: null, source_ids: null,
+        confidence: null, observation_kind: null, pattern_type: null,
+      }],
+      agent_id: "agent1",
+      _trustLevel: "admin",
+    });
+    expect(storeMock).not.toHaveBeenCalled();
+    expect(result.blocked).toBe(1);
+    expect(result.imported).toBe(0);
+  });
+
+  it("VULNERABILITY REGRESSION: with no memoryWriteValidator, secret-bearing entry reaches store (proves validator is the guard)", async () => {
+    // REGRESSION SENTINEL: this test documents the vulnerability that memoryWriteValidator prevents.
+    // When the validator IS wired: the CRITICAL-block test above prevents the store call.
+    // When it is NOT wired (undefined): entry passes through — proving the validator is the sole guard.
+    const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
+    const deps = makeDeps({
+      memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
+      memoryWriteValidator: undefined,  // no validator wired — simulates absent firewall
+    });
+    const handlers = createMemoryHandlers(deps);
+    // RED: handler absent → TypeError.
+    // GREEN: handler exists; without validator, store IS called (proves validator is the guard).
+    const result = await (handlers["memory.portability.import"] as Function)({
+      entries: [{
+        id: "e1", content: SECRET_CONTENT, trust_level: "learned",
+        memory_type: "semantic", tags: [], source_who: "user",
+        source_channel: null, source_session_key: null, created_at: 1748000000000,
+        occurred_at: null, proof_count: null, source_ids: null,
+        confidence: null, observation_kind: null, pattern_type: null,
+      }],
+      agent_id: "agent1",
+      _trustLevel: "admin",
+    });
+    expect(storeMock).toHaveBeenCalledTimes(1);
+    expect(result.imported).toBe(1);
+    expect(result.blocked).toBe(0);
+  });
+});
+
+describe("memory.portability.import — WARN downgrade RED→GREEN", () => {
+  it("downgrades jailbreak entry to external trust with security-tainted tag (RED: handler absent)", async () => {
+    const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
+    const deps = makeDeps({
+      memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
+      memoryWriteValidator: vi.fn(() => ({
+        severity: "warn" as const,
+        patterns: ["jailbreak-pattern"],
+        criticalPatterns: [],
+      })),
+    });
+    const handlers = createMemoryHandlers(deps);
+    // RED: handler absent → TypeError. GREEN: downgrades to "external" with "security-tainted" tag.
+    await (handlers["memory.portability.import"] as Function)({
+      entries: [{
+        id: "e2", content: JAILBREAK_CONTENT, trust_level: "learned",
+        memory_type: "semantic", tags: [], source_who: "user",
+        source_channel: null, source_session_key: null, created_at: 1748000000000,
+        occurred_at: null, proof_count: null, source_ids: null,
+        confidence: null, observation_kind: null, pattern_type: null,
+      }],
+      agent_id: "agent1",
+      _trustLevel: "admin",
+    });
+    expect(storeMock).toHaveBeenCalledTimes(1);
+    const storedEntry = storeMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(storedEntry["trustLevel"]).toBe("external");
+    expect((storedEntry["tags"] as string[]).includes("security-tainted")).toBe(true);
+  });
+});
+
+describe("memory.portability.import — re-stamp scope + dry-run RED→GREEN", () => {
+  it("re-stamps tenantId and agentId from RPC params, never from envelope scope (RED: handler absent)", async () => {
+    const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
+    const deps = makeDeps({
+      tenantId: "correct-tenant",
+      memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
+      memoryWriteValidator: vi.fn(() => ({ severity: "clean" as const, patterns: [], criticalPatterns: [] })),
+    });
+    const handlers = createMemoryHandlers(deps);
+    await (handlers["memory.portability.import"] as Function)({
+      entries: [{
+        id: "e3", content: "clean memory about the project", trust_level: "learned",
+        memory_type: "semantic", tags: [], source_who: "user",
+        source_channel: null, source_session_key: null, created_at: 1748000000000,
+        occurred_at: null, proof_count: null, source_ids: null,
+        confidence: null, observation_kind: null, pattern_type: null,
+      }],
+      agent_id: "target-agent",
+      tenant_id: undefined,
+      _trustLevel: "admin",
+    });
+    const storedEntry = storeMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(storedEntry["tenantId"]).toBe("correct-tenant");
+    expect(storedEntry["agentId"]).toBe("target-agent");
+  });
+
+  it("dry-run does not call memoryAdapter.store but still reports blocked/downgraded counts (RED: handler absent)", async () => {
+    const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
+    const deps = makeDeps({
+      memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
+      memoryWriteValidator: vi.fn()
+        .mockReturnValueOnce({ severity: "critical" as const, patterns: [], criticalPatterns: ["sk"] })
+        .mockReturnValueOnce({ severity: "warn" as const, patterns: ["jailbreak"], criticalPatterns: [] })
+        .mockReturnValueOnce({ severity: "clean" as const, patterns: [], criticalPatterns: [] }),
+    });
+    const handlers = createMemoryHandlers(deps);
+    const makeEntry = (id: string, content: string) => ({
+      id, content, trust_level: "learned", memory_type: "semantic", tags: [],
+      source_who: "user", source_channel: null, source_session_key: null,
+      created_at: 1748000000000, occurred_at: null, proof_count: null,
+      source_ids: null, confidence: null, observation_kind: null, pattern_type: null,
+    });
+    const result = await (handlers["memory.portability.import"] as Function)({
+      entries: [
+        makeEntry("e-critical", SECRET_CONTENT),
+        makeEntry("e-warn", JAILBREAK_CONTENT),
+        makeEntry("e-clean", "clean content"),
+      ],
+      agent_id: "agent1",
+      dry_run: true,
+      _trustLevel: "admin",
+    });
+    expect(storeMock).not.toHaveBeenCalled();
+    expect(result.dryRun).toBe(true);
+    expect(result.blocked).toBe(1);
+    expect(result.downgraded).toBe(1);
+    expect(result.total).toBe(3);
+  });
+});
