@@ -15,7 +15,7 @@ import {
   sanitizeDocText,
   securityMdViolatesIsolatedVm,
   readmeViolatesSdkIndependence,
-} from "./security-doc-claims.js";
+} from "./security-doc-claims.test.js";
 
 describe("security-doc-claims guard detects reverted claims", () => {
   it("flags isolated-vm in SECURITY.md when isolated-vm is absent from the dependency graph", () => {
