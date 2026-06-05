@@ -130,4 +130,50 @@ describe("computeTokenBudget", () => {
     const budget = computeTokenBudget(200_000, 5_000);
     expect(budget.cacheFenceIndex).toBe(-1);
   });
+
+  // -------------------------------------------------------------------------
+  // I1: recall-injection subtrahend (H = W - S - O - M - R - Recall)
+  // -------------------------------------------------------------------------
+
+  it("reduces available history by exactly the recall token estimate (separate subtrahend, never folded into S)", () => {
+    const withoutRecall = computeTokenBudget(200_000, 5_000, -1, 0);
+    const withRecall = computeTokenBudget(200_000, 5_000, -1, 4_000);
+
+    // A heavy recall block subtracts its tokens from H one-for-one — recall is a
+    // SEPARATE budget term, so a larger getRecallTokensEstimate makes the DAG
+    // compact older history harder.
+    expect(withRecall.availableHistoryTokens).toBe(
+      withoutRecall.availableHistoryTokens - 4_000,
+    );
+    // S is untouched (the partition invariant): recall is NOT folded into systemTokens.
+    expect(withRecall.systemTokens).toBe(5_000);
+  });
+
+  it("is byte-identical to the 2-arg call when the recall estimate is omitted (storeless/no-recall callers unchanged)", () => {
+    const omitted = computeTokenBudget(200_000, 5_000);
+    const explicitZero = computeTokenBudget(200_000, 5_000, -1, 0);
+
+    expect(omitted.availableHistoryTokens).toBe(explicitZero.availableHistoryTokens);
+    // H matches the pre-I1 formula exactly: 200000 - 5000 - 8192 - 10000 - 50000.
+    expect(omitted.availableHistoryTokens).toBe(126_808);
+    expect(omitted.recallTokens).toBe(0);
+  });
+
+  it("carries the clamped recall token estimate on the returned budget object", () => {
+    const budget = computeTokenBudget(200_000, 5_000, -1, 1_234);
+    expect(budget.recallTokens).toBe(1_234);
+  });
+
+  it("clamps a negative recall estimate to zero (never a negative subtrahend) and H still clamps to zero at the bottom", () => {
+    // Negative recall must not ADD to H.
+    const negativeRecall = computeTokenBudget(200_000, 5_000, -1, -9_000);
+    const zeroRecall = computeTokenBudget(200_000, 5_000, -1, 0);
+    expect(negativeRecall.recallTokens).toBe(0);
+    expect(negativeRecall.availableHistoryTokens).toBe(zeroRecall.availableHistoryTokens);
+
+    // A recall estimate larger than the window still clamps H to 0 (never negative).
+    const huge = computeTokenBudget(200_000, 5_000, -1, 1_000_000);
+    expect(huge.availableHistoryTokens).toBe(0);
+    expect(huge.recallTokens).toBe(1_000_000);
+  });
 });
