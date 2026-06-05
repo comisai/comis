@@ -906,41 +906,72 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     const live =
       ((session.agent as unknown as { state?: { messages?: unknown[] } }).state?.messages ??
         []) as Parameters<typeof ingestTurnGuarded>[2];
-    ingestTurnGuarded(deps.contextStore, scope, live, deps.clock.now(), deps.logger);
+    const store = deps.contextStore;
 
-    // NEW 129 (C1/C3): afterTurn threshold sweep — fire ONE leaf pass when
-    // utilization exceeds contextThreshold (now load-bearing). Same gate, same
-    // scope, off the injected clock. Gated on the summarizer-deps getter's
-    // presence (absent ⇒ skipped cleanly). runLeafPassAfterTurn → maybeRunLeafPass
-    // is NON-FATAL and never rejects (T-129-18), so awaiting it cannot surface an
-    // error to the live turn. The body lives in lcd-compaction-trigger.ts (this
-    // file is over the 800L cap); the call here stays thin.
-    await runLeafPassAfterTurn({
-      store: deps.contextStore,
-      scope,
-      contextEngine: config.contextEngine,
-      getSummarizerDeps: deps.getSummarizerDeps,
-      now: deps.clock.now(),
-      logger: deps.logger,
-      eventBus: deps.eventBus,
-    });
+    // R3 (132-04): route the live ingest write through the per-conversation
+    // single-flight serializer so it shares the queue with the (prior turn's)
+    // deferred compaction and can never interleave on (conversation_id, agent_id,
+    // tenant_id, seq) / the context_items ordinals (Pitfall 2). ingestTurnGuarded
+    // is NON-FATAL (skip+WARN); on a fail-closed rollover (an ambiguous/malformed
+    // scope) it invokes onFailClosed → we emit a content-free context:dag_degraded
+    // (reason fail_closed_rollover) so the refusal is observable on the bus. We
+    // AWAIT this slot so the ingest's seq slot is claimed in order before the turn
+    // returns (the ingest write is a fast synchronous append — it does not block
+    // on the deferred compaction, which rides the same queue BEHIND it).
+    const ingestStart = deps.clock.now();
+    await store.runOnConversation(conversationId, () =>
+      ingestTurnGuarded(store, scope, live, deps.clock.now(), deps.logger, () => {
+        deps.eventBus.emit("context:dag_degraded", {
+          conversationId: scope.conversationId,
+          agentId: scope.agentId,
+          sessionKey: scope.sessionKey,
+          reason: "fail_closed_rollover",
+          durationMs: Math.max(0, deps.clock.now() - ingestStart),
+          timestamp: deps.clock.now(),
+        });
+      }),
+    );
 
-    // NEW 130 (C2): afterTurn condense pass — fold ≥condensedMinFanout contiguous
-    // same-depth summaries into one depth+1 condensed summary. Runs AFTER the leaf
-    // pass (so the Nth leaf just created can immediately fold). REUSES the same
-    // getSummarizerDeps getter — the summarize seam summarizes whatever messages
-    // it is given (a leaf chunk OR a concatenated summary-of-summaries), so no new
-    // daemon dep is threaded. NON-FATAL (T-130-07): never rejects, so awaiting it
-    // cannot surface an error to the live turn. Body in lcd-condense-trigger.ts.
-    await runCondensePassAfterTurn({
-      store: deps.contextStore,
-      scope,
-      contextEngine: config.contextEngine,
-      getCondenseSummarizerDeps: deps.getSummarizerDeps,
-      now: deps.clock.now(),
-      logger: deps.logger,
-      eventBus: deps.eventBus,
-    });
+    // The two NON-FATAL afterTurn passes (T-129-18 / T-130-07 — never reject):
+    // 129 (C1/C3) leaf threshold sweep, then 130 (C2) condense fold (AFTER the
+    // leaf so the Nth leaf can immediately fold). Bodies live in the trigger
+    // modules (this file is over the 800L cap); the calls here stay thin.
+    const runDeferredPasses = async (): Promise<void> => {
+      await runLeafPassAfterTurn({
+        store,
+        scope,
+        contextEngine: config.contextEngine,
+        getSummarizerDeps: deps.getSummarizerDeps,
+        now: deps.clock.now(),
+        logger: deps.logger,
+        eventBus: deps.eventBus,
+      });
+      await runCondensePassAfterTurn({
+        store,
+        scope,
+        contextEngine: config.contextEngine,
+        getCondenseSummarizerDeps: deps.getSummarizerDeps,
+        now: deps.clock.now(),
+        logger: deps.logger,
+        eventBus: deps.eventBus,
+      });
+    };
+
+    // C4 (132-04): gate on config.contextEngine.deferCompaction (default true).
+    if (config.contextEngine?.deferCompaction ?? true) {
+      // DEFERRED: enqueue the passes onto the SAME per-conversation serializer as
+      // a DETACHED unit and do NOT await it — afterTurn returns once the ingest
+      // slot is claimed + the compaction is enqueued, BEFORE the compaction write
+      // runs (compaction never blocks the turn). The detached promise is wrapped
+      // in suppressError so a rejection is logged, NEVER swallowed by a bare empty
+      // catch (AGENTS.md §2.2).
+      const deferred = store.runOnConversation(conversationId, runDeferredPasses);
+      suppressError(deferred, "deferred LCD compaction (R3 serializer)");
+    } else {
+      // INLINE: await the passes (the pre-132 deterministic path retained for
+      // tests). Non-fatal — never surfaces an error to the live turn.
+      await runDeferredPasses();
+    }
   }
 
   // Attribute recall usage + emit the recall-used event (flag-gated, non-fatal).

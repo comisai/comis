@@ -751,3 +751,202 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
     expect(store.getSummaries(scope).length).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04).
+//
+// C4 makes the leaf + condense passes DEFERRED by default (deferCompaction,
+// seeded in 132-01): they enqueue onto the per-conversation serializer as a
+// DETACHED unit so afterTurn returns BEFORE the compaction's store write
+// completes. R3 routes the live ingest write through the SAME serializer
+// (runOnConversation) so the next turn's ingest and the prior turn's deferred
+// compaction can never interleave (Pitfall 2). A fail-closed rollover emits a
+// content-free context:dag_degraded event.
+//
+// Scaffolding all 30+ postExecution deps is impractical (see the markRead block
+// above), so — mirroring the 129-06 leaf-wiring block — we pair a SOURCE-GREP
+// (locking the inline wiring invariants the criteria require: runOnConversation
+// ×2 inside the `if (deps.contextStore)` block, the deferCompaction gate, the
+// suppressError-wrapped detached promise, NO bare empty catch) with a BEHAVIOR
+// probe that reproduces the exact inline detached-enqueue pattern against a
+// store double and proves the observable contract (the caller resolves before
+// the deferred queue slot completes; both writers route through the queue; the
+// degraded event is content-free). Both FAIL on pre-patch code (the inline
+// wiring + the event did not exist) — RED-first.
+// ---------------------------------------------------------------------------
+describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", () => {
+  function readPostExec(): { stripped: string } {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    return { stripped };
+  }
+
+  function contextStoreBlock(stripped: string): string {
+    const blockStart = stripped.indexOf("if (deps.contextStore)");
+    expect(blockStart).toBeGreaterThan(-1);
+    const afterBlock = stripped.indexOf("attributeRecallUsage", blockStart);
+    return stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
+  }
+
+  it("source-grep — the ingest AND the deferred compaction both route through runOnConversation (Pitfall 2 interlock)", () => {
+    const block = contextStoreBlock(readPostExec().stripped);
+    // BOTH writers route through the per-conversation serializer → ≥2 calls.
+    const calls = block.match(/runOnConversation/g) ?? [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    // The ingest is still guarded; the passes are still wired.
+    expect(block).toMatch(/ingestTurnGuarded/);
+    expect(block).toMatch(/runLeafPassAfterTurn/);
+    expect(block).toMatch(/runCondensePassAfterTurn/);
+  });
+
+  it("source-grep — the deferral is gated on deferCompaction and the detached promise is suppressError-wrapped (no bare empty catch)", () => {
+    const block = contextStoreBlock(readPostExec().stripped);
+    expect(block).toMatch(/deferCompaction/);
+    expect(block).toMatch(/suppressError/);
+    // No bare empty catch anywhere in the block (AGENTS.md §2.2).
+    expect(block).not.toMatch(/\.catch\(\(\)\s*=>\s*\{\}\)/);
+  });
+
+  it("source-grep — the fail-closed rollover branch emits a content-free context:dag_degraded event", () => {
+    const block = contextStoreBlock(readPostExec().stripped);
+    expect(block).toMatch(/context:dag_degraded/);
+    expect(block).toMatch(/fail_closed_rollover/);
+    // The emit carries identifiers + reason + durationMs ONLY — never content.
+    const emitStart = block.indexOf("context:dag_degraded");
+    const emitSlice = block.slice(emitStart, emitStart + 400);
+    expect(emitSlice).not.toMatch(/\bcontent\b|\btext\b|\bmessages\b/);
+  });
+
+  it("behavior — the detached enqueue pattern resolves the caller BEFORE the deferred queue slot completes; both writers share the queue", async () => {
+    const [ingestMod, shared, mockLoggerMod] = await Promise.all([
+      import("./lcd-ingest.js"),
+      import("@comis/shared"),
+      import("../../../../test/support/mock-logger.js"),
+    ]);
+    const { ingestTurnGuarded } = ingestMod as unknown as {
+      ingestTurnGuarded: (...a: unknown[]) => void;
+    };
+    const { suppressError } = shared as unknown as {
+      suppressError: (p: Promise<unknown>, reason: string) => void;
+    };
+    const createMockLogger = (mockLoggerMod as { createMockLogger: () => unknown }).createMockLogger;
+
+    // Store double modelling the single-flight queue: the FIRST slot (ingest)
+    // completes promptly; the SECOND slot (deferred compaction) is held on a
+    // latch (the long pole). Records every runOnConversation convId.
+    const calls: string[] = [];
+    let release: (() => void) | undefined;
+    const latch = new Promise<void>((r) => {
+      release = r;
+    });
+    const store = {
+      append: () => {},
+      getMessages: () => [],
+      runOnConversation: async <T>(convId: string, fn: () => T | Promise<T>): Promise<T> => {
+        const first = calls.length === 0;
+        calls.push(convId);
+        // The ingest slot (first) runs its body promptly; the deferred-compaction
+        // slot (later) does NOT run its body until the test releases the latch —
+        // modelling the single-flight queue where the compaction WRITE only fires
+        // once dequeued (AFTER afterTurn returned). So `deferredDone` stays false
+        // until release, proving afterTurn did not block on the compaction write.
+        if (!first) await latch;
+        return fn();
+      },
+    } as unknown as import("@comis/core").ContextStorePort;
+
+    const scope: import("@comis/core").ContextStoreScope = {
+      conversationId: "conv-c4",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "conv-c4",
+    };
+
+    // Reproduce the inline afterTurn pattern verbatim (the production seam):
+    // 1. ingest routed through runOnConversation (awaited — claims the seq slot);
+    await store.runOnConversation("conv-c4", () =>
+      ingestTurnGuarded(store, scope, [], 7000, createMockLogger()),
+    );
+    // 2. deferred passes enqueued onto the SAME queue, NOT awaited, suppressError-wrapped.
+    let deferredDone = false;
+    const deferred = store.runOnConversation("conv-c4", async () => {
+      deferredDone = true;
+    });
+    suppressError(deferred, "deferred LCD compaction (R3 serializer)");
+
+    // The caller (afterTurn) continues here WITHOUT awaiting `deferred`. The
+    // deferred unit's queue slot is still held by the latch → not yet complete.
+    await Promise.resolve();
+    expect(deferredDone).toBe(false);
+
+    // Both writers (ingest + deferred compaction) routed through the queue for
+    // the SAME conversation (Pitfall 2 interlock).
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.every((c) => c === "conv-c4")).toBe(true);
+
+    // Releasing the latch lets the deferred compaction run (eventually).
+    release?.();
+    await deferred;
+    expect(deferredDone).toBe(true);
+  });
+
+  it("behavior — a fail-closed rollover (malformed scope) emits a content-free context:dag_degraded with reason fail_closed_rollover", async () => {
+    const [core, ingestMod, mockLoggerMod] = await Promise.all([
+      import("@comis/core"),
+      import("./lcd-ingest.js"),
+      import("../../../../test/support/mock-logger.js"),
+    ]);
+    const { TypedEventBus } = core as unknown as { TypedEventBus: new () => import("@comis/core").TypedEventBus };
+    const { ingestTurnGuarded } = ingestMod as unknown as {
+      ingestTurnGuarded: (
+        store: unknown,
+        scope: unknown,
+        live: unknown[],
+        now: number,
+        logger: unknown,
+        onFailClosed?: (reason: string) => void,
+      ) => void;
+    };
+    const createMockLogger = (mockLoggerMod as { createMockLogger: () => unknown }).createMockLogger;
+
+    const bus = new TypedEventBus();
+    const events: Array<Record<string, unknown>> = [];
+    bus.on("context:dag_degraded", (e) => events.push(e as unknown as Record<string, unknown>));
+
+    const store = { append: () => {}, getMessages: () => [] } as unknown as import("@comis/core").ContextStorePort;
+    // Malformed: conversationId !== sessionKey → fail-closed → onFailClosed fires.
+    const scope: import("@comis/core").ContextStoreScope = {
+      conversationId: "conv-x",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "different",
+    };
+
+    // Reproduce the inline emit (the production seam wires this onFailClosed).
+    const start = 6000;
+    ingestTurnGuarded(store, scope, [], 7000, createMockLogger(), () => {
+      bus.emit("context:dag_degraded", {
+        conversationId: scope.conversationId,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        reason: "fail_closed_rollover",
+        durationMs: Math.max(0, 7000 - start),
+        timestamp: 7000,
+      });
+    });
+
+    expect(events).toHaveLength(1);
+    const e = events[0]!;
+    expect(e).toMatchObject({ conversationId: "conv-x", agentId: "agent_a", reason: "fail_closed_rollover" });
+    expect(typeof e.durationMs).toBe("number");
+    // Content-free.
+    const keys = Object.keys(e);
+    expect(keys).not.toContain("content");
+    expect(keys).not.toContain("text");
+    expect(keys).not.toContain("messages");
+  });
+});
