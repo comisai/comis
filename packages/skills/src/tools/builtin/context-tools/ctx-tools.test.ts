@@ -631,3 +631,77 @@ describe("ctx_* tools emit a content-free context:dag_expanded metric on a hit (
     await expect(runExecute(createCtxExpandTool(d3), "nobus-expand", { summaryId: "sum-1" }, liveCtx())).resolves.toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// WR-02: a throwing context:dag_expanded subscriber must NOT fail the recovery
+// ---------------------------------------------------------------------------
+
+describe("ctx_* tools: a throwing context:dag_expanded subscriber never fails the tool (WR-02)", () => {
+  // TypedEventBus.emit delegates to Node's EventEmitter.emit, which propagates the
+  // first subscriber exception synchronously back to the emitter. An unguarded emit
+  // in the success path therefore converts a fully-completed recovery into a tool
+  // error the model sees. The emit MUST be wrapped so observability can never fail
+  // the recovery (mirroring the afterTurn emitters' non-fatal contract).
+  const throwingBus = { emit: () => { throw new Error("subscriber boom (metrics sink down)"); } };
+
+  it("ctx_search still returns its hits when the context:dag_expanded subscriber throws", async () => {
+    const { store } = makeStore({
+      searchLcdReturn: [{ kind: "message", refId: "m1", snippet: "recovered hit", rank: -1 }],
+    });
+    const { deps } = makeDeps(store, { eventBus: throwingBus });
+    const tool = createCtxSearchTool(deps);
+    const result = (await runExecute(tool, "throw-search", { query: "x" }, liveCtx())) as {
+      details: { hits: Array<{ refId: string }> };
+    };
+    // The recovery succeeded despite the throwing subscriber — the result survives.
+    expect(result.details.hits).toHaveLength(1);
+    expect(result.details.hits[0].refId).toBe("m1");
+  });
+
+  it("ctx_inspect still returns its metadata when the context:dag_expanded subscriber throws", async () => {
+    const { store } = makeStore({
+      getSummariesReturn: [makeSummary({ summaryId: "sum-1" })],
+      getSummaryChildrenReturn: [],
+      getSummaryMessagesReturn: ["m1", "m2"],
+    });
+    const { deps } = makeDeps(store, { eventBus: throwingBus });
+    const tool = createCtxInspectTool(deps);
+    const result = (await runExecute(tool, "throw-inspect", { summaryId: "sum-1" }, liveCtx())) as {
+      details: { summaryId: string };
+    };
+    expect(result.details.summaryId).toBe("sum-1");
+  });
+
+  it("ctx_expand (inline path) still returns its body when the context:dag_expanded subscriber throws", async () => {
+    const { store } = makeStore({
+      getSummaryMessagesReturn: ["m1"],
+      getMessagesReturn: [makeMessage("m1", 1, "tiny recovered body")],
+    });
+    const { deps } = makeDeps(store, { eventBus: throwingBus });
+    const tool = createCtxExpandTool(deps);
+    const result = (await runExecute(tool, "throw-expand-inline", { summaryId: "sum-1" }, liveCtx())) as {
+      details: { body?: string };
+    };
+    expect(result.details.body).toContain("tiny recovered body");
+  });
+
+  it("ctx_expand (spilled path) still returns its file handle when the context:dag_expanded subscriber throws", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ctx-expand-throw-spill-"));
+    try {
+      const big = "Q".repeat(40_000);
+      const { store } = makeStore({
+        getSummaryMessagesReturn: ["m1"],
+        getMessagesReturn: [makeMessage("m1", 1, big)],
+      });
+      const { deps } = makeDeps(store, { maxExpandTokens: 100, getToolResultsDir: () => dir, eventBus: throwingBus });
+      const tool = createCtxExpandTool(deps);
+      const result = (await runExecute(tool, "throw-expand-spill", { summaryId: "sum-1" }, liveCtx())) as {
+        details: { fullOutputPath?: string };
+      };
+      expect(result.details.fullOutputPath).toBeDefined();
+      expect(existsSync(result.details.fullOutputPath as string)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
