@@ -174,7 +174,7 @@ describe("ContextEngineConfigSchema", () => {
       expect(result.success).toBe(false);
     });
 
-    it("rejects non-integer", () => {
+    it("rejects a non-integer replayDriftIdleMs", () => {
       const result = ContextEngineConfigSchema.safeParse({ replayDriftIdleMs: 60_500.5 });
       expect(result.success).toBe(false);
     });
@@ -208,7 +208,7 @@ describe("ContextEngineConfigSchema", () => {
       expect(result.version).toBe("pipeline");
     });
 
-    it("accepts 'pipeline'", () => {
+    it("accepts the explicit 'pipeline' version value", () => {
       const result = ContextEngineConfigSchema.parse({ version: "pipeline" });
       expect(result.version).toBe("pipeline");
     });
@@ -235,7 +235,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("thinkingKeepTurns", () => {
-    it("defaults to 10", () => {
+    it("defaults thinkingKeepTurns to 10 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.thinkingKeepTurns).toBe(10);
     });
@@ -329,7 +329,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("historyTurns", () => {
-    it("defaults to 15", () => {
+    it("defaults historyTurns to 15 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.historyTurns).toBe(15);
     });
@@ -473,7 +473,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("compactionCooldownTurns", () => {
-    it("defaults to 5", () => {
+    it("defaults compactionCooldownTurns to 5 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.compactionCooldownTurns).toBe(5);
     });
@@ -512,7 +512,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("compactionPrefixAnchorTurns", () => {
-    it("defaults to 2", () => {
+    it("defaults compactionPrefixAnchorTurns to 2 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.compactionPrefixAnchorTurns).toBe(2);
     });
@@ -536,7 +536,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("freshTailTurns", () => {
-    it("defaults to 8", () => {
+    it("defaults freshTailTurns to 8 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.freshTailTurns).toBe(8);
     });
@@ -565,7 +565,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("contextThreshold", () => {
-    it("defaults to 0.75", () => {
+    it("defaults contextThreshold to 0.75 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.contextThreshold).toBe(0.75);
     });
@@ -594,7 +594,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("leafMinFanout", () => {
-    it("defaults to 8", () => {
+    it("defaults leafMinFanout to 8 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.leafMinFanout).toBe(8);
     });
@@ -623,7 +623,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("condensedMinFanout", () => {
-    it("defaults to 4", () => {
+    it("defaults condensedMinFanout to 4 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.condensedMinFanout).toBe(4);
     });
@@ -652,7 +652,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("condensedMinFanoutHard", () => {
-    it("defaults to 2", () => {
+    it("defaults condensedMinFanoutHard to 2 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.condensedMinFanoutHard).toBe(2);
     });
@@ -681,7 +681,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("incrementalMaxDepth", () => {
-    it("defaults to 0", () => {
+    it("defaults incrementalMaxDepth to 0 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.incrementalMaxDepth).toBe(0);
     });
@@ -710,7 +710,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("leafChunkTokens", () => {
-    it("defaults to 20000", () => {
+    it("defaults leafChunkTokens to 20000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.leafChunkTokens).toBe(20_000);
     });
@@ -739,7 +739,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("leafTargetTokens", () => {
-    it("defaults to 1200", () => {
+    it("defaults leafTargetTokens to 1200 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.leafTargetTokens).toBe(1_200);
     });
@@ -768,7 +768,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("condensedTargetTokens", () => {
-    it("defaults to 2000", () => {
+    it("defaults condensedTargetTokens to 2000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.condensedTargetTokens).toBe(2_000);
     });
@@ -797,7 +797,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("maxExpandTokens", () => {
-    it("defaults to 4000", () => {
+    it("defaults maxExpandTokens to 4000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.maxExpandTokens).toBe(4_000);
     });
@@ -826,7 +826,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("maxRecallsPerDay", () => {
-    it("defaults to 10", () => {
+    it("defaults maxRecallsPerDay to 10 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.maxRecallsPerDay).toBe(10);
     });
@@ -855,7 +855,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("recallTimeoutMs", () => {
-    it("defaults to 120000", () => {
+    it("defaults recallTimeoutMs to 120000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.recallTimeoutMs).toBe(120_000);
     });
@@ -884,7 +884,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("largeFileTokenThreshold", () => {
-    it("defaults to 25000", () => {
+    it("defaults largeFileTokenThreshold to 25000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.largeFileTokenThreshold).toBe(25_000);
     });
@@ -913,7 +913,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("annotationKeepWindow", () => {
-    it("defaults to 15", () => {
+    it("defaults annotationKeepWindow to 15 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.annotationKeepWindow).toBe(15);
     });
@@ -942,7 +942,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("annotationTriggerChars", () => {
-    it("defaults to 200000", () => {
+    it("defaults annotationTriggerChars to 200000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.annotationTriggerChars).toBe(200_000);
     });
