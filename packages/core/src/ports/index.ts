@@ -86,6 +86,7 @@ export type {
   LcdContextItem,
   LcdRefKind,
   AppendSummaryInput,
+  AppendCondensedSummaryInput,
 } from "./context-store-types.js";
 export type { FileLockPort, LockOptions, LockError } from "./file-lock.js";
 export type { ClockPort } from "./clock.js";

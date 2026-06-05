@@ -19,6 +19,7 @@
  */
 
 import type {
+  AppendCondensedSummaryInput,
   AppendMessageInput,
   AppendSummaryInput,
   LcdContextItem,
@@ -55,6 +56,15 @@ export interface ContextStorePort {
    * one summary-ref — ALL in one transaction. Returns the new summaryId.
    */
   appendLeafSummary(input: AppendSummaryInput): string;
+  /**
+   * Compaction write path (C2): persist one CONDENSED (depth>0) summary,
+   * link it to its CHILD SUMMARIES via lcd_summary_parents (FK RESTRICT on
+   * the child — a condensed child is never deleted, losslessness), and
+   * range-replace the covered [startOrdinal, endOrdinal] SUMMARY-refs in
+   * context_items with one condensed summary-ref — ALL in one transaction.
+   * Returns the new summaryId.
+   */
+  appendCondensedSummary(input: AppendCondensedSummaryInput): string;
   /**
    * Read path: the ordered model-facing context_items view (dense, gap-free
    * ordinals). Lazily seeded 1:1 from lcd_messages on first read for a

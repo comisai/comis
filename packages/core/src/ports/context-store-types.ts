@@ -14,8 +14,11 @@
  *
  * Phase 129 adds the summary/context_items half of the contract: the
  * `LcdSummary` row, the ordered model-facing `LcdContextItem` view row, and
- * the `AppendSummaryInput` compaction write-path DTO. These are depth-0 LEAF
- * summaries only — condensation (depth>0 / condensed kinds) is Phase 130.
+ * the `AppendSummaryInput` compaction write-path DTO (depth-0 LEAF summaries).
+ * Phase 130 adds the multi-tier condensation tier: the `LcdSummaryKind` union
+ * widens to include `"condensed"` and `AppendCondensedSummaryInput` carries the
+ * depth>0 summary-of-summaries write path (linking CHILD SUMMARIES, not
+ * messages).
  *
  * @module
  */
@@ -159,14 +162,15 @@ export interface AppendMessageInput {
 }
 
 /**
- * The kind of an LCD summary. Closed string-literal union (AGENTS.md §2.8).
+ * The kind of an LCD summary. Closed string-literal union (AGENTS.md §2.8 — a
+ * `switch` on it needs an exhaustive `never` default).
  *
- * Phase 129 is LEAF-only: a `"leaf"` summary is a depth-0 condensation of a
- * contiguous run of messages. Condensed kinds (summaries-of-summaries at
- * depth>0) are Phase 130 and will extend this union then — declaring it closed
- * now keeps the discriminator exhaustive.
+ * `"leaf"` is a depth-0 condensation of a contiguous run of messages (Phase
+ * 129). `"condensed"` is a depth>0 summary-of-summaries — the multi-tier
+ * condensation tier Phase 130 adds. The union is closed: every new kind extends
+ * it here, keeping the discriminator exhaustive at every switch.
  */
-export type LcdSummaryKind = "leaf";
+export type LcdSummaryKind = "leaf" | "condensed";
 
 /**
  * A reconstructed LCD summary (one row of `lcd_summaries`). Returned by the
@@ -179,9 +183,9 @@ export type LcdSummaryKind = "leaf";
 export interface LcdSummary {
   summaryId: string;
   conversationId: string;
-  /** `"leaf"` (depth-0) for 129. */
+  /** `"leaf"` (depth-0 condensation of messages) or `"condensed"` (depth>0 summary-of-summaries). */
   kind: LcdSummaryKind;
-  /** 0 for 129 (leaf); depth>0 is Phase 130. */
+  /** 0 for a leaf; `max(child depths) + 1` for a condensed summary. */
   depth: number;
   /** Min `createdAt` of the covered messages. */
   earliestAt: number;
@@ -256,4 +260,43 @@ export interface AppendSummaryInput {
    */
   startOrdinal: number;
   endOrdinal: number;
+}
+
+/**
+ * The write-path DTO for the C2 condensation transaction: persist one
+ * condensed (depth>0) summary, link it to its CHILD SUMMARIES (not
+ * messages), and range-replace the contiguous run of summary-refs it
+ * covers with one condensed summary-ref — all atomically.
+ *
+ * Mirrors AppendSummaryInput. NEW vs AppendSummaryInput: `childSummaryIds`
+ * (the child summary ids this condensed node links via lcd_summary_parents)
+ * and `depth` (= max(child depths) + 1). `descendantCount`/`earliestAt`/
+ * `latestAt` are advisory — the store recomputes them from the child rows
+ * (the store is the authority).
+ */
+export interface AppendCondensedSummaryInput {
+  scope: ContextStoreScope;
+  /** Pre-computed agent-side via estimateMessageTokens; the store NEVER computes tokens. */
+  tokenCount: number;
+  content: string;
+  /** Advisory — the store recomputes = Σ child.descendantCount. */
+  descendantCount: number;
+  /** Advisory — the store recomputes = min(child.earliestAt). */
+  earliestAt: number;
+  /** Advisory — the store recomputes = max(child.latestAt). */
+  latestAt: number;
+  fileIds: string[];
+  /** True ⇒ condensation itself hit the deterministic Level-3 floor. */
+  fallback: boolean;
+  /** Untrusted-content flag (enforcement is Phase 132). */
+  taint: boolean;
+  /** Injected wall-clock epoch milliseconds (the caller supplies it). */
+  createdAt: number;
+  /** Inclusive context_items ordinal range of SUMMARY-refs to replace. */
+  startOrdinal: number;
+  endOrdinal: number;
+  /** The child summary ids this condensed node links (lcd_summary_parents). */
+  childSummaryIds: string[];
+  /** = max(child depths) + 1. */
+  depth: number;
 }

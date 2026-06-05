@@ -76,6 +76,7 @@ export type {
   LcdContextItem,
   LcdRefKind,
   AppendSummaryInput,
+  AppendCondensedSummaryInput,
   FileLockPort,
   LockOptions,
   LockError,
