@@ -359,21 +359,32 @@ export async function summarizeLeafChunk(
     }
   }
 
-  // --- Level 2: aggressive — filter oversized messages, one best-effort retry.
+  // --- Level 2: aggressive — one best-effort retry. Prefer the oversized-filtered
+  //     set (dropping huge messages often lets the model reduce), but when EVERY
+  //     message is oversized the filter empties the set; rather than skip Level 2
+  //     and drop straight to the count-only floor (WR-03), make the one aggressive
+  //     attempt on the FULL (unfiltered) set. An aggressive LLM summary — even of
+  //     large inputs — is strictly better context than the deterministic floor,
+  //     and continuity (`previousSummary`) is forwarded either way.
   const filtered = messages.filter(
     (m) => estimateMessageChars(m as unknown as Message) < OVERSIZED_MESSAGE_CHARS_THRESHOLD,
   );
-  if (filtered.length > 0) {
+  const level2Messages = filtered.length > 0 ? filtered : messages;
+  if (level2Messages.length > 0) {
     deps.logger.debug(
       {
         step: "lcd-leaf-escalate",
         level: 2,
         descendantCount: chunkItems.length,
-        hint: "level-1 summary did not reduce; retrying aggressive (oversized-filtered)",
+        oversizedFilterEmptied: filtered.length === 0,
+        hint:
+          filtered.length === 0
+            ? "level-1 summary did not reduce and every message is oversized; retrying aggressive on the full set"
+            : "level-1 summary did not reduce; retrying aggressive (oversized-filtered)",
       },
       "lcd leaf escalation",
     );
-    const accepted = await tryLevel(deps, filtered, {
+    const accepted = await tryLevel(deps, level2Messages, {
       reserveTokens: opts.reserveTokens,
       previousSummary: opts.previousSummary,
       aggressive: true,
