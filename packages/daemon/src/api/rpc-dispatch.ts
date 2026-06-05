@@ -23,6 +23,12 @@ import { RequiredToolsUnreachableError } from "@comis/core";
 
 import { createCronHandlers } from "./cron-handlers.js";
 import { createMemoryHandlers } from "./memory-handlers.js";
+// Memory sub-handlers extracted from memory-handlers.ts for the file-size cap.
+// Composed here (not via memory-handlers.ts importing them) so handler files
+// stay siblings — see the "*-handlers.ts never imports another *-handlers.ts"
+// architecture invariant in __tests__/architecture.test.ts.
+import { createMemoryPortabilityHandlers } from "./memory-portability-handlers.js";
+import { createMemoryPinningHandlers } from "./memory-pinning-handlers.js";
 import { createSessionHandlers } from "./session-handlers/index.js";
 import { createMessageHandlers } from "./message-handlers.js";
 import { createMediaHandlers } from "./media-handlers.js";
@@ -119,6 +125,8 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
   const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
     ...createCronHandlers(deps),
     ...createMemoryHandlers(deps),
+    ...createMemoryPortabilityHandlers(deps),
+    ...createMemoryPinningHandlers(deps),
     ...createSessionHandlers(deps),
     ...createMessageHandlers(deps),
     ...createMediaHandlers(deps),

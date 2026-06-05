@@ -10,6 +10,10 @@ import {
 } from "@comis/agent";
 import { createMemoryHandlers } from "./memory-handlers.js";
 import type { MemoryHandlerDeps } from "./memory-handlers.js";
+// Portability handlers are composed at the dispatch layer (rpc-dispatch.ts), not
+// via memory-handlers.ts (handler-sibling invariant). These blocks exercise the
+// portability unit directly.
+import { createMemoryPortabilityHandlers } from "./memory-portability-handlers.js";
 
 // ---------------------------------------------------------------------------
 // Helper: create isolated deps per test to avoid shared state
@@ -1705,7 +1709,7 @@ describe("memory.portability.export — scrubber RED→GREEN", () => {
         stats: vi.fn(() => ({ totalEntries: 1 })),
       } as never,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = createMemoryPortabilityHandlers(deps);
     // RED: handler absent → TypeError. GREEN: handler exists and scrubs content.
     const result = await (handlers["memory.portability.export"] as Function)({
       agent_id: "agent1",
@@ -1730,7 +1734,7 @@ describe("memory.portability.import — CRITICAL firewall RED→GREEN", () => {
         criticalPatterns: ["sk-ant"],
       })),
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = createMemoryPortabilityHandlers(deps);
     // RED: handler absent → TypeError. GREEN: handler exists and blocks the entry.
     const result = await (handlers["memory.portability.import"] as Function)({
       entries: [{
@@ -1758,7 +1762,7 @@ describe("memory.portability.import — CRITICAL firewall RED→GREEN", () => {
       memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
       memoryWriteValidator: undefined,  // no validator wired — must fail closed
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = createMemoryPortabilityHandlers(deps);
     // RED (before fix): handler falls through and calls store.
     // GREEN (after fix): handler throws before any store call.
     await expect(
@@ -1789,7 +1793,7 @@ describe("memory.portability.import — WARN downgrade RED→GREEN", () => {
         criticalPatterns: [],
       })),
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = createMemoryPortabilityHandlers(deps);
     // RED: handler absent → TypeError. GREEN: downgrades to "external" with "security-tainted" tag.
     await (handlers["memory.portability.import"] as Function)({
       entries: [{
@@ -1817,7 +1821,7 @@ describe("memory.portability.import — re-stamp scope + dry-run RED→GREEN", (
       memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
       memoryWriteValidator: vi.fn(() => ({ severity: "clean" as const, patterns: [], criticalPatterns: [] })),
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = createMemoryPortabilityHandlers(deps);
     await (handlers["memory.portability.import"] as Function)({
       entries: [{
         id: "e3", content: "clean memory about the project", trust_level: "learned",
@@ -1844,7 +1848,7 @@ describe("memory.portability.import — re-stamp scope + dry-run RED→GREEN", (
         .mockReturnValueOnce({ severity: "warn" as const, patterns: ["jailbreak"], criticalPatterns: [] })
         .mockReturnValueOnce({ severity: "clean" as const, patterns: [], criticalPatterns: [] }),
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = createMemoryPortabilityHandlers(deps);
     const makeEntry = (id: string, content: string) => ({
       id, content, trust_level: "learned", memory_type: "semantic", tags: [],
       source_who: "user", source_channel: null, source_session_key: null,
@@ -1895,7 +1899,7 @@ describe("memory.portability.export — source fields + tags are scrubbed (CR-01
         stats: vi.fn(() => ({ totalEntries: 1 })),
       } as never,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = createMemoryPortabilityHandlers(deps);
     // RED: source_who passes through unscrubbed. GREEN: value is [REDACTED].
     const result = await (handlers["memory.portability.export"] as Function)({
       agent_id: "agent1",
@@ -1926,7 +1930,7 @@ describe("memory.portability.export — source fields + tags are scrubbed (CR-01
         stats: vi.fn(() => ({ totalEntries: 1 })),
       } as never,
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = createMemoryPortabilityHandlers(deps);
     // RED: secret tag passes through unscrubbed. GREEN: secret tag value is [REDACTED].
     const result = await (handlers["memory.portability.export"] as Function)({
       agent_id: "agent1",
@@ -1955,7 +1959,7 @@ describe("memory.portability.import — non-string tags are filtered before stor
       memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
       memoryWriteValidator: vi.fn(() => ({ severity: "clean" as const, patterns: [], criticalPatterns: [] })),
     });
-    const handlers = createMemoryHandlers(deps);
+    const handlers = createMemoryPortabilityHandlers(deps);
     // RED: non-string elements pass through to store. GREEN: only strings survive.
     await (handlers["memory.portability.import"] as Function)({
       entries: [{

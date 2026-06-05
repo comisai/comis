@@ -550,6 +550,27 @@ describe("MemoryApi", () => {
       expect(result.ok && result.value).toBe(false);
     });
 
+    it("pin/unpin with id only (no tenant/agent scope) match the row by id alone", async () => {
+      // Exercises the broadest-scope branch: tenantId === undefined → the
+      // `WHERE id = ?` single-arg SQL path of pin() and unpin().
+      const entry = makeEntry({ tenantId: "tenant-c", agentId: "agent-3" });
+      await adapter.store(entry as MemoryEntry);
+
+      const pinned = await api.pin(entry.id);
+      expect(pinned.ok && pinned.value).toBe(true);
+      const afterPin = adapter.getDb()
+        .prepare("SELECT pinned FROM memories WHERE id = ?")
+        .get(entry.id) as { pinned: number } | undefined;
+      expect(afterPin?.pinned).toBe(1);
+
+      const unpinned = await api.unpin(entry.id);
+      expect(unpinned.ok && unpinned.value).toBe(true);
+      const afterUnpin = adapter.getDb()
+        .prepare("SELECT pinned FROM memories WHERE id = ?")
+        .get(entry.id) as { pinned: number } | undefined;
+      expect(afterUnpin?.pinned).toBe(0);
+    });
+
     it("CR-01: pin with agentId does NOT pin a same-tenant entry owned by a different agent", async () => {
       // Two entries: same tenant, different agents. Pinning for agent-a must not pin agent-b's entry.
       const entryA = makeEntry({ tenantId: "t-cr01", agentId: "agent-a" });
