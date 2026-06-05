@@ -105,6 +105,42 @@ describe("createActivityStream (spec §5)", () => {
     sub.unsubscribe();
   });
 
+  it("clamps a marker-prepended over-long defaultLabel to the 120-char cap so the event is NOT dropped (FIX 3)", () => {
+    // A registered label spec whose rendered label is already near/over the 120-char
+    // ActivityEvent cap. onToolStarted prepends the running marker (`🔧 `), pushing the
+    // final defaultLabel past 120 → parseActivityEvent rejects → the event is DROPPED
+    // (a level-50 ERROR) under tool-heavy load. The clamp must keep the event flowing.
+    const longTool = "a_very_long_tool_name_for_clamp_test";
+    registerActivityLabelSpec(longTool, {
+      semanticPhase: "tool",
+      label: "performing a very elaborate long-running operation ".repeat(4).trim(), // ~200 chars
+    });
+    const bus = new TypedEventBus();
+    const logger = makeLogger();
+    const stream = createActivityStream({ eventBus: bus, logger });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
+
+    bus.emit("tool:started", {
+      toolName: longTool,
+      toolCallId: "call-long",
+      timestamp: 1,
+      agentId: AGENT,
+      sessionKey: SESSION,
+      traceId: TRACE,
+    });
+
+    // The event survived (it was NOT dropped by the schema cap) and its label fits.
+    expect(received).toHaveLength(1);
+    expect(received[0].defaultLabel).toBeDefined();
+    expect((received[0].defaultLabel as string).length).toBeLessThanOrEqual(120);
+    // The running marker prefix is preserved (truncate the tail, keep the head).
+    expect((received[0].defaultLabel as string).startsWith("🔧")).toBe(true);
+    // No ERROR was logged for a dropped/invalid event.
+    expect(logger.errors).toHaveLength(0);
+    sub.unsubscribe();
+  });
+
   it("maps a subagent spawn to a kind:'subagent' event for the matching turn", () => {
     const bus = new TypedEventBus();
     const logger = makeLogger();
