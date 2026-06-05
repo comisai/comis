@@ -255,7 +255,7 @@ export function createMemoryManageTool(
 
           case "pin": {
             if (!p.id || typeof p.id !== "string") {
-              throwToolError("invalid_param", "id is required for pin action");
+              throwToolError("missing_param", "id is required for pin action");
             }
             const result = await rpcCall("memory.pin", {
               id: p.id as string,
@@ -268,7 +268,7 @@ export function createMemoryManageTool(
 
           case "unpin": {
             if (!p.id || typeof p.id !== "string") {
-              throwToolError("invalid_param", "id is required for unpin action");
+              throwToolError("missing_param", "id is required for unpin action");
             }
             const result = await rpcCall("memory.unpin", {
               id: p.id as string,
