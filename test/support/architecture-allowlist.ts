@@ -363,8 +363,8 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/agent/src/executor/executor-post-execution.ts",
-    lines: 1020,
-    reason: "Executor-adjacent afterTurn finally-block module (1,020L re-measured). Already over the 800L cap; Phase 129-06 added ONLY a THIN gated call (runLeafPassAfterTurn — body in lcd-compaction-trigger.ts) + its import + one deps field inside the existing if (deps.contextStore) block, per the plan's hard constraint that the leaf-pass body live elsewhere. The afterTurn write-path bodies (ingest, leaf trigger) all live in sibling modules; this file remains an orchestration shell of per-turn cleanup steps. Defer pending global-removal shrinkage or a focused post-run-cleanup/metrics helper extraction",
+    lines: 1044,
+    reason: "Executor-adjacent afterTurn finally-block module (1,044L re-measured). Already over the 800L cap; Phase 129-06 added a THIN gated call (runLeafPassAfterTurn — body in lcd-compaction-trigger.ts) and Phase 130-02 added a SECOND THIN gated call (runCondensePassAfterTurn — body in lcd-condense-trigger.ts) + its import comment, both inside the existing if (deps.contextStore) block, per the plan's hard constraint that the pass bodies live elsewhere. The afterTurn write-path bodies (ingest, leaf trigger, condense trigger) all live in sibling modules; this file remains an orchestration shell of per-turn cleanup steps. Defer pending global-removal shrinkage or a focused post-run-cleanup/metrics helper extraction",
     removedIn: "deferred",
   },
 
