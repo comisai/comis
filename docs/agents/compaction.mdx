@@ -345,6 +345,24 @@ messages, a depth-1 condensed summary summarizes depth-0 leaves once at least
 `condensedMinFanout` (default 4) of them accumulate, and so on. Higher depth means
 broader coverage but more compression loss.
 
+### Deferred (background) compaction
+
+By default the leaf and condense passes run **out-of-band** — they never block the
+turn. When a turn finishes, the agent's reply is delivered immediately; the
+summarization work then runs in the background on a **per-conversation
+single-flight serializer**, so a compaction can never run concurrently with (or
+race) the next turn's write into the same conversation. This keeps response
+latency flat even when a large session crosses the compaction threshold:
+summarizing old history is amortized, not paid synchronously on the turn that
+happened to tip the budget.
+
+This is controlled by `contextEngine.deferCompaction` (default `true`). Setting it
+to `false` runs the leaf and condense passes **inline** at the end of the turn
+(the pre-v2.12 behaviour) — deterministic and useful for tests, at the cost of
+adding the summarization time to that turn's latency. The serializer interlock
+(one compaction per conversation at a time) holds in both modes, so the lossless
+store is never written by two passes at once.
+
 ### Honest presentation of summaries
 
 A summary is a lossy, possibly-untrusted compression of earlier turns, so the DAG
@@ -401,6 +419,27 @@ agents:
 `contextEngine.version` is operator-only — an agent cannot switch its own engine
 mode via the `config.patch` RPC.
 
+### Per-(tenant, agent, session) isolation
+
+DAG history is scoped by **tenant, agent, and session** — not by conversation
+alone. Every read the assembler performs is filtered on all three, so two agents
+that happen to share the same `(tenant, user, channel)` conversation key cannot
+recover each other's compressed history: agent A never sees agent B's summaries or
+raw messages, even within one conversation. If the scope cannot be fully resolved
+(a missing agent or tenant id), the engine **fails closed** — it reads no history
+for that turn rather than risk a cross-agent leak (the verbatim fresh tail still
+ships, so the live turn is never broken), and logs a warning so the
+misconfiguration is visible.
+
+<Note>
+The cross-agent isolation adds an `agent_id` column to the DAG full-text search
+index. Because the search index is created once on a fresh database (there is no
+migration — sessions start fresh on the LCD engine by design), a **pre-existing
+development `~/.comis` database created before this release may need to be wiped**
+to pick up the isolated index. This affects only local dev databases that predate
+the LCD engine; a fresh install needs nothing.
+</Note>
+
 ## Configuration
 
 All context engine settings live under `agents.*.contextEngine` in your config
@@ -428,6 +467,12 @@ change anything.
 | `contextEngine.freshTailTurns` | number | `8` | **DAG mode (live):** most-recent steps (assistant + tool round-trips) always kept verbatim and never summarized/evicted (1-50) |
 | `contextEngine.leafChunkTokens` | number | `20000` | **DAG mode (live):** token cap for the oldest out-of-tail chunk summarized into one leaf summary (1K-100K) |
 | `contextEngine.leafTargetTokens` | number | `1200` | **DAG mode (live):** target token size for a leaf summary (96-5000) |
+| `contextEngine.deferCompaction` | boolean | `true` | **DAG mode (live):** run the afterTurn leaf + condense passes in the background on the per-conversation serializer (never blocking the turn). `false` runs them inline (deterministic, for tests) |
+| `contextEngine.summarizerSpend.maxTokensPerTenantPerHour` | number | `500000` | **DAG mode (live):** per-tenant rolling-hour ceiling on summarizer (input+output) tokens; over the cap the summarizer is bypassed and assembly degrades to truncation-only. `0` disables the hourly cap |
+| `contextEngine.summarizerSpend.maxTokensPerTenantPerDay` | number | `5000000` | **DAG mode (live):** per-tenant rolling-day summarizer token ceiling. `0` disables the daily cap |
+| `contextEngine.summarizerBreaker.failureThreshold` | number | `5` | **DAG mode (live):** consecutive summarizer failures before the circuit breaker opens → truncation-only assembly |
+| `contextEngine.summarizerBreaker.resetTimeoutMs` | number | `60000` | **DAG mode (live):** how long the summarizer breaker stays open before a half-open trial |
+| `contextEngine.summarizerBreaker.halfOpenTimeoutMs` | number | `30000` | **DAG mode (live):** half-open trial window for the summarizer breaker |
 
 ```yaml title="~/.comis/config.yaml"
 agents:

@@ -216,6 +216,59 @@ to users.
 - **What the user sees:** The same message, delivered through the fallback
   path -- no visible difference
 
+## Summarization spend governance (DAG mode)
+
+When the [DAG context engine](/agents/compaction#dag-mode-opt-in) summarizes old
+history, the summarizer is an LLM call — so it is governed like any other spend
+boundary. Two independent guards bound it, both per **tenant**:
+
+- **Rolling token cap.** A per-tenant rolling-window ceiling on summarizer
+  input+output tokens — `summarizerSpend.maxTokensPerTenantPerHour` (default
+  500,000) and `summarizerSpend.maxTokensPerTenantPerDay` (default 5,000,000),
+  well below the primary per-hour (10M) and per-day (100M) execution budgets
+  because summarization is a background seam. A ceiling of `0` disables that
+  window.
+- **Circuit breaker.** A `summarizerBreaker` opens after
+  `failureThreshold` consecutive summarizer failures (default 5) and stays open
+  for `resetTimeoutMs` (default 60s) before a half-open trial, reusing the
+  standard circuit-breaker config.
+
+When **either** guard trips — the cap is exceeded or the breaker is open — the
+summarizer is bypassed and the context engine **degrades to truncation-only
+assembly**: it assembles the turn with a deterministic bounded truncation instead
+of an LLM summary. There is no LLM call, no hang, and **no turn failure** — the
+agent keeps responding with bounded cost and latency. The degrade is also never
+retried inline (retrying a bypassed summarizer would defeat the bound).
+
+- **What the operator sees:** a content-free `WARN` (with `errorKind`
+  `resource` for the spend cap, `dependency` for the open breaker, plus a `hint`
+  and `durationMs`) and a `context:dag_degraded` event carrying the reason
+  (`spend_cap` or `breaker_open`) — ids, reason, and timing only, never message
+  content.
+- **What the user sees:** nothing different — the turn completes; older history is
+  carried as a truncation rather than a richer summary until the window resets or
+  the breaker closes.
+
+### Emergency-fallback summaries are marked and taint-escaped
+
+A summary produced by the truncation-only degrade path (no LLM) is flagged in its
+**trusted header** with an unspoofable `fallback=emergency-truncation` marker, so
+the model is told honestly that the summary is a degraded emergency truncation
+rather than a full summary. The marker is driven only by the real stored
+fallback flag and lives **outside** the untrusted-content region, and the summary
+body itself stays taint-wrapped — so a poisoned summarized message can neither
+forge the marker nor inject instructions through it. (See
+[Honest presentation of summaries](/agents/compaction#honest-presentation-of-summaries).)
+
+### Fail-closed session rollover
+
+When a session's scope is ambiguous or malformed, the DAG ingest path **refuses
+the write** rather than silently merging history across sessions. Failing closed
+here prevents one session's compressed history from leaking into another. The
+refusal is logged and emitted as a `context:dag_degraded` event with the reason
+`fail_closed_rollover`, so an operator can see (and fix) the misconfiguration —
+again, ids and reason only, never content.
+
 ## Reference: circuit breakers, retries, fallbacks
 
 Three circuit breakers run inside Comis, each with its own scope:
@@ -225,6 +278,7 @@ Three circuit breakers run inside Comis, each with its own scope:
 | **Provider health breaker** | Per LLM provider — opens after consecutive failures, blocks all calls during cooldown | `packages/agent/src/safety/circuit-breaker.ts` |
 | **Tool retry breaker** | Per tool — classifies tool errors and decides whether to retry, fall back, or surface the error | `packages/agent/src/safety/tool-retry-breaker.ts` |
 | **Layer circuit breaker** | Per context-engine layer — disables a layer for the rest of the session after 3 consecutive failures | `packages/agent/src/context-engine/context-engine.ts` |
+| **Summarizer spend breaker** | Per tenant — bounds DAG summarization LLM spend with a rolling per-tenant token cap and opens after consecutive summarizer failures; degrades to truncation-only assembly (no LLM call) | `packages/agent/src/safety/summarizer-spend-breaker.ts` |
 
 Two retry mechanisms work alongside the breakers:
 
@@ -256,6 +310,16 @@ agents:
       promptTimeoutMs: 180000        # 3 minutes for primary calls
       retryPromptTimeoutMs: 60000    # 1 minute for retry/fallback calls
 
+    # DAG summarization spend governance (only used when contextEngine.version: "dag")
+    contextEngine:
+      summarizerSpend:
+        maxTokensPerTenantPerHour: 500000    # rolling-hour per-tenant cap (0 = disabled)
+        maxTokensPerTenantPerDay: 5000000     # rolling-day per-tenant cap (0 = disabled)
+      summarizerBreaker:
+        failureThreshold: 5            # consecutive summarizer failures before opening
+        resetTimeoutMs: 60000          # how long the breaker stays open
+        halfOpenTimeoutMs: 30000       # half-open trial window
+
 security:
   agentToAgent:
     subagentContext:
@@ -263,6 +327,12 @@ security:
       maxRunTimeoutMs: 600000        # 10 minutes hard ceiling
       perStepTimeoutMs: 60000        # 1 minute per step (dynamic timeout)
 ```
+
+The summarizer spend cap, breaker, and the `contextEngine.deferCompaction`
+toggle that backgrounds compaction are documented in full on the
+[Compaction](/agents/compaction#configuration) and
+[Config Reference](/reference/config-yaml#context-engine-agents-contextengine)
+pages.
 
 See the [Config YAML Reference](/reference/config-yaml) for the full list of
 all configuration options with types, defaults, and validation rules.
