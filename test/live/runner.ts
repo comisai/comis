@@ -193,6 +193,10 @@ async function runMain(): Promise<void> {
       const result = await runSweep(credentialRegistry, governor, { dry: true, probeIds });
       console.log(`Sweep probes (${result.verdicts.length}): ${result.verdicts.map(v => v.id).join(", ")}`);
       console.log("(dry run — no real calls, no report written)");
+    } else if (args.mode === "core" || args.mode === "loop") {
+      console.log("Loop scenarios (LOOP-01..04): multi-turn, tool-call, restart, streaming");
+      console.log("  test/live/scenarios/loop/*.test.ts");
+      console.log("  Cost tier: ¢ (real LLM; cheapest available model per provider)");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -241,8 +245,22 @@ async function runMain(): Promise<void> {
     }
     console.log("");
 
+  } else if (args.mode === "core" || args.mode === "loop") {
+    // Phase 136: core real-LLM conversation loop scenarios (LOOP-01..04)
+    const LOOP_TEST_GLOB = "test/live/scenarios/loop/*.test.ts";
+    const loopCmd = [
+      "npx vitest run",
+      `"${LOOP_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(loopCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
   } else {
-    // Default: smoke test (Phase 134 baseline, and all future modes not yet wired)
+    // Default: smoke test (Phase 134 baseline)
     const smokeCmd = [
       "npx vitest run",
       SMOKE_TEST,
