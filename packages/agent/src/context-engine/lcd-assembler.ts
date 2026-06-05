@@ -471,7 +471,9 @@ function boundFreshTailToolResults(
     // an oversized text-block payload through the guard's block API — leave it
     // verbatim (A1). The guard only bounds array-of-blocks content.
     if (!Array.isArray(content)) return m;
-    const toolName = (m as unknown as { toolName?: string }).toolName;
+    // The guard's `toolHint` carries the honest lossless-recovery marker suffix (not
+    // the tool name — tool names are not the signal the model needs here; the
+    // recoverability of the masked content is).
     const result = FRESH_TAIL_TOOL_RESULT_GUARD.truncateIfNeeded(
       content as ContentBlock[],
       cap,
