@@ -31,7 +31,7 @@ import { Type } from "typebox";
 import { wrapExternalContent, scrubSecretsFromText, safePath, type LcdMessage } from "@comis/core";
 
 import { jsonResult, readStringParam } from "../../../platform-tools/tool-helpers.js";
-import { estimateTokens, renderMessageText, requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
+import { emitExpansionMetric, estimateTokens, renderMessageText, requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
 
 const CtxExpandParams = Type.Object({
   summaryId: Type.String({ description: "The summaryId (from ctx_search / ctx_inspect) whose covered messages to recover." }),
@@ -105,7 +105,9 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         );
         // O1: content-free expansion-hit metric (ids/counts/durationMs only —
         // NEVER the recovered body; the lossless store, AGENTS.md §2.2/§2.7).
-        deps.eventBus?.emit("context:dag_expanded", {
+        // WR-02: GUARDED — a throwing subscriber must never fail this completed
+        // spill recovery (see emitExpansionMetric).
+        emitExpansionMetric(deps, "ctx_expand", {
           conversationId: ctxScope.conversationId,
           agentId: ctxScope.agentId,
           sessionKey: ctxScope.sessionKey,
@@ -138,7 +140,9 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       );
       // O1: content-free expansion-hit metric (ids/counts/durationMs only —
       // NEVER the recovered body; the lossless store, AGENTS.md §2.2/§2.7).
-      deps.eventBus?.emit("context:dag_expanded", {
+      // WR-02: GUARDED — a throwing subscriber must never fail this completed
+      // inline recovery (see emitExpansionMetric).
+      emitExpansionMetric(deps, "ctx_expand", {
         conversationId: ctxScope.conversationId,
         agentId: ctxScope.agentId,
         sessionKey: ctxScope.sessionKey,

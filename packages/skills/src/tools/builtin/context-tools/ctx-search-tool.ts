@@ -25,7 +25,7 @@ import { wrapExternalContent, type LcdSearchHit } from "@comis/core";
 
 import { jsonResult, throwToolError, readStringParam, readNumberParam } from "../../../platform-tools/tool-helpers.js";
 import { sanitizeFts5Query } from "../../../platform-tools/tools/fts5-sanitizer.js";
-import { requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
+import { emitExpansionMetric, requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
 
 const CtxSearchParams = Type.Object({
   query: Type.String({ description: "Full-text query over THIS conversation's compressed history." }),
@@ -111,7 +111,14 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       );
       // O1: content-free expansion-hit metric (ids/counts/durationMs only —
       // NEVER the query or a snippet; the lossless store, AGENTS.md §2.2/§2.7).
-      deps.eventBus?.emit("context:dag_expanded", {
+      // WR-02: GUARD the emit. TypedEventBus.emit delegates to Node's
+      // EventEmitter.emit, which propagates the first subscriber exception
+      // synchronously to the emitter — so a throwing subscriber (a trajectory
+      // writer, a metrics sink) would unwind out of execute() and convert this
+      // already-completed recovery into a tool failure the model sees. Swallow
+      // it (best-effort, content-free), mirroring the afterTurn emitters'
+      // non-fatal contract: observability can NEVER fail the recovery.
+      emitExpansionMetric(deps, "ctx_search", {
         conversationId: ctxScope.conversationId,
         agentId: ctxScope.agentId,
         sessionKey: ctxScope.sessionKey,

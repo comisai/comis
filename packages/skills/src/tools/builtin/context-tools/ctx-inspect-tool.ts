@@ -24,7 +24,7 @@ import { Type } from "typebox";
 import { type LcdSummary } from "@comis/core";
 
 import { jsonResult, throwToolError, readStringParam } from "../../../platform-tools/tool-helpers.js";
-import { requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
+import { emitExpansionMetric, requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
 
 const CtxInspectParams = Type.Object({
   summaryId: Type.String({ description: "The summaryId (from a ctx_search summary hit or a <summary> footer) to inspect." }),
@@ -83,7 +83,9 @@ export function createCtxInspectTool(deps: ContextToolDeps): AgentTool<typeof Ct
       // O1: content-free expansion-hit metric (ids/counts/durationMs only —
       // NEVER the summary content; the lossless store, AGENTS.md §2.2/§2.7).
       // recoveredCount = the covered-message count the inspection surfaced.
-      deps.eventBus?.emit("context:dag_expanded", {
+      // WR-02: GUARDED — a throwing subscriber must never fail this completed
+      // metadata read (see emitExpansionMetric).
+      emitExpansionMetric(deps, "ctx_inspect", {
         conversationId: ctxScope.conversationId,
         agentId: ctxScope.agentId,
         sessionKey: ctxScope.sessionKey,

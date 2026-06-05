@@ -100,6 +100,45 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/**
+ * Emit the O1 content-free `context:dag_expanded` expansion-hit metric, GUARDED
+ * so a throwing subscriber can NEVER fail the already-completed recovery (WR-02).
+ *
+ * `TypedEventBus.emit` delegates to Node's `EventEmitter.emit`, which invokes
+ * every subscriber synchronously and propagates the FIRST subscriber exception
+ * back to the emitter. The ctx_* tools emit in the success path of `execute()`,
+ * so an unguarded throw (a trajectory writer, a metrics sink, a future dashboard
+ * handler) would unwind out of the tool and turn a fully-completed
+ * `ctx_search`/`ctx_inspect`/`ctx_expand` recovery into a tool failure the model
+ * sees — discarding the recovered content even though the store read succeeded.
+ * This mirrors the afterTurn emitters' non-fatal contract
+ * (lcd-compaction-trigger.ts / lcd-condense-trigger.ts): observability supplements
+ * the recovery, it never aborts it. The swallowed-error WARN is content-free
+ * (toolName + a sanitized error message + an actionable hint, AGENTS.md §2.7).
+ *
+ * `data` is the already-assembled, content-free payload (ids/counts/durationMs/
+ * timestamp only — never recovered text); this helper does not read or shape it.
+ */
+export function emitExpansionMetric(
+  deps: Pick<ContextToolDeps, "eventBus" | "logger">,
+  toolName: string,
+  data: unknown,
+): void {
+  try {
+    deps.eventBus?.emit("context:dag_expanded", data);
+  } catch (err) {
+    deps.logger.warn(
+      {
+        toolName,
+        err: err instanceof Error ? err.message : String(err),
+        hint: "context:dag_expanded subscriber threw; metric dropped, recovery unaffected — inspect the failing event subscriber (trajectory writer / metrics sink)",
+        errorKind: "dependency" as const,
+      },
+      "ctx_* expansion metric emit failed (non-fatal)",
+    );
+  }
+}
+
 /** JSON.stringify that degrades to `""` on a cycle/throw — never crashes the recovery path. */
 function safeStringify(value: unknown): string {
   if (typeof value === "string") return value;
