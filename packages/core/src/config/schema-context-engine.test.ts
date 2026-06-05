@@ -51,6 +51,10 @@ describe("ContextEngineConfigSchema", () => {
       annotationTriggerChars: 200_000,
       // Post-batch continuation (replaces SEP nudge enforcement)
       postBatchContinuation: { enabled: true, maxRetries: 2 },
+      // Robustness / spend / deferred-compaction knobs (Phase 132 C4 + R1)
+      deferCompaction: true,
+      summarizerSpend: { maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 },
+      summarizerBreaker: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
     });
   });
 
@@ -122,6 +126,10 @@ describe("ContextEngineConfigSchema", () => {
       summaryProvider: "anthropic",
       // Post-batch continuation defaults (not overridden in this test)
       postBatchContinuation: { enabled: true, maxRetries: 2 },
+      // Phase 132 knobs (not overridden in this test — default through)
+      deferCompaction: true,
+      summarizerSpend: { maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 },
+      summarizerBreaker: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
     });
   });
 
@@ -1061,6 +1069,136 @@ describe("ContextEngineConfigSchema", () => {
     it("accepts a string value", () => {
       const result = ContextEngineConfigSchema.parse({ summaryProvider: "anthropic" });
       expect(result.summaryProvider).toBe("anthropic");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // deferCompaction (C4) — deferred-by-default afterTurn compaction
+  // -------------------------------------------------------------------------
+
+  describe("deferCompaction", () => {
+    it("defaults to true (afterTurn leaf + condense passes run off the per-conversation serializer, never blocking the turn)", () => {
+      const result = ContextEngineConfigSchema.parse({});
+      expect(result.deferCompaction).toBe(true);
+    });
+
+    it("accepts false (inline pre-132 behaviour for deterministic tests)", () => {
+      const result = ContextEngineConfigSchema.parse({ deferCompaction: false });
+      expect(result.deferCompaction).toBe(false);
+    });
+
+    it("rejects a non-boolean value", () => {
+      const result = ContextEngineConfigSchema.safeParse({ deferCompaction: "yes" });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // summarizerSpend (R1) — per-tenant summarizer token-spend ceilings
+  // -------------------------------------------------------------------------
+
+  describe("summarizerSpend", () => {
+    it("defaults to a fully-populated object with sane per-tenant hour + day ceilings", () => {
+      const result = ContextEngineConfigSchema.parse({});
+      expect(result.summarizerSpend).toEqual({
+        maxTokensPerTenantPerHour: 500_000,
+        maxTokensPerTenantPerDay: 5_000_000,
+      });
+    });
+
+    it("accepts a custom per-tenant ceiling override", () => {
+      const result = ContextEngineConfigSchema.parse({
+        summarizerSpend: { maxTokensPerTenantPerHour: 100_000, maxTokensPerTenantPerDay: 1_000_000 },
+      });
+      expect(result.summarizerSpend).toEqual({
+        maxTokensPerTenantPerHour: 100_000,
+        maxTokensPerTenantPerDay: 1_000_000,
+      });
+    });
+
+    it("accepts a partial override (the other ceiling fills from default)", () => {
+      const result = ContextEngineConfigSchema.parse({
+        summarizerSpend: { maxTokensPerTenantPerHour: 250_000 },
+      });
+      expect(result.summarizerSpend).toEqual({
+        maxTokensPerTenantPerHour: 250_000,
+        maxTokensPerTenantPerDay: 5_000_000,
+      });
+    });
+
+    it("accepts 0 (the cap-disabled sentinel) for both ceilings", () => {
+      const result = ContextEngineConfigSchema.parse({
+        summarizerSpend: { maxTokensPerTenantPerHour: 0, maxTokensPerTenantPerDay: 0 },
+      });
+      expect(result.summarizerSpend).toEqual({
+        maxTokensPerTenantPerHour: 0,
+        maxTokensPerTenantPerDay: 0,
+      });
+    });
+
+    it("rejects a negative hourly ceiling", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        summarizerSpend: { maxTokensPerTenantPerHour: -1 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a non-integer daily ceiling", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        summarizerSpend: { maxTokensPerTenantPerDay: 1_000.5 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects unknown keys inside summarizerSpend (strictObject)", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        summarizerSpend: { maxTokensPerTenantPerHour: 1000, unknownField: "bad" },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // summarizerBreaker (R1) — reuses CircuitBreakerConfigSchema
+  // -------------------------------------------------------------------------
+
+  describe("summarizerBreaker", () => {
+    it("defaults to the shared CircuitBreakerConfigSchema defaults (threshold 5 / reset 60s / half-open 30s)", () => {
+      const result = ContextEngineConfigSchema.parse({});
+      expect(result.summarizerBreaker).toEqual({
+        failureThreshold: 5,
+        resetTimeoutMs: 60_000,
+        halfOpenTimeoutMs: 30_000,
+      });
+    });
+
+    it("accepts a custom breaker override", () => {
+      const result = ContextEngineConfigSchema.parse({
+        summarizerBreaker: { failureThreshold: 3, resetTimeoutMs: 30_000, halfOpenTimeoutMs: 15_000 },
+      });
+      expect(result.summarizerBreaker).toEqual({
+        failureThreshold: 3,
+        resetTimeoutMs: 30_000,
+        halfOpenTimeoutMs: 15_000,
+      });
+    });
+
+    it("accepts a partial override (the rest fill from CircuitBreakerConfigSchema defaults)", () => {
+      const result = ContextEngineConfigSchema.parse({
+        summarizerBreaker: { failureThreshold: 2 },
+      });
+      expect(result.summarizerBreaker).toEqual({
+        failureThreshold: 2,
+        resetTimeoutMs: 60_000,
+        halfOpenTimeoutMs: 30_000,
+      });
+    });
+
+    it("rejects a non-positive failureThreshold (inherited from CircuitBreakerConfigSchema)", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        summarizerBreaker: { failureThreshold: 0 },
+      });
+      expect(result.success).toBe(false);
     });
   });
 });
