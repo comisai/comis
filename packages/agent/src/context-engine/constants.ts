@@ -262,6 +262,27 @@ export const LEAF_FALLBACK_TARGET_TOKENS = 512;
 export const LEAF_FALLBACK_SUMMARY_MARKER = "[lcd-leaf-fallback]";
 
 // ---------------------------------------------------------------------------
+// LCD Condensation Escalation (Phase 130, C2) — the depth>0 summary-of-summaries
+// ---------------------------------------------------------------------------
+
+/** Bounded token target for the deterministic Level-3 CONDENSATION truncation —
+ *  the guaranteed-shrink floor mirroring {@link LEAF_FALLBACK_TARGET_TOKENS}. When
+ *  both LLM levels fail to reduce a contiguous run of CHILD summaries (oversized
+ *  output or throws), Level 3 builds a count-only note capped at this size so the
+ *  condensed summary ALWAYS ends up strictly smaller than the Σ child tokenCount it
+ *  replaces (the escalation terminator — never loops).
+ *  Used by: lcd-condense (Level-3 deterministic truncation). */
+export const CONDENSED_FALLBACK_TARGET_TOKENS = 512;
+
+/** Marker string prefixed onto the deterministic Level-3 condensation truncation
+ *  output so a fallback (non-LLM) condensed summary is identifiable downstream
+ *  (Phase 132 taint-escapes it; the store records `fallback: true`). The two LLM
+ *  levels never emit this marker — its presence means the deterministic floor ran.
+ *  Distinct from the leaf marker so the two tiers' floors are separable in logs +
+ *  the synthetic-session gate. Used by: lcd-condense (Level-3 marker). */
+export const CONDENSED_FALLBACK_SUMMARY_MARKER = "[lcd-condensed-fallback]";
+
+// ---------------------------------------------------------------------------
 // Post-Compaction Rehydration (Layer 6)
 // ---------------------------------------------------------------------------
 

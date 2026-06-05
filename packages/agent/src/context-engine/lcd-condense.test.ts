@@ -70,17 +70,14 @@ function shortSummarizer(text = "CONDENSED: prior summaries merged (short)."): C
   return vi.fn(async () => text);
 }
 
-/** An OVERSIZED stub: returns a string far larger than any chunk → forces the
- *  ladder past Levels 1+2 to the deterministic Level-3 floor. No network. */
+/** An OVERSIZED stub: returns a fixed string far larger than the run's STORED Σ
+ *  child tokenCount → forces the ladder past Levels 1+2 to the deterministic
+ *  Level-3 floor. Sized in CHARS independent of the (tiny) content so it always
+ *  exceeds the stored before-size (the condense before-size is the stored Σ, NOT
+ *  the content length — Pitfall 2/5). 40_000 chars ≈ 10_000 tokens ≫ any test Σ.
+ *  No network. */
 function oversizedSummarizer(): CondenseSummarizer {
-  return vi.fn(async (messages: AgentMessage[]) => {
-    const chars = messages.reduce(
-      (acc, m) =>
-        acc + JSON.stringify((m as unknown as { content?: unknown }).content ?? "").length,
-      0,
-    );
-    return "BLOAT ".repeat(Math.max(chars, 1));
-  });
+  return vi.fn(async () => "BLOAT ".repeat(8_000));
 }
 
 /** Non-fatal: throws on every call (Levels 1+2 both fail → deterministic L3). */
