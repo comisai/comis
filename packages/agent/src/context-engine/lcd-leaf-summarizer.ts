@@ -165,8 +165,21 @@ export interface LeafSummarizerDeps {
   logger: ComisLogger;
   /** The injected summarizer (the 132 spend-governance seam). */
   summarize: LeafSummarizer;
-  /** Getter for the current model's capabilities (for the summarizer call). */
+  /** Getter for the current model's capabilities (for capability reads — NOT the
+   *  LLM model arg; the SDK generateSummary needs a real Model, see getRealModel). */
   getModel: () => CompactionModelSnapshot;
+  /**
+   * B-5: the REAL pi-ai `Model<any>` for the PRIMARY summarizer path.
+   * `generateSummary` needs a real Model (with the provider-client runtime it
+   * invokes), NOT the 4-field {@link CompactionModelSnapshot} (which throws at
+   * call time). Sourced from the executor's already-resolved model
+   * (pi-executor.ts `resolvedModel` → setupContextEngine `params.resolvedModel`),
+   * captured at setup time BEFORE `session.dispose()` so the WR-04 deferred (C4)
+   * pass — which runs post-dispose — still resolves a real Model. Typed `unknown`
+   * end-to-end; the single sanctioned `as any` cast lives at the generateSummary
+   * call site (the opaque-SDK Model<any>).
+   */
+  getRealModel: () => unknown;
   /** Getter for the current model's provider API key. */
   getApiKey: () => Promise<string>;
   /** Optional cheaper override model + key for the leaf pass. */
@@ -550,7 +563,8 @@ function buildLeafSummaryInstructions(aggressive: boolean): string {
  * circuit-broken variant; 129 calls `generateSummary` directly. The override
  * model + key are used when {@link LeafSummarizerDeps.overrideModel} is present
  * (a cheaper compaction model resolved by the operation-model chain), else the
- * primary `getModel`/`getApiKey`. Mirrors `compactWithFallback`'s call shape
+ * primary REAL model (`getRealModel`) + `getApiKey` (B-5 — a real pi-ai
+ * `Model<any>`, never the 4-field snapshot). Mirrors `compactWithFallback`'s call shape
  * (`llm-compaction.ts:561`); the 8th param threads `previousSummary` for
  * continuity. The function may return a too-large string — the escalation ladder
  * in {@link summarizeLeafChunk} re-checks size and escalates.
@@ -560,12 +574,16 @@ function buildLeafSummaryInstructions(aggressive: boolean): string {
  * @returns a LeafSummarizer bound to the resolved model + key.
  */
 export function buildLeafSummarizeFn(
-  deps: Pick<LeafSummarizerDeps, "getModel" | "getApiKey" | "overrideModel">,
+  deps: Pick<LeafSummarizerDeps, "getRealModel" | "getApiKey" | "overrideModel">,
 ): LeafSummarizer {
   return async (messages: AgentMessage[], opts: LeafSummarizeOptions): Promise<string> => {
-    // Resolve the model + key: prefer the cheaper override when the operation
-    // chain picked one (parity with getCompactionDeps); else the primary.
-    const model: unknown = deps.overrideModel?.model ?? deps.getModel();
+    // B-5: resolve a REAL Model<any> for generateSummary — prefer the cheaper
+    // override's real Model when the operation chain picked one (parity with
+    // getCompactionDeps), else the PRIMARY real model (the executor-resolved
+    // `resolvedModel`, threaded via deps.getRealModel). The bare 4-field
+    // CompactionModelSnapshot is NEVER passed to generateSummary — it lacks the
+    // provider-client runtime the SDK invokes and throws at call time.
+    const model: unknown = deps.overrideModel?.model ?? deps.getRealModel();
     const apiKey = deps.overrideModel
       ? await deps.overrideModel.getApiKey()
       : await deps.getApiKey();

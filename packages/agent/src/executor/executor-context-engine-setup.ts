@@ -334,6 +334,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     modelSnapshot?: CompactionModelSnapshot,
   ): {
     getModel: () => CompactionModelSnapshot;
+    getRealModel: () => unknown;
     getApiKey: () => Promise<string>;
     overrideModel?: { model: unknown; getApiKey: () => Promise<string> };
   } => ({
@@ -347,6 +348,15 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         reasoning: model?.reasoning ?? false,
       };
     },
+    // B-5: the REAL pi-ai Model<any> for the PRIMARY leaf/condense summarizer path
+    // (generateSummary needs a real Model, not the 4-field snapshot getModel
+    // returns). It is the executor-resolved model (pi-executor.ts resolvedModel),
+    // threaded in as params.resolvedModel. Captured at setup time (a closure over
+    // the setup-time value, resolved BEFORE session.dispose()), so the WR-04
+    // DEFERRED (C4) pass — which runs post-dispose — still returns a real Model
+    // without reading session.agent.state. Kept `unknown` end-to-end; the single
+    // sanctioned `as any` cast lives at the generateSummary call site.
+    getRealModel: () => params.resolvedModel,
     // Route compaction's primary getApiKey through the shared dispatch helper so
     // OAuth-eligible providers refresh through OAuthTokenManager + setRuntimeApiKey
     // on every call. Non-OAuth providers fall through to authStorage unchanged.
@@ -428,6 +438,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       logger: deps.logger,
       summarize,
       getModel: chain.getModel,
+      // B-5: the REAL primary Model<any> (params.resolvedModel) buildLeafSummarizeFn
+      // hands generateSummary — not the 4-field snapshot getModel returns.
+      getRealModel: chain.getRealModel,
       getApiKey: chain.getApiKey,
       overrideModel: chain.overrideModel,
     };
