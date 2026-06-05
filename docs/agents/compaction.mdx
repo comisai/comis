@@ -11,11 +11,19 @@ goes — `contextEngine.version` defaults to `"pipeline"`. The result: your agen
 never runs out of room to think.
 
 <Note>
-The **DAG** engine (a lossless directed acyclic graph with recall tools) is being
-reimplemented for the v2.12 "Lossless Context DAG" release and is **not currently
-available**. Setting `contextEngine.version: "dag"` is accepted but falls back to
-the pipeline engine with a logged warning until DAG is re-enabled in a later
-release. New conversations run on the pipeline engine.
+The lossless **DAG** engine (the v2.12 "Lossless Context DAG" release) is a
+**working opt-in** engine — set `contextEngine.version: "dag"` to enable it (the
+default stays `"pipeline"`; DAG becomes the default in a later release). DAG
+stores every message losslessly and **automatically summarizes** the oldest
+out-of-tail history when context utilization crosses `contextThreshold` (default
+0.75 × the model's window) at the end of a turn: it collapses the oldest chunk
+into a leaf summary via the same three-level escalation as pipeline mode
+(normal → aggressive → a deterministic count-only floor that always fits), then
+assembles the context under the model's token budget — always keeping the
+verbatim fresh tail and never deleting anything from the store. The multi-tier
+*condensed* summary hierarchy and the on-demand recall tools land in a later
+phase. See [DAG mode](#dag-mode-opt-in) below for the mechanics and
+[Context Management](/agents/context-management) for the engine overview.
 </Note>
 
 ## How the context engine works
