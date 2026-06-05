@@ -7,6 +7,7 @@ import {
   buildSubagentContextSection,
   buildSubagentRoleSection,
   buildTaskPlanningSection,
+  buildLossinessUncertaintySection,
 } from "./context-sections.js";
 import { MAX_POST_COMPACTION_CHARS } from "../section-extractor.js";
 import type { BootstrapContextFile } from "../types.js";
@@ -35,6 +36,45 @@ describe("buildTaskPlanningSection", () => {
 
   it("returns empty array when both are false/true", () => {
     expect(buildTaskPlanningSection(false, true)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildLossinessUncertaintySection (P2 — gated on dag mode, cache-stable)
+// ---------------------------------------------------------------------------
+
+describe("buildLossinessUncertaintySection", () => {
+  it("returns the Compressed-context clause when dagModeEnabled is true and not minimal", () => {
+    const result = buildLossinessUncertaintySection(true, false);
+    expect(result.length).toBeGreaterThan(0);
+    expect(result[0]).toBe("## Compressed context");
+    const joined = result.join("\n");
+    // It must teach the model that summaries are lossy, untrusted recall cues.
+    expect(joined).toContain("LOSSY");
+    expect(joined).toContain("trust=untrusted");
+    expect(joined).toContain("NOT proof");
+    expect(joined).toContain("Prefer newer");
+    expect(joined).toContain("Expand for details");
+  });
+
+  it("returns empty array when dagModeEnabled is false (pipeline mode)", () => {
+    expect(buildLossinessUncertaintySection(false, false)).toEqual([]);
+  });
+
+  it("returns empty array when isMinimal is true (sub-agent), even in dag mode", () => {
+    expect(buildLossinessUncertaintySection(true, true)).toEqual([]);
+  });
+
+  it("returns empty array when both are false/true", () => {
+    expect(buildLossinessUncertaintySection(false, true)).toEqual([]);
+  });
+
+  it("does NOT name the Phase-131 ctx_* recovery tools", () => {
+    const joined = buildLossinessUncertaintySection(true, false).join("\n");
+    expect(joined).not.toContain("ctx_search");
+    expect(joined).not.toContain("ctx_inspect");
+    expect(joined).not.toContain("ctx_expand");
+    expect(joined).not.toContain("ctx_recall");
   });
 });
 
