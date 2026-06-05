@@ -803,6 +803,49 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     ).c;
     expect(rowCount).toBe(3);
   });
+
+  it("CRIT-2: incremental backfill seeds a LEGACY conversation (lcd_messages with zero context_items) dense 0..N-1 on first read", () => {
+    // Simulate a PRE-EXISTING conversation whose messages predate the per-append
+    // context_items insert: write lcd_messages rows DIRECTLY (bypassing append),
+    // so the model-facing view starts empty. This is the only path that does real
+    // work in seedContextItems now — the live append-maintained path is a no-op.
+    const insertLegacyMsg = db.prepare(
+      "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    const legacyIds = ["legacy-0", "legacy-1", "legacy-2"];
+    legacyIds.forEach((id, seq) => {
+      insertLegacyMsg.run(id, SCOPE_A.conversationId, SCOPE_A.tenantId, SCOPE_A.agentId, SCOPE_A.sessionKey, seq, "user", 1, 1000 + seq * 10);
+    });
+    // No context_items exist yet for this scope.
+    const before = (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
+        )
+        .get(SCOPE_A.conversationId, SCOPE_A.agentId, SCOPE_A.tenantId) as { c: number }
+    ).c;
+    expect(before).toBe(0);
+
+    // First read triggers the incremental backfill (the seed gate fires on count 0).
+    const items = store.getContextItems(SCOPE_A);
+
+    expect(items).toHaveLength(3);
+    expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2]); // dense, gap-free
+    expect(items.every((i) => i.refKind === "message")).toBe(true);
+    expect(items.map((i) => i.refId)).toEqual(legacyIds); // seq-ordered message-refs
+
+    // Idempotent: a second read seeds nothing new (no duplication).
+    const second = store.getContextItems(SCOPE_A);
+    expect(second.map((i) => i.refId)).toEqual(legacyIds);
+    const after = (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
+        )
+        .get(SCOPE_A.conversationId, SCOPE_A.agentId, SCOPE_A.tenantId) as { c: number }
+    ).c;
+    expect(after).toBe(3);
+  });
 });
 
 // =====================================================================
