@@ -70,6 +70,7 @@ import {
   type LeafChunkItem,
   type LeafSummarizerDeps,
 } from "../context-engine/lcd-leaf-summarizer.js";
+import { LCD_MAX_LEAF_PASSES_PER_TURN } from "../context-engine/constants.js";
 import type {
   CondenseChildSummary,
   SummaryRefRun,
@@ -303,18 +304,200 @@ function chunkOrdinalWindow(
 }
 
 /**
- * AfterTurn threshold sweep: fire ONE leaf pass when context utilization exceeds
- * `opts.contextThreshold`, otherwise no-op. Non-fatal end-to-end (mirrors
- * `ingestTurnGuarded`). See the module header for the full contract.
+ * The terminal outcome of one leaf pass — drives the B-2 drain loop. `made` is
+ * true ONLY when a leaf summary was actually persisted (real progress); every
+ * other `reason` is a no-progress / drained terminator that ends the loop.
+ */
+type LeafPassReason =
+  | "compacted" // a leaf summary was persisted — real progress, keep draining.
+  | "below-threshold" // the resolved view fits under contextThreshold — drained.
+  | "empty-history" // no resolvable message-ref history — nothing to do.
+  | "no-chunk" // no evictable out-of-tail history — nothing to do.
+  | "too-small" // the oldest chunk is below MIN_SHRINKABLE — cannot shrink.
+  | "divergence"; // the chunk ids did not resolve to an ordinal window (C3 guard).
+
+interface LeafPassResult {
+  /** True ⇒ a leaf summary was persisted this pass (the only "keep draining" case). */
+  made: boolean;
+  /** The terminal reason (for the drain loop + diagnosability). */
+  reason: LeafPassReason;
+}
+
+/**
+ * Run ONE leaf pass against the CURRENT store state and return whether it made
+ * progress. Re-resolves the model-facing `context_items` view itself (CR-01/CR-02)
+ * so a caller looping this observes its own prior compaction. Throws only on a
+ * store/summarizer fault (the {@link maybeRunLeafPass} drain wraps the whole loop
+ * in one try/catch so a throw in pass K never loses passes 1..K-1, which are
+ * already committed atomically). All B-13 `lcd-leaf-gate` DEBUG lines live here so
+ * they fire on EVERY drain iteration (a stalled drain stays diagnosable).
+ */
+async function runOneLeafPass(
+  store: ContextStorePort,
+  scope: ContextStoreScope,
+  opts: LeafPassOptions,
+  summarizerDeps: LeafSummarizerDeps,
+  now: number,
+  nowFn: (() => number) | undefined,
+  logger: ComisLogger,
+  eventBus: TypedEventBus | undefined,
+): Promise<LeafPassResult> {
+  const conversationId = scope.conversationId;
+  // O1: per-pass START clock read (the injected clock CALLABLE — NEVER
+  // Date.now()/performance.now(), the globals gate). A second read at emit gives
+  // this pass's real elapsed; a scalar-only caller (no nowFn) degrades to 0.
+  const passStart = nowFn?.() ?? now;
+
+  // Resolve the model-facing context from context_items (CR-01/CR-02): the
+  // utilization gate AND chunk selection both read this resolved view — never the
+  // raw lossless getMessages() set — so the pass observes prior compaction (a view
+  // that fits under threshold goes inert) and selects LIVE message-refs that
+  // resolve to an ordinal window (it collapses the NEXT chunk, not the already-
+  // summarized oldest).
+  const { history, ordinalById, resolvedTokens } = resolveContext(store, scope);
+  if (history.length === 0) { logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "empty-history", resolvedTokens, windowTokens: opts.windowTokens }, "lcd leaf pass gate skip"); return { made: false, reason: "empty-history" }; }
+
+  // Utilization = resolved context tokens / W. The numerator is the RESOLVED view
+  // (summary-ref tokens + surviving message-ref tokens), the same set the assembler
+  // budgets — NOT the un-compacted raw history (which never shrinks). Tokens are
+  // the stored authority (Pitfall 2): a re-estimate would EXCLUDE F3 thinking.
+  const utilization = resolvedTokens / opts.windowTokens;
+  logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", historyLength: history.length, resolvedTokens, windowTokens: opts.windowTokens, utilization: Math.round(utilization * 1000) / 1000, contextThreshold: opts.contextThreshold }, "lcd leaf pass evaluated");
+  if (utilization <= opts.contextThreshold) return { made: false, reason: "below-threshold" }; // drained.
+
+  // Select the oldest out-of-tail chunk (pair-safe, capped at leafChunkTokens)
+  // from the RESOLVED message-ref run — so the selected ids always map back to a
+  // context_items ordinal (the second-pass divergence is structurally gone).
+  const chunk = selectLeafChunk(history, opts.freshTailTurns, opts.leafChunkTokens);
+  if (chunk === undefined) return { made: false, reason: "no-chunk" }; // no evictable out-of-tail history.
+
+  // Skip a trivially-tiny chunk (WR-01): a chunk below the minimum shrinkable size
+  // cannot be replaced by any non-empty summary that is STRICTLY smaller, so
+  // summarizing it would only emit a degenerate (empty/larger) leaf. This is also a
+  // drain NO-PROGRESS terminator: a re-resolve would re-select the SAME sub-minimum
+  // oldest run, so the loop must stop here (not spin).
+  if (chunk.tokens < MIN_SHRINKABLE_LEAF_CHUNK_TOKENS) return { made: false, reason: "too-small" };
+
+  // Map the chunk's message range → the contiguous context_items ordinal window
+  // BEFORE summarizing (so a divergence skips cheaply, without an LLM call).
+  const firstMessageId = chunk.messageIds[0]!;
+  const lastMessageId = chunk.messageIds[chunk.messageIds.length - 1]!;
+  const window = chunkOrdinalWindow(ordinalById, firstMessageId, lastMessageId);
+  if (window === undefined) {
+    // The selected message ids are not a resolvable message-ref window in the
+    // current view (a divergence). Skip rather than corrupt ordinals (C3) — and end
+    // the drain (a re-resolve would re-select the same unresolvable chunk).
+    logger.warn(
+      {
+        conversationId,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        hint: "leaf chunk message ids did not resolve to a context_items ordinal window; skipping the pass to avoid corrupting ordering",
+        errorKind: "precondition" as ErrorKind,
+      },
+      "LCD leaf pass skipped: ordinal-window divergence",
+    );
+    return { made: false, reason: "divergence" };
+  }
+
+  // Build the chunk items in covered order (the summarizer + the leaf time-range
+  // authority). The chunk's messageIds are seq-ordered; pair them to the matching
+  // history items so the summarizer sees the verbatim reconstructed messages + their
+  // stored tokenCounts.
+  const idToItem = new Map(history.map((it) => [it.id, it]));
+  const chunkItems: LeafChunkItem[] = chunk.messageIds
+    .map((id) => idToItem.get(id))
+    .filter((it): it is LeafChunkItem => it !== undefined);
+
+  // Summarize (3-level escalation; non-fatal inside — always returns a result).
+  const previousSummary = previousSummaryContent(store, scope);
+  const result = await summarizeLeafChunk(chunkItems, summarizerDeps, {
+    reserveTokens: opts.leafTargetTokens,
+    previousSummary,
+  });
+
+  // Persist + link + range-replace at the EXACT [startOrdinal, endOrdinal] window —
+  // one atomic store transaction (C3). The store recomputes the covered-run
+  // descendantCount/time-range; we pass the chunk values as advisory + the exact
+  // window the summary-ref replaces.
+  store.appendLeafSummary({
+    scope,
+    content: result.content,
+    descendantCount: result.descendantCount,
+    earliestAt: result.earliestAt,
+    latestAt: result.latestAt,
+    tokenCount: result.tokenCount,
+    fileIds: [],
+    fallback: result.fallback,
+    taint: false,
+    createdAt: now,
+    startOrdinal: window.startOrdinal,
+    endOrdinal: window.endOrdinal,
+  });
+
+  // O1 (Phase 133): real per-pass timing — a SECOND injected-clock read at emit
+  // minus this pass's `passStart`. A scalar-only caller (no nowFn) degrades to 0.
+  const durationMs = Math.max(0, (nowFn?.() ?? now) - passStart);
+  // Emit the existing compaction event ONCE PER PASS (reuse, counts only — never
+  // content; honest per-pass counts, Pitfall 3).
+  eventBus?.emit("context:dag_compacted", {
+    conversationId,
+    agentId: scope.agentId,
+    sessionKey: scope.sessionKey,
+    leafSummariesCreated: 1,
+    condensedSummariesCreated: 0,
+    maxDepthReached: 0,
+    totalSummariesCreated: 1,
+    durationMs,
+    timestamp: now,
+  });
+
+  // Completion INFO (§2.7): ids/counts/level/durations only — NEVER content.
+  logger.info(
+    {
+      step: "lcd-leaf",
+      conversationId,
+      agentId: scope.agentId,
+      sessionKey: scope.sessionKey,
+      descendantCount: result.descendantCount,
+      escalationLevel: result.level,
+      fallback: result.fallback,
+      durationMs,
+    },
+    "LCD leaf summary persisted",
+  );
+  return { made: true, reason: "compacted" };
+}
+
+/**
+ * AfterTurn threshold sweep: a BOUNDED multi-pass leaf DRAIN (B-2). Loops
+ * {@link runOneLeafPass} — re-resolving the model-facing view each iteration so it
+ * observes its own compaction (CR-02) — until the FIRST of:
+ *   - utilization ≤ `contextThreshold` (the view is drained — the success exit),
+ *   - a no-progress guard fires (no chunk / chunk < MIN_SHRINKABLE / ordinal-window
+ *     divergence — re-resolving would re-select the SAME chunk, so the loop stops),
+ *   - the hard `maxLeafPassesPerTurn` cap is reached (the infinite-loop backstop).
+ * It NEVER loops without one of these terminating it.
+ *
+ * Why bounded BOTH ways: under `deferCompaction:false` the afterTurn drain runs
+ * INLINE + synchronously, so each pass is a real LLM round-trip blocking the live
+ * turn — the cap guarantees a turn can never fire unbounded synchronous summarizer
+ * calls. A sustained over-threshold load the cap can't fully drain in one turn keeps
+ * draining on the NEXT afterTurn (the gate stays armed) rather than stalling at one
+ * pass forever (the B-2 stall this replaces).
+ *
+ * Non-fatal end-to-end (mirrors `ingestTurnGuarded`): the WHOLE loop is wrapped in
+ * one try/catch → WARN → return, so a throw in pass K never fails the live turn and
+ * never loses passes 1..K-1 (each persisted atomically). See the module header.
  *
  * @param store          The injected core ContextStorePort (daemon-injected concrete store).
  * @param scope          The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
- * @param opts           The gating + sizing knobs from `config.contextEngine`.
+ * @param opts           The gating + sizing knobs from `config.contextEngine` (incl. the optional cap).
  * @param summarizerDeps The injected summarizer + model getters (the 132 spend-governance seam). Absent ⇒ no-op.
  * @param now            Injected wall-clock ms (`deps.clock.now()`) — NEVER the ambient time global. Stamps `timestamp`.
- * @param nowFn          Injected clock CALLABLE (`deps.clock.now`) for the two pass-timing reads (O1). Absent ⇒ durationMs 0.
- * @param logger         For the completion INFO + the non-fatal WARN.
- * @param eventBus       Optional bus to emit `context:dag_compacted` on a completed pass.
+ * @param nowFn          Injected clock CALLABLE (`deps.clock.now`) for the per-pass timing reads (O1). Absent ⇒ durationMs 0.
+ * @param logger         For the per-pass completion INFO + the non-fatal WARN.
+ * @param eventBus       Optional bus to emit `context:dag_compacted` once per actual pass.
  */
 export async function maybeRunLeafPass(
   store: ContextStorePort,
@@ -326,145 +509,29 @@ export async function maybeRunLeafPass(
   logger: ComisLogger,
   eventBus?: TypedEventBus,
 ): Promise<void> {
-  // Gated on the summarizer deps + a positive window (a missing getter / model
-  // is a clean skip, not a fault — mirrors the `deps.contextStore` ingest gate).
+  // Gated on the summarizer deps + a positive window (a missing getter / model is a
+  // clean skip, not a fault — mirrors the `deps.contextStore` ingest gate).
   if (summarizerDeps === undefined) { logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "no-summarizer-deps" }, "lcd leaf pass gate skip"); return; }
   if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) { logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "bad-window", windowTokens: opts.windowTokens }, "lcd leaf pass gate skip"); return; }
 
-  const conversationId = scope.conversationId;
-  // O1: capture a pass-START clock read at entry (the injected clock CALLABLE —
-  // NEVER Date.now()/performance.now(), the globals gate). A second read at emit
-  // gives the real elapsed. When no callable is supplied (a scalar-only caller),
-  // passStart falls back to the scalar `now` so durationMs degrades to 0.
-  const passStart = nowFn?.() ?? now;
+  // The hard cap (the infinite-loop backstop): the supplied knob or the LOW default.
+  // Clamp to >= 1 so a misconfigured 0/negative still attempts one pass (degenerate
+  // single-pass — the prior behavior) rather than silently disabling compaction.
+  const maxPasses = Math.max(1, Math.floor(opts.maxLeafPassesPerTurn ?? LCD_MAX_LEAF_PASSES_PER_TURN));
   try {
-    // Resolve the model-facing context ONCE from context_items (CR-01/CR-02): the
-    // utilization gate AND chunk selection both read this resolved view — never
-    // the raw lossless getMessages() set — so the trigger observes its own
-    // compaction (a pass that fit under threshold goes inert) and the next pass
-    // selects LIVE message-refs that resolve to an ordinal window (it collapses
-    // the NEXT chunk instead of re-hitting the already-summarized oldest).
-    const { history, ordinalById, resolvedTokens } = resolveContext(store, scope);
-    if (history.length === 0) { logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "empty-history", resolvedTokens, windowTokens: opts.windowTokens }, "lcd leaf pass gate skip"); return; }
-
-    // Utilization = resolved context tokens / W. The numerator is the RESOLVED
-    // view (summary-ref tokens + surviving message-ref tokens), the same set the
-    // assembler budgets — NOT the un-compacted raw history (which never shrinks
-    // and would keep the trigger perpetually over threshold). Tokens are the
-    // stored authority (Pitfall 2): a re-estimate would EXCLUDE F3 thinking.
-    const utilization = resolvedTokens / opts.windowTokens;
-    logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", historyLength: history.length, resolvedTokens, windowTokens: opts.windowTokens, utilization: Math.round(utilization * 1000) / 1000, contextThreshold: opts.contextThreshold }, "lcd leaf pass evaluated");
-    if (utilization <= opts.contextThreshold) return; // inert below threshold.
-
-    // Select the oldest out-of-tail chunk (pair-safe, capped at leafChunkTokens)
-    // from the RESOLVED message-ref run — so the selected ids always map back to
-    // a context_items ordinal (the second-pass divergence is structurally gone).
-    const chunk = selectLeafChunk(history, opts.freshTailTurns, opts.leafChunkTokens);
-    if (chunk === undefined) return; // no evictable out-of-tail history — no-op.
-
-    // Skip a trivially-tiny chunk (WR-01): a chunk below the minimum shrinkable
-    // size cannot be replaced by any non-empty summary that is STRICTLY smaller,
-    // so summarizing it would only emit a degenerate (empty/larger) leaf. Leave
-    // the chunk in the context view unchanged rather than the deterministic floor.
-    if (chunk.tokens < MIN_SHRINKABLE_LEAF_CHUNK_TOKENS) return;
-
-    // Map the chunk's message range → the contiguous context_items ordinal window
-    // BEFORE summarizing (so a divergence skips cheaply, without an LLM call). The
-    // window resolves against the same `ordinalById` the resolved view produced.
-    const firstMessageId = chunk.messageIds[0]!;
-    const lastMessageId = chunk.messageIds[chunk.messageIds.length - 1]!;
-    const window = chunkOrdinalWindow(ordinalById, firstMessageId, lastMessageId);
-    if (window === undefined) {
-      // The selected message ids are not a resolvable message-ref window in the
-      // current view (a divergence). Skip rather than corrupt ordinals (C3).
-      logger.warn(
-        {
-          conversationId,
-          agentId: scope.agentId,
-          sessionKey: scope.sessionKey,
-          hint: "leaf chunk message ids did not resolve to a context_items ordinal window; skipping the pass to avoid corrupting ordering",
-          errorKind: "precondition" as ErrorKind,
-        },
-        "LCD leaf pass skipped: ordinal-window divergence",
-      );
-      return;
+    for (let pass = 0; pass < maxPasses; pass++) {
+      const { made } = await runOneLeafPass(store, scope, opts, summarizerDeps, now, nowFn, logger, eventBus);
+      if (!made) break; // drained / no-progress / divergence — stop (never spin).
     }
-
-    // Build the chunk items in covered order (the summarizer + the leaf time-range
-    // authority). The chunk's messageIds are seq-ordered; pair them to the
-    // matching history items so the summarizer sees the verbatim reconstructed
-    // messages + their stored tokenCounts.
-    const idToItem = new Map(history.map((it) => [it.id, it]));
-    const chunkItems: LeafChunkItem[] = chunk.messageIds
-      .map((id) => idToItem.get(id))
-      .filter((it): it is LeafChunkItem => it !== undefined);
-
-    // Summarize (3-level escalation; non-fatal inside — always returns a result).
-    const previousSummary = previousSummaryContent(store, scope);
-    const result = await summarizeLeafChunk(chunkItems, summarizerDeps, {
-      reserveTokens: opts.leafTargetTokens,
-      previousSummary,
-    });
-
-    // Persist + link + range-replace at the EXACT [startOrdinal, endOrdinal]
-    // window — one atomic store transaction (C3). The store recomputes the
-    // covered-run descendantCount/time-range; we pass the chunk values as
-    // advisory + the exact window the summary-ref replaces.
-    store.appendLeafSummary({
-      scope,
-      content: result.content,
-      descendantCount: result.descendantCount,
-      earliestAt: result.earliestAt,
-      latestAt: result.latestAt,
-      tokenCount: result.tokenCount,
-      fileIds: [],
-      fallback: result.fallback,
-      taint: false,
-      createdAt: now,
-      startOrdinal: window.startOrdinal,
-      endOrdinal: window.endOrdinal,
-    });
-
-    // O1 (Phase 133): real pass-timing — a SECOND injected-clock read at emit
-    // minus the pass-entry `passStart`. The injected clock is the only time
-    // source (the ambient wall-clock global is banned); a scalar-only caller
-    // (no `nowFn`) degrades to 0 (passStart === now). clamped non-negative.
-    const durationMs = Math.max(0, (nowFn?.() ?? now) - passStart);
-    // Emit the existing compaction event (reuse, counts only — never content).
-    eventBus?.emit("context:dag_compacted", {
-      conversationId,
-      agentId: scope.agentId,
-      sessionKey: scope.sessionKey,
-      leafSummariesCreated: 1,
-      condensedSummariesCreated: 0,
-      maxDepthReached: 0,
-      totalSummariesCreated: 1,
-      durationMs,
-      timestamp: now,
-    });
-
-    // Completion INFO (§2.7): ids/counts/level/durations only — NEVER content.
-    logger.info(
-      {
-        step: "lcd-leaf",
-        conversationId,
-        agentId: scope.agentId,
-        sessionKey: scope.sessionKey,
-        descendantCount: result.descendantCount,
-        escalationLevel: result.level,
-        fallback: result.fallback,
-        durationMs,
-      },
-      "LCD leaf summary persisted",
-    );
   } catch (err) {
-    // Non-fatal (T-129-18): any failure degrades to a WARN + return — the live
-    // turn is unaffected (mirror ingestTurnGuarded). errorKind `dependency`
-    // (a summarizer/store failure is an external-dependency fault).
+    // Non-fatal (T-129-18): any failure degrades to a WARN + return — the live turn
+    // is unaffected (mirror ingestTurnGuarded). errorKind `dependency` (a
+    // summarizer/store failure is an external-dependency fault). Passes that already
+    // committed before the throw are kept (each appendLeafSummary is atomic).
     logger.warn(
       {
         err: err instanceof Error ? err.message : String(err),
-        conversationId,
+        conversationId: scope.conversationId,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         hint: "LCD leaf pass failed; the turn is unaffected — check the summarizer model/key and LCD store connectivity",
