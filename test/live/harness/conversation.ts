@@ -225,8 +225,10 @@ export class ConversationDriver {
    * the RPC returns an error envelope — sendTurn THROWS in that case. This is
    * intentional: the driver never returns empty silently (T-136-01 contract).
    *
-   * After a successful turn, echo.reset() is called so the next turn starts
-   * with a clean message buffer.
+   * The echo adapter's sentMessages buffer is NOT cleared after a turn — callers
+   * can read getEcho().getSentMessages() after sendTurn() returns to inspect
+   * delivery (rung-1 world-state). Call echo.reset() explicitly between turns
+   * only when a clean buffer is required for the next turn's assertions.
    *
    * @param text - The user message to send to the agent.
    * @returns The agent's reply string.
@@ -234,7 +236,6 @@ export class ConversationDriver {
    */
   async sendTurn(text: string): Promise<string> {
     const handle = this._requireHandle();
-    const echo = this._requireEcho();
 
     const ws = await openAuthenticatedWebSocket(
       handle.gatewayUrl,
@@ -263,8 +264,6 @@ export class ConversationDriver {
         );
       }
 
-      // Reset echo buffer so the next turn starts fresh
-      echo.reset();
       return reply;
     } finally {
       ws.close();
@@ -480,13 +479,27 @@ export class ConversationDriver {
       ?? resolve(here, "../../config/config.test.yaml");
 
     const content = readFileSync(baseConfig, "utf-8");
-    // Replace the gateway port line. The YAML key is "  port: <N>" directly
-    // under the gateway: block. We use a targeted regex that matches the port
-    // line only within the gateway block (first occurrence after "gateway:").
-    const patched = content.replace(
-      /(gateway:\s*(?:\n[^\n]*)*?\n\s+port:\s*)\d+/,
-      `$1${port}`,
-    );
+    // Replace the gateway port line robustly: locate the gateway: block and
+    // patch only the first "port:" line within that block's indented region.
+    // A cross-block regex can silently patch a different section's port: key
+    // when the gateway block has no inline port: or the config is non-standard.
+    const gatewayIdx = content.indexOf("\ngateway:");
+    if (gatewayIdx === -1) {
+      throw new Error(
+        `_buildPortedConfigPath: 'gateway:' block not found in ${baseConfig}`,
+      );
+    }
+    const before = content.slice(0, gatewayIdx);
+    const afterGateway = content.slice(gatewayIdx);
+    // Only patch the first "port:" that appears inside the gateway block
+    // (indented lines — before the next top-level YAML key).
+    const patchedBlock = afterGateway.replace(/(\n\s+port:\s*)\d+/, `$1${port}`);
+    if (patchedBlock === afterGateway) {
+      throw new Error(
+        `_buildPortedConfigPath: no 'port:' found inside 'gateway:' block in ${baseConfig}`,
+      );
+    }
+    const patched = before + patchedBlock;
     // Write to the same temp dir as the data dir so they share a lifetime.
     const tempConfigPath = join(this._dataDir, "config.test.patched.yaml");
     writeFileSync(tempConfigPath, patched, "utf-8");
