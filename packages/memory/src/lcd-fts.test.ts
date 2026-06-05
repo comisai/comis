@@ -127,6 +127,133 @@ describe("lcd-fts — renderMessageFtsText projection", () => {
   });
 });
 
+/**
+ * Create a db that REPORTS FTS5 as available (a real, queryable
+ * `lcd_summaries_fts` virtual table so `isFtsAvailable`'s probe MATCH succeeds),
+ * then intercept `prepare` so the two scope MATCH queries return CALLER-SUPPLIED
+ * rows. This drives `searchViaFts` / `mapFtsRows` directly with controlled FTS
+ * result shapes (corrupt rows, cross-table BM25 ranks) that real BM25 scoring
+ * cannot be made to emit deterministically. Non-MATCH prepares pass through.
+ */
+function ftsDbReturning(rowsByScope: {
+  summary?: unknown[];
+  message?: unknown[];
+}): Database.Database {
+  const real = new Database(":memory:");
+  real.pragma("foreign_keys = ON");
+  // A minimal real FTS table so the availability probe MATCH compiles+runs.
+  real.exec(`CREATE VIRTUAL TABLE lcd_summaries_fts USING fts5(content, conversation_id UNINDEXED, summary_id UNINDEXED)`);
+
+  return new Proxy(real, {
+    get(target, prop, receiver) {
+      if (prop === "prepare") {
+        return (sql: string): unknown => {
+          const isMatch = /MATCH/i.test(sql);
+          const isSummaryQuery = /FROM\s+lcd_summaries_fts/i.test(sql);
+          const isMessageQuery = /FROM\s+lcd_messages_fts/i.test(sql);
+          // Only stub the scope MATCH SELECTs; the probe (also a summaries MATCH)
+          // is distinguished by its `SELECT rowid` shape — let it pass through.
+          if (isMatch && /SELECT\s+rowid/i.test(sql)) {
+            return target.prepare(sql);
+          }
+          if (isMatch && isSummaryQuery) {
+            return { all: () => rowsByScope.summary ?? [] };
+          }
+          if (isMatch && isMessageQuery) {
+            return { all: () => rowsByScope.message ?? [] };
+          }
+          return target.prepare(sql);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as unknown as Database.Database;
+}
+
+describe("lcd-fts — FTS path degrades a corrupt hit PER ROW, not all-or-nothing (WR-01)", () => {
+  it("searchLcdImpl returns the valid FTS hits and skips only the corrupt row instead of nulling every hit", () => {
+    // One valid summary hit + one schema-violating row (snippet NULL — the
+    // strict LcdSearchHitRowSchema requires a string). The all-or-nothing
+    // `parseRows` errs on the bad row and discards the VALID sibling too,
+    // returning []. The per-row `parseOptionalRow`+skip keeps the valid hit.
+    const db = ftsDbReturning({
+      summary: [
+        { ref_id: "s-good", snippet: "the quarterly revenue report", rank: -1.5 },
+        { ref_id: "s-bad", snippet: null, rank: -0.5 }, // corrupt: snippet must be a string
+      ],
+    });
+
+    const hits = searchLcdImpl(db, "conv-a", "revenue", { limit: 10, scope: "summaries" });
+
+    // The good row survives the bad sibling (WR-01: one bad row must not poison
+    // the whole result set).
+    expect(hits.map((h) => h.refId)).toContain("s-good");
+    expect(hits.some((h) => h.refId === "s-bad")).toBe(false);
+  });
+});
+
+describe("lcd-fts — scope=both merges fairly across the two FTS tables (WR-03)", () => {
+  it("searchLcdImpl both keeps representation from each table instead of dropping a whole table by raw BM25", () => {
+    // BM25 ranks are corpus-relative — NOT comparable across two FTS indexes.
+    // Here the (single) summary's rank (-0.5) is numerically LARGER than both
+    // message ranks (-5, -4). The buggy cross-table raw sort+truncate orders
+    // ascending and slices to limit=2 → both messages win, the summary is
+    // dropped entirely. A correct merge gives each table fair representation.
+    const db = ftsDbReturning({
+      summary: [{ ref_id: "s-top", snippet: "the only matching summary", rank: -0.5 }],
+      message: [
+        { ref_id: "m1", snippet: "message one", rank: -5 },
+        { ref_id: "m2", snippet: "message two", rank: -4 },
+      ],
+    });
+
+    const hits = searchLcdImpl(db, "conv-a", "match", { limit: 2, scope: "both" });
+
+    expect(hits.length).toBe(2);
+    // The summary table must NOT be wholly evicted by the message table's
+    // (incomparable) BM25 scale.
+    expect(hits.some((h) => h.kind === "summary" && h.refId === "s-top")).toBe(true);
+    expect(hits.some((h) => h.kind === "message")).toBe(true);
+  });
+
+  it("searchLcdImpl both interleaves the two tables fairly instead of front-loading one table by incomparable BM25", () => {
+    // Every summary rank here is MORE negative than every message rank, purely
+    // because the two FTS indexes score on different scales — not because the
+    // summaries are genuinely more relevant. The buggy raw-BM25 cross-sort sorts
+    // the merged list ascending and yields [s1, s2, s3, m1, m2, m3]: ALL three
+    // summaries front-loaded, every message demoted below them (and starved
+    // entirely under a tight limit). A fair within-table round-robin (each
+    // table's best, then each table's second, …) yields [s1, m1, s2, m2, s3, m3]
+    // — the top message m1 rightly sits ahead of the SECOND summary s2.
+    const db = ftsDbReturning({
+      summary: [
+        { ref_id: "s1", snippet: "summary one", rank: -9 },
+        { ref_id: "s2", snippet: "summary two", rank: -8 },
+        { ref_id: "s3", snippet: "summary three", rank: -7 },
+      ],
+      message: [
+        { ref_id: "m1", snippet: "message one", rank: -6 },
+        { ref_id: "m2", snippet: "message two", rank: -5 },
+        { ref_id: "m3", snippet: "message three", rank: -4 },
+      ],
+    });
+
+    const hits = searchLcdImpl(db, "conv-a", "one", { limit: 6, scope: "both" });
+
+    expect(hits.length).toBe(6);
+    const order = hits.map((h) => h.refId);
+    // Each table's own (already-ranked) order is preserved within the merge.
+    expect(order.indexOf("m1")).toBeLessThan(order.indexOf("m2"));
+    expect(order.indexOf("m2")).toBeLessThan(order.indexOf("m3"));
+    expect(order.indexOf("s1")).toBeLessThan(order.indexOf("s2"));
+    // The discriminator: a fair merge puts the TOP message ahead of the SECOND
+    // summary. The buggy cross-table sort front-loads all summaries, so m1 lands
+    // behind s2/s3 — RED on the raw sort, GREEN on the round-robin merge.
+    expect(order.indexOf("m1")).toBeLessThan(order.indexOf("s2"));
+  });
+});
+
 describe("schema-lcd — boot-safety when FTS5 is uncompiled", () => {
   it("ensureLcdTables does not throw when the FTS5 CREATE VIRTUAL TABLE fails; base tables still created", () => {
     const real = new Database(":memory:");
