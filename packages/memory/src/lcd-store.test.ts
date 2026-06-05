@@ -944,4 +944,60 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
     const input: AppendCondensedSummaryInput = condensedInput([leaf0, leaf1], 0, 1);
     expect(() => store.appendCondensedSummary(input)).not.toThrow();
   });
+
+  // ── WR-02: link/range cross-check (mirror the leaf T-129-22 tamper guard) ──
+  // The condensed transaction range-replaces [start,end] AND links a child set.
+  // It must NOT trust those two inputs to agree: the linked children are DERIVED
+  // FROM the summary-refs actually in the replaced range (exactly as the leaf
+  // path derives its message links from the read range), so a mismatched
+  // childSummaryIds set can never corrupt the losslessness ledger, and a range
+  // that still holds a surviving message-ref (which would collapse a raw message
+  // into a "condensed" ref linking no message) is rejected.
+
+  it("derives the linked children FROM the in-range summary-refs — a mismatched childSummaryIds set never corrupts the lcd_summary_parents ledger (WR-02)", () => {
+    const { leaf0, leaf1 } = seedTwoContiguousLeaves(); // summary-refs at ords [0,1]
+
+    // Pass a childSummaryIds set that does NOT match the range (a caller bug / a
+    // future caller): the range [0,1] actually holds leaf0 + leaf1, but the input
+    // claims a single bogus child id.
+    const condensedId = store.appendCondensedSummary(
+      condensedInput(["bogus-child-not-in-range"], 0, 1),
+    );
+
+    // The links MUST be the range-derived set (leaf0, leaf1), NOT the bogus input.
+    const linkedChildIds = (
+      db
+        .prepare(
+          "SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ? ORDER BY child_summary_id",
+        )
+        .all(condensedId) as Array<{ child_summary_id: string }>
+    ).map((r) => r.child_summary_id);
+    expect(linkedChildIds.sort()).toEqual([leaf0, leaf1].sort());
+    // The bogus id was never linked (it is not a summary-ref in the range).
+    expect(linkedChildIds).not.toContain("bogus-child-not-in-range");
+  });
+
+  it("rejects a condensed range that still contains a surviving message-ref — never collapses a raw message into a condensed ref (WR-02)", () => {
+    seedMessages(3); // view [m0, m1, m2] at ords 0,1,2
+    store.getContextItems("conv-a");
+    // Collapse only m1 → view [m0, leaf, m2] at ords 0,1,2. The range [0,1] now
+    // spans a surviving message-ref (m0) AND a summary-ref (the leaf).
+    const leaf = store.appendLeafSummary(leafInput(1, 1));
+
+    const summariesBefore = store.getSummaries("conv-a").length;
+    const itemsBefore = store.getContextItems("conv-a");
+
+    // Condensing across the surviving message-ref must throw (a condensed run is
+    // summary-refs ONLY — collapsing m0 here would break losslessness for m0,
+    // whose links would name no message).
+    expect(() => store.appendCondensedSummary(condensedInput([leaf], 0, 1, { depth: 1 }))).toThrow(
+      /condensed range\/child mismatch|range/i,
+    );
+
+    // The throw rolled back the whole transaction (db.transaction is atomic): no
+    // condensed summary persisted, the context view is untouched.
+    expect(store.getSummaries("conv-a").length).toBe(summariesBefore);
+    const itemsAfter = store.getContextItems("conv-a");
+    expect(itemsAfter.map((i) => i.refId)).toEqual(itemsBefore.map((i) => i.refId));
+  });
 });
