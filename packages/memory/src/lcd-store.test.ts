@@ -727,6 +727,82 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     const input: AppendSummaryInput = summaryInput(0, 0);
     expect(() => store.appendLeafSummary(input)).not.toThrow();
   });
+
+  // ── DAG-CRIT-2 (260605-m82): the resolved view must TRACK appends, not just
+  //    capture the first-read seed. Production interleaves reads and appends —
+  //    the seed-once guard froze context_items at the first read while
+  //    lcd_messages kept growing, so the trigger's utilization stayed pinned and
+  //    the assembler read a stale partial history. The fix maintains the dense
+  //    view incrementally inside appendTxn.
+  it("INVARIANT (CRIT-2): getContextItems tracks appends — interleaved reads between appends keep context_items dense 1:1 with lcd_messages", () => {
+    // Append one message at a time, reading getContextItems BETWEEN each append
+    // (the exact production interleave the in-memory stubs never reproduced). The
+    // first interleaved read used to seed only message 0; every later append then
+    // left the view frozen at length 1.
+    for (let seq = 0; seq < 4; seq++) {
+      store.append({
+        scope: SCOPE_A,
+        seq,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 1000 + seq * 10,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `m${seq}` }, rawType: "text" } }],
+      });
+
+      const items = store.getContextItems(SCOPE_A);
+      const messageIds = messageIdsInSeqOrder(SCOPE_A); // the authority for the expected count
+      const expectedCount = messageIds.length; // == seq + 1
+
+      // After EVERY append the view length equals the live message count.
+      expect(items).toHaveLength(expectedCount);
+      // Ordinals are exactly 0..N-1 — dense, gap-free, ascending.
+      expect(items.map((i) => i.ordinal)).toEqual([...Array(expectedCount).keys()]);
+      // Every ref is a message-ref (no summaries yet).
+      expect(items.every((i) => i.refKind === "message")).toBe(true);
+      // refIds equal the message ids in seq order.
+      expect(items.map((i) => i.refId)).toEqual(messageIds);
+    }
+  });
+
+  it("CRIT-2: summary range-replace still works AFTER per-append seeding (no double-seed, delete/shift intact)", () => {
+    // Append 5 messages, interleaving a read so the (now no-op) seed path is
+    // exercised on an already-maintained view, then collapse [1,3].
+    for (let seq = 0; seq < 5; seq++) {
+      store.append({
+        scope: SCOPE_A,
+        seq,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 1000 + seq * 10,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `m${seq}` }, rawType: "text" } }],
+      });
+      store.getContextItems(SCOPE_A); // interleaved read exercises the incremental backfill (no-op once maintained)
+    }
+    // Five message-refs maintained by append (ordinals 0..4).
+    expect(store.getContextItems(SCOPE_A)).toHaveLength(5);
+
+    const summaryId = store.appendLeafSummary(summaryInput(1, 3));
+
+    const items = store.getContextItems(SCOPE_A);
+    // 5 messages → 3 collapsed into 1 summary → 3 items remain.
+    expect(items).toHaveLength(3);
+    // Dense, gap-free, ordered: 0,1,2.
+    expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2]);
+    // Shape: [message m0] [summary] [message m4].
+    expect(items[0]!.refKind).toBe("message");
+    expect(items[1]!.refKind).toBe("summary");
+    expect(items[1]!.refId).toBe(summaryId);
+    expect(items[2]!.refKind).toBe("message");
+    // No duplicate context_items rows from a double-seed: total rows == 3.
+    const rowCount = (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
+        )
+        .get(SCOPE_A.conversationId, SCOPE_A.agentId, SCOPE_A.tenantId) as { c: number }
+    ).c;
+    expect(rowCount).toBe(3);
+  });
 });
 
 // =====================================================================
