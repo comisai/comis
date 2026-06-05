@@ -499,3 +499,97 @@ describe("maybeRunCondensePass — non-fatal degrade", () => {
     expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(0);
   });
 });
+
+// ===========================================================================
+// WR-01 — "one resolved view is source of truth": taint + previousSummary must
+// come from the SAME single snapshot the children were selected from, NOT from
+// later independent getSummaries re-reads. (The pass is documented to become
+// deferred/async in Phase 132, so a store mutation between reads must not let a
+// diverged snapshot silently mis-propagate taint or break continuity.)
+// ===========================================================================
+
+describe("maybeRunCondensePass — single resolved snapshot is the source of truth (WR-01)", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /**
+   * Wrap the real store so `getSummaries` returns a DIFFERENT view on the FIRST
+   * call (the `resolveContext` selection snapshot) than on every later call: the
+   * first call flags every child summary as `taint: true`, later calls strip it.
+   * A correct pass reads taint off the selected children (the snapshot) → persists
+   * `taint: true`; the buggy re-read path reads a later untainted snapshot →
+   * persists `taint: false`. Also counts the calls to lock in one summaries read.
+   */
+  function divergingTaintStore(): { wrapped: ContextStorePort; getSummariesCalls: () => number } {
+    let calls = 0;
+    const wrapped: ContextStorePort = {
+      append: (i) => store.append(i),
+      getMessages: (c) => store.getMessages(c),
+      getContextItems: (c) => store.getContextItems(c),
+      appendLeafSummary: (i) => store.appendLeafSummary(i),
+      appendCondensedSummary: (i) => store.appendCondensedSummary(i),
+      getSummaries: (c) => {
+        calls += 1;
+        const rows = store.getSummaries(c);
+        // ONLY the first read (the resolveContext selection snapshot) is tainted.
+        if (calls === 1) return rows.map((s) => ({ ...s, taint: true }));
+        return rows.map((s) => ({ ...s, taint: false }));
+      },
+    };
+    return { wrapped, getSummariesCalls: () => calls };
+  }
+
+  it("propagates taint from the SELECTION snapshot (taint=OR(children)) even when a later getSummaries read diverges", async () => {
+    seedHistory(store, 40, 100);
+    seedContiguousLeaves(store, 4, 4); // 4 contiguous depth-0 leaves
+
+    const { wrapped } = divergingTaintStore();
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+
+    await maybeRunCondensePass(
+      wrapped,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4 }),
+      makeSummarizerDeps(shortSummarizer(), logger),
+      FIXED_NOW,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // The condensed summary inherits taint from the children IN THE SELECTION
+    // SNAPSHOT (taint=true), not from the later diverged read (taint=false).
+    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    expect(condensed.length).toBe(1);
+    expect(condensed[0]!.taint).toBe(true);
+  });
+
+  it("reads the conversation summaries exactly ONCE per pass (no taint/previousSummary re-query)", async () => {
+    seedHistory(store, 40, 100);
+    seedContiguousLeaves(store, 4, 4);
+
+    const { wrapped, getSummariesCalls } = divergingTaintStore();
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+
+    await maybeRunCondensePass(
+      wrapped,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4 }),
+      makeSummarizerDeps(shortSummarizer(), logger),
+      FIXED_NOW,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // A condensing pass resolves ONE getSummaries snapshot; taint + previousSummary
+    // ride that snapshot. Additional reads reintroduce the two-sources-of-truth bug.
+    expect(getSummariesCalls()).toBe(1);
+  });
+});
