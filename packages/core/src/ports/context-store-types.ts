@@ -230,6 +230,24 @@ export interface LcdContextItem {
 }
 
 /**
+ * One FTS/scan hit from {@link ContextStorePort.searchLcd} (E1). `snippet` is
+ * recovered/UNTRUSTED content — the calling tool MUST taint-wrap it via
+ * wrapExternalContent before it re-enters the model context, and MUST NEVER
+ * log it (ids/counts only). `rank` is the BM25 rank when FTS5 was used;
+ * undefined for the LIKE fallback (no ranking).
+ */
+export interface LcdSearchHit {
+  /** Closed discriminator (AGENTS.md §2.8) — mirrors LcdRefKind. */
+  kind: "message" | "summary";
+  /** `lcd_messages.id` (kind="message") OR `lcd_summaries.summaryId` (kind="summary"). */
+  refId: string;
+  /** The matched text (UNTRUSTED — the tool taint-wraps; never logged). */
+  snippet: string;
+  /** BM25 rank when FTS5 was used; undefined for the LIKE fallback. */
+  rank?: number;
+}
+
+/**
  * The write-path DTO for the compaction transaction (C3): persist one leaf
  * summary, link it to the covered messages, and range-replace the covered
  * context_items message-refs with one summary-ref — all atomically.

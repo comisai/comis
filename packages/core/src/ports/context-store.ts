@@ -24,6 +24,7 @@ import type {
   AppendSummaryInput,
   LcdContextItem,
   LcdMessage,
+  LcdSearchHit,
   LcdSummary,
 } from "./context-store-types.js";
 
@@ -79,4 +80,27 @@ export interface ContextStorePort {
    * `content` is the leaf plaintext and is NEVER logged (lossless store).
    */
   getSummaries(conversationId: string): LcdSummary[];
+  /**
+   * E1 region walk: the immediate CHILD summaries of a condensed summary
+   * (the lcd_summary_parents condensed→child edge). Returns [] when the
+   * summary has no children (a leaf) or does not exist. Scoped by conversationId.
+   */
+  getSummaryChildren(conversationId: string, parentSummaryId: string): LcdSummary[];
+  /**
+   * E1 region walk: the message ids a LEAF summary covers
+   * (the lcd_summary_messages leaf→message edge). Returns [] when the summary
+   * covers no messages or does not exist. Scoped by conversationId.
+   */
+  getSummaryMessages(conversationId: string, summaryId: string): string[];
+  /**
+   * E1 search: full-text search over THIS conversation's lossless store —
+   * FTS5 MATCH when available, LIKE scan fallback otherwise. The `query` MUST
+   * already be sanitized by the caller (sanitizeFts5Query lives in @comis/skills;
+   * @comis/memory cannot import it — PATTERNS gap #2). Scoped by conversationId.
+   */
+  searchLcd(
+    conversationId: string,
+    query: string,
+    opts: { limit: number; scope?: "messages" | "summaries" | "both" },
+  ): LcdSearchHit[];
 }

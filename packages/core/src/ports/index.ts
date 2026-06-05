@@ -85,6 +85,7 @@ export type {
   LcdSummaryKind,
   LcdContextItem,
   LcdRefKind,
+  LcdSearchHit,
   AppendSummaryInput,
   AppendCondensedSummaryInput,
 } from "./context-store-types.js";
