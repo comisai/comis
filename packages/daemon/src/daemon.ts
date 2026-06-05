@@ -2180,6 +2180,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
     agentsConfig: agents, toolCapabilityPorts, mcpClientManager,
     linkRunner, systemEventQueue, rpcCall, approvalGate,
     deliveryQueue, cronWakeCallbackRef, singleAgentDeps,
+    // Phase 131 (E1/E2): the concrete LCD ContextStorePort (createLcdStore),
+    // populated on the BootContext by bootFoundation's setupMemory Object.assign.
+    // Threaded into setupTools so assembleToolsForAgent wires the dag-mode ctx_*
+    // in-session expansion tools. The agent sees only the core port TYPE (the cut).
+    lcdStore,
   } = handle;
 
   // The 3 eliminable local-scope refs (session-tracker, tool-assembler,
@@ -2239,6 +2244,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
     subprocessEnv: handle.execToolEnv, onSuspiciousContent: handle.onSuspiciousContent,
     // 124-09 (WR-01 closure): the daemon TimerPort drives the terminal-driver reaper sweep.
     timers: handle.timers,
+    // Phase 131 (E1/E2): the concrete LCD store, so assembleToolsForAgent can wire the
+    // dag-mode ctx_* tools (gated on version === "dag" && a present store). The agent
+    // receives only the core ContextStorePort TYPE (the agent-to-store cut holds).
+    lcdStore,
     mcpClientManager,
     // Fresh accessor for per-server tool filtering — read live so
     // config:mutated server edits surface on the next tool assembly.
