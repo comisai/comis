@@ -102,6 +102,7 @@ The codebase follows five mandatory engineering principles:
 - Run integration tests: `pnpm test:integration`
 - Run full E2E orchestration with log validation and JSON report: `pnpm test:orchestrate`
 - Run the live-fire real-provider test tier: `pnpm test:live --dry` (dry run, no cost) or `pnpm test:live` (requires `COMIS_LIVE=1`)
+- Run the connectivity sweep (all provider probes, one per integration): `pnpm test:live sweep` (requires `COMIS_LIVE=1`); filter with `COMIS_LIVE_PROBES=llm-anthropic,llm-openai pnpm test:live sweep`
 - Clean up integration test artifacts: `pnpm test:cleanup`
 
 ## Tests-First Protocol

@@ -369,6 +369,28 @@ export COMIS_LIVE_BUDGET_USD=5.00   # raise for a full suite sweep
 export COMIS_LIVE_BUDGET_USD=0.50   # lower for a single scenario
 ```
 
+### `COMIS_LIVE_PROBES`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Live-fire test runner (`pnpm test:live sweep`) |
+| **Format** | Comma-separated probe IDs or category prefixes |
+| **Default** | (unset — all probes run) |
+
+Filters which sweep probes run when executing `pnpm test:live sweep`. When unset, all probes
+in `PROBE_REGISTRY` are executed. When set, only probes whose `id` or `category` matches one of
+the comma-separated values are included.
+
+Parsed by `parseProbeFilter()` in `test/live/sweep/sweep.ts`.
+
+```bash
+# Run only LLM probes
+export COMIS_LIVE_PROBES="llm-anthropic,llm-openai,llm-groq"
+
+# Run all search probes
+export COMIS_LIVE_PROBES="search"
+```
+
 ## LLM Provider Keys
 
 At least one provider key is required. Each provider is detected at startup; missing keys disable the matching provider gracefully. All keys can also be stored encrypted via [`comis secrets set`](/reference/cli#comis-secrets) instead of plaintext in `.env`.
