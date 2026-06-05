@@ -159,6 +159,25 @@ describe("setupContextEngine — createContextEngine() dependency wiring", () =>
     expect(captured.calls[0].deps.agentId).toBe("agent-xyz");
   });
 
+  // ── DAG-CRIT-1 (260605-m82): on the executeAgent path the turn's agentId
+  //    arrives as the positional execute() arg (the ALS RequestContext) and is
+  //    NEVER set onto frozenDeps, so `deps.agentId` is undefined → the assembler
+  //    built no read scope and failed closed (recalled 0 history). setupContextEngine
+  //    must accept the turn agentId as an explicit param and prefer it.
+  it("DAG-CRIT-1: createContextEngine receives the turn agentId from params.agentId even when deps.agentId is undefined (the executeAgent positional path)", () => {
+    setupContextEngine(
+      makeParams({ deps: makeDeps({ agentId: undefined }), agentId: "agent-positional" }),
+    );
+    // The read scope agentId is the caller-supplied turn agentId, NOT undefined.
+    expect(captured.calls[0].deps.agentId).toBe("agent-positional");
+  });
+
+  it("DAG-CRIT-1: params.agentId ?? deps.agentId — the deps.agentId fallback is preserved for non-executeAgent callers", () => {
+    setupContextEngine(makeParams({ deps: makeDeps({ agentId: "agent-from-deps" }) }));
+    // No explicit params.agentId → fall back to deps.agentId (unchanged behavior).
+    expect(captured.calls[0].deps.agentId).toBe("agent-from-deps");
+  });
+
   it("forwards the formattedKey (sessionKey string) into the createContextEngine deps wiring object", () => {
     setupContextEngine(makeParams({ formattedKey: "tenant-a:user-b:chan-c" }));
     expect(captured.calls[0].deps.sessionKey).toBe("tenant-a:user-b:chan-c");
