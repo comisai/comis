@@ -50,6 +50,7 @@ export function createCtxInspectTool(deps: ContextToolDeps): AgentTool<typeof Ct
       const ctxScope = requireCtxScope();
       const conversationId = ctxScope.conversationId;
       const summaryId = readStringParam(params, "summaryId", true)!;
+      const t0 = deps.nowMs();
 
       // Filter this agent's summaries (R4 agent-scoped) — no single-summary getter (YAGNI, Q2).
       const summary: LcdSummary | undefined = deps.store
@@ -79,6 +80,18 @@ export function createCtxInspectTool(deps: ContextToolDeps): AgentTool<typeof Ct
         },
         "ctx_inspect complete",
       );
+      // O1: content-free expansion-hit metric (ids/counts/durationMs only —
+      // NEVER the summary content; the lossless store, AGENTS.md §2.2/§2.7).
+      // recoveredCount = the covered-message count the inspection surfaced.
+      deps.eventBus?.emit("context:dag_expanded", {
+        conversationId: ctxScope.conversationId,
+        agentId: ctxScope.agentId,
+        sessionKey: ctxScope.sessionKey,
+        tool: "ctx_inspect",
+        recoveredCount: coveredMessageIds.length,
+        durationMs: deps.nowMs() - t0,
+        timestamp: deps.nowMs(),
+      });
 
       // METADATA ONLY — deliberately NOT taint-wrapped (metadata is not content;
       // the summary body is never surfaced here, only by ctx_expand).

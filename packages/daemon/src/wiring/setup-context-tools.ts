@@ -56,6 +56,13 @@ export interface ContextWiringDeps {
   readonly maxExpandTokens: number;
   /** Per-call session tool-results dir resolver (the hoisted exec-tool precedent). */
   readonly getToolResultsDir: () => string | undefined;
+  /**
+   * Optional structural event bus (O1) — the daemon's real `TypedEventBus`,
+   * passed structurally so the skills layer never value-imports it. Threaded
+   * onto the shared `ContextToolDeps` so each ctx_* hit emits a content-free
+   * `context:dag_expanded`. Absent ⇒ a silent no-op.
+   */
+  readonly eventBus?: { emit(event: string, data: unknown): void };
 }
 
 /**
@@ -85,6 +92,9 @@ export function wireContextTools(
     nowMs: deps.nowMs,
     maxExpandTokens: deps.maxExpandTokens,
     getToolResultsDir: deps.getToolResultsDir,
+    // O1: the daemon's real bus (structurally assignable) so each ctx_* hit
+    // emits a content-free context:dag_expanded. `undefined` ⇒ silent no-op.
+    eventBus: deps.eventBus,
   };
   tools.push(
     createCtxSearchTool(shared),

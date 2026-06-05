@@ -109,6 +109,17 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         },
         "ctx_search complete",
       );
+      // O1: content-free expansion-hit metric (ids/counts/durationMs only —
+      // NEVER the query or a snippet; the lossless store, AGENTS.md §2.2/§2.7).
+      deps.eventBus?.emit("context:dag_expanded", {
+        conversationId: ctxScope.conversationId,
+        agentId: ctxScope.agentId,
+        sessionKey: ctxScope.sessionKey,
+        tool: "ctx_search",
+        recoveredCount: hits.length,
+        durationMs: deps.nowMs() - t0,
+        timestamp: deps.nowMs(),
+      });
 
       return jsonResult({ hits: safeHits });
     },

@@ -52,6 +52,13 @@ export interface ContextToolDeps {
   readonly maxExpandTokens: number;
   /** Per-call session tool-results dir resolver (the exec-tool precedent). `undefined` ⇒ no live session dir. */
   readonly getToolResultsDir: () => string | undefined;
+  /**
+   * Optional structural event bus for emitting expansion-hit metrics (O1).
+   * STRUCTURAL only — skills must NOT import @comis/infra or a concrete
+   * TypedEventBus (the agent↛infra cut). The daemon (composition root) passes
+   * its real bus, structurally assignable. Absent ⇒ a silent no-op (the `?.`).
+   */
+  readonly eventBus?: { emit(event: string, data: unknown): void };
 }
 
 /**

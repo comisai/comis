@@ -228,6 +228,23 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** An in-session expansion tool (ctx_search/ctx_inspect/ctx_expand) recovered
+   *  compressed detail (O1). Identifiers + the tool + a recovered/hit count +
+   *  durationMs ONLY — NEVER message or summary content (the lossless store;
+   *  AGENTS.md §2.2/§2.7). Distinct from context:reread (the re-read-loop
+   *  detector) — this is a deliberate zoom into the DAG. */
+  "context:dag_expanded": {
+    conversationId: string;
+    agentId: string;
+    sessionKey: string;
+    /** Closed union — the three in-session expansion tools. */
+    tool: "ctx_search" | "ctx_inspect" | "ctx_expand";
+    /** Recovered messages (ctx_expand) / hits (ctx_search) / inspected items (ctx_inspect). */
+    recoveredCount: number;
+    durationMs: number;
+    timestamp: number;
+  };
+
   /** LCD entered a DEGRADED path (R3 + R1, Phase 132). A robustness/integrity
    *  signal — NOT a normal completion. Mirrors `context:dag_compacted`'s
    *  identifiers + durationMs, but carries a CLOSED-union `reason` instead of

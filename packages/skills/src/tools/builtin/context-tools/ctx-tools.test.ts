@@ -18,7 +18,7 @@
  * @module
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -498,5 +498,136 @@ describe("ctx_expand tool", () => {
     const fields = logger.logs.flatMap((l) => Object.keys(l.obj));
     expect(fields).toContain("conversationId");
     expect(fields).toContain("step");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O1: context:dag_expanded expansion-hit metric (structural eventBus)
+// ---------------------------------------------------------------------------
+
+/** The recorded payload keys that MUST NOT carry recovered content (leak ban). */
+const CONTENT_FIELDS = ["body", "content", "text", "snippet", "snippets", "hits"];
+
+describe("ctx_* tools emit a content-free context:dag_expanded metric on a hit (O1)", () => {
+  it("ctx_expand (inline path) emits context:dag_expanded once with tool/recoveredCount/durationMs, no content", async () => {
+    const emit = vi.fn();
+    const { store } = makeStore({
+      getSummaryMessagesReturn: ["m1", "m2"],
+      getMessagesReturn: [makeMessage("m1", 1, "first recovered line"), makeMessage("m2", 2, "second recovered line")],
+    });
+    const { deps } = makeDeps(store, { eventBus: { emit } });
+    const tool = createCtxExpandTool(deps);
+    await runExecute(tool, "emit-expand-inline", { summaryId: "sum-1" }, liveCtx());
+
+    const calls = emit.mock.calls.filter((c) => c[0] === "context:dag_expanded");
+    expect(calls).toHaveLength(1);
+    const p = calls[0]![1] as Record<string, unknown>;
+    expect(p.tool).toBe("ctx_expand");
+    expect(p.recoveredCount).toBe(2); // parts.length
+    expect(p.conversationId).toBe("default:user_a:chan_a");
+    expect(p.agentId).toBe("agent_a");
+    expect(p.sessionKey).toBe("default:user_a:chan_a");
+    expect(typeof p.durationMs).toBe("number");
+    expect(typeof p.timestamp).toBe("number");
+    // Content-leak ban: ids/counts/durations only.
+    for (const f of CONTENT_FIELDS) expect(p).not.toHaveProperty(f);
+    const blob = JSON.stringify(p);
+    expect(blob).not.toContain("first recovered line");
+    expect(blob).not.toContain("second recovered line");
+  });
+
+  it("ctx_expand (spilled path) emits context:dag_expanded once with recoveredCount = recovered parts, no content", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ctx-expand-emit-spill-"));
+    try {
+      const big = "Z".repeat(40_000);
+      const emit = vi.fn();
+      const { store } = makeStore({
+        getSummaryMessagesReturn: ["m1"],
+        getMessagesReturn: [makeMessage("m1", 1, big)],
+      });
+      const { deps } = makeDeps(store, { maxExpandTokens: 100, getToolResultsDir: () => dir, eventBus: { emit } });
+      const tool = createCtxExpandTool(deps);
+      await runExecute(tool, "emit-expand-spill", { summaryId: "sum-1" }, liveCtx());
+
+      const calls = emit.mock.calls.filter((c) => c[0] === "context:dag_expanded");
+      expect(calls).toHaveLength(1);
+      const p = calls[0]![1] as Record<string, unknown>;
+      expect(p.tool).toBe("ctx_expand");
+      expect(p.recoveredCount).toBe(1);
+      expect(JSON.stringify(p)).not.toContain(big);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ctx_search emits context:dag_expanded once with tool ctx_search + recoveredCount = hit count, no snippet", async () => {
+    const rawSnippet = "uniquely-identifiable-search-snippet";
+    const emit = vi.fn();
+    const { store } = makeStore({
+      searchLcdReturn: [
+        { kind: "message", refId: "m1", snippet: rawSnippet, rank: -1 },
+        { kind: "summary", refId: "s1", snippet: "another", rank: -0.5 },
+      ],
+    });
+    const { deps } = makeDeps(store, { eventBus: { emit } });
+    const tool = createCtxSearchTool(deps);
+    await runExecute(tool, "emit-search", { query: "plan" }, liveCtx());
+
+    const calls = emit.mock.calls.filter((c) => c[0] === "context:dag_expanded");
+    expect(calls).toHaveLength(1);
+    const p = calls[0]![1] as Record<string, unknown>;
+    expect(p.tool).toBe("ctx_search");
+    expect(p.recoveredCount).toBe(2); // hits.length
+    expect(p.conversationId).toBe("default:user_a:chan_a");
+    for (const f of CONTENT_FIELDS) expect(p).not.toHaveProperty(f);
+    expect(JSON.stringify(p)).not.toContain(rawSnippet);
+  });
+
+  it("ctx_inspect emits context:dag_expanded once with tool ctx_inspect, no summary content", async () => {
+    const summary = makeSummary({ summaryId: "sum-parent", kind: "condensed", depth: 1 });
+    const emit = vi.fn();
+    const { store } = makeStore({
+      getSummariesReturn: [summary],
+      getSummaryChildrenReturn: [makeSummary({ summaryId: "child-a" })],
+      getSummaryMessagesReturn: ["m1", "m2", "m3"],
+    });
+    const { deps } = makeDeps(store, { eventBus: { emit } });
+    const tool = createCtxInspectTool(deps);
+    await runExecute(tool, "emit-inspect", { summaryId: "sum-parent" }, liveCtx());
+
+    const calls = emit.mock.calls.filter((c) => c[0] === "context:dag_expanded");
+    expect(calls).toHaveLength(1);
+    const p = calls[0]![1] as Record<string, unknown>;
+    expect(p.tool).toBe("ctx_inspect");
+    expect(typeof p.recoveredCount).toBe("number");
+    expect(p.conversationId).toBe("default:user_a:chan_a");
+    for (const f of CONTENT_FIELDS) expect(p).not.toHaveProperty(f);
+    expect(JSON.stringify(p)).not.toContain(summary.content);
+  });
+
+  it("every ctx_* tool runs exactly as before when no eventBus is wired (optional, no throw, no emit)", async () => {
+    // ctx_search
+    const { store: s1 } = makeStore({
+      searchLcdReturn: [{ kind: "message", refId: "m1", snippet: "hit", rank: -1 }],
+    });
+    const { deps: d1 } = makeDeps(s1); // no eventBus
+    await expect(runExecute(createCtxSearchTool(d1), "nobus-search", { query: "x" }, liveCtx())).resolves.toBeDefined();
+
+    // ctx_inspect
+    const { store: s2 } = makeStore({
+      getSummariesReturn: [makeSummary({ summaryId: "sum-1" })],
+      getSummaryChildrenReturn: [],
+      getSummaryMessagesReturn: ["m1"],
+    });
+    const { deps: d2 } = makeDeps(s2);
+    await expect(runExecute(createCtxInspectTool(d2), "nobus-inspect", { summaryId: "sum-1" }, liveCtx())).resolves.toBeDefined();
+
+    // ctx_expand
+    const { store: s3 } = makeStore({
+      getSummaryMessagesReturn: ["m1"],
+      getMessagesReturn: [makeMessage("m1", 1, "tiny body")],
+    });
+    const { deps: d3 } = makeDeps(s3);
+    await expect(runExecute(createCtxExpandTool(d3), "nobus-expand", { summaryId: "sum-1" }, liveCtx())).resolves.toBeDefined();
   });
 });

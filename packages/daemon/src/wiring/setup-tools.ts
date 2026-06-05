@@ -639,7 +639,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // never-export, OUTSIDE the parity registry; store injected as the core port type.
       if ((agentConfig?.contextEngine?.version ?? "pipeline") === "dag" && deps.lcdStore) {
         const maxExpandTokens = agentConfig?.contextEngine?.maxExpandTokens ?? 4000;
-        wireContextTools(tools, deps.lcdStore, agentId, { skillsLogger, nowMs: systemNowMs, maxExpandTokens, getToolResultsDir });
+        wireContextTools(tools, deps.lcdStore, agentId, { skillsLogger, nowMs: systemNowMs, maxExpandTokens, getToolResultsDir, eventBus }); // O1: eventBus → ctx_* context:dag_expanded
       }
 
       return tools;
