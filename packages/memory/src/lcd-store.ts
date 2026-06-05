@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: WR-02 condensed range/child tamper guard in appendCondensedSummaryTxn — a throw inside db.transaction is the rollback mechanism (atomic) and the afterTurn condense trigger's outer try/catch degrades it non-fatally (T-130-07).
 /**
  * SQLite adapter implementing ContextStorePort — the LCD (Lossless Context DAG)
  * lossless store. Mirrors createSessionStore: prepared statements bound once,
