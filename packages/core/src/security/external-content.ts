@@ -9,7 +9,7 @@
  * system prompts or treated as trusted instructions.
  */
 
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHmac } from "node:crypto";
 import { tryGetContext } from "../context/context.js";
 import {
   IGNORE_INSTRUCTIONS_BROAD,
@@ -76,6 +76,45 @@ export function detectSuspiciousPatterns(content: string): string[] {
  */
 function generateRandomDelimiter(): string {
   return randomBytes(12).toString("hex");
+}
+
+/**
+ * Process-stable, unpredictable salt for deriving per-session content delimiters.
+ * Generated ONCE per process and NEVER exposed (not logged, not returned, not in
+ * any prompt). A fresh salt on daemon restart simply rebuilds the provider's
+ * prompt-cache prefix once — acceptable, and the delimiter stays unforgeable to an
+ * attacker who never sees the salt.
+ *
+ * LAZILY generated (NOT at module load): unrelated modules partially-mock
+ * `node:crypto` in their tests, and an eager top-level `randomBytes` call would
+ * crash their import. Memoized on first use so it stays process-stable thereafter.
+ */
+let processDelimiterSalt: Buffer | undefined;
+function getProcessDelimiterSalt(): Buffer {
+  processDelimiterSalt ??= randomBytes(32);
+  return processDelimiterSalt;
+}
+
+/**
+ * Derive a delimiter that is STABLE across the turns of one session — so the
+ * taint-wrapped content keeps a byte-identical prefix turn-to-turn and the
+ * provider's automatic prompt cache holds (the dag engine wraps every history
+ * summary; a per-CALL random delimiter churned the whole summaries block every
+ * turn, breaking the cache right after the system prompt and forcing the large
+ * suffix to re-process fresh — measured ~60% steady-state cache-hit).
+ *
+ * SECURITY: the value is an HMAC under a process-secret salt the attacker never
+ * sees, so it is no more predictable than the previous random delimiter; and
+ * `replaceMarkers` remains the PRIMARY forge defense (it strips ANY
+ * `<<<UNTRUSTED_hex>>>` from the body regardless of the active delimiter), so a
+ * per-session value does not weaken the boundary. Returns undefined when there is
+ * no session identity to key on (channel ingress, pre-resolution) — the caller
+ * then uses a fresh random delimiter (the prior behavior for that case).
+ */
+function sessionStableDelimiter(ctx: ReturnType<typeof tryGetContext>): string | undefined {
+  if (!ctx?.sessionKey) return undefined;
+  const scopeKey = `${ctx.tenantId ?? "default"}:${ctx.sessionKey}:${ctx.agentId ?? ""}`;
+  return createHmac("sha256", getProcessDelimiterSalt()).update(scopeKey).digest("hex").slice(0, 24);
 }
 
 /**
@@ -262,9 +301,11 @@ export function wrapExternalContent(content: string, options: WrapExternalConten
   const metadata = metadataLines.join("\n");
   const warningBlock = includeWarning ? `${EXTERNAL_CONTENT_WARNING}\n\n` : "";
 
-  // Use per-session random delimiter from context, or generate fresh one
+  // Delimiter precedence: an explicit per-session contentDelimiter (if wiring set
+  // one) → a session-stable derived delimiter (cache-friendly; byte-identical
+  // across the session's turns) → a fresh random delimiter (no session identity).
   const ctx = tryGetContext();
-  const delimiter = ctx?.contentDelimiter ?? generateRandomDelimiter();
+  const delimiter = ctx?.contentDelimiter ?? sessionStableDelimiter(ctx) ?? generateRandomDelimiter();
   const startMarker = `<<<UNTRUSTED_${delimiter}>>>`;
   const endMarker = `<<<END_UNTRUSTED_${delimiter}>>>`;
 
