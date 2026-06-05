@@ -3,7 +3,7 @@
  * Token budget algebra for the context engine pipeline.
  *
  * Computes available history token budget using the formula:
- * H = W - S - O - M - R
+ * H = W - S - O - M - R - Recall
  *
  * Where:
  * - W = model context window (tokens)
@@ -11,6 +11,8 @@
  * - O = output reserve (tokens)
  * - M = safety margin (percentage-based with absolute floor)
  * - R = context rot buffer (percentage-based)
+ * - Recall = recall-injection estimate (dynamicPreamble + inlineMemory; I1) —
+ *   a SEPARATE subtrahend, NEVER folded into S
  *
  * This is a pure function with zero side effects. All constants come from
  * the centralized constants module (not user config, per locked decision).
@@ -35,12 +37,19 @@ import type { TokenBudget } from "./types.js";
  * @param contextWindow - Model context window size in tokens (W)
  * @param systemTokensEstimate - Estimated tokens for system prompt + tool definitions (S)
  * @param cacheFenceIndex - Message index at or below which content must not be modified (-1 = no fence)
+ * @param recallTokensEstimate - Estimated tokens for the recall-injection block (the
+ *   `dynamicPreamble` + `inlineMemory` prepended into the user message by
+ *   envelope-wrapper; I1). A SEPARATE subtrahend of H — never folded into S — so a
+ *   heavier recall block compacts older history harder. Defaults to 0 for callers
+ *   that do not pass it (storeless / no-recall callers are unchanged). Clamped to
+ *   `>= 0` (a negative estimate never adds to H).
  * @returns Token budget breakdown with all components
  */
 export function computeTokenBudget(
   contextWindow: number,
   systemTokensEstimate: number,
   cacheFenceIndex: number = -1,
+  recallTokensEstimate: number = 0,
 ): TokenBudget {
   const W = contextWindow;
   const S = systemTokensEstimate;
@@ -57,8 +66,13 @@ export function computeTokenBudget(
   // R: context rot buffer -- percentage of window
   const R = Math.ceil(W * CONTEXT_ROT_BUFFER_PERCENT / 100);
 
+  // Recall: recall-injection estimate (I1) -- a SEPARATE subtrahend, clamped to
+  // >= 0 so a negative estimate never widens H. NOT folded into S (preserves the
+  // recall-dag-budget-partition invariant).
+  const Recall = Math.max(0, recallTokensEstimate);
+
   // H: available history -- clamp to zero (not negative)
-  const H = Math.max(0, W - S - O - M - R);
+  const H = Math.max(0, W - S - O - M - R - Recall);
 
   return {
     windowTokens: W,
@@ -66,6 +80,7 @@ export function computeTokenBudget(
     outputReserveTokens: O,
     safetyMarginTokens: M,
     contextRotBufferTokens: R,
+    recallTokens: Recall,
     availableHistoryTokens: H,
     cacheFenceIndex,
   };

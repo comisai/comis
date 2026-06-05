@@ -20,13 +20,14 @@ export type { TokenAnchor };
 /**
  * Token budget breakdown computed by `computeTokenBudget()`.
  *
- * Formula: H = W - S - O - M - R
+ * Formula: H = W - S - O - M - R - Recall
  * Where:
  * - W = windowTokens (model context window)
  * - S = systemTokens (system prompt + tools estimate)
  * - O = outputReserveTokens (reserved for model output)
  * - M = safetyMarginTokens (percentage-based with absolute floor)
  * - R = contextRotBufferTokens (percentage-based decay buffer)
+ * - Recall = recallTokens (recall-injection estimate; I1)
  * - H = availableHistoryTokens (remaining budget for conversation history)
  */
 export interface TokenBudget {
@@ -40,6 +41,11 @@ export interface TokenBudget {
   safetyMarginTokens: number;
   /** R: context rot buffer tokens (percentage-based). */
   contextRotBufferTokens: number;
+  /** Recall-injection tokens subtracted from H (I1) — the `dynamicPreamble` +
+   *  `inlineMemory` block prepended into the user message by envelope-wrapper.
+   *  A SEPARATE term, never folded into S (preserves the recall-dag-budget
+   *  partition invariant). Clamped to >= 0. */
+  recallTokens: number;
   /** H: available tokens for conversation history (clamped to >= 0). */
   availableHistoryTokens: number;
   /** Message index at or below which content must not be modified.
