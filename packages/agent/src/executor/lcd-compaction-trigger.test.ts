@@ -423,3 +423,107 @@ describe("maybeRunLeafPass — non-fatal degrade", () => {
     expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(0);
   });
 });
+
+// ===========================================================================
+// Multi-pass — the trigger must make PROGRESS across passes (CR-01 + CR-02)
+// ===========================================================================
+//
+// The headline BLOCKER pair: the afterTurn trigger must (CR-01) resolve history
+// from the model-facing `context_items` view so a SECOND over-threshold pass
+// collapses the NEXT-oldest chunk (not re-select the already-summarized oldest
+// and skip on an ordinal-window divergence), and (CR-02) measure utilization
+// against that SAME resolved view so a pass that has summarized enough to fit
+// under the threshold goes INERT (it observes its own compaction). On pre-fix
+// code both fail: pass 2 sources from the lossless `getMessages()` set, so it is
+// perpetually over threshold AND perpetually re-selects the collapsed oldest →
+// exactly one leaf summary is ever created, every later pass WARNs.
+
+describe("maybeRunLeafPass — makes progress across passes (CR-01/CR-02)", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("creates a SECOND distinct leaf summary on a second over-threshold pass (CR-01)", async () => {
+    // 40 msgs × 100 tok = 4000 tok; window 1000 → utilization 4.0. The fresh tail
+    // (8 STEPS ≈ msgs 25..39 = 1500 tok) ALONE exceeds the 750-tok threshold, so
+    // even after collapsing ALL out-of-tail history the resolved view stays over
+    // threshold → a correct trigger keeps firing. leafChunkTokens 300 caps each
+    // pass to ~3 messages, so two passes collapse two DISTINCT oldest chunks.
+    seedHistory(store, 40, 100);
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const summarize = shortSummarizer();
+    const deps = makeSummarizerDeps(summarize, logger);
+    const passOpts = opts({ windowTokens: 1_000, leafChunkTokens: 300, freshTailTurns: 8 });
+
+    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, logger as unknown as LeafSummarizerDeps["logger"], bus);
+    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, logger as unknown as LeafSummarizerDeps["logger"], bus);
+
+    // TWO distinct leaf summaries, covering two DIFFERENT (non-overlapping) chunks.
+    const summaries = store.getSummaries(CONVERSATION_ID);
+    expect(summaries.length).toBe(2);
+    expect(summaries[0]!.summaryId).not.toBe(summaries[1]!.summaryId);
+
+    // Two summary-refs now sit at the oldest end of the context view, in order,
+    // and the message-ref count dropped by the two chunks' worth of coverage.
+    const items = store.getContextItems(CONVERSATION_ID);
+    const summaryRefs = items.filter((it) => it.refKind === "summary");
+    expect(summaryRefs.length).toBe(2);
+    const totalCovered = summaries.reduce((acc, s) => acc + s.descendantCount, 0);
+    const messageRefs = items.filter((it) => it.refKind === "message").length;
+    expect(messageRefs).toBe(40 - totalCovered);
+
+    // No ordinal-window divergence WARN — the second pass resolved cleanly.
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const hadDivergenceWarn = warnCalls.some(
+      (call) => (call[0] as { errorKind?: string })?.errorKind === "precondition",
+    );
+    expect(hadDivergenceWarn).toBe(false);
+  });
+
+  it("goes INERT once the RESOLVED context view fits under contextThreshold (CR-02)", async () => {
+    // 40 msgs × 30 tok = 1200 tok; window 1000 → utilization 1.2 > 0.75 (750 tok)
+    // so pass 1 fires. The out-of-tail history (msgs 0..24 = 750 tok) all fits in
+    // ONE chunk (leafChunkTokens 20_000); after collapsing it into a ~5-tok leaf
+    // the RESOLVED view = leaf(~5) + fresh tail (msgs 25..39 = 450 tok) ≈ 455 tok
+    // → utilization 0.455 < 0.75. A correct trigger therefore goes inert on pass 2
+    // BEFORE selecting any chunk: no summarizer call, no divergence WARN, and no
+    // second summary. On pre-fix code pass 2 measures the raw 1200-tok history,
+    // believes it is still over threshold, re-selects the collapsed oldest, and
+    // logs the ordinal-window divergence WARN.
+    seedHistory(store, 40, 30);
+    const logger = createMockLogger();
+    const { bus, emits } = makeEventBus();
+    const summarize = shortSummarizer();
+    const deps = makeSummarizerDeps(summarize, logger);
+    const passOpts = opts({ windowTokens: 1_000, leafChunkTokens: 20_000, freshTailTurns: 8 });
+
+    // Pass 1 fires and creates exactly one leaf.
+    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, logger as unknown as LeafSummarizerDeps["logger"], bus);
+    expect(store.getSummaries(CONVERSATION_ID).length).toBe(1);
+    const callsAfterPass1 = (summarize as ReturnType<typeof vi.fn>).mock.calls.length;
+    const compactedAfterPass1 = emits.filter((e) => e.event === "context:dag_compacted").length;
+
+    // Pass 2 must be INERT: the resolved view now fits under threshold.
+    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, logger as unknown as LeafSummarizerDeps["logger"], bus);
+
+    // Still exactly one summary — no third was created, and pass 2 did not even
+    // reach the summarizer or emit another compaction event.
+    expect(store.getSummaries(CONVERSATION_ID).length).toBe(1);
+    expect((summarize as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterPass1);
+    expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(compactedAfterPass1);
+
+    // And crucially NO ordinal-window divergence WARN — pass 2 returned cleanly
+    // on the under-threshold check, it did not stumble into the divergence path.
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const hadDivergenceWarn = warnCalls.some(
+      (call) => (call[0] as { errorKind?: string })?.errorKind === "precondition",
+    );
+    expect(hadDivergenceWarn).toBe(false);
+  });
+});
