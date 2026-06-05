@@ -82,18 +82,71 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       }
       const rawBody = parts.join(BODY_SEPARATOR);
 
-      // (3) BUDGET + SPILL — oversized regions go to a secret-scrubbed file handle.
+      // (3) BUDGET + SPILL — oversized regions are ALWAYS secret-scrubbed, then
+      //     either written to a file handle (when a session dir exists) OR, when
+      //     NO dir is available (heartbeat/cron/ephemeral context, or a resolver
+      //     parse failure), inlined TRUNCATED to the cap. WR-04: the scrub AND the
+      //     size bound must NOT be conditional on a dir being present — the prior
+      //     `if (oversized && dir)` let the no-dir case fall through to the inline
+      //     path and return the FULL rawBody UNBOUNDED and UNSCRUBBED, an
+      //     unbounded-inline + unscrubbed-egress leak the cap exists to prevent.
       const dir = deps.getToolResultsDir();
       const oversized = estimateTokens(rawBody) > deps.maxExpandTokens;
-      if (oversized && dir) {
-        const scrubbed = scrubSecretsFromText(rawBody).text; // defense-in-depth on the broadest egress surface
-        mkdirSync(dir, { recursive: true });
-        const persistPath = safePath(dir, `ctx-expand-${toolCallId}.txt`); // toolCallId, NOT agent text
-        writeFileSync(persistPath, scrubbed, "utf-8");
+      if (oversized) {
+        // Defense-in-depth on the broadest egress surface — ALWAYS, regardless of
+        // whether the body spills to a file or is inlined-truncated (WR-04).
+        const scrubbed = scrubSecretsFromText(rawBody).text;
         // WR-03: read the end-instant ONCE for the DEBUG durationMs AND the emit
         // durationMs + timestamp, so the three are a single consistent snapshot
         // (the afterTurn triggers' one-read pattern).
         const endMs = deps.nowMs();
+
+        if (dir) {
+          mkdirSync(dir, { recursive: true });
+          const persistPath = safePath(dir, `ctx-expand-${toolCallId}.txt`); // toolCallId, NOT agent text
+          writeFileSync(persistPath, scrubbed, "utf-8");
+          deps.logger.debug(
+            {
+              toolName: "ctx_expand",
+              conversationId,
+              summaryId,
+              recoveredCount: parts.length,
+              unrecoverable,
+              spilled: true,
+              durationMs: endMs - t0,
+              step: "ctx_expand",
+            },
+            "ctx_expand spilled",
+          );
+          // O1: content-free expansion-hit metric (ids/counts/durationMs only —
+          // NEVER the recovered body; the lossless store, AGENTS.md §2.2/§2.7).
+          // WR-02: GUARDED — a throwing subscriber must never fail this completed
+          // spill recovery (see emitExpansionMetric).
+          emitExpansionMetric(deps, "ctx_expand", {
+            conversationId: ctxScope.conversationId,
+            agentId: ctxScope.agentId,
+            sessionKey: ctxScope.sessionKey,
+            tool: "ctx_expand",
+            recoveredCount: parts.length,
+            durationMs: endMs - t0,
+            timestamp: endMs,
+          });
+          return jsonResult({
+            fullOutputPath: persistPath,
+            unrecoverable,
+            note: `[Expanded region saved to: ${persistPath} — read it with the file tools if you need the full detail.]`,
+          });
+        }
+
+        // No dir: inline the SCRUBBED body TRUNCATED to the cap rather than
+        // returning it whole (WR-04). The cap mirrors `estimateTokens` (chars/4),
+        // so `maxExpandTokens` tokens ⇒ `maxExpandTokens * 4` chars. The truncation
+        // happens on the already-scrubbed text, then the bounded slice is
+        // taint-wrapped — never inlined raw/unbounded/unscrubbed.
+        const capChars = deps.maxExpandTokens * 4;
+        const truncated = scrubbed.length > capChars;
+        const clipped = truncated ? scrubbed.slice(0, capChars) : scrubbed;
+        const cappedBody = wrapExternalContent(clipped, { source: "unknown" });
         deps.logger.debug(
           {
             toolName: "ctx_expand",
@@ -101,16 +154,14 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
             summaryId,
             recoveredCount: parts.length,
             unrecoverable,
-            spilled: true,
+            spilled: false,
+            truncated,
             durationMs: endMs - t0,
             step: "ctx_expand",
           },
-          "ctx_expand spilled",
+          "ctx_expand inlined oversized body truncated (no tool-results dir)",
         );
-        // O1: content-free expansion-hit metric (ids/counts/durationMs only —
-        // NEVER the recovered body; the lossless store, AGENTS.md §2.2/§2.7).
-        // WR-02: GUARDED — a throwing subscriber must never fail this completed
-        // spill recovery (see emitExpansionMetric).
+        // O1: content-free expansion-hit metric (WR-02 GUARDED; ids/counts only).
         emitExpansionMetric(deps, "ctx_expand", {
           conversationId: ctxScope.conversationId,
           agentId: ctxScope.agentId,
@@ -120,11 +171,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
           durationMs: endMs - t0,
           timestamp: endMs,
         });
-        return jsonResult({
-          fullOutputPath: persistPath,
-          unrecoverable,
-          note: `[Expanded region saved to: ${persistPath} — read it with the file tools if you need the full detail.]`,
-        });
+        return jsonResult({ body: cappedBody, unrecoverable, truncated });
       }
 
       // (4) INLINE — taint-wrap the recovered body before it leaves the tool.
