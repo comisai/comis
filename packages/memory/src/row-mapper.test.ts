@@ -885,3 +885,73 @@ describe("createRowMapper — generic factory", () => {
   });
 
 });
+
+// ── CR-03: rowToEntry maps row.pinned=1 → entry.pinned=true ────────────
+describe("rowToEntry — CR-03: pinned field mapping", () => {
+  it("CR-03: rowToEntry maps row.pinned=1 to entry.pinned=true", () => {
+    // Pre-patch: rowToEntry never maps pinned → entry.pinned is undefined.
+    // Post-patch: row.pinned===1 → entry.pinned===true.
+    // Cast through unknown to accommodate the pinned field that MemoryRow does not yet declare.
+    const row = {
+      id: "pin-row-1",
+      tenant_id: "t1",
+      agent_id: "agent-a",
+      user_id: "user-1",
+      content: "pinned content",
+      trust_level: "learned",
+      memory_type: "semantic",
+      source_who: "agent",
+      source_channel: null,
+      source_session_key: null,
+      tags: "[]",
+      created_at: 1700000000000,
+      occurred_at: null,
+      proof_count: null,
+      source_ids: null,
+      consolidated_at: null,
+      confidence: null,
+      history: null,
+      observation_kind: null,
+      pattern_type: null,
+      updated_at: null,
+      expires_at: null,
+      has_embedding: 0,
+      pinned: 1,
+    } as unknown as import("./types.js").MemoryRow;
+    const entry = rowToEntry(row);
+    expect(entry.pinned).toBe(true);
+  });
+
+  it("CR-03: rowToEntry leaves entry.pinned absent when row.pinned=0", () => {
+    // row.pinned=0 (unpinned) → entry.pinned should be absent/undefined (not false).
+    const row = {
+      id: "pin-row-2",
+      tenant_id: "t1",
+      agent_id: "agent-a",
+      user_id: "user-1",
+      content: "unpinned content",
+      trust_level: "learned",
+      memory_type: "semantic",
+      source_who: "agent",
+      source_channel: null,
+      source_session_key: null,
+      tags: "[]",
+      created_at: 1700000000000,
+      occurred_at: null,
+      proof_count: null,
+      source_ids: null,
+      consolidated_at: null,
+      confidence: null,
+      history: null,
+      observation_kind: null,
+      pattern_type: null,
+      updated_at: null,
+      expires_at: null,
+      has_embedding: 0,
+      pinned: 0,
+    } as unknown as import("./types.js").MemoryRow;
+    const entry = rowToEntry(row);
+    // Unpinned: pinned field should be absent (undefined), not true or false.
+    expect(entry.pinned).toBeUndefined();
+  });
+});

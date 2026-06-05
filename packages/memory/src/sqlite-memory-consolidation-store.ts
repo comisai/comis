@@ -161,13 +161,13 @@ export function createSqliteMemoryConsolidationStore(
         "SELECT m.*, v.embedding AS embedding FROM memories m " +
           "LEFT JOIN vec_memories v ON v.memory_id = m.id " +
           "WHERE m.tenant_id = ? AND m.agent_id = ? AND m.consolidated_at IS NULL " +
-          "AND m.proof_count IS NULL " +
+          "AND m.proof_count IS NULL AND m.pinned != 1 " +
           "ORDER BY m.created_at ASC LIMIT ?",
       )
     : db.prepare(
         "SELECT m.* FROM memories m " +
           "WHERE m.tenant_id = ? AND m.agent_id = ? AND m.consolidated_at IS NULL " +
-          "AND m.proof_count IS NULL " +
+          "AND m.proof_count IS NULL AND m.pinned != 1 " +
           "ORDER BY m.created_at ASC LIMIT ?",
       );
 

@@ -115,6 +115,11 @@ export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry {
     // throws on read). pattern_type spreads only when non-null.
     observationKind: (row.observation_kind ?? "merge") as MemoryEntry["observationKind"],
     ...(row.pattern_type !== null ? { patternType: row.pattern_type as MemoryEntry["patternType"] } : {}),
+    // CR-03: map the pinned column to the domain field.
+    // pinned===1 → entry.pinned=true (always-inject marker for prompt-assembly split).
+    // pinned===0 or absent → field is absent (undefined) from the domain object,
+    // matching the MemoryEntrySchema z.boolean().optional() contract.
+    ...(row.pinned === 1 ? { pinned: true as const } : {}),
   };
 }
 

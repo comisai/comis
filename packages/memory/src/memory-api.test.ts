@@ -336,6 +336,22 @@ describe("MemoryApi", () => {
       const removed = api.clear({ tenantId: "nonexistent-tenant" });
       expect(removed).toBe(0);
     });
+
+    it("clear() does not delete pinned memories (immune like system trust)", async () => {
+      // Pinned memories must survive scoped clear() — same immunity as system-trust entries.
+      // The WHERE clause must carry `AND pinned != 1` so clear() skips pinned rows.
+      const id = crypto.randomUUID();
+      adapter.getDb().prepare(
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+         VALUES (?, 'default', 'default', 'user-1', 'pinned standing instruction', 'learned', 'semantic', 'agent', '[]', ?, 0)`,
+      ).run(id, Date.now());
+      adapter.getDb().prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(id);
+
+      api.clear({ tenantId: "default", agentId: "default" });
+
+      const rows = adapter.getDb().prepare("SELECT id FROM memories WHERE id = ?").all(id) as { id: string }[];
+      expect(rows).toHaveLength(1); // GREEN: immunity predicate added → row survives clear()
+    });
   });
 
   // ── stats ───────────────────────────────────────────────────────
@@ -502,4 +518,93 @@ describe("MemoryApi", () => {
   // along with the MemoryApi.enforceGuardrails method + GuardrailResult interface
   // + RetentionConfigSchema.maxEntries Zod field. Retention is now governed only
   // by RetentionConfigSchema.maxAgeDays (whose enforcement path lives elsewhere).
+
+  // ── pin / unpin ────────────────────────────────────────────────────────────
+  describe("pin and unpin", () => {
+    it("pin returns ok(true) when the memory entry exists in scope", async () => {
+      const entry = makeEntry({ tenantId: "tenant-a", agentId: "agent-1" });
+      await adapter.store(entry as MemoryEntry);
+      const result = await api.pin(entry.id, "tenant-a");
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).toBe(true);
+    });
+
+    it("pin returns ok(false) when the id is not found (idempotent no-op)", async () => {
+      const result = await api.pin("nonexistent-id-99", "tenant-a");
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).toBe(false);
+    });
+
+    it("unpin returns ok(true) when a pinned memory entry is unpinned", async () => {
+      const entry = makeEntry({ tenantId: "tenant-b", agentId: "agent-2" });
+      await adapter.store(entry as MemoryEntry);
+      await api.pin(entry.id, "tenant-b");
+      const result = await api.unpin(entry.id, "tenant-b");
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).toBe(true);
+    });
+
+    it("unpin returns ok(false) when the id is not found (idempotent no-op)", async () => {
+      const result = await api.unpin("nonexistent-id-99", "tenant-b");
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).toBe(false);
+    });
+
+    it("CR-01: pin with agentId does NOT pin a same-tenant entry owned by a different agent", async () => {
+      // Two entries: same tenant, different agents. Pinning for agent-a must not pin agent-b's entry.
+      const entryA = makeEntry({ tenantId: "t-cr01", agentId: "agent-a" });
+      const entryB = makeEntry({ tenantId: "t-cr01", agentId: "agent-b" });
+      await adapter.store(entryA as MemoryEntry);
+      await adapter.store(entryB as MemoryEntry);
+
+      // Pin entryA scoped to agent-a.
+      const r = await api.pin(entryA.id, "t-cr01", "agent-a");
+      expect(r.ok).toBe(true);
+      expect(r.ok && r.value).toBe(true);
+
+      // entryB (agent-b) must remain unpinned.
+      const rowB = adapter.getDb()
+        .prepare("SELECT pinned FROM memories WHERE id = ?")
+        .get(entryB.id) as { pinned: number } | undefined;
+      expect(rowB?.pinned).toBe(0);
+    });
+
+    it("CR-01: pin with wrong agentId returns ok(false) and leaves the row unpinned", async () => {
+      const entry = makeEntry({ tenantId: "t-cr01b", agentId: "agent-b" });
+      await adapter.store(entry as MemoryEntry);
+
+      // Try to pin using the wrong agentId → must return false (not found in scope).
+      const r = await api.pin(entry.id, "t-cr01b", "agent-a");
+      expect(r.ok).toBe(true);
+      expect(r.ok && r.value).toBe(false);
+
+      const row = adapter.getDb()
+        .prepare("SELECT pinned FROM memories WHERE id = ?")
+        .get(entry.id) as { pinned: number } | undefined;
+      expect(row?.pinned).toBe(0);
+    });
+  });
+
+  // ── WR-01: clear() pin immunity unconditional ──────────────────────────────
+  describe("WR-01: clear() pin immunity is unconditional (not bypassed by trustLevel scope)", () => {
+    it("WR-01: clear() with trustLevel:'external' still spares pinned entries", async () => {
+      // The pin immunity `AND pinned != 1` must apply even when scope.trustLevel is set.
+      // Pre-patch: the condition is gated on !scope.trustLevel, so clear({ trustLevel: 'external' })
+      // deletes the pinned external-trust entry. Post-patch: immunity is unconditional.
+      const db = adapter.getDb();
+      const pinnedExternalId = crypto.randomUUID();
+      db.prepare(
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type,
+          source_who, tags, created_at, has_embedding)
+         VALUES (?, 'default', 'default', 'user-1', 'pinned external', 'external', 'semantic', 'agent', '[]', ?, 0)`,
+      ).run(pinnedExternalId, Date.now());
+      db.prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(pinnedExternalId);
+
+      // clear() scoped to external trust — must NOT delete the pinned entry.
+      api.clear({ tenantId: "default", trustLevel: "external" });
+
+      const rows = db.prepare("SELECT id FROM memories WHERE id = ?").all(pinnedExternalId) as { id: string }[];
+      expect(rows).toHaveLength(1); // pinned entry survives regardless of trustLevel scope
+    });
+  });
 });

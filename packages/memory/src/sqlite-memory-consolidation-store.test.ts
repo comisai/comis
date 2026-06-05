@@ -211,6 +211,20 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(bare).toBeDefined();
       expect(bare?.embedding).toBeUndefined();
     });
+
+    it("listConsolidationCandidates excludes pinned memories from candidate set", async () => {
+      // Pinned memories must NOT appear in the consolidation candidate set.
+      // The candidate SELECT must carry `AND m.pinned != 1` so pinned rows are excluded.
+      const id = await seedMemory({ content: "pinned standing instruction", createdAt: 100 });
+      db.prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(id);
+
+      const result = await store.listConsolidationCandidates(AGENT_A, TENANT_A, 100);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const ids = result.value.map((c) => c.entry.id);
+      expect(ids).not.toContain(id); // GREEN: exclusion predicate added → pinned row absent from candidates
+    });
   });
 
   describe("listObservations", () => {

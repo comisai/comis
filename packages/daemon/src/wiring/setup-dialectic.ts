@@ -42,6 +42,7 @@ import type {
   ClockPort,
   TimerPort,
   MemoryPort,
+  MemoryPinnedStore,
   RerankerPort,
   MemoryEntityStore,
   MemoryTemporalStore,
@@ -67,6 +68,12 @@ export interface DialecticStoreSet {
   tripleStore?: TripleStorePort;
   embeddingStore?: MemoryEmbeddingStore;
   usefulnessStore?: MemoryUsefulnessStore;
+  /** Pinned-memory store. The SAME `SqliteMemoryAdapter` already in `memoryPort`
+   *  implements both `MemoryPort` AND `MemoryPinnedStore`. Supplied here as the
+   *  segregated `MemoryPinnedStore` port so the dialectic recall's Step-0 pinned-first
+   *  lane can fire (mirrors the main path R6 fix). Absent OR `rag.pinned.enabled=false` ⇒
+   *  no query runs (default-OFF byte-identity). A @comis/core port TYPE (the agent↛memory cut). */
+  pinnedStore?: MemoryPinnedStore;
   /** Tuned-alpha store. When present AND the invoking agent's
    *  `rag.onlineTuning.enabled`, the dialectic recall reads the learned 4-tuple at recall time
    *  (scoped to (tenant, agent)) and overlays the four non-trust alphas via `buildScoringAlphas`
@@ -161,7 +168,11 @@ export interface DialecticBootSlice {
     };
     eventBus?: TypedEventBus;
   };
-  memoryAdapter: MemoryPort;
+  /** The memory adapter — implements BOTH `MemoryPort` (the candidate supply) AND
+   *  `MemoryPinnedStore` (the pinned-first lane). The same `SqliteMemoryAdapter` instance
+   *  satisfies both; widened here so `dialecticWiringDepsFromBoot` can use it for both
+   *  `stores.memoryPort` and `stores.pinnedStore` without a cast. */
+  memoryAdapter: MemoryPort & MemoryPinnedStore;
   rerankerPort?: RerankerPort;
   entityStore?: MemoryEntityStore;
   temporalStore?: MemoryTemporalStore;
@@ -203,6 +214,10 @@ export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWir
       tripleStore: c.tripleStore,
       embeddingStore: c.embeddingStore,
       usefulnessStore: c.usefulnessStore,
+      // R6: c.memoryAdapter implements BOTH MemoryPort AND MemoryPinnedStore (SqliteMemoryAdapter
+      // satisfies both); pass it here as the segregated pinnedStore so the dialectic recall's
+      // Step-0 pinned-first lane can fire — parity with the main path (prompt-assembly) fix.
+      pinnedStore: c.memoryAdapter,
       // Thread the tuned-alpha store so the dialectic recall applies the SAME
       // buildScoringAlphas overlay as the main path (the main↔dialectic recall-parity fix).
       tunedAlphaStore: c.tunedAlphaStore,
@@ -356,6 +371,10 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
           ...(stores.tripleStore !== undefined ? { tripleStore: stores.tripleStore } : {}),
           ...(stores.embeddingStore !== undefined ? { embeddingStore: stores.embeddingStore } : {}),
           ...(stores.usefulnessStore !== undefined ? { usefulnessStore: stores.usefulnessStore } : {}),
+          // R6: wire the pinned store so the dialectic recall's Step-0 pinned-first lane can
+          // fire — parity with the main path (prompt-assembly) fix. Default-OFF byte-identity:
+          // with `rag.pinned.enabled=false` (the default), no query runs even when the store is present.
+          ...(stores.pinnedStore !== undefined ? { pinnedStore: stores.pinnedStore } : {}),
           ...(timers !== undefined ? { timers } : {}),
           clock,
           logger,
@@ -376,6 +395,10 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
           queryUnderstanding: rag.queryUnderstanding,
           // The FadeMem decay gate — the SAME field prompt-assembly.ts:854 passes.
           forget: rag.forget,
+          // R6: forward the pinned-memory injection config so the dialectic recall's
+          // Step-0 knows the cap. A fully-defaulted RagConfig field (same posture as mmr/forget).
+          // Default-OFF (`enabled:false`) ⇒ the pinned lane is skipped (byte-identical).
+          pinned: rag.pinned,
           ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },
       );

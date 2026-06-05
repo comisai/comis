@@ -686,6 +686,11 @@ export interface AgentEvents {
     hitCount: number;
     charsInjected: number;
     trustTags: string[];
+    /** Number of pinned entries prepended to the recall result (Step 0 of the
+     *  recall pipeline). Zero when pinning is disabled or no pins exist — the
+     *  default-off byte-identical path. Surfaced here so trajectory consumers
+     *  can distinguish pinned-first from fused-recall injection budgets. */
+    pinnedCount?: number;
     timestamp: number;
   };
 

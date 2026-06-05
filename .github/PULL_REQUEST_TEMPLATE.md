@@ -22,6 +22,16 @@ Fixes #
 - [ ] No secrets or credentials committed
 - [ ] Security implications considered
 
+## RED Test Proof
+
+_Required for all `packages/*/src/**` changes. Paste the failing test output
+(test name + assertion error) from before the production patch._
+_Exempt: pure docs, comments, formatting, build-tooling/CI/config edits._
+
+```
+(paste failing test output here, or write "EXEMPT: <reason>")
+```
+
 ## Screenshots
 
 If applicable (UI changes).

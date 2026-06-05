@@ -81,7 +81,7 @@ Verify: `curl http://localhost:4766/health` → `{"status":"ok"}`. Message your 
 
 **🔑 Credential broker — keys never enter the sandbox.** Comis drives API-key CLIs (Claude Code included) with the key kept out of the sandbox — injected at the network boundary from the daemon's encrypted store, so it's never a readable file, env var, or `/proc` entry inside the sandbox. On Linux the credentialed sandbox runs with its network namespace isolated (`--unshare-net`), and the broker unix socket is the only bind-mounted network path — so the broker is the only reachable egress, kernel-enforced and **validated on the Linux production host class**. [Deep dive →](https://docs.comis.ai/security/credential-broker)
 
-**📦 Supply-chain integrity by default.** Every release is **sigstore-attested via GitHub OIDC**. Workspace packages are bundled with `bundledDependencies` and exact-pinned — no runtime `npm install` of plugins, no transitive surprises, no peer-dependency outages. Comis owns its domain types end-to-end (no external `pi-coding-agent` you can be held hostage by). The supply chain *is* part of the threat model.
+**📦 Supply-chain integrity by default.** Every release is **sigstore-attested via GitHub OIDC**. Workspace packages are bundled with `bundledDependencies` and exact-pinned — no runtime `npm install` of plugins, no transitive surprises, no peer-dependency outages. Comis owns its domain types in-tree; its agent runtime builds on the exact-pinned, bundled `@earendil-works/pi-*` SDK rather than a loosely-versioned external dependency. The supply chain *is* part of the threat model.
 
 **💰 Cost — prompt caching saves 81%.** Dual-prompt architecture, active cache fences, adaptive TTL escalation, sub-agent spawn staggering. **$5.02 vs $26.42** for a 76-call Opus 4.6 session · **94% cache hit rate** on warm turns · **$2.11** for an 8-agent pipeline (788K tokens). [Deep dive →](https://comis.ai/context-management)
 
@@ -115,7 +115,7 @@ The agent space has split into three camps:
 | `Result<T,E>` typed errors end-to-end                    |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
 | `AsyncLocalStorage` `traceId` across every log + call    |    ✅    |        ❌        |   ❌   |    ❌    |partial |
 | Sigstore-attested releases (GitHub OIDC provenance)      |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
-| Owns its core domain types (no external SDK dependency)  |    ✅    |        ✅        |partial |    ❌    |   ✅   |
+| Owns its core domain types in-tree                       |    ✅    |        ✅        |partial |    ❌    |   ✅   |
 | Multi-tenant primitives (shared install, isolated state) |    ✅    |        ❌        |   ✅   |    ❌    |   ❌   |
 | DAG pipelines from natural language                      |    ✅    |     partial      |partial |    ❌    |partial |
 | Prompt cache as a target architecture                    |    ✅    |        ❌        |   ❌   |    ✅    |partial |

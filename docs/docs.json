@@ -104,7 +104,7 @@
       {
         "tab": "Security",
         "groups": [
-          { "group": "Overview", "pages": ["security/index", "security/defense-in-depth"] },
+          { "group": "Overview", "pages": ["security/index", "security/threat-model", "security/defense-in-depth"] },
           { "group": "Features", "pages": ["security/secrets", "security/oauth", "security/approvals", "security/audit", "security/sandbox", "security/exec-sandbox", "security/credential-broker", "security/hardening"] }
         ]
       },
@@ -120,7 +120,7 @@
         "groups": [
           { "group": "CLI", "pages": ["reference/index", "reference/cli"] },
           { "group": "Configuration", "pages": ["reference/config-yaml", "reference/environment-variables", "reference/hot-reload", "reference/secret-manager", "reference/configuration/delivery-queue"] },
-          { "group": "Security", "pages": ["reference/security-model", "reference/sandbox", "reference/safe-path", "reference/action-classifier", "reference/tool-security", "reference/node-permissions"] },
+          { "group": "Security", "pages": ["reference/security-model", "reference/sandbox", "reference/safe-path", "reference/action-classifier", "reference/tool-security", "reference/node-permissions", "reference/known-limitations"] },
           { "group": "Gateway", "pages": ["reference/http-gateway", "reference/json-rpc", "reference/websocket", "reference/openai-api", "reference/webhooks", "reference/rate-limiting", "reference/acp-server"] }
         ]
       }

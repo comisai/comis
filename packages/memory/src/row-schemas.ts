@@ -65,6 +65,15 @@ export const MemoryRowSchema = z.strictObject({
   evicted_at: z.number().nullable(),
   /** Computed lifecycle strength 0..1; null = not yet computed. */
   strength: z.number().nullable(),
+  /** Always-inject pin marker. 0 = not pinned, 1 = pinned.
+   *  NOT NULL DEFAULT 0 — every row carries it after ensurePinnedColumn().
+   *
+   *  @remarks The `.default(0)` here is a Zod parse-level safety net that applies ONLY when
+   *  the field is `undefined` (i.e., in test environments that create a bare `memories` table
+   *  without running ensurePinnedColumn()). After migration the column is NOT NULL DEFAULT 0,
+   *  so `undefined` never reaches Zod in production. Production code must NEVER rely on this
+   *  default — use the SQL column default or run ensurePinnedColumn() instead. */
+  pinned: z.number().int().default(0),
   /** Unix timestamp in milliseconds, null if never updated. */
   updated_at: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if no expiry. */

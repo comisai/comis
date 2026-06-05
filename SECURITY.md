@@ -2,6 +2,8 @@
 
 Comis is a security-first platform. Security is built into the architecture at every layer, and we treat all vulnerability reports with priority and confidentiality.
 
+For the full trust model — trust boundaries, what Comis does and does not defend against, and known limitations — see [THREAT_MODEL.md](./THREAT_MODEL.md).
+
 ## Supported Versions
 
 | Version | Supported |
@@ -33,7 +35,7 @@ In either channel, please include:
 
 Comis includes several built-in security mechanisms:
 
-- **Sandboxed Execution** -- Skills run in isolated-vm sandboxes with memory and CPU limits
+- **Sandboxed Execution** -- Agent shell and tool execution runs in OS-level sandboxes (Linux bubblewrap with namespace isolation; macOS `sandbox-exec`), with broker-mediated network egress
 - **Security Linting** -- ESLint rules that ban eval, unsafe path operations, and direct process.env access
 - **Safe Path Resolution** -- Utilities that prevent directory traversal and symlink attacks
 - **Action Classification** -- Permission system that categorizes agent behaviors by risk level

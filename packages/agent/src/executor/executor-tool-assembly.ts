@@ -96,6 +96,12 @@ export interface ToolAssemblyDeps {
   /** Optional usefulness store, threaded into prompt-assembly's createMemoryRecall.
    *  TYPE-only from @comis/core (the agent↛memory build cut). */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+  /** Optional pinned-memory store. Forwarded into prompt-assembly's createMemoryRecall
+   *  Step-0 pinned-first lane (the `deps.pinnedStore !== undefined` half of the gate).
+   *  A missing forward here is a silent no-op: pinned memories never appear in
+   *  agent recall even when the store is wired in the daemon and `rag.pinned.enabled`
+   *  is true (the R6 blocker). TYPE-only from @comis/core (the agent↛memory build cut). */
+  pinnedStore?: import("@comis/core").MemoryPinnedStore;
   /** Optional learned-alpha store, threaded into prompt-assembly's deterministic
    *  apply overlay (the gated buildScoringAlphas read on the recall scoring arg). Absent /
    *  off / no-row -> no read, the static config.rag.scoring alphas pass unchanged (byte-identical
@@ -424,6 +430,12 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       tripleStore: deps.tripleStore,
       embeddingStore: deps.embeddingStore,
       usefulnessStore: deps.usefulnessStore,
+      // R6: forward the pinned-memory store so the recall pipeline's Step-0 pinned-first
+      // lane can fire. A missing forward here is a silent no-op: the gate
+      // `cfg_pinned?.enabled === true && deps.pinnedStore !== undefined` never passes
+      // and pinned entries are never prepended to recall results even when the operator
+      // has set `rag.pinned.enabled: true` and pinned memories in the DB.
+      pinnedStore: deps.pinnedStore,
       // Forward the per-user representation store the SAME way as usefulnessStore — a
       // missing forward here is a silent no-op (the profile <user_profile> block never renders even
       // with the store wired in the daemon). prompt-assembly's deps.userRepresentationStore.read is

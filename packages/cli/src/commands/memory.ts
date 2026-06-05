@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Memory query commands: search, inspect, stats, clear.
+ * Memory query commands: search, inspect, stats, clear, export, import.
  *
- * Provides `comis memory [search|inspect|stats|clear]` subcommands
- * for querying and managing memory entries via the daemon RPC interface.
+ * Provides `comis memory [search|inspect|stats|clear|export|import]` subcommands
+ * for querying, managing, and porting memory entries via the daemon RPC interface.
+ *
+ * CLI writes export files directly (not the daemon — daemon runs under
+ * node --permission which disables fd-based fs APIs).
  *
  * @module
  */
 
+import * as fs from "node:fs/promises";
 import type { Command } from "commander";
 import chalk from "chalk";
 import {
@@ -19,6 +23,11 @@ import {
   MemoryObservationsContract,
   MemoryEntitiesContract,
   MemoryRecallStatsContract,
+  MemoryPortabilityExportContract,
+  MemoryPortabilityImportContract,
+  MemoryPinContract,
+  MemoryUnpinContract,
+  parseMemoryExportEnvelope,
 } from "@comis/core";
 import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
@@ -453,6 +462,162 @@ export function registerMemoryCommand(program: Command): void {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to clear memory: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // memory export — versioned, secret-scrubbed envelope export.
+  // CLI writes the file (daemon runs under node --permission which disables
+  // fd-based fs APIs: fsync*, fchmod, fchown). T-02-07: mode 0o600 (owner
+  // read/write only).
+  memory
+    .command("export")
+    .description("Export agent memory to a versioned JSON envelope (secrets scrubbed at source)")
+    .requiredOption("--agent <agentId>", "Agent whose memory to export")
+    .option("--output <path>", "Output file path (default: comis-memory-<agentId>-<timestamp>.json)")
+    .option("--limit <n>", "Maximum entries to export (default: 10000)", "10000")
+    .action(async (options: { agent: string; output?: string; limit: string }) => {
+      // WR-02: guard against non-numeric --limit before the RPC call.
+      const exportLimit = parseInt(options.limit, 10);
+      if (isNaN(exportLimit) || exportLimit < 1) {
+        error("Invalid limit: must be a positive integer");
+        process.exit(1);
+      }
+      try {
+        const result = await withSpinner("Exporting memory...", () =>
+          withClient(async (client) =>
+            callTyped(client, MemoryPortabilityExportContract, {
+              agent_id: options.agent,
+              limit: exportLimit,
+            }),
+          ),
+        );
+        // CLI writes the file — daemon runs node --permission (no fd-based fs APIs).
+        // T-02-07: mode 0o600 (owner read/write only — same pattern as openSqliteDatabase).
+        const outPath =
+          options.output ?? `comis-memory-${options.agent}-${Date.now()}.json`;
+        await fs.writeFile(outPath, JSON.stringify(result, null, 2), { mode: 0o600 });
+        success(
+          `Exported ${result.entryCount} entr${result.entryCount === 1 ? "y" : "ies"} → ${outPath}`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error(`Failed to export memory: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // memory import — firewalled import from comis-memory-export-v1 envelope.
+  // CLI validates envelope client-side (T-02-08 fail-closed layer) before RPC.
+  // Daemon runs its own Zod validation + memory-poisoning firewall as second line.
+  memory
+    .command("import <file>")
+    .description("Import memory from a comis-memory-export-v1 JSON envelope")
+    .requiredOption("--agent <agentId>", "Target agent to import memory into")
+    .option("--dry-run", "Validate and report counts without writing to the store")
+    .action(async (file: string, options: { agent: string; dryRun?: boolean }) => {
+      try {
+        // T-02-08: CLI validates envelope before sending to daemon — fail-closed.
+        let raw: unknown;
+        try {
+          raw = JSON.parse(await fs.readFile(file, "utf-8")) as unknown;
+        } catch {
+          error(`Cannot read import file: ${file}`);
+          process.exit(1);
+        }
+
+        const parsed = parseMemoryExportEnvelope(raw);
+        if (!parsed.ok) {
+          const got =
+            (raw as Record<string, unknown> | null)?.["schemaVersion"] ?? "(missing)";
+          error(
+            `Invalid export envelope — schemaVersion must be "comis-memory-export-v1". ` +
+              `Got: ${String(got)}`,
+          );
+          process.exit(1);
+        }
+
+        const result = await withSpinner(
+          options.dryRun ? "Validating import (dry-run)..." : "Importing memory...",
+          () =>
+            withClient(async (client) =>
+              callTyped(client, MemoryPortabilityImportContract, {
+                entries: parsed.value.entries as Record<string, unknown>[],
+                agent_id: options.agent,
+                dry_run: options.dryRun,
+              }),
+            ),
+        );
+
+        if (result.dryRun) {
+          info(
+            `Dry-run: ${result.imported} would import, ${result.blocked} blocked, ` +
+              `${result.downgraded} downgraded to external trust (${result.total} total)`,
+          );
+        } else {
+          success(
+            `Imported ${result.imported}/${result.total} entr${result.total === 1 ? "y" : "ies"}` +
+              (result.blocked > 0
+                ? ` — ${result.blocked} blocked (secret/dangerous content)`
+                : "") +
+              (result.downgraded > 0
+                ? `, ${result.downgraded} downgraded to external trust`
+                : ""),
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error(`Failed to import memory: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // memory pin <id> — mark a memory entry as always-injected in recall. Admin-gated.
+  memory
+    .command("pin <id>")
+    .description("Pin a memory entry (always inject in recall) — admin")
+    .option("--agent <agentId>", "Agent scope")
+    .option("--tenant <tenantId>", "Tenant scope")
+    .action(async (id: string, options: { agent?: string; tenant?: string }) => {
+      try {
+        const result = await withSpinner("Pinning memory...", () =>
+          withClient(async (client) =>
+            callTyped(client, MemoryPinContract, {
+              id,
+              ...(options.agent ? { agent_id: options.agent } : {}),
+              ...(options.tenant ? { tenant_id: options.tenant } : {}),
+            }),
+          ),
+        );
+        success(`Pinned memory entry: ${result.id}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error(`Failed to pin memory: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // memory unpin <id> — remove the always-inject mark from a memory entry. Admin-gated.
+  memory
+    .command("unpin <id>")
+    .description("Unpin a memory entry — admin")
+    .option("--agent <agentId>", "Agent scope")
+    .option("--tenant <tenantId>", "Tenant scope")
+    .action(async (id: string, options: { agent?: string; tenant?: string }) => {
+      try {
+        const result = await withSpinner("Unpinning memory...", () =>
+          withClient(async (client) =>
+            callTyped(client, MemoryUnpinContract, {
+              id,
+              ...(options.agent ? { agent_id: options.agent } : {}),
+              ...(options.tenant ? { tenant_id: options.tenant } : {}),
+            }),
+          ),
+        );
+        success(`Unpinned memory entry: ${result.id}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error(`Failed to unpin memory: ${msg}`);
         process.exit(1);
       }
     });
