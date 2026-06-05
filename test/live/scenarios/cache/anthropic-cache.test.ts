@@ -34,7 +34,6 @@ import { runLogOracle } from "../../assert/log-oracle.js";
 import { runDbOracle } from "../../assert/db-oracle.js";
 import {
   expectCacheWrite,
-  expectCacheRead,
   expectDigestChange,
   readCacheTraceForTurn,
 } from "../../assert/cache-trace.js";
@@ -201,14 +200,21 @@ describe.skipIf(!isLive)("Live — CACHE-01 Anthropic write→hit→invalidate (
       const t1Lines = readFileSync(cacheTracePath, "utf-8");
       await expectCacheWrite({ minCreationTokens: 1 }, t1Lines);
 
-      // Turn 2 — identical prefix → cacheReadInputTokens > 0 (hit)
+      // Turn 2 — identical prefix → cacheReadInputTokens > 0 (hit).
+      // WR-02: Snapshot cumulative readTokens BEFORE turn 2, then assert a DELTA > 0
+      // after turn 2.  Reading the whole file and checking totalReadTokens directly
+      // would falsely pass if a prior warm-cache run already populated read tokens
+      // from turn 1 (e.g., a partial cold-start hit against a previously warmed cache).
+      const preTurn2ReadTokens = readCacheTraceForTurn(
+        readFileSync(cacheTracePath, "utf-8"),
+      ).totalReadTokens;
       await driver.sendTurn("What is 1+1? Answer briefly.");
       await flushDaemonLogs(driver);
       const t2Lines = readFileSync(cacheTracePath, "utf-8");
-      await expectCacheRead({ minReadTokens: 1 }, t2Lines);
+      const t2Summary = readCacheTraceForTurn(t2Lines);
+      expect(t2Summary.totalReadTokens - preTurn2ReadTokens).toBeGreaterThan(0);
 
       // Turn 3 — different prefix → digest change → miss
-      const t2Summary = readCacheTraceForTurn(t2Lines);
       await driver.sendTurn("Tell me about quantum physics in one sentence.");
       await flushDaemonLogs(driver);
       const t3Lines = readFileSync(cacheTracePath, "utf-8");

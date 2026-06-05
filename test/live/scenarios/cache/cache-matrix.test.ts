@@ -27,8 +27,8 @@ import { describe, it, expect } from "vitest";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
 import { runDbOracle } from "../../assert/db-oracle.js";
-import { expectCacheWrite } from "../../assert/cache-trace.js";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { expectCacheWrite, expectNoCacheWrite } from "../../assert/cache-trace.js";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -137,16 +137,26 @@ function buildCacheConfig(opts: {
     }
   }
 
-  // Patch geminiCache.enabled block — replace existing or append at file level
+  // Patch geminiCache.enabled — replace the targeted `enabled:` line in an existing
+  // geminiCache block, or append the block under agents.default (NOT at file root).
+  // CR-01: geminiCache is defined in AgentConfigSchema (PerAgentConfigSchema), which
+  // maps to the `agents.default` block in YAML. AppConfigSchema is z.strictObject, so
+  // an unknown top-level key causes a ZodError and daemon boot fails.
   if (opts.geminiCacheEnabled !== undefined) {
     const enabledVal = String(opts.geminiCacheEnabled);
-    if (/geminiCache:[\s\S]*?enabled:\s*\S+/.test(content)) {
+    if (/^\s+enabled:\s*\S+/m.test(content) && /geminiCache:/.test(content)) {
+      // Replace only the `enabled:` line within an existing geminiCache block to avoid
+      // silently dropping sibling keys like maxActiveCaches.
       content = content.replace(
-        /geminiCache:[\s\S]*?enabled:\s*\S+/,
-        `geminiCache:\n  enabled: ${enabledVal}`,
+        /^(\s+enabled:\s*)\S+/m,
+        `$1${enabledVal}`,
       );
     } else {
-      content += `\ngeminiCache:\n  enabled: ${enabledVal}\n`;
+      // Append inside the agents.default block (NOT at file root).
+      content = content.replace(
+        /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
+        `$1\n    geminiCache:\n      enabled: ${enabledVal}$2`,
+      );
     }
   }
 
@@ -209,12 +219,12 @@ describe.skipIf(!isLive)("Live — CACHE-03 matrix (Stage-C)", () => {
   const registry = buildCredentialRegistry();
   const canRun = registry.getSkipVerdict("LLM(anthropic)") === null;
 
-  // Retention × adaptive combos — each spawns its own driver
-  it.each(RETENTION_MATRIX)(
+  // Retention × adaptive combos — each spawns its own driver.
+  // WR-01: use it.skipIf(!canRun) so combos show as SKIPPED (not phantom-passed)
+  // when Anthropic credentials are unavailable.
+  it.skipIf(!canRun).each(RETENTION_MATRIX)(
     "retention=$label",
     async ({ cacheRetention, adaptiveCacheRetention, label }) => {
-      if (!canRun) return;
-
       const configPath = buildCacheConfig({ cacheRetention, adaptiveCacheRetention, label });
       const driver = new ConversationDriver({
         agentId: `cache-mx-r-${label}`,
@@ -231,7 +241,16 @@ describe.skipIf(!isLive)("Live — CACHE-03 matrix (Stage-C)", () => {
         );
         await flushDaemonLogs(driver);
         const lines = readFileSync(cacheTracePath, "utf-8");
-        await expectCacheWrite({ minCreationTokens: 1 }, lines);
+
+        // CR-02: cacheRetention="none" activates the kill-switch (kill-switch.ts strips
+        // all cache_control markers), so the provider returns cacheCreationInputTokens=0.
+        // Assert the ABSENCE of a cache write for this path, not its presence.
+        if (cacheRetention === "none") {
+          await expectNoCacheWrite(lines);
+        } else {
+          await expectCacheWrite({ minCreationTokens: 1 }, lines);
+        }
+
         await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
         const dbPath = join(driver.getDataDir(), "memory.db");
         if (existsSync(dbPath)) await runDbOracle(dbPath, {});
@@ -239,17 +258,19 @@ describe.skipIf(!isLive)("Live — CACHE-03 matrix (Stage-C)", () => {
         await driver.close().catch(() => {
           // swallow shutdown noise
         });
+        // IN-01: clean up the per-combo temp config file so it does not accumulate
+        // in tmpdir across repeated live runs.
+        try { rmSync(configPath); } catch { /* ignore if already gone */ }
       }
     },
     2 * 60_000,
   );
 
-  // Breakpoint strategy × geminiCache combos — each spawns its own driver
-  it.each(STRATEGY_MATRIX)(
+  // Breakpoint strategy × geminiCache combos — each spawns its own driver.
+  // WR-01: use it.skipIf(!canRun) so combos show as SKIPPED (not phantom-passed).
+  it.skipIf(!canRun).each(STRATEGY_MATRIX)(
     "strategy=$label",
     async ({ cacheBreakpointStrategy, geminiCache, label }) => {
-      if (!canRun) return;
-
       const configPath = buildCacheConfig({
         cacheBreakpointStrategy,
         geminiCacheEnabled: geminiCache,
@@ -276,6 +297,8 @@ describe.skipIf(!isLive)("Live — CACHE-03 matrix (Stage-C)", () => {
         await driver.close().catch(() => {
           // swallow shutdown noise
         });
+        // IN-01: clean up the per-combo temp config file.
+        try { rmSync(configPath); } catch { /* ignore if already gone */ }
       }
     },
     2 * 60_000,
