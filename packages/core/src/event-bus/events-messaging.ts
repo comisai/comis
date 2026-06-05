@@ -228,6 +228,28 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** LCD entered a DEGRADED path (R3 + R1, Phase 132). A robustness/integrity
+   *  signal — NOT a normal completion. Mirrors `context:dag_compacted`'s
+   *  identifiers + durationMs, but carries a CLOSED-union `reason` instead of
+   *  counts. Payload is identifiers + a reason + durationMs ONLY — NEVER message
+   *  or summary content (the lossless store; AGENTS.md §2.2/§2.8).
+   *  - `fail_closed_rollover`: an ambiguous/malformed scope refused the ingest
+   *    write (132-04, R3) rather than silently reattaching to a prior conversation.
+   *  - `serialized_wait`: an ingest/compaction write waited on the per-conversation
+   *    single-flight serializer (132-04, R3) — reserved for the bounded-wait signal.
+   *  - `breaker_open` / `spend_cap`: the summarizer circuit breaker opened or a
+   *    per-tenant summarizer spend ceiling was hit (132-05, R1) — reserved here so
+   *    the union is closed from the start (no later open-string widening). */
+  "context:dag_degraded": {
+    conversationId: string;
+    agentId: string;
+    sessionKey: string;
+    /** Closed union — never an open string (AGENTS.md §2.8). */
+    reason: "fail_closed_rollover" | "serialized_wait" | "breaker_open" | "spend_cap";
+    durationMs: number;
+    timestamp: number;
+  };
+
   /** Context engine mode switched between pipeline and dag (one-time import cost).
    *  Carries the switch DIRECTION + the one-time reconciliation cost. Emitted on
    *  an ACTUAL direction change (not on a brand-new DAG-default conversation) from
