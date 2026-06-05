@@ -100,6 +100,16 @@ export interface ContextEngineSetupParams {
    *  `deps.tenantId ?? sessionKey.tenantId`). Threaded onto ContextEngineDeps so
    *  the assembler builds an agent + tenant scoped read (WR-02). */
   tenantId: string;
+  /** DAG-CRIT-1 (WR-02): the turn's agentId — the positional execute() arg
+   *  (`agentId ?? "default"`, the SAME `effectiveAgentId` expression
+   *  executor-post-execution uses for the LCD ingest scope), supplied by the
+   *  caller and NOT read from deps. On the executeAgent path the turn agentId is
+   *  set on the ALS RequestContext, never onto frozenDeps, so `deps.agentId` is
+   *  undefined and the assembler used to fail closed (recalled 0 history). Threading
+   *  it here makes the dag READ scope == the ingest WRITE scope so the assembler
+   *  builds a non-undefined readScope. `deps.agentId` stays the fallback for
+   *  non-executeAgent callers. */
+  agentId: string | undefined;
   msg: { channelType?: string; channelId?: string };
   sm: unknown;  // SessionManager -- typed as unknown to avoid SDK type export
   session: { agent: { state: { model: { reasoning?: boolean; contextWindow?: number; maxTokens?: number; id?: string; provider?: string; api?: string } | undefined } }; abortCompaction(): void };
@@ -242,7 +252,14 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     currentDiscoveryTracker,
   } = params;
 
-  const agentId = deps.agentId;
+  // DAG-CRIT-1: prefer the caller-supplied turn agentId (the positional
+  // execute() arg threaded as params.agentId) over deps.agentId — on the
+  // executeAgent path deps.agentId (= frozenDeps.agentId) is undefined, so this
+  // is what makes the dag read scope == the ingest write scope (the assembler no
+  // longer fails closed). deps.agentId remains the fallback for callers that set
+  // it directly. This `agentId` flows into the createContextEngine deps (the LCD
+  // read scope) and the getSummarizerDeps wiring below.
+  const agentId = params.agentId ?? deps.agentId;
 
   // contextEngineOverrides removed from ExecutionOverrides -- compaction model resolved via operationModels chain
   const contextEngineConfig = config.contextEngine ?? ContextEngineConfigSchema.parse({});

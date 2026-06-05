@@ -105,6 +105,10 @@ function makeParams(overrides?: Partial<ContextEngineSetupParams>): ContextEngin
     deps,
     formattedKey: "tenant-a:user_a:chan-a",
     sessionKey: "tenant-a:user_a:chan-a",
+    // DAG-CRIT-1: the turn agentId param defaults to undefined so the existing
+    // deps.agentId-fallback tests still resolve through deps; the CRIT-1 tests
+    // override it explicitly.
+    agentId: undefined,
     msg: { channelType: "test", channelId: "chan-a" },
     sm: { fileEntries: [] },
     session: {

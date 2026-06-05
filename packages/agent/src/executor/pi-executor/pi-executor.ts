@@ -874,6 +874,12 @@ async function runSessionLocked(
     // executor-post-execution uses for the ingest scope (deps.tenantId ?? the
     // session key's tenant), so read + write scopes agree (WR-02).
     tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
+    // DAG-CRIT-1: the dag assembler's LCD read scope agentId — the SAME
+    // `effectiveAgentId = agentId ?? "default"` expression executor-post-execution
+    // uses for the LCD ingest WRITE scope, so the read scope == the write scope and
+    // the assembler stops failing closed (the positional turn agentId never reaches
+    // frozenDeps, so deps.agentId would be undefined on this path).
+    agentId: agentId ?? "default",
     msg, sm, session,
     resolvedModel, executionOverrides,
     cacheBreakDetector,
