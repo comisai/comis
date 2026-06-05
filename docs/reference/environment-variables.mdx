@@ -328,6 +328,47 @@ Cost bound for the regression driver. Caps the number of real provider calls whe
 the suite is enabled; set to `0` for a record-only (`$0`) run that still executes
 the structural `stream:context` / `assembledShape` assertions without a live call.
 
+## Live-fire testing (operator)
+
+These variables gate the `pnpm test:live` real-provider test tier. They are **never
+required for normal operation** — when `COMIS_LIVE` is unset the entire live tier
+self-skips, so a default `pnpm test` / `pnpm validate` run makes no provider call
+and incurs no cost.
+
+### `COMIS_LIVE`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Live-fire test runner (`test/live/runner.ts`) |
+| **Format** | `1` to enable, unset to skip |
+| **Default** | (unset — the entire live tier is skipped) |
+
+Master gate for the real-provider live test tier. When unset, `pnpm test:live` exits 0
+immediately with a "Live tier skipped" message — no provider call, no network, no cost.
+When set to `1`, the runner dispatches to the scenario specified by the mode argument.
+
+```bash
+export COMIS_LIVE=1
+```
+
+### `COMIS_LIVE_BUDGET_USD`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Live-fire cost governor (`test/live/cost.ts`) |
+| **Format** | Decimal USD amount (e.g. `2.00`) |
+| **Default** | `2.00` |
+
+Hard-stop ceiling for a single `pnpm test:live` run. The cost governor accumulates
+per-call cost estimates and aborts the run with a non-zero exit when the running
+total exceeds this value, preventing runaway spend. Set a lower value for exploratory
+runs; raise it only for full suite sweeps.
+
+```bash
+export COMIS_LIVE_BUDGET_USD=5.00   # raise for a full suite sweep
+export COMIS_LIVE_BUDGET_USD=0.50   # lower for a single scenario
+```
+
 ## LLM Provider Keys
 
 At least one provider key is required. Each provider is detected at startup; missing keys disable the matching provider gracefully. All keys can also be stored encrypted via [`comis secrets set`](/reference/cli#comis-secrets) instead of plaintext in `.env`.
