@@ -54,7 +54,12 @@ const SCOPE: ContextStoreScope = {
   conversationId: CONVERSATION_ID,
   tenantId: "tenant_a",
   agentId: "agent_a",
-  sessionKey: "sess-a",
+  // The codebase invariant is conversationId === sessionKey === formattedKey
+  // (executor-post-execution.ts:894). The R3 fail-closed predicate (132-04)
+  // refuses a conversationId/sessionKey CONFLICT, so the shared fixture must
+  // satisfy the invariant — the WR-01 guard tests below exercise the SHRINK
+  // path, not the fail-closed path.
+  sessionKey: CONVERSATION_ID,
 };
 
 function userMsg(text: string): Message {
@@ -288,7 +293,7 @@ describe("ingestTurn", () => {
       conversationId: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a", // R4 (132-03): the assembler reads with the full scope (else fails closed — WR-02)
-      sessionKey: "sess-a",
+      sessionKey: CONVERSATION_ID, // conversationId === sessionKey invariant
     };
     const engine = createLcdContextEngine(dagConfig(1), deps);
     const out = await engine.transformContext(turn);
@@ -319,7 +324,7 @@ describe("ingestTurn", () => {
         step: "lcd-ingest",
         conversationId: CONVERSATION_ID,
         agentId: "agent_a",
-        sessionKey: "sess-a",
+        sessionKey: CONVERSATION_ID,
         appended: 1,
       }),
       expect.any(String),

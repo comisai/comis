@@ -112,9 +112,55 @@ export function ingestTurn(
 }
 
 /**
+ * R3 (132-04) fail-closed rollover predicate: is `scope` safe to ingest a turn
+ * under, or is it ambiguous/malformed and must REFUSE the write?
+ *
+ * LOSSLESS-CLAW §5 posture: an ambiguous session rollover fails CLOSED — it
+ * refuses the write rather than silently reattaching a turn's messages to the
+ * WRONG (prior) conversation (the silent cross-session-merge threat,
+ * T-132-04-02). This is the ambiguity guard the codebase lacked: today a
+ * malformed scope's append proceeds and stamps cross-session-readable / mis-
+ * attached rows.
+ *
+ * Two refusal conditions (conservative — refuse, never guess):
+ *  1. **Empty/blank security column.** Each of conversationId / agentId /
+ *     tenantId / sessionKey MUST be a non-empty TRIMMED string (mirrors the
+ *     T-128-08 "SECURITY columns must never be empty" intent + the
+ *     {@link ingestTurnGuarded} WR-01 skip+WARN shape). An empty column produces
+ *     a row reachable by an unrelated scope.
+ *  2. **conversationId ↔ sessionKey conflict.** The codebase invariant is
+ *     `conversationId === sessionKey === formattedKey`
+ *     (executor-post-execution.ts:894, where `conversationId = formattedKey` and
+ *     `sessionKey: formattedKey`). A mismatch is internally inconsistent —
+ *     refuse rather than GUESS which conversation to attach to.
+ *
+ * Returns a discriminated result so the caller can log the specific `reason`.
+ *
+ * @param scope The SECURITY scope columns to validate.
+ * @returns `{ ok: true }` when safe, else `{ ok: false; reason }`.
+ */
+export function isScopeSafeForIngest(
+  scope: ContextStoreScope,
+): { ok: true } | { ok: false; reason: string } {
+  // Condition 1: every security column must be a non-empty trimmed string.
+  if (scope.conversationId.trim() === "") return { ok: false, reason: "empty conversationId" };
+  if (scope.agentId.trim() === "") return { ok: false, reason: "empty agentId" };
+  if (scope.tenantId.trim() === "") return { ok: false, reason: "empty tenantId" };
+  if (scope.sessionKey.trim() === "") return { ok: false, reason: "empty sessionKey" };
+  // Condition 2: conversationId must equal sessionKey (the formattedKey invariant).
+  // A mismatch means the scope is internally inconsistent — refuse rather than
+  // reattach to either candidate conversation (LOSSLESS-CLAW §5).
+  if (scope.conversationId !== scope.sessionKey) {
+    return { ok: false, reason: "conversationId/sessionKey conflict" };
+  }
+  return { ok: true };
+}
+
+/**
  * Guarded afterTurn ingest: derive the not-yet-persisted delta from the store's
  * persisted high-water mark and append it — but SKIP cleanly (with a WARN) when
- * the live array is SHORTER than the high-water mark (WR-01).
+ * the live array is SHORTER than the high-water mark (WR-01) OR when the scope is
+ * ambiguous/malformed (R3 fail-closed rollover — see {@link isScopeSafeForIngest}).
  *
  * The store is strictly append-only, so its count only grows; in steady state
  * the live array (`session.agent.state.messages`) is the full conversation and
@@ -129,11 +175,17 @@ export function ingestTurn(
  * append, WARNing (errorKind `precondition` — an unmet guard-state, §2.7) so the
  * divergence is observable rather than silent.
  *
- * @param store    The injected core ContextStorePort.
- * @param scope    The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
- * @param live     The live canonical AgentMessage[] (the full conversation).
- * @param now      Injected wall-clock ms (`deps.clock.now()`).
- * @param logger   For the divergence WARN + the delegated ingest logs.
+ * @param store        The injected core ContextStorePort.
+ * @param scope        The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
+ * @param live         The live canonical AgentMessage[] (the full conversation).
+ * @param now          Injected wall-clock ms (`deps.clock.now()`).
+ * @param logger       For the divergence WARN + the delegated ingest logs.
+ * @param onFailClosed Optional callback fired ONLY on the R3 fail-closed-rollover
+ *                     refuse path (NOT the WR-01 shrink skip), carrying the
+ *                     refusal `reason`. The agent-side call site uses it to emit
+ *                     a content-free `context:dag_degraded` event (the eventBus
+ *                     lives agent-side; this module stays bus-free). Never carries
+ *                     message content.
  */
 export function ingestTurnGuarded(
   store: ContextStorePort,
@@ -141,7 +193,31 @@ export function ingestTurnGuarded(
   live: AgentMessage[],
   now: number,
   logger: ComisLogger,
+  onFailClosed?: (reason: string) => void,
 ): void {
+  // R3 (132-04) fail-closed rollover: refuse the write on an ambiguous/malformed
+  // scope BEFORE touching the store, so a mis-derived session key can never
+  // silently reattach this turn's messages to a prior conversation (T-132-04-02).
+  // Skip + WARN (errorKind precondition) — non-fatal, like the WR-01 guard below;
+  // NEVER throw (the afterTurn path must not fail the live turn).
+  const safe = isScopeSafeForIngest(scope);
+  if (!safe.ok) {
+    logger.warn(
+      {
+        conversationId: scope.conversationId,
+        agentId: scope.agentId,
+        errorKind: "precondition" as ErrorKind,
+        hint: "ambiguous/malformed LCD scope — refusing the ingest write to avoid a cross-session reattach; check the session-key derivation",
+      },
+      "lcd ingest refused (fail-closed rollover)",
+    );
+    // Let the agent-side caller emit a content-free context:dag_degraded
+    // (reason: fail_closed_rollover) — the reason string is a closed-meaning tag,
+    // never message content.
+    onFailClosed?.(safe.reason);
+    return;
+  }
+
   // R4 (132-03): the high-water mark is AGENT-SCOPED — getMessages(scope) counts
   // ONLY this agent's persisted rows, so each agent in a shared conversation owns
   // an independent seq sequence (WR-02). The unique (conversation_id, agent_id,
