@@ -90,6 +90,16 @@ export interface LeafPassOptions {
   freshTailTurns: number;
   /** The model's context window W (the utilization denominator). */
   windowTokens: number;
+  /**
+   * B-2: hard cap on leaf passes per afterTurn drain (the infinite-loop backstop).
+   * The drain re-resolves the view each iteration and stops on the FIRST of:
+   * utilization ≤ contextThreshold, a no-progress guard, OR this cap. Optional —
+   * defaults to {@link LCD_MAX_LEAF_PASSES_PER_TURN} when absent so existing
+   * single-pass callers/tests are unchanged (they get the bounded multi-pass drain
+   * with the safe default). Set LOW: under `deferCompaction:false` each pass is a
+   * synchronous LLM round-trip, so a turn must never fire unbounded summarizer calls.
+   */
+  maxLeafPassesPerTurn?: number;
 }
 
 /**

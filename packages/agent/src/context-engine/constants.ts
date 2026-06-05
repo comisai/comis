@@ -261,6 +261,23 @@ export const LEAF_FALLBACK_TARGET_TOKENS = 512;
  *  Used by: lcd-leaf-summarizer (Level-3 marker). */
 export const LEAF_FALLBACK_SUMMARY_MARKER = "[lcd-leaf-fallback]";
 
+/** B-2: hard cap on the number of leaf passes one afterTurn drain may fire (the
+ *  infinite-loop backstop). The drain loops `runOneLeafPass` — re-resolving the
+ *  model-facing view each iteration so utilization reflects the prior pass's
+ *  compaction — and terminates on the FIRST of: utilization ≤ contextThreshold
+ *  (drained, the success exit), a no-progress guard (no chunk / chunk below
+ *  MIN_SHRINKABLE / ordinal-window divergence), OR this cap.
+ *
+ *  Set LOW (4) deliberately: under `deferCompaction:false` the afterTurn drain runs
+ *  INLINE + synchronously, so EACH pass is a real LLM round-trip blocking the live
+ *  turn — a turn must NEVER fire unbounded synchronous summarizer calls. Four passes
+ *  is enough to drain a few back-to-back large turns' backlog under threshold in one
+ *  turn while bounding worst-case added latency; a sustained over-threshold load that
+ *  the cap cannot fully drain in one turn simply continues draining on the next
+ *  afterTurn (the leaf gate stays armed) rather than stalling at one pass forever
+ *  (the B-2 stall this fixes). Used by: lcd-compaction-trigger (the drain loop cap). */
+export const LCD_MAX_LEAF_PASSES_PER_TURN = 4;
+
 /** TRUSTED-HEADER marker (R2, Phase 132) appended to a fallback summary's
  *  `summaryRefToMessage` header — OUTSIDE the `wrapExternalContent` untrusted
  *  region — so the model is honestly told the summary is an emergency, degraded
