@@ -35,9 +35,14 @@ const TIER_USD: Record<CostTier, number> = {
 
 /**
  * Secret-sweep regex — ports bench-memory.sh `sweep_tier_report` pattern to TypeScript.
- * Matches: sk-* API keys, Bearer tokens, bare `apiKey` keyword.
+ * Matches: sk-* API keys, Bearer tokens, apiKey key-value assignments with non-empty values.
+ *
+ * The apiKey branch matches "apiKey": "..." or apiKey: "..." (key=value form) but NOT
+ * bare field names in serialized JSON like `"apiKey":null` or `"apiKey":"<param-name>"`.
+ * A minimum value length of 4 chars avoids matching parameter-name placeholders.
  */
-const SECRET_PATTERN = /sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|apiKey\b/g;
+const SECRET_PATTERN =
+  /sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|(?:"apiKey"|apiKey)\s*[=:]\s*["'][^"']{4,}/g;
 
 /**
  * Scan a string for credential-shaped patterns.

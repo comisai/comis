@@ -75,6 +75,33 @@ describe("scanForSecrets", () => {
     const matches = scanForSecrets("hello world");
     expect(matches).toEqual([]);
   });
+
+  // CR-01: apiKey field-name false-positive regression tests
+  it("does NOT match a JSON field name 'apiKey' with null value", () => {
+    const matches = scanForSecrets(JSON.stringify({ apiKey: null }));
+    expect(matches).toEqual([]);
+  });
+
+  it("does NOT match a JSON field name 'apiKey' with a short placeholder value", () => {
+    // A parameter name shorter than 4 chars should not match
+    const matches = scanForSecrets(JSON.stringify({ apiKey: "key" }));
+    expect(matches).toEqual([]);
+  });
+
+  it("does NOT match a bare 'apiKey' word in prose", () => {
+    const matches = scanForSecrets("The apiKey field is documented in the README.");
+    expect(matches).toEqual([]);
+  });
+
+  it("matches apiKey key=value assignment with a real-looking value (double-quoted JSON)", () => {
+    const matches = scanForSecrets('"apiKey": "sk-ant-api03-realtoken"');
+    expect(matches.length).toBeGreaterThan(0);
+  });
+
+  it("matches apiKey key=value assignment with a real-looking value (unquoted JS form)", () => {
+    const matches = scanForSecrets("apiKey: 'sk-ant-api03-realtoken'");
+    expect(matches.length).toBeGreaterThan(0);
+  });
 });
 
 describe("assertNoSecrets", () => {
