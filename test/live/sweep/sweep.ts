@@ -97,9 +97,17 @@ export async function runSweep(
   const probeMap = opts.probeRegistry ?? PROBE_REGISTRY;
   let probes = [...probeMap.values()];
 
-  // Apply probeIds filter if provided (non-empty)
+  // Apply probeIds filter if provided (non-empty).
+  // Each token matches a probe if it is an exact probe ID match, a dash-prefix
+  // match (e.g. "search" matches "search-brave", "search-tavily", …), or an
+  // exact category match. This aligns with the documented example:
+  //   COMIS_LIVE_PROBES=search → all search-* probes run (WR-01).
   if (opts.probeIds && opts.probeIds.length > 0) {
-    probes = probes.filter((p) => opts.probeIds!.includes(p.id));
+    probes = probes.filter((p) =>
+      opts.probeIds!.some(
+        (f) => p.id === f || p.id.startsWith(f + "-") || p.category === f,
+      ),
+    );
   }
 
   const verdicts: ProbeVerdict[] = [];

@@ -208,6 +208,75 @@ describe("runSweep — orchestration (unit, mock probes)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// WR-01: prefix matching — COMIS_LIVE_PROBES=search must select all search-* probes
+// ---------------------------------------------------------------------------
+
+describe("runSweep — probeIds prefix matching (WR-01)", () => {
+  it("COMIS_LIVE_PROBES=search selects all search-* probes (prefix match)", async () => {
+    const searchBrave: Probe = {
+      id: "search-brave",
+      category: "search(brave)",
+      costTier: "$0",
+      run: async () => ({ status: "green", durationMs: 1 }),
+    };
+    const searchTavily: Probe = {
+      id: "search-tavily",
+      category: "search(tavily)",
+      costTier: "$0",
+      run: async () => ({ status: "green", durationMs: 1 }),
+    };
+    const llmAnthropicProbe: Probe = {
+      id: "llm-anthropic",
+      category: "LLM(anthropic)",
+      costTier: "$0",
+      run: async () => ({ status: "green", durationMs: 1 }),
+    };
+    const registry = new Map([
+      [searchBrave.id, searchBrave],
+      [searchTavily.id, searchTavily],
+      [llmAnthropicProbe.id, llmAnthropicProbe],
+    ]);
+    const result = await runSweep(
+      makeMockRegistry(),
+      makeMockGovernor(),
+      { probeRegistry: registry, probeIds: ["search"] },
+    );
+    // Only search-* probes should run
+    expect(result.verdicts).toHaveLength(2);
+    const ids = result.verdicts.map((v) => v.id);
+    expect(ids).toContain("search-brave");
+    expect(ids).toContain("search-tavily");
+    expect(ids).not.toContain("llm-anthropic");
+  });
+
+  it("exact probe ID 'search-brave' selects exactly one probe", async () => {
+    const searchBrave: Probe = {
+      id: "search-brave",
+      category: "search(brave)",
+      costTier: "$0",
+      run: async () => ({ status: "green", durationMs: 1 }),
+    };
+    const searchTavily: Probe = {
+      id: "search-tavily",
+      category: "search(tavily)",
+      costTier: "$0",
+      run: async () => ({ status: "green", durationMs: 1 }),
+    };
+    const registry = new Map([
+      [searchBrave.id, searchBrave],
+      [searchTavily.id, searchTavily],
+    ]);
+    const result = await runSweep(
+      makeMockRegistry(),
+      makeMockGovernor(),
+      { probeRegistry: registry, probeIds: ["search-brave"] },
+    );
+    expect(result.verdicts).toHaveLength(1);
+    expect(result.verdicts[0]?.id).toBe("search-brave");
+  });
+});
+
 describe("parseProbeFilter — COMIS_LIVE_PROBES env parsing (unit)", () => {
   let originalEnv: string | undefined;
 
