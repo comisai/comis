@@ -394,6 +394,18 @@ export const FtsSearchRowSchema = z.strictObject({
 });
 
 /**
+ * Schema for an LCD FTS5 MATCH hit row (E1 ctx_search). The SELECT aliases the
+ * per-table columns to a uniform shape (`message_id`/`summary_id AS ref_id`,
+ * `content AS snippet`, `rank`). Mirrors `FtsSearchRowSchema`; consumed by
+ * `searchLcdImpl` (lcd-fts.ts), which maps it to the core `LcdSearchHit` DTO.
+ */
+export const LcdSearchHitRowSchema = z.strictObject({
+  ref_id: z.string(),
+  snippet: z.string(),
+  rank: z.number(),
+});
+
+/**
  * Schema for the `named_graphs` table.
  * Paired with `NamedGraphRow` exported from `./types.js`.
  */

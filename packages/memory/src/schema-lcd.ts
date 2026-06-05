@@ -156,4 +156,72 @@ export function ensureLcdTables(db: Database.Database): void {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_lcd_ctx_items_conv_ord ON lcd_context_items(conversation_id, ordinal);
   `);
+
+  // ── LCD full-text search (Phase 131, E1 ctx_search) ────────────────────────
+  // TWO FTS5 virtual tables over the lossless store (RESEARCH Open Q1 → two
+  // tables: origin parity, clean per-`scope` query, and PATTERNS gap #1 forces
+  // different mechanisms — summaries HAVE a `content` column, messages do NOT).
+  //
+  //   - lcd_summaries_fts : external-content over lcd_summaries.content (mirrors
+  //       memory_fts over memories.content, schema.ts:531-565). Kept in sync by
+  //       AFTER INSERT/DELETE triggers; the 'rebuild' idiom backfills pre-index
+  //       history (A5).
+  //   - lcd_messages_fts  : CONTENTLESS — lcd_messages has NO content column
+  //       (message text is JSON in lcd_message_parts.tool_input/tool_output +
+  //       text parts). The createLcdStore adapter populates it on `append` with
+  //       rendered part-text (the contentless-FTS populate path, gap #1). There
+  //       is no external table to 'rebuild' from, so pre-index message history is
+  //       covered by searchLcd's LIKE fallback (and new appends populate it going
+  //       forward — a documented tradeoff).
+  //
+  // The WHOLE section is wrapped in a try/catch so a host whose better-sqlite3
+  // lacks compiled FTS5 still BOOTS (Pitfall 4 — initSchema must not throw):
+  // searchLcd then detects the missing table and degrades to a LIKE scan. The
+  // CREATE statements use `IF NOT EXISTS` (forward-only, re-run-safe — the file's
+  // discipline; NO DROP). No interpolated identifiers/values (T-127-09).
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS lcd_summaries_fts USING fts5(
+        content,
+        conversation_id UNINDEXED,
+        summary_id UNINDEXED,
+        content='lcd_summaries',
+        content_rowid='rowid',
+        tokenize='porter unicode61'
+      );
+    `);
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS lcd_messages_fts USING fts5(
+        content,
+        conversation_id UNINDEXED,
+        message_id UNINDEXED,
+        tokenize='porter unicode61'
+      );
+    `);
+    // A5 backfill: cover summaries written BEFORE the index existed (RESEARCH A5,
+    // MEDIUM risk if skipped). External-content 'rebuild' idiom (mirror
+    // schema.ts:545-549) — safe on an empty/just-created table.
+    try {
+      db.exec(`INSERT INTO lcd_summaries_fts(lcd_summaries_fts) VALUES('rebuild')`);
+    } catch {
+      // Safe to ignore on a just-created table with no content yet (schema.ts:547).
+    }
+    // Sync triggers for the EXTERNAL-CONTENT summaries table (lcd_summaries is
+    // append-only/immutable, so INSERT + DELETE are the relevant ones; mirror
+    // schema.ts:552-565). lcd_messages_fts is adapter-populated (no triggers —
+    // the parts JSON cannot be rendered in SQL).
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS lcd_summaries_ai AFTER INSERT ON lcd_summaries BEGIN
+        INSERT INTO lcd_summaries_fts(rowid, content, conversation_id, summary_id)
+        VALUES (new.rowid, new.content, new.conversation_id, new.summary_id);
+      END;
+      CREATE TRIGGER IF NOT EXISTS lcd_summaries_ad AFTER DELETE ON lcd_summaries BEGIN
+        INSERT INTO lcd_summaries_fts(lcd_summaries_fts, rowid, content, conversation_id, summary_id)
+        VALUES ('delete', old.rowid, old.content, old.conversation_id, old.summary_id);
+      END;
+    `);
+  } catch {
+    // FTS5 not compiled into this host's better-sqlite3 → boot WITHOUT the index.
+    // searchLcd detects the missing table and uses a LIKE scan (never hard-fails).
+  }
 }

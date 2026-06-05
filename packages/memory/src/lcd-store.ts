@@ -58,9 +58,11 @@ import {
   type LcdSummary,
   type LcdSummaryKind,
 } from "@comis/core";
+import type { LcdSearchHit } from "@comis/core";
 import type { Message } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { renderMessageFtsText, searchLcdImpl } from "./lcd-fts.js";
 import { createRowMapper } from "./row-mapper.js";
 import {
   LcdContextItemRowSchema,
@@ -97,6 +99,10 @@ const messageSeedRowMapper = createRowMapper(MessageSeedRowSchema);
 /** Single-column ordinal projection for the dense-shift pass (no `as` cast — untyped-sqlite rule). */
 const CtxOrdinalRowSchema = z.strictObject({ ordinal: z.number() });
 const ctxOrdinalRowMapper = createRowMapper(CtxOrdinalRowSchema);
+
+/** Single-column message-id projection for the E1 leaf→message walk (no `as` cast). */
+const SummaryMessageIdRowSchema = z.strictObject({ message_id: z.string() });
+const summaryMessageIdRowMapper = createRowMapper(SummaryMessageIdRowSchema);
 
 /** The verbatim canonical block is opaque at the row layer (F1). */
 const LcdPartMetadataSchema = z.looseObject({
@@ -224,6 +230,42 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   const selectSummaries = db.prepare(
     "SELECT * FROM lcd_summaries WHERE conversation_id = ? ORDER BY created_at, summary_id",
   );
+
+  // ── Phase 131 (E1) region-walk statements: edge-table reads, scoped by
+  //    conversation_id (R4). Static SQL, bound params, no interpolated
+  //    identifiers (T-127-09 / T-131-02-01).
+  // The immediate CHILD summaries of a condensed summary (lcd_summary_parents
+  // condensed→child edge), joined back to lcd_summaries for the full DTO. Scoped
+  // by the child's conversation_id so a wrong/stale conversationId returns [].
+  const selectSummaryChildren = db.prepare(`
+    SELECT s.* FROM lcd_summaries s
+    JOIN lcd_summary_parents p ON p.child_summary_id = s.summary_id
+    WHERE p.parent_summary_id = ? AND s.conversation_id = ?
+    ORDER BY s.created_at, s.summary_id
+  `);
+
+  // The message ids a LEAF summary covers (lcd_summary_messages leaf→message
+  // edge), seq-ordered via the join to lcd_messages. The summary is scoped by
+  // conversation_id through the JOIN (the messages carry the scope column).
+  const selectSummaryMessageIds = db.prepare(`
+    SELECT sm.message_id AS message_id
+    FROM lcd_summary_messages sm
+    JOIN lcd_messages m ON m.id = sm.message_id
+    WHERE sm.summary_id = ? AND m.conversation_id = ?
+    ORDER BY m.seq
+  `);
+
+  // Contentless lcd_messages_fts populate (gap #1): one row per appended message,
+  // rowid joinable to the lcd_messages rowid, content = rendered part-text. Only
+  // run when the FTS table exists (guarded at the call site so an FTS-less host's
+  // append never throws).
+  const insertMessageFts = db.prepare(
+    "INSERT INTO lcd_messages_fts(rowid, content, conversation_id, message_id) VALUES (?, ?, ?, ?)",
+  );
+
+  // The just-inserted message's rowid — keeps lcd_messages_fts.rowid joinable to
+  // lcd_messages.rowid. Bound by the message id.
+  const selectMessageRowid = db.prepare("SELECT rowid FROM lcd_messages WHERE id = ?");
 
   // The covered run [start,end] (inclusive), ordinal-ascending — used to gather
   // the message refIds the new summary links + to count descendants.
@@ -544,6 +586,27 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       );
       ordinal++;
     }
+
+    // E1 (gap #1): populate the CONTENTLESS lcd_messages_fts with the rendered
+    // part-text so ctx_search finds this message. lcd_messages has no content
+    // column (text is JSON in the parts), so the adapter — not a trigger — is the
+    // only place that can render + index it; keep the FTS rowid in step with the
+    // lcd_messages rowid (joinable). GUARDED: an FTS5-less host (no table) must
+    // NOT fail the append — search degrades to LIKE.
+    try {
+      const rowidRow = selectMessageRowid.get(messageId) as { rowid: number } | undefined;
+      if (rowidRow) {
+        insertMessageFts.run(
+          rowidRow.rowid,
+          renderMessageFtsText(input.parts),
+          input.scope.conversationId,
+          messageId,
+        );
+      }
+    } catch {
+      // No lcd_messages_fts table (FTS5 uncompiled) → skip indexing; the LIKE
+      // fallback in searchLcd covers this message. Never fails the write path.
+    }
   });
 
   return {
@@ -665,6 +728,61 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
         });
       }
       return out;
+    },
+
+    getSummaryChildren(conversationId: string, parentSummaryId: string): LcdSummary[] {
+      // E1 region walk: the immediate child summaries of a condensed summary
+      // (lcd_summary_parents condensed→child edge). Same map-to-DTO discipline as
+      // getSummaries — reuse summaryRowMapper, per-row parseOptionalRow +
+      // skip-bad-row (NEVER parseRows — WR-02). Scoped by conversation_id in the
+      // JOIN's WHERE (a wrong/stale id → []); the store never logs content.
+      const out: LcdSummary[] = [];
+      for (const raw of selectSummaryChildren.all(parentSummaryId, conversationId)) {
+        const parsed = summaryRowMapper.parseOptionalRow(raw);
+        if (!parsed.ok || !parsed.value) continue; // skip only the bad row
+        const row = parsed.value;
+        out.push({
+          summaryId: row.summary_id,
+          conversationId: row.conversation_id,
+          kind: row.kind as LcdSummaryKind,
+          depth: row.depth,
+          earliestAt: row.earliest_at,
+          latestAt: row.latest_at,
+          descendantCount: row.descendant_count,
+          tokenCount: row.token_count,
+          content: row.content,
+          fileIds: parseFileIds(row.file_ids),
+          taint: row.taint !== 0,
+          fallback: row.fallback !== 0,
+          createdAt: row.created_at,
+        });
+      }
+      return out;
+    },
+
+    getSummaryMessages(conversationId: string, summaryId: string): string[] {
+      // E1 region walk: the message ids a LEAF summary covers (lcd_summary_messages
+      // leaf→message edge), seq-ordered. Per-row parseOptionalRow + skip-bad-row
+      // (NEVER parseRows — WR-02). Scoped via the JOIN; unknown summaryId → [].
+      const out: string[] = [];
+      for (const raw of selectSummaryMessageIds.all(summaryId, conversationId)) {
+        const parsed = summaryMessageIdRowMapper.parseOptionalRow(raw);
+        if (!parsed.ok || !parsed.value) continue; // skip only the bad row
+        out.push(parsed.value.message_id);
+      }
+      return out;
+    },
+
+    searchLcd(
+      conversationId: string,
+      query: string,
+      opts: { limit: number; scope?: "messages" | "summaries" | "both" },
+    ): LcdSearchHit[] {
+      // E1 search: delegate the FTS5-MATCH-with-LIKE-fallback branch to lcd-fts.ts
+      // (the extract that keeps this file under the 800-line cap). The `query`
+      // arrives pre-sanitized (the tool sanitizes — the cut bars memory from the
+      // skills sanitizer). Scoped by conversation_id; never throws.
+      return searchLcdImpl(db, conversationId, query, opts);
     },
   };
 }
