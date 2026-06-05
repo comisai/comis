@@ -39,6 +39,8 @@ import {
 } from "./constants.js";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { createSummarizerSpendBreaker } from "../safety/summarizer-spend-breaker.js";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures (mirror lcd-assembler.test.ts)
@@ -271,6 +273,62 @@ describe("summarizeLeafChunk always reduces tokens or falls back deterministical
     expect(result.fallback).toBe(true);
     expect(result.content.startsWith(LEAF_FALLBACK_SUMMARY_MARKER)).toBe(true);
     expect(summaryTokens(result.content)).toBeLessThan(totalChunkTokens);
+  });
+
+  it("R1: an OVER-CAP per-tenant gate degrades the leaf pass to the deterministic floor (truncation-only, no throw to the turn)", async () => {
+    // Build the REAL 132-02 gate with a 1-token hourly cap → ANY real chunk is
+    // over-cap → the gate throws "degraded" WITHOUT calling inner. The ladder
+    // catches that throw and floors to Level-3 (fallback:true) — exactly the R1
+    // degrade-to-truncation-only path, with NO error propagating to the turn.
+    const inner = shortSummarizer(); // would succeed at Level 1 if ever called
+    const spendBreaker = createSummarizerSpendBreaker({
+      breakerConfig: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
+      spendConfig: { maxTokensPerTenantPerHour: 1, maxTokensPerTenantPerDay: 1 },
+      clock: createFakeClock(1_000),
+      estimateInputTokens: () => 10_000, // far above the 1-token cap → over-cap refuse
+      estimateOutputTokens: () => 0,
+    });
+    const gated = spendBreaker.gate("tenant-a", inner);
+    const { deps } = makeDeps(gated);
+
+    const result = await summarizeLeafChunk(chunkItems, deps, { reserveTokens: 1_200 });
+
+    // Degraded to the deterministic floor — no turn failure.
+    expect(result.level).toBe(3);
+    expect(result.fallback).toBe(true);
+    expect(result.content.startsWith(LEAF_FALLBACK_SUMMARY_MARKER)).toBe(true);
+    // The inner summarizer was BYPASSED (the gate refused before calling it).
+    expect(inner).not.toHaveBeenCalled();
+    // Strictly smaller than the chunk (the C1 invariant still holds under degrade).
+    expect(summaryTokens(result.content)).toBeLessThan(totalChunkTokens);
+  });
+
+  it("R1: an OPEN-breaker per-tenant gate degrades the leaf pass to the floor after repeated summarizer failures", async () => {
+    // failureThreshold:1 → the FIRST inner throw opens the breaker; the SECOND
+    // call is bypassed (breaker open) and floors. Proves the breaker (not just the
+    // spend cap) drives the degrade. Generous spend caps so only the breaker fires.
+    const inner = throwingSummarizer(); // every inner call throws → records a failure
+    const spendBreaker = createSummarizerSpendBreaker({
+      breakerConfig: { failureThreshold: 1, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
+      spendConfig: { maxTokensPerTenantPerHour: 0, maxTokensPerTenantPerDay: 0 }, // 0 = disabled
+      clock: createFakeClock(1_000),
+      estimateInputTokens: () => 1,
+      estimateOutputTokens: () => 0,
+    });
+    const gated = spendBreaker.gate("tenant-a", inner);
+    const { deps } = makeDeps(gated);
+
+    // First pass: inner throws (caught by the ladder) → breaker opens → Level-3 floor.
+    const first = await summarizeLeafChunk(chunkItems, deps, { reserveTokens: 1_200 });
+    expect(first.fallback).toBe(true);
+
+    // Second pass: breaker is OPEN → the gate bypasses inner entirely → floor again.
+    const innerCallsAfterOpen = (inner as ReturnType<typeof vi.fn>).mock.calls.length;
+    const second = await summarizeLeafChunk(chunkItems, deps, { reserveTokens: 1_200 });
+    expect(second.level).toBe(3);
+    expect(second.fallback).toBe(true);
+    // inner was NOT called again on the second pass (breaker-open bypass).
+    expect((inner as ReturnType<typeof vi.fn>).mock.calls.length).toBe(innerCallsAfterOpen);
   });
 
   it("INVARIANT: across short, oversized, and throwing stubs the result always shrinks the chunk", async () => {

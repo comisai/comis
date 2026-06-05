@@ -67,6 +67,8 @@ import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { TypedEventBus } from "@comis/core";
 import type { ContextEngineSetupParams, ContextEngineSetupDeps } from "./executor-context-engine-setup.js";
+import type { SummarizerSpendBreaker } from "../safety/summarizer-spend-breaker.js";
+import type { LeafSummarizer } from "../context-engine/lcd-leaf-summarizer.js";
 
 // Module-level clock for executor-session-state bounded maps.
 setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
@@ -380,5 +382,53 @@ describe("setupContextEngine — observation-masker -> cacheBreakDetector wiring
     }));
     captured.calls[0].deps.onContentModified();
     expect(notify).toHaveBeenCalledWith("session-with-modified-content");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R1 (132-05): getSummarizerDeps wraps the leaf summarizer with the injected
+// per-tenant spend+breaker gate keyed on the live tenantId.
+// ---------------------------------------------------------------------------
+
+describe("setupContextEngine — getSummarizerDeps per-tenant spend+breaker wiring (R1)", () => {
+  /** A stub gate that records the tenantId it was keyed on and returns a sentinel. */
+  function makeRecordingBreaker(): {
+    breaker: SummarizerSpendBreaker;
+    seenTenantIds: string[];
+    sentinel: LeafSummarizer;
+  } {
+    const seenTenantIds: string[] = [];
+    const sentinel: LeafSummarizer = vi.fn(async () => "SENTINEL-GATED-SUMMARY");
+    const breaker: SummarizerSpendBreaker = {
+      gate: vi.fn((tenantId: string, _inner: LeafSummarizer): LeafSummarizer => {
+        seenTenantIds.push(tenantId);
+        return sentinel;
+      }),
+    };
+    return { breaker, seenTenantIds, sentinel };
+  }
+
+  it("wraps the summarizer with the injected per-tenant gate keyed on the live tenantId", () => {
+    const { breaker, seenTenantIds, sentinel } = makeRecordingBreaker();
+    const result = setupContextEngine(
+      makeParams({
+        tenantId: "tenant-x",
+        deps: makeDeps({ summarizerSpendBreaker: breaker }),
+      }),
+    );
+    const summarizerDeps = result.getSummarizerDeps();
+    // The returned summarizer is the gate's sentinel — the seam IS wrapped.
+    expect(summarizerDeps.summarize).toBe(sentinel);
+    // The gate was keyed on the live tenantId threaded through the params.
+    expect(seenTenantIds).toContain("tenant-x");
+  });
+
+  it("returns the raw summarizer when no breaker is injected (optional/daemon-owned)", () => {
+    const result = setupContextEngine(
+      makeParams({ deps: makeDeps({ summarizerSpendBreaker: undefined }) }),
+    );
+    const summarizerDeps = result.getSummarizerDeps();
+    // Absent breaker ⇒ a real (unwrapped) summarizer function, no crash.
+    expect(typeof summarizerDeps.summarize).toBe("function");
   });
 });
