@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: the R1 (132-05) degrade-observability wrapper RE-THROWS the gate's
+// caught SummarizerDegradeError (after emitting a content-free WARN + dag_degraded)
+// so the leaf/condense ladder's existing catch floors to truncation-only — the
+// throw is a boundary re-raise that preserves the ladder contract, not control flow.
 /**
  * Context engine creation and wiring for PiExecutor.
  *
