@@ -164,6 +164,13 @@ export interface ContextEngineDeps {
    *  Returns 0 when not provided (backward-compatible). */
   getSystemTokensEstimate?: () => number;
 
+  // --- I1: recall-injection budget seam ---
+  /** Lazy getter for the recall-injection token estimate (the `dynamicPreamble`
+   *  + `inlineMemory` block prepended by envelope-wrapper). Called on each run.
+   *  Subtracted from H as a SEPARATE budget term (NOT folded into S — preserves
+   *  the recall-dag-budget-partition invariant). Returns 0 when not provided. */
+  getRecallTokensEstimate?: () => number;
+
   // --- G-09: Content modification notification ---
   /** Called when observation masking modifies content (maskedCount > 0).
    *  Used by cache break detector to suppress false-positive CacheBreakEvents. */

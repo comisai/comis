@@ -27,7 +27,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
 import { initSchema } from "@comis/memory";
 import { createLcdStore } from "@comis/memory";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createContextEngine } from "./context-engine.js";
 import { createLcdContextEngine, freshTailBoundaryIndex } from "./lcd-assembler.js";
 import type { ContextEngineDeps } from "./types.js";
@@ -682,6 +682,154 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     // (summary + the live tail) is representable; assert the live fresh tail rode
     // through verbatim (it is never evicted — A1/A3).
     expect(out[out.length - 1]).toBe(live[live.length - 1]); // a3 (live object)
+  });
+
+  // -------------------------------------------------------------------------
+  // I1: recall-aware eviction (a heavy recall block compacts history harder)
+  // -------------------------------------------------------------------------
+
+  /** Count the kept EVICTABLE (store-reconstructed) messages — i.e. everything
+   *  before the verbatim live fresh tail. The fresh tail rides as the LIVE objects,
+   *  so kept-evictable = total assembled minus the trailing live-tail objects. */
+  function keptEvictableCount(out: AgentMessage[], live: AgentMessage[]): number {
+    let liveTail = 0;
+    for (let i = out.length - 1; i >= 0 && liveTail < live.length; i--) {
+      if (out[i] === live[live.length - 1 - liveTail]) liveTail++;
+      else break;
+    }
+    return out.length - liveTail;
+  }
+
+  it("I1: a heavy recall block evicts MORE history than a light one (recall is visible to the budget)", async () => {
+    // 10 turns (20 messages), each store tokenCount=1. Window 13_667 with the
+    // O+M+R reserves (8192 + 2048-floor + 3417) leaves H_light = 10 tokens → the
+    // newest 10 evictable messages kept; a 5-token recall block drops H to 5 →
+    // only 5 kept. Heavier recall ⇒ harder compaction (FEWER evictable steps).
+    const msgs = seedTextTurns(10);
+    const live: AgentMessage[] = msgs as AgentMessage[];
+
+    const baseDeps = (recall: number): ContextEngineDeps => ({
+      logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: true, contextWindow: 13_667, maxTokens: 256 }),
+      getSystemTokensEstimate: () => 0,
+      getRecallTokensEstimate: () => recall,
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      tenantId: "tenant_a",
+      sessionKey: "sess-a",
+    });
+
+    // freshTailTurns=2 → the last two assistant steps ride verbatim in both runs.
+    const lightOut = await createLcdContextEngine(dagConfig(2), baseDeps(0)).transformContext(live);
+    const heavyOut = await createLcdContextEngine(dagConfig(2), baseDeps(5)).transformContext(live);
+
+    const keptLight = keptEvictableCount(lightOut, live);
+    const keptHeavy = keptEvictableCount(heavyOut, live);
+
+    // The load-bearing assertion: a larger getRecallTokensEstimate keeps FEWER
+    // store-history steps (it ate into H). On the pre-patch 2-arg budget call the
+    // recall dep is ignored, so keptHeavy === keptLight and this FAILS (RED).
+    expect(keptHeavy).toBeLessThan(keptLight);
+
+    // The fresh tail is intact in BOTH runs (A1/A3 — never evicted).
+    expect(lightOut[lightOut.length - 1]).toBe(live[live.length - 1]);
+    expect(heavyOut[heavyOut.length - 1]).toBe(live[live.length - 1]);
+  });
+
+  it("I1: with no getRecallTokensEstimate dep (omitted), eviction is byte-identical to today", async () => {
+    // Mirrors Plan05 Test B (tiny window forces H=0) but asserts the omitted-dep
+    // path matches the documented behavior: the whole evictable prefix drops, the
+    // fresh tail ships, oldest turns gone.
+    const msgs = seedTextTurns(10);
+    const live: AgentMessage[] = msgs as AgentMessage[];
+
+    const deps: ContextEngineDeps = {
+      logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: true, contextWindow: 1_000, maxTokens: 256 }),
+      getSystemTokensEstimate: () => 0,
+      // getRecallTokensEstimate intentionally OMITTED.
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      tenantId: "tenant_a",
+      sessionKey: "sess-a",
+    };
+    const out = await createLcdContextEngine(dagConfig(2), deps).transformContext(live);
+    const texts = out.map((m) => {
+      const c = (m as unknown as { content: unknown }).content;
+      if (typeof c === "string") return c;
+      const arr = c as { type: string; text?: string }[];
+      return arr.find((b) => b.type === "text")?.text ?? "";
+    });
+    expect(texts).toContain("a9");
+    expect(out[out.length - 1]).toBe(live[live.length - 1]);
+    expect(texts).not.toContain("u0");
+    expect(out.length).toBeLessThan(live.length);
+  });
+
+  // -------------------------------------------------------------------------
+  // O1: the LCD path emits a real, content-free context:evicted event
+  // -------------------------------------------------------------------------
+
+  it("O1: emits context:evicted with the real dropped count (counts/ids only — never content) when eviction drops items", async () => {
+    const msgs = seedTextTurns(10);
+    const live: AgentMessage[] = msgs as AgentMessage[];
+    const emit = vi.fn();
+
+    // Tiny window (H=0) guarantees the whole evictable prefix drops → droppedCount > 0.
+    const deps: ContextEngineDeps = {
+      logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: true, contextWindow: 1_000, maxTokens: 256 }),
+      getSystemTokensEstimate: () => 0,
+      eventBus: { emit },
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      tenantId: "tenant_a",
+      sessionKey: "sess-a",
+    };
+    await createLcdContextEngine(dagConfig(2), deps).transformContext(live);
+
+    const evicted = emit.mock.calls.find(([name]) => name === "context:evicted");
+    expect(evicted).toBeDefined();
+    const payload = evicted![1] as Record<string, unknown>;
+    // A real, non-zero dropped count.
+    expect(typeof payload.evictedCount).toBe("number");
+    expect(payload.evictedCount as number).toBeGreaterThan(0);
+    expect(payload.categories).toEqual({ lcd_history: payload.evictedCount });
+    expect(payload.agentId).toBe("agent_a");
+    expect(payload.sessionKey).toBe("sess-a");
+    expect(typeof payload.evictedChars).toBe("number");
+    expect(typeof payload.timestamp).toBe("number");
+    // CONTENT-FREE: the payload carries ONLY numeric/id fields — no message text.
+    expect(Object.keys(payload).sort()).toEqual(
+      ["agentId", "categories", "evictedChars", "evictedCount", "sessionKey", "timestamp"].sort(),
+    );
+  });
+
+  it("O1: emits NO context:evicted event when nothing is evicted (droppedCount === 0)", async () => {
+    // A generous window keeps every evictable step → droppedCount === 0 → no emit
+    // (mirrors the pipeline engine's `> 0` guard).
+    const msgs = seedTextTurns(3);
+    const live: AgentMessage[] = msgs as AgentMessage[];
+    const emit = vi.fn();
+
+    const deps: ContextEngineDeps = {
+      logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: true, contextWindow: 200_000, maxTokens: 8_192 }),
+      getSystemTokensEstimate: () => 0,
+      eventBus: { emit },
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      tenantId: "tenant_a",
+      sessionKey: "sess-a",
+    };
+    await createLcdContextEngine(dagConfig(2), deps).transformContext(live);
+
+    const evicted = emit.mock.calls.filter(([name]) => name === "context:evicted");
+    expect(evicted).toHaveLength(0);
   });
 });
 
