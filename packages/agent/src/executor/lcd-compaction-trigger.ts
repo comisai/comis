@@ -87,19 +87,80 @@ export interface LeafPassOptions {
 }
 
 /**
- * Reconstruct the conversation history from the store as `LeafChunkItem[]` — the
- * pure input the leaf summarizer's chunk selection consumes. Token authority
- * (Pitfall 2): the STORED per-message `tokenCount` (counts F3 thinking), NOT a
- * re-estimate of the reconstructed message (which would exclude thinking).
+ * The model-facing context resolved from the `context_items` view (the SAME
+ * source the assembler budgets, `lcd-assembler.ts:101-114,161-168`). This is the
+ * single source of truth for BOTH the utilization gate (CR-02) and the chunk
+ * selection / ordinal-window mapping (CR-01) — sourcing either half from the raw
+ * lossless `getMessages()` set is the defect that let the trigger fire forever
+ * (raw never shrinks) yet make no progress (it re-selects the already-collapsed
+ * oldest and fails the ordinal-window lookup).
  */
-function reconstructHistory(store: ContextStorePort, conversationId: string): LeafChunkItem[] {
-  const rows = store.getMessages(conversationId);
-  return rows.map((row) => ({
-    id: row.id,
-    msg: partsToMessage(row) as unknown as AgentMessage,
-    tokens: row.tokenCount,
-    createdAt: row.createdAt,
-  }));
+interface ResolvedContext {
+  /**
+   * The contiguous run of `message`-ref items, oldest-first, that FOLLOWS any
+   * leading `summary`-refs (a leaf never re-summarizes a prior summary in 129;
+   * summary-refs are depth-0 terminals). This is the pure input chunk selection
+   * consumes — so `selectLeafChunk` always picks LIVE message-refs whose ids map
+   * back to a `context_items` ordinal, and the second pass collapses the NEXT
+   * chunk instead of re-hitting the first one.
+   */
+  history: LeafChunkItem[];
+  /** Message id → its `context_items` ordinal (for the exact C3 window). */
+  ordinalById: Map<string, number>;
+  /**
+   * Total tokens of the RESOLVED view = every summary-ref `tokenCount`
+   * (`getSummaries`) + every message-ref `tokenCount` (the row). This is what the
+   * model actually sees, so utilization reflects the compaction the trigger
+   * performed (CR-02) — not the un-compacted raw history.
+   */
+  resolvedTokens: number;
+}
+
+/**
+ * Resolve the model-facing context from `context_items`. Token authority
+ * (Pitfall 2): the STORED per-row/per-summary `tokenCount` (counts F3 thinking),
+ * NOT a re-estimate of the reconstructed message (which would exclude thinking).
+ * Mirrors the synthetic-session gate's `runOneLeafPass` driver — skip leading
+ * summary-refs, take the contiguous message-ref run, and stop at the next summary
+ * (never spanning a summary boundary so the persisted ordinal range stays
+ * contiguous). Summary-ref tokens are summed across the WHOLE view for
+ * utilization even though they are not selectable chunk items.
+ */
+function resolveContext(store: ContextStorePort, conversationId: string): ResolvedContext {
+  const items = store.getContextItems(conversationId);
+  const rowById = new Map(store.getMessages(conversationId).map((r) => [r.id, r]));
+  const summaryTokensById = new Map(
+    store.getSummaries(conversationId).map((s) => [s.summaryId, s.tokenCount]),
+  );
+
+  const history: LeafChunkItem[] = [];
+  const ordinalById = new Map<string, number>();
+  let resolvedTokens = 0;
+
+  for (const item of items) {
+    if (item.refKind !== "message") {
+      // A summary terminal: it is part of the model-facing view (count its
+      // tokens for utilization), but it is NOT a selectable chunk item. Skip a
+      // LEADING summary (an already-collapsed oldest leaf); once the contiguous
+      // message run has started, STOP — never span across a summary so the
+      // persisted [startOrdinal, endOrdinal] window stays contiguous.
+      resolvedTokens += summaryTokensById.get(item.refId) ?? 0;
+      if (history.length === 0) continue;
+      break;
+    }
+    const row = rowById.get(item.refId);
+    if (row === undefined) continue;
+    history.push({
+      id: row.id,
+      msg: partsToMessage(row) as unknown as AgentMessage,
+      tokens: row.tokenCount,
+      createdAt: row.createdAt,
+    });
+    ordinalById.set(row.id, item.ordinal);
+    resolvedTokens += row.tokenCount;
+  }
+
+  return { history, ordinalById, resolvedTokens };
 }
 
 /**
@@ -115,26 +176,21 @@ function previousSummaryContent(store: ContextStorePort, conversationId: string)
 
 /**
  * Map the selected chunk's first/last covered message id to the contiguous
- * `context_items` ordinal window `[startOrdinal, endOrdinal]` (the C3 window).
- * `startOrdinal` is the ordinal of the message-ref whose `refId` matches the
- * chunk's FIRST message id; `endOrdinal` the LAST. Returns `undefined` when
- * either endpoint is not a `message`-ref in the current view (a divergence the
- * caller treats as a skip rather than corrupting ordering).
+ * `context_items` ordinal window `[startOrdinal, endOrdinal]` (the C3 window),
+ * using the `ordinalById` map built by {@link resolveContext} from the SAME
+ * resolved view the chunk was selected from. `startOrdinal` is the ordinal of
+ * the chunk's FIRST message id; `endOrdinal` the LAST. Because both the chunk and
+ * the map derive from one resolved `context_items` walk, the lookup always
+ * succeeds for a selected message-ref — the divergence path is retained only as a
+ * defensive guard against a future non-1:1 mapping (it never corrupts ordering).
  */
 function chunkOrdinalWindow(
-  store: ContextStorePort,
-  conversationId: string,
+  ordinalById: Map<string, number>,
   firstMessageId: string,
   lastMessageId: string,
 ): { startOrdinal: number; endOrdinal: number } | undefined {
-  const items = store.getContextItems(conversationId);
-  let startOrdinal: number | undefined;
-  let endOrdinal: number | undefined;
-  for (const item of items) {
-    if (item.refKind !== "message") continue;
-    if (item.refId === firstMessageId) startOrdinal = item.ordinal;
-    if (item.refId === lastMessageId) endOrdinal = item.ordinal;
-  }
+  const startOrdinal = ordinalById.get(firstMessageId);
+  const endOrdinal = ordinalById.get(lastMessageId);
   if (startOrdinal === undefined || endOrdinal === undefined) return undefined;
   if (endOrdinal < startOrdinal) return undefined;
   return { startOrdinal, endOrdinal };
@@ -169,26 +225,35 @@ export async function maybeRunLeafPass(
 
   const conversationId = scope.conversationId;
   try {
-    const history = reconstructHistory(store, conversationId);
+    // Resolve the model-facing context ONCE from context_items (CR-01/CR-02): the
+    // utilization gate AND chunk selection both read this resolved view — never
+    // the raw lossless getMessages() set — so the trigger observes its own
+    // compaction (a pass that fit under threshold goes inert) and the next pass
+    // selects LIVE message-refs that resolve to an ordinal window (it collapses
+    // the NEXT chunk instead of re-hitting the already-summarized oldest).
+    const { history, ordinalById, resolvedTokens } = resolveContext(store, conversationId);
     if (history.length === 0) return;
 
-    // Utilization = total context tokens / W. The numerator uses the stored
-    // per-message tokenCount (Pitfall 2) — estimateContextTokens over the
-    // reconstructed messages would EXCLUDE F3 thinking and under-count, so sum
-    // the stored authority directly.
-    const totalTokens = history.reduce((acc, it) => acc + it.tokens, 0);
-    const utilization = totalTokens / opts.windowTokens;
+    // Utilization = resolved context tokens / W. The numerator is the RESOLVED
+    // view (summary-ref tokens + surviving message-ref tokens), the same set the
+    // assembler budgets — NOT the un-compacted raw history (which never shrinks
+    // and would keep the trigger perpetually over threshold). Tokens are the
+    // stored authority (Pitfall 2): a re-estimate would EXCLUDE F3 thinking.
+    const utilization = resolvedTokens / opts.windowTokens;
     if (utilization <= opts.contextThreshold) return; // inert below threshold.
 
-    // Select the oldest out-of-tail chunk (pair-safe, capped at leafChunkTokens).
+    // Select the oldest out-of-tail chunk (pair-safe, capped at leafChunkTokens)
+    // from the RESOLVED message-ref run — so the selected ids always map back to
+    // a context_items ordinal (the second-pass divergence is structurally gone).
     const chunk = selectLeafChunk(history, opts.freshTailTurns, opts.leafChunkTokens);
     if (chunk === undefined) return; // no evictable out-of-tail history — no-op.
 
     // Map the chunk's message range → the contiguous context_items ordinal window
-    // BEFORE summarizing (so a divergence skips cheaply, without an LLM call).
+    // BEFORE summarizing (so a divergence skips cheaply, without an LLM call). The
+    // window resolves against the same `ordinalById` the resolved view produced.
     const firstMessageId = chunk.messageIds[0]!;
     const lastMessageId = chunk.messageIds[chunk.messageIds.length - 1]!;
-    const window = chunkOrdinalWindow(store, conversationId, firstMessageId, lastMessageId);
+    const window = chunkOrdinalWindow(ordinalById, firstMessageId, lastMessageId);
     if (window === undefined) {
       // The selected message ids are not a resolvable message-ref window in the
       // current view (a divergence). Skip rather than corrupt ordinals (C3).
