@@ -218,6 +218,22 @@ export interface LcdSummaryMessageRow {
 }
 
 /**
+ * Raw row shape for the `lcd_summary_parents` table (LCD condensed tier,
+ * Phase 130, C2).
+ *
+ * The condensed→child summary edge — one row per (condensed parent summary,
+ * child summary it links). Mirrors `LcdSummaryMessageRow` but BOTH endpoints
+ * are `lcd_summaries` rows: the `child_summary_id` FK is `ON DELETE RESTRICT`
+ * so a condensed child summary can never be deleted (losslessness for the
+ * multi-tier DAG). Paired 1:1 with `LcdSummaryParentRowSchema` via the drift
+ * guard.
+ */
+export interface LcdSummaryParentRow {
+  parent_summary_id: string;
+  child_summary_id: string;
+}
+
+/**
  * Raw row shape for the `lcd_context_items` table (LCD compaction store,
  * Phase 129, C3).
  *

@@ -354,6 +354,16 @@ export const LcdSummaryMessageRowSchema = z.strictObject({
 });
 
 /**
+ * Schema for the `lcd_summary_parents` table (LCD condensed tier, Phase 130,
+ * C2). Paired with `LcdSummaryParentRow` exported from `./types.js`. The
+ * condensed→child summary edge; strict (no extra column) keeps the edge minimal.
+ */
+export const LcdSummaryParentRowSchema = z.strictObject({
+  parent_summary_id: z.string(),
+  child_summary_id: z.string(),
+});
+
+/**
  * Schema for the `lcd_context_items` table (LCD compaction store, Phase 129,
  * C3). Paired with `LcdContextItemRow` exported from `./types.js`. The R4
  * isolation columns are strict-required (threat T-129-04); `ref_kind` is the

@@ -17,11 +17,14 @@ import type Database from "better-sqlite3";
  * Idempotently create the LCD (Lossless Context DAG) lossless message store
  * (Phase 127, F1): `lcd_messages` (one row per turn) + `lcd_message_parts` (one
  * row per structured block) — plus the Phase-129 (C3) compaction tables:
- * `lcd_summaries` (one row per depth-0 leaf summary), `lcd_summary_messages`
+ * `lcd_summaries` (one row per leaf/condensed summary), `lcd_summary_messages`
  * (the leaf→message link, `ON DELETE RESTRICT` on the message FK to ENFORCE
- * losslessness) and `lcd_context_items` (the ordered, dense model-facing view).
- * Forward-only, re-run-safe — `CREATE … IF NOT EXISTS` only; NO `DROP TABLE` /
- * down-migration (design §9).
+ * losslessness) and `lcd_context_items` (the ordered, dense model-facing view) —
+ * plus the Phase-130 (C2) condensed tier table `lcd_summary_parents` (the
+ * condensed→child summary edge, `ON DELETE RESTRICT` on the child FK so a
+ * condensed child summary is never deleted — losslessness for the multi-tier
+ * DAG). Forward-only, re-run-safe — `CREATE … IF NOT EXISTS` only; NO `DROP
+ * TABLE` / down-migration (design §9).
  *
  * ## What it persists (F1)
  *
@@ -104,7 +107,7 @@ export function ensureLcdTables(db: Database.Database): void {
       agent_id         TEXT NOT NULL,
       session_key      TEXT NOT NULL,
       kind             TEXT NOT NULL
-        CHECK (kind IN ('leaf')),                -- closed union; condensed kinds = Phase 130
+        CHECK (kind IN ('leaf','condensed')),    -- closed union (leaf | condensed)
       depth            INTEGER NOT NULL,         -- 0 for 129 (leaf)
       earliest_at      INTEGER NOT NULL,         -- min created_at of the covered messages
       latest_at        INTEGER NOT NULL,         -- max created_at of the covered messages
@@ -124,6 +127,21 @@ export function ensureLcdTables(db: Database.Database): void {
       PRIMARY KEY (summary_id, message_id)
     );
     CREATE INDEX IF NOT EXISTS idx_lcd_summary_messages_msg ON lcd_summary_messages(message_id);
+
+    -- ── LCD condensed tier (Phase 130, C2) ─────────────────────────────────
+    -- lcd_summary_parents is the condensed→child summary edge: one row per
+    -- (condensed parent summary, child summary it links). It mirrors
+    -- lcd_summary_messages but BOTH endpoints are lcd_summaries rows — the
+    -- parent FK CASCADEs (deleting a condensed summary drops its edges) and the
+    -- child FK is ON DELETE RESTRICT (a condensed child summary can never be
+    -- deleted — the losslessness ledger for the multi-tier DAG). Forward-only,
+    -- re-run-safe (CREATE … IF NOT EXISTS only); NO DROP / down-migration.
+    CREATE TABLE IF NOT EXISTS lcd_summary_parents (
+      parent_summary_id TEXT NOT NULL REFERENCES lcd_summaries(summary_id) ON DELETE CASCADE,
+      child_summary_id  TEXT NOT NULL REFERENCES lcd_summaries(summary_id) ON DELETE RESTRICT,  -- RESTRICT ENFORCES losslessness
+      PRIMARY KEY (parent_summary_id, child_summary_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lcd_summary_parents_child ON lcd_summary_parents(child_summary_id);
 
     CREATE TABLE IF NOT EXISTS lcd_context_items (
       id              TEXT PRIMARY KEY,

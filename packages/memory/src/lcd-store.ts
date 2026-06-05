@@ -21,6 +21,13 @@
  * `lcd_messages` on first read; no migration). `lcd_messages` is NEVER deleted
  * (FK RESTRICT enforces losslessness). The store NEVER logs summary `content`.
  *
+ * Phase 130 (C2) adds the condensed tier: `appendCondensedSummary` (a sibling
+ * clone of `appendLeafSummary` that persists a depth>0 `condensed`-kind summary,
+ * links its CHILD SUMMARIES via `lcd_summary_parents` instead of messages, and
+ * range-replaces the covered run of SUMMARY-refs — recomputing descendantCount +
+ * time-range from the child rows). The child summary rows are NEVER deleted (FK
+ * RESTRICT — losslessness for the multi-tier DAG).
+ *
  * NO module-level logger in Phase 127 (mirrors createSessionStore exactly): the
  * memory package has no infra-logging dependency and AGENTS.md §2.4 forbids
  * importing the infra logger directly (inject the logger via Deps). The boundary
@@ -36,6 +43,7 @@
 import type Database from "better-sqlite3";
 import {
   partsToMessage,
+  type AppendCondensedSummaryInput,
   type AppendMessageInput,
   type AppendSummaryInput,
   type ContextStorePort,
@@ -180,8 +188,24 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     VALUES (?, ?, ?, ?, ?, 'leaf', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  // Phase 130 (C2): the condensed-tier insert. Unlike insertSummary (which
+  // hardcodes 'leaf'/0), this binds kind ('condensed') + depth as parameters —
+  // 16 placeholders. insertSummary is left UNCHANGED (a SEPARATE method, no
+  // regression risk to the green 129 leaf transaction; RESEARCH A3).
+  const insertCondensedSummary = db.prepare(`
+    INSERT INTO lcd_summaries
+      (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+       earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
   const insertSummaryMessage = db.prepare(
     "INSERT OR IGNORE INTO lcd_summary_messages (summary_id, message_id) VALUES (?, ?)",
+  );
+
+  // Phase 130 (C2): the condensed→child summary edge (lcd_summary_parents).
+  const insertSummaryParent = db.prepare(
+    "INSERT OR IGNORE INTO lcd_summary_parents (parent_summary_id, child_summary_id) VALUES (?, ?)",
   );
 
   const insertCtxItem = db.prepare(`
@@ -361,6 +385,106 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     return summaryId;
   });
 
+  // One atomic write (Phase 130, C2): persist ONE condensed (depth>0) summary,
+  // link it to its CHILD SUMMARIES via lcd_summary_parents (NOT
+  // lcd_summary_messages), and range-replace the covered contiguous run of
+  // SUMMARY-refs with one condensed summary-ref — ordinals stay dense, gap-free,
+  // ordered. A SIBLING CLONE of appendLeafSummaryTxn (steps 3-5 are IDENTICAL —
+  // delete/shift operate on ordinals regardless of refKind). DIFFERENCES: the
+  // recompute reads the CHILD SUMMARY rows (descendantCount = Σ
+  // child.descendantCount; earliest/latest = min/max of the children — the store
+  // is the authority); depth/taint/fallback/tokenCount/content are persisted
+  // from the INPUT (the agent-side condense summarizer derives them); the link
+  // is to children, not messages. NEVER deletes the child lcd_summaries rows (FK
+  // RESTRICT enforces losslessness for the multi-tier DAG). Never logs content.
+  const appendCondensedSummaryTxn = db.transaction((input: AppendCondensedSummaryInput): string => {
+    const conversationId = input.scope.conversationId;
+    // Ensure the model-facing view exists before range-replacing it (the same
+    // auto-seed guard the leaf txn uses — a condensed pass works even if
+    // getContextItems was never called first).
+    seedContextItems(conversationId);
+
+    // Recompute descendantCount + time-range from the CHILD SUMMARY rows (store
+    // is authority — the input's advisory fields are ignored). Read the whole
+    // conversation's summaries once, index by id (WR-02 per-row degrade), filter
+    // to the linked children.
+    const childSet = new Set(input.childSummaryIds);
+    let descendantCount = 0;
+    let earliestAt = Number.POSITIVE_INFINITY;
+    let latestAt = Number.NEGATIVE_INFINITY;
+    for (const raw of selectSummaries.all(conversationId)) {
+      const parsed = summaryRowMapper.parseOptionalRow(raw);
+      if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
+      if (!childSet.has(parsed.value.summary_id)) continue;
+      descendantCount += parsed.value.descendant_count;
+      if (parsed.value.earliest_at < earliestAt) earliestAt = parsed.value.earliest_at;
+      if (parsed.value.latest_at > latestAt) latestAt = parsed.value.latest_at;
+    }
+    // Degrade to the caller-supplied advisory range when no child matched
+    // (defensive; an empty child set yields a zero-descendant summary, never
+    // NaN bounds).
+    const resolvedEarliest = Number.isFinite(earliestAt) ? earliestAt : input.earliestAt;
+    const resolvedLatest = Number.isFinite(latestAt) ? latestAt : input.latestAt;
+
+    // 1. Persist the condensed summary row (kind 'condensed', depth from input).
+    const summaryId = randomUUID();
+    insertCondensedSummary.run(
+      summaryId,
+      conversationId,
+      input.scope.tenantId,
+      input.scope.agentId,
+      input.scope.sessionKey,
+      "condensed",
+      input.depth,
+      resolvedEarliest,
+      resolvedLatest,
+      descendantCount,
+      input.tokenCount,
+      input.content,
+      JSON.stringify(input.fileIds),
+      input.taint ? 1 : 0,
+      input.fallback ? 1 : 0,
+      input.createdAt,
+    );
+
+    // 2. Link one row per child summary id (losslessness ledger — children, not
+    //    messages).
+    for (const childId of input.childSummaryIds) {
+      insertSummaryParent.run(summaryId, childId);
+    }
+
+    // 3. Delete the [start,end] context_items rows (vacates those ordinals).
+    deleteCtxItemsInRange.run(conversationId, input.startOrdinal, input.endOrdinal);
+
+    // 4. Insert the condensed summary-ref at ordinal = startOrdinal (a condensed
+    //    summary is still a `summary`-ref, same as a leaf).
+    insertCtxItem.run(
+      randomUUID(),
+      conversationId,
+      input.scope.tenantId,
+      input.scope.agentId,
+      input.scope.sessionKey,
+      input.startOrdinal,
+      "summary" satisfies LcdRefKind,
+      summaryId,
+    );
+
+    // 5. Shift every ordinal strictly above the replaced range DOWN by
+    //    (endOrdinal - startOrdinal), ascending so each target slot is already
+    //    vacated (no transient UNIQUE-index dup). Identical to the leaf txn.
+    const shift = input.endOrdinal - input.startOrdinal;
+    if (shift > 0) {
+      for (const raw of selectCtxOrdinalsAbove.all(conversationId, input.endOrdinal)) {
+        const parsed = ctxOrdinalRowMapper.parseOptionalRow(raw);
+        if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
+        const ordinal = parsed.value.ordinal;
+        updateCtxItemOrdinal.run(ordinal - shift, conversationId, ordinal);
+      }
+    }
+
+    return summaryId;
+  });
+
   // One atomic write: the message row + its N part rows commit together (F1).
   const appendTxn = db.transaction((input: AppendMessageInput) => {
     const messageId = randomUUID();
@@ -452,6 +576,10 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
 
     appendLeafSummary(input: AppendSummaryInput): string {
       return appendLeafSummaryTxn(input);
+    },
+
+    appendCondensedSummary(input: AppendCondensedSummaryInput): string {
+      return appendCondensedSummaryTxn(input);
     },
 
     getContextItems(conversationId: string): LcdContextItem[] {
