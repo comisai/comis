@@ -31,14 +31,21 @@ import { LEAN_TOOL_DESCRIPTIONS } from "../bootstrap/sections/tool-descriptions.
 
 /**
  * Hard character cap on the query text fed to `EmbeddingPort.embed` for the
- * discover_tools semantic re-rank. A very large user message (~69K tokens) used
- * as the query throws `Input is longer than the context size` in a local
- * embedding model, collapsing the re-rank to BM25-only. Capping the query keeps
- * the semantic lane running on a truncated query instead of failing. ~8K chars
- * ≈ 2K tokens at the conservative 4-chars/token ratio — well inside any
- * embedding context window while preserving the query's leading signal.
+ * discover_tools semantic re-rank. A very large user message used as the query
+ * throws `Input is longer than the context size` in a local embedding model,
+ * collapsing the re-rank to BM25-only. Capping the query keeps the semantic lane
+ * running on a truncated query instead of failing.
+ *
+ * The value is the DENSEST-RATIO safe bound for a 2048-token embedding context:
+ * 1536 tokens × 3 chars/token = 4608 chars. A 4-chars/token estimate
+ * UNDER-counts dense content (code/JSON/ids tokenize at ~2.5-3 chars/token), so
+ * the earlier 8000-char cap still packed ~2700-3200 tokens and overflowed the
+ * 2048 context. 4608 chars stays under 2048 tokens even at a dense 2.5
+ * chars/token (4608/2.5 ≈ 1843). This MIRRORS the recall path's bound
+ * (`truncateForEmbedding(_, 1536)` in @comis/memory). The constant is kept local
+ * (not imported) to preserve the agent↛memory build cut.
  */
-export const MAX_EMBED_QUERY_CHARS = 8_000;
+export const MAX_EMBED_QUERY_CHARS = 4_608;
 
 // ---------------------------------------------------------------------------
 // Public types
