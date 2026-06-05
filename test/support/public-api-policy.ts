@@ -2237,6 +2237,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "LcdSummaryRowSchema",
       "LcdSummaryMessageRowSchema",
       "LcdContextItemRowSchema",
+      // LCD multi-tier condensed→child link schema (v2.12, Phase 130-01). The exact
+      // analog of LcdSummaryMessageRowSchema: paired 1:1 with its
+      // LcdSummaryParentRow interface via the row-schemas.test.ts drift guard, and
+      // barrel-surfaced through `export *`. appendCondensedSummary writes the
+      // lcd_summary_parents edges via a static prepared statement (it reuses
+      // summaryRowMapper for the child-row recompute, not this schema), and no
+      // production READ of parent rows exists yet (the expansion/zoom read path is
+      // a later phase), so its only current consumer is the drift-guard test —
+      // tracked here as a baseline orphan like the sibling link schema above.
+      "LcdSummaryParentRowSchema",
       "VecSearchRowSchema",
       "VecSearchRowFromSchema",
       "FtsSearchRowSchema",
