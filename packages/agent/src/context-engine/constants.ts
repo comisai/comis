@@ -261,6 +261,18 @@ export const LEAF_FALLBACK_TARGET_TOKENS = 512;
  *  Used by: lcd-leaf-summarizer (Level-3 marker). */
 export const LEAF_FALLBACK_SUMMARY_MARKER = "[lcd-leaf-fallback]";
 
+/** TRUSTED-HEADER marker (R2, Phase 132) appended to a fallback summary's
+ *  `summaryRefToMessage` header — OUTSIDE the `wrapExternalContent` untrusted
+ *  region — so the model is honestly told the summary is an emergency, degraded
+ *  truncation (the breaker/spend-cap floor or the deterministic Level-3 floor
+ *  produced it, with no LLM). UNSPOOFABLE by construction: the body lives inside
+ *  the per-session random hex delimiter and `replaceMarkers`/`foldMarkerText`
+ *  neutralize any forged copy, so a poisoned body can neither forge nor strip
+ *  this header marker — only the real `LcdSummary.fallback` row flag drives it.
+ *  Distinct concern from {@link LEAF_FALLBACK_SUMMARY_MARKER} (the in-CONTENT
+ *  Level-3 prefix); this is the header equivalent. Used by: lcd-assembler. */
+export const LCD_FALLBACK_HEADER_MARKER = "fallback=emergency-truncation";
+
 // ---------------------------------------------------------------------------
 // LCD Condensation Escalation (Phase 130, C2) — the depth>0 summary-of-summaries
 // ---------------------------------------------------------------------------
