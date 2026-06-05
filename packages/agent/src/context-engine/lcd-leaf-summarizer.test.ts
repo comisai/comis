@@ -107,11 +107,20 @@ function item(id: string, msg: Message, tokens: number, createdAt: number): Leaf
   return { id, msg: msg as unknown as AgentMessage, tokens, createdAt };
 }
 
-/** A simple synthetic history of N user/assistant text turns (each ~tokens each). */
+/**
+ * A simple synthetic history of N user/assistant text turns (each ~`tokensEach`
+ * stored tokens). The content is padded to ≈ `tokensEach * CHARS_PER_TOKEN` chars
+ * so the RENDERED 4:1 measure is consistent with the claimed stored token count
+ * (B-4 260605-ney: the shrink-CHECK now compares the candidate against the
+ * rendered ceiling, so a fixture's content length must match its token claim —
+ * a 2-char "u0" body claiming 200 tokens is dishonest and would falsely floor).
+ */
 function textHistory(count: number, tokensEach: number, startAt = 100): LeafChunkItem[] {
   const items: LeafChunkItem[] = [];
+  // Pad to roughly tokensEach*4 chars so estimateMessageChars(msg)/4 ≈ tokensEach.
+  const pad = (label: string): string => label.padEnd(Math.max(label.length, tokensEach * 4), " word");
   for (let i = 0; i < count; i++) {
-    const role = i % 2 === 0 ? userMsg(`u${i}`) : assistantText(`a${i}`);
+    const role = i % 2 === 0 ? userMsg(pad(`u${i}`)) : assistantText(pad(`a${i}`));
     items.push(item(`m${i}`, role, tokensEach, startAt + i));
   }
   return items;

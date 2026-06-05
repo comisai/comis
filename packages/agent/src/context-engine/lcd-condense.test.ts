@@ -247,15 +247,22 @@ describe("summarizeCondensedChunk — 3-level escalation, before-size is Σ chil
   });
 
   it("uses the STORED Σ child tokenCount as the before-size, NOT a re-estimate of the concatenation (Pitfall 5)", async () => {
-    // Children whose CONTENT is tiny but whose STORED tokenCount is large: a
-    // Level-1 stub returning a ~6-token string must be accepted (6 < 900),
-    // proving the before-size is the summed STORED counts (900), not the
-    // re-estimated concatenation (which would be a handful of tokens and could
-    // make the comparison spuriously fail/pass).
+    // Children whose STORED tokenCount (300 each = 900) is far larger than their
+    // rendered content measure: a Level-1 stub returning a ~5-token string must be
+    // accepted (5 < both the rendered shrink ceiling AND the stored 900), proving
+    // the before-size / budget authority is the summed STORED counts (900), not a
+    // re-estimate that would understate the chunk.
+    //
+    // B-4 (260605-ney): the ACCEPT ceiling is now the rendered 4:1 measure (the
+    // candidate is judged like-for-like) — so the content here is realistic prose
+    // (a degenerate 1-char content would make the self-consistent ceiling tiny,
+    // which is the now-correctly-rejected case, not the intended scenario). The
+    // STORED Σ (900) remains the floor/budget authority; the L1 acceptance still
+    // proves the comparison is not driven by a tiny re-estimated concatenation.
     const tinyContentBigCount = [
-      child("a", 0, { tokenCount: 300, content: "a" }),
-      child("b", 1, { tokenCount: 300, content: "b" }),
-      child("c", 2, { tokenCount: 300, content: "c" }),
+      child("a", 0, { tokenCount: 300, content: "decision A: selected the postgres backend after benchmarking three options" }),
+      child("b", 1, { tokenCount: 300, content: "decision B: the cache write failed under load and was rolled back for retry" }),
+      child("c", 2, { tokenCount: 300, content: "open question C: whether to pre-shard the events table prior to the launch" }),
     ];
     const result = await summarizeCondensedChunk(tinyContentBigCount, makeDeps(shortSummarizer("merged ok summary")), {
       reserveTokens: 2_000,

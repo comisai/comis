@@ -54,11 +54,15 @@ import {
   CONDENSED_FALLBACK_SUMMARY_MARKER,
 } from "./constants.js";
 import {
+  computeShrinkBounds,
   type LeafSummarizer,
   type LeafSummarizeOptions,
   type LeafSummarizerDeps,
 } from "./lcd-leaf-summarizer.js";
-import { estimateMessageTokens } from "../safety/token-estimator.js";
+import {
+  estimateMessageTokens,
+  estimateMessageChars,
+} from "../safety/token-estimator.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -194,6 +198,13 @@ export function selectCondensableTier(
  * of the concatenation (Pitfall 2/5: the stored counts include the F3 thinking
  * the child leaves budgeted at their own write time).
  *
+ * B-4 (260605-ney): the EFFECTIVE summarize target is bounded below the run's
+ * rendered shrink ceiling ({@link computeShrinkBounds}) so the model is never asked
+ * to write more than it compresses (the spurious-floor fix mirrored from the leaf),
+ * and the accept-test ceiling is the RENDERED 4:1 measure — self-consistent with
+ * the candidate's units. The STORED `Σ children.tokenCount` stays the budget /
+ * floor authority: the deterministic Level-3 floor must still beat it.
+ *
  * @param children - the contiguous child summaries (stored tokenCounts + content)
  * @param deps - the injected summarizer + model getters + logger (shared with leaf)
  * @param opts - reserveTokens (= condensedTargetTokens) + optional previousSummary
@@ -207,21 +218,34 @@ export async function summarizeCondensedChunk(
   // Before-size authority: the STORED per-child tokenCounts (Pitfall 2/5) — NOT a
   // re-estimate of the concatenation (which would exclude the F3 thinking the
   // child leaves counted, under-stating the chunk and risking a non-shrinking
-  // "reduction" that is actually larger than the real covered tokens).
+  // "reduction" that is actually larger than the real covered tokens). This stays
+  // the BUDGET / floor authority — the deterministic Level-3 floor still beats it.
   const beforeTokens = children.reduce((acc, c) => acc + c.tokenCount, 0);
   // The ONE pseudo-message the injected summarizer sees: the child summary
   // content strings, clearly separated. A summary OF summaries.
   const pseudoMessage = buildCondenseInput(children);
 
+  // B-4 (260605-ney): self-consistent shrink bounds from the run's RENDERED chars
+  // (the one concatenated pseudo-message — already prose). The accept ceiling is
+  // measured the SAME way the candidate is (4:1), and the EFFECTIVE target is
+  // bounded below the run so the summarizer is never asked to write more than it
+  // compresses (the dominant fix mirrored from the leaf tier).
+  const renderedChars = estimateMessageChars(pseudoMessage as unknown as Message);
+  const { shrinkCeilingTokens, effectiveReserveTokens } = computeShrinkBounds(
+    renderedChars,
+    opts.reserveTokens,
+  );
+
   // --- Level 1: full summarization, up to 1 + COMPACTION_MAX_RETRIES attempts.
-  //     Accept ONLY when the summary is strictly smaller than Σ child tokens.
+  //     Accept ONLY when the summary is strictly smaller than the rendered-4:1
+  //     ceiling (self-consistent units), with the EFFECTIVE bounded target.
   const maxAttempts = 1 + COMPACTION_MAX_RETRIES;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const accepted = await tryCondenseLevel(
       deps,
       pseudoMessage,
-      { reserveTokens: opts.reserveTokens, previousSummary: opts.previousSummary },
-      beforeTokens,
+      { reserveTokens: effectiveReserveTokens, previousSummary: opts.previousSummary },
+      shrinkCeilingTokens,
       attempt,
     );
     if (accepted !== undefined) {
@@ -245,8 +269,8 @@ export async function summarizeCondensedChunk(
   const aggressive = await tryCondenseLevel(
     deps,
     pseudoMessage,
-    { reserveTokens: opts.reserveTokens, previousSummary: opts.previousSummary, aggressive: true },
-    beforeTokens,
+    { reserveTokens: effectiveReserveTokens, previousSummary: opts.previousSummary, aggressive: true },
+    shrinkCeilingTokens,
     maxAttempts,
   );
   if (aggressive !== undefined) {
@@ -283,22 +307,24 @@ function buildCondenseInput(children: CondenseChildSummary[]): AgentMessage {
 
 /**
  * Attempt one condensation summarizer call and accept it ONLY when the produced
- * summary is strictly smaller (in tokens) than `beforeTokens` (the stored Σ child
- * tokenCount). Non-fatal: a throwing summarizer is caught (WARN, errorKind
- * `dependency`) and reported as "not accepted" so the ladder escalates rather
- * than failing. Mirrors `tryLevel` in `lcd-leaf-summarizer.ts` verbatim in shape.
+ * summary is strictly smaller (in tokens) than `shrinkCeilingTokens` — the run's
+ * RENDERED 4:1 measure (B-4, 260605-ney), so the candidate (a 4:1-prose user
+ * string) and the ceiling are like-for-like units. Non-fatal: a throwing
+ * summarizer is caught (WARN, errorKind `dependency`) and reported as "not
+ * accepted" so the ladder escalates rather than failing. Mirrors `tryLevel` in
+ * `lcd-leaf-summarizer.ts` verbatim in shape.
  */
 async function tryCondenseLevel(
   deps: LeafSummarizerDeps,
   pseudoMessage: AgentMessage,
   opts: LeafSummarizeOptions,
-  beforeTokens: number,
+  shrinkCeilingTokens: number,
   attempt: number,
 ): Promise<{ content: string; tokenCount: number } | undefined> {
   try {
     const summary = await deps.summarize([pseudoMessage], opts);
     const tokenCount = estimateMessageTokens({ role: "user", content: summary } as Message);
-    if (tokenCount < beforeTokens) return { content: summary, tokenCount };
+    if (tokenCount < shrinkCeilingTokens) return { content: summary, tokenCount };
     // Non-reduction → escalate.
     deps.logger.debug(
       {

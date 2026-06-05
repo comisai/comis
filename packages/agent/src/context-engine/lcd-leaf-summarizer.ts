@@ -54,6 +54,7 @@ import {
 import {
   estimateMessageTokens,
   estimateMessageChars,
+  CHARS_PER_TOKEN,
 } from "../safety/token-estimator.js";
 
 // ---------------------------------------------------------------------------
@@ -70,6 +71,57 @@ import {
  * pass entirely (WR-01) rather than emitting a degenerate empty/larger fallback.
  */
 export const MIN_SHRINKABLE_LEAF_CHUNK_TOKENS = 2;
+
+/**
+ * B-4 (260605-ney): the fraction of a chunk's rendered shrink ceiling used as the
+ * EFFECTIVE summarize target. The configured `reserveTokens` (= `leafTargetTokens`
+ * / `condensedTargetTokens`) can EXCEED a small chunk — telling the model to write
+ * a summary larger than what it compresses → a guaranteed non-reduction → the
+ * spurious deterministic floor seen live (`escalationLevel:3` on a 3-message
+ * chunk). Bounding the target at half the chunk's rendered ceiling guarantees the
+ * ask is to at least halve the chunk, so a real summary can reduce. A fixed sub-1
+ * fraction; only bites when the configured target would otherwise exceed half the
+ * chunk (large chunks are still capped from above by the configured target).
+ */
+export const SHRINK_TARGET_FRACTION = 0.5;
+
+/**
+ * Compute the self-consistent shrink bounds for a chunk (B-4, 260605-ney). Shared
+ * by {@link summarizeLeafChunk} and `summarizeCondensedChunk` (the rule of three
+ * is met — both summarizers need the identical bounding).
+ *
+ * Two outputs, both derived from the chunk's RENDERED character count:
+ *
+ *  - `shrinkCeilingTokens` — the accept-test ceiling, measured the SAME way the
+ *    candidate summary is (`estimateMessageTokens` of a user string = 4:1 prose):
+ *    `ceil(renderedChars / CHARS_PER_TOKEN)`. The prior code compared a 4:1-prose
+ *    candidate against the chunk's MIXED-ratio STORED `tokenCount` (3:1 structured
+ *    / 4:1 text) — inconsistent units. This makes the comparison like-for-like.
+ *    NOTE: the STORED Σ `tokenCount` remains the BUDGET / before-size / floor
+ *    authority everywhere else (utilization, eviction, the deterministic Level-3
+ *    note + its strict ceiling) — only the accept-test ceiling moves here.
+ *
+ *  - `effectiveReserveTokens` — the bounded summarize target:
+ *    `min(configuredReserveTokens, max(1, floor(shrinkCeilingTokens *
+ *    SHRINK_TARGET_FRACTION)))`. Never zero (a 1-token floor); never above the
+ *    configured target (large chunks are unaffected).
+ *
+ * @param renderedChars - Σ `estimateMessageChars` over the chunk's messages (leaf)
+ *   or `estimateMessageChars` of the one concatenated pseudo-message (condense).
+ * @param configuredReserveTokens - the configured target (`reserveTokens`).
+ * @returns the rendered-4:1 accept ceiling + the bounded effective target.
+ */
+export function computeShrinkBounds(
+  renderedChars: number,
+  configuredReserveTokens: number,
+): { shrinkCeilingTokens: number; effectiveReserveTokens: number } {
+  const shrinkCeilingTokens = Math.ceil(renderedChars / CHARS_PER_TOKEN);
+  const effectiveReserveTokens = Math.min(
+    configuredReserveTokens,
+    Math.max(1, Math.floor(shrinkCeilingTokens * SHRINK_TARGET_FRACTION)),
+  );
+  return { shrinkCeilingTokens, effectiveReserveTokens };
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -347,6 +399,13 @@ function roleOf(m: AgentMessage): string | undefined {
  * C1 invariant) — accepting an LLM summary only when it actually reduces, and
  * otherwise falling through to the deterministic, bounded Level-3 truncation.
  *
+ * B-4 (260605-ney): the EFFECTIVE summarize target is bounded below the chunk's
+ * rendered shrink ceiling ({@link computeShrinkBounds}) so the model is never asked
+ * to write more than it compresses (the spurious-floor fix), and the accept-test
+ * ceiling is the RENDERED 4:1 measure — self-consistent with the candidate's units.
+ * The STORED Σ `tokenCount` stays the budget / floor authority: the deterministic
+ * Level-3 floor must still beat the real stored before-size.
+ *
  * @param chunkItems - the chunk's items (pre-computed tokens + ids + timestamps)
  * @param deps - the injected summarizer + model getters + logger
  * @param opts - reserveTokens (= leafTargetTokens) + optional previousSummary
@@ -362,9 +421,24 @@ export async function summarizeLeafChunk(
   const createdAts = chunkItems.map((it) => it.createdAt);
   // Before-size authority: the caller's pre-computed per-message tokens (counts
   // F3 thinking on store-sourced rows, which re-estimation would under-count).
+  // This stays the BUDGET / floor authority — the deterministic Level-3 floor must
+  // still beat the REAL stored before-size (NOT the smaller rendered ceiling).
   const chunkTokens = chunkItems.reduce((acc, it) => acc + it.tokens, 0);
   const earliestAt = createdAts.length > 0 ? Math.min(...createdAts) : 0;
   const latestAt = createdAts.length > 0 ? Math.max(...createdAts) : 0;
+
+  // B-4: self-consistent shrink bounds from the chunk's RENDERED chars. The
+  // accept ceiling (`shrinkCeilingTokens`) is measured the SAME way the candidate
+  // summary is (4:1 prose); the EFFECTIVE target is bounded below the chunk so the
+  // summarizer is never asked to write more than it compresses (the dominant fix).
+  const renderedChars = messages.reduce(
+    (acc, m) => acc + estimateMessageChars(m as unknown as Message),
+    0,
+  );
+  const { shrinkCeilingTokens, effectiveReserveTokens } = computeShrinkBounds(
+    renderedChars,
+    opts.reserveTokens,
+  );
 
   const base = {
     descendantCount: chunkItems.length,
@@ -374,13 +448,14 @@ export async function summarizeLeafChunk(
   };
 
   // --- Level 1: full summarization, up to 1 + COMPACTION_MAX_RETRIES attempts.
-  //     Accept ONLY when the summary is strictly smaller than the chunk.
+  //     Accept ONLY when the summary is strictly smaller than the rendered-4:1
+  //     ceiling (self-consistent units), with the EFFECTIVE bounded target.
   const maxAttempts = 1 + COMPACTION_MAX_RETRIES;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const accepted = await tryLevel(deps, messages, {
-      reserveTokens: opts.reserveTokens,
+      reserveTokens: effectiveReserveTokens,
       previousSummary: opts.previousSummary,
-    }, chunkTokens, attempt);
+    }, shrinkCeilingTokens, attempt);
     if (accepted !== undefined) {
       return { ...base, content: accepted.content, level: 1, fallback: false, tokenCount: accepted.tokenCount };
     }
@@ -412,10 +487,10 @@ export async function summarizeLeafChunk(
       "lcd leaf escalation",
     );
     const accepted = await tryLevel(deps, level2Messages, {
-      reserveTokens: opts.reserveTokens,
+      reserveTokens: effectiveReserveTokens,
       previousSummary: opts.previousSummary,
       aggressive: true,
-    }, chunkTokens, maxAttempts);
+    }, shrinkCeilingTokens, maxAttempts);
     if (accepted !== undefined) {
       return { ...base, content: accepted.content, level: 2, fallback: false, tokenCount: accepted.tokenCount };
     }
@@ -439,21 +514,23 @@ export async function summarizeLeafChunk(
 
 /**
  * Attempt one summarizer call and accept it ONLY when the produced summary is
- * strictly smaller (in tokens) than the chunk. Non-fatal: a throwing summarizer
- * is caught (WARN, errorKind `dependency`) and reported as "not accepted" so the
- * ladder escalates rather than failing.
+ * strictly smaller (in tokens) than `shrinkCeilingTokens` — the chunk's RENDERED
+ * 4:1 measure (B-4, 260605-ney), so the candidate (a 4:1-prose user string) and
+ * the ceiling are like-for-like units. Non-fatal: a throwing summarizer is caught
+ * (WARN, errorKind `dependency`) and reported as "not accepted" so the ladder
+ * escalates rather than failing.
  */
 async function tryLevel(
   deps: LeafSummarizerDeps,
   messages: AgentMessage[],
   opts: LeafSummarizeOptions,
-  chunkTokens: number,
+  shrinkCeilingTokens: number,
   attempt: number,
 ): Promise<{ content: string; tokenCount: number } | undefined> {
   try {
     const summary = await deps.summarize(messages, opts);
     const tokenCount = estimateMessageTokens({ role: "user", content: summary } as Message);
-    if (tokenCount < chunkTokens) return { content: summary, tokenCount };
+    if (tokenCount < shrinkCeilingTokens) return { content: summary, tokenCount };
     // Non-reduction → escalate (LOSSLESS-CLAW §5).
     deps.logger.debug(
       {
