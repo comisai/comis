@@ -1,0 +1,501 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Tests for the LCD afterTurn CONDENSE pass (Phase 130, C2 — Plan 02 Task 2).
+ *
+ * RED-first. Drives `maybeRunCondensePass` — the mirror of `maybeRunLeafPass`
+ * that folds a contiguous run of ≥`condensedMinFanout` same-depth summary-refs
+ * into one depth+1 condensed summary (select the shallowest contiguous run →
+ * summarize the child content via the INJECTED stub → `appendCondensedSummary`
+ * over the run's [startOrdinal,endOrdinal] window → emit `context:dag_compacted`
+ * with the REAL `condensedSummariesCreated:1` + `maxDepthReached:depth+1`), and
+ * is otherwise a no-op. The pass is NON-FATAL: a throwing summarizer / store
+ * NEVER propagates.
+ *
+ * The store is the REAL `createLcdStore(new Database(":memory:"))` — `@comis/memory`
+ * is an agent devDependency, allowed in `.test.ts` only (the agent↛memory cut).
+ * The summarizer is a STUB (no network, no real LLM).
+ */
+import {
+  type AppendMessageInput,
+  type ContextStorePort,
+  type ContextStoreScope,
+  type LcdContextItem,
+  type TypedEventBus,
+  messageToParts,
+} from "@comis/core";
+import type { Message } from "@earendil-works/pi-ai";
+import Database from "better-sqlite3";
+import { initSchema, createLcdStore } from "@comis/memory";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { maybeRunCondensePass, type CondensePassOptions } from "./lcd-condense-trigger.js";
+import type { LeafSummarizer, LeafSummarizerDeps } from "../context-engine/lcd-leaf-summarizer.js";
+import { CONDENSED_FALLBACK_SUMMARY_MARKER } from "../context-engine/constants.js";
+import { createMockLogger } from "../../../../test/support/mock-logger.js";
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+const FIXED_NOW = 7000;
+const CONVERSATION_ID = "conv-condense";
+
+const SCOPE: ContextStoreScope = {
+  conversationId: CONVERSATION_ID,
+  tenantId: "tenant_a",
+  agentId: "agent_a",
+  sessionKey: "sess-a",
+};
+
+function userMsg(text: string): Message {
+  return { role: "user", content: text, timestamp: 1000 } as Message;
+}
+
+function assistantText(text: string): Message {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: "anthropic.messages",
+    provider: "anthropic",
+    model: "claude-test",
+    usage: { inputTokens: 1, outputTokens: 1 },
+    stopReason: "stop",
+    timestamp: 1000,
+  } as unknown as Message;
+}
+
+function append(store: ContextStorePort, msg: Message, seq: number, tokenCount: number, createdAt: number): void {
+  const input: AppendMessageInput = {
+    scope: SCOPE,
+    seq,
+    role: msg.role,
+    tokenCount,
+    createdAt,
+    parts: messageToParts(msg),
+  };
+  store.append(input);
+}
+
+/** Seed `count` alternating user/assistant messages, each `tokensEach` tokens. */
+function seedHistory(store: ContextStorePort, count: number, tokensEach: number): void {
+  for (let i = 0; i < count; i++) {
+    const msg = i % 2 === 0 ? userMsg(`u${i}`) : assistantText(`a${i}`);
+    append(store, msg, i, tokensEach, 1000 + i);
+  }
+}
+
+/**
+ * Collapse the FIRST `width` surviving MESSAGE-refs (by current ordinal order)
+ * into ONE depth-0 leaf summary via `appendLeafSummary`. Reads the CURRENT
+ * `context_items` so successive calls collapse successive contiguous windows.
+ * Returns the new leaf's summaryId.
+ */
+function collapseLeaf(
+  store: ContextStorePort,
+  fromOrdinalAfter: number,
+  width: number,
+  summaryTokens: number,
+): string {
+  const items = store.getContextItems(CONVERSATION_ID);
+  const msgRefs = items.filter((it) => it.refKind === "message" && it.ordinal > fromOrdinalAfter);
+  const windowRefs = msgRefs.slice(0, width);
+  const startOrdinal = windowRefs[0]!.ordinal;
+  const endOrdinal = windowRefs[windowRefs.length - 1]!.ordinal;
+  return store.appendLeafSummary({
+    scope: SCOPE,
+    tokenCount: summaryTokens,
+    content: `LEAF over ${width} msgs [${startOrdinal}..${endOrdinal}]`,
+    descendantCount: width,
+    earliestAt: 1000 + startOrdinal,
+    latestAt: 1000 + endOrdinal,
+    fileIds: [],
+    fallback: false,
+    taint: false,
+    createdAt: FIXED_NOW,
+    startOrdinal,
+    endOrdinal,
+  });
+}
+
+/**
+ * Seed `n` CONTIGUOUS depth-0 leaf summaries at the oldest end. Each leaf
+ * collapses `width` message-refs; because each collapse range-replaces a window
+ * with one summary-ref at its startOrdinal and the next collapse takes the next
+ * surviving message-refs, the result is `n` adjacent summary-refs (ordinals
+ * 0..n-1) followed by the surviving tail message-refs.
+ */
+function seedContiguousLeaves(store: ContextStorePort, n: number, width: number): string[] {
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    // After the i-th collapse, ordinal i holds a summary-ref; the next message
+    // window begins just after it. Collapsing the FIRST surviving message-refs
+    // (ordinal > i-1 ⇒ all message-refs, the oldest of which sits right after the
+    // i existing summary-refs) keeps the new summary-ref adjacent to its siblings.
+    ids.push(collapseLeaf(store, i - 1, width, 5));
+  }
+  return ids;
+}
+
+// --- Injected summarizer stubs (NO network, NO real LLM) ---
+
+function shortSummarizer(text = "CONDENSED-SUMMARY"): LeafSummarizer {
+  return vi.fn(async () => text);
+}
+
+/** Oversized: fixed string far larger than any stored Σ → forces Level-3 floor. */
+function oversizedSummarizer(): LeafSummarizer {
+  return vi.fn(async () => "BLOAT ".repeat(8_000));
+}
+
+function throwingSummarizer(): LeafSummarizer {
+  return vi.fn(async () => {
+    throw new Error("condense summarizer boom");
+  });
+}
+
+function makeSummarizerDeps(
+  summarize: LeafSummarizer,
+  logger: ReturnType<typeof createMockLogger>,
+): LeafSummarizerDeps {
+  return {
+    logger: logger as unknown as LeafSummarizerDeps["logger"],
+    summarize,
+    getModel: () => ({ provider: "anthropic", contextWindow: 200_000, reasoning: true }),
+    getApiKey: async () => "test-key",
+  };
+}
+
+function makeEventBus(): { bus: TypedEventBus; emits: Array<{ event: string; payload: Record<string, unknown> }> } {
+  const emits: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const bus = {
+    emit: (event: string, payload: Record<string, unknown>) => {
+      emits.push({ event, payload });
+      return true;
+    },
+  } as unknown as TypedEventBus;
+  return { bus, emits };
+}
+
+function condenseOpts(overrides: Partial<CondensePassOptions> = {}): CondensePassOptions {
+  return {
+    condensedMinFanout: 4,
+    condensedTargetTokens: 2_000,
+    windowTokens: 200_000,
+    ...overrides,
+  };
+}
+
+function summaryRefs(items: LcdContextItem[]): LcdContextItem[] {
+  return items.filter((it) => it.refKind === "summary");
+}
+
+// ===========================================================================
+// No-op below fanout
+// ===========================================================================
+
+describe("maybeRunCondensePass — no-op below fanout", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("does nothing (no condensed summary, no event, no summarizer call) when fewer than condensedMinFanout contiguous same-depth summaries exist", async () => {
+    seedHistory(store, 40, 100);
+    // Only 3 contiguous leaf summaries < condensedMinFanout 4.
+    seedContiguousLeaves(store, 3, 4);
+    expect(store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "leaf").length).toBe(3);
+
+    const logger = createMockLogger();
+    const { bus, emits } = makeEventBus();
+    const summarize = shortSummarizer();
+
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4 }),
+      makeSummarizerDeps(summarize, logger),
+      FIXED_NOW,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // No condensed summary was created, no event fired, the summarizer was never called.
+    expect(store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed").length).toBe(0);
+    expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(0);
+    expect(summarize).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// Condenses at fanout + emits the real event
+// ===========================================================================
+
+describe("maybeRunCondensePass — condenses at fanout and emits the real compaction event", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("folds exactly condensedMinFanout contiguous depth-0 leaves into ONE depth-1 condensed summary + emits condensedSummariesCreated:1, maxDepthReached:1", async () => {
+    seedHistory(store, 40, 100);
+    const childIds = seedContiguousLeaves(store, 4, 4); // 4 contiguous depth-0 leaves
+    expect(childIds.length).toBe(4);
+
+    const logger = createMockLogger();
+    const { bus, emits } = makeEventBus();
+
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4 }),
+      makeSummarizerDeps(shortSummarizer(), logger),
+      FIXED_NOW,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // Exactly one depth-1 condensed summary now exists.
+    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    expect(condensed.length).toBe(1);
+    expect(condensed[0]!.depth).toBe(1);
+    // descendantCount = Σ child descendantCount (each leaf covered 4 msgs → 16).
+    expect(condensed[0]!.descendantCount).toBe(16);
+    // createdAt comes from the injected now (never Date.now()).
+    expect(condensed[0]!.createdAt).toBe(FIXED_NOW);
+
+    // The compaction event fired with the REAL condensed metrics (not the leaf's 0).
+    const compacted = emits.filter((e) => e.event === "context:dag_compacted");
+    expect(compacted.length).toBe(1);
+    expect(compacted[0]!.payload.condensedSummariesCreated).toBe(1);
+    expect(compacted[0]!.payload.leafSummariesCreated).toBe(0);
+    expect(compacted[0]!.payload.maxDepthReached).toBe(1);
+    expect(compacted[0]!.payload.totalSummariesCreated).toBe(1);
+    expect(compacted[0]!.payload.conversationId).toBe(CONVERSATION_ID);
+
+    // The four child leaves are range-replaced by ONE condensed summary-ref at the
+    // oldest end; ordinals stay dense + gap-free + ordered.
+    const items = store.getContextItems(CONVERSATION_ID);
+    const sRefs = summaryRefs(items);
+    expect(sRefs.length).toBe(1);
+    expect(sRefs[0]!.refId).toBe(condensed[0]!.summaryId);
+    expect(sRefs[0]!.ordinal).toBe(0);
+    const ordinals = items.map((it) => it.ordinal);
+    expect(ordinals).toEqual(Array.from({ length: items.length }, (_, i) => i));
+  });
+
+  it("links the child leaf summaries via lcd_summary_parents (losslessness ledger)", async () => {
+    seedHistory(store, 40, 100);
+    const childIds = seedContiguousLeaves(store, 4, 4);
+
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4 }),
+      makeSummarizerDeps(shortSummarizer(), logger),
+      FIXED_NOW,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    expect(condensed.length).toBe(1);
+    const parentId = condensed[0]!.summaryId;
+
+    // The edge table links the condensed parent to all four child leaf ids.
+    const rows = db
+      .prepare("SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ? ORDER BY child_summary_id")
+      .all(parentId) as Array<{ child_summary_id: string }>;
+    const linkedChildren = rows.map((r) => r.child_summary_id).sort();
+    expect(linkedChildren).toEqual([...childIds].sort());
+  });
+});
+
+// ===========================================================================
+// Pitfall 3 — non-contiguous fanout is NEVER condensed across a message-ref
+// ===========================================================================
+
+describe("maybeRunCondensePass — contiguity (Pitfall 3)", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("with a [s0(d0) m1 s2 s3 s4(d0)] layout and condensedMinFanout=4, condenses ONLY the contiguous run that reaches fanout — NEVER s0 across the surviving message-ref", async () => {
+    // Build: collapse the oldest 3 msgs into s0 (ordinal 0). Leave the next
+    // surviving message-ref in place (the separator m1). Then collapse the NEXT
+    // FOUR message-runs into four adjacent leaves s2,s3,s4,s5 (a contiguous run
+    // of 4 after the separator).
+    seedHistory(store, 40, 100);
+
+    // s0: collapse the first 3 message-refs (ordinals 0..2 → summary-ref at 0).
+    collapseLeaf(store, -1, 3, 5);
+    // Now ordinal 0 = s0, ordinal 1 = the surviving separator message-ref m1.
+    // Collapse the next 4 windows of 3 message-refs each, each starting AFTER the
+    // separator at ordinal 1, producing s2..s5 contiguous at ordinals 2..5.
+    for (let k = 0; k < 4; k++) {
+      collapseLeaf(store, 1 + k, 3, 5);
+    }
+
+    const items = store.getContextItems(CONVERSATION_ID);
+    // Sanity on the constructed layout: s0 at 0, a message-ref at 1, then ≥4
+    // contiguous summary-refs from ordinal 2.
+    expect(items[0]!.refKind).toBe("summary");
+    expect(items[1]!.refKind).toBe("message");
+    const contiguousAfterSep = [];
+    for (let i = 2; i < items.length && items[i]!.refKind === "summary"; i++) {
+      contiguousAfterSep.push(items[i]!);
+    }
+    expect(contiguousAfterSep.length).toBeGreaterThanOrEqual(4);
+    const leafCountBefore = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "leaf").length;
+
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4 }),
+      makeSummarizerDeps(shortSummarizer(), logger),
+      FIXED_NOW,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // One condensed summary was created — covering the CONTIGUOUS trailing run.
+    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    expect(condensed.length).toBe(1);
+    const parentId = condensed[0]!.summaryId;
+
+    // CRITICAL: s0 is NEVER a child of the condensed summary (it sits before the
+    // surviving separator message-ref — a different, non-contiguous run).
+    const childRows = db
+      .prepare("SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ?")
+      .all(parentId) as Array<{ child_summary_id: string }>;
+    const childIds = new Set(childRows.map((r) => r.child_summary_id));
+    // Exactly the 4 contiguous-run leaves were linked (none from before the separator).
+    expect(childIds.size).toBe(4);
+
+    // The separator message-ref STILL survives (the condensed run never spanned it),
+    // and s0 still exists as a leaf in context_items.
+    const after = store.getContextItems(CONVERSATION_ID);
+    expect(after[0]!.refKind).toBe("summary"); // s0 untouched at the oldest end
+    expect(after[0]!.refId).not.toBe(parentId);
+    expect(after.some((it) => it.refKind === "message")).toBe(true); // the separator survives
+    // Leaf count is unchanged by the condense pass (children are NEVER deleted —
+    // FK RESTRICT losslessness): leaves before == leaves after.
+    const leafCountAfter = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "leaf").length;
+    expect(leafCountAfter).toBe(leafCountBefore);
+  });
+});
+
+// ===========================================================================
+// Non-fatal — never propagates
+// ===========================================================================
+
+describe("maybeRunCondensePass — non-fatal degrade", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("resolves without throwing when the summarizer throws — falls through to the deterministic Level-3 floor (a condensed summary persists, no throw)", async () => {
+    seedHistory(store, 40, 100);
+    seedContiguousLeaves(store, 4, 4);
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+
+    await expect(
+      maybeRunCondensePass(
+        store,
+        SCOPE,
+        condenseOpts({ condensedMinFanout: 4 }),
+        makeSummarizerDeps(throwingSummarizer(), logger),
+        FIXED_NOW,
+        logger as unknown as LeafSummarizerDeps["logger"],
+        bus,
+      ),
+    ).resolves.toBeUndefined();
+
+    // The deterministic Level-3 floor still produced a bounded condensed summary.
+    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    expect(condensed.length).toBe(1);
+    expect(condensed[0]!.fallback).toBe(true);
+    expect(condensed[0]!.content.startsWith(CONDENSED_FALLBACK_SUMMARY_MARKER)).toBe(true);
+  });
+
+  it("resolves without throwing when store.appendCondensedSummary throws (WARN errorKind dependency, never propagates)", async () => {
+    seedHistory(store, 40, 100);
+    seedContiguousLeaves(store, 4, 4);
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+
+    // Wrap the real store so appendCondensedSummary throws.
+    const brokenStore: ContextStorePort = {
+      append: (i) => store.append(i),
+      getMessages: (c) => store.getMessages(c),
+      getContextItems: (c) => store.getContextItems(c),
+      getSummaries: (c) => store.getSummaries(c),
+      appendLeafSummary: (i) => store.appendLeafSummary(i),
+      appendCondensedSummary: () => {
+        throw new Error("store boom");
+      },
+    };
+
+    await expect(
+      maybeRunCondensePass(
+        brokenStore,
+        SCOPE,
+        condenseOpts({ condensedMinFanout: 4 }),
+        makeSummarizerDeps(shortSummarizer(), logger),
+        FIXED_NOW,
+        logger as unknown as LeafSummarizerDeps["logger"],
+        bus,
+      ),
+    ).resolves.toBeUndefined();
+
+    const warn = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    expect(warn.length).toBeGreaterThan(0);
+    const hasDependencyWarn = warn.some(
+      (call) => (call[0] as { errorKind?: string })?.errorKind === "dependency",
+    );
+    expect(hasDependencyWarn).toBe(true);
+  });
+
+  it("resolves cleanly with no summarizerDeps (undefined) — gated off, no condensed summary", async () => {
+    seedHistory(store, 40, 100);
+    seedContiguousLeaves(store, 4, 4);
+    const logger = createMockLogger();
+    const { bus, emits } = makeEventBus();
+
+    await expect(
+      maybeRunCondensePass(
+        store,
+        SCOPE,
+        condenseOpts({ condensedMinFanout: 4 }),
+        undefined,
+        FIXED_NOW,
+        logger as unknown as LeafSummarizerDeps["logger"],
+        bus,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed").length).toBe(0);
+    expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(0);
+  });
+});
