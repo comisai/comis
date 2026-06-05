@@ -2247,6 +2247,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // a later phase), so its only current consumer is the drift-guard test —
       // tracked here as a baseline orphan like the sibling link schema above.
       "LcdSummaryParentRowSchema",
+      // LCD FTS search-hit row schema (v2.12, Phase 131-02, E1 ctx_search). Consumed
+      // intra-package by lcd-fts.ts via createRowMapper(LcdSearchHitRowSchema) — the
+      // searchLcd FTS5-MATCH-with-LIKE-fallback hit-row mapper (an intra-file value
+      // reference, NOT a cross-file import). Barrel-surfaced through `export *` so the
+      // export-graph walker counts it as an orphan — tracked here like the sibling LCD
+      // row schemas above (the checker counts cross-package barrel consumers only; the
+      // ctx_* tools read the recovered hits via the searchLcd RETURN value, not by
+      // importing this schema). No *RowFromSchema inferred type is exported — the
+      // LcdSearchHit DTO lives in @comis/core's context-store-types.ts.
+      "LcdSearchHitRowSchema",
       "VecSearchRowSchema",
       "VecSearchRowFromSchema",
       "FtsSearchRowSchema",
