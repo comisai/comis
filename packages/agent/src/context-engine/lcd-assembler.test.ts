@@ -601,6 +601,88 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     );
     expect(anyFallback).toBe(false);
   });
+
+  it("WR-01: an ACTIVE leaf summary + a live array LONGER than the store does NOT drop the oldest summarized content at the eviction seam", async () => {
+    // THE UNTESTED COMBINED CASE the eviction `overlapCount` math relied on by
+    // an unverified invariant (REVIEW WR-01): a prior leaf compaction is present
+    // (`resolved` is COLLAPSED — strictly shorter than `rows.length`) AND the
+    // live array carries an in-flight, not-yet-persisted delta (`live > store`,
+    // the CR-01 mid-turn state). The buggy math computed
+    //   overlapCount = max(0, rows.length − tailStart)   // a RAW-message count
+    //   evictable    = resolved.slice(0, resolved.length − overlapCount)
+    // i.e. it subtracted a RAW count from the COLLAPSED `resolved.length`. When
+    // the fresh-tail window reaches back far enough that `overlapCount` exceeds
+    // the number of trailing raw message-refs in `resolved`, the slice crosses
+    // the summary boundary at the HEAD and drops it — silently losing the oldest
+    // history (the summary AND the messages it represents). The fix bounds the
+    // exclusion by the trailing raw message-refs actually present in `resolved`
+    // so the slice can never cut into a summary-ref regardless of the collapse
+    // shape.
+    //
+    // Persist 6 completed messages (u0..a2, seq 0..5); rows.length = 6.
+    const persisted: Message[] = [
+      userMsg("u0"),
+      assistantText("a0"),
+      userMsg("u1"),
+      assistantText("a1"),
+      userMsg("u2"),
+      assistantText("a2"),
+    ];
+    for (let i = 0; i < persisted.length; i++) append(store, persisted[i] as Message, i);
+
+    // Force the lazy 1:1 seed, then collapse the OLDEST run [0,1] (u0,a0) into
+    // ONE leaf summary. context_items is now [SUMMARY@0, u1@1, a1@2, u2@3, a2@4]
+    // → resolved.length = 5 (1 summary-ref + 4 trailing message-refs), while
+    // rows.length stays 6. THIS is the count/length mismatch WR-01 is about.
+    store.getContextItems(SCOPE);
+    const SUMMARY_TEXT = "LEAF-SUMMARY-OF-OLDEST-TURN-u0-a0";
+    store.appendLeafSummary({
+      scope: SCOPE,
+      tokenCount: 5,
+      content: SUMMARY_TEXT,
+      descendantCount: 2,
+      earliestAt: FIXED_CREATED_AT,
+      latestAt: FIXED_CREATED_AT,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_CREATED_AT,
+      startOrdinal: 0,
+      endOrdinal: 1,
+    });
+
+    // The LIVE array = the 6 raw persisted messages PLUS one in-flight, not-yet-
+    // persisted assistant turn (a3). live.length = 7 > rows.length = 6 (CR-01).
+    const live: AgentMessage[] = [
+      ...(persisted as AgentMessage[]),
+      assistantText("a3") as AgentMessage,
+    ];
+
+    // freshTailTurns=4: assistants in `live` are at indices 1,3,5,6. The 4th-from-
+    // last assistant is index 1 (a0), so tailStart=1 and the fresh tail is
+    // live[1..] = [a0,u1,a1,u2,a2,a3]. Then overlapCount = max(0, 6 − 1) = 5,
+    // but `resolved` has only 4 trailing message-refs (the head is the summary):
+    // resolved.length − overlapCount = 5 − 5 = 0 → the buggy slice drops the
+    // ENTIRE history INCLUDING the head summary. u0 (which sits BEFORE the fresh
+    // tail at live index 0) is then represented NOWHERE — a silent transcript drop.
+    const { deps } = makeDeps(store);
+    const engine = createLcdContextEngine(dagConfig(4), deps);
+    const out = await engine.transformContext(live);
+
+    // The oldest summarized content MUST survive: the leaf summary (the only
+    // carrier of u0) is retained in the history prefix. On the buggy math the
+    // slice crossed the summary boundary and this summary is gone.
+    const summaryPresent = out.some((m) =>
+      JSON.stringify((m as unknown as { content?: unknown }).content ?? "").includes(SUMMARY_TEXT),
+    );
+    expect(summaryPresent).toBe(true);
+
+    // Defensive: the eviction must never have produced a negative/over-eager
+    // slice that also nukes the surviving recent history. The full conversation
+    // (summary + the live tail) is representable; assert the live fresh tail rode
+    // through verbatim (it is never evicted — A1/A3).
+    expect(out[out.length - 1]).toBe(live[live.length - 1]); // a3 (live object)
+  });
 });
 
 describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
