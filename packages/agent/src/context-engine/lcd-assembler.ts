@@ -59,7 +59,7 @@ import type { ContextEngineConfig } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
 import { computeTokenBudget } from "./token-budget.js";
-import { LCD_FALLBACK_HEADER_MARKER } from "./constants.js";
+import { CHARS_PER_TOKEN_RATIO, LCD_FALLBACK_HEADER_MARKER } from "./constants.js";
 import { evictHistoryUnderBudget, type BudgetItem } from "./lcd-budget-eviction.js";
 import type { ContextEngine, ContextEngineDeps } from "./types.js";
 
@@ -229,24 +229,57 @@ export function createLcdContextEngine(
       const overlapCount = Math.min(rawOverlap, trailingMessageRefs);
       const evictable = resolved.slice(0, Math.max(0, resolved.length - overlapCount));
 
+      // I1: the recall-injection block (`dynamicPreamble` + `inlineMemory`, prepended
+      // into the latest user message by envelope-wrapper) rides the fresh tail and is
+      // invisible to S by design (the recall-dag-budget-partition invariant). Subtract
+      // it as a SEPARATE budget term so a heavier recall block compacts older history
+      // harder — NEVER fold it into S. Pass `-1` for the (defaulted) cacheFenceIndex to
+      // reach the 4th positional `recallTokensEstimate` slot.
       const W = deps.getModel().contextWindow;
       const S = deps.getSystemTokensEstimate?.() ?? 0;
-      const budget = computeTokenBudget(W, S);
+      const recallTokens = deps.getRecallTokensEstimate?.() ?? 0;
+      const budget = computeTokenBudget(W, S, -1, recallTokens);
       const budgeted = evictHistoryUnderBudget(evictable, budget.availableHistoryTokens);
+      const droppedCount = evictable.length - budgeted.length;
       deps.logger.debug(
         {
           step: "lcd-evict",
           budgetTokens: budget.availableHistoryTokens,
           windowTokens: W,
           systemTokens: S,
+          recallTokens,
           evictableCount: evictable.length,
           keptCount: budgeted.length,
-          droppedCount: evictable.length - budgeted.length,
+          droppedCount,
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
         },
         "lcd history evicted under budget",
       );
+
+      // O1: emit the EXISTING `context:evicted` event from the LCD path (parity with
+      // the pipeline engine's guard at context-engine.ts:663-672) when eviction
+      // actually dropped history. CONTENT-FREE (AGENTS.md §2.2 / the lossless store):
+      // `evictedChars` is derived ONLY from each dropped item's pre-computed `tokens`
+      // field (× CHARS_PER_TOKEN_RATIO) — the message text is NEVER read or emitted.
+      // Reuse the entry-clock read `startMs` for `timestamp` (no new clock read; the
+      // globals gate bans ambient time). Reuse the existing event name — do NOT invent
+      // a `context:lcd_evicted`.
+      if (droppedCount > 0) {
+        const droppedItems = evictable.slice(budgeted.length);
+        const evictedChars = droppedItems.reduce(
+          (sum, it) => sum + Math.round(it.tokens * CHARS_PER_TOKEN_RATIO),
+          0,
+        );
+        deps.eventBus?.emit("context:evicted", {
+          agentId: deps.agentId ?? "",
+          sessionKey: deps.sessionKey ?? "",
+          evictedCount: droppedCount,
+          evictedChars,
+          categories: { lcd_history: droppedCount },
+          timestamp: startMs,
+        });
+      }
 
       // The fresh tail is concatenated UNCONDITIONALLY (A1/A3) — never evicted.
       const assembled = [...budgeted, ...freshTail];
