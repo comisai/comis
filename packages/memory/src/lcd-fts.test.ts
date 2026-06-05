@@ -193,6 +193,89 @@ describe("lcd-fts — FTS path degrades a corrupt hit PER ROW, not all-or-nothin
   });
 });
 
+/**
+ * A base-tables-only db (FTS5 reported UNAVAILABLE, so `searchLcdImpl` routes to
+ * the LIKE-scan fallback) whose LIKE SELECTs return CALLER-SUPPLIED rows. The
+ * availability probe (`SELECT rowid FROM lcd_summaries_fts … MATCH …`) throws on
+ * the missing FTS table and is left to pass through; the two LIKE SELECTs (a
+ * `FROM lcd_summaries` scan and a `FROM lcd_messages … JOIN lcd_message_parts`
+ * scan, neither a MATCH) are intercepted so we can inject a corrupt row that the
+ * typed write path could never produce (on-disk drift / a NULL projected column).
+ */
+function likeDbReturning(rowsByScope: {
+  summary?: unknown[];
+  message?: unknown[];
+}): Database.Database {
+  const real = baseTablesOnlyDb(); // no FTS vtables → isFtsAvailable() === false
+
+  return new Proxy(real, {
+    get(target, prop, receiver) {
+      if (prop === "prepare") {
+        return (sql: string): unknown => {
+          const isMatch = /MATCH/i.test(sql);
+          // The FTS availability probe is a MATCH — let it pass through so it
+          // throws on the absent vtable and routes searchLcdImpl to the LIKE path.
+          if (isMatch) return target.prepare(sql);
+          // The summaries LIKE scan: FROM lcd_summaries (+ LIKE), no JOIN.
+          if (/FROM\s+lcd_summaries\b/i.test(sql) && /LIKE/i.test(sql)) {
+            return { all: () => rowsByScope.summary ?? [] };
+          }
+          // The messages LIKE scan: FROM lcd_messages m JOIN lcd_message_parts.
+          if (/FROM\s+lcd_messages\b/i.test(sql) && /JOIN\s+lcd_message_parts/i.test(sql)) {
+            return { all: () => rowsByScope.message ?? [] };
+          }
+          return target.prepare(sql);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as unknown as Database.Database;
+}
+
+describe("lcd-fts — LIKE fallback degrades a corrupt hit PER ROW, not all-or-nothing (WR-02)", () => {
+  it("searchLcdImpl LIKE summaries fallback keeps the valid hit and skips only the corrupt row (no undefined snippet leaks)", () => {
+    // One valid summary hit + one schema-violating row (snippet NULL — a drifted/
+    // corrupt column the typed write path cannot produce). The pre-patch LIKE
+    // fallback cast `raw as { ref_id, snippet }` with NO validation, so the bad
+    // row's `undefined` snippet flowed straight into the LcdSearchHit (and onward
+    // into wrapExternalContent at the tool boundary). The fix routes the LIKE rows
+    // through the same per-row `parseOptionalRow`+skip the MATCH path uses.
+    const db = likeDbReturning({
+      summary: [
+        { ref_id: "s-good", snippet: "the quarterly revenue report" },
+        { ref_id: "s-bad", snippet: null }, // corrupt: snippet must be a string
+      ],
+    });
+
+    const hits = searchLcdImpl(db, "conv-a", "a", "revenue", { limit: 10, scope: "summaries" });
+
+    // The valid hit survives its corrupt sibling.
+    expect(hits.map((h) => h.refId)).toContain("s-good");
+    // The corrupt row is SKIPPED, not surfaced with an undefined snippet.
+    expect(hits.some((h) => h.refId === "s-bad")).toBe(false);
+    // No hit ever carries a non-string snippet (the bug this guards).
+    expect(hits.every((h) => typeof h.snippet === "string")).toBe(true);
+  });
+
+  it("searchLcdImpl LIKE messages fallback skips a corrupt row (undefined ref_id) instead of emitting it", () => {
+    // A corrupt message row whose projected ref_id is missing — the pre-patch
+    // cast would `seen.add(undefined)` and push a hit with `refId: undefined`.
+    const db = likeDbReturning({
+      message: [
+        { ref_id: "m-good", snippet: "ship the falcon release" },
+        { ref_id: null, snippet: "drifted row with no id" }, // corrupt: ref_id must be a string
+      ],
+    });
+
+    const hits = searchLcdImpl(db, "conv-a", "a", "falcon", { limit: 10, scope: "messages" });
+
+    expect(hits.map((h) => h.refId)).toContain("m-good");
+    // Every emitted hit has a real string id + snippet — the corrupt row is gone.
+    expect(hits.every((h) => typeof h.refId === "string" && typeof h.snippet === "string")).toBe(true);
+  });
+});
+
 describe("lcd-fts — scope=both merges fairly across the two FTS tables (WR-03)", () => {
   it("searchLcdImpl both keeps representation from each table instead of dropping a whole table by raw BM25", () => {
     // BM25 ranks are corpus-relative — NOT comparable across two FTS indexes.
