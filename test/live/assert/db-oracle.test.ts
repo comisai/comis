@@ -14,33 +14,41 @@ import Database from "better-sqlite3";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// join is used for temp paths in corrupt-DB and backup tests
 import { runDbOracle } from "./db-oracle.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Write a fresh in-memory DB to a temp file so db-oracle can open it by path. */
-function writeMemoryDbToFile(setupFn: (db: Database.Database) => void): string {
+/**
+ * Write a fresh in-memory DB to a temp file so db-oracle can open it by path.
+ * Returns [dbPath, tempDir] — caller should clean up tempDir after the test.
+ */
+async function writeMemoryDbToFile(
+  setupFn: (db: Database.Database) => void,
+): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "comis-db-oracle-test-"));
   const dbPath = join(dir, "test.db");
 
-  // Create in-memory DB, set it up, then copy to file
+  // Create in-memory DB, set it up, then backup to file (async API)
   const memDb = new Database(":memory:");
   setupFn(memDb);
 
-  // Use SQLite backup API to persist to file
-  memDb.backup(dbPath);
+  // backup() returns a Promise — must await before closing
+  await memDb.backup(dbPath);
   memDb.close();
 
+  // Track the directory for cleanup
+  tempDirs.push(dir);
   return dbPath;
 }
 
-const tempPaths: string[] = [];
+const tempDirs: string[] = [];
 
 afterEach(() => {
-  for (const p of tempPaths.splice(0)) {
-    try { rmSync(p, { recursive: true }); } catch { /* ignore */ }
+  for (const d of tempDirs.splice(0)) {
+    try { rmSync(d, { recursive: true }); } catch { /* ignore */ }
   }
 });
 
@@ -50,7 +58,7 @@ afterEach(() => {
 
 describe("runDbOracle — fresh DB with valid memories row passes", () => {
   it("resolves on :memory:-backed DB with a valid memories row", async () => {
-    const dbPath = writeMemoryDbToFile((db) => {
+    const dbPath = await writeMemoryDbToFile((db) => {
       db.exec(`
         CREATE TABLE memories (
           id TEXT NOT NULL,
@@ -92,7 +100,6 @@ describe("runDbOracle — fresh DB with valid memories row passes", () => {
         "[]", Date.now(), 0,
       );
     });
-    tempPaths.push(join(dbPath, ".."));
 
     await expect(runDbOracle(dbPath)).resolves.toBeUndefined();
   });
@@ -101,7 +108,7 @@ describe("runDbOracle — fresh DB with valid memories row passes", () => {
 describe("runDbOracle — corrupt DB throws on integrity check", () => {
   it("throws when the SQLite file contains invalid bytes", async () => {
     const dir = mkdtempSync(join(tmpdir(), "comis-db-oracle-corrupt-"));
-    tempPaths.push(dir);
+    tempDirs.push(dir);
     const dbPath = join(dir, "corrupt.db");
     writeFileSync(dbPath, Buffer.from("this is not a sqlite database at all!!"));
 
@@ -111,7 +118,7 @@ describe("runDbOracle — corrupt DB throws on integrity check", () => {
 
 describe("runDbOracle — memories row missing required column throws", () => {
   it("throws when memories row fails zod validation (missing required column)", async () => {
-    const dbPath = writeMemoryDbToFile((db) => {
+    const dbPath = await writeMemoryDbToFile((db) => {
       // Create table WITHOUT required `has_embedding` column → zod strictObject rejects
       db.exec(`
         CREATE TABLE memories (
@@ -138,7 +145,6 @@ describe("runDbOracle — memories row missing required column throws", () => {
         "Incomplete row", "medium", "episodic", "user", "[]", Date.now(),
       );
     });
-    tempPaths.push(join(dbPath, ".."));
 
     await expect(runDbOracle(dbPath)).rejects.toThrow();
   });
@@ -146,7 +152,7 @@ describe("runDbOracle — memories row missing required column throws", () => {
 
 describe("runDbOracle — row delta: expected +1 and got +1 passes", () => {
   it("resolves when expectedRowDelta matches actual row count change", async () => {
-    const dbPath = writeMemoryDbToFile((db) => {
+    const dbPath = await writeMemoryDbToFile((db) => {
       db.exec(`
         CREATE TABLE memories (
           id TEXT NOT NULL,
@@ -187,7 +193,6 @@ describe("runDbOracle — row delta: expected +1 and got +1 passes", () => {
         "Delta test", "high", "episodic", "user", "[]", Date.now(), 0,
       );
     });
-    tempPaths.push(join(dbPath, ".."));
 
     await expect(
       runDbOracle(dbPath, {
@@ -200,7 +205,7 @@ describe("runDbOracle — row delta: expected +1 and got +1 passes", () => {
 
 describe("runDbOracle — row delta: expected +1 but got 0 throws", () => {
   it("throws when actualRowDelta does not match expectedRowDelta", async () => {
-    const dbPath = writeMemoryDbToFile((db) => {
+    const dbPath = await writeMemoryDbToFile((db) => {
       db.exec(`
         CREATE TABLE memories (
           id TEXT NOT NULL,
@@ -234,7 +239,6 @@ describe("runDbOracle — row delta: expected +1 but got 0 throws", () => {
       `);
       // Insert 0 rows — so delta from beforeCount=0 is 0, but we'll expect 1
     });
-    tempPaths.push(join(dbPath, ".."));
 
     await expect(
       runDbOracle(dbPath, {

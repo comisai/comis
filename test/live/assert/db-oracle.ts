@@ -1,0 +1,139 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Persistence oracle — afterEach post-condition for every live test.
+ *
+ * Opens the SQLite store READONLY (never writes). Runs:
+ *   1. PRAGMA integrity_check
+ *   2. PRAGMA foreign_key_check
+ *   3. Zod row validation on the `memories` table via parseRows (RowMapper has no singular parse method)
+ *   4. Row-delta diff (snapshot before/after via opts.expectedDeltas + opts.beforeCounts)
+ *
+ * T-134-12 (Tampering): Database opened with { readonly: true } — any write
+ * attempt throws immediately.
+ *
+ * @module
+ */
+
+import Database from "better-sqlite3";
+import { createRowMapper, MemoryRowSchema } from "@comis/memory";
+
+/**
+ * Expected row count delta for a single table.
+ */
+export interface RowDelta {
+  table: string;
+  expectedRowDelta: number;
+}
+
+/**
+ * Options for the persistence oracle.
+ */
+export interface DbOracleOptions {
+  /** Expected row count deltas (snapshot-diff check). */
+  expectedDeltas?: RowDelta[];
+  /** Row counts captured BEFORE the test ran (keyed by table name). */
+  beforeCounts?: Record<string, number>;
+}
+
+/**
+ * Run the persistence oracle against a SQLite database file.
+ *
+ * The database is opened readonly — the oracle NEVER writes to the store.
+ * Throws on the first failing check with a descriptive message.
+ *
+ * @param dbPath - Absolute path to the SQLite database file.
+ * @param opts   - Per-test oracle options.
+ */
+export async function runDbOracle(
+  dbPath: string,
+  opts?: DbOracleOptions,
+): Promise<void> {
+  // Open READONLY — oracle never writes (T-134-12).
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    // ── Check 1: PRAGMA integrity_check ──────────────────────────────────────
+    const ic = db.pragma("integrity_check") as Array<{ integrity_check: string }>;
+    if (ic[0]?.integrity_check !== "ok") {
+      throw new Error(
+        `[db-oracle check 1] PRAGMA integrity_check failed: ${JSON.stringify(ic)}`,
+      );
+    }
+
+    // ── Check 2: PRAGMA foreign_key_check ────────────────────────────────────
+    const fk = db.pragma("foreign_key_check") as unknown[];
+    if (fk.length > 0) {
+      throw new Error(
+        `[db-oracle check 2] PRAGMA foreign_key_check failed: ${fk.length} violation(s): ${JSON.stringify(fk.slice(0, 3))}`,
+      );
+    }
+
+    // ── Check 3: Zod row validation on memories table ────────────────────────
+    // Uses parseRows (RowMapper exposes parseRows + parseOptionalRow; no singular parse method exists).
+    const tables = (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+        .all() as { name: string }[]
+    ).map((r) => r.name);
+
+    if (tables.includes("memories")) {
+      const memoryMapper = createRowMapper(MemoryRowSchema);
+      const rows = db.prepare("SELECT * FROM memories").all();
+      const result = memoryMapper.parseRows(rows);
+      if (!result.ok) {
+        throw new Error(
+          `[db-oracle check 3] Row validation failed in 'memories': ${JSON.stringify(result.error)}`,
+        );
+      }
+    }
+
+    // ── Check 4: Row-delta diff ───────────────────────────────────────────────
+    if (opts?.expectedDeltas && opts.beforeCounts) {
+      for (const delta of opts.expectedDeltas) {
+        if (!tables.includes(delta.table)) continue;
+        const afterCount = (
+          db
+            .prepare(`SELECT count(*) as c FROM ${delta.table}`)
+            .get() as { c: number }
+        ).c;
+        const beforeCount = opts.beforeCounts[delta.table] ?? 0;
+        const actual = afterCount - beforeCount;
+        if (actual !== delta.expectedRowDelta) {
+          throw new Error(
+            `[db-oracle check 4] Row delta mismatch on '${delta.table}': expected ${delta.expectedRowDelta}, got ${actual}`,
+          );
+        }
+      }
+    }
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Snapshot row counts for the given tables before a test runs.
+ *
+ * Call this before the unit-under-test to capture the baseline, then pass
+ * the result as `opts.beforeCounts` to `runDbOracle`.
+ *
+ * Opens the database READONLY — never writes.
+ *
+ * @param dbPath - Absolute path to the SQLite database file.
+ * @param tables - Table names to snapshot.
+ */
+export function snapshotRowCounts(
+  dbPath: string,
+  tables: string[],
+): Record<string, number> {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const counts: Record<string, number> = {};
+    for (const t of tables) {
+      counts[t] = (
+        db.prepare(`SELECT count(*) as c FROM ${t}`).get() as { c: number }
+      ).c;
+    }
+    return counts;
+  } finally {
+    db.close();
+  }
+}

@@ -52,8 +52,8 @@ function makeFakeLog(entries: FakeEntry[]): string {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("runLogOracle — check 2+3: ERROR with hint+errorKind passes", () => {
-  it("resolves when ERROR has both hint and errorKind", async () => {
+describe("runLogOracle — check 2+3: ERROR with hint+errorKind passes when expected", () => {
+  it("resolves when ERROR has both hint and errorKind and is listed in expectedErrors", async () => {
     const log = makeFakeLog([
       {
         level: "error",
@@ -63,7 +63,10 @@ describe("runLogOracle — check 2+3: ERROR with hint+errorKind passes", () => {
         errorKind: "transient",
       },
     ]);
-    await expect(runLogOracle(log)).resolves.toBeUndefined();
+    // Error must be in expectedErrors (check 2 subtraction) AND have hint+errorKind (check 3 passes)
+    await expect(
+      runLogOracle(log, { expectedErrors: ["some error occurred"] }),
+    ).resolves.toBeUndefined();
   });
 });
 
