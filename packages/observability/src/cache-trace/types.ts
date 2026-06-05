@@ -120,6 +120,36 @@ export const CacheTraceEventSchema = z.object({
   messages: z.array(z.unknown()).optional(),
   messageCount: z.number().int().nonnegative().optional(),
   messageRoles: z.array(z.string()).optional(),
+  // O2 (Phase 126): a SMALL assembled-array shape descriptor — per-message
+  // block-kind counts + a `hasToolResult` flag + tool_use/tool_result
+  // id-pairing summary. It lets a test assert tool_use<->tool_result pairing
+  // + array growth WITHOUT shipping the full `messages` array, so it is
+  // present even when includeMessages is OFF. Counts/flags + opaque
+  // toolCallId strings ONLY — never block bodies — so it stays well under the
+  // 32 KB bound and rides sanitizeForPersistence unchanged (it is NOT added
+  // to the exempt set). The permanent provider-boundary regression gate
+  // asserts against this (see provider-boundary-harness.test.ts).
+  //
+  // WR-01 (Phase 126): the `toolUseIds` / `toolResultIds` arrays are a SAMPLE
+  // (capped at MAX_SAMPLED_IDS, below the 64-item array bound) so the limiter
+  // never replaces them with an opaque sentinel on large tool fan-outs. The
+  // authoritative pairing/growth signal lives in the integer count fields
+  // (`toolUseCount` / `toolResultCount` / `pairedToolResultCount`), which
+  // cannot vanish under the bound; `idsTruncated` flags when the arrays are a
+  // partial sample.
+  assembledShape: z
+    .object({
+      totalCount: z.number().int().nonnegative(),
+      blockKindCounts: z.record(z.string(), z.number().int().nonnegative()),
+      hasToolResult: z.boolean(),
+      toolUseIds: z.array(z.string()),
+      toolResultIds: z.array(z.string()),
+      toolUseCount: z.number().int().nonnegative(),
+      toolResultCount: z.number().int().nonnegative(),
+      pairedToolResultCount: z.number().int().nonnegative(),
+      idsTruncated: z.boolean(),
+    })
+    .optional(),
   messageFingerprints: z.array(z.string()).optional(),
   messagesDigest: z.string().optional(),
   system: z.unknown().optional(),

@@ -61,8 +61,13 @@ Instead of listing individual tools in your allow and deny lists, you can use gr
 | `group:sessions` | `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `session_status`, `session_search`, `subagents`, `pipeline` | All session and agent tools |
 | `group:platform_actions` | `discord_action`, `telegram_action`, `slack_action`, `whatsapp_action` | All platform moderation tools |
 | `group:supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` | All supervisor tools |
-| `group:context` | `ctx_search`, `ctx_inspect`, `ctx_recall` | Context DAG search and recall tools |
-| `group:context_expand` | `ctx_expand`, `ctx_inspect` | Context DAG expansion tools (sub-agent only) |
+
+<Note>
+The DAG (LCD) context engine's `ctx_*` recall tools (`ctx_search`, `ctx_inspect`,
+`ctx_expand`) are active in the default DAG mode (`contextEngine.version` defaults
+to `"dag"`) and are `never-export`. In the opt-in pipeline mode, use
+`session_search` (part of `group:sessions`) instead.
+</Note>
 
 You can mix individual tool names and group names in the same allow or deny list.
 

@@ -21,6 +21,13 @@ const mockSqliteMemoryAdapter = vi.hoisted(() => {
   });
 });
 const mockCreateSessionStore = vi.hoisted(() => vi.fn(() => ({ loadByFormattedKey: vi.fn(), save: vi.fn() })));
+// LCD lossless store factory (ContextStorePort) — mocked so setup wires it
+// without a real DB. setupMemory constructs it on the shared db handle beside
+// createSessionStore (Phase 127); without the mock entry the @comis/memory
+// factory is undefined and EVERY setup call throws `createLcdStore is not a
+// function` (the MEMORY.md "setup-memory mock" gate). The two port methods are
+// stubbed (the append write + the conversation-scoped getMessages read).
+const mockCreateLcdStore = vi.hoisted(() => vi.fn(() => ({ append: vi.fn(), getMessages: vi.fn(() => []) })));
 const mockCreateMemoryApi = vi.hoisted(() => vi.fn(() => ({ search: vi.fn(), store: vi.fn() })));
 const mockCreateEmbeddingProvider = vi.hoisted(() => vi.fn(async () => ({
   ok: true,
@@ -169,6 +176,7 @@ const mockCreateSqliteMemoryLifecycleStore = vi.hoisted(() => vi.fn(() => ({
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
   createSessionStore: mockCreateSessionStore,
+  createLcdStore: mockCreateLcdStore,
   createMemoryApi: mockCreateMemoryApi,
   createEmbeddingProvider: mockCreateEmbeddingProvider,
   createCachedEmbeddingPort: mockCreateCachedEmbeddingPort,
@@ -208,9 +216,14 @@ const mockCreateCircuitBreaker = vi.hoisted(() => vi.fn(() => ({
   getState: vi.fn(() => "closed"),
   reset: vi.fn(),
 })));
-vi.mock("@comis/agent", () => ({
-  createCircuitBreaker: mockCreateCircuitBreaker,
-}));
+// Partial mock: override only createCircuitBreaker (the embedding breaker stub);
+// keep the REAL createSummarizerSpendBreaker + estimateMessageTokens (both pure,
+// deterministic, no I/O) so the R1 (132-05) daemon-owned breaker construction is
+// exercised end-to-end against the actual unit, not a stand-in.
+vi.mock("@comis/agent", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, createCircuitBreaker: mockCreateCircuitBreaker };
+});
 
 vi.mock("@comis/shared", async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;

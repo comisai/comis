@@ -10,13 +10,15 @@
  */
 
 import type { AppContainer, EmbeddingPort } from "@comis/core";
-import { safePath } from "@comis/core";
+import { safePath, ContextEngineConfigSchema } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { createCircuitBreaker } from "@comis/agent";
+import { createCircuitBreaker, createSummarizerSpendBreaker, estimateMessageTokens } from "@comis/agent";
+import type { SummarizerSpendBreaker } from "@comis/agent";
 import { err, type Result } from "@comis/shared";
 import {
   SqliteMemoryAdapter,
   createSessionStore,
+  createLcdStore,
   createMemoryApi,
   createEmbeddingProvider,
   createCachedEmbeddingPort,
@@ -61,6 +63,8 @@ export interface MemoryResult {
   db: ReturnType<SqliteMemoryAdapter["getDb"]>;
   /** Session persistence store. */
   sessionStore: ReturnType<typeof createSessionStore>;
+  /** LCD lossless context store (Phase 127); the live append-on-turn write-path is wired in Phase 128. */
+  lcdStore: ReturnType<typeof createLcdStore>;
   /** High-level memory query/store API. */
   memoryApi: MemoryApi;
   /** Background embedding queue for new entries (optional). */
@@ -71,6 +75,11 @@ export interface MemoryResult {
   embeddingCacheStats?: () => import("@comis/memory").EmbeddingCacheStats;
   /** Embedding circuit breaker state accessor for memory persistence operations. */
   embeddingCircuitBreakerState?: () => import("@comis/agent").CircuitState;
+  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker. ONE
+   *  instance (mirrors the embedding breaker) injected through setupAgents ->
+   *  createPiExecutor -> setupContextEngine so the leaf seam is gated per tenant
+   *  and bounds AGGREGATE summarizer spend across a tenant's sessions/agents. */
+  summarizerSpendBreaker: SummarizerSpendBreaker;
   /** Cross-encoder reranker port. Defined only when at least one agent has
    *  `rag.rerank.enabled === true` AND the model loaded — otherwise undefined and recall
    *  degrades to fusion order. The all-default (rerank-off) config NEVER builds
@@ -332,6 +341,44 @@ export async function setupMemory(deps: {
       memoryLogger.warn({ err: providerResult.error.message, hint: "Set OPENAI_API_KEY or configure an embedding provider in integrations.media", errorKind: "config" as const }, "No embedding provider available, using FTS5 only");
     }
   }
+
+  // 6.5.1a-R1 (132-05). The per-tenant summarizer spend+breaker — ONE daemon-owned
+  // instance (mirrors the embedding breaker above, reusing the same injected
+  // `clock`), constructed UNCONDITIONALLY (it is cheap + I/O-free, and the
+  // summarizer seam exists in `dag` mode regardless of embeddings). Threaded
+  // through setupAgents -> createPiExecutor -> setupContextEngine so
+  // `getSummarizerDeps` wraps the leaf seam with `gate(tenantId, inner)`; ONE
+  // instance partitions internally by tenantId so it bounds AGGREGATE per-tenant
+  // summarizer spend across all of a tenant's sessions/agents (Pitfall 1). The
+  // breaker/spend KNOBS are the daemon-level ContextEngine defaults
+  // (failureThreshold 5; 500k tok/h, 5M tok/day) — a per-tenant aggregate cannot
+  // coherently read a single agent's per-agent override since a tenant's sessions
+  // span many agents, so the schema default is the daemon-global source. Token
+  // estimates reuse the agent `estimateMessageTokens` heuristic (RESEARCH
+  // "Don't Hand-Roll the estimator").
+  const ceDefaults = ContextEngineConfigSchema.parse({});
+  const summarizerSpendBreaker = createSummarizerSpendBreaker({
+    breakerConfig: ceDefaults.summarizerBreaker,
+    spendConfig: ceDefaults.summarizerSpend,
+    clock,
+    // Input estimate: sum the chunk messages via the shared estimator.
+    estimateInputTokens: (messages) =>
+      messages.reduce(
+        (acc, m) => acc + estimateMessageTokens(m as unknown as Parameters<typeof estimateMessageTokens>[0]),
+        0,
+      ),
+    // Output estimate: the produced summary as a user-role string.
+    estimateOutputTokens: (out) =>
+      estimateMessageTokens({ role: "user", content: out } as unknown as Parameters<typeof estimateMessageTokens>[0]),
+  });
+  memoryLogger.debug(
+    {
+      failureThreshold: ceDefaults.summarizerBreaker.failureThreshold,
+      maxTokensPerTenantPerHour: ceDefaults.summarizerSpend.maxTokensPerTenantPerHour,
+      maxTokensPerTenantPerDay: ceDefaults.summarizerSpend.maxTokensPerTenantPerDay,
+    },
+    "Per-tenant summarizer spend+breaker active",
+  );
 
   // 6.5.1b. Build the cross-encoder reranker — ONLY when at least one agent enables
   // rerank. Building it downloads a ~606MB GGUF on first run, so the all-default
@@ -692,6 +739,8 @@ export async function setupMemory(deps: {
   }
 
   const sessionStore = createSessionStore(db);
+  // LCD lossless store (Phase 127); live append-on-turn wiring lands in Phase 128.
+  const lcdStore = createLcdStore(db);
   const memoryApi: MemoryApi = createMemoryApi(db, memoryAdapter, sessionStore, memoryConfig);
   memoryLogger.debug(
     { dbPath: memoryConfig.dbPath, embedding: !!cachedPort },
@@ -722,11 +771,13 @@ export async function setupMemory(deps: {
     memoryAdapter,
     db,
     sessionStore,
+    lcdStore,
     memoryApi,
     embeddingQueue,
     backgroundIndexingPromise,
     embeddingCacheStats,
     embeddingCircuitBreakerState: embeddingCbRef ? () => embeddingCbRef!.getState() : undefined,
+    summarizerSpendBreaker,
     rerankerPort,
     rerankerModelPresent: modelPresent,
     disposeReranker,

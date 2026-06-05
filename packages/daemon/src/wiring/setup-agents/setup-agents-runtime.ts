@@ -55,10 +55,6 @@ import {
 } from "@comis/skills";
 import { resolveAgentModel, deriveCanaryFallback, resolveEffectiveRerank } from "./setup-agents-tooling.js";
 import { createAcpWiring } from "./setup-acp-wiring.js";
-import {
-  detectAndRecordModeSwitch,
-  makeConsumePendingModeSwitch,
-} from "./setup-agents-mode-switch.js";
 import { wireAuthProvider } from "./setup-agents-oauth.js";
 import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
 // Re-export types so consumers of the runtime leaf preserve the historic
@@ -106,19 +102,6 @@ export async function setupSingleAgent(
     rag: { ...agentConfig.rag, rerank: { ...agentConfig.rag.rerank, enabled: resolveEffectiveRerank(rawRerank, deps.rerankerModelPresent ?? false) } },
   };
 
-  // Detect a context-engine MODE SWITCH at the rebuild seam.
-  // container.config.agents[agentId] still holds the PRIOR config here (on a
-  // config-reload re-invocation); it is undefined on the very first build. We
-  // must read the prior version BEFORE the overwrite below (which destroys the
-  // prior config). The detection + INFO boundary log live in
-  // detectAndRecordModeSwitch (setup-agents-mode-switch.ts).
-  detectAndRecordModeSwitch(
-    agentId,
-    container.config.agents[agentId]?.contextEngine?.version,
-    effectiveConfig.contextEngine?.version,
-    deps.pendingModeSwitches,
-    agentLogger,
-  );
 
   // Write resolved values back to container.config.agents so all downstream
   // consumers (getConfig RPC, agents.get, session.status, REST /api/agents)
@@ -461,6 +444,8 @@ export async function setupSingleAgent(
     memoryPort: memoryAdapter,
     reranker: deps.rerankerPort,  // Cross-encoder reranker (built in setup-memory only when an agent enables rerank).
     entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, tripleStore: deps.tripleStore, embeddingStore: deps.embeddingStore, usefulnessStore: deps.usefulnessStore, pinnedStore: deps.pinnedStore, userRepresentationStore: deps.userRepresentationStore, relationshipStore: deps.relationshipStore, tunedAlphaStore: deps.tunedAlphaStore,  // rag.entityLane + rag.lanes.temporal + rag.lanes.causal + rag.lanes.graphSpread + rag.mmr + rag.feedback + rag.pinned (R6 — the pinned-first lane; pinnedStore is the same memoryAdapter cast as MemoryPinnedStore) + memoryUserRepresentation + socialModeling + rag.onlineTuning (the buildScoringAlphas tuned-vector read) standing-block -> createMemoryRecall/prompt-assembly read (default-OFF; JSDoc on AgentSetupDeps).
+    contextStore: deps.lcdStore,  // Phase 128 LCD store (ContextStorePort) -> PiExecutorDeps.contextStore -> setupContextEngine -> the `dag` branch (context-engine.ts). The daemon-injected CONCRETE createLcdStore; the agent sees only the core port TYPE (agent↛memory cut). Opt-in (version: "dag"); default stays pipeline. Absent ⇒ pipeline fallback.
+    summarizerSpendBreaker: deps.summarizerSpendBreaker,  // R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker -> PiExecutorDeps.summarizerSpendBreaker -> setupContextEngine (getSummarizerDeps wraps the leaf seam with gate(tenantId, inner) → truncation-only degrade on open-breaker/over-cap). ONE daemon instance, partitions by tenantId.
     secretManager: scopedManager,
     envelopeConfig: container.config.envelope,
     senderTrustDisplayConfig: container.config.senderTrustDisplay,
@@ -483,16 +468,6 @@ export async function setupSingleAgent(
     embeddingEnqueue: deps.embeddingQueue?.enqueue.bind(deps.embeddingQueue),
     embeddingPort: deps.embeddingPort,  // Semantic search in discover_tools
     toolCapabilityPort,  // Live adapter constructed above from container.config.tooling + skillRegistry + mcpClientManager.
-    // DAG context engine deps (optional -- only when context engine version is dag)
-    contextStore: deps.contextStore,
-    db: deps.db,
-    // One-shot delete-on-read consumer of a pending engine-mode switch.
-    // Threaded through PiExecutorDeps -> setupContextEngine -> DagContextEngineDeps
-    // so the DAG reconcile seam can emit context:mode_switched once (with the
-    // real import cost) and then clear the pending flag. Returns undefined when
-    // there is no pending switch (e.g. a brand-new DAG-default conversation),
-    // so no false event fires.
-    consumePendingModeSwitch: makeConsumePendingModeSwitch(deps.pendingModeSwitches),
     tenantId: container.config.tenantId,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,

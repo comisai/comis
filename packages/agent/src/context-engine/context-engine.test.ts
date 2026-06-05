@@ -134,6 +134,44 @@ describe("createContextEngine", () => {
     }
   });
 
+  it("c2) version 'dag' (the default) without a contextStore warns with errorKind config and runs the pipeline (the storeless safety net)", async () => {
+    // The storeless safety net that makes dag the default non-breaking: with
+    // version: "dag" (now the default since Phase 133) selected but NO
+    // ContextStorePort/conversationId wired, the factory must NOT instantiate
+    // the LCD engine. It WARN-logs (errorKind: "config") and falls through to
+    // the pipeline assembly. The deps here deliberately omit any
+    // contextStore/conversationId -- the pipeline does not need them, so a
+    // storeless context (a non-daemon unit caller) defaulting to "dag" boots
+    // cleanly on pipeline rather than crashing. This is a PERMANENT regression
+    // gate: the daemon always wires the store, so production never hits this
+    // fall-through, but a storeless caller must stay behaviorally identical.
+    const { deps, logger } = createMockDeps({ reasoning: true });
+    const dagConfig: ContextEngineConfig = { ...enabledConfig, version: "dag" };
+
+    const engine = createContextEngine(dagConfig, deps);
+
+    // The WARN fires at construction time, carrying the canonical config kind.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "config" }),
+      expect.any(String),
+    );
+
+    // Pipeline behavior: transformContext runs without a contextStore and does
+    // not throw -- below the masking threshold it returns the array unchanged.
+    const messages: AgentMessage[] = [
+      makeAssistantMsg([makeTextBlock("hello")]),
+    ];
+    const result = await engine.transformContext(messages);
+    expect(result).toBe(messages);
+
+    // Startup INFO ("Context engine active") proves the pipeline assembly ran,
+    // i.e. we did NOT short-circuit into a DAG engine.
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ layerCount: expect.any(Number) }),
+      "Context engine active",
+    );
+  });
+
   it("d) layer error isolation -- catches error, logs WARN, returns unmodified", async () => {
     const { deps, logger } = createMockDeps({ reasoning: true });
 

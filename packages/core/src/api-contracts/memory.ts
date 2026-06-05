@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Memory + context-domain RPC contracts. Mirrors the two daemon handler
- * factory files that share the `MemoryApiDeps` cluster slice:
+ * Memory-domain RPC contracts. Mirrors the daemon handler factory file that
+ * owns the `MemoryApiDeps` cluster slice:
  *
  *   - `packages/daemon/src/api/memory-handlers.ts`  (8 methods)
- *   - `packages/daemon/src/api/context-handlers.ts` (7 methods)
  *
- * Both handler files map to the SAME ApiDeps slice (`MemoryApiDeps`) and
- * so share one contract file (one contract file per logical domain
- * mirroring the `*ApiDeps` slices). The aggregator below preserves
- * per-handler grouping via `// --- xxx-handlers.ts ---` comment blocks;
- * the order within the array is documentation-only (the bidirectional
- * 1:1 test treats it as an unordered set).
+ * NOTE (v2.12, Phase 126): the sibling `context-handlers.ts` (7 `context.*`
+ * methods) and its 7 `Context*Contract` definitions were REMOVED with the DAG
+ * context engine. The governed context-expansion RPC surface is reintroduced
+ * fresh by the LCD engine (Phase 131).
+ *
+ * The aggregator below preserves per-handler grouping via
+ * `// --- xxx-handlers.ts ---` comment blocks; the order within the array is
+ * documentation-only (the bidirectional 1:1 test treats it as an unordered
+ * set).
  *
  * **Scope assignments** (mirror `setup-gateway-api.ts` registrations):
  *
@@ -37,15 +39,6 @@
  *   - `memory.flush`        (admin) — setup-gateway-api.ts line 235.
  *   - `memory.export`       (admin) — setup-gateway-api.ts line 235.
  *
- *   context-handlers.ts:
- *   - `context.search`               (rpc)   — setup-gateway-api.ts:164.
- *   - `context.inspect`              (rpc)   — setup-gateway-api.ts:164.
- *   - `context.recall`               (rpc)   — setup-gateway-api.ts:164.
- *   - `context.expand`               (rpc)   — setup-gateway-api.ts:164.
- *   - `context.conversations`        (admin) — setup-gateway-api.ts:169.
- *   - `context.tree`                 (admin) — setup-gateway-api.ts:169.
- *   - `context.searchByConversation` (admin) — setup-gateway-api.ts:169.
- *
  * **Loose-record use.** Multiple response shapes carry deeply nested
  * fields with `Record<string, unknown>` or `JSON.parse(...)`-typed
  * payloads where modelling them tighter would pin the underlying wire
@@ -59,30 +52,14 @@
  *     the full row carries unknown fields per memory adapter.
  *   - `memory.export.response.entries[]` — similar nested-record shape;
  *     `source` is `Record<string, unknown>` at the leaf.
- *   - `context.inspect.response` — discriminated by ID prefix (`sum_` vs
- *     `file_`); the two variants carry different field sets. Modelled as
- *     a loose record at the top level + tight inner typing for the known
- *     fields.
- *   - `context.recall.response` — `{ answer, citations[], grantId?,
- *     tokensConsumed? }` is mostly primitive; `answer` is the
- *     unconstrained sub-agent output (loose-modelled internal).
- *   - `context.tree.response.nodes[]` — has nested `childIds[]` and
- *     `parentIds[]` per node.
- *   - `context.searchByConversation.response.results[]` — discriminated
- *     by `type: "message" | "summary"`; the two variants carry the same
- *     wire shape per handler.
  *
- * **Gateway-adapter shim caveat.** The CLI's `packages/cli/src/commands/memory.ts`
- * contains raw `client.call(...)` sites for `memory.search`,
- * `memory.inspect`, and `config.set`. These are NOT memory-handlers.ts or
- * context-handlers.ts methods — they are gateway-adapter shims registered
- * in `packages/gateway/src/rpc/rpc-adapters.ts:171-249` that bypass the
- * daemon handler-factory layer. Those methods have no contract in this
- * file (and no daemon-handler-factory entry to map against, per the
- * bidirectional 1:1 architecture test scope). The CLI retarget here is
- * scoped to `client.call("memory.search_files"|"memory.get_file"|
- * "memory.store"|"memory.stats"|"memory.browse"|"memory.delete"|
- * "memory.flush"|"memory.export"|"context.*", ...)` sites only.
+ * **CLI memory search/inspect (v2.12).** The CLI's
+ * `packages/cli/src/commands/memory.ts` previously borrowed the (now-removed)
+ * `context.search` / `context.inspect` RPCs for its `memory search` /
+ * `memory inspect` subcommands. With the DAG context engine demolished those
+ * commands fail closed (explicit not-available message + non-zero exit) — there
+ * is no `memory.search` / `memory.inspect` handler. Full-text context search +
+ * entry inspection return with the LCD engine (Phase 131).
  *
  * @module
  */
@@ -431,291 +408,15 @@ export const MemoryExportContract = defineContract({
 });
 
 // ===========================================================================
-// --- context-handlers.ts ---
+// --- context-handlers.ts (REMOVED in v2.12) ---
+//
+// The 7 `Context*Contract` definitions (context.search / .inspect / .recall /
+// .expand / .conversations / .tree / .searchByConversation) were removed in
+// v2.12 (Phase 126) along with the DAG context engine + its daemon handlers
+// (Plan 03) + the CLI memory search/inspect rewire (fail-closed, this plan).
+// The governed context-expansion RPC surface is reintroduced fresh by the LCD
+// engine (Phase 131).
 // ===========================================================================
-
-// ---------------------------------------------------------------------------
-// context.search
-// ---------------------------------------------------------------------------
-
-/**
- * `context.search` — FTS5 / regex search across messages and summaries
- * within the caller's active DAG conversation. Resolved from the
- * dispatcher-injected `_callerSessionKey`.
- *
- * Bespoke pre-Zod validation:
- *   - No active DAG conversation → `"No active DAG conversation for
- *     this session"`.
- *   - `query` missing → `"Missing required parameter: query"`.
- *
- * Request fields: `query` (required), `mode` (default `"fts"`), `scope`
- * (default `"both"`), `limit` (max 100).
- *
- * Response: `{ results: SearchResultRow[], total }`. Each row carries
- * `id` (stringified message-id or summaryId), `content` (truncated to
- * 500 chars), `type: "message" | "summary"`, and optional `rank` (FTS5
- * rank — lower is better; absent for regex mode).
- */
-export const ContextSearchContract = defineContract({
-  method: "context.search",
-  request: z.object({
-    query: z.string().min(1),
-    mode: z.enum(["fts", "regex"]).optional(),
-    scope: z.enum(["both", "messages", "summaries"]).optional(),
-    limit: z.number().optional(),
-  }),
-  response: z.object({
-    results: z.array(
-      z.object({
-        id: z.string(),
-        content: z.string(),
-        type: z.enum(["message", "summary"]),
-        rank: z.number().optional(),
-      }),
-    ),
-    total: z.number(),
-  }),
-  scopes: ["rpc"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// context.inspect
-// ---------------------------------------------------------------------------
-
-/**
- * `context.inspect` — fetch full content of a summary or file by ID. The
- * ID prefix discriminates the variant: `sum_*` returns a summary row +
- * lineage; `file_*` returns large-file metadata + on-disk content
- * (capped at 100,000 chars).
- *
- * Bespoke pre-Zod validation:
- *   - `id` missing → `"Missing required parameter: id"`.
- *   - Summary not found → `"Summary not found: <id>"`.
- *   - File not found → `"File not found: <id>"`.
- *   - Unknown prefix → `"Unknown ID prefix. Expected 'sum_' or 'file_'..."`.
- *
- * Response: LOOSE RECORD. The two variants carry overlapping but
- * distinct field sets:
- *   - summary: `{ type: "summary", summaryId, content, depth, kind,
- *     tokenCount, earliestAt?, latestAt?, descendantCount, parentIds[],
- *     childIds[], sourceMessageCount }`.
- *   - file:    `{ type: "file", fileId, fileName?, mimeType?, byteSize?,
- *     explorationSummary?, content (capped at 100k) }`.
- *
- * Modelling the discriminated union tightly would require pinning the
- * `kind` enum (varies per compaction strategy) and the per-field
- * nullability (depends on memory-adapter implementation). The loose
- * record preserves the variant discrimination via `type` + lets the
- * underlying types stay authoritative.
- */
-export const ContextInspectContract = defineContract({
-  method: "context.inspect",
-  request: z.object({
-    id: z.string().min(1),
-  }),
-  response: z.record(z.string(), z.unknown()),
-  scopes: ["rpc"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// context.recall
-// ---------------------------------------------------------------------------
-
-/**
- * `context.recall` — deep recall via bounded sub-agent spawning. Creates
- * an expansion grant (configurable token cap + expiry), spawns a sub-
- * agent with `context_expand` tool group, and returns the sub-agent's
- * answer + citation summaryIds.
- *
- * Bespoke pre-Zod validation:
- *   - No active DAG conversation → `"No active DAG conversation for
- *     this session"`.
- *   - Daily quota exceeded → `"Daily recall quota exceeded
- *     (<N>/day)..."`.
- *   - `prompt` missing → `"Missing required parameter: prompt"`.
- *
- * Request: `{ prompt, query?, summary_ids?, max_tokens? }`. Either
- * `query` (auto-search for candidates) OR `summary_ids` (explicit
- * candidate set) drives the sub-agent's working set.
- *
- * Response: `{ answer, citations: string[], grantId?, tokensConsumed? }`.
- * `grantId` + `tokensConsumed` are absent when zero candidates were
- * found.
- */
-export const ContextRecallContract = defineContract({
-  method: "context.recall",
-  request: z.object({
-    prompt: z.string().min(1),
-    query: z.string().optional(),
-    summary_ids: z.array(z.string()).optional(),
-    max_tokens: z.number().optional(),
-  }),
-  response: z.object({
-    answer: z.string(),
-    citations: z.array(z.string()),
-    grantId: z.string().optional(),
-    tokensConsumed: z.number().optional(),
-  }),
-  scopes: ["rpc"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// context.expand
-// ---------------------------------------------------------------------------
-
-/**
- * `context.expand` — walk deeper into the DAG with a grant. Used by the
- * sub-agent spawned from `context.recall` to traverse summaries down to
- * source messages, bounded by the grant's token cap + conversation
- * allowlist + expiry.
- *
- * Bespoke pre-Zod validation:
- *   - `grant_id` missing → `"Missing required parameter: grant_id"`.
- *   - `summary_id` missing → `"Missing required parameter: summary_id"`.
- *   - Grant not found / revoked / expired → corresponding error message.
- *   - Token cap reached → `"Token cap reached (<consumed>/<cap>)..."`.
- *   - Summary not found → `"Summary not found: <id>"`.
- *   - Summary outside grant's conversation allowlist → `"Summary does
- *     not belong to an authorized conversation"`.
- *
- * Response: `{ summaryId, depth, kind, children[], tokensExpanded,
- * tokenBudgetRemaining }`. Each child is either a summary (when
- * expanding a condensed summary) or a source message (when expanding a
- * leaf summary).
- */
-export const ContextExpandContract = defineContract({
-  method: "context.expand",
-  request: z.object({
-    grant_id: z.string().min(1),
-    summary_id: z.string().min(1),
-  }),
-  response: z.object({
-    summaryId: z.string(),
-    depth: z.number(),
-    kind: z.string(),
-    children: z.array(
-      z.object({
-        type: z.enum(["summary", "message"]),
-        id: z.union([z.string(), z.number()]),
-        content: z.string(),
-        tokenCount: z.number(),
-      }),
-    ),
-    tokensExpanded: z.number(),
-    tokenBudgetRemaining: z.number(),
-  }),
-  scopes: ["rpc"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// context.conversations
-// ---------------------------------------------------------------------------
-
-/**
- * `context.conversations` — list ALL DAG conversations for the tenant
- * (operator view). Admin-only.
- *
- * Bespoke pre-Zod validation:
- *   - `_trustLevel !== "admin"` → `"Admin access required"`.
- *
- * Response: `{ conversations[], total }`. Each conversation row is the
- * raw `CtxConversationRow` from the context store (loose-record —
- * modelling the row shape tightly would pin the persistence schema).
- */
-export const ContextConversationsContract = defineContract({
-  method: "context.conversations",
-  request: z.object({
-    limit: z.number().optional(),
-    offset: z.number().optional(),
-  }),
-  response: z.object({
-    conversations: z.array(z.record(z.string(), z.unknown())),
-    total: z.number(),
-  }),
-  scopes: ["admin"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// context.tree
-// ---------------------------------------------------------------------------
-
-/**
- * `context.tree` — summary-tree for a given DAG conversation (operator
- * view). Admin-only.
- *
- * Bespoke pre-Zod validation:
- *   - `_trustLevel !== "admin"` → `"Admin access required"`.
- *   - `conversation_id` missing → `"Missing required parameter:
- *     conversation_id"`.
- *   - Conversation not found → `"Conversation not found"`.
- *
- * Response: `{ conversationId, nodes[], messageCount }`. Each node
- * carries `summaryId, kind, depth, tokenCount, contentPreview` (first
- * 200 chars), `childIds[]`, `parentIds[]`, `createdAt`. `kind` is a
- * loose-string (compaction strategies evolve over time).
- */
-export const ContextTreeContract = defineContract({
-  method: "context.tree",
-  request: z.object({
-    conversation_id: z.string().min(1),
-  }),
-  response: z.object({
-    conversationId: z.string(),
-    nodes: z.array(
-      z.object({
-        summaryId: z.string(),
-        kind: z.string(),
-        depth: z.number(),
-        tokenCount: z.number(),
-        contentPreview: z.string(),
-        childIds: z.array(z.string()),
-        parentIds: z.array(z.string()),
-        createdAt: z.string(),
-      }),
-    ),
-    messageCount: z.number(),
-  }),
-  scopes: ["admin"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// context.searchByConversation
-// ---------------------------------------------------------------------------
-
-/**
- * `context.searchByConversation` — FTS5 search within a SPECIFIC DAG
- * conversation (operator view; bypasses the caller's active session).
- * Admin-only.
- *
- * Bespoke pre-Zod validation:
- *   - `_trustLevel !== "admin"` → `"Admin access required"`.
- *   - `conversation_id` missing → `"Missing required parameter:
- *     conversation_id"`.
- *   - `query` missing → `"Missing required parameter: query"`.
- *
- * Response: `{ results[] }`. Each row carries `id`, `type: "message" |
- * "summary"`, `content` (FULL content — no truncation, unlike
- * `context.search`), and optional FTS5 `rank`.
- */
-export const ContextSearchByConversationContract = defineContract({
-  method: "context.searchByConversation",
-  request: z.object({
-    conversation_id: z.string().min(1),
-    query: z.string().min(1),
-    limit: z.number().optional(),
-  }),
-  response: z.object({
-    results: z.array(
-      z.object({
-        id: z.string(),
-        type: z.enum(["message", "summary"]),
-        content: z.string(),
-        rank: z.number().optional(),
-      }),
-    ),
-  }),
-  scopes: ["admin"] as const,
-});
 
 // ===========================================================================
 // --- memory-handlers.ts (diagnostic surface) ---
@@ -786,12 +487,6 @@ export const MEMORY_CONTRACTS = [
   ...MEMORY_PINNING_CONTRACTS,
   // --- memory-handlers.ts (diagnostic surface) ---
   ...MEMORY_DIAGNOSTIC_CONTRACTS,
-  // --- context-handlers.ts ---
-  ContextSearchContract,
-  ContextInspectContract,
-  ContextRecallContract,
-  ContextExpandContract,
-  ContextConversationsContract,
-  ContextTreeContract,
-  ContextSearchByConversationContract,
+  // NOTE: the 7 context.* contracts (context-handlers.ts) were removed in v2.12
+  // (Phase 126) with the DAG context engine; reintroduced fresh by LCD (Phase 131).
 ] as const;

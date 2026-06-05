@@ -60,22 +60,25 @@ export type {
   ConsolidationCandidate,
   ConsolidationPlan,
   ConsolidationFoldPlan,
-  ContextStorePort,
-  ContextEngineStore,
-  ContextAdminStore,
-  CtxConversationRow,
-  CtxMessageRow,
-  CtxMessagePartRow,
-  CtxSummaryRow,
-  CtxSummaryMessageRow,
-  CtxSummaryParentRow,
-  CtxContextItemRow,
-  CtxLargeFileRow,
-  CtxExpansionGrantRow,
   SessionStorePort,
   SessionData,
   SessionListEntry,
   SessionDetailedEntry,
+  ContextStorePort,
+  LcdMessage,
+  LcdMessagePart,
+  LcdPartMetadata,
+  LcdPartKind,
+  LcdRole,
+  ContextStoreScope,
+  AppendMessageInput,
+  LcdSummary,
+  LcdSummaryKind,
+  LcdContextItem,
+  LcdRefKind,
+  LcdSearchHit,
+  AppendSummaryInput,
+  AppendCondensedSummaryInput,
   FileLockPort,
   LockOptions,
   LockError,
@@ -154,3 +157,9 @@ export type {
   EgressControlPort,
   EgressMaterialization,
 } from "../ports/index.js";
+
+// LCD parts <-> pi-ai Message codec (v2.12, Phase 127). Runtime VALUES (not
+// types) — the pure round-trip functions the memory adapter (Plan 04) and
+// Phase 128 ingest consume. The port + DTO TYPES are in the export-type block
+// above; these two functions are the value seam.
+export { messageToParts, partsToMessage } from "../context-store/index.js";

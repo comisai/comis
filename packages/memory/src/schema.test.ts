@@ -9,6 +9,7 @@ import {
   ensureUsefulnessTable,
   ensureTripleTable,
 } from "./schema.js";
+import { ensureLcdTables } from "./schema-lcd.js";
 import { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
 
 describe("initSchema", () => {
@@ -220,6 +221,460 @@ describe("initSchema", () => {
       .all() as Array<{ name: string }>;
 
     expect(tables).toHaveLength(2);
+  });
+
+  // ── LCD lossless store: lcd_messages + lcd_message_parts (Phase 127, F1) ──
+  // The schema must persist every structured block with its tool columns + the
+  // verbatim block JSON, and carry the tenant/agent/session isolation columns
+  // NOW (Phase 132 R4 enforces on the same schema, no migration — threat
+  // T-127-06). DDL is forward-only (no down-migration; design §9) and idempotent.
+
+  it("initSchema creates the lcd_messages and lcd_message_parts tables", () => {
+    initSchema(db, 1536);
+
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lcd_%' ORDER BY name")
+      .all() as Array<{ name: string }>;
+
+    const names = tables.map((t) => t.name);
+    expect(names).toContain("lcd_messages");
+    expect(names).toContain("lcd_message_parts");
+  });
+
+  it("lcd_messages carries the tenant/agent/session isolation columns + seq/role/token_count/created_at", () => {
+    initSchema(db, 1536);
+
+    const columns = db.prepare("PRAGMA table_info(lcd_messages)").all() as Array<{ name: string }>;
+    const colNames = columns.map((c) => c.name);
+
+    expect(colNames).toContain("id");
+    // R4 scoping columns (threat T-127-06): present from day 1.
+    expect(colNames).toContain("conversation_id");
+    expect(colNames).toContain("tenant_id");
+    expect(colNames).toContain("agent_id");
+    expect(colNames).toContain("session_key");
+    expect(colNames).toContain("seq");
+    expect(colNames).toContain("role");
+    expect(colNames).toContain("token_count");
+    expect(colNames).toContain("created_at");
+  });
+
+  it("lcd_message_parts carries the F1 block columns (kind + tool fields + metadata)", () => {
+    initSchema(db, 1536);
+
+    const columns = db
+      .prepare("PRAGMA table_info(lcd_message_parts)")
+      .all() as Array<{ name: string }>;
+    const colNames = columns.map((c) => c.name);
+
+    expect(colNames).toContain("id");
+    expect(colNames).toContain("message_id");
+    expect(colNames).toContain("ordinal");
+    expect(colNames).toContain("kind");
+    expect(colNames).toContain("tool_call_id");
+    expect(colNames).toContain("tool_name");
+    expect(colNames).toContain("tool_input");
+    expect(colNames).toContain("tool_output");
+    expect(colNames).toContain("is_error");
+    // The verbatim-block JSON column (carries metadata.raw + messageEnvelope, F1/F2).
+    expect(colNames).toContain("metadata");
+  });
+
+  it("lcd_messages has the per-(conversation, agent, tenant) UNIQUE seq index (R4 132-03)", () => {
+    initSchema(db, 1536);
+
+    const indexes = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='lcd_messages'")
+      .all() as Array<{ name: string }>;
+
+    // R4 (132-03): seq is monotonic PER (conversation, agent, tenant) so two
+    // agents sharing one conversation_id own independent seq sequences (WR-02).
+    expect(indexes.map((i) => i.name)).toContain("idx_lcd_messages_conv_agent_seq");
+
+    // The SAME (conversation_id, seq) for the SAME agent collides...
+    db.prepare(
+      "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m1','conv-1','t','agent-a','s',0,'user',1,1)",
+    ).run();
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m2','conv-1','t','agent-a','s',0,'user',1,1)",
+        )
+        .run(),
+    ).toThrow(/UNIQUE constraint/i);
+    // ...but a DIFFERENT agent in the SAME conversation may reuse seq 0 (R4).
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m3','conv-1','t','agent-b','s',0,'user',1,1)",
+        )
+        .run(),
+    ).not.toThrow();
+  });
+
+  it("ensureLcdTables is idempotent -- calling twice does not throw", () => {
+    initSchema(db, 1536);
+    expect(() => ensureLcdTables(db)).not.toThrow();
+    expect(() => ensureLcdTables(db)).not.toThrow();
+
+    // The six LCD BUSINESS tables: lcd_messages + lcd_message_parts (Phase 127),
+    // the three Phase-129 compaction tables (summaries / summary_messages /
+    // context_items), plus the Phase-130 lcd_summary_parents condensed→child edge.
+    // The Phase-131 FTS5 virtual tables (lcd_*_fts) + their shadow tables
+    // (lcd_*_fts_data/_idx/_content/_docsize/_config) are EXCLUDED here — they are
+    // an index, not a business table; their presence is asserted separately below.
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lcd_%' AND name NOT LIKE '%\\_fts%' ESCAPE '\\'")
+      .all() as Array<{ name: string }>;
+    expect(tables).toHaveLength(6);
+
+    // The two Phase-131 FTS5 virtual tables exist after ensureLcdTables (E1
+    // ctx_search). On a host whose better-sqlite3 lacks compiled FTS5 the guarded
+    // DDL skips them — this assertion documents the FTS5-present expectation; the
+    // FTS5-absent boot-safety path is covered by lcd-fts.test.ts.
+    const ftsTables = db
+      .prepare("SELECT name FROM sqlite_master WHERE name IN ('lcd_summaries_fts','lcd_messages_fts')")
+      .all() as Array<{ name: string }>;
+    expect(ftsTables.map((t) => t.name).sort()).toEqual(["lcd_messages_fts", "lcd_summaries_fts"]);
+  });
+
+  it("deleting an lcd_messages row cascades to its lcd_message_parts (ON DELETE CASCADE)", () => {
+    initSchema(db, 1536);
+    // The bare `:memory:` test db is NOT opened via openSqliteDatabase (which
+    // sets PRAGMA foreign_keys = ON in production, sqlite-adapter-base.ts:52),
+    // so enable it here to exercise the cascade the production wiring guarantees.
+    db.pragma("foreign_keys = ON");
+
+    db.prepare(
+      `INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
+       VALUES ('msg-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 0, 'assistant', 12, 1700000000000)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO lcd_message_parts (id, message_id, ordinal, kind, metadata)
+       VALUES ('part-1', 'msg-1', 0, 'text', '{}')`,
+    ).run();
+
+    expect(
+      (db.prepare("SELECT COUNT(*) AS count FROM lcd_message_parts").get() as { count: number })
+        .count,
+    ).toBe(1);
+
+    db.prepare("DELETE FROM lcd_messages WHERE id = 'msg-1'").run();
+
+    expect(
+      (db.prepare("SELECT COUNT(*) AS count FROM lcd_message_parts").get() as { count: number })
+        .count,
+    ).toBe(0);
+  });
+
+  // ── LCD compaction tables: lcd_summaries + lcd_summary_messages +
+  //    lcd_context_items (Phase 129, C3) ──
+  // The three forward-only compaction tables. lcd_summaries holds the depth-0
+  // leaf summary row (R4 scoping NOW); lcd_summary_messages is the leaf→message
+  // link with ON DELETE RESTRICT on the message FK (Pitfall 5 — RESTRICT
+  // ENFORCES losslessness; the store never deletes a summarized lcd_messages
+  // row); lcd_context_items is the ordered model-facing view with a UNIQUE
+  // (conversation_id, ordinal) index keeping ordinals dense + gap-free.
+
+  it("initSchema creates the lcd_summaries, lcd_summary_messages and lcd_context_items tables", () => {
+    initSchema(db, 1536);
+
+    const names = (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lcd_%'")
+        .all() as Array<{ name: string }>
+    ).map((t) => t.name);
+
+    expect(names).toContain("lcd_summaries");
+    expect(names).toContain("lcd_summary_messages");
+    expect(names).toContain("lcd_summary_parents");
+    expect(names).toContain("lcd_context_items");
+  });
+
+  it("lcd_summaries carries the R4 scoping columns + the leaf summary fields (kind/depth/time-range/counts/content/flags)", () => {
+    initSchema(db, 1536);
+
+    const colNames = (
+      db.prepare("PRAGMA table_info(lcd_summaries)").all() as Array<{ name: string }>
+    ).map((c) => c.name);
+
+    expect(colNames).toContain("summary_id");
+    // R4 scoping columns (threat T-129-04): present from day 1.
+    expect(colNames).toContain("conversation_id");
+    expect(colNames).toContain("tenant_id");
+    expect(colNames).toContain("agent_id");
+    expect(colNames).toContain("session_key");
+    expect(colNames).toContain("kind");
+    expect(colNames).toContain("depth");
+    expect(colNames).toContain("earliest_at");
+    expect(colNames).toContain("latest_at");
+    expect(colNames).toContain("descendant_count");
+    expect(colNames).toContain("token_count");
+    expect(colNames).toContain("content");
+    expect(colNames).toContain("file_ids");
+    expect(colNames).toContain("taint");
+    expect(colNames).toContain("fallback");
+    expect(colNames).toContain("created_at");
+  });
+
+  it("lcd_summaries.kind CHECK accepts leaf + condensed and rejects an out-of-union kind (Phase 130 widened closed union)", () => {
+    initSchema(db, 1536);
+
+    // An out-of-union kind is still rejected (the constraint is not removed).
+    const insertBadKind = () =>
+      db
+        .prepare(
+          "INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("s_bad", "conv-1", "t1", "a1", "sess-1", "bogus", 1, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
+    expect(insertBadKind).toThrow(/CHECK constraint/i);
+
+    // A leaf kind inserts.
+    const insertLeaf = () =>
+      db
+        .prepare(
+          "INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("s_leaf", "conv-1", "t1", "a1", "sess-1", "leaf", 0, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
+    expect(insertLeaf).not.toThrow();
+
+    // A condensed kind now ALSO inserts (Phase 130 widened the union).
+    const insertCondensed = () =>
+      db
+        .prepare(
+          "INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("s_cond", "conv-1", "t1", "a1", "sess-1", "condensed", 1, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
+    expect(insertCondensed).not.toThrow();
+  });
+
+  it("lcd_summary_messages.message_id FK is ON DELETE RESTRICT (losslessness — a summarized message cannot be deleted)", () => {
+    initSchema(db, 1536);
+
+    const fks = db.prepare("PRAGMA foreign_key_list(lcd_summary_messages)").all() as Array<{
+      table: string;
+      from: string;
+      to: string;
+      on_delete: string;
+    }>;
+    const msgFk = fks.find((fk) => fk.table === "lcd_messages" && fk.from === "message_id");
+    expect(msgFk).toBeDefined();
+    expect(msgFk!.on_delete).toBe("RESTRICT");
+  });
+
+  it("lcd_summary_messages RESTRICT blocks deleting an lcd_messages row that a summary covers", () => {
+    initSchema(db, 1536);
+    db.pragma("foreign_keys = ON"); // production sets this via openSqliteDatabase
+
+    db.prepare(
+      `INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
+       VALUES ('msg-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 0, 'assistant', 12, 1700000000000)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+       VALUES ('sum-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 'leaf', 0, 1, 2, 1, 10, 'leaf', '[]', 0, 0, 1700000000000)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO lcd_summary_messages (summary_id, message_id) VALUES ('sum-1', 'msg-1')`,
+    ).run();
+
+    // The message is referenced by a summary → RESTRICT throws on delete.
+    expect(() => db.prepare("DELETE FROM lcd_messages WHERE id = 'msg-1'").run()).toThrow(
+      /FOREIGN KEY constraint/i,
+    );
+    // The message row is still present (losslessness preserved).
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM lcd_messages WHERE id = 'msg-1'").get() as {
+        c: number;
+      }).c,
+    ).toBe(1);
+  });
+
+  it("deleting an lcd_summaries row CASCADES to its lcd_summary_messages links (but never the messages)", () => {
+    initSchema(db, 1536);
+    db.pragma("foreign_keys = ON");
+
+    db.prepare(
+      `INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
+       VALUES ('msg-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 0, 'assistant', 12, 1700000000000)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+       VALUES ('sum-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 'leaf', 0, 1, 2, 1, 10, 'leaf', '[]', 0, 0, 1700000000000)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO lcd_summary_messages (summary_id, message_id) VALUES ('sum-1', 'msg-1')`,
+    ).run();
+
+    db.prepare("DELETE FROM lcd_summaries WHERE summary_id = 'sum-1'").run();
+
+    // The link is gone (CASCADE on the summary FK)...
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM lcd_summary_messages").get() as { c: number }).c,
+    ).toBe(0);
+    // ...but the message row survives (losslessness — never deleted).
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM lcd_messages").get() as { c: number }).c,
+    ).toBe(1);
+  });
+
+  it("lcd_summary_parents.child_summary_id FK is ON DELETE RESTRICT (losslessness — a condensed child cannot be deleted)", () => {
+    initSchema(db, 1536);
+
+    const fks = db.prepare("PRAGMA foreign_key_list(lcd_summary_parents)").all() as Array<{
+      table: string;
+      from: string;
+      to: string;
+      on_delete: string;
+    }>;
+    const childFk = fks.find((fk) => fk.from === "child_summary_id");
+    expect(childFk).toBeDefined();
+    expect(childFk!.table).toBe("lcd_summaries");
+    expect(childFk!.on_delete).toBe("RESTRICT");
+
+    // The parent FK cascades (deleting the condensed parent drops its edges).
+    const parentFk = fks.find((fk) => fk.from === "parent_summary_id");
+    expect(parentFk).toBeDefined();
+    expect(parentFk!.on_delete).toBe("CASCADE");
+  });
+
+  it("lcd_summary_parents RESTRICT blocks deleting a child lcd_summaries row that a condensed summary covers", () => {
+    initSchema(db, 1536);
+    db.pragma("foreign_keys = ON"); // production sets this via openSqliteDatabase
+
+    db.prepare(
+      `INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+       VALUES ('leaf-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 'leaf', 0, 1, 2, 1, 10, 'leaf', '[]', 0, 0, 1700000000000)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+       VALUES ('cond-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 'condensed', 1, 1, 2, 1, 12, 'cond', '[]', 0, 0, 1700000001000)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO lcd_summary_parents (parent_summary_id, child_summary_id) VALUES ('cond-1', 'leaf-1')`,
+    ).run();
+
+    // The child summary is referenced by a condensed parent → RESTRICT throws.
+    expect(() => db.prepare("DELETE FROM lcd_summaries WHERE summary_id = 'leaf-1'").run()).toThrow(
+      /FOREIGN KEY constraint/i,
+    );
+    // The child row is still present (losslessness preserved).
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM lcd_summaries WHERE summary_id = 'leaf-1'").get() as {
+        c: number;
+      }).c,
+    ).toBe(1);
+  });
+
+  it("lcd_context_items carries id + R4 columns + ordinal/ref_kind/ref_id", () => {
+    initSchema(db, 1536);
+
+    const colNames = (
+      db.prepare("PRAGMA table_info(lcd_context_items)").all() as Array<{ name: string }>
+    ).map((c) => c.name);
+
+    expect(colNames).toContain("id");
+    expect(colNames).toContain("conversation_id");
+    expect(colNames).toContain("tenant_id");
+    expect(colNames).toContain("agent_id");
+    expect(colNames).toContain("session_key");
+    expect(colNames).toContain("ordinal");
+    expect(colNames).toContain("ref_kind");
+    expect(colNames).toContain("ref_id");
+  });
+
+  it("lcd_context_items.ref_kind CHECK rejects a value outside ('message','summary')", () => {
+    initSchema(db, 1536);
+
+    const insertBad = () =>
+      db
+        .prepare(
+          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("ci_bad", "conv-1", "t1", "a1", "sess-1", 0, "bogus", "ref-1");
+    expect(insertBad).toThrow(/CHECK constraint/i);
+
+    for (const kind of ["message", "summary"]) {
+      expect(() =>
+        db
+          .prepare(
+            "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          )
+          .run(`ci_${kind}`, "conv-1", "t1", "a1", "sess-1", kind === "message" ? 0 : 1, kind, "ref-1"),
+      ).not.toThrow();
+    }
+  });
+
+  it("lcd_context_items has the per-(conversation, agent, tenant) UNIQUE ordinal index (R4 dense gap-free per-agent guard)", () => {
+    initSchema(db, 1536);
+
+    const indexes = (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='lcd_context_items'")
+        .all() as Array<{ name: string }>
+    ).map((i) => i.name);
+    // R4 (132-03): the model-facing view is per (conversation, agent, tenant);
+    // each agent's ordinals are dense + gap-free over ITS OWN items (WR-02).
+    expect(indexes).toContain("idx_lcd_ctx_items_conv_agent_ord");
+
+    // The index is UNIQUE: same (conversation_id, agent_id, tenant_id, ordinal) collides.
+    db.prepare(
+      "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('a', 'conv-1', 't', 'agent-a', 's', 0, 'message', 'm1')",
+    ).run();
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('b', 'conv-1', 't', 'agent-a', 's', 0, 'message', 'm2')",
+        )
+        .run(),
+    ).toThrow(/UNIQUE constraint/i);
+    // The SAME ordinal in a DIFFERENT conversation is allowed (scoped uniqueness).
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('c', 'conv-2', 't', 'agent-a', 's', 0, 'message', 'm3')",
+        )
+        .run(),
+    ).not.toThrow();
+    // R4: the SAME ordinal in the SAME conversation but a DIFFERENT agent is now
+    // allowed — two agents sharing a conversation each keep a dense view (WR-02).
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('d', 'conv-1', 't', 'agent-b', 's', 0, 'message', 'm4')",
+        )
+        .run(),
+    ).not.toThrow();
+  });
+
+  it("ensureLcdTables is idempotent over all five LCD tables -- a second run does not throw", () => {
+    initSchema(db, 1536);
+    expect(() => ensureLcdTables(db)).not.toThrow();
+    expect(() => ensureLcdTables(db)).not.toThrow();
+
+    const tables = (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lcd_%'")
+        .all() as Array<{ name: string }>
+    ).map((t) => t.name);
+    expect(tables).toContain("lcd_summaries");
+    expect(tables).toContain("lcd_summary_messages");
+    expect(tables).toContain("lcd_context_items");
+  });
+
+  it("ensureLcdTables uses no DROP / down-migration (forward-only, design §9)", () => {
+    initSchema(db, 1536);
+    // Each LCD CREATE statement is reconstructable from sqlite_master; assert none
+    // of the tables carry a destructive down-migration artifact (a belt-and-braces
+    // mirror of the acceptance grep `DROP TABLE == 0`).
+    const allSql = (
+      db
+        .prepare("SELECT sql FROM sqlite_master WHERE name LIKE 'lcd_%' AND sql IS NOT NULL")
+        .all() as Array<{ sql: string }>
+    )
+      .map((r) => r.sql)
+      .join("\n");
+    expect(/DROP\s+TABLE/i.test(allSql)).toBe(false);
   });
 
   // ── occurred_at additive column ──────────────────────────

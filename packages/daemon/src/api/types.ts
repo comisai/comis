@@ -29,7 +29,6 @@ import type {
   MemoryWriteValidationResult,
   SecretStorePort,
   ExecGitFn,
-  ContextStorePort,
   MutableSecretManager,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
@@ -105,20 +104,21 @@ export interface SessionsApiDeps {
  * Dependencies for memory-handlers + context-handlers
  * (memory.read/write/search/embeddingCache, context.recall/expand).
  */
-// @optional-field-count: 17 optional fields — MemoryApiDeps is the shared slice
-// for memory-handlers + context-handlers, so it carries THREE feature-gated dep
-// families: the context-DAG quartet (contextStore/store/config/contextEngineConfig/
-// resolveConversationId/rpcCall — a binary dispatcher gate); the
+// @optional-field-count: 13 optional fields — MemoryApiDeps is the shared slice
+// for memory-handlers, so it carries TWO feature-gated dep families: the
 // memory-diagnostic deps (consolidationStore/entityStore/
 // recallCounters/dataDir — each absent ⇒ the corresponding admin diagnostic is
 // unavailable / zeroed, never a stub); and the
 // dialectic deps (dialecticSeam/buildDialecticRecall — each absent ⇒ memory.ask
 // returns the abstain sentinel, never a stub). Every optional is a real runtime
-// feature-switch documented row-by-row in packages/daemon/AUDIT-memory.md
-// (the CI architecture test enforces bidirectional parity with this interface);
+// feature-switch documented row-by-row in packages/daemon/AUDIT-memory.md;
 // tightening them to required would force every dispatcher call site to
 // fabricate stubs. Splitting the slice would break the structural-subtyping
 // invariant the 27 legacy *HandlerDeps depend on (see ApiDispatchDeps).
+// (Phase 126: the context-DAG quartet — contextStore/store/config/
+// contextEngineConfig/resolveConversationId/rpcCall — was removed with the
+// deleted context-handlers; the governed expansion surface is rebuilt fresh
+// against the lcd_* store in Phase 131.)
 export interface MemoryApiDeps {
   /** memory-handlers + context-handlers read deps.defaultAgentId / deps.tenantId. */
   defaultAgentId: string;
@@ -136,17 +136,6 @@ export interface MemoryApiDeps {
   /** memory-handlers reads deps.logger.warn/info; context-handlers reads
    *  deps.logger.info/warn. Required (matches other slices for multi-extends parity). */
   logger: ComisLogger;
-  // Context DAG recall deps
-  contextStore?: ContextStorePort;
-  contextEngineConfig?: { maxRecallsPerDay: number; maxExpandTokens: number; recallTimeoutMs: number };
-  /** context-handlers reads deps.store. Aliases contextStore. */
-  store?: ContextStorePort;
-  /** context-handlers reads deps.config (recall-quota / token-cap / timeout). Aliases contextEngineConfig. */
-  config?: { maxRecallsPerDay: number; maxExpandTokens: number; recallTimeoutMs: number };
-  /** context-handlers reads deps.resolveConversationId. */
-  resolveConversationId?: (sessionKey: string) => string | undefined;
-  /** context-handlers reads deps.rpcCall for ctx_recall -> session.spawn self-dispatch. */
-  rpcCall?: (method: string, params: Record<string, unknown>) => Promise<unknown>;
   // Embedding cache stats accessors
   /** Embedding cache stats accessor for memory.embeddingCache RPC */
   embeddingCacheStats?: () => import("@comis/memory").EmbeddingCacheStats;

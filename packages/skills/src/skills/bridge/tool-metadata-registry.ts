@@ -82,10 +82,6 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("sessions_list",    { isReadOnly: true });
   registerToolMetadata("session_status",   { isReadOnly: true });
   registerToolMetadata("sessions_history", { isReadOnly: true });
-  registerToolMetadata("ctx_search",  { isReadOnly: true });
-  registerToolMetadata("ctx_inspect", { isReadOnly: true });
-  registerToolMetadata("ctx_expand",  { isReadOnly: true });
-  registerToolMetadata("ctx_recall",  { isReadOnly: true });
 
   registerToolMetadata("image_analyze",    { isReadOnly: true });
   registerToolMetadata("describe_video",   { isReadOnly: true });
@@ -96,6 +92,12 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("models_manage", { isReadOnly: true });
 
   registerToolMetadata("discover_tools", { isReadOnly: true });
+
+  // Context expansion (3) — in-session lossless-store recovery (E1/E2). They
+  // only READ the LCD store, so they are read-only (parallel-execution safe).
+  registerToolMetadata("ctx_search",  { isReadOnly: true });
+  registerToolMetadata("ctx_inspect", { isReadOnly: true });
+  registerToolMetadata("ctx_expand",  { isReadOnly: true });
 
   // --- Mutating tools (25) ---
   registerToolMetadata("edit",        { isReadOnly: false });
@@ -542,12 +544,6 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("extract_document", { searchHint: "pdf csv docx xlsx parse text content extract spreadsheet" });
   registerToolMetadata("browser",          { searchHint: "chrome headless puppeteer navigate click screenshot scrape" });
 
-  // --- Context tools ---
-  registerToolMetadata("ctx_search",  { searchHint: "rag context knowledge semantic embedding retrieve similar" });
-  registerToolMetadata("ctx_inspect", { searchHint: "context detail metadata source provenance inspect entry" });
-  registerToolMetadata("ctx_expand",  { searchHint: "context expand elaborate detail follow-up deeper related" });
-  registerToolMetadata("ctx_recall",  { searchHint: "memory recall remember fact previous mentioned earlier" });
-
   // --- Platform channel actions ---
   registerToolMetadata("discord_action",  { searchHint: "pin kick ban roles threads channels guild server discord" });
   registerToolMetadata("telegram_action", { searchHint: "pin poll sticker admin topics group supergroup telegram" });
@@ -635,11 +631,6 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("session_status",   { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_list",    { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_history", { mcpExportPolicy: "permission-gated" });
-  // Context-engine reads (4) — read-only RAG / embedding views.
-  registerToolMetadata("ctx_search",  { mcpExportPolicy: "permission-gated" });
-  registerToolMetadata("ctx_inspect", { mcpExportPolicy: "permission-gated" });
-  registerToolMetadata("ctx_expand",  { mcpExportPolicy: "permission-gated" });
-  registerToolMetadata("ctx_recall",  { mcpExportPolicy: "permission-gated" });
   // Observability read (1) — operator allowlists by query scope.
   registerToolMetadata("obs_query", { mcpExportPolicy: "permission-gated" });
   // Meta-tool (1) — reveals registered-tools attack surface; per-client allowlist required.
@@ -701,6 +692,11 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("terminal_session_status",    { mcpExportPolicy: "never-export" });
   registerToolMetadata("terminal_session_resize",    { mcpExportPolicy: "never-export" });
   registerToolMetadata("terminal_session_kill",      { mcpExportPolicy: "never-export" });
+  // Context expansion (3) — never-export; in-session lossless-store recovery (E1/E2),
+  // NOT an MCP-exported surface and DISTINCT from cross-session recall.
+  registerToolMetadata("ctx_search",  { mcpExportPolicy: "never-export" });
+  registerToolMetadata("ctx_inspect", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("ctx_expand",  { mcpExportPolicy: "never-export" });
 
   // =========================================================================
   // Failure Detectors (§16.10/§16.11)

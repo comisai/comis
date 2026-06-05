@@ -25,11 +25,6 @@ export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 export { createAnnouncementDeadLetterQueue } from "@comis/orchestrator";
 export type { AnnouncementDeadLetterQueue, DeadLetterEntry } from "@comis/orchestrator";
 
-// Context handlers: DAG context engine RPC handlers
-// Consumer: test/integration/context-dag-integration.test.ts:52-53
-export { createContextHandlers } from "./api/context-handlers.js";
-export type { ContextHandlerDeps } from "./api/context-handlers.js";
-
 // Auth handlers: encrypted OAuth-profile management (auth.set / auth.list /
 // auth.logout) — re-exported so the auth-set-encrypted integration test can
 // drive the real admin-gated auth.set handler against a mock

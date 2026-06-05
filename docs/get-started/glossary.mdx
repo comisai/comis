@@ -72,7 +72,7 @@ A higher-level summary in the DAG context engine created by merging multiple lea
 
 ## Context DAG
 
-The directed acyclic graph that stores an agent's full conversation history when running in DAG mode. Each message, tool result, and file is a node; compaction creates summary nodes linked to their sources. Unlike the pipeline mode (which discards old content), the DAG preserves everything and makes it retrievable through recall tools. See [Compaction](/agents/compaction).
+The lossless context engine (the v2.12 "Lossless Context DAG" release) — the **default** context engine (`contextEngine.version` defaults to `"dag"`; set `"pipeline"` to opt into the simpler engine). Unlike pipeline mode (which discards old content), DAG preserves the agent's full conversation history losslessly and reconstructs it verbatim each turn — every message, tool call, and tool result kept and paired by id — plus a verbatim [Fresh Tail](#fresh-tail) of the most recent steps. DAG zoomably compresses the oldest history under a token budget and exposes the in-session `ctx_*` expansion tools to recover compressed detail. See [Context Management](/agents/context-management#dag-mode-the-default-engine).
 
 ## Context Engine
 
@@ -80,7 +80,7 @@ The system that manages what your agent sees each turn. The context engine runs 
 
 ## Context Threshold
 
-The budget utilization percentage at which DAG compaction triggers. When the assembled context window exceeds this fraction of the model's token budget (default 75%), the DAG engine compresses older content into summaries. Configured via `contextEngine.contextThreshold`. See [Compaction](/agents/compaction).
+The budget utilization percentage at which DAG compaction triggers. Configured via `contextEngine.contextThreshold` (default 75%). This field belongs to the DAG context engine's compaction pass, which lands in a later phase — DAG in the current release does lossless verbatim assembly with **no compaction**, so this field is reserved and inert. See [Compaction](/agents/compaction).
 
 ## Context Window
 
@@ -132,7 +132,7 @@ When an agent uses a tool, it may need another thinking step to process the tool
 
 ## Fresh Tail
 
-The most recent turns in a DAG-mode conversation that are always protected from compaction. The fresh tail ensures the agent has full, uncompressed access to the latest exchanges. The number of protected turns is configured via `contextEngine.freshTailTurns` (default 8). See [Compaction](/agents/compaction).
+The most recent **steps** in a DAG-mode conversation that are always kept verbatim (an assistant message plus the tool results it triggered counts as one step — not user-turns), configured via `contextEngine.freshTailTurns` (default 8). The fresh tail is sliced as the original structured blocks (never reconstructed-from-text) and is never evicted. This is a DAG context engine concept; DAG is the default engine (`contextEngine.version` defaults to `"dag"`; set `"pipeline"` to opt into the simpler engine). See [Context Management](/agents/context-management#dag-mode-the-default-engine).
 
 ## Gateway
 
@@ -252,7 +252,7 @@ A technique where the agent searches its long-term memory for relevant informati
 
 ## Recall Grant
 
-A time-limited authorization token that allows a recall sub-agent to expand and inspect DAG summaries. When an agent uses the `ctx_recall` tool, Comis creates a recall grant that controls which summaries the sub-agent can access, how many tokens it can read, and when the grant expires. A daily quota (`contextEngine.maxRecallsPerDay`, default 10) limits how many recall grants can be issued per agent per day. See [Compaction](/agents/compaction).
+A time-limited authorization token that allows a recall sub-agent to expand and inspect DAG summaries, governed by a daily quota (`contextEngine.maxRecallsPerDay`, default 10). The recall-grant token/quota subsystem belongs to the DAG (LCD) context engine and lands in a later phase. It is distinct from the agent's own **in-session expansion tools** (`ctx_search`, `ctx_inspect`, `ctx_expand`), which let the agent directly recover compressed detail from the current conversation in DAG mode — see [Context expansion tools](/agent-tools/sessions#context-expansion-tools). See [Compaction](/agents/compaction).
 
 ## Result Type
 

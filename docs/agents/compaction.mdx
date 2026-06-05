@@ -5,13 +5,33 @@ icon: "compress"
 ---
 
 As conversations grow longer, they eventually become too large for your agent to
-handle efficiently. Comis offers two context engine modes to manage long
-conversations. The default **DAG** mode preserves your full conversation history
-in a lossless directed acyclic graph with recall tools, so nothing is thrown away
-— `contextEngine.version` defaults to `"dag"`. The opt-out **pipeline** mode
-(`version: "pipeline"`) instead processes every conversation through ten layers
-before each AI call, dropping and masking old content as it goes. The result:
-your agent never runs out of room to think.
+handle efficiently. The default **DAG** (LCD) engine keeps the whole conversation
+losslessly and zoomably compresses the oldest history under a token budget; the
+opt-in **pipeline** engine instead processes every conversation through ten layers
+before each AI call, dropping and masking old content as it goes —
+`contextEngine.version` defaults to `"dag"`, and you set it to `"pipeline"` for
+the simpler engine. Either way, your agent never runs out of room to think.
+
+<Note>
+The lossless **DAG** (LCD) engine (the v2.12 "Lossless Context DAG" release) is
+the **default** engine — `contextEngine.version` defaults to `"dag"` (set
+`"pipeline"` to opt into the simpler engine). DAG
+stores every message losslessly and **automatically summarizes** the oldest
+out-of-tail history when context utilization crosses `contextThreshold` (default
+0.75 × the model's window) at the end of a turn: it collapses the oldest chunk
+into a leaf summary via the same three-level escalation as pipeline mode
+(normal → aggressive → a deterministic count-only floor that always fits), then
+assembles the context under the model's token budget — always keeping the
+verbatim fresh tail and never deleting anything from the store. The multi-tier
+*condensed* summary hierarchy is **now part of DAG** too: when enough same-depth
+summaries accumulate (≥`condensedMinFanout`, default 4) they fold into one deeper
+condensed summary, and every summary is rendered honestly
+(`depth`/`descendant_count`/time-range/`trust=untrusted` markers + an expand
+footer, body taint-wrapped). The on-demand `ctx_*` recall tools (`ctx_search`,
+`ctx_inspect`, `ctx_expand`) let the agent drill back into a compressed region.
+See [DAG mode](#dag-mode-the-default-engine) below for the mechanics and
+[Context Management](/agents/context-management) for the engine overview.
+</Note>
 
 ## How the context engine works
 
@@ -23,11 +43,10 @@ chapters, masks old footnotes, summarizes if the manuscript is still too long,
 and restores key references at the end. All of this happens automatically in the
 background, and you do not need to configure or monitor it.
 
-## The ten layers (pipeline mode, the opt-out engine)
+## The ten layers (pipeline mode, the opt-in engine)
 
-These ten layers run only in **pipeline** mode — the opt-out engine you reach by
-setting `contextEngine.version: "pipeline"`. (The default DAG engine handles long
-conversations differently; see [DAG mode](#dag-mode) below.) Here is what happens
+These ten layers run in **pipeline** mode — the opt-in engine you select with
+`contextEngine.version: "pipeline"` (the default is `"dag"`). Here is what happens
 during each step, in order:
 
 ### 1. Clearing scratch paper
@@ -256,19 +275,51 @@ A write-time guard that intercepts oversized tool results before they are saved 
 
 Oversized results are saved to disk as JSON files with compact inline references in the conversation. This is different from step 5 (masking old tool results), which operates at read time -- the microcompaction guard operates at write time, preventing large results from ever entering the conversation file.
 
-## DAG mode
+## DAG mode (the default engine)
+
+<Warning>
+The DAG (LCD) engine is the **default** engine (the v2.12 "Lossless Context
+DAG" release) — `contextEngine.version` defaults to `"dag"` (set `"pipeline"` to
+opt into the simpler engine). It stores every message losslessly and assembles
+the context **under the model's token budget**: it resolves the ordered context
+view (raw messages plus
+any leaf summaries) and **evicts the oldest out-of-tail history** when the budget
+is exceeded — always keeping the verbatim fresh tail. **Automatic leaf
+summarization is now live**: when context utilization crosses `contextThreshold`
+(default 0.75 × the model's window) at the end of a turn, the oldest out-of-tail
+chunk is summarized into a leaf summary and slotted back into the context view in
+its original position. The multi-tier **condensed** summary hierarchy (summaries
+of summaries) is **now live too** — when enough same-depth summaries accumulate
+(≥`condensedMinFanout`, default 4) they fold into one deeper condensed summary,
+and every summary is rendered with honest lossiness markers (see
+[Honest presentation](#honest-presentation-of-summaries) below). Only the
+on-demand `ctx_*` recall tools described later in this section still land in a
+**later phase**. Nothing is ever deleted from the store — both eviction and
+summarization operate on the assembled context only, so the underlying messages
+remain recoverable when recall lands.
+</Warning>
 
 ### What is DAG mode
 
-DAG mode is the **default** context engine: it stores every message and tool
-result in a directed acyclic graph (DAG). Instead of discarding old content, the
-DAG compresses it into hierarchical summaries. Your agent can recall any past
-content through search and inspection tools -- nothing is ever truly lost.
-
-Because `contextEngine.version` defaults to `"dag"`, this is what your agent runs
-out of the box — no configuration required. To opt out and run the ten-layer
-pipeline instead, set `version: "pipeline"`. See [Switching modes](#switching-modes)
-below.
+DAG mode stores every message and tool result losslessly and rebuilds the
+model-facing context each turn from the ordered context view — every surviving
+message, tool call, and tool result preserved and paired by id, plus a verbatim
+fresh tail of the most recent steps. When context utilization crosses
+`contextThreshold` at the end of a turn, the **oldest out-of-tail chunk is
+summarized into a leaf summary** (whole tool-use/tool-result steps only — a pair
+is never split) and slotted back into the context view in its original position;
+the fresh tail is always protected. When the assembled history would still exceed
+the model's token budget, the oldest evictable history is dropped to fit.
+Summarization and eviction operate on the assembled context only: the underlying
+messages stay in the lossless store, so compressed detail remains recoverable.
+When enough same-depth summaries accumulate (≥`condensedMinFanout`, default 4),
+the DAG rolls them up into one deeper **condensed** summary — a zoomable
+leaf→condensed hierarchy where each level covers a broader span. Every summary is
+rendered into context with honest lossiness markers (see
+[Honest presentation of summaries](#honest-presentation-of-summaries)). Only the
+on-demand `ctx_*` recall tools (the design described below) still land in a later
+phase; the current release does leaf summarization, multi-tier condensation, and
+budget-bounded assembly.
 
 ### How DAG compaction works
 
@@ -285,50 +336,113 @@ A three-tier escalation ensures summaries always fit within their target size:
 
 - **Normal** -- Structured summary with key details preserved.
 - **Aggressive** -- Compact summary that prioritizes brevity.
-- **Truncation** -- Cuts at the nearest sentence boundary (guaranteed to fit).
+- **Truncation** -- A bounded count-only note (marker-prefixed, guaranteed to
+  fit and to shrink below the source it replaces).
 
 The most recent turns (the "fresh tail", default 8 turns) are always protected
 from compaction, ensuring your agent has full, uncompressed access to the latest
 exchanges.
 
+The condensed hierarchy is **depth-aware**: a depth-0 leaf summarizes raw
+messages, a depth-1 condensed summary summarizes depth-0 leaves once at least
+`condensedMinFanout` (default 4) of them accumulate, and so on. Higher depth means
+broader coverage but more compression loss.
+
+### Deferred (background) compaction
+
+By default the leaf and condense passes run **out-of-band** — they never block the
+turn. When a turn finishes, the agent's reply is delivered immediately; the
+summarization work then runs in the background on a **per-conversation
+single-flight serializer**, so a compaction can never run concurrently with (or
+race) the next turn's write into the same conversation. This keeps response
+latency flat even when a large session crosses the compaction threshold:
+summarizing old history is amortized, not paid synchronously on the turn that
+happened to tip the budget.
+
+This is controlled by `contextEngine.deferCompaction` (default `true`). Setting it
+to `false` runs the leaf and condense passes **inline** at the end of the turn
+(the pre-v2.12 behaviour) — deterministic and useful for tests, at the cost of
+adding the summarization time to that turn's latency. The serializer interlock
+(one compaction per conversation at a time) holds in both modes, so the lossless
+store is never written by two passes at once.
+
+### Honest presentation of summaries
+
+A summary is a lossy, possibly-untrusted compression of earlier turns, so the DAG
+never slips one into context disguised as a normal message. Each summary the
+engine assembles is rendered with explicit honesty markers and carried untrusted
+by role:
+
+- **Lossiness markers** -- a trusted header announces `depth`, `descendant_count`
+  (how many underlying messages it covers), and the ISO time-range it spans, plus
+  `trust=untrusted`. These values come from the stored summary row, not from the
+  summary text, so a poisoned body cannot forge them.
+- **Expand footer** -- an "Expand for details about:" line states what was
+  compressed (the descendant count, depth, and time-range), making clear the
+  detail exists losslessly in the store even though it is not inline.
+- **Taint-wrapped body** -- the summary text itself is wrapped as untrusted
+  external content (the same taint primitive used for any non-system input), so
+  injected instructions inside a summarized message are not treated as commands.
+- **Uncertainty clause** -- in dag mode the system prompt adds a
+  *Compressed context* section instructing the model to treat summaries as
+  compressed recall cues rather than proof: do not assert exact commands, SHAs,
+  paths, numbers, or timestamps from a summary, and prefer newer verbatim evidence
+  when a summary and a recent message conflict.
+
+This is the *honest presentation* contract: the model always knows which parts of
+its context are compressed, how lossy they are, and that it should verify exact
+details against fresher evidence rather than trust a summary blindly.
+
 ### Recall tools
 
-DAG mode replaces the pipeline's `session_search` tool with four recall tools:
-
-- **`ctx_search`** -- Full-text or regex search across all messages and
-  summaries in the DAG.
-- **`ctx_inspect`** -- View the full content of a specific summary or stored
-  file.
-- **`ctx_expand`** -- Expand a compressed summary back into the underlying
-  messages it was condensed from.
-- **`ctx_recall`** -- Spawn a recall sub-agent to find and expand information
-  from compressed summaries.
+In DAG mode (the default), the in-session `ctx_*` tools let the agent drill back
+into a compressed region of *this* conversation: `ctx_search` (full-text/regex
+search across messages and summaries), `ctx_inspect` (inspect a summary's
+coverage), and `ctx_expand` (rehydrate a region to its underlying messages). They
+are active only in DAG mode, `never-export`, and distinct from cross-session
+recall (`memory_search`, `session_search`). In the opt-in pipeline mode the agent
+instead uses `session_search` over the raw session history.
 
 See [Built-in Tools](/skills/built-in-tools) and
-[Platform Tools](/skills/platform-tools) for full tool reference documentation.
+[Platform Tools](/skills/platform-tools) for the full tool
+reference documentation.
 
 ### Switching modes
 
-DAG is the default, so you only set `contextEngine.version` explicitly when you
-want to **opt out** to the pipeline engine — or switch back:
+DAG is the default. `contextEngine.version` accepts `"pipeline"` and `"dag"`;
+omit it (or set `"dag"`) for the lossless LCD engine, or set `"pipeline"` to opt
+into the simpler sequential-layer engine:
 
 ```yaml title="~/.comis/config.yaml"
 agents:
   default:
     contextEngine:
-      version: "pipeline"   # opt out of the DAG default; remove the key (or set "dag") to switch back
+      version: "pipeline"   # opt into the simpler engine; omit (or "dag") for the default lossless LCD engine
 ```
 
-Switching either direction is operator-safe: it is applied on a config reload (no
-daemon restart) and takes effect at the next turn boundary — never mid-turn. The
-switch is reversible and non-destructive in both directions: going to DAG
-reconciles existing JSONL history into the DAG automatically (no manual
-migration), and switching back to pipeline re-reads the full conversation while
-leaving the DAG's stored content intact for a later switch-back. `contextEngine.version`
-is operator-only — an agent cannot switch its own engine mode via the `config.patch`
-RPC. For the full switching semantics (including the `context:mode_switched` event
-and the security boundary), see
-[Switching context modes](/agents/context-management#switching-context-modes-operator-safe).
+`contextEngine.version` is operator-only — an agent cannot switch its own engine
+mode via the `config.patch` RPC.
+
+### Per-(tenant, agent, session) isolation
+
+DAG history is scoped by **tenant, agent, and session** — not by conversation
+alone. Every read the assembler performs is filtered on all three, so two agents
+that happen to share the same `(tenant, user, channel)` conversation key cannot
+recover each other's compressed history: agent A never sees agent B's summaries or
+raw messages, even within one conversation. If the scope cannot be fully resolved
+(a missing agent or tenant id), the engine **fails closed** — it reads no history
+for that turn rather than risk a cross-agent leak (the verbatim fresh tail still
+ships, so the live turn is never broken), and logs a warning so the
+misconfiguration is visible.
+
+<Note>
+The cross-agent isolation adds an `agent_id` column to the DAG full-text search
+index. Because the search index is created once on a fresh database (there is no
+migration — sessions start fresh on the LCD engine by design), a **pre-existing
+development `~/.comis` database created before this release may need to be wiped**
+to pick up the isolated index. This affects only local dev databases that predate
+the LCD engine; a fresh install needs nothing.
+</Note>
 
 ## Configuration
 
@@ -339,7 +453,7 @@ change anything.
 | Option | Type | Default | What it does |
 |--------|------|---------|--------------|
 | `contextEngine.enabled` | boolean | `true` | Master toggle for the context engine |
-| `contextEngine.version` | string | `"dag"` | Context engine mode: `"dag"` (default) or `"pipeline"` (opt-out) |
+| `contextEngine.version` | string | `"dag"` | Context engine mode: `"dag"` (default, the lossless LCD engine) or `"pipeline"` (opt-in sequential-layer engine) |
 | `contextEngine.thinkingKeepTurns` | number | `10` | Recent turns that keep AI reasoning notes (1-50) |
 | `contextEngine.compactionModel` | string | `""` | Model used for summarization (empty = runtime-resolved default) |
 | `contextEngine.evictionMinAge` | number | `15` | Minimum turn age before stale errors are evicted (3-50) |
@@ -353,13 +467,23 @@ change anything.
 | `contextEngine.outputEscalation.escalatedMaxTokens` | number | `32768` | Maximum output tokens after escalation (4096-128000) |
 | `contextEngine.observationDeactivationChars` | number | `80000` | Character threshold to deactivate observation masking (20K-500K) |
 | `contextEngine.ephemeralKeepWindow` | number | `10` | Recent ephemeral tool results to preserve from masking (1-50) |
+| `contextEngine.contextThreshold` | number | `0.75` | **DAG mode (live):** context-utilization fraction (of the model window) that triggers a leaf-summarization pass at the end of a turn (0.1-0.95) |
+| `contextEngine.freshTailTurns` | number | `8` | **DAG mode (live):** most-recent steps (assistant + tool round-trips) always kept verbatim and never summarized/evicted (1-50) |
+| `contextEngine.leafChunkTokens` | number | `20000` | **DAG mode (live):** token cap for the oldest out-of-tail chunk summarized into one leaf summary (1K-100K) |
+| `contextEngine.leafTargetTokens` | number | `1200` | **DAG mode (live):** target token size for a leaf summary (96-5000) |
+| `contextEngine.deferCompaction` | boolean | `true` | **DAG mode (live):** run the afterTurn leaf + condense passes in the background on the per-conversation serializer (never blocking the turn). `false` runs them inline (deterministic, for tests) |
+| `contextEngine.summarizerSpend.maxTokensPerTenantPerHour` | number | `500000` | **DAG mode (live):** per-tenant rolling-hour ceiling on summarizer (input+output) tokens; over the cap the summarizer is bypassed and assembly degrades to truncation-only. `0` disables the hourly cap |
+| `contextEngine.summarizerSpend.maxTokensPerTenantPerDay` | number | `5000000` | **DAG mode (live):** per-tenant rolling-day summarizer token ceiling. `0` disables the daily cap |
+| `contextEngine.summarizerBreaker.failureThreshold` | number | `5` | **DAG mode (live):** consecutive summarizer failures before the circuit breaker opens → truncation-only assembly |
+| `contextEngine.summarizerBreaker.resetTimeoutMs` | number | `60000` | **DAG mode (live):** how long the summarizer breaker stays open before a half-open trial |
+| `contextEngine.summarizerBreaker.halfOpenTimeoutMs` | number | `30000` | **DAG mode (live):** half-open trial window for the summarizer breaker |
 
 ```yaml title="~/.comis/config.yaml"
 agents:
   default:
     contextEngine:
       enabled: true
-      # version: "pipeline"  # DAG is the default; uncomment to opt out to the pipeline engine
+      # version: "dag"  # the default lossless LCD engine; set "pipeline" for the simpler engine
       thinkingKeepTurns: 10
       historyTurns: 15
       historyTurnOverrides:

@@ -20,13 +20,14 @@ export type { TokenAnchor };
 /**
  * Token budget breakdown computed by `computeTokenBudget()`.
  *
- * Formula: H = W - S - O - M - R
+ * Formula: H = W - S - O - M - R - P
  * Where:
  * - W = windowTokens (model context window)
  * - S = systemTokens (system prompt + tools estimate)
  * - O = outputReserveTokens (reserved for model output)
  * - M = safetyMarginTokens (percentage-based with absolute floor)
  * - R = contextRotBufferTokens (percentage-based decay buffer)
+ * - P = freshTailPreambleTokens (the WHOLE fresh-tail preamble estimate; I1/WR-01)
  * - H = availableHistoryTokens (remaining budget for conversation history)
  */
 export interface TokenBudget {
@@ -40,6 +41,15 @@ export interface TokenBudget {
   safetyMarginTokens: number;
   /** R: context rot buffer tokens (percentage-based). */
   contextRotBufferTokens: number;
+  /** P: fresh-tail preamble tokens subtracted from H (I1 / WR-01) — the WHOLE
+   *  `dynamicPreamble` + `inlineMemory` block prepended into the latest user
+   *  message by envelope-wrapper (skills XML, MCP instructions, deferred-tools
+   *  context, date/channel lines, recalled memory, …), NOT just recalled memory.
+   *  Counting the whole preamble is deliberate: that blob rides the
+   *  unconditionally-shipped fresh tail and is reserved nowhere else, so this is
+   *  the only window-headroom reservation for it. A SEPARATE term, never folded
+   *  into S (preserves the recall-dag-budget partition invariant). Clamped to >= 0. */
+  freshTailPreambleTokens: number;
   /** H: available tokens for conversation history (clamped to >= 0). */
   availableHistoryTokens: number;
   /** Message index at or below which content must not be modified.
@@ -135,10 +145,18 @@ export interface ContextEngineDeps {
   // --- Observability event emission ---
   /** Optional event bus for emitting context engine lifecycle events. */
   eventBus?: { emit(event: string, data: unknown): void };
-  /** Agent ID for event attribution and structured logging. */
+  /** Agent ID for event attribution and structured logging. Also the R4 read
+   *  scope (132-03): the dag assembler builds a ContextStoreScope from it so LCD
+   *  reads are agent-isolated (WR-02). */
   agentId?: string;
   /** Formatted session key for event correlation and structured logging. */
   sessionKey?: string;
+  /** Tenant ID for the R4 LCD read scope (132-03). The dag assembler builds a
+   *  ContextStoreScope { conversationId, agentId, tenantId, sessionKey } from it
+   *  so reads filter by tenant + agent (WR-02). Threaded from
+   *  executor-context-engine-setup.ts (the same source executor-post-execution
+   *  uses: deps.tenantId ?? sessionKey.tenantId). */
+  tenantId?: string;
 
   // --- Objective reinforcement ---
   /** Subagent objective for post-compaction reinforcement. */
@@ -149,6 +167,15 @@ export interface ContextEngineDeps {
    *  Called on each pipeline run so the value can update after prompt assembly.
    *  Returns 0 when not provided (backward-compatible). */
   getSystemTokensEstimate?: () => number;
+
+  // --- I1 / WR-01: fresh-tail preamble budget seam ---
+  /** Lazy getter for the WHOLE fresh-tail preamble token estimate (the
+   *  `dynamicPreamble` + `inlineMemory` block prepended by envelope-wrapper —
+   *  skills XML, MCP instructions, deferred-tools context, date/channel lines,
+   *  recalled memory, …, NOT just recall; see WR-01). Called on each run.
+   *  Subtracted from H as a SEPARATE budget term (NOT folded into S — preserves
+   *  the recall-dag-budget-partition invariant). Returns 0 when not provided. */
+  getFreshTailPreambleTokensEstimate?: () => number;
 
   // --- G-09: Content modification notification ---
   /** Called when observation masking modifies content (maskedCount > 0).
@@ -185,6 +212,22 @@ export interface ContextEngineDeps {
    *  static value is used. Used by idle thinking clear to strip all thinking
    *  blocks when the cache is cold (>1h idle). */
   getThinkingKeepTurnsOverride?: () => number | undefined;
+
+  // --- LCD dag-mode assembly (Phase 128) ---
+  /** Injected core ContextStorePort (the LCD lossless store) for dag-mode
+   *  assembly. TYPE-only from `@comis/core` — the agent NEVER imports
+   *  `@comis/memory` (the agent↛memory architecture cut); the daemon injects
+   *  the concrete `createLcdStore`. Absent ⇒ dag falls back to the pipeline. */
+  contextStore?: import("@comis/core").ContextStorePort;
+  /** Conversation id for the dag-mode store read (= `formatSessionKey(sessionKey)`).
+   *  Absent ⇒ dag falls back to the pipeline. */
+  conversationId?: string;
+  /** Injected wall-clock for the dag-mode assembler's timestamps (assembly
+   *  duration + the synthesized-tool-result `timestamp` in transcript repair).
+   *  Production code never calls `Date.now()` directly (the globals gate); the
+   *  daemon threads its `ClockPort` here via setupContextEngine. Falls back to
+   *  `Date.now()` only when absent (a unit context with no injected clock). */
+  clock?: import("@comis/core").ClockPort;
 }
 
 // ---------------------------------------------------------------------------

@@ -40,13 +40,36 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 // ===========================================================================
 
 describe("tool-metadata-registry -- registry count", () => {
-  it("registers exactly 60 unique tools (registry count assertion)", () => {
-    // 60 = 51 prior tools + the nine terminal_session_* names registered
-    // never-export. 51 = 50 prior + providers_manage (added alongside
-    // the tool-entry schema metadata; it pre-existed as a tool file but was not
-    // previously surfaced in the metadata registry).
+  it("registers exactly 59 unique tools (registry count assertion)", () => {
+    // 59 = 56 prior + the 3 ctx_* in-session expansion tools (ctx_search /
+    // ctx_inspect / ctx_expand) rebuilt in Phase 131 (E1/E2). The 4 OLD ctx_*
+    // DAG read tools were deleted in Phase 126; these 3 are the governed TOOL
+    // surface over the LCD store.
     const all = getAllToolMetadata();
-    expect(all.size).toBe(60);
+    expect(all.size).toBe(59);
+  });
+});
+
+// ===========================================================================
+// Context expansion — all three ctx_* tools never-export + read-only (E2)
+// ===========================================================================
+
+describe("tool-metadata-registry -- context expansion governance", () => {
+  // The three in-session expansion tools (Phase 131, E1/E2). All MUST be
+  // never-export: they live inside Comis's trust boundary over the LCD store
+  // and must never reach the MCP-exported set. They only READ the store, so
+  // they are also isReadOnly. The mcp-export-policy.test.ts AST gate
+  // additionally requires every registered name to carry an explicit policy.
+  const CTX_TOOLS = ["ctx_search", "ctx_inspect", "ctx_expand"] as const;
+
+  it.each(CTX_TOOLS)("%s resolves to mcpExportPolicy 'never-export'", (name) => {
+    const meta = getToolMetadata(name);
+    expect(meta, `${name} must be registered`).toBeDefined();
+    expect(meta!.mcpExportPolicy).toBe("never-export");
+  });
+
+  it.each(CTX_TOOLS)("%s resolves to isReadOnly true", (name) => {
+    expect(getToolMetadata(name)!.isReadOnly).toBe(true);
   });
 });
 
@@ -141,14 +164,13 @@ describe("tool-metadata-registry -- parallelism read-only tools", () => {
     "web_search", "web_fetch", "browser",
     "memory_search", "memory_get", "session_search",
     "sessions_list", "session_status", "sessions_history",
-    "ctx_search", "ctx_inspect", "ctx_expand", "ctx_recall",
     "image_analyze", "describe_video", "extract_document", "transcribe_audio",
     "obs_query", "models_manage",
     "discover_tools",
   ];
 
-  it("registers all 24 read-only tools with isReadOnly: true", () => {
-    expect(readOnlyToolNames).toHaveLength(24);
+  it("registers all 20 read-only tools with isReadOnly: true", () => {
+    expect(readOnlyToolNames).toHaveLength(20);
     for (const name of readOnlyToolNames) {
       const meta = getToolMetadata(name);
       expect(meta, `${name} should have metadata`).toBeDefined();
@@ -602,7 +624,6 @@ describe("tool-metadata-registry -- search hints", () => {
     "cron", "gateway", "image_analyze", "tts_synthesize",
     "transcribe_audio", "describe_video",
     "extract_document", "browser",
-    "ctx_search", "ctx_inspect", "ctx_expand", "ctx_recall",
     "discord_action", "telegram_action", "slack_action", "whatsapp_action",
     "agents_manage", "obs_query", "sessions_manage", "memory_manage",
     "channels_manage", "tokens_manage", "models_manage", "skills_manage",
@@ -708,7 +729,7 @@ describe("tool-metadata-registry -- search hints", () => {
 // ===========================================================================
 
 describe("tool-metadata-registry -- completeness", () => {
-  it("all 51 TOOL_SUMMARIES tools have at least one metadata field", () => {
+  it("all 47 TOOL_SUMMARIES tools have at least one metadata field", () => {
     const ALL_TOOLS = [
       "read", "edit", "write", "grep", "find", "ls", "apply_patch",
       "exec", "process",
@@ -720,14 +741,13 @@ describe("tool-metadata-registry -- completeness", () => {
       "cron", "gateway", "image_analyze", "tts_synthesize",
       "transcribe_audio", "describe_video", "extract_document", "browser",
       "discord_action", "telegram_action", "slack_action", "whatsapp_action",
-      "ctx_search", "ctx_inspect", "ctx_expand", "ctx_recall",
       "agents_manage", "obs_query", "sessions_manage", "memory_manage",
       "channels_manage", "tokens_manage", "models_manage", "skills_manage",
       "mcp_manage", "heartbeat_manage", "providers_manage",
       "discover_tools",
     ];
 
-    expect(ALL_TOOLS.length).toBe(51);
+    expect(ALL_TOOLS.length).toBe(47);
 
     const missing: string[] = [];
     for (const tool of ALL_TOOLS) {
@@ -992,7 +1012,7 @@ describe("tool-metadata-registry -- failure detectors", () => {
     // Asserting an absolute size HERE is fragile: validator/errorKind tests
     // earlier in this file pollute the module-level singleton with synthetic
     // tool names. The merge-not-create invariant is the load-bearing claim, so
-    // assert THAT directly: every detector target is one of the 51 canonical
+    // assert THAT directly: every detector target is one of the 47 canonical
     // production tool names.
     const CANONICAL_TOOL_NAMES = new Set([
       "read", "edit", "write", "grep", "find", "ls", "apply_patch",
@@ -1005,13 +1025,12 @@ describe("tool-metadata-registry -- failure detectors", () => {
       "cron", "gateway", "image_analyze", "tts_synthesize",
       "transcribe_audio", "describe_video", "extract_document", "browser",
       "discord_action", "telegram_action", "slack_action", "whatsapp_action",
-      "ctx_search", "ctx_inspect", "ctx_expand", "ctx_recall",
       "agents_manage", "obs_query", "sessions_manage", "memory_manage",
       "channels_manage", "tokens_manage", "models_manage", "skills_manage",
       "mcp_manage", "heartbeat_manage", "providers_manage",
       "discover_tools",
     ]);
-    expect(CANONICAL_TOOL_NAMES.size).toBe(51);
+    expect(CANONICAL_TOOL_NAMES.size).toBe(47);
     for (const target of ["web_search", "web_fetch"]) {
       expect(
         CANONICAL_TOOL_NAMES.has(target),

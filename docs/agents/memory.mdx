@@ -350,25 +350,26 @@ Consolidation is **non-destructive** (source memories are kept) and **opt-in
 configuration lives in the [config reference](/reference/config-yaml); this page
 describes the concept.
 
-## DAG context store
+## DAG context store (the default engine; in-session expansion tools)
 
-When your agent runs in DAG mode (`contextEngine.version: "dag"`, the **default**
-context engine — full details in
-[Context Management](/agents/context-management)), Comis
-maintains an additional storage layer alongside the regular long-term memory.
-The DAG context store preserves the full conversation history in a structured
-graph -- every message, tool result, and file content is stored as a node, and
-compaction creates summary nodes that link back to their source messages. This
-means nothing is ever truly lost; even after compaction, your agent can recall
-the original content using the `ctx_search`, `ctx_inspect`, and `ctx_recall`
-tools.
+The DAG (LCD) context store preserves the full conversation history losslessly —
+every message, tool call, and tool result kept verbatim and paired by id. It backs
+the **default** lossless DAG engine (`contextEngine.version` defaults to `"dag"` — full details
+in [Context Management](/agents/context-management#dag-mode-the-default-engine)). In DAG mode
+the engine compresses old turns into a zoomable summary hierarchy, and three
+dedicated **in-session** expansion tools (`ctx_search`, `ctx_inspect`,
+`ctx_expand`) let the agent query that store on demand and recover detail the
+summarizer compressed away — see
+[Context expansion tools](/agent-tools/sessions#context-expansion-tools). They are
+`never-export` and **distinct from cross-session recall**. The default context
+engine is **DAG** mode (`contextEngine.version` defaults to `"dag"`); in the
+opt-in **pipeline** mode (`contextEngine.version: "pipeline"`), the
+`session_search` tool searches the raw session history instead. The long-term memory
+described above (semantic store, recall, consolidation) is independent of the DAG
+context store and is fully available.
 
-The DAG context store lives in the same SQLite database as your agent's regular
-memory. It uses 12 dedicated tables (prefixed with `ctx_`) and 2 full-text
-search indexes for fast lookups.
-
-See [Compaction](/agents/compaction) for how DAG compaction works, and
-[Built-in Tools](/skills/built-in-tools) for the recall tool reference.
+See [Compaction](/agents/compaction) for the pipeline engine and the DAG design
+reference.
 
 ## Configuration
 

@@ -218,9 +218,15 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   //   per-event granular eviction/mask/reread signals — kept internal).
   // context:pipeline:cache: post-LLM cache-patch event whose fields
   //   are folded into the pre-LLM context:pipeline trajectory snapshot.
+  // context:dag_degraded: LCD robustness/integrity signal (Phase 132 R1 + R3) —
+  //   a fail-closed rollover / serialized-wait / summarizer breaker-open /
+  //   spend-cap degrade, carrying ids + a closed reason + durationMs ONLY (never
+  //   content). A health/safety signal fed to observability snapshots, NOT a
+  //   turn-level trajectory step (same class as provider:degraded above).
   // -------------------------------------------------------------------
   "context:compacted",
   "context:pipeline:cache",
+  "context:dag_degraded",
 
   // -------------------------------------------------------------------
   // Diagnostic counters — internal aggregation, not user-visible.

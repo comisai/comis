@@ -370,11 +370,11 @@ describe("@comis/agent -- architecture invariants", () => {
   // ---------------------------------------------------------------------------
   // Agent has zero memory production imports.
   //
-  // ContextStorePort + SessionStorePort + row DTOs (Ctx*Row + Session*) all
-  // live in @comis/core. Agent production source imports them from
-  // @comis/core. The OAuth credential store selector is rewritten to consume
-  // a daemon-injected encryptedStore port, so no value-import into
-  // @comis/memory remains.
+  // SessionStorePort + its 3 Session* row DTOs live in @comis/core; agent
+  // production source imports them from @comis/core. (The DAG ContextStorePort +
+  // the 9 Ctx*Row DTOs were removed in v2.12, Phase 126.) The OAuth credential
+  // store selector is rewritten to consume a daemon-injected encryptedStore
+  // port, so no value-import into @comis/memory remains.
   // ---------------------------------------------------------------------------
 
   describe("agent -> memory cut", () => {
@@ -394,7 +394,7 @@ describe("@comis/agent -- architecture invariants", () => {
         violations,
         formatViolations({
           description:
-            "@comis/agent production source must not import @comis/memory. ContextStore->ContextStorePort and SessionStore->SessionStorePort plus the 9 Ctx*Row and 3 Session* row DTOs all live in @comis/core. The lone value-import (createOAuthProfileStoreEncrypted) moved to daemon's setup-agents.ts -- the agent selector now consumes an injected encryptedStore port.",
+            "@comis/agent production source must not import @comis/memory. SessionStore->SessionStorePort plus the 3 Session* row DTOs live in @comis/core. The lone value-import (createOAuthProfileStoreEncrypted) moved to daemon's setup-agents.ts -- the agent selector now consumes an injected encryptedStore port.",
           violations: violations.map((v) => ({
             file: v.file,
             line: v.line,
@@ -402,7 +402,7 @@ describe("@comis/agent -- architecture invariants", () => {
             snippet: v.snippet,
           })),
           suggestedFix:
-            'Replace `from "@comis/memory"` with `from "@comis/core"`. Rename ContextStore->ContextStorePort and SessionStore->SessionStorePort at use sites. For OAuth-store construction, inject an OAuthCredentialStorePort from the daemon composition (setup-agents.ts already owns the createOAuthProfileStoreEncrypted call site).',
+            'Replace `from "@comis/memory"` with `from "@comis/core"`. Rename SessionStore->SessionStorePort at use sites. For OAuth-store construction, inject an OAuthCredentialStorePort from the daemon composition (setup-agents.ts already owns the createOAuthProfileStoreEncrypted call site).',
         }),
       ).toEqual([]);
       expect(

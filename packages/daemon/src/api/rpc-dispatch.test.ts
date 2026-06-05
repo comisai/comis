@@ -215,10 +215,6 @@ vi.mock("./image-handlers.js", () => ({
   createImageHandlers: vi.fn(() => ({})),
 }));
 
-vi.mock("./context-handlers.js", () => ({
-  createContextHandlers: vi.fn(() => ({})),
-}));
-
 vi.mock("./graph-handlers/index.js", () => ({
   createGraphHandlers: vi.fn(() => ({})),
 }));
@@ -416,7 +412,7 @@ describe("createRpcDispatch", () => {
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(mockDeps);
 
-    // Regression for the ~/.comis/logs/ "context.expand id=abc-123" case:
+    // Regression for the ~/.comis/logs/ "cron.add id=abc-123" case:
     // params MUST appear on the same log payload so an operator does not
     // have to cross-reference a separate request log to find the input.
     await expect(dispatch("cron.add", { id: "abc-123" })).rejects.toThrow();

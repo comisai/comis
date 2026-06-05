@@ -112,7 +112,6 @@ import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/i
 import {
   setupSecrets as _setupSecretsImpl,
   createNamedGraphStore,
-  createContextStore,
   createObservabilityStore,
   selectSecretStore,
 } from "@comis/memory";
@@ -1000,12 +999,6 @@ function buildRpcDispatchDeps(deps: {
           logger: c.skillsLogger,
           getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
         };
-  // Inlined buildContextEngineConfig: read default agent's contextEngine sub-tree with fallbacks.
-  const contextEngineConfig = {
-    maxRecallsPerDay: c.agentsConfig[c.defaultAgentId]?.contextEngine?.maxRecallsPerDay ?? 10,
-    maxExpandTokens: c.agentsConfig[c.defaultAgentId]?.contextEngine?.maxExpandTokens ?? 4000,
-    recallTimeoutMs: c.agentsConfig[c.defaultAgentId]?.contextEngine?.recallTimeoutMs ?? 120000,
-  };
   // Inlined buildTokenStoreMutators.
   const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
   const removeFromTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["removeFromTokenStore"] = (id) => {
@@ -1070,8 +1063,7 @@ function buildRpcDispatchDeps(deps: {
     // MemoryApiDeps.eventBus accepts the full AppContainer["eventBus"] type;
     // no down-cast to `{ emit }` is needed.
     eventBus: c.container.eventBus,
-    mcpClientManager: c.mcpClientManager, contextStore: c.contextStore,
-    contextEngineConfig,
+    mcpClientManager: c.mcpClientManager,
     obsStore: c.obsStore, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
     contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
     deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
@@ -1611,7 +1603,8 @@ async function bootFoundation(
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
-    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters,
+    summarizerSpendBreaker,
+    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters,
   } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1640,8 +1633,7 @@ async function bootFoundation(
   const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
 
-  // Create context store + daemon-level runtime registries
-  const contextStore = createContextStore(db);
+  // Create daemon-level runtime registries
   const activeRunRegistry = createActiveRunRegistry();
   const sessionResolver = createBackgroundSessionResolver({ activeRunRegistry });
   const canaryFallbackSecret = (await import("node:crypto")).createHmac("sha256", container.config.tenantId)
@@ -1762,8 +1754,8 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
-    obsStore, obsPersistence, contextStore,
+    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
+    obsStore, obsPersistence,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
     geminiCacheManager,
@@ -1820,11 +1812,12 @@ async function bootAgents(
     rerankerPort, // built in setup-memory; threaded into setupAgents -> createPiExecutor
     rerankerModelPresent, // model-present probe result; threaded into setupAgents -> per-agent effective rerank precedence (same value as the build gate)
     entityStore, // threaded into setupAgents -> createPiExecutor (recall read path) + the cron review (write path)
+    lcdStore, // Phase 128 LCD store; threaded into setupAgents -> createPiExecutor (contextStore) -> setupContextEngine -> the `dag` branch (context-engine.ts). Opt-in (version: "dag"); default pipeline. The agent receives the core ContextStorePort TYPE only (agent↛memory cut)
+    summarizerSpendBreaker, // R1 (132-05); daemon-owned per-tenant breaker; threaded into setupAgents -> createPiExecutor -> setupContextEngine so getSummarizerDeps gates the leaf seam per tenant (truncation-only degrade on open-breaker/over-cap)
     temporalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall temporal-spread read path); dormant until rag.lanes.temporal.enabled
     causalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
     tripleStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
     embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, // the MMR re-rank's scoped embedding read + recall usefulness read + the LLM-free <user_profile> standing-block read + the LLM-free <channel_relationships> standing-block read (dormant until the offline builder writes rows + the social-modeling sign-off) + the buildScoringAlphas tuned-vector read (dormant until rag.onlineTuning.enabled + the bandit cron) -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut)
-    contextStore,
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
@@ -1943,7 +1936,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts,
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, summarizerSpendBreaker, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
@@ -1951,9 +1944,6 @@ async function bootAgents(
     canaryFallbackSecret,  // Deterministic canary fallback
     injectionRateLimiter,  // Per-user injection rate limiting
     embeddingQueue,  // Conversation memory persistence in executor
-    // DAG context engine deps
-    contextStore,
-    db,
     embeddingPort: cachedPort,  // Semantic search in discover_tools
     // Session mirroring -- mirror port + injection budget config
     deliveryMirror,
@@ -2192,6 +2182,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
     agentsConfig: agents, toolCapabilityPorts, mcpClientManager,
     linkRunner, systemEventQueue, rpcCall, approvalGate,
     deliveryQueue, cronWakeCallbackRef, singleAgentDeps,
+    // Phase 131 (E1/E2): the concrete LCD ContextStorePort (createLcdStore),
+    // populated on the BootContext by bootFoundation's setupMemory Object.assign.
+    // Threaded into setupTools so assembleToolsForAgent wires the dag-mode ctx_*
+    // in-session expansion tools. The agent sees only the core port TYPE (the cut).
+    lcdStore,
   } = handle;
 
   // The 3 eliminable local-scope refs (session-tracker, tool-assembler,
@@ -2251,6 +2246,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
     subprocessEnv: handle.execToolEnv, onSuspiciousContent: handle.onSuspiciousContent,
     // 124-09 (WR-01 closure): the daemon TimerPort drives the terminal-driver reaper sweep.
     timers: handle.timers,
+    // Phase 131 (E1/E2): the concrete LCD store, so assembleToolsForAgent can wire the
+    // dag-mode ctx_* tools (gated on version === "dag" && a present store). The agent
+    // receives only the core ContextStorePort TYPE (the agent-to-store cut holds).
+    lcdStore,
     mcpClientManager,
     // Fresh accessor for per-server tool filtering — read live so
     // config:mutated server edits surface on the next tool assembly.

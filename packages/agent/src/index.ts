@@ -26,6 +26,12 @@ export { createContextWindowGuard } from "./safety/context-window-guard.js";
 export type { ContextWindowGuard, ContextWindowStatus, ContextWindowGuardOptions } from "./safety/context-window-guard.js";
 export { createToolResultSizeGuard } from "./safety/tool-result-size-guard.js";
 export type { ToolResultSizeGuard, TruncationMetadata, ToolResultSizeGuardOptions } from "./safety/tool-result-size-guard.js";
+export { createSummarizerSpendBreaker } from "./safety/summarizer-spend-breaker.js";
+// SummarizerSpendBreakerDeps + SummarizerSpendConfig are NOT re-exported: they are
+// consumed only intra-package (the factory's own signature in
+// summarizer-spend-breaker.ts). The daemon composition root imports
+// createSummarizerSpendBreaker + the SummarizerSpendBreaker instance type only.
+export type { SummarizerSpendBreaker } from "./safety/summarizer-spend-breaker.js";
 
 // Token estimator
 export { estimateMessageChars, estimateContextChars, estimateMessageTokens, estimateContextTokens, CHARS_PER_TOKEN, IMAGE_TOKEN_ESTIMATE } from "./safety/token-estimator.js";
@@ -520,31 +526,9 @@ export type {
   LayerCircuitBreaker,
 } from "./context-engine/index.js";
 
-// DAG reconciliation, compaction, integrity, and assembler
-export {
-  reconcileJsonlToDag,
-  installDagIngestionHook,
-  createDagContextEngine,
-  runLeafPass,
-  runCondensedPass,
-  resolveFreshTailBoundary,
-  shouldCompact,
-  markAncestorsDirty,
-  recomputeDescendantCounts,
-  runDagCompaction,
-  checkIntegrity,
-  CHARS_PER_TOKEN_RATIO,
-} from "./context-engine/index.js";
-export type {
-  ReconciliationResult,
-  DagContextEngineDeps,
-  CompactionDeps,
-  DagCompactionConfig,
-  DagCompactionDeps,
-  IntegrityCheckDeps,
-  IntegrityReport,
-  IntegrityIssue,
-} from "./context-engine/index.js";
+// Shared token-estimation ratio (non-DAG; consumed by tool-schema-safety.ts,
+// executor-tool-assembly.ts, et al.)
+export { CHARS_PER_TOKEN_RATIO } from "./context-engine/index.js";
 
 // Provider capabilities
 export {

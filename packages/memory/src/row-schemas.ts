@@ -8,9 +8,10 @@
  *
  * Sectional layout: (1) memory-package-local public rows paired 1:1 with the
  * `./types.js` interfaces (each pair gets an `expectTypeOf` drift guard in
- * `row-schemas.test.ts`); (2) context-store rows (`Ctx*Row` from @comis/core); (3)
- * session-store DTOs; (4) file-internal snake_case row shapes (the SSOT consumers
- * retarget to via `z.infer<typeof XxxRowSchema>`).
+ * `row-schemas.test.ts`); (2) removed in v2.12 — the DAG context-store row
+ * schemas were deleted with the ctx_* schema (Phase 126); (3) session-store
+ * DTOs; (4) file-internal snake_case row shapes (the SSOT consumers retarget to
+ * via `z.infer<typeof XxxRowSchema>`).
  *
  * Conventions: every schema is `z.strictObject(...)` (rejects extra columns);
  * JSON-encoded TEXT → `z.string()` (parsed downstream); SQLite bool INTEGER 0/1 →
@@ -287,6 +288,107 @@ export const SessionRowSchema = z.strictObject({
   metadata: z.string(), // JSON-encoded Record<string, unknown>
 });
 
+/**
+ * Schema for the `lcd_messages` table (LCD lossless store, Phase 127, F1).
+ * Paired with `LcdMessageRow` exported from `./types.js`. The R4 isolation
+ * columns are strict-required so a SELECT that drops one fails loudly (threat
+ * T-127-06 — a silent scoping gap would be a cross-tenant hole).
+ */
+export const LcdMessageRowSchema = z.strictObject({
+  id: z.string(),
+  conversation_id: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  session_key: z.string(),
+  seq: z.number(), // monotonic per conversation
+  role: z.string(), // pi-ai role: user | assistant | toolResult
+  token_count: z.number(),
+  created_at: z.number(), // Unix ms
+});
+
+/**
+ * Schema for the `lcd_message_parts` table (LCD lossless store, Phase 127, F1).
+ * Paired with `LcdMessagePartRow` exported from `./types.js`. Tool columns are
+ * nullable (SQLite NULL ≠ undefined — absent for non-tool blocks); `is_error`
+ * is the SQLite bool 0/1 integer; `tool_input`/`tool_output`/`metadata` are
+ * JSON-encoded TEXT parsed (graceful-degrade `safeParse`) on the read path.
+ */
+export const LcdMessagePartRowSchema = z.strictObject({
+  id: z.string(),
+  message_id: z.string(),
+  ordinal: z.number(),
+  kind: z.string(), // text | tool_use | tool_result | reasoning | file
+  tool_call_id: z.string().nullable(),
+  tool_name: z.string().nullable(),
+  tool_input: z.string().nullable(), // JSON
+  tool_output: z.string().nullable(), // JSON
+  is_error: z.number().int().nullable(), // 0/1; null for non-tool_result
+  metadata: z.string(), // JSON-encoded LcdPartMetadata (raw + messageEnvelope + reasoning marker)
+});
+
+/**
+ * Schema for the `lcd_summaries` table (LCD compaction store, Phase 129, C3).
+ * Paired with `LcdSummaryRow` exported from `./types.js`. The R4 isolation
+ * columns are strict-required so a SELECT that drops one fails loudly (threat
+ * T-129-04). `kind` is the closed-union TEXT (`leaf` for 129); `taint`/
+ * `fallback` are the SQLite bool 0/1 integers; `file_ids` is JSON-encoded TEXT.
+ */
+export const LcdSummaryRowSchema = z.strictObject({
+  summary_id: z.string(),
+  conversation_id: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  session_key: z.string(),
+  kind: z.string(), // leaf (closed union; condensed kinds = Phase 130)
+  depth: z.number(),
+  earliest_at: z.number(),
+  latest_at: z.number(),
+  descendant_count: z.number(),
+  token_count: z.number(),
+  content: z.string(),
+  file_ids: z.string(), // JSON string[]
+  taint: z.number().int(), // 0/1
+  fallback: z.number().int(), // 0/1
+  created_at: z.number(),
+});
+
+/**
+ * Schema for the `lcd_summary_messages` table (LCD compaction store, Phase 129,
+ * C3). Paired with `LcdSummaryMessageRow` exported from `./types.js`. The
+ * leaf→message link; strict (no extra column) keeps the projection minimal.
+ */
+export const LcdSummaryMessageRowSchema = z.strictObject({
+  summary_id: z.string(),
+  message_id: z.string(),
+});
+
+/**
+ * Schema for the `lcd_summary_parents` table (LCD condensed tier, Phase 130,
+ * C2). Paired with `LcdSummaryParentRow` exported from `./types.js`. The
+ * condensed→child summary edge; strict (no extra column) keeps the edge minimal.
+ */
+export const LcdSummaryParentRowSchema = z.strictObject({
+  parent_summary_id: z.string(),
+  child_summary_id: z.string(),
+});
+
+/**
+ * Schema for the `lcd_context_items` table (LCD compaction store, Phase 129,
+ * C3). Paired with `LcdContextItemRow` exported from `./types.js`. The R4
+ * isolation columns are strict-required (threat T-129-04); `ref_kind` is the
+ * closed `message`|`summary` discriminator TEXT.
+ */
+export const LcdContextItemRowSchema = z.strictObject({
+  id: z.string(),
+  conversation_id: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  session_key: z.string(),
+  ordinal: z.number(),
+  ref_kind: z.string(), // message | summary
+  ref_id: z.string(),
+});
+
 // Schema for sqlite-vec KNN query results. Paired with `VecSearchRow` (./types.js).
 export const VecSearchRowSchema = z.strictObject({
   memory_id: z.string(),
@@ -298,6 +400,32 @@ export const FtsSearchRowSchema = z.strictObject({
   id: z.string(),
   content: z.string(),
   rank: z.number(),
+});
+
+/**
+ * Schema for an LCD FTS5 MATCH hit row (E1 ctx_search). The SELECT aliases the
+ * per-table columns to a uniform shape (`message_id`/`summary_id AS ref_id`,
+ * `content AS snippet`, `rank`). Mirrors `FtsSearchRowSchema`; consumed by
+ * `searchLcdImpl` (lcd-fts.ts), which maps it to the core `LcdSearchHit` DTO.
+ */
+export const LcdSearchHitRowSchema = z.strictObject({
+  ref_id: z.string(),
+  snippet: z.string(),
+  rank: z.number(),
+});
+
+/**
+ * Schema for an LCD LIKE-fallback hit row (E1 ctx_search, FTS5 uncompiled). Same
+ * `ref_id`/`snippet` shape as the MATCH path but WITHOUT `rank` — the LIKE scan
+ * has no ranking, so the projection selects no `rank` column and the hit's `rank`
+ * is set to `undefined` by the contract. Routes through the SAME per-row
+ * `parseOptionalRow`+skip the MATCH path uses (WR-02) so both search paths degrade
+ * identically — a drifted/corrupt row is skipped, never surfaced with an
+ * `undefined` `snippet`/`refId` into `wrapExternalContent` at the tool boundary.
+ */
+export const LcdLikeHitRowSchema = z.strictObject({
+  ref_id: z.string(),
+  snippet: z.string(),
 });
 
 /**
@@ -317,139 +445,11 @@ export const NamedGraphRowSchema = z.strictObject({
   deleted_at: z.number().nullable(),
 });
 
-// ─── 2. Context-store rows (paired with @comis/core/ports/context-store-types) ───
-
-/**
- * Schema for the `ctx_conversations` table.
- * Paired with `CtxConversationRow` from `@comis/core`.
- */
-export const CtxConversationRowSchema = z.strictObject({
-  conversation_id: z.string(),
-  tenant_id: z.string(),
-  agent_id: z.string(),
-  session_key: z.string(),
-  title: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
-
-/**
- * Schema for the `ctx_messages` table.
- * Paired with `CtxMessageRow` from `@comis/core`.
- */
-export const CtxMessageRowSchema = z.strictObject({
-  message_id: z.number(),
-  conversation_id: z.string(),
-  seq: z.number(),
-  role: z.string(),
-  content: z.string(),
-  content_hash: z.string(),
-  token_count: z.number(),
-  tool_name: z.string().nullable(),
-  tool_call_id: z.string().nullable(),
-  created_at: z.string(),
-});
-
-/**
- * Schema for the `ctx_message_parts` table.
- * Paired with `CtxMessagePartRow` from `@comis/core`.
- */
-export const CtxMessagePartRowSchema = z.strictObject({
-  part_id: z.number(),
-  message_id: z.number(),
-  ordinal: z.number(),
-  part_type: z.string(),
-  content: z.string().nullable(),
-  metadata: z.string().nullable(),
-});
-
-/**
- * Schema for the `ctx_summaries` table.
- * Paired with `CtxSummaryRow` from `@comis/core`.
- */
-export const CtxSummaryRowSchema = z.strictObject({
-  summary_id: z.string(),
-  conversation_id: z.string(),
-  kind: z.enum(["leaf", "condensed"]),
-  depth: z.number(),
-  content: z.string(),
-  token_count: z.number(),
-  file_ids: z.string(),
-  earliest_at: z.string().nullable(),
-  latest_at: z.string().nullable(),
-  descendant_count: z.number(),
-  descendant_token_count: z.number(),
-  source_token_count: z.number(),
-  counts_dirty: z.number(),
-  quality_score: z.number().nullable(),
-  compaction_level: z.string().nullable(),
-  created_at: z.string(),
-});
-
-/**
- * Schema for the `ctx_summary_messages` link table.
- * Paired with `CtxSummaryMessageRow` from `@comis/core`.
- */
-export const CtxSummaryMessageRowSchema = z.strictObject({
-  summary_id: z.string(),
-  message_id: z.number(),
-  ordinal: z.number(),
-});
-
-/**
- * Schema for the `ctx_summary_parents` link table.
- * Paired with `CtxSummaryParentRow` from `@comis/core`.
- */
-export const CtxSummaryParentRowSchema = z.strictObject({
-  summary_id: z.string(),
-  parent_summary_id: z.string(),
-  ordinal: z.number(),
-});
-
-/**
- * Schema for the `ctx_context_items` table.
- * Paired with `CtxContextItemRow` from `@comis/core`.
- */
-export const CtxContextItemRowSchema = z.strictObject({
-  conversation_id: z.string(),
-  ordinal: z.number(),
-  item_type: z.string(),
-  message_id: z.number().nullable(),
-  summary_id: z.string().nullable(),
-});
-
-/**
- * Schema for the `ctx_large_files` table.
- * Paired with `CtxLargeFileRow` from `@comis/core`.
- */
-export const CtxLargeFileRowSchema = z.strictObject({
-  file_id: z.string(),
-  conversation_id: z.string(),
-  file_name: z.string().nullable(),
-  mime_type: z.string().nullable(),
-  byte_size: z.number().nullable(),
-  content_hash: z.string().nullable(),
-  storage_path: z.string(),
-  exploration_summary: z.string().nullable(),
-  created_at: z.string(),
-});
-
-/**
- * Schema for the `ctx_expansion_grants` table.
- * Paired with `CtxExpansionGrantRow` from `@comis/core`.
- */
-export const CtxExpansionGrantRowSchema = z.strictObject({
-  grant_id: z.string(),
-  issuer_session: z.string(),
-  conversation_ids: z.string(),
-  summary_ids: z.string(),
-  max_depth: z.number(),
-  token_cap: z.number(),
-  tokens_consumed: z.number(),
-  expires_at: z.string(),
-  revoked: z.number(),
-  created_at: z.string(),
-});
+// ─── 2. (removed) Context-store rows ───
+// The DAG context-store row schemas (paired with the @comis/core
+// context-store-types DTOs) were removed in v2.12 (Phase 126, LCD
+// reimplementation) together with the ctx_* schema/store. The LCD store DTOs
+// are reintroduced fresh in a later phase.
 
 // ─── 3. Session-store DTOs (paired with @comis/core/ports/session-store-types) ───
 

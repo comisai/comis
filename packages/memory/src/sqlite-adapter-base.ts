@@ -6,9 +6,9 @@
  * directory creation, database open, WAL/pragma setup, file permissions,
  * and schema initialization.
  *
- * Stores that receive a pre-opened `db` parameter (createContextStore,
- * createSessionStore, DeliveryQueueAdapter, etc.) do not need this utility --
- * they have minimal boilerplate already.
+ * Stores that receive a pre-opened `db` parameter (createSessionStore,
+ * DeliveryQueueAdapter, etc.) do not need this utility -- they have minimal
+ * boilerplate already.
  *
  * @module
  */

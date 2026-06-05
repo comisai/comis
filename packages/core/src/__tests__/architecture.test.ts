@@ -93,47 +93,11 @@ describe("@comis/core -- architecture invariants", () => {
     ).toEqual([]);
   });
 
-  it("exports ContextStorePort (interface or alias) + ContextEngineStore + ContextAdminStore from core/src/ports/", () => {
-    // ContextStorePort was split into ContextEngineStore (34 per-session
-    // read/write methods) + ContextAdminStore (4 admin/cleanup methods).
-    // ContextStorePort is now declared as an intersection type
-    // alias: `export type ContextStorePort = ContextEngineStore &
-    // ContextAdminStore`. This assertion accepts BOTH the legacy interface
-    // form AND the post-split type-alias form to remain stable across the
-    // refactor window.
-    //
-    // The dead memory-parity-check branch is intentionally removed — memory
-    // pkg no longer declares its own `ContextStore` type (terminal state
-    // per pre-refactor architecture comment); ContextStorePort from
-    // @comis/core is the single source of truth.
-    const missing: string[] = [];
-
-    // ContextStorePort — accept BOTH interface AND type alias (post-split form).
-    const portFile = resolve(SRC_ROOT, "ports/context-store.ts");
-    const portSrc = readFileSync(portFile, "utf8");
-    if (!/export\s+(?:interface|type)\s+ContextStorePort\b/.test(portSrc)) {
-      missing.push("ContextStorePort");
-    }
-
-    // ContextEngineStore — interface in new file (34 per-session methods).
-    const engineFile = resolve(SRC_ROOT, "ports/context-engine-store.ts");
-    const engineSrc = readFileSync(engineFile, "utf8");
-    if (!/export\s+interface\s+ContextEngineStore\b/.test(engineSrc)) {
-      missing.push("ContextEngineStore");
-    }
-
-    // ContextAdminStore — interface in new file (4 admin/cleanup methods).
-    const adminFile = resolve(SRC_ROOT, "ports/context-admin-store.ts");
-    const adminSrc = readFileSync(adminFile, "utf8");
-    if (!/export\s+interface\s+ContextAdminStore\b/.test(adminSrc)) {
-      missing.push("ContextAdminStore");
-    }
-
-    expect(
-      missing,
-      `Expected ContextStorePort (interface or alias) + ContextEngineStore + ContextAdminStore port declarations to exist. Missing: ${missing.join(", ")}`,
-    ).toEqual([]);
-  });
+  // NOTE (v2.12, Phase 126): the "exports ContextStorePort + ContextEngineStore
+  // + ContextAdminStore from core/src/ports/" assertion was removed — those DAG
+  // store ports (and the context-store{,-engine,-admin,-types}.ts files) were
+  // deleted with the DAG context engine. The LCD store port is reintroduced
+  // fresh in a later phase.
 
   it("OAuth rewritten errors expose code (OAuthErrorCode) and logErrorKind (closed Pino ErrorKind), with no string-typed errorKind field", () => {
     // The RewrittenOAuthError interface in core/src/security/oauth-helpers.ts
@@ -395,38 +359,11 @@ describe("port-DTO residency text-level checks", () => {
   const PORTS_DIR_P31 = resolve(SRC_ROOT, "ports");
   const DOMAIN_DIR_P31 = resolve(SRC_ROOT, "domain");
 
-  it("every Ctx*Row name appearing in the context-store port files is exported from context-store-types.ts", () => {
-    // Complementary check — the primary AST-level check is the
-    // TS-compiler-API walker wired in test/architecture/source-rules.test.ts.
-    // This regex check additionally catches Ctx*Row names mentioned in
-    // comments or non-method-signature positions.
-    //
-    // A prior refactor split ContextStorePort into two narrower ports —
-    // ContextEngineStore (34 methods) + ContextAdminStore (4 methods).
-    // The Ctx*Row references moved out of `context-store.ts`
-    // (now a ~30-line intersection-alias file with no DTO references) and
-    // into the two new port files. The residency check now unions the
-    // names across all three files.
-    const portFileSources = [
-      readFileSync(resolve(PORTS_DIR_P31, "context-store.ts"), "utf8"),
-      readFileSync(resolve(PORTS_DIR_P31, "context-engine-store.ts"), "utf8"),
-      readFileSync(resolve(PORTS_DIR_P31, "context-admin-store.ts"), "utf8"),
-    ].join("\n");
-    const typesFile = readFileSync(resolve(PORTS_DIR_P31, "context-store-types.ts"), "utf8");
-    const ctxRowNames = new Set(
-      [...portFileSources.matchAll(/\bCtx[A-Z][A-Za-z]+Row\b/g)].map((m) => m[0]),
-    );
-    expect(
-      ctxRowNames.size,
-      "context-store port files must reference at least 1 Ctx*Row type",
-    ).toBeGreaterThan(0);
-    for (const name of ctxRowNames) {
-      expect(
-        typesFile,
-        `${name} (used in a context-store port file) must be exported from context-store-types.ts`,
-      ).toMatch(new RegExp(`export\\s+interface\\s+${name}\\b`));
-    }
-  });
+  // NOTE (v2.12, Phase 126): the "every Ctx*Row name ... exported from
+  // context-store-types.ts" residency check was removed — the context-store
+  // port files (context-store{,-engine,-admin,-types}.ts) and the 9 Ctx*Row
+  // DTOs were deleted with the DAG context engine. The negative-residency
+  // guard below (no Ctx*Row in core/src/domain/) is retained.
 
   it("session-store.ts declares SessionStorePort with exactly 7 methods", () => {
     const portFile = readFileSync(resolve(PORTS_DIR_P31, "session-store.ts"), "utf8");

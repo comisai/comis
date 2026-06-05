@@ -2,11 +2,9 @@
 /**
  * Tool assembly pipeline for PiExecutor.
  *
- * Extracted from pi-executor.ts execute() to isolate tool merging,
- * SettingsManager creation, settings overrides, prompt assembly,
- * resource loader configuration, tool deferral, lifecycle management,
- * JIT guide wrapping, schema pruning, schema snapshot, provider
- * normalization, and mutation serializer into a focused module.
+ * Extracted from pi-executor.ts execute() to isolate tool merging, SettingsManager creation,
+ * settings overrides, prompt assembly, resource loader config, tool deferral, lifecycle
+ * management, JIT guide wrapping, schema pruning/snapshot, provider normalization, serializer.
  *
  * Consumers:
  * - pi-executor.ts: calls assembleTools() during execute()
@@ -226,6 +224,14 @@ export interface ToolAssemblyResult {
   promptResult: ExecutionPromptResult;
   /** Estimated system token count (system prompt + tool definition overhead). */
   cachedSystemTokensEstimate: number;
+  /** I1 / WR-01: estimated WHOLE fresh-tail preamble token count (the entire
+   *  `dynamicPreamble` + `inlineMemory` blob envelope-wrapper prepends into the
+   *  latest user message — skills XML, MCP instructions, deferred-tools context,
+   *  date/channel lines, recalled memory, …, NOT just recall) — a SEPARATE budget
+   *  subtrahend, never folded into the system estimate above. The whole preamble is
+   *  counted on purpose (it rides the unconditionally-shipped fresh tail and is
+   *  reserved nowhere else); see token-budget.ts WR-01. */
+  cachedFreshTailPreambleTokens: number;
 }
 
 /** Parameters for the assembleTools function. */
@@ -512,6 +518,18 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const cachedSystemTokensEstimate = Math.ceil(
     (promptResult.systemPrompt.length + toolDefOverheadChars) / CHARS_PER_TOKEN_RATIO,
   );
+  // I1 / WR-01: the WHOLE fresh-tail preamble token estimate — the entire
+  // dynamicPreamble + inlineMemory blob envelope-wrapper prepends into the latest
+  // user message (skills XML, MCP instructions, deferred-tools context, date/channel
+  // lines, recalled memory, …, NOT just recall), measured as a SEPARATE budget
+  // subtrahend (NOT folded into S above — the recall-dag-budget-partition lock).
+  // The whole preamble is counted deliberately: it rides the unconditionally-shipped
+  // fresh tail and is reserved nowhere else, so this is the only window-headroom
+  // reservation for it (recall is a strict subset → a heavier recall block still
+  // grows this and compacts harder, preserving I1's intent). See token-budget.ts WR-01.
+  const cachedFreshTailPreambleTokens = Math.ceil(
+    (promptResult.dynamicPreamble.length + (promptResult.inlineMemory?.length ?? 0)) / CHARS_PER_TOKEN_RATIO,
+  );
 
   // -------------------------------------------------------------------
   // 6. ResourceLoader options
@@ -776,5 +794,6 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     resourceLoaderOptions,
     promptResult,
     cachedSystemTokensEstimate,
+    cachedFreshTailPreambleTokens,
   };
 }

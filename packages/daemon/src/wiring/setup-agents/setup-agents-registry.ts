@@ -172,14 +172,6 @@ export async function setupAgents(deps: {
   injectionRateLimiter?: InjectionRateLimiter;
   /** Embedding queue for async vector generation. Wired into executor for conversation persistence. */
   embeddingQueue?: { enqueue(entryId: string, content: string): void };
-  /** Context store for DAG mode context engine. Narrowed to ContextEngineStore
-   *  (the engine half of ContextStorePort) — the agent never calls admin
-   *  methods (listConversations, cleanupExpiredGrants, deleteConversation,
-   *  touchConversation), so the narrower view prevents structural misuse at
-   *  compile time. */
-  contextStore?: import("@comis/core").ContextEngineStore;
-  /** Raw better-sqlite3 database handle for DAG transactions */
-  db?: unknown;
   /** Optional embedding port for discover_tools semantic search. */
   embeddingPort?: import("@comis/core").EmbeddingPort;
   /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
@@ -192,6 +184,16 @@ export async function setupAgents(deps: {
   /** Entity-associative store. Threaded into each per-agent createPiExecutor
    *  like memoryPort (the recall read path). Built in setup-memory on the shared db. */
   entityStore?: import("@comis/core").MemoryEntityStore;
+  /** LCD lossless context store (Phase 128). Threaded into each per-agent
+   *  createPiExecutor like entityStore — as `contextStore` (the dag-mode assembly
+   *  read path -> context-engine.ts `dag` branch). Built in setup-memory on the
+   *  shared db (`createLcdStore(db)`); injected as the core `ContextStorePort` TYPE
+   *  (agent↛memory cut). Opt-in (`contextEngine.version: "dag"`); default pipeline. */
+  lcdStore?: import("@comis/core").ContextStorePort;
+  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker; threaded
+   *  into each per-agent createPiExecutor -> setupContextEngine (the getSummarizerDeps
+   *  leaf-seam gate). ONE daemon instance, partitions by tenantId. */
+  summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker;
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
   temporalStore?: import("@comis/core").MemoryTemporalStore;
@@ -450,14 +452,14 @@ export async function setupAgents(deps: {
     canaryFallbackSecret: deps.canaryFallbackSecret,
     injectionRateLimiter: deps.injectionRateLimiter,
     embeddingQueue: deps.embeddingQueue,
-    contextStore: deps.contextStore,
-    db: deps.db,
     providerHealth,
     lastKnownModel,
     embeddingPort: deps.embeddingPort,
     rerankerPort: deps.rerankerPort,
     rerankerModelPresent: deps.rerankerModelPresent,
     entityStore: deps.entityStore,
+    lcdStore: deps.lcdStore,
+    summarizerSpendBreaker: deps.summarizerSpendBreaker,
     temporalStore: deps.temporalStore,
     causalStore: deps.causalStore,
     tripleStore: deps.tripleStore,
@@ -494,11 +496,6 @@ export async function setupAgents(deps: {
     // Session-scoped trajectory recorder registry — threaded into every
     // per-agent executor so the same registry is shared across agents.
     trajectoryRegistry,
-    // Single shared pending-switch carrier. Built ONCE here and reused
-    // for every setupSingleAgent call (incl. config-reload re-invocations with
-    // the SAME deps object), so a contextEngine.version switch recorded at the
-    // rebuild seam survives until the DAG engine consumes it at the next reconcile.
-    pendingModeSwitches: new Map(),
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {

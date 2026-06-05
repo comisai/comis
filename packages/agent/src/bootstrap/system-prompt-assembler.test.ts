@@ -2281,6 +2281,44 @@ function makeOperationalParams() {
   };
 }
 
+describe("assembleRichSystemPrompt — P2 Compressed-context clause (dag-mode gated)", () => {
+  it("includes '## Compressed context' when dagModeEnabled is true", () => {
+    const result = assembleRichSystemPrompt({
+      ...makeOperationalParams(),
+      promptMode: "full",
+      dagModeEnabled: true,
+    });
+    expect(result).toContain("## Compressed context");
+    expect(result).toContain("trust=untrusted");
+  });
+
+  it("does NOT include '## Compressed context' by default (pipeline/undefined)", () => {
+    const result = assembleRichSystemPrompt({
+      ...makeOperationalParams(),
+      promptMode: "full",
+    });
+    expect(result).not.toContain("## Compressed context");
+  });
+
+  it("does NOT include '## Compressed context' when dagModeEnabled is false", () => {
+    const result = assembleRichSystemPrompt({
+      ...makeOperationalParams(),
+      promptMode: "full",
+      dagModeEnabled: false,
+    });
+    expect(result).not.toContain("## Compressed context");
+  });
+
+  it("excludes the clause in minimal mode even when dagModeEnabled is true (sub-agent)", () => {
+    const result = assembleRichSystemPrompt({
+      ...makeOperationalParams(),
+      promptMode: "minimal",
+      dagModeEnabled: true,
+    });
+    expect(result).not.toContain("## Compressed context");
+  });
+});
+
 describe("SECTIONS descriptor contract", () => {
   it("every SECTION descriptor declares a non-empty includeIn set", () => {
     for (const s of SECTIONS) {

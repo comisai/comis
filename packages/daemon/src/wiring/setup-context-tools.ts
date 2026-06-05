@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Daemon-side wiring for the in-session expansion-loop `ctx_*` tools
+ * (v2.12 Phase 131, E1/E2): `ctx_search` / `ctx_inspect` / `ctx_expand`.
+ *
+ * The daemon is the composition root — it constructs the concrete LCD store
+ * (`createLcdStore`, in `setup-memory`) and injects it here AS the core
+ * `ContextStorePort` TYPE, then pushes the three tools onto the agent tool array
+ * sharing ONE `ContextToolDeps`. This mirrors the v2.11 terminal-driver wiring
+ * (`wireTerminalTools`) exactly: a direct-injection, never-export, owner-scoped
+ * tool set wired OUTSIDE the platform-tool parity registry — it is structurally
+ * DISTINCT from the cross-session recall layer (no in-process RPC dispatch, no
+ * recall-store dispatch path, no cross-package recall import). The
+ * agent-to-store cut holds: skills + agent see only the core `ContextStorePort`
+ * type; the concrete adapter is the daemon's.
+ *
+ * The factories + `ContextToolDeps` live on the `@comis/skills/tools` subpath
+ * (the terminal-driver precedent — `createTerminalSession*` ride the same
+ * subpath); `PlatformToolProvider` is on the `.` barrel, the same way
+ * `setup-terminal-tools.ts` types its tool array. There is NO module-global
+ * mutable state — the deps are threaded in from the `setupTools` closure.
+ *
+ * @module
+ */
+
+import type { ContextStorePort } from "@comis/core";
+// The daemon does not depend on the pi SDK directly — it references the tool
+// array type via @comis/skills' PlatformToolProvider (= () => AgentTool[]), the
+// same way setup-tools.ts and setup-terminal-tools.ts type their tool arrays.
+import type { PlatformToolProvider } from "@comis/skills";
+// Direct-injection ctx_* factories + the shared deps contract. These live on the
+// `./tools` subpath (NOT the `.` barrel) — the terminal-driver precedent (Plan 03).
+import {
+  createCtxSearchTool,
+  createCtxInspectTool,
+  createCtxExpandTool,
+  type ContextToolDeps,
+} from "@comis/skills/tools";
+
+/** The daemon tool-assembly array element type (an `AgentTool`), via skills. */
+type AgentToolArray = ReturnType<PlatformToolProvider>;
+
+/**
+ * The daemon-supplied slice of `ContextToolDeps` (everything except the `store`,
+ * which is passed positionally so the call site reads `wireContextTools(tools,
+ * store, …)` like `wireTerminalTools(tools, registries, …)`). `skillsLogger` is
+ * the daemon's `ComisLogger` — structurally assignable to the tools'
+ * structural `ToolLogger`.
+ */
+export interface ContextWiringDeps {
+  /** The daemon's module-bound skills logger (a `ComisLogger`, structurally a `ToolLogger`). */
+  readonly skillsLogger: ContextToolDeps["logger"];
+  /** Injected clock — the sanctioned-root `systemNowMs`; never a raw wall-clock global. */
+  readonly nowMs: () => number;
+  /** Inline-output cap before `ctx_expand` spills to a file (from `ContextEngineConfig`, default 4000). */
+  readonly maxExpandTokens: number;
+  /** Per-call session tool-results dir resolver (the hoisted exec-tool precedent). */
+  readonly getToolResultsDir: () => string | undefined;
+  /**
+   * Optional structural event bus (O1) — the daemon's real `TypedEventBus`,
+   * passed structurally so the skills layer never value-imports it. Threaded
+   * onto the shared `ContextToolDeps` so each ctx_* hit emits a content-free
+   * `context:dag_expanded`. Absent ⇒ a silent no-op.
+   */
+  readonly eventBus?: { emit(event: string, data: unknown): void };
+}
+
+/**
+ * Wire the three never-export, dag-mode in-session expansion tools (E1/E2).
+ * Mirrors `wireTerminalTools`: build one shared `ContextToolDeps` from the
+ * injected store + the daemon deps, then push the three factories onto the
+ * agent tool array. The `store` is the concrete `createLcdStore` adapter the
+ * daemon constructed, injected here AS the core `ContextStorePort` TYPE — the
+ * agent-to-store cut holds. DISTINCT from the cross-session recall layer: no
+ * in-process RPC dispatch, no recall-store dispatch path.
+ */
+export function wireContextTools(
+  tools: AgentToolArray,
+  store: ContextStorePort,
+  _agentId: string,
+  deps: ContextWiringDeps,
+): void {
+  // R4 (132-03): `_agentId` stays UNUSED. The ctx_* tools read the live agentId
+  // (+ tenantId) from the per-call RequestContext (`tryGetContext()`), NOT from
+  // this wiring-time closure — multi-agent-safe (Pitfall 4). One wiring can serve
+  // multiple agents per channel, so a closure-captured agentId would scope every
+  // agent's reads to whichever agent wired the tools (the exact WR-02 cross-agent
+  // threat). The store read scope therefore comes from the live turn, never here.
+  const shared: ContextToolDeps = {
+    store,
+    logger: deps.skillsLogger,
+    nowMs: deps.nowMs,
+    maxExpandTokens: deps.maxExpandTokens,
+    getToolResultsDir: deps.getToolResultsDir,
+    // O1: the daemon's real bus (structurally assignable) so each ctx_* hit
+    // emits a content-free context:dag_expanded. `undefined` ⇒ silent no-op.
+    eventBus: deps.eventBus,
+  };
+  tools.push(
+    createCtxSearchTool(shared),
+    createCtxInspectTool(shared),
+    createCtxExpandTool(shared),
+  );
+}

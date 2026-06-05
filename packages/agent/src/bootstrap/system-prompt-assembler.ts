@@ -44,6 +44,7 @@ import {
   buildSenderTrustSection,
   buildDocumentationSection,
   buildTaskPlanningSection,
+  buildLossinessUncertaintySection,
 } from "./sections/index.js";
 
 export type { SubagentRoleParams } from "./sections/index.js";
@@ -127,6 +128,8 @@ export interface AssemblerParams {
   workspaceProfile?: "full" | "specialist";
   /** Whether Silent Execution Planner (SEP) is enabled for this agent. */
   sepEnabled?: boolean;
+  /** When true (contextEngine.version === "dag"), include the P2 Compressed-context uncertainty clause. Cache-stable: gated on per-session config, not per-turn store state. */
+  dagModeEnabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +245,7 @@ export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
   // --- Operational-kept body (MODES_ALL) ---
   { id: "skills",           includeIn: MODES_ALL,      build: (p, m) => buildSkillsSection(p.skillsPrompt, m === "minimal", p.promptSkillsXml, p.activePromptSkillContent) },
   { id: "memory-recall",    includeIn: MODES_ALL,      build: (p, m) => buildMemoryRecallSection(p.hasMemoryTools ?? false, m === "minimal") },
+  { id: "lossiness",        includeIn: MODES_ALL,      build: (p, m) => buildLossinessUncertaintySection(p.dagModeEnabled ?? false, m === "minimal") },
   { id: "workspace",        includeIn: MODES_ALL,      build: (p, m) => buildWorkspaceSection(p.workspaceDir, m === "minimal") },
   // --- Operational-stripped body ---
   { id: "documentation",    includeIn: MODES_FULL_MIN, build: (p, m) => p.documentationConfig

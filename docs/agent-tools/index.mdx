@@ -4,7 +4,7 @@ description: "Master reference for every tool your Comis agents can use"
 icon: "toolbox"
 ---
 
-Comis ships with **70 built-in agent tools** spanning file operations, web access, messaging, scheduling, media processing, browser automation, context management, interactive terminal sessions, and administration. This page is the master reference -- every tool listed with its category, description, and link to detailed documentation.
+Comis ships with **73 built-in agent tools** spanning file operations, web access, messaging, scheduling, media processing, browser automation, context management, interactive terminal sessions, and administration. This page is the master reference -- every tool listed with its category, description, and link to detailed documentation.
 
 When an agent receives a message, it decides which tools to use based on what you asked it to do. Need a daily briefing? The agent uses the `cron` tool. Want to send a message to another channel? It uses `message`. Need to analyze an image someone sent? It reaches for `image_analyze`.
 
@@ -16,7 +16,7 @@ Tools fall into three tiers:
 
 | Tier | Count | Description |
 |------|-------|-------------|
-| **Built-in tools** | 70 | Core capabilities shipped with Comis -- file operations, shell commands, web search, browser automation, messaging, scheduling, sessions, media, infrastructure, context, interactive terminal sessions, supervisor admin, and platform actions. Available on every agent unless restricted by tool policy. |
+| **Built-in tools** | 73 | Core capabilities shipped with Comis -- file operations, shell commands, web search, browser automation, messaging, scheduling, sessions, media, infrastructure, context, interactive terminal sessions, supervisor admin, and platform actions. Available on every agent unless restricted by tool policy. |
 | **MCP tools** | Configurable | External Model Context Protocol servers -- Anthropic's reference servers, community-built MCP servers, and your own. Discovered at runtime and qualified with `mcp:{server}/{tool}` names. See [MCP Management](/web-dashboard/mcp-management). |
 | **Custom skills** | Unlimited | Markdown-defined "mini-programs" with optional tool restrictions and bin/env requirements. Comis ships 7 built-in skills; you can author your own. See [Skills](/skills/index). |
 
@@ -143,19 +143,22 @@ Memory tools give agents access to their long-term memory. Agents automatically 
 | `memory_store` | Store a new memory entry (secret-detection guard applied) | [Sessions](/agent-tools/sessions#memory-tools-long-term-memory) |
 | `memory_ask` | Grounded natural-language answer over the agent's recall pipeline. Opt-in: requires `dialectic.enabled: true` in agent config. | [Sessions](/agent-tools/sessions#memory-tools-long-term-memory) |
 
-### Context (Conversation DAG)
+### Context (3 tools)
 
-The `context_tool` lets agents inspect their compressed conversation history. Each request the agent processes is stored as a node in a directed acyclic graph; the context tool searches, recalls, inspects, and expands these nodes.
+In-session recovery tools over the DAG (LCD) context engine's lossless store.
+Available when the agent runs in DAG mode (`contextEngine.version: "dag"`).
+They recover detail the summary hierarchy compressed away **within this
+conversation** — they are **distinct from cross-session recall**
+(`memory_search` / `session_search`), which they share no code with, and they
+never reach other sessions or tenants. All three are `never-export` (never
+reachable via the MCP server) and read-only. See
+[Context Management](/agents/context-management#dag-mode-the-default-engine).
 
-In pipeline mode, four individual tools expose the same underlying operations. In DAG mode, `context_tool` is used instead.
-
-| Tool | Description | Guide |
-|------|-------------|-------|
-| `context_tool` | Unified context DAG management with 4 actions: `search`, `recall`, `inspect`, `expand` | [Context Management](/agents/context-management) |
-| `ctx_expand` | Expand context entries (pipeline mode). In DAG mode, use `context_tool` instead. | [Context Management](/agents/context-management) |
-| `ctx_inspect` | Inspect individual context entries (pipeline mode). In DAG mode, use `context_tool` instead. | [Context Management](/agents/context-management) |
-| `ctx_recall` | Recall context by semantic query (pipeline mode). In DAG mode, use `context_tool` instead. | [Context Management](/agents/context-management) |
-| `ctx_search` | Search context by keyword (pipeline mode). In DAG mode, use `context_tool` instead. | [Context Management](/agents/context-management) |
+| Tool | Description | Documentation |
+|------|-------------|---------------|
+| `ctx_search` | Full-text search over THIS conversation's compressed history (FTS with a LIKE fallback). | [Sessions](/agent-tools/sessions#context-expansion-tools) |
+| `ctx_inspect` | Inspect a summary's metadata (depth, coverage, time-range) and its immediate children / covered-message count. | [Sessions](/agent-tools/sessions#context-expansion-tools) |
+| `ctx_expand` | Recover (rehydrate) a compressed region back to its underlying messages; large output is written to a session file with a handle. | [Sessions](/agent-tools/sessions#context-expansion-tools) |
 
 ### Infrastructure
 

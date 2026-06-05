@@ -7,7 +7,7 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
-import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry, TimerPort } from "@comis/core";
+import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -68,6 +68,8 @@ import {
 } from "@comis/skills/tools";
 // Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
 import { wireTerminalTools, buildTerminalEgressDeps, buildTerminalWiringDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
+// In-session expansion-loop (v2.12 Phase 131, E1/E2) dag-gated ctx_* wiring.
+import { wireContextTools } from "./setup-context-tools.js";
 // Tool-audit DEBUG-line subscription extracted to setup-tool-audit.ts (file-size cap).
 import { setupToolAuditLogging } from "./setup-tool-audit.js";
 
@@ -169,6 +171,10 @@ export interface ToolsDeps {
   /** The daemon's injected `TimerPort` — threaded toward the terminal reaper (124-09 WR-01
    *  closure) so the idle-TTL/max-sessions sweep composes. Absent ⇒ no terminal reaper. */
   timers?: TimerPort;
+  /** The concrete LCD `ContextStorePort` (`createLcdStore`) from setupMemory — injected so
+   *  assembleToolsForAgent wires the dag-mode `ctx_*` tools (E1/E2); the agent sees only the
+   *  core port TYPE (the agent-to-store cut). Absent ⇒ ctx_* not wired. */
+  lcdStore?: ContextStorePort;
 }
 
 /** Options for assembleToolsForAgent controlling platform tool selection. */
@@ -529,6 +535,19 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         .map((d) => d.build(ctx))
         .filter((t): t is PlatformTool => t !== undefined);
 
+      // HOISTED (Phase 131) so BOTH the exec tool and the dag-gated ctx_* wiring (below) reuse
+      // the ONE ALS-resolved session tool-results resolver.
+      const agentWorkspaceDir = workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
+      const getToolResultsDir = (): string | undefined => {
+        const alsCtx = tryGetContext();
+        if (!alsCtx?.sessionKey) return undefined;
+        const parsed = parseFormattedSessionKey(alsCtx.sessionKey);
+        if (!parsed) return undefined;
+        const sessionBaseDir = safePath(agentWorkspaceDir, "sessions");
+        const sessionDir = sessionKeyToPath(parsed, sessionBaseDir);
+        return safePath(sessionDir, "tool-results");
+      };
+
       // Build per-agent sandbox config from daemon provider + agent config
       const sandboxCfg: ExecSandboxConfig | undefined =
         skillsConfig.execSandbox.enabled === "always" && sandboxProvider
@@ -563,24 +582,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         }
       }
 
-      // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering
+      // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering.
+      // (agentWorkspaceDir + getToolResultsDir are HOISTED above — shared with the ctx_* wiring.)
       {
         const registry = getOrCreateRegistry(agentId);
-        const agentWorkspaceDir = workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
-
-        // Getter for session tool-results dir, resolved at call time via ALS context.
-        // Matches session path pattern from comis-session-manager + microcompaction-guard.
-        // Renamed local from `ctx` to `alsCtx` to avoid shadowing the outer
-        // `PlatformToolBuildContext` variable created for the registry call.
-        const getToolResultsDir = (): string | undefined => {
-          const alsCtx = tryGetContext();
-          if (!alsCtx?.sessionKey) return undefined;
-          const parsed = parseFormattedSessionKey(alsCtx.sessionKey);
-          if (!parsed) return undefined;
-          const sessionBaseDir = safePath(agentWorkspaceDir, "sessions");
-          const sessionDir = sessionKeyToPath(parsed, sessionBaseDir);
-          return safePath(sessionDir, "tool-results");
-        };
 
         tools.push(createExecTool({
           workspacePath: agentWorkspaceDir,
@@ -629,6 +634,14 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       const terminalBase = { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers };
       wireTerminalTools(tools, terminalRegistries, agentId, buildTerminalWiringDeps(terminalBase, skillsConfig.terminal));
 
+      // Context expansion tools (v2.12 Phase 131, E1/E2): in-session lossless-store recovery
+      // (ctx_*). Wired ONLY in dag mode AND with a store present (inert in pipeline mode).
+      // never-export, OUTSIDE the parity registry; store injected as the core port type.
+      if ((agentConfig?.contextEngine?.version ?? "pipeline") === "dag" && deps.lcdStore) {
+        const maxExpandTokens = agentConfig?.contextEngine?.maxExpandTokens ?? 4000;
+        wireContextTools(tools, deps.lcdStore, agentId, { skillsLogger, nowMs: systemNowMs, maxExpandTokens, getToolResultsDir, eventBus }); // O1: eventBus → ctx_* context:dag_expanded
+      }
+
       return tools;
     };
 
@@ -644,25 +657,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         if (profileTools) {
           for (const t of profileTools) allowedNames.add(t);
         }
-        // Also check TOOL_GROUPS (e.g., "context_expand" -> ["ctx_expand", "ctx_inspect"])
+        // Also check TOOL_GROUPS (e.g., "web" -> ["web_fetch", "web_search", "browser"])
         const groupKey = group.startsWith("group:") ? group : `group:${group}`;
         const groupTools = TOOL_GROUPS[groupKey];
         if (groupTools) {
           for (const t of groupTools) allowedNames.add(t);
         }
-      }
-      // §8.1 fix: in DAG mode, force-include the ctx_* recall tools
-      // regardless of the restricted profile. Without this, a masked DAG tool
-      // result ("...Use ctx_inspect to view.") has no recovery path -- no
-      // profile lists ctx_* (tool-policy.ts), so a restricted-profile DAG agent
-      // would be told to call a tool it cannot reach. Gated strictly on
-      // version === "dag" (ctx_* are dead/confusing in pipeline mode -- no DAG
-      // RPC backing) and unions ONLY the two recall groups (V4: no widening
-      // beyond group:context + group:context_expand). The builtinTools ceiling
-      // below still runs AFTER and still wins for exec/process/browser.
-      if (agentConfig?.contextEngine?.version === "dag") {
-        for (const t of TOOL_GROUPS["group:context"] ?? []) allowedNames.add(t);
-        for (const t of TOOL_GROUPS["group:context_expand"] ?? []) allowedNames.add(t);
       }
       platformToolProvider = () => agentPlatformTools().filter(t => allowedNames.has(t.name));
     } else {

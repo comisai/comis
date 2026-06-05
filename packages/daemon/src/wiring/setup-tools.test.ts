@@ -10,7 +10,6 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 const mockAssembleToolPipeline = vi.hoisted(() => vi.fn(async () => []));
 const mockCreateCronTool = vi.hoisted(() => vi.fn(() => ({ name: "cron" })));
-const mockCreateUnifiedContextTool = vi.hoisted(() => vi.fn(() => ({ name: "context_tool" })));
 const mockCreateMessageTool = vi.hoisted(() => vi.fn(() => ({ name: "message" })));
 const mockCreateDiscordActionTool = vi.hoisted(() => vi.fn(() => ({ name: "discord_action" })));
 const mockCreateTelegramActionTool = vi.hoisted(() => vi.fn(() => ({ name: "telegram_action" })));
@@ -104,8 +103,6 @@ vi.mock("@comis/skills", () => ({
   },
   TOOL_GROUPS: {
     "group:coding": ["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"],
-    "group:context": ["ctx_search", "ctx_inspect", "ctx_recall"],
-    "group:context_expand": ["ctx_expand", "ctx_inspect"],
   },
 }));
 
@@ -147,15 +144,22 @@ vi.mock("@comis/skills/tools", () => ({
     checkWallClock: vi.fn(() => undefined),
     forget: vi.fn(),
   })),
+  // In-session expansion-loop ctx_* factories (Phase 131, E1/E2). The real
+  // wireContextTools (imported relatively from ./setup-context-tools.js — NOT
+  // mocked) resolves these from @comis/skills/tools, so the dag-gated wiring
+  // pushes named tools the gate test can assert on.
+  createCtxSearchTool: vi.fn(() => ({ name: "ctx_search", execute: vi.fn() })),
+  createCtxInspectTool: vi.fn(() => ({ name: "ctx_inspect", execute: vi.fn() })),
+  createCtxExpandTool: vi.fn(() => ({ name: "ctx_expand", execute: vi.fn() })),
 }));
 
 // `createPlatformToolRegistry` mock returns descriptors that delegate back
 // to the existing hoisted mock factories. Each descriptor's `build(ctx)`
 // invokes the corresponding mock so existing `mockCreate*Tool.toHaveBeenCalled`
-// expectations still fire when daemon iterates the registry. The 4 truly-
-// conditional descriptors (background_tasks, image_generate, unified_context,
-// browser) carry the same `conditional` predicates that the real registry
-// uses -- daemon filters on those before invoking `build`.
+// expectations still fire when daemon iterates the registry. The 3 truly-
+// conditional descriptors (background_tasks, image_generate, browser) carry the
+// same `conditional` predicates that the real registry uses -- daemon filters
+// on those before invoking `build`.
 vi.mock("@comis/skills/platform-tools", () => ({
   createPlatformToolRegistry: vi.fn(() => [
     { name: "agents_manage", category: "agent", build: (ctx: any) => mockCreateAgentsManageTool(ctx.rpcCall, ctx.skillsLogger, ctx.approvalGate, { onMutationStart: ctx.onConfigMutationStart, onMutationEnd: ctx.onConfigMutationEnd, onAgentCreated: ctx.onAgentCreated }) },
@@ -163,11 +167,6 @@ vi.mock("@comis/skills/platform-tools", () => ({
     { name: "subagents", category: "agent", build: (ctx: any) => mockCreateSubagentsTool(ctx.rpcCall, ctx.skillsLogger) },
     { name: "background_tasks", category: "background", conditional: (ctx: any) => ctx.backgroundTaskManager !== undefined, build: (ctx: any) => mockCreateBackgroundTasksTool({ manager: ctx.backgroundTaskManager, agentId: ctx.agentId }) },
     { name: "browser", category: "browser", conditional: (ctx: any) => ctx.builtinToolsBrowserEnabled === true, build: (ctx: any) => mockCreateBrowserTool({ rpcCall: ctx.rpcCall, sanitizeImage: ctx.browserSanitizeImage, persistMedia: ctx.browserPersistMedia, workspaceDir: ctx.browserWorkspaceDir }) },
-    { name: "ctx_expand", category: "context", build: (ctx: any) => ({ name: "ctx_expand", rpcCall: ctx.rpcCall }) },
-    { name: "ctx_inspect", category: "context", build: (ctx: any) => ({ name: "ctx_inspect", rpcCall: ctx.rpcCall }) },
-    { name: "ctx_recall", category: "context", build: (ctx: any) => ({ name: "ctx_recall", rpcCall: ctx.rpcCall }) },
-    { name: "ctx_search", category: "context", build: (ctx: any) => ({ name: "ctx_search", rpcCall: ctx.rpcCall }) },
-    { name: "unified_context", category: "context", conditional: (ctx: any) => ctx.contextEngineVersion === "dag", build: (ctx: any) => mockCreateUnifiedContextTool(ctx.rpcCall) },
     { name: "gateway", category: "gateway", build: (ctx: any) => mockCreateGatewayTool(ctx.rpcCall, ctx.skillsLogger) },
     { name: "obs_query", category: "observability", build: (ctx: any) => mockCreateObsQueryTool(ctx.rpcCall) },
     { name: "heartbeat_manage", category: "heartbeat", build: (ctx: any) => mockCreateHeartbeatManageTool(ctx.rpcCall) },
@@ -1734,115 +1733,82 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 22. §8.1 ctx_* force-include under restricted profiles
-  //
-  // A restricted tool profile (anything that is NOT "full") drops the ctx_*
-  // recall tools -- no profile/group in TOOL_PROFILES lists them. Yet in DAG
-  // mode the annotator emits masked tool results that say "...Use ctx_inspect
-  // to view.", so a masked result must have a reachable recovery tool. The
-  // §8.1 fix force-includes group:context + group:context_expand (the ctx_*
-  // recall tools) into the restricted-profile allow-set WHEN AND ONLY WHEN
-  // contextEngine.version === "dag". This is SECURITY-CRITICAL: it widens
-  // tool exposure, so it is constrained to (a) dag mode only and (b) the two
-  // recall groups only -- never broader. The builtinTools ceiling still runs
-  // AFTER and still wins for exec/process/browser.
-  //
-  // Fixture note: the mocked TOOL_PROFILES.minimal here is ["exec","read",
-  // "write"] and the mocked TOOL_GROUPS["group:context"]/["group:context_expand"]
-  // mirror the real tool-policy sets (ctx_search/ctx_inspect/ctx_recall and
-  // ctx_expand/ctx_inspect). The mock platform-tool registry registers neither
-  // a "read" nor a "write" descriptor (only "exec" overlaps the minimal
-  // profile), and the default builtinTools (exec:false) ceiling drops "exec".
-  // So a minimal+non-dag agent resolves to the EMPTY set here -- which makes
-  // the no-widening assertion sharp: under minimal+dag the ONLY tools that may
-  // appear are the four ctx_* recall tools introduced by the force-include.
+  // 131-05: dag-gated ctx_* in-session expansion-loop wiring (E1/E2)
   // -------------------------------------------------------------------------
 
-  describe("§8.1 ctx_* force-include under restricted profiles", () => {
-    const CTX_TOOLS = ["ctx_search", "ctx_inspect", "ctx_recall", "ctx_expand"] as const;
+  describe("ctx_* in-session expansion tools (dag-gated wiring)", () => {
+    const CTX_NAMES = ["ctx_search", "ctx_inspect", "ctx_expand"];
 
-    /** Restricted-profile agent ("minimal") whose contextEngine.version is set. */
-    function depsWithVersion(version: "pipeline" | "dag") {
+    /** A no-op ContextStorePort double (only the wiring identity matters here). */
+    function makeFakeLcdStore() {
+      return {
+        searchLcd: vi.fn(() => []),
+        getSummaries: vi.fn(() => []),
+        getSummaryChildren: vi.fn(() => []),
+        getSummaryMessages: vi.fn(() => []),
+        getMessages: vi.fn(() => []),
+      } as any;
+    }
+
+    /** Build a deps object with the agent pinned to a given contextEngine version. */
+    function depsWithVersion(version: "dag" | "pipeline", lcdStore?: unknown) {
       return createMinimalDeps({
         agents: {
           "agent-1": {
-            // Only the field the SUT reads (setup-tools.ts:445 ->
-            // agentConfig?.contextEngine?.version). builtinTools left at the
-            // default (exec/process/browser all false) so the ceiling behavior
-            // is exercised alongside the force-include.
-            contextEngine: { version },
             skills: {
               builtinTools: { browser: false, exec: false, process: false },
               toolPolicy: { profile: "default" },
               discoveryPaths: [],
               execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
             },
+            contextEngine: { version, maxExpandTokens: 4_000 },
           } as any,
         },
+        ...(lcdStore !== undefined ? { lcdStore: lcdStore as any } : {}),
       });
     }
 
-    async function resolveToolNames(
-      version: "pipeline" | "dag",
-      toolGroups: string[],
-    ): Promise<string[]> {
-      const deps = depsWithVersion(version);
+    it("wires ctx_search/ctx_inspect/ctx_expand when contextEngine version is dag and a store is present", async () => {
+      const deps = depsWithVersion("dag", makeFakeLcdStore());
       const setupTools = await getSetupTools();
       const { assembleToolsForAgent } = setupTools(deps);
-      await assembleToolsForAgent("agent-1", { toolGroups });
+
+      await assembleToolsForAgent("agent-1");
+
       const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
-      return tools.map((t: any) => t.name);
-    }
-
-    // Test A (positive -- RED on pre-fix code): restricted profile + dag mode
-    // force-includes all four ctx_* recall tools.
-    it("force-includes ctx_search/ctx_inspect/ctx_recall/ctx_expand under a restricted profile in DAG mode", async () => {
-      const names = await resolveToolNames("dag", ["minimal"]);
-      expect(names).toEqual(expect.arrayContaining([...CTX_TOOLS]));
+      const toolNames = tools.map((t: any) => t.name);
+      for (const name of CTX_NAMES) {
+        expect(toolNames).toContain(name);
+      }
     });
 
-    // Test B (gate negative -- GREEN even on pre-fix code, proves the gate):
-    // the SAME restricted profile in pipeline mode gains NO ctx_* tool. The
-    // resolved set is empty under this mock harness (no read/write descriptors;
-    // exec ceiling-stripped) -- the salient point is that NO ctx_* leaks in.
-    it("does NOT force-include any ctx_* tool under a restricted profile in pipeline mode (gate is strictly dag)", async () => {
-      const names = await resolveToolNames("pipeline", ["minimal"]);
-      expect(names.some((n) => n.startsWith("ctx_"))).toBe(false);
+    it("does NOT wire the ctx_* tools in pipeline mode (even with a store present)", async () => {
+      const deps = depsWithVersion("pipeline", makeFakeLcdStore());
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+
+      await assembleToolsForAgent("agent-1");
+
+      const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      const toolNames = tools.map((t: any) => t.name);
+      for (const name of CTX_NAMES) {
+        expect(toolNames).not.toContain(name);
+      }
     });
 
-    // Test C (V4 no-widening -- the force-include admits ONLY the recall group):
-    // restricted + dag must NOT gain exec/process/browser, and NOTHING outside
-    // (minimal baseline ∪ ctx_*) may leak in.
-    it("does NOT widen exposure beyond the ctx_* recall group under a restricted profile in DAG mode", async () => {
-      const names = await resolveToolNames("dag", ["minimal"]);
+    it("does NOT wire the ctx_* tools in dag mode when no lcdStore is injected", async () => {
+      const deps = depsWithVersion("dag"); // no lcdStore on ToolsDeps
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
 
-      // The dangerous tools the force-include must never admit. (exec is in the
-      // mocked minimal profile but the builtinTools ceiling removes it; process
-      // and browser are neither in minimal nor in the ctx_* groups.)
-      expect(names).not.toContain("exec");
-      expect(names).not.toContain("process");
-      expect(names).not.toContain("browser");
-      expect(names).not.toContain("apply_patch");
-      expect(names).not.toContain("gateway");
+      await assembleToolsForAgent("agent-1");
 
-      // Strict containment: every resolved name is either a minimal-baseline
-      // tool (read/write -- neither is registered in this mock registry, and
-      // exec is ceiling-stripped) or one of the four ctx_* recall tools. No
-      // other tool may leak through the force-include. In this harness that
-      // means the resolved set is EXACTLY the four ctx_* recall tools.
-      const allowed = new Set<string>([...["read", "write"], ...CTX_TOOLS]);
-      const leaked = names.filter((n) => !allowed.has(n));
-      expect(leaked).toEqual([]);
-    });
-
-    // The "full" profile is unaffected -- it already returns all tools, ctx_*
-    // included, via the non-restricted branch (no force-include needed).
-    it("leaves the full profile unchanged -- ctx_* already present without the force-include in DAG mode", async () => {
-      const names = await resolveToolNames("dag", ["full"]);
-      expect(names).toEqual(expect.arrayContaining([...CTX_TOOLS]));
-      // Full profile also keeps non-ctx tools (proves it is the unfiltered path).
-      expect(names).toContain("cron");
-      expect(names).toContain("gateway");
+      const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      const toolNames = tools.map((t: any) => t.name);
+      for (const name of CTX_NAMES) {
+        expect(toolNames).not.toContain(name);
+      }
     });
   });
+
 });

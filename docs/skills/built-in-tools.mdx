@@ -491,23 +491,22 @@ action: screenshot
 
 ## Context Tools
 
-Context tools help your agent search and recall information from the current conversation session. Which tools are available depends on the context engine mode: **pipeline mode** provides `session_search`, while **DAG mode** provides `ctx_search`, `ctx_inspect`, `ctx_recall`, and `ctx_expand`. These tools are registered automatically based on your `contextEngine.version` setting -- you do not need to enable them manually. See [Compaction](/agents/compaction) for how each mode works.
+Context tools help your agent search and recall information from the current conversation session. In the default **DAG** (LCD) mode the available tools are three **in-session** expansion tools -- `ctx_search`, `ctx_inspect`, and `ctx_expand` -- that recover detail the summary hierarchy compressed away within the current conversation. They are active only in DAG mode (`contextEngine.version` defaults to `"dag"`), `never-export`, and distinct from cross-session recall (`memory_search`, `session_search`). In the opt-in **pipeline** mode the available tool is `session_search` instead. See [Context expansion tools](/agent-tools/sessions#context-expansion-tools) and [Compaction](/agents/compaction) for how the engines work.
 
-### Mode Availability
+### Availability
 
 | Tool | Pipeline Mode | DAG Mode | Description |
 |------|:---:|:---:|-------------|
-| `session_search` | Yes | -- | Search current session history |
-| `ctx_search` | -- | Yes | Search messages and summaries (FTS or regex) |
-| `ctx_inspect` | -- | Yes | View full content of a summary or file |
-| `ctx_recall` | -- | Yes | Spawn a sub-agent to answer questions from compressed history |
-| `ctx_expand` | -- | Sub-agent only | Expand a summary node (requires recall grant) |
+| `session_search` | Yes | Yes | Search current session history |
+| `ctx_search` | No | Yes | Full-text search over this conversation's compressed history |
+| `ctx_inspect` | No | Yes | Inspect a compressed summary's metadata and children |
+| `ctx_expand` | No | Yes | Recover a compressed region back to its underlying messages |
 
 <AccordionGroup>
 
 <Accordion title="session_search -- Search session history">
 
-Searches through the current conversation session history using case-insensitive substring matching. Available in pipeline mode only.
+Searches through the current conversation session history using case-insensitive substring matching. Available in pipeline mode.
 
 **Parameters:**
 
@@ -518,93 +517,12 @@ Searches through the current conversation session history using case-insensitive
 | `limit` | `number` | No | Maximum results to return (1-30, default 10) |
 
 **Notes:**
-- Available in pipeline mode only
 - Search results are protected from observation masking, so recovered content remains visible
 - This tool is registered as a protected tool name -- its results survive compaction
 
 </Accordion>
 
-<Accordion title="ctx_search -- Search context DAG">
-
-Searches across messages and summaries in the context DAG using full-text search or regular expressions. Available in DAG mode only.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `query` | `string` | Yes | Search pattern (FTS query or regex depending on mode) |
-| `mode` | `string` | No | Search mode: `"fts"` (default, full-text search) or `"regex"` |
-| `scope` | `string` | No | Search scope: `"both"` (default), `"messages"`, or `"summaries"` |
-| `limit` | `number` | No | Maximum results to return (1-100, default 20) |
-
-**Notes:**
-- Available in DAG mode only
-- Results are truncated to 500 characters -- use `ctx_inspect` to view full content
-- FTS mode uses SQLite FTS5 for fast full-text matching
-- Regex mode extracts the longest literal substring for a pre-filter, then applies the full regex in post-processing
-
-</Accordion>
-
-<Accordion title="ctx_inspect -- Inspect DAG node">
-
-Returns the full content of a summary or the full text of a stored file. Use this after `ctx_search` to read the complete text of a result that was truncated in the search output. Available in DAG mode only.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | `string` | Yes | ID of the node to inspect: summary ID (`sum_xxx`) or file ID (`file_xxx`) |
-
-**Notes:**
-- Available in DAG mode only
-- Returns the full content of a summary or the full text of a stored file
-- Use this after `ctx_search` to read the complete text of a result that was truncated in the search output
-
-</Accordion>
-
-<Accordion title="ctx_recall -- Recall from compressed history">
-
-Spawns a bounded sub-agent to answer questions from compressed conversation history. The sub-agent has access to `ctx_expand` and `ctx_inspect` tools to read through summaries and produce an answer. Available in DAG mode only.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `prompt` | `string` | Yes | What to find or answer from earlier conversation history |
-| `query` | `string` | No | Text search query to locate relevant summaries (helps the recall agent find the right content) |
-| `summary_ids` | `string[]` | No | Explicit summary IDs to expand (bypasses search, goes directly to these summaries) |
-| `max_tokens` | `number` | No | Maximum answer length in tokens (100-10000, default 2000) |
-
-**Notes:**
-- Available in DAG mode only
-- Spawns a bounded sub-agent with `ctx_expand` and `ctx_inspect` tools to read compressed history and produce an answer
-- Subject to a daily quota (`contextEngine.maxRecallsPerDay`, default 10) and a timeout (`contextEngine.recallTimeoutMs`, default 120 seconds)
-- Each recall consumes one recall grant
-
-</Accordion>
-
-<Accordion title="ctx_expand -- Expand DAG summary">
-
-Expands a summary node to show the original messages that were compressed into it. This tool is only available to recall sub-agents -- it cannot be used directly by regular agents.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `grant_id` | `string` | Yes | Expansion grant ID (provided in the recall sub-agent's domain knowledge) |
-| `summary_id` | `string` | Yes | ID of the summary to expand (shows the original messages that were compressed) |
-
-<Warning>
-This tool is only available to recall sub-agents spawned by `ctx_recall`. Regular agents cannot use `ctx_expand` directly -- it requires a valid expansion grant that is created during the recall process. If you need to view summary content from a regular agent session, use `ctx_inspect` instead.
-</Warning>
-
-</Accordion>
-
 </AccordionGroup>
-
-<Tip>
-Context tools belong to two tool policy groups: `group:context` includes `ctx_search`, `ctx_inspect`, and `ctx_recall`. `group:context_expand` includes `ctx_expand` and `ctx_inspect`. Use these group names in your [tool policy](/skills/tool-policy) configuration to control access.
-</Tip>
 
 ## Terminal Driver
 

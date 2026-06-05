@@ -401,7 +401,7 @@ agents:
       enabled: true                 # opt-in (default false) -- LLM cron, a cost gate
       schedule: "30 3 * * *"
     contextEngine:
-      version: dag                  # the default; set "pipeline" to opt out
+      version: dag                  # the default lossless LCD engine; set "pipeline" for the simpler engine
 
 memory:
   rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
@@ -485,14 +485,14 @@ Per-agent configuration for Gemini explicit CachedContent caching. When enabled,
 
 #### Context Engine (agents.*.contextEngine)
 
-Context engine configuration. Controls the system that manages what your agent sees each turn. Supports two operating modes: **dag** (default, the lossless DAG with recall tools) and **pipeline** (opt-out, the 8-step sequential system). See [Compaction](/agents/compaction) for a user-friendly explanation.
+Context engine configuration. Controls the system that manages what your agent sees each turn. The default is **dag** (the v2.12 lossless LCD engine). The **pipeline** value (the simpler sequential layered engine) is the first-class **opt-in** — set `version: "pipeline"` to use it. DAG does lossless verbatim assembly (full faithful history + a verbatim fresh tail of the most recent steps + transcript repair), zoomably compresses the oldest history under a token budget, and exposes the in-session `ctx_*` expansion tools. See [Compaction](/agents/compaction) for a user-friendly explanation.
 
 **Core fields**
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Master toggle for the context engine |
-| `version` | `string` | `"dag"` | Operating mode: `"dag"` (default, lossless DAG with recall tools) or `"pipeline"` (opt-out, the 8-step sequential system) |
+| `version` | `string` | `"dag"` | Operating mode: `"dag"` (default, the lossless LCD engine) or `"pipeline"` (opt-in, the sequential layered system) |
 
 **Shared fields** (both modes)
 
@@ -517,12 +517,12 @@ Context engine configuration. Controls the system that manages what your agent s
 | `observationDeactivationChars` | `number` | `80000` | Character threshold to deactivate observation masking entirely (20K-500K) |
 | `ephemeralKeepWindow` | `number` | `10` | Recent ephemeral tool results to keep unmasked (1-50) |
 
-**DAG mode fields** (`version: "dag"`)
+**DAG mode fields** (`version: "dag"`) — `freshTailTurns`, the leaf/condense summarization fields, and budget-bounded eviction are **active** in the current release (lossless verbatim assembly + threshold-triggered leaf summarization + multi-tier condensation + budget eviction); only the on-demand `ctx_*` recall keys (`maxExpandTokens`, `maxRecallsPerDay`, `recallTimeoutMs`) remain **reserved** until the recall tools land in a later phase:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `freshTailTurns` | `number` | `8` | Recent user-assistant turn cycles protected from compaction (1-50) |
-| `contextThreshold` | `number` | `0.75` | Budget utilization ratio that triggers compaction (0.1-0.95) |
+| `freshTailTurns` | `number` | `8` | Recent **steps** (assistant + tool round-trips, not user-turns) always kept verbatim and never evicted (1-50) |
+| `contextThreshold` | `number` | `0.75` | Budget utilization ratio (of the model window) that triggers an end-of-turn leaf-summarization pass (0.1-0.95) |
 | `leafMinFanout` | `number` | `8` | Minimum raw messages before creating a leaf summary (2-20) |
 | `condensedMinFanout` | `number` | `4` | Minimum leaf summaries before creating a condensed summary (2-20) |
 | `condensedMinFanoutHard` | `number` | `2` | Absolute minimum fanout for condensed summaries under pressure (2-10) |
@@ -539,8 +539,23 @@ Context engine configuration. Controls the system that manages what your agent s
 | `summaryModel` | `string` | -- | Optional model override for DAG summarization (falls back to `compactionModel`) |
 | `summaryProvider` | `string` | -- | Optional provider override for DAG summarization |
 
+**DAG robustness / spend / deferred-compaction fields** (`version: "dag"`) — all **active** in the current release:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `deferCompaction` | `boolean` | `true` | Run the afterTurn leaf + condense passes in the background on the per-conversation single-flight serializer (never blocking the turn). `false` runs them inline at end-of-turn (deterministic, for tests) |
+| `summarizerSpend.maxTokensPerTenantPerHour` | `number` | `500000` | Per-tenant rolling-hour ceiling on summarizer (input+output) tokens; over the cap the summarizer is bypassed → truncation-only assembly (no LLM call, no turn failure). `0` disables the hourly cap (min 0) |
+| `summarizerSpend.maxTokensPerTenantPerDay` | `number` | `5000000` | Per-tenant rolling-day summarizer token ceiling. `0` disables the daily cap (min 0) |
+| `summarizerBreaker.failureThreshold` | `number` | `5` | Consecutive summarizer failures before the breaker opens → truncation-only assembly (min 1) |
+| `summarizerBreaker.resetTimeoutMs` | `number` | `60000` | How long the summarizer breaker stays open before a half-open trial, in milliseconds |
+| `summarizerBreaker.halfOpenTimeoutMs` | `number` | `30000` | Half-open trial window for the summarizer breaker, in milliseconds |
+
 <Note>
   DAG mode fields are validated by Zod even when `version` is `"pipeline"`. This means you can pre-configure DAG settings before switching modes -- invalid values will be caught at startup regardless of the active mode.
+</Note>
+
+<Note>
+  The DAG cross-agent isolation adds an `agent_id` column to the full-text search index, created once on a fresh database (no migration — sessions start fresh on the LCD engine). A pre-existing development `~/.comis` database created before this release may need to be wiped to pick up the isolated index; a fresh install needs nothing. See [Compaction](/agents/compaction#per-tenant-agent-session-isolation).
 </Note>
 
 #### Memory Consolidation (agents.*.memoryConsolidation)

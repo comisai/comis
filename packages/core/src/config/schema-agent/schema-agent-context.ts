@@ -9,13 +9,16 @@
  *     escalation; post-batch continuation).
  *   - Context guard: ContextPruningConfig, SourceGateConfig.
  *
- * Imports nothing from sibling leaves (model/context/prompt/runtime) —
- * one-directional dependency graph; the top-level `AgentConfigSchema` in
- * `schema-agent-runtime.ts` composes from this leaf.
+ * Imports `CircuitBreakerConfigSchema` from the model leaf (the R1 summarizer
+ * breaker REUSES it — DRY, mirrors the embedding-resilience breaker) but nothing
+ * else from sibling leaves; the dependency graph stays one-directional and
+ * acyclic (model has no reverse import of context). The top-level
+ * `AgentConfigSchema` in `schema-agent-runtime.ts` composes from this leaf.
  *
  * @module
  */
 import { z } from "zod";
+import { CircuitBreakerConfigSchema } from "./schema-agent-model.js";
 
 // ── Session Lifecycle Schemas ────────────────────────────────────────────
 
@@ -172,7 +175,16 @@ export const ContextEngineConfigSchema = z.strictObject({
 
   /** Master toggle for the context engine pipeline (enabled by default). */
   enabled: z.boolean().default(true),
-  /** Operating mode: "pipeline" for sequential layer composition, "dag" for graph-based context management. DAG is the first-class default; set "pipeline" to opt out. */
+  /** Operating mode: "dag" (= the v2.12 LCD engine) is the DEFAULT
+   *  working-context engine — it keeps a lossless verbatim history (full faithful
+   *  reconstruction via the parts codec + a verbatim fresh tail of the last N
+   *  steps + transcript repair, multi-tier zoomable compaction, and the in-session
+   *  expansion loop) instead of dropping/masking old content. "pipeline" is the
+   *  first-class opt-in (`version: "pipeline"`): the simpler sequential-layer
+   *  engine, retained as the fallback. The daemon injects the ContextStorePort
+   *  unconditionally, so "dag" "just works" for every daemon agent; a storeless
+   *  context (a non-daemon unit caller) falls back to pipeline with a logged
+   *  warning — behaviorally identical, never a crash. */
   version: z.enum(["pipeline", "dag"]).default("dag"),
 
   // --- Shared (both modes) ---
@@ -228,9 +240,18 @@ export const ContextEngineConfigSchema = z.strictObject({
 
   // --- DAG mode ---
 
-  /** Number of most recent turns always included verbatim in DAG context. */
+  /** Number of most recent STEPS (assistant + tool round-trips, NOT user-turns)
+   *  always included verbatim in the dag/LCD context (A1). A step = one assistant
+   *  message plus the tool results it triggered; the last N steps are kept as the
+   *  ORIGINAL structured blocks (never reconstructed-from-text) and are never
+   *  evicted. Default 8 is a safe production floor; the tuned value comes from
+   *  real-LLM measurement in a later phase. */
   freshTailTurns: z.number().int().min(1).max(50).default(8),
-  /** Context utilization fraction that triggers DAG compaction (0.1 to 0.95). */
+  /** Context utilization fraction that triggers DAG leaf summarization (0.1 to
+   *  0.95). LIVE in dag/LCD mode (Phase 129): at the end of a turn, when total
+   *  context tokens / model window exceeds this fraction, the oldest out-of-tail
+   *  chunk is summarized into a leaf summary + the context is assembled under the
+   *  token budget. Inert in pipeline mode. */
   contextThreshold: z.number().min(0.1).max(0.95).default(0.75),
   /** Minimum fan-out for leaf nodes in the DAG. */
   leafMinFanout: z.number().int().min(2).max(20).default(8),
@@ -262,6 +283,44 @@ export const ContextEngineConfigSchema = z.strictObject({
   summaryModel: z.string().optional(),
   /** Optional provider override for DAG summary generation. */
   summaryProvider: z.string().optional(),
+
+  // --- DAG robustness / spend / deferred compaction (Phase 132 C4 + R1) ---
+
+  /** When true (default), the afterTurn leaf + condense passes are deferred onto
+   *  the per-conversation serializer and never block the turn's afterTurn hook
+   *  (C4). When false, they run inline (the pre-132 behaviour) for deterministic
+   *  tests. */
+  deferCompaction: z.boolean().default(true),
+  /** Per-tenant rolling-window ceilings on summarizer LLM input+output tokens
+   *  (R1). When a ceiling is exceeded the summarizer seam is bypassed →
+   *  truncation-only assembly (no LLM call), NOT a turn failure. Consumed by
+   *  plans 132-05/132-06. */
+  summarizerSpend: z.strictObject({
+    /** Rolling-hour per-tenant summarizer token ceiling. 0 disables the hourly
+     *  cap. Default 500_000 — a few hundred-thousand tokens/hour, well below the
+     *  primary per-hour execution budget (10M) since this is a background seam. */
+    maxTokensPerTenantPerHour: z.number().int().min(0).default(500_000),
+    /** Rolling-day per-tenant summarizer token ceiling. 0 disables the daily cap.
+     *  Default 5_000_000 — 10× the hourly default (≥ the hourly ceiling) and
+     *  below the 100M primary per-day execution budget. */
+    maxTokensPerTenantPerDay: z.number().int().min(0).default(5_000_000),
+    // Fully-populated default object (NOT `.default({})`) so an empty config
+    // resolves to the real ceilings — mirrors outputEscalation/postBatchContinuation
+    // in this file. Zod uses a `.default(value)` verbatim and does NOT re-parse it
+    // through the inner field defaults, so `{}` would leave the ceilings undefined.
+  }).default({ maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 }),
+  /** Circuit breaker for the per-tenant summarizer seam (R1). N consecutive
+   *  summarizer failures open the breaker → truncation-only assembly until
+   *  resetTimeoutMs elapses. Mirrors the embedding-resilience breaker
+   *  (setup-memory.ts); REUSES CircuitBreakerConfigSchema (failureThreshold /
+   *  resetTimeoutMs / halfOpenTimeoutMs) rather than re-declaring the fields. The
+   *  fully-populated default object mirrors the inner CircuitBreakerConfigSchema
+   *  defaults (a bare `.default({})` would not re-parse the inner field defaults). */
+  summarizerBreaker: CircuitBreakerConfigSchema.default({
+    failureThreshold: 5,
+    resetTimeoutMs: 60_000,
+    halfOpenTimeoutMs: 30_000,
+  }),
 
   // --- Post-batch continuation (replaces SEP nudge enforcement) ---
 

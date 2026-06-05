@@ -23,6 +23,8 @@ import {
   type TypedEventBus,
   type MemoryPort,
   type ClockPort,
+  type ContextStorePort,
+  type ContextStoreScope,
   tryGetContext,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
@@ -50,6 +52,27 @@ import {
 import { mergeSessionStats } from "./pi-executor/session-stats.js";
 import { recordLastResponseTs } from "./ttl-guard.js";
 import { stripDiscoverySchemas } from "./schema-stripping.js";
+// LCD afterTurn ingest write-path (Phase 128, A1). Body lives in lcd-ingest.ts
+// (this file is already over the 800L cap); the call below is a thin gated
+// invocation. The agent↛memory cut: lcd-ingest imports only the core port type
+// + the core codec — never @comis/memory.
+import { ingestTurnGuarded } from "./lcd-ingest.js";
+// LCD afterTurn leaf-pass trigger (Phase 129, C1/C3). Activates the inert
+// contextThreshold: a thin gated call right after the ingest fires one leaf pass
+// when utilization is over threshold. The body (gating + opts + summarize +
+// range-replace + emit) lives in lcd-compaction-trigger.ts (this file is over
+// the 800L cap); the call here is a single non-fatal invocation. The
+// agent↛memory cut: the trigger imports only the core port type + the core codec.
+import { runLeafPassAfterTurn } from "./lcd-compaction-trigger.js";
+// LCD afterTurn CONDENSE pass (Phase 130, C2). A second thin gated call right
+// after the leaf pass: when ≥condensedMinFanout contiguous same-depth summaries
+// have accumulated, fold the shallowest run into one depth+1 condensed summary.
+// Runs AFTER the leaf pass so a turn that just created the Nth leaf can fold it.
+// The body lives in lcd-condense-trigger.ts (this file is over the 800L cap); the
+// call here is a single non-fatal invocation. The agent↛memory cut: the condense
+// trigger imports only core types + the agent-side condense summarizer.
+import { runCondensePassAfterTurn } from "./lcd-condense-trigger.js";
+import type { LeafSummarizerDeps, CompactionModelSnapshot } from "../context-engine/lcd-leaf-summarizer.js";
 // In-package pure attribution fn (the agent↛memory cut — core types
 // only; the write-back is the daemon's job, off the recall-used bus event).
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
@@ -204,6 +227,23 @@ export interface PostExecutionParams {
     eventBus: TypedEventBus;
     logger: ComisLogger;
     memoryPort?: MemoryPort;
+    /** Optional LCD context store (Phase 128 dag-mode write-path, A1). Present
+     *  ⇒ the turn's NEW messages are ingested at afterTurn; absent ⇒ skipped
+     *  cleanly. TYPE-only core port (the agent↛memory cut). */
+    contextStore?: ContextStorePort;
+    /** Tenant id for the LCD ingest scope. Threaded from PiExecutorDeps.tenantId
+     *  at the call site so the scope's SECURITY column is never empty
+     *  (T-128-08). Falls back to the session key tenant when absent. */
+    tenantId?: string;
+    /** Getter for the leaf-summarizer deps (Phase 129, C1). Present ⇒ the
+     *  afterTurn leaf pass is wired live (over threshold ⇒ a leaf summary is
+     *  persisted); absent ⇒ the pass is gated off cleanly. Sourced from the
+     *  context-engine setup's getCompactionDeps-style getters; TYPE-only (the
+     *  agent↛memory cut — the LLM call lives behind the injected summarizer).
+     *  Accepts an optional `modelSnapshot`: the DEFERRED (C4) path passes a model
+     *  identity captured BEFORE `session.dispose()` so a detached pass never
+     *  re-reads a torn-down `session.agent.state` (WR-04). */
+    getSummarizerDeps?: (modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps;
     activeRunRegistry?: ActiveRunRegistry;
     embeddingEnqueue?: (entryId: string, content: string) => void;
     workspaceDir: string;
@@ -399,6 +439,54 @@ export function buildSessionEndMetadata(args: {
       totalTokens: args.totalTokens,
     },
   };
+}
+
+/**
+ * WR-04 lifetime guard for the DEFERRED (C4) compaction path.
+ *
+ * The deferred leaf/condense passes are enqueued DETACHED onto the per-conversation
+ * serializer and can run AFTER `postExecution` returns + `session.dispose()` tears
+ * the session down. Each pass resolves its summarizer deps WHEN IT RUNS, and the
+ * model getter (and the `buildLeafSummarizeFn`-internal model read) re-read
+ * `session.agent.state.model` (executor-context-engine-setup.ts) — a use-after-
+ * dispose if the SDK dispose nulls that state.
+ *
+ * This helper SNAPSHOTS the model identity ONCE, NOW (while the session is still
+ * alive — called from `postExecution` BEFORE it returns/disposes), then re-binds
+ * the getter so every later resolution passes that snapshot into `getSummarizerDeps`.
+ * Because the snapshot threads into `resolveCompactionModelChain`, BOTH the top-level
+ * `getModel` AND the summarizer's internal model read use the captured value — the
+ * detached pass NEVER re-reads `session.agent.state`. The captured model is the
+ * turn's own model (the correct one for compacting that turn's history), and the
+ * lifetime contract is now explicit: the deferred path depends ONLY on this
+ * snapshot + the daemon-owned store/auth/clock (all of which outlive the session),
+ * never on `session.agent.state`.
+ *
+ * Resolving the snapshot is itself wrapped defensively: if reading the live model
+ * throws (an already-disposed/edge session at call time), the helper falls back to
+ * the original getter unchanged (the pass then degrades non-fatally via the
+ * trigger's own try/catch — never a crash). Returns `undefined` when the input is
+ * `undefined` (the leaf pass stays cleanly gated off).
+ *
+ * @param getSummarizerDeps - the live, session-coupled deps getter (or undefined).
+ * @returns a model-snapshot-bound getter safe to call post-dispose (or undefined).
+ */
+export function snapshotSummarizerDepsForDefer(
+  getSummarizerDeps: ((modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps) | undefined,
+): ((modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps) | undefined {
+  if (getSummarizerDeps === undefined) return undefined;
+  // Capture the LIVE model identity now (session still alive). If the live read
+  // throws at capture time, leave the getter unchanged — the deferred pass then
+  // degrades non-fatally through the trigger's try/catch.
+  let modelSnapshot: CompactionModelSnapshot | undefined;
+  try {
+    modelSnapshot = getSummarizerDeps().getModel();
+  } catch {
+    return getSummarizerDeps;
+  }
+  // Re-bind: every later resolution injects the captured snapshot, so neither the
+  // top-level getModel nor the summarizer-internal model read touches the session.
+  return (override?: CompactionModelSnapshot) => getSummarizerDeps(override ?? modelSnapshot);
 }
 
 /**
@@ -837,6 +925,125 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         { userLen: msg.text.trim().length, minUserChars: PAIRED_MIN_USER_CHARS, minCombinedChars: PAIRED_MIN_COMBINED_CHARS },
         "Paired memory skipped: content below quality threshold",
       );
+    }
+  }
+
+  // LCD afterTurn ingest (Phase 128 dag-mode write-path, A1). Mirrors the
+  // memoryPort persist above: gated on `deps.contextStore` presence, off the
+  // injected clock, non-fatal (ingestTurn wraps each append per-entry). The
+  // body lives in lcd-ingest.ts (this file is over the 800L cap).
+  //
+  // Idempotency (T-128-09): the high-water mark `getMessages(conversationId).length`
+  // is the persisted count (survives restarts); the delta `live.slice(persisted)`
+  // appends only the not-yet-persisted tail. A retry with no new messages appends
+  // nothing. `ingestTurnGuarded` also guards the WR-01 shrink edge: if a heal ever
+  // reassigns `state.messages` SHORTER than the store, it skips the append and
+  // WARNs (errorKind `precondition`) rather than slicing past the end and either
+  // persisting nothing forever or colliding on the unique (conversationId, seq)
+  // index.
+  if (deps.contextStore) {
+    const conversationId = formattedKey;
+    const scope: ContextStoreScope = {
+      conversationId,
+      // The scope's SECURITY columns must never be empty (T-128-08). tenantId
+      // prefers the explicitly-threaded deps.tenantId, falling back to the
+      // session key's tenant (the same source the memoryPort persist uses).
+      tenantId: deps.tenantId ?? sessionKey.tenantId,
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+    };
+    // The live canonical AgentMessage[] (pi-executor.ts:1118 reads the same
+    // ref). Typed as unknown on AgentSession — no public SDK type for it.
+    const live =
+      ((session.agent as unknown as { state?: { messages?: unknown[] } }).state?.messages ??
+        []) as Parameters<typeof ingestTurnGuarded>[2];
+    const store = deps.contextStore;
+
+    // R3 (132-04): route the live ingest write through the per-conversation
+    // single-flight serializer so it shares the queue with the (prior turn's)
+    // deferred compaction and can never interleave on (conversation_id, agent_id,
+    // tenant_id, seq) / the context_items ordinals (Pitfall 2). ingestTurnGuarded
+    // is NON-FATAL (skip+WARN); on a fail-closed rollover (an ambiguous/malformed
+    // scope) it invokes onFailClosed → we emit a content-free context:dag_degraded
+    // (reason fail_closed_rollover) so the refusal is observable on the bus. We
+    // AWAIT this slot so the ingest's seq slot is claimed in order before the turn
+    // returns (the ingest write is a fast synchronous append — it does not block
+    // on the deferred compaction, which rides the same queue BEHIND it).
+    const ingestStart = deps.clock.now();
+    await store.runOnConversation(conversationId, () =>
+      ingestTurnGuarded(store, scope, live, deps.clock.now(), deps.logger, () => {
+        deps.eventBus.emit("context:dag_degraded", {
+          conversationId: scope.conversationId,
+          agentId: scope.agentId,
+          sessionKey: scope.sessionKey,
+          reason: "fail_closed_rollover",
+          durationMs: Math.max(0, deps.clock.now() - ingestStart),
+          timestamp: deps.clock.now(),
+        });
+      }),
+    );
+
+    // The two NON-FATAL afterTurn passes (T-129-18 / T-130-07 — never reject):
+    // 129 (C1/C3) leaf threshold sweep, then 130 (C2) condense fold (AFTER the
+    // leaf so the Nth leaf can immediately fold). Bodies live in the trigger
+    // modules (this file is over the 800L cap); the calls here stay thin.
+    // `summarizerGetter` is the (possibly snapshot-bound) deps getter — the
+    // deferred path passes a model-snapshot-bound getter (WR-04), the inline path
+    // reads the live session.
+    const runDeferredPasses = async (
+      summarizerGetter: typeof deps.getSummarizerDeps,
+    ): Promise<void> => {
+      await runLeafPassAfterTurn({
+        store,
+        scope,
+        contextEngine: config.contextEngine,
+        getSummarizerDeps: summarizerGetter,
+        now: deps.clock.now(),
+        // O1: a clock CALLABLE so the trigger times the pass with two reads
+        // (entry → emit). Bound to the injected ClockPort — never Date.now().
+        nowFn: () => deps.clock.now(),
+        logger: deps.logger,
+        eventBus: deps.eventBus,
+      });
+      await runCondensePassAfterTurn({
+        store,
+        scope,
+        contextEngine: config.contextEngine,
+        getCondenseSummarizerDeps: summarizerGetter,
+        now: deps.clock.now(),
+        // O1: clock CALLABLE for the two-read pass timing (entry → emit).
+        nowFn: () => deps.clock.now(),
+        logger: deps.logger,
+        eventBus: deps.eventBus,
+      });
+    };
+
+    // C4 (132-04): gate on config.contextEngine.deferCompaction (default true).
+    if (config.contextEngine?.deferCompaction ?? true) {
+      // DEFERRED: enqueue the passes onto the SAME per-conversation serializer as
+      // a DETACHED unit and do NOT await it — afterTurn returns once the ingest
+      // slot is claimed + the compaction is enqueued, BEFORE the compaction write
+      // runs (compaction never blocks the turn). The detached promise is wrapped
+      // in suppressError so a rejection is logged, NEVER swallowed by a bare empty
+      // catch (AGENTS.md §2.2).
+      //
+      // WR-04: snapshot the summarizer model identity NOW (session still alive)
+      // and bind it into the getter the detached pass uses, so a pass that resolves
+      // its deps AFTER the `session.dispose()` below never re-reads a torn-down
+      // `session.agent.state.model`. The detached closure then depends only on the
+      // captured snapshot + the daemon-owned store/auth/clock — all of which
+      // outlive the session. (Lifetime contract, documented on
+      // snapshotSummarizerDepsForDefer.)
+      const deferredSummarizerGetter = snapshotSummarizerDepsForDefer(deps.getSummarizerDeps);
+      const deferred = store.runOnConversation(conversationId, () =>
+        runDeferredPasses(deferredSummarizerGetter),
+      );
+      suppressError(deferred, "deferred LCD compaction (R3 serializer)");
+    } else {
+      // INLINE: await the passes (the pre-132 deterministic path retained for
+      // tests). Non-fatal — never surfaces an error to the live turn. Reads the
+      // LIVE session model (no snapshot needed — the session is alive inline).
+      await runDeferredPasses(deps.getSummarizerDeps);
     }
   }
 

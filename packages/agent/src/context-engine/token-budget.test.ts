@@ -130,4 +130,50 @@ describe("computeTokenBudget", () => {
     const budget = computeTokenBudget(200_000, 5_000);
     expect(budget.cacheFenceIndex).toBe(-1);
   });
+
+  // -------------------------------------------------------------------------
+  // I1 / WR-01: fresh-tail preamble subtrahend (H = W - S - O - M - R - P)
+  // -------------------------------------------------------------------------
+
+  it("reduces available history by exactly the fresh-tail preamble token estimate (separate subtrahend, never folded into S)", () => {
+    const withoutPreamble = computeTokenBudget(200_000, 5_000, -1, 0);
+    const withPreamble = computeTokenBudget(200_000, 5_000, -1, 4_000);
+
+    // A heavier fresh-tail preamble (recall is a strict subset of it) subtracts its
+    // tokens from H one-for-one — the preamble is a SEPARATE budget term, so a larger
+    // getFreshTailPreambleTokensEstimate makes the DAG compact older history harder.
+    expect(withPreamble.availableHistoryTokens).toBe(
+      withoutPreamble.availableHistoryTokens - 4_000,
+    );
+    // S is untouched (the partition invariant): the preamble is NOT folded into systemTokens.
+    expect(withPreamble.systemTokens).toBe(5_000);
+  });
+
+  it("is byte-identical to the 2-arg call when the preamble estimate is omitted (storeless/no-preamble callers unchanged)", () => {
+    const omitted = computeTokenBudget(200_000, 5_000);
+    const explicitZero = computeTokenBudget(200_000, 5_000, -1, 0);
+
+    expect(omitted.availableHistoryTokens).toBe(explicitZero.availableHistoryTokens);
+    // H matches the pre-I1 formula exactly: 200000 - 5000 - 8192 - 10000 - 50000.
+    expect(omitted.availableHistoryTokens).toBe(126_808);
+    expect(omitted.freshTailPreambleTokens).toBe(0);
+  });
+
+  it("carries the clamped fresh-tail preamble token estimate on the returned budget object", () => {
+    const budget = computeTokenBudget(200_000, 5_000, -1, 1_234);
+    expect(budget.freshTailPreambleTokens).toBe(1_234);
+  });
+
+  it("clamps a negative preamble estimate to zero (never a negative subtrahend) and H still clamps to zero at the bottom", () => {
+    // A negative preamble estimate must not ADD to H.
+    const negativePreamble = computeTokenBudget(200_000, 5_000, -1, -9_000);
+    const zeroPreamble = computeTokenBudget(200_000, 5_000, -1, 0);
+    expect(negativePreamble.freshTailPreambleTokens).toBe(0);
+    expect(negativePreamble.availableHistoryTokens).toBe(zeroPreamble.availableHistoryTokens);
+
+    // A preamble estimate larger than the window still clamps H to 0 (never negative).
+    const huge = computeTokenBudget(200_000, 5_000, -1, 1_000_000);
+    expect(huge.availableHistoryTokens).toBe(0);
+    expect(huge.freshTailPreambleTokens).toBe(1_000_000);
+  });
 });

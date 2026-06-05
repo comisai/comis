@@ -9,7 +9,7 @@
  */
 import type Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import { initContextSchema } from "./context-schema.js";
+import { ensureLcdTables } from "./schema-lcd.js";
 import { ensurePinnedColumn } from "./schema-pinned.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
@@ -584,14 +584,13 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
   `);
 
-  // --- Context store tables (DAG schema) ---
-  initContextSchema(db);
-
+  // NOTE: the DAG context-store tables (ctx_*) were removed in v2.12 (Phase 126,
+  // LCD reimplementation) — only the schema-create call is deleted (no reverse
+  // migration exists); existing DBs keep harmless orphaned tables (design §9).
   // The calls below run in dependency order AFTER the `memories` table (the FK
   // target) exists; each is idempotent, and every `ON DELETE CASCADE` fires via
   // the `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase`. Per-table
-  // contracts (schema shape, isolation scope, trust floor) live in each
-  // function's JSDoc.
+  // contracts (schema shape, isolation scope, trust floor) live in each fn JSDoc.
   ensureMemoryColumns(db); // additive memory columns (forward-only; design §4.1)
   ensureEntityTables(db); // entity junction tables
   ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket
@@ -600,13 +599,14 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureUserRepresentationTable(db); // per-user representation
   ensureRelationshipTable(db); // directional relationships
   ensureTunedAlphaTable(db); // tuned ranking alphas
+  ensureLcdTables(db); // LCD lossless message + parts store (Phase 127)
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
+
   // --- Observation partial indexes (design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).
   // `idx_memories_unconsol` serves the candidate scan (WHERE consolidated_at IS NULL);
-  // `idx_memories_observations` serves the observation lookup (WHERE
-  // proof_count IS NOT NULL). The design's third "live" index (exact-dup-retirement)
-  // is OMITTED — that filter + its column are deferred to a later phase.
+  // `idx_memories_observations` serves the observation lookup (WHERE proof_count IS NOT NULL).
+  // The design's third "live" index (exact-dup-retirement) is OMITTED — deferred to a later phase.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_memories_unconsol
       ON memories(agent_id, created_at) WHERE consolidated_at IS NULL;

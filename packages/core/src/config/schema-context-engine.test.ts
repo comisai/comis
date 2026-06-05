@@ -51,6 +51,10 @@ describe("ContextEngineConfigSchema", () => {
       annotationTriggerChars: 200_000,
       // Post-batch continuation (replaces SEP nudge enforcement)
       postBatchContinuation: { enabled: true, maxRetries: 2 },
+      // Robustness / spend / deferred-compaction knobs (Phase 132 C4 + R1)
+      deferCompaction: true,
+      summarizerSpend: { maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 },
+      summarizerBreaker: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
     });
   });
 
@@ -122,6 +126,10 @@ describe("ContextEngineConfigSchema", () => {
       summaryProvider: "anthropic",
       // Post-batch continuation defaults (not overridden in this test)
       postBatchContinuation: { enabled: true, maxRetries: 2 },
+      // Phase 132 knobs (not overridden in this test — default through)
+      deferCompaction: true,
+      summarizerSpend: { maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 },
+      summarizerBreaker: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
     });
   });
 
@@ -166,7 +174,7 @@ describe("ContextEngineConfigSchema", () => {
       expect(result.success).toBe(false);
     });
 
-    it("rejects non-integer", () => {
+    it("rejects a non-integer replayDriftIdleMs", () => {
       const result = ContextEngineConfigSchema.safeParse({ replayDriftIdleMs: 60_500.5 });
       expect(result.success).toBe(false);
     });
@@ -191,26 +199,29 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("version", () => {
-    it("version defaults to 'dag' when unset (first-class default)", () => {
-      // DAG is the first-class default engine. New conversations use
-      // the graph-based context engine unless an operator opts out explicitly.
+    it("version defaults to 'dag' when unset (Phase 133 re-enables dag as the default working-context engine)", () => {
+      // Phase 133 (the v2.12 GA keystone) flips the default pipeline -> dag.
+      // The lossless LCD (dag) engine is now the live default for every agent
+      // that omits `version`; the simpler sequential-layer pipeline engine is
+      // the first-class opt-in. This is the durable regression gate for the
+      // keystone flip.
       const result = ContextEngineConfigSchema.parse({});
       expect(result.version).toBe("dag");
     });
 
-    it("accepts 'pipeline'", () => {
+    it("accepts the explicit 'pipeline' version value", () => {
       const result = ContextEngineConfigSchema.parse({ version: "pipeline" });
       expect(result.version).toBe("pipeline");
     });
 
-    it("opt-out: explicit version 'pipeline' still parses to 'pipeline'", () => {
-      // The default flipped pipeline -> dag, but pipeline remains a valid
-      // opt-out: an operator who sets it explicitly keeps the pipeline engine.
-      const result = ContextEngineConfigSchema.parse({ version: "pipeline" });
-      expect(result.version).toBe("pipeline");
-    });
-
-    it("accepts 'dag'", () => {
+    it("explicit version 'dag' parses to 'dag' (the default LCD engine, explicitly pinned)", () => {
+      // "dag" (the LCD engine) is the default since Phase 133; pinning it
+      // explicitly is equivalent to omitting `version`. Selecting it does not
+      // throw; with a context store wired the factory builds the LCD engine,
+      // and a storeless caller falls back to pipeline with a logged warning
+      // (see the c2 test in
+      // packages/agent/src/context-engine/context-engine.test.ts).
+      expect(() => ContextEngineConfigSchema.parse({ version: "dag" })).not.toThrow();
       const result = ContextEngineConfigSchema.parse({ version: "dag" });
       expect(result.version).toBe("dag");
     });
@@ -226,7 +237,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("thinkingKeepTurns", () => {
-    it("defaults to 10", () => {
+    it("defaults thinkingKeepTurns to 10 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.thinkingKeepTurns).toBe(10);
     });
@@ -320,7 +331,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("historyTurns", () => {
-    it("defaults to 15", () => {
+    it("defaults historyTurns to 15 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.historyTurns).toBe(15);
     });
@@ -464,7 +475,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("compactionCooldownTurns", () => {
-    it("defaults to 5", () => {
+    it("defaults compactionCooldownTurns to 5 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.compactionCooldownTurns).toBe(5);
     });
@@ -503,7 +514,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("compactionPrefixAnchorTurns", () => {
-    it("defaults to 2", () => {
+    it("defaults compactionPrefixAnchorTurns to 2 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.compactionPrefixAnchorTurns).toBe(2);
     });
@@ -527,7 +538,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("freshTailTurns", () => {
-    it("defaults to 8", () => {
+    it("defaults freshTailTurns to 8 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.freshTailTurns).toBe(8);
     });
@@ -556,7 +567,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("contextThreshold", () => {
-    it("defaults to 0.75", () => {
+    it("defaults contextThreshold to 0.75 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.contextThreshold).toBe(0.75);
     });
@@ -585,7 +596,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("leafMinFanout", () => {
-    it("defaults to 8", () => {
+    it("defaults leafMinFanout to 8 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.leafMinFanout).toBe(8);
     });
@@ -614,7 +625,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("condensedMinFanout", () => {
-    it("defaults to 4", () => {
+    it("defaults condensedMinFanout to 4 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.condensedMinFanout).toBe(4);
     });
@@ -643,7 +654,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("condensedMinFanoutHard", () => {
-    it("defaults to 2", () => {
+    it("defaults condensedMinFanoutHard to 2 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.condensedMinFanoutHard).toBe(2);
     });
@@ -672,7 +683,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("incrementalMaxDepth", () => {
-    it("defaults to 0", () => {
+    it("defaults incrementalMaxDepth to 0 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.incrementalMaxDepth).toBe(0);
     });
@@ -701,7 +712,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("leafChunkTokens", () => {
-    it("defaults to 20000", () => {
+    it("defaults leafChunkTokens to 20000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.leafChunkTokens).toBe(20_000);
     });
@@ -730,7 +741,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("leafTargetTokens", () => {
-    it("defaults to 1200", () => {
+    it("defaults leafTargetTokens to 1200 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.leafTargetTokens).toBe(1_200);
     });
@@ -759,7 +770,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("condensedTargetTokens", () => {
-    it("defaults to 2000", () => {
+    it("defaults condensedTargetTokens to 2000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.condensedTargetTokens).toBe(2_000);
     });
@@ -788,7 +799,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("maxExpandTokens", () => {
-    it("defaults to 4000", () => {
+    it("defaults maxExpandTokens to 4000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.maxExpandTokens).toBe(4_000);
     });
@@ -817,7 +828,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("maxRecallsPerDay", () => {
-    it("defaults to 10", () => {
+    it("defaults maxRecallsPerDay to 10 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.maxRecallsPerDay).toBe(10);
     });
@@ -846,7 +857,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("recallTimeoutMs", () => {
-    it("defaults to 120000", () => {
+    it("defaults recallTimeoutMs to 120000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.recallTimeoutMs).toBe(120_000);
     });
@@ -875,7 +886,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("largeFileTokenThreshold", () => {
-    it("defaults to 25000", () => {
+    it("defaults largeFileTokenThreshold to 25000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.largeFileTokenThreshold).toBe(25_000);
     });
@@ -904,7 +915,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("annotationKeepWindow", () => {
-    it("defaults to 15", () => {
+    it("defaults annotationKeepWindow to 15 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.annotationKeepWindow).toBe(15);
     });
@@ -933,7 +944,7 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("annotationTriggerChars", () => {
-    it("defaults to 200000", () => {
+    it("defaults annotationTriggerChars to 200000 when unset", () => {
       const result = ContextEngineConfigSchema.parse({});
       expect(result.annotationTriggerChars).toBe(200_000);
     });
@@ -1060,6 +1071,136 @@ describe("ContextEngineConfigSchema", () => {
     it("accepts a string value", () => {
       const result = ContextEngineConfigSchema.parse({ summaryProvider: "anthropic" });
       expect(result.summaryProvider).toBe("anthropic");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // deferCompaction (C4) — deferred-by-default afterTurn compaction
+  // -------------------------------------------------------------------------
+
+  describe("deferCompaction", () => {
+    it("defaults to true (afterTurn leaf + condense passes run off the per-conversation serializer, never blocking the turn)", () => {
+      const result = ContextEngineConfigSchema.parse({});
+      expect(result.deferCompaction).toBe(true);
+    });
+
+    it("accepts false (inline pre-132 behaviour for deterministic tests)", () => {
+      const result = ContextEngineConfigSchema.parse({ deferCompaction: false });
+      expect(result.deferCompaction).toBe(false);
+    });
+
+    it("rejects a non-boolean value", () => {
+      const result = ContextEngineConfigSchema.safeParse({ deferCompaction: "yes" });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // summarizerSpend (R1) — per-tenant summarizer token-spend ceilings
+  // -------------------------------------------------------------------------
+
+  describe("summarizerSpend", () => {
+    it("defaults to a fully-populated object with sane per-tenant hour + day ceilings", () => {
+      const result = ContextEngineConfigSchema.parse({});
+      expect(result.summarizerSpend).toEqual({
+        maxTokensPerTenantPerHour: 500_000,
+        maxTokensPerTenantPerDay: 5_000_000,
+      });
+    });
+
+    it("accepts a custom per-tenant ceiling override", () => {
+      const result = ContextEngineConfigSchema.parse({
+        summarizerSpend: { maxTokensPerTenantPerHour: 100_000, maxTokensPerTenantPerDay: 1_000_000 },
+      });
+      expect(result.summarizerSpend).toEqual({
+        maxTokensPerTenantPerHour: 100_000,
+        maxTokensPerTenantPerDay: 1_000_000,
+      });
+    });
+
+    it("accepts a partial override (the other ceiling fills from default)", () => {
+      const result = ContextEngineConfigSchema.parse({
+        summarizerSpend: { maxTokensPerTenantPerHour: 250_000 },
+      });
+      expect(result.summarizerSpend).toEqual({
+        maxTokensPerTenantPerHour: 250_000,
+        maxTokensPerTenantPerDay: 5_000_000,
+      });
+    });
+
+    it("accepts 0 (the cap-disabled sentinel) for both ceilings", () => {
+      const result = ContextEngineConfigSchema.parse({
+        summarizerSpend: { maxTokensPerTenantPerHour: 0, maxTokensPerTenantPerDay: 0 },
+      });
+      expect(result.summarizerSpend).toEqual({
+        maxTokensPerTenantPerHour: 0,
+        maxTokensPerTenantPerDay: 0,
+      });
+    });
+
+    it("rejects a negative hourly ceiling", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        summarizerSpend: { maxTokensPerTenantPerHour: -1 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a non-integer daily ceiling", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        summarizerSpend: { maxTokensPerTenantPerDay: 1_000.5 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects unknown keys inside summarizerSpend (strictObject)", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        summarizerSpend: { maxTokensPerTenantPerHour: 1000, unknownField: "bad" },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // summarizerBreaker (R1) — reuses CircuitBreakerConfigSchema
+  // -------------------------------------------------------------------------
+
+  describe("summarizerBreaker", () => {
+    it("defaults to the shared CircuitBreakerConfigSchema defaults (threshold 5 / reset 60s / half-open 30s)", () => {
+      const result = ContextEngineConfigSchema.parse({});
+      expect(result.summarizerBreaker).toEqual({
+        failureThreshold: 5,
+        resetTimeoutMs: 60_000,
+        halfOpenTimeoutMs: 30_000,
+      });
+    });
+
+    it("accepts a custom breaker override", () => {
+      const result = ContextEngineConfigSchema.parse({
+        summarizerBreaker: { failureThreshold: 3, resetTimeoutMs: 30_000, halfOpenTimeoutMs: 15_000 },
+      });
+      expect(result.summarizerBreaker).toEqual({
+        failureThreshold: 3,
+        resetTimeoutMs: 30_000,
+        halfOpenTimeoutMs: 15_000,
+      });
+    });
+
+    it("accepts a partial override (the rest fill from CircuitBreakerConfigSchema defaults)", () => {
+      const result = ContextEngineConfigSchema.parse({
+        summarizerBreaker: { failureThreshold: 2 },
+      });
+      expect(result.summarizerBreaker).toEqual({
+        failureThreshold: 2,
+        resetTimeoutMs: 60_000,
+        halfOpenTimeoutMs: 30_000,
+      });
+    });
+
+    it("rejects a non-positive failureThreshold (inherited from CircuitBreakerConfigSchema)", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        summarizerBreaker: { failureThreshold: 0 },
+      });
+      expect(result.success).toBe(false);
     });
   });
 });

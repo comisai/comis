@@ -140,15 +140,6 @@ export const TOOL_GROUPS: Record<string, string[]> = {
     "mcp_manage",
     "heartbeat_manage",
   ],
-  "group:context": [
-    "ctx_search",
-    "ctx_inspect",
-    "ctx_recall",
-  ],
-  "group:context_expand": [
-    "ctx_expand",
-    "ctx_inspect",
-  ],
 };
 
 /**

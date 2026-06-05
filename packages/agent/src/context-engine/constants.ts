@@ -243,6 +243,100 @@ export const DEFAULT_COMPACTION_PREFIX_ANCHOR_TURNS = 2;
 export const MIN_MIDDLE_MESSAGES_FOR_COMPACTION = 3;
 
 // ---------------------------------------------------------------------------
+// LCD Leaf Summarization Escalation (Phase 129, C1)
+// ---------------------------------------------------------------------------
+
+/** Bounded token target for the deterministic Level-3 leaf-summary truncation —
+ *  the guaranteed-shrink floor (LOSSLESS-CLAW §5). When both LLM summarization
+ *  levels fail to reduce the chunk (oversized output or throws), Level 3 builds a
+ *  count-only note capped at this size so the leaf summary ALWAYS ends up strictly
+ *  smaller than the chunk it replaces (the escalation terminator — never loops).
+ *  Used by: lcd-leaf-summarizer (Level-3 deterministic truncation). */
+export const LEAF_FALLBACK_TARGET_TOKENS = 512;
+
+/** Marker string prefixed onto the deterministic Level-3 leaf truncation output so
+ *  a fallback (non-LLM) leaf summary is identifiable downstream (Phase 132
+ *  taint-escapes it; the assembler/store record `fallback: true`). The two LLM
+ *  levels never emit this marker — its presence means the deterministic floor ran.
+ *  Used by: lcd-leaf-summarizer (Level-3 marker). */
+export const LEAF_FALLBACK_SUMMARY_MARKER = "[lcd-leaf-fallback]";
+
+/** B-2: hard cap on the number of leaf passes one afterTurn drain may fire (the
+ *  infinite-loop backstop). The drain loops `runOneLeafPass` — re-resolving the
+ *  model-facing view each iteration so utilization reflects the prior pass's
+ *  compaction — and terminates on the FIRST of: utilization ≤ contextThreshold
+ *  (drained, the success exit), a no-progress guard (no chunk / chunk below
+ *  MIN_SHRINKABLE / ordinal-window divergence), OR this cap.
+ *
+ *  Set LOW (4) deliberately: under `deferCompaction:false` the afterTurn drain runs
+ *  INLINE + synchronously, so EACH pass is a real LLM round-trip blocking the live
+ *  turn — a turn must NEVER fire unbounded synchronous summarizer calls. Four passes
+ *  is enough to drain a few back-to-back large turns' backlog under threshold in one
+ *  turn while bounding worst-case added latency; a sustained over-threshold load that
+ *  the cap cannot fully drain in one turn simply continues draining on the next
+ *  afterTurn (the leaf gate stays armed) rather than stalling at one pass forever
+ *  (the B-2 stall this fixes). Used by: lcd-compaction-trigger (the drain loop cap). */
+export const LCD_MAX_LEAF_PASSES_PER_TURN = 4;
+
+/** TRUSTED-HEADER marker (R2, Phase 132) appended to a fallback summary's
+ *  `summaryRefToMessage` header — OUTSIDE the `wrapExternalContent` untrusted
+ *  region — so the model is honestly told the summary is an emergency, degraded
+ *  truncation (the breaker/spend-cap floor or the deterministic Level-3 floor
+ *  produced it, with no LLM). UNSPOOFABLE by construction: the body lives inside
+ *  the per-session random hex delimiter and `replaceMarkers`/`foldMarkerText`
+ *  neutralize any forged copy, so a poisoned body can neither forge nor strip
+ *  this header marker — only the real `LcdSummary.fallback` row flag drives it.
+ *  Distinct concern from {@link LEAF_FALLBACK_SUMMARY_MARKER} (the in-CONTENT
+ *  Level-3 prefix); this is the header equivalent. Used by: lcd-assembler. */
+export const LCD_FALLBACK_HEADER_MARKER = "fallback=emergency-truncation";
+
+/** B-8: per-tool-RESULT character cap for tool results sitting in the LCD `dag`
+ *  assembler's UNCONDITIONAL fresh tail. The dag assembly path runs NEITHER the
+ *  pipeline observation masker NOR the dead-content evictor (those are wired only
+ *  in the pipeline branch), and the fresh tail is concatenated verbatim and
+ *  UNCONDITIONALLY (`[...budgeted, ...freshTail]`, A1/A3) — so a turn whose last
+ *  `freshTailTurns` steps carry a huge tool output (a 200K-char file read, a giant
+ *  command dump) can overflow the model window before any budget pass sees it.
+ *  This cap bounds each oversized fresh-tail tool RESULT's total text via the
+ *  shared `createToolResultSizeGuard()` (head+tail+honest marker — NOT hand-rolled)
+ *  while every result that fits passes through byte-identical (A1 preserved for
+ *  what fits).
+ *
+ *  Value = {@link TOOL_RESULT_HARD_CAP_CHARS} (100_000), the same absolute
+ *  per-result ceiling the pipeline microcompaction guard enforces — chosen for
+ *  consistency with the existing tiering rather than the tighter
+ *  {@link MAX_INLINE_MCP_TOOL_RESULT_CHARS} (15_000) so the assembler only bounds
+ *  genuinely pathological results and leaves normal-large tool outputs intact in
+ *  the fresh tail. A SINGLE per-result cap (the simplest correct shape) is used,
+ *  not a "then largest-first total-tail budget" tier: 100K chars ≈ 28.6K tokens
+ *  per result at {@link CHARS_PER_TOKEN_RATIO}, so even a fresh tail of several
+ *  capped results fits any modern window's fresh-tail allowance — masking is
+ *  acceptable ONLY because the LCD store keeps the full content losslessly and
+ *  `ctx_expand` recovers it. Used by: lcd-assembler (B-8 fresh-tail bounding). */
+export const LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS = TOOL_RESULT_HARD_CAP_CHARS;
+
+// ---------------------------------------------------------------------------
+// LCD Condensation Escalation (Phase 130, C2) — the depth>0 summary-of-summaries
+// ---------------------------------------------------------------------------
+
+/** Bounded token target for the deterministic Level-3 CONDENSATION truncation —
+ *  the guaranteed-shrink floor mirroring {@link LEAF_FALLBACK_TARGET_TOKENS}. When
+ *  both LLM levels fail to reduce a contiguous run of CHILD summaries (oversized
+ *  output or throws), Level 3 builds a count-only note capped at this size so the
+ *  condensed summary ALWAYS ends up strictly smaller than the Σ child tokenCount it
+ *  replaces (the escalation terminator — never loops).
+ *  Used by: lcd-condense (Level-3 deterministic truncation). */
+export const CONDENSED_FALLBACK_TARGET_TOKENS = 512;
+
+/** Marker string prefixed onto the deterministic Level-3 condensation truncation
+ *  output so a fallback (non-LLM) condensed summary is identifiable downstream
+ *  (Phase 132 taint-escapes it; the store records `fallback: true`). The two LLM
+ *  levels never emit this marker — its presence means the deterministic floor ran.
+ *  Distinct from the leaf marker so the two tiers' floors are separable in logs +
+ *  the synthetic-session gate. Used by: lcd-condense (Level-3 marker). */
+export const CONDENSED_FALLBACK_SUMMARY_MARKER = "[lcd-condensed-fallback]";
+
+// ---------------------------------------------------------------------------
 // Post-Compaction Rehydration (Layer 6)
 // ---------------------------------------------------------------------------
 
@@ -274,87 +368,6 @@ export const MAX_REHYDRATION_TOKEN_BUDGET_CHARS = 50_000;
  * for eviction. Used by: dead content evictor layer.
  */
 export const DEAD_CONTENT_EVICTION_MIN_AGE = 10;
-
-// ---------------------------------------------------------------------------
-// DAG Compaction
-// ---------------------------------------------------------------------------
-
-/**
- * Depth-aware summarization prompts for the DAG compaction engine.
- *
- * Each depth level has a "normal" (Tier 1) and "aggressive" (Tier 2) prompt.
- * Depth 0 = operational detail, depth 1 = session summary, depth 2 = phase summary,
- * depth 3+ = project memory (durable decisions, architectural choices).
- *
- * Used by: `getDepthPrompt()` in `dag-compaction.ts`.
- */
-export const DEPTH_PROMPTS: Record<number, { normal: string; aggressive: string }> = {
-  0: {
-    normal: `Summarize this conversation segment, preserving:
-- Decisions made and their rationale
-- Tool outputs and their significance
-- File changes and paths
-- Error messages and resolutions
-- Blockers and constraints identified
-Drop: filler, greetings, repetition, verbose tool output formatting.
-Target: concise operational summary.`,
-    aggressive: `Create a tight summary of this conversation segment.
-Keep ONLY: key decisions, critical file paths, error resolutions, active constraints.
-Drop everything else. Be extremely concise.`,
-  },
-  1: {
-    normal: `Summarize this session, preserving:
-- Decision chains and their outcomes
-- Active constraints and requirements
-- Completed work items
-- Unresolved issues
-Drop: individual tool calls, intermediate states, process details.
-Target: session-level summary.`,
-    aggressive: `Create a tight session summary.
-Keep ONLY: final decisions, outcomes, active constraints.
-Drop all process detail.`,
-  },
-  2: {
-    normal: `Summarize this phase of work, preserving:
-- Overall trajectory and direction changes
-- Evolved decisions and why they changed
-- Completed milestones
-- Outstanding work
-Drop: session-specific details, individual identifiers.
-Target: phase-level summary.`,
-    aggressive: `Create a tight phase summary.
-Keep ONLY: trajectory, key decisions, milestones.`,
-  },
-  3: {
-    normal: `Summarize this body of work as project memory, preserving:
-- Durable decisions and architectural choices
-- Lessons learned
-- Key relationships and dependencies
-Drop: process details, method specifics, temporal references.
-Target: long-term project knowledge.`,
-    aggressive: `Distill to essential project knowledge.
-Keep ONLY: architectural decisions, lessons, critical dependencies.`,
-  },
-};
-
-/** Multiplier beyond target tokens that triggers escalation to next tier. Used by: three-tier escalation in dag-compaction.ts. */
-export const DAG_ESCALATION_OVERRUN_TOLERANCE = 1.5;
-
-/** Prefix for generated summary IDs (e.g., "sum_a1b2c3d4e5f6a7b8"). Used by: dag-compaction.ts ID generation. */
-export const DAG_SUMMARY_ID_PREFIX = "sum_";
-
-/** Number of random bytes for summary ID generation (produces 16 hex characters). Used by: dag-compaction.ts ID generation. */
-export const DAG_SUMMARY_ID_BYTES = 8;
-
-// ---------------------------------------------------------------------------
-// DAG Assembly
-// ---------------------------------------------------------------------------
-
-/** Estimated token overhead per XML-wrapped summary (accounts for `<context_summary>` tag, attributes, closing tag). Used by: dag-assembler.ts budget selection. */
-export const XML_WRAPPER_OVERHEAD_TOKENS = 40;
-
-/** Recall tool guidance injected as the first message in assembled DAG output. Used by: dag-assembler.ts recall guidance injection. */
-export const RECALL_GUIDANCE = `You have access to a context DAG containing your full conversation history. Summaries marked with <context_summary> tags contain compressed versions of earlier exchanges. To view full details of any summarized content, use the ctx_inspect tool with the summary ID. For broader recall across your history, use ctx_search with a text query.`;
 
 // ---------------------------------------------------------------------------
 // Cache Break Detection

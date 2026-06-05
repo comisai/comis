@@ -67,6 +67,8 @@ import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { TypedEventBus } from "@comis/core";
 import type { ContextEngineSetupParams, ContextEngineSetupDeps } from "./executor-context-engine-setup.js";
+import { SummarizerDegradeError, type SummarizerSpendBreaker } from "../safety/summarizer-spend-breaker.js";
+import type { LeafSummarizer } from "../context-engine/lcd-leaf-summarizer.js";
 
 // Module-level clock for executor-session-state bounded maps.
 setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
@@ -103,6 +105,10 @@ function makeParams(overrides?: Partial<ContextEngineSetupParams>): ContextEngin
     deps,
     formattedKey: "tenant-a:user_a:chan-a",
     sessionKey: "tenant-a:user_a:chan-a",
+    // DAG-CRIT-1: the turn agentId param defaults to undefined so the existing
+    // deps.agentId-fallback tests still resolve through deps; the CRIT-1 tests
+    // override it explicitly.
+    agentId: undefined,
     msg: { channelType: "test", channelId: "chan-a" },
     sm: { fileEntries: [] },
     session: {
@@ -124,6 +130,7 @@ function makeParams(overrides?: Partial<ContextEngineSetupParams>): ContextEngin
     cacheBreakDetector: { notifyContentModification: vi.fn() },
     contextEngineRef: { current: undefined },
     getCachedSystemTokensEstimate: () => 4_000,
+    getCachedFreshTailPreambleTokens: () => 0,
     getTokenAnchor: () => null,
     onAnchorReset: vi.fn(),
     ...overrides,
@@ -156,6 +163,25 @@ describe("setupContextEngine — createContextEngine() dependency wiring", () =>
     expect(captured.calls[0].deps.agentId).toBe("agent-xyz");
   });
 
+  // ── DAG-CRIT-1 (260605-m82): on the executeAgent path the turn's agentId
+  //    arrives as the positional execute() arg (the ALS RequestContext) and is
+  //    NEVER set onto frozenDeps, so `deps.agentId` is undefined → the assembler
+  //    built no read scope and failed closed (recalled 0 history). setupContextEngine
+  //    must accept the turn agentId as an explicit param and prefer it.
+  it("DAG-CRIT-1: createContextEngine receives the turn agentId from params.agentId even when deps.agentId is undefined (the executeAgent positional path)", () => {
+    setupContextEngine(
+      makeParams({ deps: makeDeps({ agentId: undefined }), agentId: "agent-positional" }),
+    );
+    // The read scope agentId is the caller-supplied turn agentId, NOT undefined.
+    expect(captured.calls[0].deps.agentId).toBe("agent-positional");
+  });
+
+  it("DAG-CRIT-1: params.agentId ?? deps.agentId — the deps.agentId fallback is preserved for non-executeAgent callers", () => {
+    setupContextEngine(makeParams({ deps: makeDeps({ agentId: "agent-from-deps" }) }));
+    // No explicit params.agentId → fall back to deps.agentId (unchanged behavior).
+    expect(captured.calls[0].deps.agentId).toBe("agent-from-deps");
+  });
+
   it("forwards the formattedKey (sessionKey string) into the createContextEngine deps wiring object", () => {
     setupContextEngine(makeParams({ formattedKey: "tenant-a:user-b:chan-c" }));
     expect(captured.calls[0].deps.sessionKey).toBe("tenant-a:user-b:chan-c");
@@ -166,6 +192,15 @@ describe("setupContextEngine — createContextEngine() dependency wiring", () =>
     const params = makeParams({ contextEngineRef: ref as ContextEngineSetupParams["contextEngineRef"] });
     setupContextEngine(params);
     expect(ref.current).toBe(captured.calls[0].engineHandle);
+  });
+
+  it("threads getCachedFreshTailPreambleTokens into the engine deps as getFreshTailPreambleTokensEstimate (I1 / WR-01 — separate from getSystemTokensEstimate)", () => {
+    setupContextEngine(makeParams({ getCachedFreshTailPreambleTokens: () => 321 }));
+    const deps = captured.calls[0].deps;
+    // The fresh-tail preamble estimate is wired as its OWN lazy getter (the budget
+    // subtrahend), distinct from the system-tokens getter.
+    expect(typeof deps.getFreshTailPreambleTokensEstimate).toBe("function");
+    expect(deps.getFreshTailPreambleTokensEstimate!()).toBe(321);
   });
 });
 
@@ -380,5 +415,116 @@ describe("setupContextEngine — observation-masker -> cacheBreakDetector wiring
     }));
     captured.calls[0].deps.onContentModified();
     expect(notify).toHaveBeenCalledWith("session-with-modified-content");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R1 (132-05): getSummarizerDeps wraps the leaf summarizer with the injected
+// per-tenant spend+breaker gate keyed on the live tenantId.
+// ---------------------------------------------------------------------------
+
+describe("setupContextEngine — getSummarizerDeps per-tenant spend+breaker wiring (R1)", () => {
+  /** A stub gate that records the tenantId it was keyed on and returns a sentinel. */
+  function makeRecordingBreaker(): {
+    breaker: SummarizerSpendBreaker;
+    seenTenantIds: string[];
+    sentinel: LeafSummarizer;
+  } {
+    const seenTenantIds: string[] = [];
+    const sentinel: LeafSummarizer = vi.fn(async () => "SENTINEL-GATED-SUMMARY");
+    const breaker: SummarizerSpendBreaker = {
+      gate: vi.fn((tenantId: string, _inner: LeafSummarizer): LeafSummarizer => {
+        seenTenantIds.push(tenantId);
+        return sentinel;
+      }),
+    };
+    return { breaker, seenTenantIds, sentinel };
+  }
+
+  it("wraps the summarizer with the injected per-tenant gate keyed on the live tenantId", async () => {
+    const { breaker, seenTenantIds, sentinel } = makeRecordingBreaker();
+    const result = setupContextEngine(
+      makeParams({
+        tenantId: "tenant-x",
+        deps: makeDeps({ summarizerSpendBreaker: breaker }),
+      }),
+    );
+    const summarizerDeps = result.getSummarizerDeps();
+    // The gate was keyed on the live tenantId threaded through the params.
+    expect(breaker.gate).toHaveBeenCalledTimes(1);
+    expect(seenTenantIds).toContain("tenant-x");
+    // The returned summarizer delegates to the gate's sentinel — the seam IS
+    // wrapped (a successful call flows through the gate, not the raw seam).
+    const out = await summarizerDeps.summarize(
+      [] as unknown as Parameters<LeafSummarizer>[0],
+      { reserveTokens: 100 },
+    );
+    expect(out).toBe("SENTINEL-GATED-SUMMARY");
+    expect(sentinel).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns the raw summarizer when no breaker is injected (optional/daemon-owned)", () => {
+    const result = setupContextEngine(
+      makeParams({ deps: makeDeps({ summarizerSpendBreaker: undefined }) }),
+    );
+    const summarizerDeps = result.getSummarizerDeps();
+    // Absent breaker ⇒ a real (unwrapped) summarizer function, no crash.
+    expect(typeof summarizerDeps.summarize).toBe("function");
+  });
+
+  it("emits a content-free context:dag_degraded (reason spend_cap) + re-throws when the gate degrades over-cap", async () => {
+    const eventBus = new TypedEventBus();
+    const events: Array<Record<string, unknown>> = [];
+    eventBus.on("context:dag_degraded", (e) => events.push(e as unknown as Record<string, unknown>));
+    // A gate whose returned summarizer throws the over-cap degrade signal.
+    const breaker: SummarizerSpendBreaker = {
+      gate: vi.fn((): LeafSummarizer => async () => {
+        throw new SummarizerDegradeError("spend_cap");
+      }),
+    };
+    const result = setupContextEngine(
+      makeParams({
+        tenantId: "tenant-cap",
+        formattedKey: "tenant-cap:user_a:chan-a",
+        sessionKey: "tenant-cap:user_a:chan-a",
+        deps: makeDeps({ summarizerSpendBreaker: breaker, eventBus }),
+      }),
+    );
+    // The degrade must RE-THROW so the leaf/condense ladder floors to truncation-only.
+    await expect(
+      result.getSummarizerDeps().summarize(
+        [] as unknown as Parameters<LeafSummarizer>[0],
+        { reserveTokens: 100 },
+      ),
+    ).rejects.toBeInstanceOf(SummarizerDegradeError);
+    // The event is emitted exactly once with the closed reason — and is content-free.
+    expect(events).toHaveLength(1);
+    expect(events[0].reason).toBe("spend_cap");
+    expect(events[0].conversationId).toBe("tenant-cap:user_a:chan-a");
+    expect(typeof events[0].durationMs).toBe("number");
+    // No summary/message content on the payload (ids/reason/durationMs only).
+    expect(JSON.stringify(events[0])).not.toContain("content");
+  });
+
+  it("emits reason breaker_open when the gate degrades on an open breaker", async () => {
+    const eventBus = new TypedEventBus();
+    const events: Array<Record<string, unknown>> = [];
+    eventBus.on("context:dag_degraded", (e) => events.push(e as unknown as Record<string, unknown>));
+    const breaker: SummarizerSpendBreaker = {
+      gate: vi.fn((): LeafSummarizer => async () => {
+        throw new SummarizerDegradeError("breaker_open");
+      }),
+    };
+    const result = setupContextEngine(
+      makeParams({ deps: makeDeps({ summarizerSpendBreaker: breaker, eventBus }) }),
+    );
+    await expect(
+      result.getSummarizerDeps().summarize(
+        [] as unknown as Parameters<LeafSummarizer>[0],
+        { reserveTokens: 100 },
+      ),
+    ).rejects.toBeInstanceOf(SummarizerDegradeError);
+    expect(events).toHaveLength(1);
+    expect(events[0].reason).toBe("breaker_open");
   });
 });

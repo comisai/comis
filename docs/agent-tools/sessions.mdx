@@ -23,6 +23,11 @@ icon: "users"
 | `memory_manage` | Create, update, or delete memory entries (admin CRUD: stats, browse, delete, flush, export) |
 | `memory_search` | Semantic search over agent memory (hybrid text + vector similarity) |
 | `memory_store` | Store a new memory entry (secret-detection guard applied) |
+| `ctx_search` | In-session full-text search over THIS conversation's compressed history (DAG mode) |
+| `ctx_inspect` | Inspect a compressed summary's metadata and immediate children (DAG mode) |
+| `ctx_expand` | Recover a compressed region back to its underlying messages (DAG mode) |
+
+The `ctx_*` tools are **in-session recovery** over the DAG (LCD) context engine's lossless store -- they are distinct from the cross-session recall tools (`memory_search`, `session_search`). See [Context expansion tools](#context-expansion-tools) below.
 
 For DAG-style multi-agent workflows (debate, vote, refine, map-reduce, etc.), see [Pipelines](/agent-tools/pipelines) -- the `pipeline` tool is the canonical entry point.
 
@@ -282,6 +287,71 @@ Agents have access to long-term memory that persists across conversations. Four 
     | `memory_type` | string | No | Filter by memory type |
     | `trust_level` | string | No | Filter by trust level |
     | `tags` | string[] | No | Tag filter |
+  </Accordion>
+</AccordionGroup>
+
+## Context expansion tools
+
+These three tools recover detail from **the current conversation** when the agent
+runs in DAG mode (`contextEngine.version: "dag"`). As a long, tool-heavy session
+grows past its token budget, the DAG (LCD) context engine compresses old turns into
+a zoomable summary hierarchy. The `ctx_*` tools let the agent zoom back in:
+search the compressed history, inspect a summary's coverage, and rehydrate a
+compressed region back to its underlying messages.
+
+<Note>
+**In-session, not cross-session.** The `ctx_*` tools operate **only** on the
+current conversation's lossless store and share no code with the long-term recall
+tools. Use `memory_search` / `session_search` to recall information from *other*
+sessions; use `ctx_*` to recover detail the summarizer compressed away *within
+this* session. The `ctx_*` tools are **DAG-mode-only** — active by default (DAG is
+the default engine) and inactive only in the opt-in `pipeline` mode — **never-export**
+(never reachable via the Comis MCP server), and
+read-only -- they never reach another session or tenant.
+</Note>
+
+<AccordionGroup>
+  <Accordion title="ctx_search -- Search this conversation's compressed history">
+    Full-text search over the current conversation's lossless store (compressed
+    messages and summaries). Uses SQLite FTS5 when available and falls back to a
+    `LIKE` scan otherwise -- it never hard-fails. Returns matching snippets, which
+    are treated as untrusted recovered content.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `query` | string | Yes | Full-text query over this conversation's compressed history |
+    | `scope` | string | No | What to search: `messages`, `summaries`, or `both` (default `both`) |
+    | `limit` | integer | No | Maximum hits to return (default 10, max 30) |
+  </Accordion>
+
+  <Accordion title="ctx_inspect -- Inspect a compressed summary's metadata">
+    Inspects a single summary in the DAG: its depth, the time range and number of
+    messages it covers, its token count, and its immediate children. Returns
+    metadata only (no recovered content), so it is a cheap way to decide which
+    region is worth expanding.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `summary_id` | string | Yes | The id of the summary to inspect |
+  </Accordion>
+
+  <Accordion title="ctx_expand -- Recover a compressed region to its messages">
+    Rehydrates a compressed region back to the underlying messages it covers. A
+    region that partially drifted out of the store is recovered best-effort (the
+    unrecoverable count is reported -- expansion is never fatal). Large output is
+    not inlined into the context: it is written to the session's `tool-results/`
+    directory and returned as a file handle, which you can then open with the file
+    tools (`read`). Recovered content is treated as untrusted.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `summary_id` | string | Yes | The id of the compressed region (summary) to expand |
   </Accordion>
 </AccordionGroup>
 

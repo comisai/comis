@@ -40,6 +40,7 @@ import type {
   ClockPort,
   EnvPort,
   TimerPort,
+  ContextStorePort,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 
@@ -47,6 +48,7 @@ import type { BudgetGuard } from "../../budget/budget-guard.js";
 import type { CostTracker } from "../../budget/cost-tracker.js";
 import type { StepCounter } from "../step-counter.js";
 import type { CircuitBreaker } from "../../safety/circuit-breaker.js";
+import type { SummarizerSpendBreaker } from "../../safety/summarizer-spend-breaker.js";
 import type { ProviderHealthMonitor } from "../../safety/provider-health-monitor.js";
 import type { ComisSessionManager } from "../../session/comis-session-manager.js";
 import type { AuthRotationAdapter } from "../../model/auth-rotation-adapter.js";
@@ -98,6 +100,21 @@ export interface PiExecutorDeps {
   agentDir: string;
   // Optional
   memoryPort?: MemoryPort;
+  /** Optional LCD context store (Phase 128 dag-mode write-path + assembly).
+   *  TYPE-only from @comis/core — the agent never imports the memory package
+   *  (the agent↛memory cut); the daemon injects the concrete createLcdStore.
+   *  Absent ⇒ no afterTurn ingest + the dag branch falls through to the
+   *  pipeline (never crashes, never no-ops). */
+  contextStore?: ContextStorePort;
+  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker. ONE
+   *  instance constructed at the composition root (mirrors the embedding breaker,
+   *  setup-memory.ts) and injected here so it bounds AGGREGATE per-tenant
+   *  summarizer spend across all of a tenant's sessions/agents. Threaded into
+   *  ContextEngineSetupDeps so `getSummarizerDeps` wraps the leaf seam with
+   *  `gate(tenantId, inner)` → open-breaker / over-cap bypasses the LLM → the
+   *  ladder floors to truncation-only. Absent ⇒ the raw seam (tests / non-daemon
+   *  callers). */
+  summarizerSpendBreaker?: SummarizerSpendBreaker;
   /** Optional cross-encoder reranker. Built in the daemon (setup-memory) only when an
    *  agent enables rerank; threaded into prompt-assembly's createMemoryRecall via
    *  ToolAssemblyDeps. Absent -> recall keeps fusion order. */
@@ -237,21 +254,6 @@ export interface PiExecutorDeps {
   senderTrustDisplayConfig?: SenderTrustDisplayConfig;
   /** Documentation config from AppConfig. */
   documentationConfig?: import("@comis/core").DocumentationConfig;
-  /** Context store for DAG mode. Optional -- only present when DAG tables exist. */
-  contextStore?: import("@comis/core").ContextEngineStore;
-  /** Raw database handle for DAG transactions. */
-  db?: unknown;
-  /**
-   * One-shot consumer of a pending engine-mode switch for this agent.
-   * Threaded from the daemon rebuild seam (setup-agents-runtime.ts) through
-   * setupContextEngine into the DAG engine, which calls it at the reconcile
-   * seam to emit context:mode_switched once and clear the pending flag. Returns
-   * undefined when there is no pending switch (e.g. a brand-new DAG-default
-   * conversation). Optional — non-DAG and test paths are unaffected.
-   */
-  consumePendingModeSwitch?: (
-    agentId: string,
-  ) => { from: "pipeline" | "dag"; to: "pipeline" | "dag" } | undefined;
   /** Tenant ID for conversation creation. */
   tenantId?: string;
   /** Delivery mirror port for session mirroring injection. */

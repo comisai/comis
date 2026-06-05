@@ -103,6 +103,20 @@ export {
 export type { InstallDetourDecision, DetourOverlap } from "./builtin/install-detour.js";
 export { parseInstallDetour } from "./builtin/install-detour.js";
 
+// Built-in tools -- In-session expansion loop. The three never-export,
+// direct-injection, owner-scoped tool factories (ctx_search / ctx_inspect /
+// ctx_expand) + the shared ContextToolDeps the daemon wiring (setup-tools.ts,
+// the composition root) constructs. They read the injected core
+// ContextStorePort — structurally distinct from the RPC session_search/
+// memory_search recall path (no rpcCall / memory.* / @comis/memory).
+export {
+  createCtxSearchTool,
+  createCtxInspectTool,
+  createCtxExpandTool,
+  type ContextToolDeps,
+  type ContextToolLogger,
+} from "./builtin/context-tools/index.js";
+
 // Built-in tools -- Exec sandbox types
 export type { SandboxProvider, SandboxOptions, ExecSandboxConfig } from "./builtin/sandbox/types.js";
 

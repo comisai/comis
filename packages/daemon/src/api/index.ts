@@ -19,7 +19,6 @@ export { createTokenHandlers, createTokenRegistry, type TokenHandlerDeps, type T
 export { createMcpHandlers, type McpHandlerDeps } from "./mcp-handlers.js";
 export { createMcpOauthHandlers, type McpOauthHandlerDeps } from "./mcp-oauth-handlers.js";
 export { createWorkspaceHandlers, type WorkspaceHandlerDeps } from "./workspace-handlers.js";
-export { createContextHandlers, type ContextHandlerDeps } from "./context-handlers.js";
 export { createDaemonHandlers, type DaemonHandlerDeps } from "./daemon-handlers.js";
 export { createEnvHandlers, type EnvHandlerDeps } from "./env-handlers.js";
 export { createSecretsHandlers, type SecretsHandlerDeps } from "./secrets-handlers.js";

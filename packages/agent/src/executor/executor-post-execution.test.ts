@@ -557,3 +557,550 @@ describe("modelAcknowledgedFailure word-boundary regression", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// LCD afterTurn leaf-pass wiring (Plan 129-06, C1/C3) — RED-first
+//
+// The wiring is PRODUCTION source in packages/agent/src/** (CLAUDE.md
+// Tests-First). It activates the inert contextThreshold config: at the
+// afterTurn boundary, INSIDE the same `if (deps.contextStore)` block as the
+// 128-03 ingest, a thin gated call fires `maybeRunLeafPass` (body in
+// lcd-compaction-trigger.ts) when a `getSummarizerDeps` getter is present.
+//
+// The behavioral proof exercises the call-site wiring helper directly
+// (`runLeafPassAfterTurn`) — scaffolding all 30+ postExecution deps for the full
+// path is impractical (see the markRead block above), so the helper that the
+// `if (deps.contextStore)` block invokes is the testable seam. With a real
+// :memory: store (over-threshold) + a STUB getSummarizerDeps, a leaf summary
+// persists; with getSummarizerDeps absent it is gated off (no summary). Both
+// FAIL on pre-patch code (the helper does not exist) — RED-first. A source-grep
+// locks the call into the `if (deps.contextStore)` block.
+// ---------------------------------------------------------------------------
+describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
+  function readPostExec(): { src: string; stripped: string } {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    return { src, stripped };
+  }
+
+  it("source-grep — the thin gated call to maybeRunLeafPass/runLeafPassAfterTurn lives inside the if (deps.contextStore) block", () => {
+    const { stripped } = readPostExec();
+    // The call site must reference the trigger (via the wiring helper or directly).
+    expect(stripped).toMatch(/maybeRunLeafPass|runLeafPassAfterTurn/);
+    // … and it must sit INSIDE the `if (deps.contextStore)` block: between the
+    // block open and the next top-level statement after the ingest. We slice from
+    // the `if (deps.contextStore)` to the recall-attribution block that follows it.
+    const blockStart = stripped.indexOf("if (deps.contextStore)");
+    expect(blockStart).toBeGreaterThan(-1);
+    const afterBlock = stripped.indexOf("attributeRecallUsage", blockStart);
+    const block = stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
+    expect(block).toMatch(/maybeRunLeafPass|runLeafPassAfterTurn/);
+    // The ingest call is still there too (the leaf call comes AFTER it).
+    expect(block).toMatch(/ingestTurnGuarded/);
+  });
+
+  it("behavior — runLeafPassAfterTurn fires the trigger (a leaf summary persists) when getSummarizerDeps is populated + over threshold", async () => {
+    const [{ default: Database }, memory, core, trigger, summarizerMod, mockLoggerMod] =
+      await Promise.all([
+        import("better-sqlite3"),
+        import("@comis/memory"),
+        import("@comis/core"),
+        import("./lcd-compaction-trigger.js"),
+        import("../context-engine/lcd-leaf-summarizer.js"),
+        import("../../../../test/support/mock-logger.js"),
+      ]);
+    const { initSchema, createLcdStore } = memory as unknown as {
+      initSchema: (db: unknown, dim: number) => void;
+      createLcdStore: (db: unknown) => import("@comis/core").ContextStorePort;
+    };
+    const { messageToParts } = core as unknown as {
+      messageToParts: (m: unknown) => import("@comis/core").LcdMessagePart[];
+    };
+    const { runLeafPassAfterTurn } = trigger as unknown as {
+      runLeafPassAfterTurn: (params: Record<string, unknown>) => Promise<void>;
+    };
+    const createMockLogger = (mockLoggerMod as { createMockLogger: () => unknown }).createMockLogger;
+    type SummarizerDeps = import("../context-engine/lcd-leaf-summarizer.js").LeafSummarizerDeps;
+
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const scope: import("@comis/core").ContextStoreScope = {
+      conversationId: "conv-wire",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "sess-a",
+    };
+
+    // Seed an over-threshold history (40 msgs × 100 stored tokens = 4000;
+    // windowTokens 1000 → utilization 4.0 ≫ 0.75).
+    for (let i = 0; i < 40; i++) {
+      const msg =
+        i % 2 === 0
+          ? ({ role: "user", content: `u${i}`, timestamp: 1000 } as unknown)
+          : ({
+              role: "assistant",
+              content: [{ type: "text", text: `a${i}` }],
+              api: "anthropic.messages",
+              provider: "anthropic",
+              model: "claude-test",
+              usage: { inputTokens: 1, outputTokens: 1 },
+              stopReason: "stop",
+              timestamp: 1000,
+            } as unknown);
+      store.append({
+        scope,
+        seq: i,
+        role: (msg as { role: import("@comis/core").LcdRole }).role,
+        tokenCount: 100,
+        createdAt: 1000 + i,
+        parts: messageToParts(msg),
+      });
+    }
+
+    const logger = createMockLogger();
+    // STUB summarizer (no network) returning a fixed short string.
+    const getSummarizerDeps = (): SummarizerDeps => ({
+      logger: logger as unknown as SummarizerDeps["logger"],
+      summarize: async () => "WIRED-LEAF-SUMMARY",
+      getModel: () => ({ provider: "anthropic", contextWindow: 1_000, reasoning: true }),
+      getApiKey: async () => "test-key",
+    });
+
+    await runLeafPassAfterTurn({
+      store,
+      scope,
+      // config.contextEngine — undefined is allowed (the helper defaults it),
+      // but pass the activated knobs explicitly so the assertion is hermetic.
+      contextEngine: {
+        contextThreshold: 0.75,
+        leafChunkTokens: 20_000,
+        leafTargetTokens: 1_200,
+        freshTailTurns: 8,
+      },
+      getSummarizerDeps,
+      now: 7000,
+      logger,
+      eventBus: undefined,
+    });
+
+    const summaries = store.getSummaries(scope);
+    expect(summaries.length).toBe(1);
+    expect(summaries[0]!.kind).toBe("leaf");
+    expect(summaries[0]!.createdAt).toBe(7000);
+  });
+
+  it("behavior — gated off: no getSummarizerDeps → the post-execution path runs cleanly and persists NO summary", async () => {
+    const [{ default: Database }, memory, core, trigger, mockLoggerMod] = await Promise.all([
+      import("better-sqlite3"),
+      import("@comis/memory"),
+      import("@comis/core"),
+      import("./lcd-compaction-trigger.js"),
+      import("../../../../test/support/mock-logger.js"),
+    ]);
+    const { initSchema, createLcdStore } = memory as unknown as {
+      initSchema: (db: unknown, dim: number) => void;
+      createLcdStore: (db: unknown) => import("@comis/core").ContextStorePort;
+    };
+    const { messageToParts } = core as unknown as {
+      messageToParts: (m: unknown) => import("@comis/core").LcdMessagePart[];
+    };
+    const { runLeafPassAfterTurn } = trigger as unknown as {
+      runLeafPassAfterTurn: (params: Record<string, unknown>) => Promise<void>;
+    };
+    const createMockLogger = (mockLoggerMod as { createMockLogger: () => unknown }).createMockLogger;
+
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const scope: import("@comis/core").ContextStoreScope = {
+      conversationId: "conv-gated",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "sess-a",
+    };
+    for (let i = 0; i < 40; i++) {
+      store.append({
+        scope,
+        seq: i,
+        role: "user",
+        tokenCount: 100,
+        createdAt: 1000 + i,
+        parts: messageToParts({ role: "user", content: `u${i}`, timestamp: 1000 }),
+      });
+    }
+
+    const logger = createMockLogger();
+    // No getSummarizerDeps → the wiring helper must NOT fire the trigger.
+    await expect(
+      runLeafPassAfterTurn({
+        store,
+        scope,
+        contextEngine: undefined,
+        getSummarizerDeps: undefined,
+        now: 7000,
+        logger,
+        eventBus: undefined,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(store.getSummaries(scope).length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04).
+//
+// C4 makes the leaf + condense passes DEFERRED by default (deferCompaction,
+// seeded in 132-01): they enqueue onto the per-conversation serializer as a
+// DETACHED unit so afterTurn returns BEFORE the compaction's store write
+// completes. R3 routes the live ingest write through the SAME serializer
+// (runOnConversation) so the next turn's ingest and the prior turn's deferred
+// compaction can never interleave (Pitfall 2). A fail-closed rollover emits a
+// content-free context:dag_degraded event.
+//
+// Scaffolding all 30+ postExecution deps is impractical (see the markRead block
+// above), so — mirroring the 129-06 leaf-wiring block — we pair a SOURCE-GREP
+// (locking the inline wiring invariants the criteria require: runOnConversation
+// ×2 inside the `if (deps.contextStore)` block, the deferCompaction gate, the
+// suppressError-wrapped detached promise, NO bare empty catch) with a BEHAVIOR
+// probe that reproduces the exact inline detached-enqueue pattern against a
+// store double and proves the observable contract (the caller resolves before
+// the deferred queue slot completes; both writers route through the queue; the
+// degraded event is content-free). Both FAIL on pre-patch code (the inline
+// wiring + the event did not exist) — RED-first.
+// ---------------------------------------------------------------------------
+describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", () => {
+  function readPostExec(): { stripped: string } {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    return { stripped };
+  }
+
+  function contextStoreBlock(stripped: string): string {
+    const blockStart = stripped.indexOf("if (deps.contextStore)");
+    expect(blockStart).toBeGreaterThan(-1);
+    const afterBlock = stripped.indexOf("attributeRecallUsage", blockStart);
+    return stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
+  }
+
+  it("source-grep — the ingest AND the deferred compaction both route through runOnConversation (Pitfall 2 interlock)", () => {
+    const block = contextStoreBlock(readPostExec().stripped);
+    // BOTH writers route through the per-conversation serializer → ≥2 calls.
+    const calls = block.match(/runOnConversation/g) ?? [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    // The ingest is still guarded; the passes are still wired.
+    expect(block).toMatch(/ingestTurnGuarded/);
+    expect(block).toMatch(/runLeafPassAfterTurn/);
+    expect(block).toMatch(/runCondensePassAfterTurn/);
+  });
+
+  it("source-grep — the deferral is gated on deferCompaction and the detached promise is suppressError-wrapped (no bare empty catch)", () => {
+    const block = contextStoreBlock(readPostExec().stripped);
+    expect(block).toMatch(/deferCompaction/);
+    expect(block).toMatch(/suppressError/);
+    // No bare empty catch anywhere in the block (AGENTS.md §2.2).
+    expect(block).not.toMatch(/\.catch\(\(\)\s*=>\s*\{\}\)/);
+  });
+
+  it("source-grep — the fail-closed rollover branch emits a content-free context:dag_degraded event", () => {
+    const block = contextStoreBlock(readPostExec().stripped);
+    expect(block).toMatch(/context:dag_degraded/);
+    expect(block).toMatch(/fail_closed_rollover/);
+    // The emit carries identifiers + reason + durationMs ONLY — never content.
+    const emitStart = block.indexOf("context:dag_degraded");
+    const emitSlice = block.slice(emitStart, emitStart + 400);
+    expect(emitSlice).not.toMatch(/\bcontent\b|\btext\b|\bmessages\b/);
+  });
+
+  it("behavior — the detached enqueue pattern resolves the caller BEFORE the deferred queue slot completes; both writers share the queue", async () => {
+    const [ingestMod, shared, mockLoggerMod] = await Promise.all([
+      import("./lcd-ingest.js"),
+      import("@comis/shared"),
+      import("../../../../test/support/mock-logger.js"),
+    ]);
+    const { ingestTurnGuarded } = ingestMod as unknown as {
+      ingestTurnGuarded: (...a: unknown[]) => void;
+    };
+    const { suppressError } = shared as unknown as {
+      suppressError: (p: Promise<unknown>, reason: string) => void;
+    };
+    const createMockLogger = (mockLoggerMod as { createMockLogger: () => unknown }).createMockLogger;
+
+    // Store double modelling the single-flight queue: the FIRST slot (ingest)
+    // completes promptly; the SECOND slot (deferred compaction) is held on a
+    // latch (the long pole). Records every runOnConversation convId.
+    const calls: string[] = [];
+    let release: (() => void) | undefined;
+    const latch = new Promise<void>((r) => {
+      release = r;
+    });
+    const store = {
+      append: () => {},
+      getMessages: () => [],
+      runOnConversation: async <T>(convId: string, fn: () => T | Promise<T>): Promise<T> => {
+        const first = calls.length === 0;
+        calls.push(convId);
+        // The ingest slot (first) runs its body promptly; the deferred-compaction
+        // slot (later) does NOT run its body until the test releases the latch —
+        // modelling the single-flight queue where the compaction WRITE only fires
+        // once dequeued (AFTER afterTurn returned). So `deferredDone` stays false
+        // until release, proving afterTurn did not block on the compaction write.
+        if (!first) await latch;
+        return fn();
+      },
+    } as unknown as import("@comis/core").ContextStorePort;
+
+    const scope: import("@comis/core").ContextStoreScope = {
+      conversationId: "conv-c4",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "conv-c4",
+    };
+
+    // Reproduce the inline afterTurn pattern verbatim (the production seam):
+    // 1. ingest routed through runOnConversation (awaited — claims the seq slot);
+    await store.runOnConversation("conv-c4", () =>
+      ingestTurnGuarded(store, scope, [], 7000, createMockLogger()),
+    );
+    // 2. deferred passes enqueued onto the SAME queue, NOT awaited, suppressError-wrapped.
+    let deferredDone = false;
+    const deferred = store.runOnConversation("conv-c4", async () => {
+      deferredDone = true;
+    });
+    suppressError(deferred, "deferred LCD compaction (R3 serializer)");
+
+    // The caller (afterTurn) continues here WITHOUT awaiting `deferred`. The
+    // deferred unit's queue slot is still held by the latch → not yet complete.
+    await Promise.resolve();
+    expect(deferredDone).toBe(false);
+
+    // Both writers (ingest + deferred compaction) routed through the queue for
+    // the SAME conversation (Pitfall 2 interlock).
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.every((c) => c === "conv-c4")).toBe(true);
+
+    // Releasing the latch lets the deferred compaction run (eventually).
+    release?.();
+    await deferred;
+    expect(deferredDone).toBe(true);
+  });
+
+  it("behavior — a fail-closed rollover (malformed scope) emits a content-free context:dag_degraded with reason fail_closed_rollover", async () => {
+    const [core, ingestMod, mockLoggerMod] = await Promise.all([
+      import("@comis/core"),
+      import("./lcd-ingest.js"),
+      import("../../../../test/support/mock-logger.js"),
+    ]);
+    const { TypedEventBus } = core as unknown as { TypedEventBus: new () => import("@comis/core").TypedEventBus };
+    const { ingestTurnGuarded } = ingestMod as unknown as {
+      ingestTurnGuarded: (
+        store: unknown,
+        scope: unknown,
+        live: unknown[],
+        now: number,
+        logger: unknown,
+        onFailClosed?: (reason: string) => void,
+      ) => void;
+    };
+    const createMockLogger = (mockLoggerMod as { createMockLogger: () => unknown }).createMockLogger;
+
+    const bus = new TypedEventBus();
+    const events: Array<Record<string, unknown>> = [];
+    bus.on("context:dag_degraded", (e) => events.push(e as unknown as Record<string, unknown>));
+
+    const store = { append: () => {}, getMessages: () => [] } as unknown as import("@comis/core").ContextStorePort;
+    // Malformed: conversationId !== sessionKey → fail-closed → onFailClosed fires.
+    const scope: import("@comis/core").ContextStoreScope = {
+      conversationId: "conv-x",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "different",
+    };
+
+    // Reproduce the inline emit (the production seam wires this onFailClosed).
+    const start = 6000;
+    ingestTurnGuarded(store, scope, [], 7000, createMockLogger(), () => {
+      bus.emit("context:dag_degraded", {
+        conversationId: scope.conversationId,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        reason: "fail_closed_rollover",
+        durationMs: Math.max(0, 7000 - start),
+        timestamp: 7000,
+      });
+    });
+
+    expect(events).toHaveLength(1);
+    const e = events[0]!;
+    expect(e).toMatchObject({ conversationId: "conv-x", agentId: "agent_a", reason: "fail_closed_rollover" });
+    expect(typeof e.durationMs).toBe("number");
+    // Content-free.
+    const keys = Object.keys(e);
+    expect(keys).not.toContain("content");
+    expect(keys).not.toContain("text");
+    expect(keys).not.toContain("messages");
+  });
+
+  // WR-04: the DEFERRED (C4) compaction closure is enqueued detached and can run
+  // AFTER postExecution returns + `session.dispose()` tears the session down. The
+  // deferred passes resolve the summarizer deps WHEN THEY RUN — and getModel()
+  // re-reads `session.agent.state.model` (executor-context-engine-setup.ts:307,
+  // and again inside buildLeafSummarizeFn). If the SDK dispose nulls
+  // session.agent.state, a deferred pass that resolves the model post-dispose
+  // reads a torn-down session. The fix snapshots the model identity into the
+  // deferred closure BEFORE returning (snapshotSummarizerDepsForDefer), so the
+  // detached pass never re-reads the disposed session — it completes non-fatally
+  // and still persists a correct summary against the LIVE store.
+  it("behavior — snapshotSummarizerDepsForDefer captures the model BEFORE dispose so a deferred pass does not re-read a torn-down session and still persists (WR-04)", async () => {
+    const [{ default: Database }, memory, core, trigger, postExecMod, mockLoggerMod] =
+      await Promise.all([
+        import("better-sqlite3"),
+        import("@comis/memory"),
+        import("@comis/core"),
+        import("./lcd-compaction-trigger.js"),
+        import("./executor-post-execution.js"),
+        import("../../../../test/support/mock-logger.js"),
+      ]);
+    const { initSchema, createLcdStore } = memory as unknown as {
+      initSchema: (db: unknown, dim: number) => void;
+      createLcdStore: (db: unknown) => import("@comis/core").ContextStorePort;
+    };
+    const { messageToParts } = core as unknown as {
+      messageToParts: (m: unknown) => import("@comis/core").LcdMessagePart[];
+    };
+    const { runLeafPassAfterTurn } = trigger as unknown as {
+      runLeafPassAfterTurn: (params: Record<string, unknown>) => Promise<void>;
+    };
+    type SnapshotModel = import("../context-engine/lcd-leaf-summarizer.js").LeafSummarizerDeps extends {
+      getModel: () => infer M;
+    }
+      ? M
+      : never;
+    type SummarizerDepsGetter = (
+      modelSnapshot?: SnapshotModel,
+    ) => import("../context-engine/lcd-leaf-summarizer.js").LeafSummarizerDeps;
+    // The new lifetime helper the fix adds — RED on the pre-patch tree (the export
+    // does not exist, so the import is undefined and the call below throws).
+    const { snapshotSummarizerDepsForDefer } = postExecMod as unknown as {
+      snapshotSummarizerDepsForDefer: (
+        getSummarizerDeps: SummarizerDepsGetter | undefined,
+      ) => SummarizerDepsGetter | undefined;
+    };
+    const createMockLogger = (mockLoggerMod as { createMockLogger: () => unknown }).createMockLogger;
+    type SummarizerDeps = import("../context-engine/lcd-leaf-summarizer.js").LeafSummarizerDeps;
+
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const scope: import("@comis/core").ContextStoreScope = {
+      conversationId: "conv-dispose",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "sess-a",
+    };
+
+    // Over-threshold history (40 msgs × 100 tokens = 4000; window 1000 → util 4.0).
+    for (let i = 0; i < 40; i++) {
+      const msg =
+        i % 2 === 0
+          ? ({ role: "user", content: `u${i}`, timestamp: 1000 } as unknown)
+          : ({
+              role: "assistant",
+              content: [{ type: "text", text: `a${i}` }],
+              api: "anthropic.messages",
+              provider: "anthropic",
+              model: "claude-test",
+              usage: { inputTokens: 1, outputTokens: 1 },
+              stopReason: "stop",
+              timestamp: 1000,
+            } as unknown);
+      store.append({
+        scope,
+        seq: i,
+        role: (msg as { role: import("@comis/core").LcdRole }).role,
+        tokenCount: 100,
+        createdAt: 1000 + i,
+        parts: messageToParts(msg),
+      });
+    }
+
+    const logger = createMockLogger();
+
+    // A summarizer-deps getter that models the production SESSION COUPLING +
+    // snapshot seam (executor-context-engine-setup.ts resolveCompactionModelChain):
+    // WITHOUT an injected model snapshot, getModel() reads a
+    // `session.agent.state.model` that becomes UNREADABLE after dispose (the read
+    // throws — the opaque SDK dispose tearing down the state), and `summarize`
+    // re-reads it too (mirrors buildLeafSummarizeFn:554 calling chain.getModel()).
+    // WITH an injected snapshot the chain uses it verbatim, never touching the
+    // session — the lifetime severance the deferred path needs. The fix's helper
+    // resolves the LIVE model once (pre-dispose) and re-binds the getter to inject
+    // that snapshot on every later resolution.
+    let disposed = false;
+    const sessionState: { model: SnapshotModel | undefined } = {
+      model: { provider: "anthropic", contextWindow: 1_000, reasoning: true },
+    };
+    const readModel = (): SnapshotModel => {
+      if (disposed) throw new Error("session.agent.state read after dispose");
+      return sessionState.model!;
+    };
+    const getSummarizerDeps: SummarizerDepsGetter = (modelSnapshot?: SnapshotModel): SummarizerDeps => {
+      // Mirror resolveCompactionModelChain: the injected snapshot (when present)
+      // is the model authority; otherwise read the live session.
+      const resolveModel = (): SnapshotModel => modelSnapshot ?? readModel();
+      return {
+        logger: logger as unknown as SummarizerDeps["logger"],
+        summarize: async () => {
+          resolveModel(); // buildLeafSummarizeFn:554 — chain.getModel() at LLM time
+          return "DEFERRED-LEAF-SUMMARY";
+        },
+        getModel: () => resolveModel(),
+        getApiKey: async () => "test-key",
+      };
+    };
+
+    // 1. Snapshot the deps BEFORE dispose (what the deferred branch does at enqueue):
+    //    capture the LIVE model identity and re-bind the getter to inject it.
+    const deferredGetter = snapshotSummarizerDepsForDefer(getSummarizerDeps);
+    expect(deferredGetter).toBeDefined();
+
+    // 2. The session disposes (postExecution returns → session.dispose()). Any
+    //    later read of session.agent.state.model now throws.
+    disposed = true;
+
+    // 3. The DEFERRED pass runs AFTER dispose using the snapshotted getter. With
+    //    the fix it reads the captured model snapshot (never the torn-down
+    //    session), so it completes non-fatally AND persists a correct summary.
+    await expect(
+      runLeafPassAfterTurn({
+        store,
+        scope,
+        contextEngine: {
+          contextThreshold: 0.75,
+          leafChunkTokens: 20_000,
+          leafTargetTokens: 1_200,
+          freshTailTurns: 8,
+        },
+        getSummarizerDeps: deferredGetter,
+        now: 9000,
+        logger,
+        eventBus: undefined,
+      }),
+    ).resolves.toBeUndefined();
+
+    // The deferred pass wrote to the LIVE store despite the disposed session.
+    const summaries = store.getSummaries(scope);
+    expect(summaries.length).toBe(1);
+    expect(summaries[0]!.kind).toBe("leaf");
+    expect(summaries[0]!.createdAt).toBe(9000);
+  });
+});

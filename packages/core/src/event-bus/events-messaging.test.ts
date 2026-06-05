@@ -311,6 +311,35 @@ describe("MessagingEvents payload structure", () => {
     expect(received.totalSummariesCreated).toBe(4);
   });
 
+  it("context:dag_expanded delivers in-session expansion-hit metrics (ids/counts/durationMs only)", () => {
+    // O1: a dedicated content-free expansion-hit event emitted by the three
+    // ctx_* tools on a hit. Closed `tool` union; recovered/hit count; durationMs.
+    // NEVER message or summary content (the lossless store; AGENTS.md §2.2/§2.7).
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const now = Date.now();
+    const payload: EventMap["context:dag_expanded"] = {
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      sessionKey: "default:user1:channel1",
+      tool: "ctx_expand",
+      recoveredCount: 7,
+      durationMs: 12,
+      timestamp: now,
+    };
+
+    bus.on("context:dag_expanded", handler);
+    bus.emit("context:dag_expanded", payload);
+
+    expect(handler).toHaveBeenCalledOnce();
+    const received = handler.mock.calls[0]![0] as EventMap["context:dag_expanded"];
+    expect(received.conversationId).toBe("conv-1");
+    expect(received.tool).toBe("ctx_expand");
+    expect(received.recoveredCount).toBe(7);
+    expect(received.durationMs).toBe(12);
+    expect(received.timestamp).toBe(now);
+  });
+
   // context:mode_switched carries the switch DIRECTION
   // (closed "pipeline" | "dag" union) plus the one-time import COST
   // (fullImport / importedCount / durationMs) + correlation ids. Mirrors

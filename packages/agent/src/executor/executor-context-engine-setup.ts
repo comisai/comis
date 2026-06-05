@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: the R1 (132-05) degrade-observability wrapper RE-THROWS the gate's
+// caught SummarizerDegradeError (after emitting a content-free WARN + dag_degraded)
+// so the leaf/condense ladder's existing catch floors to truncation-only — the
+// throw is a boundary re-raise that preserves the ladder contract, not control flow.
 /**
  * Context engine creation and wiring for PiExecutor.
  *
@@ -22,6 +26,19 @@ import type { ComisLogger } from "@comis/core";
 import { createContextEngine, type ContextEngine } from "../context-engine/index.js";
 import type { TokenAnchor } from "../context-engine/types.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
+// Phase 129 (C1): the leaf-summarizer deps the afterTurn trigger consumes. The
+// production `summarize` seam wraps the SDK generateSummary; the model + key are
+// resolved via the SAME getCompactionDeps chain (no duplicate resolveProviderApiKey).
+import {
+  buildLeafSummarizeFn,
+  type LeafSummarizerDeps,
+  type CompactionModelSnapshot,
+} from "../context-engine/lcd-leaf-summarizer.js";
+import {
+  isSummarizerDegradeError,
+  type SummarizerSpendBreaker,
+} from "../safety/summarizer-spend-breaker.js";
+import type { LeafSummarizer } from "../context-engine/lcd-leaf-summarizer.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import type { ExecutionOverrides } from "./types.js";
 import { resolveOperationModel, resolveProviderFamily } from "../model/operation-model-resolver.js";
@@ -49,16 +66,6 @@ export interface ContextEngineSetupDeps {
   authStorage: import("@earendil-works/pi-coding-agent").AuthStorage;
   modelRegistry: import("@earendil-works/pi-coding-agent").ModelRegistry;
   getPromptSkillsXml?: () => string;
-  contextStore?: import("@comis/core").ContextEngineStore;
-  db?: unknown;
-  /**
-   * One-shot consumer of a pending engine-mode switch for this agent.
-   * Spread into the DAG deps so the reconcile seam can emit context:mode_switched
-   * once and clear the pending flag. Optional — non-DAG/test paths unaffected.
-   */
-  consumePendingModeSwitch?: (
-    agentId: string,
-  ) => { from: "pipeline" | "dag"; to: "pipeline" | "dag" } | undefined;
   /**
    * Optional OAuth token manager. When provided, compaction LLM
    * calls route through resolveProviderApiKey for OAuth-eligible providers,
@@ -67,6 +74,19 @@ export interface ContextEngineSetupDeps {
   oauthManager?: OAuthTokenManager;
   /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
+  /** Optional LCD context store (Phase 128 dag-mode assembly). Threaded into
+   *  createContextEngine's deps alongside `conversationId: formattedKey` so the
+   *  dag branch returns the LCD assembler (reads what the afterTurn ingest
+   *  writes). TYPE-only core port (the agent↛memory cut); absent ⇒ the dag
+   *  branch falls through to the pipeline. */
+  contextStore?: import("@comis/core").ContextStorePort;
+  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker. When
+   *  present, `getSummarizerDeps` wraps the leaf summarizer seam with
+   *  `gate(tenantId, inner)` so an open breaker / over-cap tenant BYPASSES the LLM
+   *  → the leaf/condense ladder floors to truncation-only (no turn failure).
+   *  ONE daemon-owned instance (per-tenant aggregate across sessions/agents);
+   *  absent ⇒ the raw seam (non-daemon callers / tests). */
+  summarizerSpendBreaker?: SummarizerSpendBreaker;
 }
 
 /** Parameters for context engine creation. */
@@ -75,6 +95,21 @@ export interface ContextEngineSetupParams {
   deps: ContextEngineSetupDeps;
   formattedKey: string;
   sessionKey: string;
+  /** R4 (132-03): the tenant for the dag assembler's LCD read scope (the SAME
+   *  source executor-post-execution uses for the ingest scope:
+   *  `deps.tenantId ?? sessionKey.tenantId`). Threaded onto ContextEngineDeps so
+   *  the assembler builds an agent + tenant scoped read (WR-02). */
+  tenantId: string;
+  /** DAG-CRIT-1 (WR-02): the turn's agentId — the positional execute() arg
+   *  (`agentId ?? "default"`, the SAME `effectiveAgentId` expression
+   *  executor-post-execution uses for the LCD ingest scope), supplied by the
+   *  caller and NOT read from deps. On the executeAgent path the turn agentId is
+   *  set on the ALS RequestContext, never onto frozenDeps, so `deps.agentId` is
+   *  undefined and the assembler used to fail closed (recalled 0 history). Threading
+   *  it here makes the dag READ scope == the ingest WRITE scope so the assembler
+   *  builds a non-undefined readScope. `deps.agentId` stays the fallback for
+   *  non-executeAgent callers. */
+  agentId: string | undefined;
   msg: { channelType?: string; channelId?: string };
   sm: unknown;  // SessionManager -- typed as unknown to avoid SDK type export
   session: { agent: { state: { model: { reasoning?: boolean; contextWindow?: number; maxTokens?: number; id?: string; provider?: string; api?: string } | undefined } }; abortCompaction(): void };
@@ -86,6 +121,10 @@ export interface ContextEngineSetupParams {
   contextEngineRef: { current?: ContextEngine };
   /** Getter for cached system tokens estimate */
   getCachedSystemTokensEstimate: () => number;
+  /** I1 / WR-01: getter for the cached WHOLE fresh-tail preamble token estimate (a
+   *  SEPARATE budget subtrahend — the entire dynamicPreamble + inlineMemory blob, NOT
+   *  just recall; never folded into S). See token-budget.ts WR-01. */
+  getCachedFreshTailPreambleTokens: () => number;
   /** Getter for current token anchor */
   getTokenAnchor: () => TokenAnchor | null;
   /** Callback to reset token anchor */
@@ -108,6 +147,80 @@ export interface ContextEngineSetupResult {
   getSignatureScrubCounters: () => {
     signatureScrubs: number;
     signatureScrubsToolCallsAffected: number;
+  };
+  /** Phase 129 (C1): the leaf-summarizer deps getter the afterTurn trigger
+   *  consumes. Threaded into PostExecutionParams.deps.getSummarizerDeps at the
+   *  pi-executor call site so the leaf pass fires live over threshold. Resolves
+   *  the model fresh per call (honors mid-session model cycling) UNLESS a
+   *  `modelSnapshot` is supplied — in which case the chain uses it verbatim
+   *  instead of reading `session.agent.state.model`. The DEFERRED (C4) compaction
+   *  path passes a snapshot captured BEFORE `session.dispose()` so a detached pass
+   *  never re-reads a torn-down session (WR-04). */
+  getSummarizerDeps: (modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps;
+}
+
+// ---------------------------------------------------------------------------
+// R1 (132-05) degrade observability
+// ---------------------------------------------------------------------------
+
+/** Identifiers + sinks the degrade observability wrapper needs (content-free). */
+interface DegradeObservabilityCtx {
+  eventBus: import("@comis/core").TypedEventBus;
+  logger: ComisLogger;
+  clock: import("@comis/core").ClockPort;
+  conversationId: string;
+  agentId: string;
+  sessionKey: string;
+}
+
+/**
+ * R1 (132-05): wrap a GATED {@link LeafSummarizer} so a spend/breaker DEGRADE
+ * bypass is OBSERVABLE at the wiring boundary (the breaker module itself is
+ * content-free + log-free by design — observability lives where the `ComisLogger`
+ * + `eventBus` are injected). On a {@link SummarizerDegradeError} we emit a
+ * content-free WARN (`errorKind` `dependency` for breaker_open, `resource` for
+ * spend_cap) + the `context:dag_degraded` event (reason `breaker_open`/`spend_cap`,
+ * from 132-04), then RE-THROW so the leaf/condense ladder floors to truncation-only.
+ * Any non-degrade throw (an inner LLM failure the gate already recorded) and every
+ * success pass straight through untouched. NEVER logs summary/message content —
+ * ids / reason / durationMs only (AGENTS.md §2.2; T-132-05-04).
+ */
+function wrapSummarizerWithDegradeObservability(
+  gated: LeafSummarizer,
+  ctx: DegradeObservabilityCtx,
+): LeafSummarizer {
+  return async (messages, opts): Promise<string> => {
+    const start = ctx.clock.now();
+    try {
+      return await gated(messages, opts);
+    } catch (err) {
+      if (isSummarizerDegradeError(err)) {
+        const reason = err.degradeReason; // closed union: "breaker_open" | "spend_cap"
+        const errorKind: ErrorKind = reason === "spend_cap" ? "resource" : "dependency";
+        ctx.logger.warn(
+          {
+            step: "lcd-summarizer-degrade",
+            reason,
+            errorKind,
+            durationMs: Math.max(0, ctx.clock.now() - start),
+            hint:
+              reason === "spend_cap"
+                ? "per-tenant summarizer token cap reached; compaction degraded to truncation-only — raise contextEngine.summarizerSpend or wait for the rolling window to drain"
+                : "summarizer circuit breaker open after repeated failures; compaction degraded to truncation-only — investigate the compaction model/provider",
+          },
+          "lcd summarizer degraded to truncation-only",
+        );
+        ctx.eventBus.emit("context:dag_degraded", {
+          conversationId: ctx.conversationId,
+          agentId: ctx.agentId,
+          sessionKey: ctx.sessionKey,
+          reason,
+          durationMs: Math.max(0, ctx.clock.now() - start),
+          timestamp: ctx.clock.now(),
+        });
+      }
+      throw err; // floor: the ladder catches this and degrades to Level-3.
+    }
   };
 }
 
@@ -132,14 +245,21 @@ export interface ContextEngineSetupResult {
  */
 export function setupContextEngine(params: ContextEngineSetupParams): ContextEngineSetupResult {
   const {
-    config, deps, formattedKey, msg, sm, session, executionOverrides,
+    config, deps, formattedKey, tenantId, msg, sm, session, executionOverrides,
     cacheBreakDetector,
     contextEngineRef,
-    getCachedSystemTokensEstimate, getTokenAnchor, onAnchorReset,
+    getCachedSystemTokensEstimate, getCachedFreshTailPreambleTokens, getTokenAnchor, onAnchorReset,
     currentDiscoveryTracker,
   } = params;
 
-  const agentId = deps.agentId;
+  // DAG-CRIT-1: prefer the caller-supplied turn agentId (the positional
+  // execute() arg threaded as params.agentId) over deps.agentId — on the
+  // executeAgent path deps.agentId (= frozenDeps.agentId) is undefined, so this
+  // is what makes the dag read scope == the ingest write scope (the assembler no
+  // longer fails closed). deps.agentId remains the fallback for callers that set
+  // it directly. This `agentId` flows into the createContextEngine deps (the LCD
+  // read scope) and the getSummarizerDeps wiring below.
+  const agentId = params.agentId ?? deps.agentId;
 
   // contextEngineOverrides removed from ExecutionOverrides -- compaction model resolved via operationModels chain
   const contextEngineConfig = config.contextEngine ?? ContextEngineConfigSchema.parse({});
@@ -198,11 +318,142 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   let signatureScrubs = 0;
   let signatureScrubsToolCallsAffected = 0;
 
+  // Shared compaction-model resolution (getModel / getApiKey / overrideModel) —
+  // the SINGLE source for both the pipeline `getCompactionDeps` (Layer 8) and the
+  // Phase-129 leaf `getSummarizerDeps`. Both compaction surfaces resolve the
+  // SAME 5-level operation-model chain + route getApiKey through resolveProviderApiKey
+  // (no duplicate resolver — CLAUDE.md DRY / Plan 129-06 step 1). Returns the
+  // getters + the optional override model+key.
+  const resolveCompactionModelChain = (
+    // WR-04: when present, the chain uses this CAPTURED model snapshot verbatim
+    // instead of reading `session.agent.state.model`. The deferred (C4) compaction
+    // path captures it at the afterTurn boundary (before session.dispose()) so a
+    // detached pass — which resolves the chain when it RUNS, possibly post-dispose
+    // — never touches a torn-down session. Absent ⇒ the live per-call read (honors
+    // mid-session model cycling for the inline path).
+    modelSnapshot?: CompactionModelSnapshot,
+  ): {
+    getModel: () => CompactionModelSnapshot;
+    getRealModel: () => unknown;
+    getApiKey: () => Promise<string>;
+    overrideModel?: { model: unknown; getApiKey: () => Promise<string> };
+  } => ({
+    getModel: () => {
+      if (modelSnapshot !== undefined) return modelSnapshot;
+      const model = session.agent.state.model;
+      return {
+        id: model?.id,
+        provider: model?.provider ?? config.provider,
+        contextWindow: model?.contextWindow ?? 128_000,
+        reasoning: model?.reasoning ?? false,
+      };
+    },
+    // B-5: the REAL pi-ai Model<any> for the PRIMARY leaf/condense summarizer path
+    // (generateSummary needs a real Model, not the 4-field snapshot getModel
+    // returns). It is the executor-resolved model (pi-executor.ts resolvedModel),
+    // threaded in as params.resolvedModel. Captured at setup time (a closure over
+    // the setup-time value, resolved BEFORE session.dispose()), so the WR-04
+    // DEFERRED (C4) pass — which runs post-dispose — still returns a real Model
+    // without reading session.agent.state. Kept `unknown` end-to-end; the single
+    // sanctioned `as any` cast lives at the generateSummary call site.
+    getRealModel: () => params.resolvedModel,
+    // Route compaction's primary getApiKey through the shared dispatch helper so
+    // OAuth-eligible providers refresh through OAuthTokenManager + setRuntimeApiKey
+    // on every call. Non-OAuth providers fall through to authStorage unchanged.
+    getApiKey: async () =>
+      resolveProviderApiKey(config.provider, {
+        authStorage: deps.authStorage,
+        oauthManager: deps.oauthManager,
+        agentConfig: config,
+      }),
+    // Resolve compaction model via the 5-level priority chain; only set
+    // overrideModel when the resolver picked a non-primary model.
+    ...(() => {
+      const compactionResolution = resolveOperationModel({
+        operationType: "compaction",
+        agentProvider: config.provider,
+        agentModel: config.model,
+        operationModels: config.operationModels ?? {},
+        providerFamily: resolveProviderFamily(config.provider),
+        agentPromptTimeoutMs: config.promptTimeout?.promptTimeoutMs,
+      });
+      if (compactionResolution.source !== "agent_primary") {
+        try {
+          const compactionModel = deps.modelRegistry.find(
+            compactionResolution.provider,
+            compactionResolution.modelId,
+          );
+          if (compactionModel) {
+            return {
+              overrideModel: {
+                model: compactionModel,
+                getApiKey: async () =>
+                  resolveProviderApiKey(compactionResolution.provider, {
+                    authStorage: deps.authStorage,
+                    oauthManager: deps.oauthManager,
+                    agentConfig: config,
+                  }),
+              },
+            };
+          }
+        } catch {
+          // Model not in registry -- fall through to session model
+        }
+      }
+      return {};
+    })(),
+  });
+
+  // The Phase-129 leaf-summarizer deps getter: the shared model chain + the
+  // production summarizer seam (buildLeafSummarizeFn wraps the SDK generateSummary;
+  // Phase 132 swaps it for a spend-governed variant) + the injected logger. The
+  // afterTurn trigger (executor-post-execution.ts → runLeafPassAfterTurn) calls
+  // this; when wired the leaf pass fires live over threshold. Resolved fresh per
+  // call so model cycling mid-session is honored (same as getCompactionDeps).
+  //
+  // WR-04: a `modelSnapshot` (when supplied by the DEFERRED compaction path)
+  // flows into the chain so BOTH `getModel` AND the `buildLeafSummarizeFn`-internal
+  // model read use the captured value — a deferred pass resolving this AFTER
+  // `session.dispose()` then never reads `session.agent.state`.
+  const getSummarizerDeps = (modelSnapshot?: CompactionModelSnapshot): LeafSummarizerDeps => {
+    const chain = resolveCompactionModelChain(modelSnapshot);
+    const inner = buildLeafSummarizeFn(chain);
+    // R1 (132-05): wrap the leaf summarizer seam with the daemon-owned per-tenant
+    // spend+breaker gate keyed on the LIVE tenantId (the SAME tenant the afterTurn
+    // ingest scope uses). On open-breaker / over-cap the gate THROWS the degrade
+    // signal → the leaf/condense ladder catches it (lcd-leaf-summarizer tryLevel)
+    // → deterministic Level-3 floor → truncation-only assembly → R2's Task-1
+    // fallback marker fires on the resulting fallback:true summary. NO retry of
+    // the inner LLM (the RESEARCH anti-pattern). The same getter feeds BOTH the
+    // leaf and the condense pass, so condense degrades identically. Absent breaker
+    // ⇒ the raw seam (non-daemon callers / tests).
+    const summarize = deps.summarizerSpendBreaker
+      ? wrapSummarizerWithDegradeObservability(
+          deps.summarizerSpendBreaker.gate(tenantId, inner),
+          { eventBus: deps.eventBus, logger: deps.logger, clock: deps.clock,
+            conversationId: formattedKey, agentId: agentId ?? "default", sessionKey: formattedKey },
+        )
+      : inner;
+    return {
+      logger: deps.logger,
+      summarize,
+      getModel: chain.getModel,
+      // B-5: the REAL primary Model<any> (params.resolvedModel) buildLeafSummarizeFn
+      // hands generateSummary — not the 4-field snapshot getModel returns.
+      getRealModel: chain.getRealModel,
+      getApiKey: chain.getApiKey,
+      overrideModel: chain.overrideModel,
+    };
+  };
+
   const contextEngine = createContextEngine(contextEngineConfig, {
     logger: deps.logger,
     eventBus: deps.eventBus,
     agentId,
     sessionKey: formattedKey,
+    // R4 (132-03): the dag assembler builds an agent + tenant scoped LCD read
+    // from agentId + tenantId + conversationId (the WR-02 close).
+    tenantId,
     getModel: () => {
       // Lazy model getter handles model cycling mid-session
       const model = session.agent.state.model;
@@ -221,6 +472,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     getSessionManager: () => sm,  // Persistent write-back for observation masker
     objective: executionOverrides?.spawnPacket?.objective, // Objective reinforcement
     getSystemTokensEstimate: getCachedSystemTokensEstimate,
+    getFreshTailPreambleTokensEstimate: getCachedFreshTailPreambleTokens,
     // G-09: Notify cache break detector when observation masking modifies content
     onContentModified: () => cacheBreakDetector.notifyContentModification(formattedKey),
     // Accumulate signature-replay scrub counts per-execute. Only
@@ -250,79 +502,19 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       if (drift?.drop) return 0;
       return undefined; // Use default keepTurns
     },
-    // LLM compaction deps
+    // LLM compaction deps (Layer 8). The getModel / getApiKey / overrideModel
+    // resolution is shared with the Phase-129 leaf getSummarizerDeps via
+    // resolveCompactionModelChain() above — one source for both compaction
+    // surfaces (the 5-level operation-model chain + the shared resolveProviderApiKey
+    // dispatch; no duplicate resolver). The override is set only when the
+    // resolver picked a non-primary compaction model; absent ⇒ llm-compaction
+    // uses getModel/getApiKey.
     getCompactionDeps: () => ({
       logger: deps.logger,
       getSessionManager: () => sm,
       // Serialize discovered tool names for compaction metadata
       getDiscoveredTools: () => currentDiscoveryTracker?.serialize() ?? [],
-      getModel: () => {
-        const model = session.agent.state.model;
-        return {
-          id: model?.id,
-          provider: model?.provider ?? config.provider,
-          contextWindow: model?.contextWindow ?? 128_000,
-          reasoning: model?.reasoning ?? false,
-        };
-      },
-      // Route compaction's primary getApiKey through the shared
-      // dispatch helper so OAuth-eligible providers refresh through
-      // OAuthTokenManager + setRuntimeApiKey on every call. Non-OAuth
-      // providers (anthropic, openai, etc.) still fall through to
-      // authStorage.getApiKey unchanged.
-      getApiKey: async () =>
-        resolveProviderApiKey(config.provider, {
-          authStorage: deps.authStorage,
-          oauthManager: deps.oauthManager,
-          agentConfig: config,
-        }),
-      // Resolve compaction model via 5-level priority chain
-      // contextEngineOverrides removed -- invocationOverride path eliminated
-      //   Path 1: operationModels.compaction (operator config) -> explicit_config (Level 2)
-      //   Path 2: family default (Level 4) or agent primary (Level 5)
-      ...(() => {
-        const compactionResolution = resolveOperationModel({
-          operationType: "compaction",
-          agentProvider: config.provider,
-          agentModel: config.model,
-          operationModels: config.operationModels ?? {},
-          providerFamily: resolveProviderFamily(config.provider),
-          agentPromptTimeoutMs: config.promptTimeout?.promptTimeoutMs,
-        });
-
-        // Only set overrideModel when resolver picked a non-primary model
-        // (preserves existing behavior: when no override, llm-compaction uses getModel/getApiKey)
-        if (compactionResolution.source !== "agent_primary") {
-          try {
-            const compactionModel = deps.modelRegistry.find(
-              compactionResolution.provider,
-              compactionResolution.modelId,
-            );
-            if (compactionModel) {
-              return {
-                overrideModel: {
-                  model: compactionModel,
-                  // Route the override-model getApiKey through
-                  // the shared dispatch helper. Each callsite passes
-                  // its OWN providerId — config.provider above for the
-                  // primary, compactionResolution.provider here for the
-                  // override — both correctly resolve the right OAuth
-                  // profile via agentConfig.oauthProfiles[providerId].
-                  getApiKey: async () =>
-                    resolveProviderApiKey(compactionResolution.provider, {
-                      authStorage: deps.authStorage,
-                      oauthManager: deps.oauthManager,
-                      agentConfig: config,
-                    }),
-                },
-              };
-            }
-          } catch {
-            // Model not in registry -- fall through to session model
-          }
-        }
-        return {};
-      })(),
+      ...resolveCompactionModelChain(),
     }),
 
     // Rehydration deps
@@ -418,19 +610,15 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         });
       },
     }),
-
-    // DAG mode deps (only when version === "dag")
-    ...(contextEngineConfig.version === "dag" && deps.contextStore ? {
-      contextStore: deps.contextStore,
-      db: deps.db,
-      conversationId: (sm as unknown as Record<string, string>).__dagConversationId ?? "",
-      estimateTokens: (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN_RATIO),
-      // One-shot mode-switch consumer threaded from the daemon rebuild
-      // seam. The DAG engine calls it at the reconcile seam to emit
-      // context:mode_switched once with the real import cost, then clears it.
-      // Optional — undefined on test/non-daemon paths (no emit).
-      consumePendingModeSwitch: deps.consumePendingModeSwitch,
-    } : {}),
+    // Phase 128 dag-mode: thread the injected LCD store + the conversation id
+    // (= formattedKey) so context-engine's `dag` branch returns the LCD
+    // assembler, which reconstructs history from what the afterTurn ingest
+    // wrote. Absent ⇒ the branch WARN-falls-through to the pipeline.
+    contextStore: deps.contextStore,
+    conversationId: formattedKey,
+    // The dag assembler stamps assembly duration + synthesized-tool-result
+    // timestamps via this injected clock (production never calls Date.now()).
+    clock: deps.clock,
   });
 
   // Wire context engine to the mutable holder so requestBodyInjector
@@ -467,5 +655,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       signatureScrubs,
       signatureScrubsToolCallsAffected,
     }),
+    // Expose the leaf-summarizer deps getter (Phase 129) so pi-executor can
+    // thread it into postExecution's deps.getSummarizerDeps — wiring the
+    // afterTurn leaf pass live.
+    getSummarizerDeps,
   };
 }

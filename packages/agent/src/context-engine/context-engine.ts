@@ -39,11 +39,10 @@ import { createLlmCompactionLayer } from "./llm-compaction.js";
 import { createRehydrationLayer } from "./rehydration.js";
 import { createObjectiveReinforcementLayer } from "./objective-reinforcement.js";
 import { createDeadContentEvictorLayer } from "./dead-content-evictor.js";
+import { createLcdContextEngine } from "./lcd-assembler.js";
 import { detectRereads } from "./reread-detector.js";
 import type { Message } from "@earendil-works/pi-ai";
 import { estimateContextCharsWithDualRatio, estimateWithAnchor } from "../safety/token-estimator.js";
-import { createDagContextEngine } from "./dag-reconciliation.js";
-import type { DagContextEngineDeps } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Layer Circuit Breaker (internal)
@@ -229,20 +228,27 @@ export function createContextEngine(
     return { transformContext: async (msgs) => msgs, lastBreakpointIndex: undefined, lastTrimOffset: 0 };
   }
 
-  // DAG mode branch -- entirely different layer pipeline
+  // DAG/LCD mode (the default since Phase 133): when a ContextStorePort +
+  // conversationId are wired (the daemon injects the concrete createLcdStore
+  // unconditionally), return the LCD assembly engine -- history reconstructed
+  // from the store via the codec, verbatim fresh tail, transcript repair last
+  // (the corrected loop fix). With NO store wired (unit tests / non-daemon
+  // callers) it must NOT crash and must NOT no-op: it WARN-logs
+  // (errorKind: "config") and falls through to the pipeline assembly below --
+  // the storeless safety net that makes the dag-default flip non-breaking
+  // (a permanent regression gate -- see context-engine.test.ts c2).
   if (config.version === "dag") {
-    const dagDeps = deps as DagContextEngineDeps;
-    if (dagDeps.contextStore && dagDeps.conversationId) {
-      return createDagContextEngine(config, dagDeps);
+    if (deps.contextStore && deps.conversationId) {
+      return createLcdContextEngine(config, deps);
     }
-    // Fallback: DAG mode requested but deps missing -- log WARN and fall through to pipeline
     deps.logger.warn(
       {
-        hint: "DAG mode configured but contextStore or conversationId not provided; falling back to pipeline mode",
+        hint: "dag mode selected but no ContextStorePort wired; using pipeline",
         errorKind: "config" as const,
       },
-      "DAG context engine deps missing",
+      "LCD dag engine unavailable without a context store -- using pipeline",
     );
+    // (fall through to the pipeline assembly below -- never crash, never no-op)
   }
 
   // Check model capabilities to determine which layers to activate.

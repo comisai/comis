@@ -21,8 +21,8 @@
  *
  * Why emitted names: `descriptor.name` is a registry-side label and is NOT
  * guaranteed to equal the emitted `AgentTool.name` (e.g. `notify`→`notify_user`,
- * `unified_context`→`context_tool`, `image`→`image_analyze`, `tts`→
- * `tts_synthesize`). The activity stream resolves on the EMITTED name, so the
+ * `image`→`image_analyze`, `tts`→`tts_synthesize`). The activity stream resolves
+ * on the EMITTED name, so the
  * gate (and the registrations) must key on `descriptor.build(ctx).name`
  * (RESEARCH Pitfall 1).
  *

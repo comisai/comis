@@ -11,6 +11,7 @@
 !.env.example
 !.env.docker.example
 scripts/bench-memory.env
+scripts/lcd-regression.env
 
 # Comis-specific ignores
 node_modules/

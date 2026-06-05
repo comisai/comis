@@ -476,6 +476,89 @@ describe("assembleTools — system token estimate from systemPrompt length + too
 });
 
 // ---------------------------------------------------------------------------
+// I1 / WR-01: cachedFreshTailPreambleTokens — the SEPARATE WHOLE-preamble estimate
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — fresh-tail preamble token estimate from the WHOLE dynamicPreamble + inlineMemory block (I1 / WR-01)", () => {
+  // The budget-path char ratio (constants.ts CHARS_PER_TOKEN_RATIO = 3.5), NOT the
+  // ctx-tools' /4 — the estimate must match the token-budget heuristic the DAG
+  // subtracts it against.
+  const CHARS_PER_TOKEN_RATIO = 3.5;
+
+  it("computes ceil((dynamicPreamble.length + inlineMemory.length) / 3.5) for a non-empty preamble block", async () => {
+    const dynamicPreamble = "P".repeat(350);
+    const inlineMemory = "M".repeat(700);
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(100),
+      dynamicPreamble,
+      inlineMemory,
+    });
+    const r = await assembleTools(makeParams());
+    expect(r.cachedFreshTailPreambleTokens).toBe(
+      Math.ceil((dynamicPreamble.length + inlineMemory.length) / CHARS_PER_TOKEN_RATIO),
+    );
+    // A non-empty preamble block yields a > 0 estimate.
+    expect(r.cachedFreshTailPreambleTokens).toBeGreaterThan(0);
+  });
+
+  it("yields 0 for an empty preamble block (no dynamicPreamble, no inlineMemory)", async () => {
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(100),
+      dynamicPreamble: "",
+      inlineMemory: undefined,
+    });
+    const r = await assembleTools(makeParams());
+    expect(r.cachedFreshTailPreambleTokens).toBe(0);
+  });
+
+  it("WR-01: measures the WHOLE dynamicPreamble (skills XML / MCP / deferred tools) even with ZERO recalled memory", async () => {
+    // The load-bearing WR-01 property: the estimate tracks the ENTIRE fresh-tail
+    // preamble, not just recalled memory. A large dynamicPreamble (e.g. a heavy
+    // skills-XML / many-MCP agent) with EMPTY inlineMemory (no recall at all) must
+    // STILL produce a large estimate, because the whole preamble rides the
+    // unconditionally-shipped fresh tail and is reserved nowhere else. Measuring
+    // only the recalled bytes would yield ~0 here and under-reserve H → fresh-tail
+    // overflow risk. The new field name pins the rename; the assertion pins the
+    // whole-preamble semantic.
+    const heavyPreambleNoRecall = "S".repeat(7_000); // skills XML + MCP + deferred tools, no memory
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(100),
+      dynamicPreamble: heavyPreambleNoRecall,
+      inlineMemory: undefined, // ZERO recalled memory
+    });
+    const r = await assembleTools(makeParams());
+    // The whole-preamble bytes are counted even though recall is empty.
+    expect(r.cachedFreshTailPreambleTokens).toBe(
+      Math.ceil(heavyPreambleNoRecall.length / CHARS_PER_TOKEN_RATIO),
+    );
+    // Concretely large (the heavy preamble dominates) — NOT ~0.
+    expect(r.cachedFreshTailPreambleTokens).toBeGreaterThan(1_000);
+  });
+
+  it("is SEPARATE from cachedSystemTokensEstimate — growing the preamble block does NOT change S", async () => {
+    // The preamble estimate must NOT be folded into S (the recall-dag-budget-partition
+    // invariant). Identical systemPrompt + tools, only the preamble block grows.
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(200),
+      dynamicPreamble: "",
+      inlineMemory: undefined,
+    });
+    const light = await assembleTools(makeParams());
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(200),
+      dynamicPreamble: "P".repeat(1_000),
+      inlineMemory: "M".repeat(1_000),
+    });
+    const heavy = await assembleTools(makeParams());
+
+    // S is identical (the preamble is NOT in S) …
+    expect(heavy.cachedSystemTokensEstimate).toBe(light.cachedSystemTokensEstimate);
+    // … while the preamble estimate grew.
+    expect(heavy.cachedFreshTailPreambleTokens).toBeGreaterThan(light.cachedFreshTailPreambleTokens);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tool pipeline chain — every stage is invoked
 // ---------------------------------------------------------------------------
 

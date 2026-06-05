@@ -428,26 +428,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ContextEngineMetrics",
       "AssembledContext",
       "LayerCircuitBreaker",
-      "reconcileJsonlToDag",
-      "installDagIngestionHook",
-      "createDagContextEngine",
-      "runLeafPass",
-      "runCondensedPass",
-      "resolveFreshTailBoundary",
-      "shouldCompact",
-      "markAncestorsDirty",
-      "recomputeDescendantCounts",
-      "runDagCompaction",
-      "checkIntegrity",
       "CHARS_PER_TOKEN_RATIO",
-      "ReconciliationResult",
-      "DagContextEngineDeps",
-      "CompactionDeps",
-      "DagCompactionConfig",
-      "DagCompactionDeps",
-      "IntegrityCheckDeps",
-      "IntegrityReport",
-      "IntegrityIssue",
       "PROVIDER_CAPABILITY_DEFAULTS",
       "resolveProviderCapabilities",
       "normalizeProviderId",
@@ -916,48 +897,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "TranscriptToolCallIdMode",
       "createNoOpCapabilityPort",
       "PROFILE_ID_RE",
-      // ContextStorePort is declared but not yet consumed by agent —
-      // tracked as a planned-orphan policy entry mirrored from the
-      // FileLockPort pattern. Preserved this entry through the split:
-      // ContextStorePort is now a type alias
-      // (`type ContextStorePort = ContextEngineStore & ContextAdminStore`)
-      // and remains an in-codebase symbol consumed primarily by the
-      // daemon's context-handlers + the memory contract test.
-      "ContextStorePort",
-      // ContextEngineStore (34 per-session read/write methods). Consumed
-      // by the agent context-engine + the executor injection-deps types;
-      // the public-export-consumers test resolves the consumer files (so
-      // a runtime consumer entry is not required here for Engine).
-      // Tracked alongside ContextAdminStore for documentation symmetry.
-      // ContextAdminStore (4 admin/cleanup methods). The admin half of
-      // ContextStorePort. No production consumer imports this name as a
-      // value-typed annotation today — the daemon's context-handlers +
-      // api/types.ts consume the wider intersection alias
-      // `ContextStorePort` (which still resolves structurally through
-      // the alias to the union of Engine + Admin methods). Tracked as a
-      // planned-orphan policy entry mirroring the ContextStorePort
-      // pattern above; the memory contract test gates the type contract
-      // via `.toExtend<ContextAdminStore>()`.
-      "ContextAdminStore",
-      // Row DTOs for ContextStorePort moved from @comis/memory into
-      // core/src/ports/context-store-types.ts. The 2 link-table types
-      // (CtxSummaryMessageRow, CtxSummaryParentRow) were already orphans
-      // under @comis/memory; the 7 method-signature types
-      // (CtxConversationRow, CtxMessageRow, CtxMessagePartRow,
-      // CtxSummaryRow, CtxContextItemRow, CtxLargeFileRow,
-      // CtxExpansionGrantRow) are surfaced on @comis/core but consumed by
-      // agent only after the agent imports are retargeted from
-      // @comis/memory → @comis/core (mirrors the ContextStorePort
-      // planned-orphan posture above).
-      "CtxConversationRow",
-      "CtxMessageRow",
-      "CtxMessagePartRow",
-      "CtxSummaryRow",
-      "CtxSummaryMessageRow",
-      "CtxSummaryParentRow",
-      "CtxContextItemRow",
-      "CtxLargeFileRow",
-      "CtxExpansionGrantRow",
+      // NOTE (v2.12, Phase 126 Plan 04): the DAG context-store planned-orphan
+      // cluster — ContextStorePort / ContextEngineStore / ContextAdminStore, the
+      // 5 remaining Context*Contract definitions (ContextRecall/Expand/
+      // Conversations/Tree/SearchByConversation), and the 9 Ctx*Row DTOs — was
+      // removed here. The core ports + the contract definitions were deleted
+      // outright in this plan (the last consumers went in Plans 02/03 + the CLI
+      // rewire), so they are no longer orphaned exports to track.
       // SessionStorePort + its 3 row DTOs are declared in
       // core/src/ports/{session-store,session-store-types}.ts but not yet
       // consumed by agent/cli value-import retargets — tracked as
@@ -966,6 +912,24 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SessionData",
       "SessionListEntry",
       "SessionDetailedEntry",
+      // LCD lossless store (v2.12, Phase 127): the ContextStorePort + DTOs +
+      // codec are surfaced on @comis/core but only memory's createLcdStore
+      // (port + DTO typed-import) and Phase 128 ingest consume some of them —
+      // tracked as planned-orphan policy entries (same pattern as
+      // SessionStorePort). The memory adapter (Plan 04) value-consumes the
+      // codec + types; listed here so the gate is green at THIS plan's commit
+      // before Plan 04 lands (over-listing a soon-consumed symbol is the
+      // documented pattern, never under-listing).
+      "ContextStorePort",
+      "LcdMessage",
+      "LcdMessagePart",
+      "LcdPartMetadata",
+      "LcdPartKind",
+      "LcdRole",
+      "ContextStoreScope",
+      "AppendMessageInput",
+      "messageToParts",
+      "partsToMessage",
       // Master-key file helpers extracted from CLI's `secrets init` body
       // into core/src/security/master-key.ts. The three names are surfaced
       // on @comis/core's public barrel without a consumer until the CLI
@@ -1850,9 +1814,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryExportEnvelope",
       "MemoryExportEntry",
     ])],
-    // @comis/daemon: baseline orphans tracked here. All four
+    // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
-    // createContextHandlers, createAgentHandlers, createTracingLogger)
+    // createAgentHandlers, createTracingLogger)
     // DO have real test consumers — they are tracked here only because
     // the public-export-consumers AST walker excludes `test/**` and
     // ignores dynamic `require("@comis/daemon")` patterns (it walks
@@ -1864,8 +1828,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // Consumer audit (2026-05-21):
     //   - createAnnouncementDeadLetterQueue / AnnouncementDeadLetterQueue / DeadLetterEntry
     //     → test/integration/resilience-e2e-dead-letter.test.ts:22 (static import)
-    //   - createContextHandlers / ContextHandlerDeps
-    //     → test/integration/context-dag-integration.test.ts:52-53 (static import)
     //   - createAgentHandlers / AgentHandlerDeps
     //     → test/integration/oauth-multi-account.test.ts:80,580 (static import +
     //       direct factory call — drives the agents.update RPC handler against a
@@ -1888,8 +1850,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createAnnouncementDeadLetterQueue",
       "AnnouncementDeadLetterQueue",
       "DeadLetterEntry",
-      "createContextHandlers",
-      "ContextHandlerDeps",
       "createAgentHandlers",
       "AgentHandlerDeps",
       // MCP install persistence — re-exported so the integration test at
@@ -2079,6 +2039,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // barrel anymore. The 5 entries below document this transient state.
     ["@comis/memory", new Set<string>([
       "initSchema",
+      // NOTE (v2.12, Phase 126 Plan 04): createContextStore (the DAG
+      // context-store factory) was deleted here along with context-store.ts +
+      // its barrel re-export — no longer an orphaned export to track.
+      // LCD lossless store (v2.12, Phase 127 Plan 04). createLcdStore (the
+      // ContextStorePort SQLite adapter) has a production consumer — the daemon
+      // composition root constructs it on the shared memory db (setup-memory) — so
+      // the factory is NOT listed here (the factory-orphan dance shrank on
+      // schedule; allowlist-shrink enforces shrink-only). reconstructLcdMessage is
+      // the named pi-ai reconstruction seam (delegates to the @comis/core
+      // parts-codec); its consumer is Phase-128 assembly, so it is a planned
+      // orphan until that wiring lands (mirrors the SessionStorePort pattern).
+      "reconstructLcdMessage",
       "SessionData",
       "SessionListEntry",
       "InspectFilters",
@@ -2226,23 +2198,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ObsTableName",
       "ResetResult",
       "PruneResult",
-      "initContextSchema",
-      "CtxConversationRow",
-      "CtxMessagePartRow",
-      "CtxSummaryMessageRow",
-      "CtxSummaryParentRow",
-      "CtxLargeFileRow",
-      "CtxExpansionGrantRow",
-      // Agent retargeted these 5 names from @comis/memory → @comis/core.
-      // Memory's barrel still re-exports them (SessionStore is now a type
-      // alias of SessionStorePort). No in-repo production consumer remains
-      // until the alias re-exports are retired entirely from
-      // packages/memory/src/index.ts.
+      // NOTE (v2.12, Phase 126 Plan 04): initContextSchema + the 9 Ctx*Row DTOs
+      // (CtxConversationRow … CtxExpansionGrantRow) were removed here — the ctx_*
+      // schema/store + the @comis/core context-store-types port were deleted, so
+      // memory's barrel no longer re-exports them.
+      // Agent retargeted these 2 names from @comis/memory → @comis/core.
+      // Memory's barrel still re-exports them (SessionStore is a type alias of
+      // SessionStorePort). No in-repo production consumer remains until the alias
+      // re-exports are retired entirely from packages/memory/src/index.ts.
       "SessionStore",
       "SessionDetailedEntry",
-      "CtxMessageRow",
-      "CtxSummaryRow",
-      "CtxContextItemRow",
       // Generic RowMapper factory + per-row Zod schemas. Surfaced before
       // consumption at SQLite call sites — tracked here as transient
       // orphans for the gap. Removed wholesale when call sites import
@@ -2281,31 +2246,67 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "EntityListRowSchema",
       "SessionRowSchema",
       "SessionRowFromSchema",
+      // LCD lossless-store row schemas (v2.12, Phase 127). Consumed
+      // intra-package by lcd-store.ts via createRowMapper (and paired 1:1 with the
+      // LcdMessageRow/LcdMessagePartRow interfaces in types.ts via the
+      // row-schemas.test.ts drift guard); barrel-surfaced through `export *` so
+      // tracked here like the sibling row schemas (the checker counts cross-package
+      // barrel consumers only). No *RowFromSchema inferred types are exported —
+      // the row interfaces live in types.ts.
+      "LcdMessageRowSchema",
+      "LcdMessagePartRowSchema",
+      // LCD compaction row schemas (v2.12, Phase 129). LcdSummaryRowSchema +
+      // LcdContextItemRowSchema are consumed intra-package by lcd-store.ts via
+      // createRowMapper (the getSummaries / getContextItems graceful-degrade reads);
+      // LcdSummaryMessageRowSchema is the leaf→message link schema paired 1:1 with
+      // its LcdSummaryMessageRow interface via the row-schemas.test.ts drift guard.
+      // All three are barrel-surfaced through `export *` so tracked here like the
+      // sibling row schemas above (the checker counts cross-package barrel consumers
+      // only; an intra-file createRowMapper reference is not a cross-file import).
+      "LcdSummaryRowSchema",
+      "LcdSummaryMessageRowSchema",
+      "LcdContextItemRowSchema",
+      // LCD multi-tier condensed→child link schema (v2.12, Phase 130-01). The exact
+      // analog of LcdSummaryMessageRowSchema: paired 1:1 with its
+      // LcdSummaryParentRow interface via the row-schemas.test.ts drift guard, and
+      // barrel-surfaced through `export *`. appendCondensedSummary writes the
+      // lcd_summary_parents edges via a static prepared statement (it reuses
+      // summaryRowMapper for the child-row recompute, not this schema), and no
+      // production READ of parent rows exists yet (the expansion/zoom read path is
+      // a later phase), so its only current consumer is the drift-guard test —
+      // tracked here as a baseline orphan like the sibling link schema above.
+      "LcdSummaryParentRowSchema",
+      // LCD FTS search-hit row schema (v2.12, Phase 131-02, E1 ctx_search). Consumed
+      // intra-package by lcd-fts.ts via createRowMapper(LcdSearchHitRowSchema) — the
+      // searchLcd FTS5-MATCH-with-LIKE-fallback hit-row mapper (an intra-file value
+      // reference, NOT a cross-file import). Barrel-surfaced through `export *` so the
+      // export-graph walker counts it as an orphan — tracked here like the sibling LCD
+      // row schemas above (the checker counts cross-package barrel consumers only; the
+      // ctx_* tools read the recovered hits via the searchLcd RETURN value, not by
+      // importing this schema). No *RowFromSchema inferred type is exported — the
+      // LcdSearchHit DTO lives in @comis/core's context-store-types.ts.
+      "LcdSearchHitRowSchema",
+      // LCD LIKE-fallback hit row schema (v2.12, Phase 132 WR-02). The exact sibling
+      // of LcdSearchHitRowSchema MINUS the `rank` column — the LIKE scan has no
+      // ranking. Consumed intra-package by lcd-fts.ts via
+      // createRowMapper(LcdLikeHitRowSchema) so the LIKE-fallback rows degrade
+      // per-row (parseOptionalRow+skip) identically to the MATCH path, instead of a
+      // raw `as { ref_id, snippet }` cast that leaked an undefined snippet/refId.
+      // An intra-file value reference, NOT a cross-package import; barrel-surfaced
+      // through `export *`, so tracked here as a baseline orphan like the sibling
+      // LCD row schemas above (the ctx_* tools read hits via the searchLcd RETURN
+      // value, never by importing this schema).
+      "LcdLikeHitRowSchema",
       "VecSearchRowSchema",
       "VecSearchRowFromSchema",
       "FtsSearchRowSchema",
       "FtsSearchRowFromSchema",
       "NamedGraphRowSchema",
       "NamedGraphRowFromSchema",
-      // Context-store row schemas + inferred types (9 × 2 = 18 entries):
-      "CtxConversationRowSchema",
-      "CtxConversationRowFromSchema",
-      "CtxMessageRowSchema",
-      "CtxMessageRowFromSchema",
-      "CtxMessagePartRowSchema",
-      "CtxMessagePartRowFromSchema",
-      "CtxSummaryRowSchema",
-      "CtxSummaryRowFromSchema",
-      "CtxSummaryMessageRowSchema",
-      "CtxSummaryMessageRowFromSchema",
-      "CtxSummaryParentRowSchema",
-      "CtxSummaryParentRowFromSchema",
-      "CtxContextItemRowSchema",
-      "CtxContextItemRowFromSchema",
-      "CtxLargeFileRowSchema",
-      "CtxLargeFileRowFromSchema",
-      "CtxExpansionGrantRowSchema",
-      "CtxExpansionGrantRowFromSchema",
+      // NOTE (v2.12, Phase 126 Plan 04): the 9 Ctx*RowSchema + their inferred
+      // Ctx*RowFromSchema types were removed here — the section-2 ctx_* row
+      // schemas were deleted from packages/memory/src/row-schemas.ts with the
+      // ctx_* schema/store.
       // Session-store DTO schemas + inferred types (3 × 2 = 6 entries):
       "SessionDataSchema",
       "SessionDataFromSchema",

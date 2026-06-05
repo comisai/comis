@@ -97,7 +97,6 @@ import type {
 } from "./wiring/index.js";
 import type { BrokerHandle } from "./wiring/setup-broker.js";
 import type { createNamedGraphStore } from "@comis/memory";
-import type { createContextStore } from "@comis/memory";
 import type { createTokenRegistry } from "./api/token-handlers.js";
 import type { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import type { ObsPersistenceResult } from "./observability/obs-persistence-wiring.js";
@@ -385,6 +384,10 @@ export interface BootContext {
   backgroundIndexingPromise: Awaited<ReturnType<typeof setupMemory>>["backgroundIndexingPromise"];
   embeddingCacheStats: Awaited<ReturnType<typeof setupMemory>>["embeddingCacheStats"];
   embeddingCircuitBreakerState: Awaited<ReturnType<typeof setupMemory>>["embeddingCircuitBreakerState"];
+  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker — threaded
+   *  into setupAgents -> createPiExecutor -> setupContextEngine (the getSummarizerDeps
+   *  leaf-seam gate). Built in setup-memory; ONE instance partitions by tenantId. */
+  summarizerSpendBreaker: Awaited<ReturnType<typeof setupMemory>>["summarizerSpendBreaker"];
   rerankerPort: Awaited<ReturnType<typeof setupMemory>>["rerankerPort"];
   /** The no-download model-present probe result computed once in
    *  setup-memory. Carried through BootContext so bootAgents threads the SAME boolean into
@@ -394,6 +397,13 @@ export interface BootContext {
   /** Entity-associative store — threaded into setupAgents (executor recall
    *  read path) + the cron review (write path). Built in setup-memory on the shared db. */
   entityStore: Awaited<ReturnType<typeof setupMemory>>["entityStore"];
+  /** LCD lossless context store (Phase 128) — threaded into setupAgents (the
+   *  executor `contextStore` -> the `dag` branch in context-engine.ts). Built in
+   *  setup-memory on the shared db (`createLcdStore(db)`); injected as the CORE
+   *  `ContextStorePort` TYPE on SingleAgentDeps (agent↛memory cut). The `dag`
+   *  engine is opt-in (`contextEngine.version: "dag"`); the default stays pipeline,
+   *  so absent/unselected this is dormant. */
+  lcdStore: Awaited<ReturnType<typeof setupMemory>>["lcdStore"];
   /** Temporal-spread store — threaded into setupAgents (the executor recall
    *  read path → createMemoryRecall) ONLY. NOT the cron/diagnostic paths. Built in setup-memory
    *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator
@@ -457,7 +467,6 @@ export interface BootContext {
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;
-  contextStore: ReturnType<typeof createContextStore>;
   // Runtime registries (4 fields)
   activeRunRegistry: ReturnType<typeof createActiveRunRegistry>;
   sessionResolver: ReturnType<typeof createBackgroundSessionResolver>;

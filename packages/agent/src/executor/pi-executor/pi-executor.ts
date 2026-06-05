@@ -58,7 +58,6 @@ import {
   formatSessionKey,
   safePath,
   tryGetContext,
-  ContextEngineConfigSchema,
   type SessionKey,
   type NormalizedMessage,
   type PerAgentConfig,
@@ -103,9 +102,8 @@ import { normalizeModelCompat } from "../../provider/model-compat.js";
 import { normalizeModelId } from "../../provider/model-id-normalize.js";
 import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
-import { installDagIngestionHook, validateRoleAttribution } from "../../context-engine/index.js";
+import { validateRoleAttribution } from "../../context-engine/index.js";
 import type { TokenAnchor } from "../../context-engine/types.js";
-import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
 import { getElapsedSinceLastResponse } from "../ttl-guard.js";
 import { clearSessionBlockStability } from "../block-stability-tracker.js";
 import { wrapToolForAutoBackground } from "../../background/index.js";
@@ -297,6 +295,15 @@ export function createPiExecutor(
       if (alsCtx && resolvedModel) {
         (alsCtx as Record<string, unknown>).resolvedModel = `${resolvedModel.provider}:${resolvedModel.id}`;
       }
+      // R4 (132-03): populate the turn's agentId onto the LIVE RequestContext so
+      // the in-session ctx_* tools scope LCD reads by THIS agent per-call (WR-02).
+      // The agentId arrives as a positional execute() arg (not in the context set
+      // at the channel/RPC boundary); mirror the resolvedModel mutation above. The
+      // tools read `tryGetContext().agentId` — a wiring-time closure would be
+      // unsafe when one wiring serves multiple agents (the exact WR-02 threat).
+      if (alsCtx && agentId) {
+        (alsCtx as Record<string, unknown>).agentId = agentId;
+      }
 
       // Derive compat config via normalizeModelCompat (xAI auto-detection).
       const modelCompat = resolvedModel ? normalizeModelCompat({
@@ -479,39 +486,10 @@ async function runSessionLocked(
   const {
     deferralResult, deferredContext, capabilityIndexResult,
     modelTier, discoveryTracker, settingsManager,
-    resourceLoaderOptions, promptResult, cachedSystemTokensEstimate,
+    resourceLoaderOptions, promptResult, cachedSystemTokensEstimate, cachedFreshTailPreambleTokens,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
   const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories } = promptResult;
-
-  // DAG ingestion hook -- install BEFORE microcompaction
-  // so microcompaction is the outer wrapper. Execution order: microcompaction first -> DAG ingest second.
-  // DAG ingest receives the post-microcompaction message (with disk offload references).
-  const baseContextEngineConfigForHook = config.contextEngine ?? ContextEngineConfigSchema.parse({});
-  if (baseContextEngineConfigForHook.version === "dag" && deps.contextStore) {
-    const tenantId = deps.tenantId ?? "default";
-    const hookFormattedKey = formatSessionKey(sessionKey);
-    const existingConv = deps.contextStore.getConversationBySession(tenantId, hookFormattedKey);
-    let hookConversationId: string;
-    if (existingConv) {
-      hookConversationId = existingConv.conversation_id;
-    } else {
-      hookConversationId = deps.contextStore.createConversation({
-        tenantId,
-        agentId: agentId ?? config.name,
-        sessionKey: hookFormattedKey,
-      });
-    }
-    // Store for later use by context engine
-    (sm as unknown as Record<string, string>).__dagConversationId = hookConversationId;
-    installDagIngestionHook(
-      sm,
-      deps.contextStore,
-      hookConversationId,
-      deps.logger,
-      (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN_RATIO),
-    );
-  }
 
   const resourceLoader = new DefaultResourceLoader(resourceLoaderOptions);
   await resourceLoader.reload();
@@ -891,11 +869,23 @@ async function runSessionLocked(
   // TypeScript declares transformContext as private, but it's a plain instance property
   // accessible at runtime. Same pattern as streamFn override above.
   const ceSetup = setupContextEngine({
-    config, deps: frozenDeps, formattedKey, sessionKey: formattedKey, msg, sm, session,
+    config, deps: frozenDeps, formattedKey, sessionKey: formattedKey,
+    // R4 (132-03): the dag assembler's LCD read scope tenant — the SAME source
+    // executor-post-execution uses for the ingest scope (deps.tenantId ?? the
+    // session key's tenant), so read + write scopes agree (WR-02).
+    tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
+    // DAG-CRIT-1: the dag assembler's LCD read scope agentId — the SAME
+    // `effectiveAgentId = agentId ?? "default"` expression executor-post-execution
+    // uses for the LCD ingest WRITE scope, so the read scope == the write scope and
+    // the assembler stops failing closed (the positional turn agentId never reaches
+    // frozenDeps, so deps.agentId would be undefined on this path).
+    agentId: agentId ?? "default",
+    msg, sm, session,
     resolvedModel, executionOverrides,
     cacheBreakDetector,
     contextEngineRef,
     getCachedSystemTokensEstimate: () => cachedSystemTokensEstimate,
+    getCachedFreshTailPreambleTokens: () => cachedFreshTailPreambleTokens,
     getTokenAnchor: () => tokenAnchor,
     onAnchorReset: () => { tokenAnchor = null; },
     currentDiscoveryTracker,
@@ -1480,6 +1470,16 @@ async function runSessionLocked(
         eventBus: deps.eventBus,
         logger: deps.logger,
         memoryPort: deps.memoryPort,
+        // Phase 128 dag-mode afterTurn ingest write-path (A1). Both the store
+        // and tenantId thread through so postExecution's ingest scope has a
+        // real tenant (T-128-08); absent ⇒ ingest skipped cleanly.
+        contextStore: deps.contextStore,
+        tenantId: deps.tenantId,
+        // Phase 129 (C1): the leaf-summarizer deps getter sourced from the
+        // context-engine setup's shared compaction-model chain. Present ⇒ the
+        // afterTurn leaf pass fires live over threshold (gated additionally on
+        // deps.contextStore inside postExecution); absent ⇒ the pass is gated off.
+        getSummarizerDeps: ceSetup?.getSummarizerDeps,
         activeRunRegistry: deps.activeRunRegistry,
         embeddingEnqueue: deps.embeddingEnqueue,
         workspaceDir: deps.workspaceDir,
