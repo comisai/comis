@@ -269,13 +269,15 @@ stays `"pipeline"`; DAG becomes the default in a later release). The current
 release stores every message losslessly and assembles the context **under the
 model's token budget**: it resolves the ordered context view (raw messages plus
 any leaf summaries) and **evicts the oldest out-of-tail history** when the budget
-is exceeded — always keeping the verbatim fresh tail. **Automatic** leaf /
-condensed summary creation on every turn (the hierarchical summary nodes and the
-on-demand recall tools described in the rest of this section) lands in a **later
-phase**; until then the budget pass drops the oldest raw history rather than
-summarizing it. Nothing is ever deleted from the store — eviction trims the
-assembled context at read time only, so evicted messages remain recoverable when
-recall lands.
+is exceeded — always keeping the verbatim fresh tail. **Automatic leaf
+summarization is now live**: when context utilization crosses `contextThreshold`
+(default 0.75 × the model's window) at the end of a turn, the oldest out-of-tail
+chunk is summarized into a leaf summary and slotted back into the context view in
+its original position. The multi-tier **condensed** summary hierarchy (summaries
+of summaries) and the on-demand recall tools described in the rest of this
+section still land in a **later phase**. Nothing is ever deleted from the store —
+both eviction and leaf summarization operate on the assembled context only, so
+the underlying messages remain recoverable when recall lands.
 </Warning>
 
 ### What is DAG mode
@@ -283,15 +285,18 @@ recall lands.
 DAG mode stores every message and tool result losslessly and rebuilds the
 model-facing context each turn from the ordered context view — every surviving
 message, tool call, and tool result preserved and paired by id, plus a verbatim
-fresh tail of the most recent steps. When the assembled history would exceed the
-model's token budget, the **oldest evictable history is dropped** to fit (whole
-tool-use/tool-result steps only — a pair is never split), while the fresh tail is
-always protected. Any leaf summaries present in the store are resolved into the
-context in their original position. Eviction is **read-time only**: the underlying
-messages stay in the lossless store. In a later phase the DAG will additionally
-compress old content into hierarchical summaries automatically on each turn and
-expose on-demand recall tools (the design described below); in the current
-release it does budget-bounded assembly with read-time eviction.
+fresh tail of the most recent steps. When context utilization crosses
+`contextThreshold` at the end of a turn, the **oldest out-of-tail chunk is
+summarized into a leaf summary** (whole tool-use/tool-result steps only — a pair
+is never split) and slotted back into the context view in its original position;
+the fresh tail is always protected. When the assembled history would still exceed
+the model's token budget, the oldest evictable history is dropped to fit.
+Summarization and eviction operate on the assembled context only: the underlying
+messages stay in the lossless store, so compressed detail remains recoverable. In
+a later phase the DAG will additionally roll leaf summaries up into a multi-tier
+**condensed** hierarchy and expose on-demand recall tools (the design described
+below); in the current release it does leaf summarization + budget-bounded
+assembly.
 
 ### How DAG compaction works
 
@@ -366,6 +371,10 @@ change anything.
 | `contextEngine.outputEscalation.escalatedMaxTokens` | number | `32768` | Maximum output tokens after escalation (4096-128000) |
 | `contextEngine.observationDeactivationChars` | number | `80000` | Character threshold to deactivate observation masking (20K-500K) |
 | `contextEngine.ephemeralKeepWindow` | number | `10` | Recent ephemeral tool results to preserve from masking (1-50) |
+| `contextEngine.contextThreshold` | number | `0.75` | **DAG mode (live):** context-utilization fraction (of the model window) that triggers a leaf-summarization pass at the end of a turn (0.1-0.95) |
+| `contextEngine.freshTailTurns` | number | `8` | **DAG mode (live):** most-recent steps (assistant + tool round-trips) always kept verbatim and never summarized/evicted (1-50) |
+| `contextEngine.leafChunkTokens` | number | `20000` | **DAG mode (live):** token cap for the oldest out-of-tail chunk summarized into one leaf summary (1K-100K) |
+| `contextEngine.leafTargetTokens` | number | `1200` | **DAG mode (live):** target token size for a leaf summary (96-5000) |
 
 ```yaml title="~/.comis/config.yaml"
 agents:

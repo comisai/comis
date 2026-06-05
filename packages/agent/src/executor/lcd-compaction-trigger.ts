@@ -59,9 +59,9 @@ import type {
   ErrorKind,
   TypedEventBus,
 } from "@comis/core";
-import type { Message } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { estimateContextTokens } from "../safety/token-estimator.js";
+import type { ContextEngineConfig } from "@comis/core";
+import { ContextEngineConfigSchema } from "@comis/core";
 import {
   selectLeafChunk,
   summarizeLeafChunk,
@@ -289,4 +289,77 @@ export async function maybeRunLeafPass(
       "LCD leaf pass failed (non-fatal)",
     );
   }
+}
+
+/**
+ * The minimal inputs the afterTurn call site threads into {@link runLeafPassAfterTurn}.
+ * Keeping the wiring behind ONE param object lets `executor-post-execution.ts`
+ * (already over the 800L cap) add a single thin gated call instead of building
+ * the opts + resolving the summarizer deps inline.
+ */
+export interface RunLeafPassAfterTurnParams {
+  /** The injected core ContextStorePort (the same store the ingest wrote to). */
+  store: ContextStorePort;
+  /** The SECURITY scope built once for the afterTurn ingest (reused verbatim). */
+  scope: ContextStoreScope;
+  /** `config.contextEngine` (may be undefined — defaulted via the schema here). */
+  contextEngine: ContextEngineConfig | undefined;
+  /**
+   * Getter for the leaf summarizer deps (model getters + the injected summarizer
+   * seam). ABSENT ⇒ the leaf pass is gated off cleanly (no trigger, no summary)
+   * — the wiring gate, mirroring how the ingest gates on `deps.contextStore`.
+   */
+  getSummarizerDeps: (() => LeafSummarizerDeps) | undefined;
+  /** Injected wall-clock ms (`deps.clock.now()`) — never the ambient time global. */
+  now: number;
+  /** For the trigger's completion INFO + non-fatal WARN. */
+  logger: ComisLogger;
+  /** Optional bus for the `context:dag_compacted` emit on a completed pass. */
+  eventBus?: TypedEventBus;
+}
+
+/**
+ * Thin afterTurn call-site wiring for the leaf pass: resolve the summarizer deps,
+ * gate on their presence, build {@link LeafPassOptions} from `config.contextEngine`
+ * (defaulted via `ContextEngineConfigSchema`) with `windowTokens` taken from the
+ * summarizer's `getModel().contextWindow`, then delegate to {@link maybeRunLeafPass}.
+ *
+ * This is the single call `executor-post-execution.ts` adds inside its existing
+ * `if (deps.contextStore)` block (after `ingestTurnGuarded`) — the body stays in
+ * this module so the call site stays under the file-size cap. Non-fatal end to
+ * end: {@link maybeRunLeafPass} never rejects, so awaiting this never surfaces an
+ * error to the live turn.
+ *
+ * @param params - the minimal afterTurn inputs (see {@link RunLeafPassAfterTurnParams}).
+ */
+export async function runLeafPassAfterTurn(params: RunLeafPassAfterTurnParams): Promise<void> {
+  const { store, scope, contextEngine, getSummarizerDeps, now, logger, eventBus } = params;
+  // Gate: no summarizer-deps getter ⇒ the leaf pass is off (clean skip).
+  if (getSummarizerDeps === undefined) return;
+  const summarizerDeps = getSummarizerDeps();
+  if (summarizerDeps === undefined) return;
+
+  // Default the config the same way `setupContextEngine` does (line 141): an
+  // absent contextEngine block resolves to the schema defaults (contextThreshold
+  // 0.75, leafChunkTokens 20_000, leafTargetTokens 1_200, freshTailTurns 8).
+  const cfg = contextEngine ?? ContextEngineConfigSchema.parse({});
+  // The utilization denominator W is the model's context window from the
+  // summarizer deps (the live model getter), NOT a config knob.
+  const windowTokens = summarizerDeps.getModel().contextWindow;
+
+  await maybeRunLeafPass(
+    store,
+    scope,
+    {
+      contextThreshold: cfg.contextThreshold,
+      leafChunkTokens: cfg.leafChunkTokens,
+      leafTargetTokens: cfg.leafTargetTokens,
+      freshTailTurns: cfg.freshTailTurns,
+      windowTokens,
+    },
+    summarizerDeps,
+    now,
+    logger,
+    eventBus,
+  );
 }

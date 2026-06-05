@@ -245,9 +245,11 @@ export const ContextEngineConfigSchema = z.strictObject({
    *  evicted. Default 8 is a safe production floor; the tuned value comes from
    *  real-LLM measurement in a later phase. */
   freshTailTurns: z.number().int().min(1).max(50).default(8),
-  /** Context utilization fraction that triggers DAG compaction (0.1 to 0.95).
-   *  Reserved for the dag/LCD budget-eviction pass (a later phase); inert in this
-   *  release — "dag" does lossless verbatim assembly with no compaction yet. */
+  /** Context utilization fraction that triggers DAG leaf summarization (0.1 to
+   *  0.95). LIVE in dag/LCD mode (Phase 129): at the end of a turn, when total
+   *  context tokens / model window exceeds this fraction, the oldest out-of-tail
+   *  chunk is summarized into a leaf summary + the context is assembled under the
+   *  token budget. Inert in pipeline mode. */
   contextThreshold: z.number().min(0.1).max(0.95).default(0.75),
   /** Minimum fan-out for leaf nodes in the DAG. */
   leafMinFanout: z.number().int().min(2).max(20).default(8),

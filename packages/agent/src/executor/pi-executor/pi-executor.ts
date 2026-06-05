@@ -1454,6 +1454,11 @@ async function runSessionLocked(
         // real tenant (T-128-08); absent ⇒ ingest skipped cleanly.
         contextStore: deps.contextStore,
         tenantId: deps.tenantId,
+        // Phase 129 (C1): the leaf-summarizer deps getter sourced from the
+        // context-engine setup's shared compaction-model chain. Present ⇒ the
+        // afterTurn leaf pass fires live over threshold (gated additionally on
+        // deps.contextStore inside postExecution); absent ⇒ the pass is gated off.
+        getSummarizerDeps: ceSetup?.getSummarizerDeps,
         activeRunRegistry: deps.activeRunRegistry,
         embeddingEnqueue: deps.embeddingEnqueue,
         workspaceDir: deps.workspaceDir,

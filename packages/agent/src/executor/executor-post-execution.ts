@@ -57,6 +57,14 @@ import { stripDiscoverySchemas } from "./schema-stripping.js";
 // invocation. The agent↛memory cut: lcd-ingest imports only the core port type
 // + the core codec — never @comis/memory.
 import { ingestTurnGuarded } from "./lcd-ingest.js";
+// LCD afterTurn leaf-pass trigger (Phase 129, C1/C3). Activates the inert
+// contextThreshold: a thin gated call right after the ingest fires one leaf pass
+// when utilization is over threshold. The body (gating + opts + summarize +
+// range-replace + emit) lives in lcd-compaction-trigger.ts (this file is over
+// the 800L cap); the call here is a single non-fatal invocation. The
+// agent↛memory cut: the trigger imports only the core port type + the core codec.
+import { runLeafPassAfterTurn } from "./lcd-compaction-trigger.js";
+import type { LeafSummarizerDeps } from "../context-engine/lcd-leaf-summarizer.js";
 // In-package pure attribution fn (the agent↛memory cut — core types
 // only; the write-back is the daemon's job, off the recall-used bus event).
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
@@ -219,6 +227,12 @@ export interface PostExecutionParams {
      *  at the call site so the scope's SECURITY column is never empty
      *  (T-128-08). Falls back to the session key tenant when absent. */
     tenantId?: string;
+    /** Getter for the leaf-summarizer deps (Phase 129, C1). Present ⇒ the
+     *  afterTurn leaf pass is wired live (over threshold ⇒ a leaf summary is
+     *  persisted); absent ⇒ the pass is gated off cleanly. Sourced from the
+     *  context-engine setup's getCompactionDeps-style getters; TYPE-only (the
+     *  agent↛memory cut — the LLM call lives behind the injected summarizer). */
+    getSummarizerDeps?: () => LeafSummarizerDeps;
     activeRunRegistry?: ActiveRunRegistry;
     embeddingEnqueue?: (entryId: string, content: string) => void;
     workspaceDir: string;
@@ -885,6 +899,23 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       ((session.agent as unknown as { state?: { messages?: unknown[] } }).state?.messages ??
         []) as Parameters<typeof ingestTurnGuarded>[2];
     ingestTurnGuarded(deps.contextStore, scope, live, deps.clock.now(), deps.logger);
+
+    // NEW 129 (C1/C3): afterTurn threshold sweep — fire ONE leaf pass when
+    // utilization exceeds contextThreshold (now load-bearing). Same gate, same
+    // scope, off the injected clock. Gated on the summarizer-deps getter's
+    // presence (absent ⇒ skipped cleanly). runLeafPassAfterTurn → maybeRunLeafPass
+    // is NON-FATAL and never rejects (T-129-18), so awaiting it cannot surface an
+    // error to the live turn. The body lives in lcd-compaction-trigger.ts (this
+    // file is over the 800L cap); the call here stays thin.
+    await runLeafPassAfterTurn({
+      store: deps.contextStore,
+      scope,
+      contextEngine: config.contextEngine,
+      getSummarizerDeps: deps.getSummarizerDeps,
+      now: deps.clock.now(),
+      logger: deps.logger,
+      eventBus: deps.eventBus,
+    });
   }
 
   // Attribute recall usage + emit the recall-used event (flag-gated, non-fatal).

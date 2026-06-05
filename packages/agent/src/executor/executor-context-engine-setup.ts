@@ -22,6 +22,13 @@ import type { ComisLogger } from "@comis/core";
 import { createContextEngine, type ContextEngine } from "../context-engine/index.js";
 import type { TokenAnchor } from "../context-engine/types.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
+// Phase 129 (C1): the leaf-summarizer deps the afterTurn trigger consumes. The
+// production `summarize` seam wraps the SDK generateSummary; the model + key are
+// resolved via the SAME getCompactionDeps chain (no duplicate resolveProviderApiKey).
+import {
+  buildLeafSummarizeFn,
+  type LeafSummarizerDeps,
+} from "../context-engine/lcd-leaf-summarizer.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import type { ExecutionOverrides } from "./types.js";
 import { resolveOperationModel, resolveProviderFamily } from "../model/operation-model-resolver.js";
@@ -105,6 +112,11 @@ export interface ContextEngineSetupResult {
     signatureScrubs: number;
     signatureScrubsToolCallsAffected: number;
   };
+  /** Phase 129 (C1): the leaf-summarizer deps getter the afterTurn trigger
+   *  consumes. Threaded into PostExecutionParams.deps.getSummarizerDeps at the
+   *  pi-executor call site so the leaf pass fires live over threshold. Resolves
+   *  the model fresh per call (honors mid-session model cycling). */
+  getSummarizerDeps: () => LeafSummarizerDeps;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +206,90 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   let signatureScrubs = 0;
   let signatureScrubsToolCallsAffected = 0;
 
+  // Shared compaction-model resolution (getModel / getApiKey / overrideModel) —
+  // the SINGLE source for both the pipeline `getCompactionDeps` (Layer 8) and the
+  // Phase-129 leaf `getSummarizerDeps`. Both compaction surfaces resolve the
+  // SAME 5-level operation-model chain + route getApiKey through resolveProviderApiKey
+  // (no duplicate resolver — CLAUDE.md DRY / Plan 129-06 step 1). Returns the
+  // getters + the optional override model+key.
+  const resolveCompactionModelChain = (): {
+    getModel: () => { id?: string; provider: string; contextWindow: number; reasoning: boolean };
+    getApiKey: () => Promise<string>;
+    overrideModel?: { model: unknown; getApiKey: () => Promise<string> };
+  } => ({
+    getModel: () => {
+      const model = session.agent.state.model;
+      return {
+        id: model?.id,
+        provider: model?.provider ?? config.provider,
+        contextWindow: model?.contextWindow ?? 128_000,
+        reasoning: model?.reasoning ?? false,
+      };
+    },
+    // Route compaction's primary getApiKey through the shared dispatch helper so
+    // OAuth-eligible providers refresh through OAuthTokenManager + setRuntimeApiKey
+    // on every call. Non-OAuth providers fall through to authStorage unchanged.
+    getApiKey: async () =>
+      resolveProviderApiKey(config.provider, {
+        authStorage: deps.authStorage,
+        oauthManager: deps.oauthManager,
+        agentConfig: config,
+      }),
+    // Resolve compaction model via the 5-level priority chain; only set
+    // overrideModel when the resolver picked a non-primary model.
+    ...(() => {
+      const compactionResolution = resolveOperationModel({
+        operationType: "compaction",
+        agentProvider: config.provider,
+        agentModel: config.model,
+        operationModels: config.operationModels ?? {},
+        providerFamily: resolveProviderFamily(config.provider),
+        agentPromptTimeoutMs: config.promptTimeout?.promptTimeoutMs,
+      });
+      if (compactionResolution.source !== "agent_primary") {
+        try {
+          const compactionModel = deps.modelRegistry.find(
+            compactionResolution.provider,
+            compactionResolution.modelId,
+          );
+          if (compactionModel) {
+            return {
+              overrideModel: {
+                model: compactionModel,
+                getApiKey: async () =>
+                  resolveProviderApiKey(compactionResolution.provider, {
+                    authStorage: deps.authStorage,
+                    oauthManager: deps.oauthManager,
+                    agentConfig: config,
+                  }),
+              },
+            };
+          }
+        } catch {
+          // Model not in registry -- fall through to session model
+        }
+      }
+      return {};
+    })(),
+  });
+
+  // The Phase-129 leaf-summarizer deps getter: the shared model chain + the
+  // production summarizer seam (buildLeafSummarizeFn wraps the SDK generateSummary;
+  // Phase 132 swaps it for a spend-governed variant) + the injected logger. The
+  // afterTurn trigger (executor-post-execution.ts → runLeafPassAfterTurn) calls
+  // this; when wired the leaf pass fires live over threshold. Resolved fresh per
+  // call so model cycling mid-session is honored (same as getCompactionDeps).
+  const getSummarizerDeps = (): LeafSummarizerDeps => {
+    const chain = resolveCompactionModelChain();
+    return {
+      logger: deps.logger,
+      summarize: buildLeafSummarizeFn(chain),
+      getModel: chain.getModel,
+      getApiKey: chain.getApiKey,
+      overrideModel: chain.overrideModel,
+    };
+  };
+
   const contextEngine = createContextEngine(contextEngineConfig, {
     logger: deps.logger,
     eventBus: deps.eventBus,
@@ -246,79 +342,19 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       if (drift?.drop) return 0;
       return undefined; // Use default keepTurns
     },
-    // LLM compaction deps
+    // LLM compaction deps (Layer 8). The getModel / getApiKey / overrideModel
+    // resolution is shared with the Phase-129 leaf getSummarizerDeps via
+    // resolveCompactionModelChain() above — one source for both compaction
+    // surfaces (the 5-level operation-model chain + the shared resolveProviderApiKey
+    // dispatch; no duplicate resolver). The override is set only when the
+    // resolver picked a non-primary compaction model; absent ⇒ llm-compaction
+    // uses getModel/getApiKey.
     getCompactionDeps: () => ({
       logger: deps.logger,
       getSessionManager: () => sm,
       // Serialize discovered tool names for compaction metadata
       getDiscoveredTools: () => currentDiscoveryTracker?.serialize() ?? [],
-      getModel: () => {
-        const model = session.agent.state.model;
-        return {
-          id: model?.id,
-          provider: model?.provider ?? config.provider,
-          contextWindow: model?.contextWindow ?? 128_000,
-          reasoning: model?.reasoning ?? false,
-        };
-      },
-      // Route compaction's primary getApiKey through the shared
-      // dispatch helper so OAuth-eligible providers refresh through
-      // OAuthTokenManager + setRuntimeApiKey on every call. Non-OAuth
-      // providers (anthropic, openai, etc.) still fall through to
-      // authStorage.getApiKey unchanged.
-      getApiKey: async () =>
-        resolveProviderApiKey(config.provider, {
-          authStorage: deps.authStorage,
-          oauthManager: deps.oauthManager,
-          agentConfig: config,
-        }),
-      // Resolve compaction model via 5-level priority chain
-      // contextEngineOverrides removed -- invocationOverride path eliminated
-      //   Path 1: operationModels.compaction (operator config) -> explicit_config (Level 2)
-      //   Path 2: family default (Level 4) or agent primary (Level 5)
-      ...(() => {
-        const compactionResolution = resolveOperationModel({
-          operationType: "compaction",
-          agentProvider: config.provider,
-          agentModel: config.model,
-          operationModels: config.operationModels ?? {},
-          providerFamily: resolveProviderFamily(config.provider),
-          agentPromptTimeoutMs: config.promptTimeout?.promptTimeoutMs,
-        });
-
-        // Only set overrideModel when resolver picked a non-primary model
-        // (preserves existing behavior: when no override, llm-compaction uses getModel/getApiKey)
-        if (compactionResolution.source !== "agent_primary") {
-          try {
-            const compactionModel = deps.modelRegistry.find(
-              compactionResolution.provider,
-              compactionResolution.modelId,
-            );
-            if (compactionModel) {
-              return {
-                overrideModel: {
-                  model: compactionModel,
-                  // Route the override-model getApiKey through
-                  // the shared dispatch helper. Each callsite passes
-                  // its OWN providerId — config.provider above for the
-                  // primary, compactionResolution.provider here for the
-                  // override — both correctly resolve the right OAuth
-                  // profile via agentConfig.oauthProfiles[providerId].
-                  getApiKey: async () =>
-                    resolveProviderApiKey(compactionResolution.provider, {
-                      authStorage: deps.authStorage,
-                      oauthManager: deps.oauthManager,
-                      agentConfig: config,
-                    }),
-                },
-              };
-            }
-          } catch {
-            // Model not in registry -- fall through to session model
-          }
-        }
-        return {};
-      })(),
+      ...resolveCompactionModelChain(),
     }),
 
     // Rehydration deps
@@ -459,5 +495,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       signatureScrubs,
       signatureScrubsToolCallsAffected,
     }),
+    // Expose the leaf-summarizer deps getter (Phase 129) so pi-executor can
+    // thread it into postExecution's deps.getSummarizerDeps — wiring the
+    // afterTurn leaf pass live.
+    getSummarizerDeps,
   };
 }

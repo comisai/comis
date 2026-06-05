@@ -43,6 +43,7 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
+import { generateSummary } from "@earendil-works/pi-coding-agent";
 import type { ComisLogger } from "@comis/core";
 import {
   COMPACTION_MAX_RETRIES,
@@ -456,4 +457,69 @@ function buildDeterministicFallback(messageCount: number, chunkTokens: number): 
   if (note.length <= maxChars) return note;
   // Truncate, keeping the marker identifiable at the head.
   return note.slice(0, maxChars);
+}
+
+// ---------------------------------------------------------------------------
+// Production summarizer (the SDK generateSummary seam)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the leaf-specific summarization instructions appended to the SDK's base
+ * prompt via `customInstructions`. A leaf is a finer-grained chunk summary than a
+ * full compaction — it does NOT require the 9-section compaction schema (RESEARCH
+ * §Pattern 1 difference #2); it asks for a faithful, compact prose summary that
+ * preserves concrete details (ids, decisions, tool outcomes) so a later
+ * expansion / recall pass can rely on it. Returns the instruction string.
+ */
+function buildLeafSummaryInstructions(aggressive: boolean): string {
+  const base =
+    "Summarize the conversation chunk above into a faithful, compact summary. " +
+    "Preserve concrete details that later turns may rely on: file paths, ids, " +
+    "decisions made, tool calls and their outcomes (success/failure), and any " +
+    "open questions. Do NOT invent facts not present in the chunk. Write prose, " +
+    "not a section template.";
+  return aggressive
+    ? base + " Be as terse as possible while keeping the load-bearing facts."
+    : base;
+}
+
+/**
+ * Construct the PRODUCTION {@link LeafSummarizer} — the seam that wraps the SDK
+ * `generateSummary`. Phase 132 swaps THIS factory's output for a spend-governed /
+ * circuit-broken variant; 129 calls `generateSummary` directly. The override
+ * model + key are used when {@link LeafSummarizerDeps.overrideModel} is present
+ * (a cheaper compaction model resolved by the operation-model chain), else the
+ * primary `getModel`/`getApiKey`. Mirrors `compactWithFallback`'s call shape
+ * (`llm-compaction.ts:561`); the 8th param threads `previousSummary` for
+ * continuity. The function may return a too-large string — the escalation ladder
+ * in {@link summarizeLeafChunk} re-checks size and escalates.
+ *
+ * @param deps - the model getters + optional override (the logger is unused here;
+ *   the ladder owns the WARN on a throw — this factory just performs the call).
+ * @returns a LeafSummarizer bound to the resolved model + key.
+ */
+export function buildLeafSummarizeFn(
+  deps: Pick<LeafSummarizerDeps, "getModel" | "getApiKey" | "overrideModel">,
+): LeafSummarizer {
+  return async (messages: AgentMessage[], opts: LeafSummarizeOptions): Promise<string> => {
+    // Resolve the model + key: prefer the cheaper override when the operation
+    // chain picked one (parity with getCompactionDeps); else the primary.
+    const model: unknown = deps.overrideModel?.model ?? deps.getModel();
+    const apiKey = deps.overrideModel
+      ? await deps.overrideModel.getApiKey()
+      : await deps.getApiKey();
+    const instructions = buildLeafSummaryInstructions(opts.aggressive ?? false);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK generateSummary takes an opaque Model<any>
+    return generateSummary(
+      messages,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      model as any,
+      opts.reserveTokens,
+      apiKey,
+      undefined, // headers
+      undefined, // signal
+      instructions,
+      opts.previousSummary, // 8th param: prior leaf content for continuity
+    );
+  };
 }
