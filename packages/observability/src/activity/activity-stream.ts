@@ -67,7 +67,7 @@ import {
 import { randomUUID } from "node:crypto";
 
 import { createBoundedQueue, type BoundedQueue } from "./bounded-queue.js";
-import { compressLabel } from "./label-compressor.js";
+import { clampLabel, compressLabel } from "./label-compressor.js";
 
 /**
  * The tool-metadata subset the stream reads to honor `suppressActivity`. Looked
@@ -452,8 +452,10 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       // The running marker is themed (default: 🔧, ascii: [..]) and resolved
       // once at construction (line 198). DO NOT apply to onToolExecuted
       // (phase:"end") — that violates Pitfall 7 (the running marker conveys
-      // in-flight status only).
-      defaultLabel: `${markers.running} ${defaultLabel}`,
+      // in-flight status only). Clamp the marker-prepended label to the schema
+      // cap (FIX 3): the marker is added AFTER compressLabel, so without this a
+      // near-cap label would exceed 120 and the event would be DROPPED.
+      defaultLabel: clampLabel(`${markers.running} ${defaultLabel}`),
     });
   }
 
@@ -522,8 +524,9 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       kind: "model",
       semanticPhase: "thinking",
       // §3.1: themed running marker on the static label.
-      // Mirrors the subagent precedent at lines 602/621.
-      defaultLabel: `${markers.running} switching model provider`,
+      // Mirrors the subagent precedent at lines 602/621. Clamped to the cap (FIX 3)
+      // — consistent with the tool path; a custom theme could supply a long marker.
+      defaultLabel: clampLabel(`${markers.running} switching model provider`),
     });
   }
 
@@ -552,7 +555,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
             { id: "deny", defaultLabel: "Deny", style: "danger" },
           ],
         },
-        defaultLabel: `approval required: ${p.toolName}`,
+        defaultLabel: clampLabel(`approval required: ${p.toolName}`),
       },
       { requestId: p.requestId, shortId: p.shortId },
     );
@@ -605,7 +608,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       status: "running",
       kind: "subagent",
       semanticPhase: "thinking",
-      defaultLabel: `${markers.subagent} ${p.agentId} subagent`,
+      defaultLabel: clampLabel(`${markers.subagent} ${p.agentId} subagent`),
     });
   }
 
@@ -624,7 +627,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       kind: "subagent",
       semanticPhase: p.success ? "done" : "error",
       durationMs: p.runtimeMs,
-      defaultLabel: `${markers.subagent} ${p.agentId} subagent`,
+      defaultLabel: clampLabel(`${markers.subagent} ${p.agentId} subagent`),
     });
   }
 
