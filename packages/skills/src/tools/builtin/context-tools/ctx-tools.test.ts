@@ -19,6 +19,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { Value } from "typebox/value";
 import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -320,6 +321,35 @@ describe("ctx_search tool", () => {
     expect(fields).toContain("conversationId");
     expect(fields).toContain("hitCount");
     expect(fields).toContain("step");
+  });
+
+  // A real-LLM run surfaced this: the agent picked `limit: 50`, the typebox
+  // schema's hard `maximum: 30` REJECTED the call at framework validation (before
+  // execute()), and the model got a `[tool failure]` mid-recovery — even though
+  // the handler already clamps with `Math.min(Math.max(1, requested), 30)`. The
+  // schema must NOT hard-reject an out-of-range integer; the handler is the single
+  // clamp authority. LLMs routinely pick round numbers (50/100), so a hard bound
+  // turns a recoverable lookup into a failure.
+  it("ctx_search accepts an out-of-range limit at schema validation (the handler clamps; the framework must not reject)", () => {
+    const { store } = makeStore();
+    const { deps } = makeDeps(store);
+    const tool = createCtxSearchTool(deps);
+    // Pre-fix these are FALSE (maximum:30 / minimum:1) → the framework rejects the
+    // call before the handler can clamp.
+    expect(Value.Check(tool.parameters, { query: "x", limit: 50 })).toBe(true);
+    expect(Value.Check(tool.parameters, { query: "x", limit: 0 })).toBe(true);
+    // A non-integer is still rejected (the param is an integer count).
+    expect(Value.Check(tool.parameters, { query: "x", limit: 3.5 })).toBe(false);
+  });
+
+  it("ctx_search clamps an over-/under-range limit to 1..30 before it reaches the store", async () => {
+    const { stub, store } = makeStore({ searchLcdReturn: [] });
+    const { deps } = makeDeps(store);
+    const tool = createCtxSearchTool(deps);
+    await runExecute(tool, "call-clamp-hi", { query: "x", limit: 50 }, liveCtx());
+    await runExecute(tool, "call-clamp-lo", { query: "x", limit: 0 }, liveCtx());
+    expect((stub.searchLcdArgs[0].opts as { limit: number }).limit).toBe(30);
+    expect((stub.searchLcdArgs[1].opts as { limit: number }).limit).toBe(1);
   });
 });
 
