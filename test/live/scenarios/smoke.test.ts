@@ -27,6 +27,7 @@ import { runDbOracle } from "../assert/db-oracle.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // COMIS_LIVE gate — skip (not fail) when unset
@@ -65,6 +66,22 @@ describe.skipIf(!isLive)("Live — smoke (FND rig self-validation)", () => {
   });
 
   afterEach(async () => {
+    // Flush-sentinel: write a unique sentinel line and poll until it appears
+    // in the captured entries before snapshotting — mandated by log-oracle.ts
+    // header contract (T-134-flush). The Pino async worker may not have flushed
+    // the last 1–2 lines (including the health line) by the time getEntries() is
+    // called; skipping this step silently omits oracle check 8.
+    const sentinelKey = `end-${randomUUID()}`;
+    handle.daemon.logger.debug({ sentinel: sentinelKey }, "flush-sentinel");
+
+    // Poll until sentinel appears (max 2 s at 50 ms intervals).
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      const entries = logCapture.getEntries();
+      if (entries.some((e) => (e as Record<string, unknown>)["sentinel"] === sentinelKey)) break;
+      await new Promise<void>((r) => setTimeout(r, 50));
+    }
+
     const logLines = logCapture
       .getEntries()
       .map((e) => JSON.stringify(e))
