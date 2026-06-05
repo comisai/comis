@@ -24,6 +24,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import {
   startTestDaemon,
   type TestDaemonHandle,
@@ -504,5 +505,34 @@ export class ConversationDriver {
     const tempConfigPath = join(this._dataDir, "config.test.patched.yaml");
     writeFileSync(tempConfigPath, patched, "utf-8");
     return tempConfigPath;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// flushDaemonLogs — shared flush-sentinel helper (extracted from afterEach hooks)
+// ---------------------------------------------------------------------------
+
+/**
+ * Write a unique flush-sentinel log line to the daemon and poll until it
+ * appears in the driver's captured log entries.
+ *
+ * Required before log-oracle snapshots (T-134-flush): Pino's async worker
+ * may not have flushed the last 1–2 lines by the time an assertion runs.
+ * Writing a sentinel and waiting for it ensures the buffer is drained.
+ *
+ * @param driver - The ConversationDriver whose daemon logger to write to.
+ * @param budgetMs - Maximum wait time in milliseconds (default: 2000).
+ */
+export async function flushDaemonLogs(
+  driver: ConversationDriver,
+  budgetMs = 2000,
+): Promise<void> {
+  const handle = driver.getHandle();
+  const sentinelKey = `end-${randomUUID()}`;
+  handle.daemon.logger.debug({ sentinel: sentinelKey }, "flush-sentinel");
+  const deadline = Date.now() + budgetMs;
+  while (Date.now() < deadline) {
+    if (driver.capturedLogLines().includes(sentinelKey)) break;
+    await new Promise<void>((r) => setTimeout(r, 50));
   }
 }

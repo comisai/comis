@@ -40,12 +40,11 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { ConversationDriver } from "../../harness/conversation.js";
+import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
 import { runDbOracle } from "../../assert/db-oracle.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { buildCredentialRegistry } from "../../credentials.js";
 import type {
   SessionEndedEvent,
@@ -99,18 +98,9 @@ describe("LOOP-03 Stage-A — restart survival (deterministic, no COMIS_LIVE)", 
   });
 
   afterEach(async () => {
-    // Flush-sentinel: write a unique sentinel and poll until it appears in
-    // the captured log entries — required before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting (T-134-flush).
     // After restart(), driver.getHandle() returns the NEW handle.
-    const handle = driver.getHandle();
-    const sentinelKey = `end-${randomUUID()}`;
-    handle.daemon.logger.debug({ sentinel: sentinelKey }, "flush-sentinel");
-
-    const deadline = Date.now() + 2000;
-    while (Date.now() < deadline) {
-      if (driver.capturedLogLines().includes(sentinelKey)) break;
-      await new Promise<void>((r) => setTimeout(r, 50));
-    }
+    await flushDaemonLogs(driver);
 
     // "JSON-RPC method error" is expected in Stage-A: rpc-dispatch.ts emits this
     // ERROR-level Pino line when agent.execute fails at the LLM provider call
@@ -280,16 +270,8 @@ describe.skipIf(!isLive)("Live — LOOP-03 restart survival (Stage-C, real LLM)"
   });
 
   afterEach(async () => {
-    // Flush-sentinel on current handle (new handle after restart)
-    const handle = driver.getHandle();
-    const sentinelKey = `end-${randomUUID()}`;
-    handle.daemon.logger.debug({ sentinel: sentinelKey }, "flush-sentinel");
-
-    const deadline = Date.now() + 2000;
-    while (Date.now() < deadline) {
-      if (driver.capturedLogLines().includes(sentinelKey)) break;
-      await new Promise<void>((r) => setTimeout(r, 50));
-    }
+    // Flush daemon log buffer before snapshotting (T-134-flush).
+    await flushDaemonLogs(driver);
 
     // Real successful LLM turns emit no ERROR/FATAL lines
     await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });

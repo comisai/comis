@@ -26,12 +26,11 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { ConversationDriver } from "../../harness/conversation.js";
+import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
 import { runDbOracle } from "../../assert/db-oracle.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { buildCredentialRegistry } from "../../credentials.js";
 
 // ---------------------------------------------------------------------------
@@ -66,18 +65,8 @@ describe("LOOP-01 Stage-A — multi-turn flow (mock provider, no COMIS_LIVE)", (
   });
 
   afterEach(async () => {
-    // Flush-sentinel: write a unique sentinel and poll until it appears in the
-    // captured log entries — required before snapshotting (T-134-flush).
-    // Pino's async worker may not have flushed the last 1–2 lines yet.
-    const handle = driver.getHandle();
-    const sentinelKey = `end-${randomUUID()}`;
-    handle.daemon.logger.debug({ sentinel: sentinelKey }, "flush-sentinel");
-
-    const deadline = Date.now() + 2000;
-    while (Date.now() < deadline) {
-      if (driver.capturedLogLines().includes(sentinelKey)) break;
-      await new Promise<void>((r) => setTimeout(r, 50));
-    }
+    // Flush daemon log buffer before snapshotting (T-134-flush).
+    await flushDaemonLogs(driver);
 
     // "JSON-RPC method error" is expected in Stage-A: rpc-dispatch.ts emits this
     // ERROR-level Pino line when agent.execute fails at the LLM provider call
@@ -185,16 +174,8 @@ describe.skipIf(!isLive)("Live — LOOP-01 multi-turn (Stage-C, real LLM)", () =
   });
 
   afterEach(async () => {
-    // Flush-sentinel before log oracle snapshot
-    const handle = driver.getHandle();
-    const sentinelKey = `end-${randomUUID()}`;
-    handle.daemon.logger.debug({ sentinel: sentinelKey }, "flush-sentinel");
-
-    const deadline = Date.now() + 2000;
-    while (Date.now() < deadline) {
-      if (driver.capturedLogLines().includes(sentinelKey)) break;
-      await new Promise<void>((r) => setTimeout(r, 50));
-    }
+    // Flush daemon log buffer before snapshotting (T-134-flush).
+    await flushDaemonLogs(driver);
 
     // Real successful turns emit no ERROR/FATAL lines
     await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
