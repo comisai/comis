@@ -401,22 +401,33 @@ function buildCondenseInstructions(aggressive: boolean): string {
 /**
  * Construct the PRODUCTION {@link CondenseSummarizer} — the seam that wraps the
  * SDK `generateSummary` for the condense tier. Clones `buildLeafSummarizeFn`
- * (`lcd-leaf-summarizer.ts:548-572`) verbatim, swapping ONLY the instructions
+ * (`lcd-leaf-summarizer.ts:576-604`) verbatim, swapping ONLY the instructions
  * builder; the `generateSummary` 8-arg call shape is unchanged (`previousSummary`
  * is the 8th param). Phase 132 swaps THIS factory's output for a spend-governed /
  * circuit-broken variant — the same single seam as the leaf.
  *
- * @param deps - the model getters + optional override (the logger is unused here;
- *   the ladder owns the WARN on a throw — this factory just performs the call).
+ * B-5 twin (260605-ney): `generateSummary` needs a REAL pi-ai `Model<any>` (with
+ * the provider-client runtime it invokes), NOT the 4-field
+ * {@link CompactionModelSnapshot} (which lacks that runtime and throws at call
+ * time). The primary path resolves `deps.getRealModel()` — the executor-resolved
+ * `resolvedModel` threaded via the shared `LeafSummarizerDeps`, IDENTICAL to
+ * `buildLeafSummarizeFn` — never the snapshot. The override path is unchanged (the
+ * operation chain already supplies a real Model).
+ *
+ * @param deps - the real-model getter + optional override (the logger is unused
+ *   here; the ladder owns the WARN on a throw — this factory just performs the call).
  * @returns a CondenseSummarizer bound to the resolved model + key.
  */
 export function buildCondenseSummarizeFn(
-  deps: Pick<LeafSummarizerDeps, "getModel" | "getApiKey" | "overrideModel">,
+  deps: Pick<LeafSummarizerDeps, "getRealModel" | "getApiKey" | "overrideModel">,
 ): CondenseSummarizer {
   return async (messages: AgentMessage[], opts: LeafSummarizeOptions): Promise<string> => {
-    // Resolve the model + key: prefer the cheaper override when present; else the
-    // primary (parity with buildLeafSummarizeFn).
-    const model: unknown = deps.overrideModel?.model ?? deps.getModel();
+    // B-5: resolve a REAL Model<any> for generateSummary — prefer the cheaper
+    // override's real Model when present; else the PRIMARY real model (the
+    // executor-resolved `resolvedModel`, via deps.getRealModel). The bare 4-field
+    // CompactionModelSnapshot is NEVER passed to generateSummary (it lacks the
+    // provider-client runtime the SDK invokes and throws at call time).
+    const model: unknown = deps.overrideModel?.model ?? deps.getRealModel();
     const apiKey = deps.overrideModel
       ? await deps.overrideModel.getApiKey()
       : await deps.getApiKey();
