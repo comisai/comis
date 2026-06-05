@@ -31,6 +31,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createContextEngine } from "./context-engine.js";
 import { createLcdContextEngine, freshTailBoundaryIndex } from "./lcd-assembler.js";
 import type { ContextEngineDeps } from "./types.js";
+import { LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS } from "./constants.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
@@ -434,6 +435,99 @@ describe("createLcdContextEngine", () => {
     // EXTRA rows (u2,a2) are NOT over-included, and a1 is NOT doubled at the seam.
     expect(texts).toEqual(["u0", "a0", "u1", "a1"]);
     expect(texts.filter((t) => t === "a1")).toHaveLength(1);
+  });
+});
+
+describe("B-8: fresh-tail tool-result bounding", () => {
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Sum the text-block chars of a (toolResult) message's content array. */
+  function toolResultTextChars(m: AgentMessage): number {
+    const c = (m as unknown as { content: unknown }).content;
+    if (!Array.isArray(c)) return 0;
+    return (c as { type: string; text?: string }[]).reduce(
+      (sum, b) => sum + (b.type === "text" && b.text ? b.text.length : 0),
+      0,
+    );
+  }
+
+  it("Test B-8.1: an oversized tool RESULT in the unconditional fresh tail is bounded to the per-result cap with a lossless-recoverable marker", async () => {
+    // A fresh tail carrying a single huge tool result. The live array is JUST the
+    // fresh-tail step (user → assistant tool_use → giant toolResult → trailing
+    // assistant text), so the overflow comes PURELY from the fresh tail (history is
+    // empty; nothing is persisted). With freshTailTurns large enough the whole
+    // array is the fresh tail, sliced + concatenated UNCONDITIONALLY (A1/A3).
+    const HUGE = "X".repeat(200_000);
+    const live: AgentMessage[] = [
+      userMsg("read that file") as AgentMessage,
+      assistantToolCall("tu_big", "read", { path: "/big" }) as AgentMessage,
+      toolResult("tu_big", "read", HUGE) as AgentMessage,
+      assistantText("done reading") as AgentMessage,
+    ];
+    // Nothing persisted → history is empty; the only content is the fresh tail.
+
+    const { deps } = makeDeps(store);
+    const engine = createLcdContextEngine(dagConfig(8), deps);
+    const out = await engine.transformContext(live);
+
+    // The toolResult survives (paired) but its text is BOUNDED to the per-result
+    // cap — NOT shipped at 200_000 chars. On pre-patch code the fresh tail is
+    // concatenated verbatim, so the result's text stays 200_000 and this FAILS.
+    const tr = out.find((m) => roleOf(m) === "toolResult");
+    expect(tr).toBeDefined();
+    const chars = toolResultTextChars(tr as AgentMessage);
+    expect(chars).toBeLessThanOrEqual(LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS);
+    expect(chars).toBeLessThan(HUGE.length); // genuinely shrunk
+
+    // An honest truncation marker is present AND it advertises lossless recovery
+    // from the LCD store (the masking is only acceptable because the store keeps
+    // the full content — parity with the deterministic-fallback note wording).
+    const text = JSON.stringify((tr as unknown as { content: unknown }).content);
+    expect(text).toContain("truncated");
+    expect(text.toLowerCase()).toContain("lossless");
+
+    // A2: the assistant tool_use and its toolResult are STILL PAIRED and in order
+    // (the masker only shrank CONTENT; pairing repair still ran after it).
+    const callIdx = out.findIndex(
+      (m) =>
+        roleOf(m) === "assistant" &&
+        (m as unknown as { content: unknown[] }).content.some((b) => isToolCallBlock(b) && b.id === "tu_big"),
+    );
+    const resultIdx = out.findIndex(
+      (m) => roleOf(m) === "toolResult" && (m as unknown as { toolCallId: string }).toolCallId === "tu_big",
+    );
+    expect(callIdx).toBeGreaterThanOrEqual(0);
+    expect(resultIdx).toBeGreaterThan(callIdx);
+  });
+
+  it("Test B-8.2: a fresh tail with only SMALL tool results is returned byte-identical (the masker is a no-op below the cap — A1 preserved for what fits)", async () => {
+    // Small tool results — well under the cap. The masker must not rewrite them at
+    // all: the fresh-tail blocks pass through referentially identical (A1).
+    const live: AgentMessage[] = [
+      userMsg("read small") as AgentMessage,
+      assistantToolCall("tu_s", "read", { path: "/s" }) as AgentMessage,
+      toolResult("tu_s", "read", "tiny output") as AgentMessage,
+      assistantText("ok") as AgentMessage,
+    ];
+
+    const { deps } = makeDeps(store);
+    const engine = createLcdContextEngine(dagConfig(8), deps);
+    const out = await engine.transformContext(live);
+
+    const tr = out.find((m) => roleOf(m) === "toolResult");
+    expect(tr).toBeDefined();
+    // The content block is the SAME object the live array carried (no rewrite).
+    const liveContent = (live[2] as unknown as { content: unknown[] }).content;
+    const outContent = (tr as unknown as { content: unknown[] }).content;
+    expect(outContent[0]).toBe(liveContent[0]);
+    // No truncation marker anywhere for a result that fits.
+    expect(JSON.stringify(outContent)).not.toContain("truncated");
   });
 });
 

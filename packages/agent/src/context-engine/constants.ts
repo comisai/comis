@@ -273,6 +273,31 @@ export const LEAF_FALLBACK_SUMMARY_MARKER = "[lcd-leaf-fallback]";
  *  Level-3 prefix); this is the header equivalent. Used by: lcd-assembler. */
 export const LCD_FALLBACK_HEADER_MARKER = "fallback=emergency-truncation";
 
+/** B-8: per-tool-RESULT character cap for tool results sitting in the LCD `dag`
+ *  assembler's UNCONDITIONAL fresh tail. The dag assembly path runs NEITHER the
+ *  pipeline observation masker NOR the dead-content evictor (those are wired only
+ *  in the pipeline branch), and the fresh tail is concatenated verbatim and
+ *  UNCONDITIONALLY (`[...budgeted, ...freshTail]`, A1/A3) — so a turn whose last
+ *  `freshTailTurns` steps carry a huge tool output (a 200K-char file read, a giant
+ *  command dump) can overflow the model window before any budget pass sees it.
+ *  This cap bounds each oversized fresh-tail tool RESULT's total text via the
+ *  shared `createToolResultSizeGuard()` (head+tail+honest marker — NOT hand-rolled)
+ *  while every result that fits passes through byte-identical (A1 preserved for
+ *  what fits).
+ *
+ *  Value = {@link TOOL_RESULT_HARD_CAP_CHARS} (100_000), the same absolute
+ *  per-result ceiling the pipeline microcompaction guard enforces — chosen for
+ *  consistency with the existing tiering rather than the tighter
+ *  {@link MAX_INLINE_MCP_TOOL_RESULT_CHARS} (15_000) so the assembler only bounds
+ *  genuinely pathological results and leaves normal-large tool outputs intact in
+ *  the fresh tail. A SINGLE per-result cap (the simplest correct shape) is used,
+ *  not a "then largest-first total-tail budget" tier: 100K chars ≈ 28.6K tokens
+ *  per result at {@link CHARS_PER_TOKEN_RATIO}, so even a fresh tail of several
+ *  capped results fits any modern window's fresh-tail allowance — masking is
+ *  acceptable ONLY because the LCD store keeps the full content losslessly and
+ *  `ctx_expand` recovers it. Used by: lcd-assembler (B-8 fresh-tail bounding). */
+export const LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS = TOOL_RESULT_HARD_CAP_CHARS;
+
 // ---------------------------------------------------------------------------
 // LCD Condensation Escalation (Phase 130, C2) — the depth>0 summary-of-summaries
 // ---------------------------------------------------------------------------
