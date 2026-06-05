@@ -705,3 +705,66 @@ describe("ctx_* tools: a throwing context:dag_expanded subscriber never fails th
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// WR-03: durationMs and timestamp must be a SINGLE consistent clock snapshot
+// ---------------------------------------------------------------------------
+
+describe("ctx_* tools: the O1 emit reads the end-instant ONCE so durationMs + timestamp agree (WR-03)", () => {
+  // A monotonic stepping clock: each nowMs() read returns a strictly larger value.
+  // t0 is the FIRST read in every ctx_* execute(), so post-fix the emit reads the
+  // end-instant ONCE (endMs) and reports durationMs = endMs - t0 with timestamp =
+  // endMs — hence (timestamp - durationMs) === t0 === BASE. Pre-fix the emit reads
+  // the clock TWICE (durationMs off one read, timestamp off a later read), so
+  // (timestamp - durationMs) === BASE + STEP, NOT BASE — the RED state.
+  const BASE = 5_000_000;
+  const STEP = 1_000;
+
+  function steppingClock(): () => number {
+    let n = 0;
+    return () => BASE + STEP * n++;
+  }
+
+  function emittedPayload(emit: ReturnType<typeof vi.fn>): Record<string, unknown> {
+    const calls = emit.mock.calls.filter((c) => c[0] === "context:dag_expanded");
+    expect(calls).toHaveLength(1);
+    return calls[0]![1] as Record<string, unknown>;
+  }
+
+  it("ctx_search: timestamp minus durationMs equals the single entry read (t0), not a later read", async () => {
+    const emit = vi.fn();
+    const { store } = makeStore({
+      searchLcdReturn: [{ kind: "message", refId: "m1", snippet: "hit", rank: -1 }],
+    });
+    const { deps } = makeDeps(store, { eventBus: { emit }, nowMs: steppingClock() });
+    await runExecute(createCtxSearchTool(deps), "wr03-search", { query: "x" }, liveCtx());
+    const p = emittedPayload(emit);
+    // The load-bearing invariant: durationMs and timestamp come from ONE read.
+    expect((p.timestamp as number) - (p.durationMs as number)).toBe(BASE);
+  });
+
+  it("ctx_inspect: timestamp minus durationMs equals the single entry read (t0), not a later read", async () => {
+    const emit = vi.fn();
+    const { store } = makeStore({
+      getSummariesReturn: [makeSummary({ summaryId: "sum-1" })],
+      getSummaryChildrenReturn: [],
+      getSummaryMessagesReturn: ["m1", "m2"],
+    });
+    const { deps } = makeDeps(store, { eventBus: { emit }, nowMs: steppingClock() });
+    await runExecute(createCtxInspectTool(deps), "wr03-inspect", { summaryId: "sum-1" }, liveCtx());
+    const p = emittedPayload(emit);
+    expect((p.timestamp as number) - (p.durationMs as number)).toBe(BASE);
+  });
+
+  it("ctx_expand (inline path): timestamp minus durationMs equals the single entry read (t0)", async () => {
+    const emit = vi.fn();
+    const { store } = makeStore({
+      getSummaryMessagesReturn: ["m1"],
+      getMessagesReturn: [makeMessage("m1", 1, "tiny recovered body")],
+    });
+    const { deps } = makeDeps(store, { eventBus: { emit }, nowMs: steppingClock() });
+    await runExecute(createCtxExpandTool(deps), "wr03-expand-inline", { summaryId: "sum-1" }, liveCtx());
+    const p = emittedPayload(emit);
+    expect((p.timestamp as number) - (p.durationMs as number)).toBe(BASE);
+  });
+});
