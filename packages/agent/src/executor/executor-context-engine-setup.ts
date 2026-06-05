@@ -32,6 +32,7 @@ import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import {
   buildLeafSummarizeFn,
   type LeafSummarizerDeps,
+  type CompactionModelSnapshot,
 } from "../context-engine/lcd-leaf-summarizer.js";
 import {
   isSummarizerDegradeError,
@@ -136,8 +137,12 @@ export interface ContextEngineSetupResult {
   /** Phase 129 (C1): the leaf-summarizer deps getter the afterTurn trigger
    *  consumes. Threaded into PostExecutionParams.deps.getSummarizerDeps at the
    *  pi-executor call site so the leaf pass fires live over threshold. Resolves
-   *  the model fresh per call (honors mid-session model cycling). */
-  getSummarizerDeps: () => LeafSummarizerDeps;
+   *  the model fresh per call (honors mid-session model cycling) UNLESS a
+   *  `modelSnapshot` is supplied — in which case the chain uses it verbatim
+   *  instead of reading `session.agent.state.model`. The DEFERRED (C4) compaction
+   *  path passes a snapshot captured BEFORE `session.dispose()` so a detached pass
+   *  never re-reads a torn-down session (WR-04). */
+  getSummarizerDeps: (modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps;
 }
 
 // ---------------------------------------------------------------------------
@@ -298,12 +303,21 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   // SAME 5-level operation-model chain + route getApiKey through resolveProviderApiKey
   // (no duplicate resolver — CLAUDE.md DRY / Plan 129-06 step 1). Returns the
   // getters + the optional override model+key.
-  const resolveCompactionModelChain = (): {
-    getModel: () => { id?: string; provider: string; contextWindow: number; reasoning: boolean };
+  const resolveCompactionModelChain = (
+    // WR-04: when present, the chain uses this CAPTURED model snapshot verbatim
+    // instead of reading `session.agent.state.model`. The deferred (C4) compaction
+    // path captures it at the afterTurn boundary (before session.dispose()) so a
+    // detached pass — which resolves the chain when it RUNS, possibly post-dispose
+    // — never touches a torn-down session. Absent ⇒ the live per-call read (honors
+    // mid-session model cycling for the inline path).
+    modelSnapshot?: CompactionModelSnapshot,
+  ): {
+    getModel: () => CompactionModelSnapshot;
     getApiKey: () => Promise<string>;
     overrideModel?: { model: unknown; getApiKey: () => Promise<string> };
   } => ({
     getModel: () => {
+      if (modelSnapshot !== undefined) return modelSnapshot;
       const model = session.agent.state.model;
       return {
         id: model?.id,
@@ -365,8 +379,13 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   // afterTurn trigger (executor-post-execution.ts → runLeafPassAfterTurn) calls
   // this; when wired the leaf pass fires live over threshold. Resolved fresh per
   // call so model cycling mid-session is honored (same as getCompactionDeps).
-  const getSummarizerDeps = (): LeafSummarizerDeps => {
-    const chain = resolveCompactionModelChain();
+  //
+  // WR-04: a `modelSnapshot` (when supplied by the DEFERRED compaction path)
+  // flows into the chain so BOTH `getModel` AND the `buildLeafSummarizeFn`-internal
+  // model read use the captured value — a deferred pass resolving this AFTER
+  // `session.dispose()` then never reads `session.agent.state`.
+  const getSummarizerDeps = (modelSnapshot?: CompactionModelSnapshot): LeafSummarizerDeps => {
+    const chain = resolveCompactionModelChain(modelSnapshot);
     const inner = buildLeafSummarizeFn(chain);
     // R1 (132-05): wrap the leaf summarizer seam with the daemon-owned per-tenant
     // spend+breaker gate keyed on the LIVE tenantId (the SAME tenant the afterTurn

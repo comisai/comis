@@ -142,6 +142,20 @@ export type LeafSummarizer = (
 ) => Promise<string>;
 
 /**
+ * The minimal model-capabilities snapshot the compaction chain resolves
+ * (`id`/`provider`/`contextWindow`/`reasoning`). A plain value object with NO
+ * reference back to `session.agent.state` — so it can be captured once at the
+ * afterTurn boundary and safely read by a DEFERRED (C4) pass that runs AFTER
+ * `session.dispose()` (WR-04). `getModel()` returns this shape.
+ */
+export interface CompactionModelSnapshot {
+  id?: string;
+  provider: string;
+  contextWindow: number;
+  reasoning: boolean;
+}
+
+/**
  * Dependencies for the leaf summarizer. Mirrors the `CompactionLayerDeps`-style
  * getters (`getModel` / `getApiKey` / `overrideModel`) so Phase 132 can reuse the
  * same resolution chain; the LLM call itself lives behind {@link LeafSummarizer}.
@@ -152,7 +166,7 @@ export interface LeafSummarizerDeps {
   /** The injected summarizer (the 132 spend-governance seam). */
   summarize: LeafSummarizer;
   /** Getter for the current model's capabilities (for the summarizer call). */
-  getModel: () => { id?: string; provider: string; contextWindow: number; reasoning: boolean };
+  getModel: () => CompactionModelSnapshot;
   /** Getter for the current model's provider API key. */
   getApiKey: () => Promise<string>;
   /** Optional cheaper override model + key for the leaf pass. */

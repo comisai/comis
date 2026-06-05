@@ -72,7 +72,7 @@ import { runLeafPassAfterTurn } from "./lcd-compaction-trigger.js";
 // call here is a single non-fatal invocation. The agent↛memory cut: the condense
 // trigger imports only core types + the agent-side condense summarizer.
 import { runCondensePassAfterTurn } from "./lcd-condense-trigger.js";
-import type { LeafSummarizerDeps } from "../context-engine/lcd-leaf-summarizer.js";
+import type { LeafSummarizerDeps, CompactionModelSnapshot } from "../context-engine/lcd-leaf-summarizer.js";
 // In-package pure attribution fn (the agent↛memory cut — core types
 // only; the write-back is the daemon's job, off the recall-used bus event).
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
@@ -239,8 +239,11 @@ export interface PostExecutionParams {
      *  afterTurn leaf pass is wired live (over threshold ⇒ a leaf summary is
      *  persisted); absent ⇒ the pass is gated off cleanly. Sourced from the
      *  context-engine setup's getCompactionDeps-style getters; TYPE-only (the
-     *  agent↛memory cut — the LLM call lives behind the injected summarizer). */
-    getSummarizerDeps?: () => LeafSummarizerDeps;
+     *  agent↛memory cut — the LLM call lives behind the injected summarizer).
+     *  Accepts an optional `modelSnapshot`: the DEFERRED (C4) path passes a model
+     *  identity captured BEFORE `session.dispose()` so a detached pass never
+     *  re-reads a torn-down `session.agent.state` (WR-04). */
+    getSummarizerDeps?: (modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps;
     activeRunRegistry?: ActiveRunRegistry;
     embeddingEnqueue?: (entryId: string, content: string) => void;
     workspaceDir: string;
@@ -436,6 +439,54 @@ export function buildSessionEndMetadata(args: {
       totalTokens: args.totalTokens,
     },
   };
+}
+
+/**
+ * WR-04 lifetime guard for the DEFERRED (C4) compaction path.
+ *
+ * The deferred leaf/condense passes are enqueued DETACHED onto the per-conversation
+ * serializer and can run AFTER `postExecution` returns + `session.dispose()` tears
+ * the session down. Each pass resolves its summarizer deps WHEN IT RUNS, and the
+ * model getter (and the `buildLeafSummarizeFn`-internal model read) re-read
+ * `session.agent.state.model` (executor-context-engine-setup.ts) — a use-after-
+ * dispose if the SDK dispose nulls that state.
+ *
+ * This helper SNAPSHOTS the model identity ONCE, NOW (while the session is still
+ * alive — called from `postExecution` BEFORE it returns/disposes), then re-binds
+ * the getter so every later resolution passes that snapshot into `getSummarizerDeps`.
+ * Because the snapshot threads into `resolveCompactionModelChain`, BOTH the top-level
+ * `getModel` AND the summarizer's internal model read use the captured value — the
+ * detached pass NEVER re-reads `session.agent.state`. The captured model is the
+ * turn's own model (the correct one for compacting that turn's history), and the
+ * lifetime contract is now explicit: the deferred path depends ONLY on this
+ * snapshot + the daemon-owned store/auth/clock (all of which outlive the session),
+ * never on `session.agent.state`.
+ *
+ * Resolving the snapshot is itself wrapped defensively: if reading the live model
+ * throws (an already-disposed/edge session at call time), the helper falls back to
+ * the original getter unchanged (the pass then degrades non-fatally via the
+ * trigger's own try/catch — never a crash). Returns `undefined` when the input is
+ * `undefined` (the leaf pass stays cleanly gated off).
+ *
+ * @param getSummarizerDeps - the live, session-coupled deps getter (or undefined).
+ * @returns a model-snapshot-bound getter safe to call post-dispose (or undefined).
+ */
+export function snapshotSummarizerDepsForDefer(
+  getSummarizerDeps: ((modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps) | undefined,
+): ((modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps) | undefined {
+  if (getSummarizerDeps === undefined) return undefined;
+  // Capture the LIVE model identity now (session still alive). If the live read
+  // throws at capture time, leave the getter unchanged — the deferred pass then
+  // degrades non-fatally through the trigger's try/catch.
+  let modelSnapshot: CompactionModelSnapshot | undefined;
+  try {
+    modelSnapshot = getSummarizerDeps().getModel();
+  } catch {
+    return getSummarizerDeps;
+  }
+  // Re-bind: every later resolution injects the captured snapshot, so neither the
+  // top-level getModel nor the summarizer-internal model read touches the session.
+  return (override?: CompactionModelSnapshot) => getSummarizerDeps(override ?? modelSnapshot);
 }
 
 /**
@@ -936,12 +987,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // 129 (C1/C3) leaf threshold sweep, then 130 (C2) condense fold (AFTER the
     // leaf so the Nth leaf can immediately fold). Bodies live in the trigger
     // modules (this file is over the 800L cap); the calls here stay thin.
-    const runDeferredPasses = async (): Promise<void> => {
+    // `summarizerGetter` is the (possibly snapshot-bound) deps getter — the
+    // deferred path passes a model-snapshot-bound getter (WR-04), the inline path
+    // reads the live session.
+    const runDeferredPasses = async (
+      summarizerGetter: typeof deps.getSummarizerDeps,
+    ): Promise<void> => {
       await runLeafPassAfterTurn({
         store,
         scope,
         contextEngine: config.contextEngine,
-        getSummarizerDeps: deps.getSummarizerDeps,
+        getSummarizerDeps: summarizerGetter,
         now: deps.clock.now(),
         logger: deps.logger,
         eventBus: deps.eventBus,
@@ -950,7 +1006,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         store,
         scope,
         contextEngine: config.contextEngine,
-        getCondenseSummarizerDeps: deps.getSummarizerDeps,
+        getCondenseSummarizerDeps: summarizerGetter,
         now: deps.clock.now(),
         logger: deps.logger,
         eventBus: deps.eventBus,
@@ -965,12 +1021,24 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // runs (compaction never blocks the turn). The detached promise is wrapped
       // in suppressError so a rejection is logged, NEVER swallowed by a bare empty
       // catch (AGENTS.md §2.2).
-      const deferred = store.runOnConversation(conversationId, runDeferredPasses);
+      //
+      // WR-04: snapshot the summarizer model identity NOW (session still alive)
+      // and bind it into the getter the detached pass uses, so a pass that resolves
+      // its deps AFTER the `session.dispose()` below never re-reads a torn-down
+      // `session.agent.state.model`. The detached closure then depends only on the
+      // captured snapshot + the daemon-owned store/auth/clock — all of which
+      // outlive the session. (Lifetime contract, documented on
+      // snapshotSummarizerDepsForDefer.)
+      const deferredSummarizerGetter = snapshotSummarizerDepsForDefer(deps.getSummarizerDeps);
+      const deferred = store.runOnConversation(conversationId, () =>
+        runDeferredPasses(deferredSummarizerGetter),
+      );
       suppressError(deferred, "deferred LCD compaction (R3 serializer)");
     } else {
       // INLINE: await the passes (the pre-132 deterministic path retained for
-      // tests). Non-fatal — never surfaces an error to the live turn.
-      await runDeferredPasses();
+      // tests). Non-fatal — never surfaces an error to the live turn. Reads the
+      // LIVE session model (no snapshot needed — the session is alive inline).
+      await runDeferredPasses(deps.getSummarizerDeps);
     }
   }
 
