@@ -304,6 +304,26 @@ describe("ctx_search tool", () => {
     expect(wrapped).toContain(rawSnippet); // the original text survives inside the wrapper
   });
 
+  it("ctx_search scrubs secrets out of each returned hit snippet (FIX 2b egress)", async () => {
+    // A recovered snippet that contains a credential. Pre-patch the snippet was
+    // wrapped but returned VERBATIM, so the secret reached the model context. The
+    // returned snippet must have the secret REDACTED while staying taint-wrapped.
+    const secret = "sk-proj-LEAKTEST9999abcdefghijklmnop";
+    const rawSnippet = `recovered context mentioning the api key ${secret} inline`;
+    const { store } = makeStore({
+      searchLcdReturn: [{ kind: "message", refId: "m1", snippet: rawSnippet, rank: -0.7 }],
+    });
+    const { deps } = makeDeps(store);
+    const tool = createCtxSearchTool(deps);
+    const result = (await runExecute(tool, "search-secret-1", { query: "api key" }, liveCtx())) as {
+      details: { hits: Array<{ snippet: string }> };
+    };
+    const snippet = result.details.hits[0].snippet;
+    expect(snippet).toContain("UNTRUSTED");
+    expect(snippet).not.toContain(secret);
+    expect(snippet).toContain("[REDACTED]");
+  });
+
   it("ctx_search logs only ids and counts, never the query text or a snippet substring", async () => {
     const rawQuery = "supercalifragilistic-query-token";
     const rawSnippet = "uniquely-identifiable-snippet-body";
@@ -488,6 +508,28 @@ describe("ctx_expand tool", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("ctx_expand scrubs secrets from the INLINE recovered body, not just the spill file (FIX 2a egress)", async () => {
+    // A secret in a SMALL recovered region → the inline (non-spill) path. Pre-patch
+    // the inline branch returned the recovered body VERBATIM (only the oversized
+    // spill branch scrubbed), so a credential reached the model context + every
+    // re-injected summary. The inline body must be REDACTED, not verbatim.
+    const secret = "sk-proj-LEAKTEST9999abcdefghijklmnop";
+    const { store } = makeStore({
+      getSummaryMessagesReturn: ["m1"],
+      getMessagesReturn: [makeMessage("m1", 1, `recovered line with a credential ${secret} embedded`)],
+    });
+    const { deps } = makeDeps(store, { maxExpandTokens: 4000, getToolResultsDir: () => undefined });
+    const tool = createCtxExpandTool(deps);
+    const result = (await runExecute(tool, "inline-secret-1", { summaryId: "sum-1" }, liveCtx())) as {
+      details: { body?: string };
+    };
+    expect(result.details.body).toBeDefined();
+    // Still taint-wrapped, but with the secret scrubbed.
+    expect(result.details.body).toContain("UNTRUSTED");
+    expect(result.details.body).not.toContain(secret);
+    expect(result.details.body).toContain("[REDACTED]");
   });
 
   it("ctx_expand inlines small recovered output without writing a file", async () => {

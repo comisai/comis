@@ -612,6 +612,50 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     expect(texts).not.toContain("a1");
   });
 
+  it("scrubs secrets out of a summary body before it surfaces as a user-role message (FIX 2c egress)", async () => {
+    // A summary derived from a region that legitimately contained a credential.
+    // Pre-patch `summaryRefToMessage` wrapped the body but injected it VERBATIM, so
+    // the secret re-entered the model context every turn the summary was assembled.
+    // The assembled summary message must have the secret REDACTED while keeping the
+    // taint wrap + the trusted `[LCD summary …]` header.
+    const SECRET = "sk-proj-LEAKTEST9999abcdefghijklmnop";
+    const msgs = seedTextTurns(6);
+    store.getContextItems(SCOPE);
+    const summaryWithSecret = `summary mentioning an api key ${SECRET} that leaked into the digest`;
+    store.appendLeafSummary({
+      scope: SCOPE,
+      tokenCount: 5,
+      content: summaryWithSecret,
+      descendantCount: 4,
+      earliestAt: FIXED_CREATED_AT,
+      latestAt: FIXED_CREATED_AT,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_CREATED_AT,
+      startOrdinal: 0,
+      endOrdinal: 3,
+    });
+
+    const live: AgentMessage[] = msgs as AgentMessage[];
+    const { deps } = makeDeps(store);
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    const out = await engine.transformContext(live);
+
+    // Find the assembled summary message (the [LCD summary …] header survives).
+    const summaryMsg = out.find(
+      (m) =>
+        roleOf(m) === "user" &&
+        JSON.stringify((m as unknown as { content: unknown }).content).includes("[LCD summary"),
+    );
+    expect(summaryMsg).toBeDefined();
+    const blob = JSON.stringify((summaryMsg as unknown as { content: unknown }).content);
+    // The secret is REDACTED, the taint wrap + the count metadata survive.
+    expect(blob).not.toContain(SECRET);
+    expect(blob).toContain("[REDACTED]");
+    expect(blob).toContain("UNTRUSTED");
+  });
+
   it("Plan05 Test B: over-budget eviction drops the OLDEST evictable steps; the fresh tail is intact even when H is tiny", async () => {
     // 10 turns (20 messages). Each store message tokenCount=1 (append() default),
     // so the evictable prefix is cheap per message; we force a TINY model window
