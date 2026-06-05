@@ -1256,6 +1256,94 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
+// createLcdStore — WR-03 contentless-FTS populate guard (gate + per-row mapper)
+// ───────────────────────────────────────────────────────────────────────────
+// The append-path lcd_messages_fts populate must (1) be GATED on
+// isFtsAvailable(db) so the EXPECTED FTS5-absent case is a clean conditional skip
+// instead of an exception swallowed by an over-broad bare `catch {}`, and (2) read
+// the just-inserted rowid through the sanctioned createRowMapper instead of a raw
+// `as { rowid: number }` cast. The gate is the testable behavior: when the FTS
+// availability probe reports UNAVAILABLE, the append must NOT attempt the
+// lcd_messages_fts INSERT at all. The pre-patch code attempted it unconditionally
+// (then swallowed any throw), so it MUST fail on the pre-patch tree.
+describe("createLcdStore — WR-03 FTS-populate guard", () => {
+  /**
+   * Wrap a full-schema db in a Proxy that (a) forces the FTS-availability probe
+   * (`SELECT rowid FROM lcd_summaries_fts … MATCH`) to THROW so isFtsAvailable()
+   * caches `false`, and (b) records every attempted `INSERT INTO lcd_messages_fts`
+   * via a spy whose `.run()` is a no-op. Construction still uses the REAL prepares
+   * for every other statement, so createLcdStore builds normally. Returns the
+   * proxied db plus the populate-attempt counter.
+   */
+  function ftsUnavailableProbeDb(): { db: Database.Database; ftsInsertAttempts: () => number } {
+    const real = new Database(":memory:");
+    real.pragma("foreign_keys = ON");
+    initSchema(real, 1536); // full schema → lcd_messages_fts EXISTS (construction prepares it)
+
+    let attempts = 0;
+    const proxied = new Proxy(real, {
+      get(target, prop, receiver) {
+        if (prop === "prepare") {
+          return (sql: string): unknown => {
+            // The isFtsAvailable probe: SELECT rowid … MATCH. Make it throw so the
+            // verdict caches FALSE (the FTS5-absent host the gate guards for).
+            if (/SELECT\s+rowid/i.test(sql) && /MATCH/i.test(sql)) {
+              return { all: () => { throw new Error("no such module: fts5"); } };
+            }
+            // The contentless-FTS populate INSERT: count + no-op so we can assert
+            // the gated path NEVER attempts it when FTS is reported unavailable.
+            if (/INSERT\s+INTO\s+lcd_messages_fts/i.test(sql)) {
+              return { run: () => { attempts++; return { changes: 0, lastInsertRowid: 0 }; } };
+            }
+            return target.prepare(sql);
+          };
+        }
+        if (prop === "transaction") {
+          // db.transaction(fn) must still wrap against the REAL db so the
+          // message+parts write actually commits; bind to target.
+          const txn = Reflect.get(target, prop, receiver) as (
+            fn: (...a: unknown[]) => unknown,
+          ) => (...a: unknown[]) => unknown;
+          return txn.bind(target);
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as unknown as Database.Database;
+
+    return { db: proxied, ftsInsertAttempts: () => attempts };
+  }
+
+  it("does NOT attempt the lcd_messages_fts populate when the FTS availability probe reports unavailable (gated skip, not a swallowed throw)", () => {
+    const { db, ftsInsertAttempts } = ftsUnavailableProbeDb();
+    const store = createLcdStore(db);
+
+    // Append a normal message. With FTS reported unavailable the populate must be
+    // a clean conditional SKIP — the INSERT is never attempted. (Pre-patch: the
+    // INSERT was attempted unconditionally and any throw swallowed by `catch {}`.)
+    expect(() =>
+      store.append({
+        scope: SCOPE_A,
+        seq: 0,
+        role: "user",
+        tokenCount: 1,
+        createdAt: FIXED_CREATED_AT,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: "ungated populate?" }, rawType: "text" } }],
+      }),
+    ).not.toThrow();
+
+    // The gate held: zero FTS populate attempts on an FTS-unavailable host.
+    expect(ftsInsertAttempts()).toBe(0);
+
+    // The authoritative base-table write still committed (lossless tables are the
+    // source of truth; the contentless index is best-effort only).
+    const msgs = store.getMessages(SCOPE_A);
+    expect(msgs).toHaveLength(1);
+    expect(JSON.stringify(msgs[0]!.parts)).toContain("ungated populate?");
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
 // createLcdStore — R4 cross-agent read isolation (the Phase-131 WR-02 close)
 // ───────────────────────────────────────────────────────────────────────────
 // Two agents (agent-a, agent-b) legitimately share ONE conversation_id +
