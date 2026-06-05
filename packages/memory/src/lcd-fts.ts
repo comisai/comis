@@ -109,14 +109,19 @@ function isFtsAvailable(db: Database.Database): boolean {
 }
 
 /**
- * Full-text search over THIS conversation's lossless store — FTS5 MATCH when
- * available, a LIKE scan otherwise. The `query` MUST already be sanitized by the
- * caller. Returns at most `opts.limit` hits across the requested scope. Scoped
- * by `conversationId`; never throws (degrades to fewer/no hits).
+ * Full-text search over THIS (conversation, agent)'s lossless store — FTS5 MATCH
+ * when available, a LIKE scan otherwise. The `query` MUST already be sanitized by
+ * the caller. Returns at most `opts.limit` hits across the requested scope. R4
+ * (132-03): scoped by `conversationId` AND `agentId` — BOTH the FTS MATCH path
+ * AND the LIKE fallback filter agent_id so a different agent sharing the
+ * conversation never recovers another agent's hits (WR-02, Pitfall 3); the
+ * conversation_id prefix carries the tenant boundary. Never throws (degrades to
+ * fewer/no hits).
  */
 export function searchLcdImpl(
   db: Database.Database,
   conversationId: string,
+  agentId: string,
   query: string,
   opts: { limit: number; scope?: LcdSearchScope },
 ): LcdSearchHit[] {
@@ -125,14 +130,15 @@ export function searchLcdImpl(
   if (limit <= 0) return [];
 
   return isFtsAvailable(db)
-    ? searchViaFts(db, conversationId, query, scope, limit)
-    : searchViaLike(db, conversationId, query, scope, limit);
+    ? searchViaFts(db, conversationId, agentId, query, scope, limit)
+    : searchViaLike(db, conversationId, agentId, query, scope, limit);
 }
 
 /** FTS5 MATCH path — BM25 `ORDER BY rank` (the in-tree recall-FTS query shape). */
 function searchViaFts(
   db: Database.Database,
   conversationId: string,
+  agentId: string,
   query: string,
   scope: LcdSearchScope,
   limit: number,
@@ -140,13 +146,13 @@ function searchViaFts(
   const hits: LcdSearchHit[] = [];
 
   // A closed-union switch with an exhaustive `never` default (AGENTS.md §2.8).
-  // Each branch is static SQL + bound params, scoped by conversation_id.
+  // Each branch is static SQL + bound params, scoped by (conversation_id, agent_id).
   switch (scope) {
     case "summaries":
-      hits.push(...ftsSummaryHits(db, conversationId, query, limit));
+      hits.push(...ftsSummaryHits(db, conversationId, agentId, query, limit));
       break;
     case "messages":
-      hits.push(...ftsMessageHits(db, conversationId, query, limit));
+      hits.push(...ftsMessageHits(db, conversationId, agentId, query, limit));
       break;
     case "both": {
       // Merge the two tables by WITHIN-TABLE rank POSITION, not by raw BM25
@@ -158,8 +164,8 @@ function searchViaFts(
       // representation up to `limit` without pretending the two scales are
       // comparable (and without the old `?? 0` fallback, which would have
       // sorted an unranked hit as MOST relevant since BM25 ranks are negative).
-      const summaries = ftsSummaryHits(db, conversationId, query, limit);
-      const messages = ftsMessageHits(db, conversationId, query, limit);
+      const summaries = ftsSummaryHits(db, conversationId, agentId, query, limit);
+      const messages = ftsMessageHits(db, conversationId, agentId, query, limit);
       return interleaveByRank(summaries, messages, limit);
     }
     default: {
@@ -199,33 +205,39 @@ function interleaveByRank(
 function ftsSummaryHits(
   db: Database.Database,
   conversationId: string,
+  agentId: string,
   query: string,
   limit: number,
 ): LcdSearchHit[] {
+  // R4: + AND agent_id = ? (the vtable carries agent_id UNINDEXED) so a different
+  // agent's summary hits never leak within a shared conversation (WR-02).
   const stmt = db.prepare(`
     SELECT summary_id AS ref_id, content AS snippet, rank
     FROM lcd_summaries_fts
-    WHERE lcd_summaries_fts MATCH ? AND conversation_id = ?
+    WHERE lcd_summaries_fts MATCH ? AND conversation_id = ? AND agent_id = ?
     ORDER BY rank
     LIMIT ?
   `);
-  return mapFtsRows(safeAll(() => stmt.all(query, conversationId, limit)), "summary");
+  return mapFtsRows(safeAll(() => stmt.all(query, conversationId, agentId, limit)), "summary");
 }
 
 function ftsMessageHits(
   db: Database.Database,
   conversationId: string,
+  agentId: string,
   query: string,
   limit: number,
 ): LcdSearchHit[] {
+  // R4: + AND agent_id = ? (the vtable carries agent_id UNINDEXED; the adapter
+  // populates it on append) so cross-agent message hits never leak (WR-02).
   const stmt = db.prepare(`
     SELECT message_id AS ref_id, content AS snippet, rank
     FROM lcd_messages_fts
-    WHERE lcd_messages_fts MATCH ? AND conversation_id = ?
+    WHERE lcd_messages_fts MATCH ? AND conversation_id = ? AND agent_id = ?
     ORDER BY rank
     LIMIT ?
   `);
-  return mapFtsRows(safeAll(() => stmt.all(query, conversationId, limit)), "message");
+  return mapFtsRows(safeAll(() => stmt.all(query, conversationId, agentId, limit)), "message");
 }
 
 /**
@@ -254,12 +266,16 @@ function mapFtsRows(rawRows: unknown[], kind: "message" | "summary"): LcdSearchH
 /**
  * LIKE-scan fallback (no FTS5). Scans `lcd_summaries.content` and the message
  * parts' JSON text columns (the same surfaces `renderMessageFtsText` indexes),
- * scoped by conversation. `rank` is undefined — the contract's no-ranking
- * marker. Bound `%term%` param (LIKE wildcards escaped); static SQL.
+ * scoped by (conversation, agent). `rank` is undefined — the contract's
+ * no-ranking marker. Bound `%term%` param (LIKE wildcards escaped); static SQL.
+ * R4 (132-03, Pitfall 3): the fallback MUST filter agent_id too — `AND agent_id =
+ * ?` (summaries) / `AND m.agent_id = ?` (messages JOIN) — not just the FTS path,
+ * else a different agent's hits leak when FTS5 is uncompiled (WR-02).
  */
 function searchViaLike(
   db: Database.Database,
   conversationId: string,
+  agentId: string,
   query: string,
   scope: LcdSearchScope,
   limit: number,
@@ -271,11 +287,11 @@ function searchViaLike(
     const stmt = db.prepare(`
       SELECT summary_id AS ref_id, content AS snippet
       FROM lcd_summaries
-      WHERE conversation_id = ? AND content LIKE ? ESCAPE '\\'
+      WHERE conversation_id = ? AND agent_id = ? AND content LIKE ? ESCAPE '\\'
       ORDER BY created_at
       LIMIT ?
     `);
-    for (const raw of safeAll(() => stmt.all(conversationId, like, limit))) {
+    for (const raw of safeAll(() => stmt.all(conversationId, agentId, like, limit))) {
       const row = raw as { ref_id: string; snippet: string };
       hits.push({ kind: "summary", refId: row.ref_id, snippet: row.snippet, rank: undefined });
     }
@@ -285,12 +301,12 @@ function searchViaLike(
     // Message text is JSON across part columns — LIKE over the rendered-equivalent
     // columns (tool_input/tool_output/metadata) of the message's parts. DISTINCT
     // message id; snippet is the matched part's metadata (UNTRUSTED — the tool
-    // taint-wraps before re-entry).
+    // taint-wraps before re-entry). R4: + AND m.agent_id = ? (Pitfall 3).
     const stmt = db.prepare(`
       SELECT m.id AS ref_id, p.metadata AS snippet
       FROM lcd_messages m
       JOIN lcd_message_parts p ON p.message_id = m.id
-      WHERE m.conversation_id = ?
+      WHERE m.conversation_id = ? AND m.agent_id = ?
         AND (
           COALESCE(p.tool_input, '') LIKE ? ESCAPE '\\'
           OR COALESCE(p.tool_output, '') LIKE ? ESCAPE '\\'
@@ -300,7 +316,7 @@ function searchViaLike(
       LIMIT ?
     `);
     const seen = new Set<string>();
-    for (const raw of safeAll(() => stmt.all(conversationId, like, like, like, limit))) {
+    for (const raw of safeAll(() => stmt.all(conversationId, agentId, like, like, like, limit))) {
       const row = raw as { ref_id: string; snippet: string };
       if (seen.has(row.ref_id)) continue; // one hit per message
       seen.add(row.ref_id);

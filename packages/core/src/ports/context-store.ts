@@ -22,6 +22,7 @@ import type {
   AppendCondensedSummaryInput,
   AppendMessageInput,
   AppendSummaryInput,
+  ContextStoreScope,
   LcdContextItem,
   LcdMessage,
   LcdSearchHit,
@@ -45,11 +46,13 @@ export interface ContextStorePort {
    */
   append(input: AppendMessageInput): void;
   /**
-   * Read path (F2): reconstruct all messages for a conversation, ordered by
-   * seq. Each `LcdMessage` carries its parts; provider-correct block emission
-   * is pi-ai's job downstream — this port returns the faithful canonical rows.
+   * Read path (F2): reconstruct all messages for the `scope`, ordered by seq.
+   * Each `LcdMessage` carries its parts; provider-correct block emission is
+   * pi-ai's job downstream — this port returns the faithful canonical rows.
+   * Scoped by (conversationId, agentId, tenantId) — full isolation (R4): two
+   * agents sharing one conversation_id never read each other's messages (WR-02).
    */
-  getMessages(conversationId: string): LcdMessage[];
+  getMessages(scope: ContextStoreScope): LcdMessage[];
   /**
    * Compaction write path (C3): persist one leaf summary, link it to the
    * covered messages (FK RESTRICT — losslessness), and range-replace the
@@ -70,36 +73,45 @@ export interface ContextStorePort {
    * Read path: the ordered model-facing context_items view (dense, gap-free
    * ordinals). Lazily seeded 1:1 from lcd_messages on first read for a
    * conversation with no context_items rows (no migration — design §9).
+   * Scoped by (conversationId, agentId, tenantId) — full isolation (R4).
    */
-  getContextItems(conversationId: string): LcdContextItem[];
+  getContextItems(scope: ContextStoreScope): LcdContextItem[];
   /**
    * Read path: every leaf summary for a conversation. The dag assembler joins
    * these (by `summaryId`) to resolve a context_items `summary`-ref into its
    * `content` + pre-computed `tokenCount` when assembling the model-facing
    * context. Returned in insertion order; the assembler keys by id, not order.
    * `content` is the leaf plaintext and is NEVER logged (lossless store).
+   * Scoped by (conversationId, agentId, tenantId) — full isolation (R4).
    */
-  getSummaries(conversationId: string): LcdSummary[];
+  getSummaries(scope: ContextStoreScope): LcdSummary[];
   /**
    * E1 region walk: the immediate CHILD summaries of a condensed summary
    * (the lcd_summary_parents condensed→child edge). Returns [] when the
-   * summary has no children (a leaf) or does not exist. Scoped by conversationId.
+   * summary has no children (a leaf) or does not exist. Scoped by
+   * (conversationId, agentId, tenantId) — full isolation (R4): a different
+   * agent sharing the conversation cannot reach this condensed edge (WR-02).
    */
-  getSummaryChildren(conversationId: string, parentSummaryId: string): LcdSummary[];
+  getSummaryChildren(scope: ContextStoreScope, parentSummaryId: string): LcdSummary[];
   /**
    * E1 region walk: the message ids a LEAF summary covers
    * (the lcd_summary_messages leaf→message edge). Returns [] when the summary
-   * covers no messages or does not exist. Scoped by conversationId.
+   * covers no messages or does not exist. Scoped by (conversationId, agentId,
+   * tenantId) — full isolation (R4): a different agent cannot reach the covered
+   * ids of another agent's summary within the shared conversation (WR-02).
    */
-  getSummaryMessages(conversationId: string, summaryId: string): string[];
+  getSummaryMessages(scope: ContextStoreScope, summaryId: string): string[];
   /**
-   * E1 search: full-text search over THIS conversation's lossless store —
-   * FTS5 MATCH when available, LIKE scan fallback otherwise. The `query` MUST
-   * already be sanitized by the caller (sanitizeFts5Query lives in @comis/skills;
-   * @comis/memory cannot import it — PATTERNS gap #2). Scoped by conversationId.
+   * E1 search: full-text search over THIS (conversation, agent)'s lossless
+   * store — FTS5 MATCH when available, LIKE scan fallback otherwise. The `query`
+   * MUST already be sanitized by the caller (sanitizeFts5Query lives in
+   * @comis/skills; @comis/memory cannot import it — PATTERNS gap #2). Scoped by
+   * (conversationId, agentId) — full isolation (R4): BOTH the FTS path AND the
+   * LIKE fallback filter agent_id so a different agent's hits never leak (WR-02,
+   * Pitfall 3). The conversation_id prefix carries the tenant boundary.
    */
   searchLcd(
-    conversationId: string,
+    scope: ContextStoreScope,
     query: string,
     opts: { limit: number; scope?: "messages" | "summaries" | "both" },
   ): LcdSearchHit[];

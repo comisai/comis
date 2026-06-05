@@ -280,14 +280,36 @@ describe("initSchema", () => {
     expect(colNames).toContain("metadata");
   });
 
-  it("lcd_messages has the (conversation_id, seq) unique index", () => {
+  it("lcd_messages has the per-(conversation, agent, tenant) UNIQUE seq index (R4 132-03)", () => {
     initSchema(db, 1536);
 
     const indexes = db
       .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='lcd_messages'")
       .all() as Array<{ name: string }>;
 
-    expect(indexes.map((i) => i.name)).toContain("idx_lcd_messages_conv_seq");
+    // R4 (132-03): seq is monotonic PER (conversation, agent, tenant) so two
+    // agents sharing one conversation_id own independent seq sequences (WR-02).
+    expect(indexes.map((i) => i.name)).toContain("idx_lcd_messages_conv_agent_seq");
+
+    // The SAME (conversation_id, seq) for the SAME agent collides...
+    db.prepare(
+      "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m1','conv-1','t','agent-a','s',0,'user',1,1)",
+    ).run();
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m2','conv-1','t','agent-a','s',0,'user',1,1)",
+        )
+        .run(),
+    ).toThrow(/UNIQUE constraint/i);
+    // ...but a DIFFERENT agent in the SAME conversation may reuse seq 0 (R4).
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m3','conv-1','t','agent-b','s',0,'user',1,1)",
+        )
+        .run(),
+    ).not.toThrow();
   });
 
   it("ensureLcdTables is idempotent -- calling twice does not throw", () => {
@@ -583,7 +605,7 @@ describe("initSchema", () => {
     }
   });
 
-  it("lcd_context_items has the UNIQUE (conversation_id, ordinal) index (dense gap-free ordering guard)", () => {
+  it("lcd_context_items has the per-(conversation, agent, tenant) UNIQUE ordinal index (R4 dense gap-free per-agent guard)", () => {
     initSchema(db, 1536);
 
     const indexes = (
@@ -591,16 +613,18 @@ describe("initSchema", () => {
         .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='lcd_context_items'")
         .all() as Array<{ name: string }>
     ).map((i) => i.name);
-    expect(indexes).toContain("idx_lcd_ctx_items_conv_ord");
+    // R4 (132-03): the model-facing view is per (conversation, agent, tenant);
+    // each agent's ordinals are dense + gap-free over ITS OWN items (WR-02).
+    expect(indexes).toContain("idx_lcd_ctx_items_conv_agent_ord");
 
-    // The index is genuinely UNIQUE: two rows with the same (conversation_id, ordinal) collide.
+    // The index is UNIQUE: same (conversation_id, agent_id, tenant_id, ordinal) collides.
     db.prepare(
-      "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('a', 'conv-1', 't', 'a', 's', 0, 'message', 'm1')",
+      "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('a', 'conv-1', 't', 'agent-a', 's', 0, 'message', 'm1')",
     ).run();
     expect(() =>
       db
         .prepare(
-          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('b', 'conv-1', 't', 'a', 's', 0, 'message', 'm2')",
+          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('b', 'conv-1', 't', 'agent-a', 's', 0, 'message', 'm2')",
         )
         .run(),
     ).toThrow(/UNIQUE constraint/i);
@@ -608,7 +632,16 @@ describe("initSchema", () => {
     expect(() =>
       db
         .prepare(
-          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('c', 'conv-2', 't', 'a', 's', 0, 'message', 'm3')",
+          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('c', 'conv-2', 't', 'agent-a', 's', 0, 'message', 'm3')",
+        )
+        .run(),
+    ).not.toThrow();
+    // R4: the SAME ordinal in the SAME conversation but a DIFFERENT agent is now
+    // allowed — two agents sharing a conversation each keep a dense view (WR-02).
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('d', 'conv-1', 't', 'agent-b', 's', 0, 'message', 'm4')",
         )
         .run(),
     ).not.toThrow();

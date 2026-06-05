@@ -138,7 +138,7 @@ describe("createLcdStore", () => {
       parts: toolResultParts(false),
     });
 
-    const messages = store.getMessages("conv-a");
+    const messages = store.getMessages(SCOPE_A);
 
     // Two messages, ordered by seq.
     expect(messages).toHaveLength(2);
@@ -177,7 +177,7 @@ describe("createLcdStore", () => {
     store.append({ scope: SCOPE_A, seq: 2, role: "assistant", tokenCount: 1, createdAt: FIXED_CREATED_AT, parts: [{ kind: "text", metadata: { raw: { type: "text", text: "second" }, rawType: "text" } }] });
     store.append({ scope: SCOPE_A, seq: 1, role: "user", tokenCount: 1, createdAt: FIXED_CREATED_AT, parts: assistantParts() });
 
-    const messages = store.getMessages("conv-a");
+    const messages = store.getMessages(SCOPE_A);
     expect(messages.map((m) => m.seq)).toEqual([1, 2]);
 
     // Parts of the seq-1 message preserve their build order (tool_use, reasoning, text).
@@ -201,7 +201,7 @@ describe("createLcdStore", () => {
     const parts = messageToParts(assistantMsg);
     store.append({ scope: SCOPE_A, seq: 1, role: "assistant", tokenCount: 5, createdAt: FIXED_CREATED_AT, parts });
 
-    const [reconstructedRow] = store.getMessages("conv-a");
+    const [reconstructedRow] = store.getMessages(SCOPE_A);
     expect(reconstructedRow).toBeDefined();
 
     const reconstructed = partsToMessage(reconstructedRow!) as Extract<Message, { role: "assistant" }>;
@@ -228,15 +228,15 @@ describe("createLcdStore", () => {
     store.append({ scope: SCOPE_A, seq: 1, role: "user", tokenCount: 1, createdAt: FIXED_CREATED_AT, parts: assistantParts() });
     store.append({ scope: SCOPE_B, seq: 1, role: "user", tokenCount: 1, createdAt: FIXED_CREATED_AT, parts: assistantParts() });
 
-    const a = store.getMessages("conv-a");
-    const b = store.getMessages("conv-b");
+    const a = store.getMessages(SCOPE_A);
+    const b = store.getMessages(SCOPE_B);
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(1);
     expect(a[0]!.conversationId).toBe("conv-a");
     expect(b[0]!.conversationId).toBe("conv-b");
 
     // Empty for an unknown conversation.
-    expect(store.getMessages("conv-nonexistent")).toHaveLength(0);
+    expect(store.getMessages({ ...SCOPE_A, conversationId: "conv-nonexistent" })).toHaveLength(0);
   });
 
   it("graceful degrade — corrupt metadata JSON does NOT throw on read (safeParse)", () => {
@@ -246,8 +246,8 @@ describe("createLcdStore", () => {
     db.prepare("UPDATE lcd_message_parts SET metadata = ? WHERE kind = 'text'").run("{not valid json");
 
     // getMessages must NOT throw — the corrupt part degrades its raw to undefined.
-    expect(() => store.getMessages("conv-a")).not.toThrow();
-    const messages = store.getMessages("conv-a");
+    expect(() => store.getMessages(SCOPE_A)).not.toThrow();
+    const messages = store.getMessages(SCOPE_A);
     expect(messages).toHaveLength(1);
     const text = messages[0]!.parts.find((p) => p.kind === "text");
     expect(text).toBeDefined();
@@ -258,7 +258,7 @@ describe("createLcdStore", () => {
     store.append({ scope: SCOPE_A, seq: 1, role: "assistant", tokenCount: 1, createdAt: FIXED_CREATED_AT, parts: assistantParts() });
     store.append({ scope: SCOPE_A, seq: 2, role: "toolResult", tokenCount: 1, createdAt: FIXED_CREATED_AT, parts: toolResultParts(true) });
 
-    const messages = store.getMessages("conv-a");
+    const messages = store.getMessages(SCOPE_A);
     const toolResult = messages[1]!.parts.find((p) => p.kind === "tool_result");
     expect(toolResult!.isError).toBe(true);
   });
@@ -282,8 +282,8 @@ describe("createLcdStore", () => {
     // row-schema check — a realistic on-disk drift / corruption.
     db.prepare("UPDATE lcd_message_parts SET ordinal = ? WHERE kind = 'reasoning'").run("corrupt");
 
-    expect(() => store.getMessages("conv-a")).not.toThrow();
-    const messages = store.getMessages("conv-a");
+    expect(() => store.getMessages(SCOPE_A)).not.toThrow();
+    const messages = store.getMessages(SCOPE_A);
     expect(messages).toHaveLength(1);
     // The TWO valid parts survive; only the corrupt reasoning part is skipped.
     const kinds = messages[0]!.parts.map((p) => p.kind);
@@ -302,8 +302,8 @@ describe("createLcdStore", () => {
     // column fails `seq: z.number()`.
     db.prepare("UPDATE lcd_messages SET seq = ? WHERE seq = 2").run("corrupt");
 
-    expect(() => store.getMessages("conv-a")).not.toThrow();
-    const messages = store.getMessages("conv-a");
+    expect(() => store.getMessages(SCOPE_A)).not.toThrow();
+    const messages = store.getMessages(SCOPE_A);
     // The two intact messages survive (seq 1 and 3); only the corrupt one is skipped.
     expect(messages).toHaveLength(2);
     expect(messages.map((m) => m.seq)).toEqual([1, 3]);
@@ -368,7 +368,7 @@ describe("createLcdStore", () => {
       parts: [{ kind: "text", metadata: { raw: { type: "text", text: "hi" }, rawType: "text" } }],
     };
     expect(() => store.append(input)).not.toThrow();
-    expect(store.getMessages("conv-a")[0]!.seq).toBe(99);
+    expect(store.getMessages(SCOPE_A)[0]!.seq).toBe(99);
   });
 });
 
@@ -409,9 +409,9 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     }
   }
 
-  /** The message ids of a conversation, in seq order. */
-  function messageIdsInSeqOrder(conversationId: string): string[] {
-    return store.getMessages(conversationId).map((m) => m.id);
+  /** The message ids of a scope, in seq order. */
+  function messageIdsInSeqOrder(scope: ContextStoreScope): string[] {
+    return store.getMessages(scope).map((m) => m.id);
   }
 
   /** A minimal valid AppendSummaryInput over [start,end]. */
@@ -439,9 +439,9 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 
   it("getContextItems lazily seeds 1:1 from lcd_messages on first read (ordinal 0..N-1, message-refs in seq order)", () => {
     seedMessages(3);
-    const ids = messageIdsInSeqOrder("conv-a");
+    const ids = messageIdsInSeqOrder(SCOPE_A);
 
-    const items = store.getContextItems("conv-a");
+    const items = store.getContextItems(SCOPE_A);
 
     expect(items).toHaveLength(3);
     expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2]);
@@ -452,8 +452,8 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 
   it("getContextItems is stable across calls — a second read returns the same seeded view, not a re-seed/duplication", () => {
     seedMessages(2);
-    const first = store.getContextItems("conv-a");
-    const second = store.getContextItems("conv-a");
+    const first = store.getContextItems(SCOPE_A);
+    const second = store.getContextItems(SCOPE_A);
 
     expect(second).toHaveLength(2);
     expect(second.map((i) => i.refId)).toEqual(first.map((i) => i.refId));
@@ -467,17 +467,17 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
   });
 
   it("getContextItems returns [] for a conversation with no messages (nothing to seed)", () => {
-    expect(store.getContextItems("conv-empty")).toHaveLength(0);
+    expect(store.getContextItems({ ...SCOPE_A, conversationId: "conv-empty" })).toHaveLength(0);
   });
 
   it("appendLeafSummary range-replaces [start,end] with ONE summary-ref; ordinals stay dense, gap-free and ordered", () => {
     seedMessages(5); // ordinals 0..4, all message-refs
-    store.getContextItems("conv-a"); // seed
+    store.getContextItems(SCOPE_A); // seed
 
     // Replace the middle run [1,3] (m1,m2,m3) with one summary.
     const summaryId = store.appendLeafSummary(summaryInput(1, 3));
 
-    const items = store.getContextItems("conv-a");
+    const items = store.getContextItems(SCOPE_A);
     // 5 messages → 3 collapsed into 1 summary → 3 items remain (m0, SUMMARY, m4).
     expect(items).toHaveLength(3);
     // Ordinals are dense + gap-free + ordered: 0,1,2.
@@ -491,7 +491,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 
   it("appendLeafSummary recomputes descendantCount = covered message count and earliest/latest = min/max covered createdAt", () => {
     seedMessages(5); // createdAt: 1000,1010,1020,1030,1040 for m0..m4
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
 
     const summaryId = store.appendLeafSummary(summaryInput(1, 3)); // covers m1,m2,m3
 
@@ -510,8 +510,8 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 
   it("appendLeafSummary persists the lcd_summaries row (content/tokenCount/fileIds/taint/fallback) + the per-covered-message links in ONE go", () => {
     seedMessages(4);
-    store.getContextItems("conv-a");
-    const idsBefore = messageIdsInSeqOrder("conv-a");
+    store.getContextItems(SCOPE_A);
+    const idsBefore = messageIdsInSeqOrder(SCOPE_A);
 
     const summaryId = store.appendLeafSummary(
       summaryInput(0, 2, {
@@ -555,7 +555,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 
   it("getSummaries returns the persisted leaf summary as the LcdSummary DTO (content/tokenCount/fileIds/taint/fallback/kind/depth) — the assembler's summary-ref resolution source", () => {
     seedMessages(4); // createdAt 1000,1010,1020,1030
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
 
     const summaryId = store.appendLeafSummary(
       summaryInput(0, 2, {
@@ -568,7 +568,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
       }),
     );
 
-    const summaries = store.getSummaries("conv-a");
+    const summaries = store.getSummaries(SCOPE_A);
     expect(summaries).toHaveLength(1);
     const s = summaries[0]!;
     // The full DTO the assembler keys by summaryId to resolve a summary-ref into
@@ -590,24 +590,24 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 
   it("getSummaries returns [] for a conversation with no summaries, and is scoped per conversation", () => {
     seedMessages(3); // messages but NO leaf pass
-    expect(store.getSummaries("conv-a")).toHaveLength(0);
+    expect(store.getSummaries(SCOPE_A)).toHaveLength(0);
 
     // A leaf pass on conv-a must not leak into a sibling conversation's read.
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
     store.appendLeafSummary(summaryInput(0, 1));
-    expect(store.getSummaries("conv-a")).toHaveLength(1);
-    expect(store.getSummaries("conv-b")).toHaveLength(0);
+    expect(store.getSummaries(SCOPE_A)).toHaveLength(1);
+    expect(store.getSummaries(SCOPE_B)).toHaveLength(0);
   });
 
   it("appendLeafSummary NEVER deletes lcd_messages — getMessages length is unchanged after a leaf pass (losslessness)", () => {
     seedMessages(5);
-    store.getContextItems("conv-a");
-    expect(store.getMessages("conv-a")).toHaveLength(5);
+    store.getContextItems(SCOPE_A);
+    expect(store.getMessages(SCOPE_A)).toHaveLength(5);
 
     store.appendLeafSummary(summaryInput(1, 3));
 
     // The underlying messages are all still present (FK RESTRICT + no DELETE).
-    expect(store.getMessages("conv-a")).toHaveLength(5);
+    expect(store.getMessages(SCOPE_A)).toHaveLength(5);
     expect(
       (db.prepare("SELECT COUNT(*) AS c FROM lcd_messages WHERE conversation_id = 'conv-a'").get() as {
         c: number;
@@ -620,7 +620,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 
     const summaryId = store.appendLeafSummary(summaryInput(0, 1));
 
-    const items = store.getContextItems("conv-a");
+    const items = store.getContextItems(SCOPE_A);
     // 4 messages → [0,1] collapsed → 3 items (SUMMARY, m2, m3).
     expect(items).toHaveLength(3);
     expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2]);
@@ -630,17 +630,17 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 
   it("successive leaf passes — a second appendLeafSummary over the now-shorter range range-replaces correctly", () => {
     seedMessages(6); // ordinals 0..5
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
 
     // First pass: collapse [0,1] → now items: [S0, m2, m3, m4, m5] (5 items, ordinals 0..4).
     const s0 = store.appendLeafSummary(summaryInput(0, 1));
-    let items = store.getContextItems("conv-a");
+    let items = store.getContextItems(SCOPE_A);
     expect(items).toHaveLength(5);
     expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2, 3, 4]);
 
     // Second pass over the now-shorter view: collapse [2,4] (m3,m4,m5) → [S0, m2, S1] (3 items).
     const s1 = store.appendLeafSummary(summaryInput(2, 4));
-    items = store.getContextItems("conv-a");
+    items = store.getContextItems(SCOPE_A);
     expect(items).toHaveLength(3);
     expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2]);
     expect(items[0]!.refKind).toBe("summary");
@@ -659,11 +659,11 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 
   it("appendLeafSummary collapsing a single-message range [k,k] replaces exactly that one ref (boundary)", () => {
     seedMessages(3);
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
 
     const summaryId = store.appendLeafSummary(summaryInput(1, 1)); // just m1
 
-    const items = store.getContextItems("conv-a");
+    const items = store.getContextItems(SCOPE_A);
     expect(items).toHaveLength(3); // 3 messages → m1 swapped for a summary → still 3 items
     expect(items.map((i) => i.ordinal)).toEqual([0, 1, 2]);
     expect(items[1]!.refKind).toBe("summary");
@@ -677,7 +677,7 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 
   it("appendLeafSummary returns a non-empty summaryId that matches the persisted lcd_summaries row", () => {
     seedMessages(2);
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
 
     const summaryId = store.appendLeafSummary(summaryInput(0, 0));
     expect(summaryId).toBeTruthy();
@@ -692,15 +692,15 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
 
   it("getContextItems degrades per-row (WR-02) — a corrupt context_items row is skipped, its siblings survive and never throw", () => {
     seedMessages(3);
-    store.getContextItems("conv-a"); // seed 3 message-refs (ordinals 0,1,2)
+    store.getContextItems(SCOPE_A); // seed 3 message-refs (ordinals 0,1,2)
 
     // Corrupt ONE context_items row on disk: a non-numeric TEXT in the INTEGER
     // `ordinal` column fails the `ordinal: z.number()` row-schema check (a
     // realistic on-disk drift). The read must NOT throw and must keep the other two.
     db.prepare("UPDATE lcd_context_items SET ordinal = ? WHERE ordinal = 1").run("corrupt");
 
-    expect(() => store.getContextItems("conv-a")).not.toThrow();
-    const items = store.getContextItems("conv-a");
+    expect(() => store.getContextItems(SCOPE_A)).not.toThrow();
+    const items = store.getContextItems(SCOPE_A);
     // The corrupt middle row is skipped; the two valid siblings survive (not []).
     expect(items).toHaveLength(2);
     expect(items.map((i) => i.ordinal)).toEqual([0, 2]);
@@ -710,20 +710,20 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     seedMessages(2, SCOPE_A);
     seedMessages(3, SCOPE_B);
 
-    const a = store.getContextItems("conv-a");
-    const b = store.getContextItems("conv-b");
+    const a = store.getContextItems(SCOPE_A);
+    const b = store.getContextItems(SCOPE_B);
     expect(a).toHaveLength(2);
     expect(b).toHaveLength(3);
 
     // A leaf pass on conv-a does not touch conv-b's view.
     store.appendLeafSummary(summaryInput(0, 1, { scope: SCOPE_A }));
-    expect(store.getContextItems("conv-a")).toHaveLength(1);
-    expect(store.getContextItems("conv-b")).toHaveLength(3);
+    expect(store.getContextItems(SCOPE_A)).toHaveLength(1);
+    expect(store.getContextItems(SCOPE_B)).toHaveLength(3);
   });
 
   it("AppendSummaryInput type is the compaction write-path contract", () => {
     seedMessages(2);
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
     const input: AppendSummaryInput = summaryInput(0, 0);
     expect(() => store.appendLeafSummary(input)).not.toThrow();
   });
@@ -824,7 +824,7 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
    */
   function seedTwoContiguousLeaves(): { leaf0: string; leaf1: string } {
     seedMessages(4); // m0..m3, createdAt 1000,1010,1020,1030 → ordinals 0..3
-    store.getContextItems("conv-a"); // seed the view
+    store.getContextItems(SCOPE_A); // seed the view
     // Collapse [0,1] (m0,m1) → leaf0 at ord 0; view now [leaf0, m2, m3].
     const leaf0 = store.appendLeafSummary(leafInput(0, 1));
     // Collapse [1,2] (m2,m3) → leaf1 at ord 1; view now [leaf0, leaf1].
@@ -837,12 +837,12 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
     const { leaf0, leaf1 } = seedTwoContiguousLeaves();
 
     // The two contiguous leaf summary-refs occupy ordinals [0,1].
-    const itemsBefore = store.getContextItems("conv-a");
+    const itemsBefore = store.getContextItems(SCOPE_A);
     expect(itemsBefore).toHaveLength(2);
     expect(itemsBefore.every((i) => i.refKind === "summary")).toBe(true);
 
     // Read the children so we can assert the store's recompute.
-    const before = store.getSummaries("conv-a");
+    const before = store.getSummaries(SCOPE_A);
     const child0 = before.find((s) => s.summaryId === leaf0)!;
     const child1 = before.find((s) => s.summaryId === leaf1)!;
 
@@ -851,7 +851,7 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
     );
 
     // The condensed summary round-trips through getSummaries with kind/depth.
-    const after = store.getSummaries("conv-a");
+    const after = store.getSummaries(SCOPE_A);
     const condensed = after.find((s) => s.summaryId === condensedId);
     expect(condensed).toBeDefined();
     expect(condensed!.kind).toBe("condensed");
@@ -867,7 +867,7 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
 
     // context_items: the two summary-refs are replaced by ONE condensed
     // summary-ref at startOrdinal; ordinals stay dense/gap-free.
-    const items = store.getContextItems("conv-a");
+    const items = store.getContextItems(SCOPE_A);
     expect(items).toHaveLength(1);
     expect(items[0]!.ordinal).toBe(0);
     expect(items[0]!.refKind).toBe("summary");
@@ -908,7 +908,7 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
 
     // Reading back through getSummaries proves the widened CHECK accepted the
     // insert AND the z.string() row schema parses kind='condensed' (no drift).
-    const condensed = store.getSummaries("conv-a").find((s) => s.summaryId === condensedId);
+    const condensed = store.getSummaries(SCOPE_A).find((s) => s.summaryId === condensedId);
     expect(condensed).toBeDefined();
     expect(condensed!.kind).toBe("condensed");
 
@@ -922,11 +922,11 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
   // ── Test D: no regression — the leaf path is unchanged ──
   it("appendLeafSummary still produces a kind='leaf' depth-0 row under the widened union (no regression)", () => {
     seedMessages(3);
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
 
     const leafId = store.appendLeafSummary(leafInput(0, 1));
 
-    const leaf = store.getSummaries("conv-a").find((s) => s.summaryId === leafId);
+    const leaf = store.getSummaries(SCOPE_A).find((s) => s.summaryId === leafId);
     expect(leaf).toBeDefined();
     expect(leaf!.kind).toBe("leaf");
     expect(leaf!.depth).toBe(0);
@@ -941,7 +941,7 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
       condensedInput([leaf1], 1, 1, { depth: 1 }),
     );
 
-    const items = store.getContextItems("conv-a");
+    const items = store.getContextItems(SCOPE_A);
     expect(items).toHaveLength(2); // [leaf0, condensed]
     expect(items.map((i) => i.ordinal)).toEqual([0, 1]);
     expect(items[0]!.refId).toBe(leaf0);
@@ -952,12 +952,12 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
   // ── Losslessness: a condensed pass NEVER deletes the child summary rows ──
   it("appendCondensedSummary NEVER deletes the child lcd_summaries rows — the children survive (losslessness ledger)", () => {
     const { leaf0, leaf1 } = seedTwoContiguousLeaves();
-    expect(store.getSummaries("conv-a")).toHaveLength(2);
+    expect(store.getSummaries(SCOPE_A)).toHaveLength(2);
 
     store.appendCondensedSummary(condensedInput([leaf0, leaf1], 0, 1));
 
     // Both children + the new condensed summary are all present (3 total).
-    const summaries = store.getSummaries("conv-a");
+    const summaries = store.getSummaries(SCOPE_A);
     expect(summaries).toHaveLength(3);
     expect(summaries.some((s) => s.summaryId === leaf0)).toBe(true);
     expect(summaries.some((s) => s.summaryId === leaf1)).toBe(true);
@@ -1003,13 +1003,13 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
 
   it("rejects a condensed range that still contains a surviving message-ref — never collapses a raw message into a condensed ref (WR-02)", () => {
     seedMessages(3); // view [m0, m1, m2] at ords 0,1,2
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
     // Collapse only m1 → view [m0, leaf, m2] at ords 0,1,2. The range [0,1] now
     // spans a surviving message-ref (m0) AND a summary-ref (the leaf).
     const leaf = store.appendLeafSummary(leafInput(1, 1));
 
-    const summariesBefore = store.getSummaries("conv-a").length;
-    const itemsBefore = store.getContextItems("conv-a");
+    const summariesBefore = store.getSummaries(SCOPE_A).length;
+    const itemsBefore = store.getContextItems(SCOPE_A);
 
     // Condensing across the surviving message-ref must throw (a condensed run is
     // summary-refs ONLY — collapsing m0 here would break losslessness for m0,
@@ -1020,8 +1020,8 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
 
     // The throw rolled back the whole transaction (db.transaction is atomic): no
     // condensed summary persisted, the context view is untouched.
-    expect(store.getSummaries("conv-a").length).toBe(summariesBefore);
-    const itemsAfter = store.getContextItems("conv-a");
+    expect(store.getSummaries(SCOPE_A).length).toBe(summariesBefore);
+    const itemsAfter = store.getContextItems(SCOPE_A);
     expect(itemsAfter.map((i) => i.refId)).toEqual(itemsBefore.map((i) => i.refId));
   });
 });
@@ -1073,7 +1073,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
       parts: [{ kind: "text", metadata: { raw: { type: "text", text }, rawType: "text" } }],
     });
     // The store assigns ids internally; resolve by seq from the read path.
-    const msg = store.getMessages(scope.conversationId).find((m) => m.seq === seq);
+    const msg = store.getMessages(scope).find((m) => m.seq === seq);
     return msg!.id;
   }
 
@@ -1129,46 +1129,46 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
   it("getSummaryChildren returns the condensed summary's immediate child summaries scoped by conversation", () => {
     // m0..m3 → collapse [0,1]→leaf0, [1,2]→leaf1, then condense [0,1]→condensed.
     seedMessages(4);
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
     const leaf0 = store.appendLeafSummary(leafInput(0, 1));
     const leaf1 = store.appendLeafSummary(leafInput(1, 2));
     const condensedId = store.appendCondensedSummary(condensedInput([leaf0, leaf1], 0, 1, { depth: 1 }));
 
-    const children = store.getSummaryChildren("conv-a", condensedId);
+    const children = store.getSummaryChildren(SCOPE_A, condensedId);
     expect(children.map((c) => c.summaryId).sort()).toEqual([leaf0, leaf1].sort());
     // Every returned child is a full LcdSummary DTO (not just an id).
     expect(children.every((c) => c.kind === "leaf" && typeof c.content === "string")).toBe(true);
 
     // A DIFFERENT conversation never sees these children.
-    expect(store.getSummaryChildren("conv-b", condensedId)).toHaveLength(0);
+    expect(store.getSummaryChildren(SCOPE_B, condensedId)).toHaveLength(0);
     // A leaf (no children) returns [].
-    expect(store.getSummaryChildren("conv-a", leaf0)).toHaveLength(0);
+    expect(store.getSummaryChildren(SCOPE_A, leaf0)).toHaveLength(0);
   });
 
   it("getSummaryMessages returns the message ids a leaf summary covers in order", () => {
     seedMessages(4); // m0..m3
-    const ids = store.getMessages("conv-a").map((m) => m.id); // seq order
-    store.getContextItems("conv-a");
+    const ids = store.getMessages(SCOPE_A).map((m) => m.id); // seq order
+    store.getContextItems(SCOPE_A);
     // Collapse [1,3] → covers m1,m2,m3.
     const leafId = store.appendLeafSummary(leafInput(1, 3));
 
-    const covered = store.getSummaryMessages("conv-a", leafId);
+    const covered = store.getSummaryMessages(SCOPE_A, leafId);
     expect(covered).toEqual([ids[1], ids[2], ids[3]]);
 
     // Unknown summaryId → [].
-    expect(store.getSummaryMessages("conv-a", "does-not-exist")).toHaveLength(0);
+    expect(store.getSummaryMessages(SCOPE_A, "does-not-exist")).toHaveLength(0);
     // Wrong conversation → [] (scoped).
-    expect(store.getSummaryMessages("conv-b", leafId)).toHaveLength(0);
+    expect(store.getSummaryMessages(SCOPE_B, leafId)).toHaveLength(0);
   });
 
   it("searchLcd finds a summary by full-text content when FTS5 is available", () => {
     seedMessages(2);
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
     const summaryId = store.appendLeafSummary(
       leafInput(0, 1, { content: "Q3 quarterly revenue grew sharply" }),
     );
 
-    const hits = store.searchLcd("conv-a", "revenue", { limit: 10 });
+    const hits = store.searchLcd(SCOPE_A, "revenue", { limit: 10 });
     const hit = hits.find((h) => h.refId === summaryId);
     expect(hit).toBeDefined();
     expect(hit!.kind).toBe("summary");
@@ -1179,7 +1179,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
   it("searchLcd finds a message by rendered part text when FTS5 is available", () => {
     const messageId = appendTextMessage("we should deploy the canary build first", 0);
 
-    const hits = store.searchLcd("conv-a", "canary", { limit: 10, scope: "messages" });
+    const hits = store.searchLcd(SCOPE_A, "canary", { limit: 10, scope: "messages" });
     const hit = hits.find((h) => h.refId === messageId);
     expect(hit).toBeDefined();
     expect(hit!.kind).toBe("message");
@@ -1190,10 +1190,10 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
     // A message + a summary that both match "alpha".
     appendTextMessage("the alpha rollout", 0);
     appendTextMessage("unrelated text", 1);
-    store.getContextItems("conv-a");
+    store.getContextItems(SCOPE_A);
     store.appendLeafSummary(leafInput(1, 1, { content: "alpha summary note" }));
 
-    const both = store.searchLcd("conv-a", "alpha", { limit: 10, scope: "both" });
+    const both = store.searchLcd(SCOPE_A, "alpha", { limit: 10, scope: "both" });
     const kinds = new Set(both.map((h) => h.kind));
     expect(kinds.has("message")).toBe(true);
     expect(kinds.has("summary")).toBe(true);
@@ -1203,10 +1203,10 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
     appendTextMessage("shared keyword zebra", 0, SCOPE_A);
     appendTextMessage("shared keyword zebra", 0, SCOPE_B);
 
-    const aHits = store.searchLcd("conv-a", "zebra", { limit: 10, scope: "messages" });
+    const aHits = store.searchLcd(SCOPE_A, "zebra", { limit: 10, scope: "messages" });
     expect(aHits.length).toBeGreaterThan(0);
     // Every hit belongs to conv-a — none of conv-b's message ids appear.
-    const bIds = new Set(store.getMessages("conv-b").map((m) => m.id));
+    const bIds = new Set(store.getMessages(SCOPE_B).map((m) => m.id));
     expect(aHits.some((h) => bIds.has(h.refId))).toBe(false);
   });
 
@@ -1237,12 +1237,20 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
       VALUES ('pre1','conv-a','t','a','s','leaf',0,1,1,1,1,'preexisting margin figures','[]',0,0,1)
     `).run();
 
-    // NOW run ensureLcdTables — it must add the FTS tables AND backfill ('rebuild')
-    // the pre-existing summary row so searchLcd finds it.
+    // NOW run ensureLcdTables — it must add the FTS tables (incl. agent_id
+    // UNINDEXED) AND backfill ('rebuild') the pre-existing summary row, carrying
+    // its agent_id, so an agent-scoped searchLcd finds it (R4).
     ensureLcdTables(bare);
     const bareStore = createLcdStore(bare);
 
-    const hits = bareStore.searchLcd("conv-a", "margin", { limit: 10, scope: "summaries" });
+    // Scope matches the directly-seeded row (conversation_id 'conv-a', agent_id 'a').
+    const preScope: ContextStoreScope = {
+      conversationId: "conv-a",
+      tenantId: "t",
+      agentId: "a",
+      sessionKey: "s",
+    };
+    const hits = bareStore.searchLcd(preScope, "margin", { limit: 10, scope: "summaries" });
     expect(hits.some((h) => h.refId === "pre1")).toBe(true);
   });
 });

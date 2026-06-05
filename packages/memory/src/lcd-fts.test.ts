@@ -61,7 +61,7 @@ describe("lcd-fts — LIKE fallback when FTS5 is unavailable", () => {
     // No FTS table exists → the probe reports unavailable → LIKE scan, never throws.
     let hits: ReturnType<typeof searchLcdImpl> = [];
     expect(() => {
-      hits = searchLcdImpl(db, "conv-a", "revenue", { limit: 10, scope: "summaries" });
+      hits = searchLcdImpl(db, "conv-a", "a", "revenue", { limit: 10, scope: "summaries" });
     }).not.toThrow();
 
     const hit = hits.find((h) => h.refId === "s1");
@@ -84,7 +84,7 @@ describe("lcd-fts — LIKE fallback when FTS5 is unavailable", () => {
       JSON.stringify({ raw: { type: "text", text: "ship the falcon release" }, rawType: "text" }),
     );
 
-    const hits = searchLcdImpl(db, "conv-a", "falcon", { limit: 10, scope: "messages" });
+    const hits = searchLcdImpl(db, "conv-a", "a", "falcon", { limit: 10, scope: "messages" });
     expect(hits.map((h) => h.refId)).toContain("m1");
     expect(hits.some((h) => h.refId === "m2")).toBe(false); // conv-b excluded
     expect(hits.every((h) => h.rank === undefined)).toBe(true);
@@ -100,7 +100,7 @@ describe("lcd-fts — LIKE fallback when FTS5 is unavailable", () => {
         VALUES (?,'conv-a','t','a','s','leaf',0,1,1,1,1,?, '[]',0,0,?)
       `).run(`s${i}`, `keyword match number ${i}`, i);
     }
-    const hits = searchLcdImpl(db, "conv-a", "keyword", { limit: 2, scope: "summaries" });
+    const hits = searchLcdImpl(db, "conv-a", "a", "keyword", { limit: 2, scope: "summaries" });
     expect(hits.length).toBeLessThanOrEqual(2);
   });
 });
@@ -184,7 +184,7 @@ describe("lcd-fts — FTS path degrades a corrupt hit PER ROW, not all-or-nothin
       ],
     });
 
-    const hits = searchLcdImpl(db, "conv-a", "revenue", { limit: 10, scope: "summaries" });
+    const hits = searchLcdImpl(db, "conv-a", "a", "revenue", { limit: 10, scope: "summaries" });
 
     // The good row survives the bad sibling (WR-01: one bad row must not poison
     // the whole result set).
@@ -208,7 +208,7 @@ describe("lcd-fts — scope=both merges fairly across the two FTS tables (WR-03)
       ],
     });
 
-    const hits = searchLcdImpl(db, "conv-a", "match", { limit: 2, scope: "both" });
+    const hits = searchLcdImpl(db, "conv-a", "a", "match", { limit: 2, scope: "both" });
 
     expect(hits.length).toBe(2);
     // The summary table must NOT be wholly evicted by the message table's
@@ -239,7 +239,7 @@ describe("lcd-fts — scope=both merges fairly across the two FTS tables (WR-03)
       ],
     });
 
-    const hits = searchLcdImpl(db, "conv-a", "one", { limit: 6, scope: "both" });
+    const hits = searchLcdImpl(db, "conv-a", "a", "one", { limit: 6, scope: "both" });
 
     expect(hits.length).toBe(6);
     const order = hits.map((h) => h.refId);

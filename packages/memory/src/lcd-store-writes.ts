@@ -41,6 +41,7 @@ import type Database from "better-sqlite3";
 import {
   type AppendCondensedSummaryInput,
   type AppendSummaryInput,
+  type ContextStoreScope,
   type LcdContextItem,
   type LcdRefKind,
 } from "@comis/core";
@@ -59,8 +60,8 @@ import type {
  * captured exactly these; passing them keeps the relocation byte-identical).
  */
 export interface LcdSummaryWriteDeps {
-  /** Lazy-seed context_items 1:1 from lcd_messages for a fresh conversation. */
-  seedContextItems: (conversationId: string) => void;
+  /** Lazy-seed context_items 1:1 from lcd_messages for a fresh (conversation, agent, tenant) — R4 agent-scoped (132-03). */
+  seedContextItems: (scope: ContextStoreScope) => void;
   /** Covered run [start,end] inclusive, ordinal-ascending. */
   selectCtxItemsInRange: Database.Statement;
   /** Seq-ordered (id, created_at) projection — the time-range source. */
@@ -121,15 +122,20 @@ export function buildAppendLeafSummaryTxn(
 
   return db.transaction((input: AppendSummaryInput): string => {
     const conversationId = input.scope.conversationId;
+    // R4 (132-03): the model-facing view + the seed source are per (conversation,
+    // agent, tenant), so every range op below binds the agentId+tenantId from the
+    // input scope — a leaf pass touches ONLY the acting agent's view (WR-02).
+    const agentId = input.scope.agentId;
+    const tenantId = input.scope.tenantId;
     // Ensure the model-facing view exists before range-replacing it (auto-seed
     // so a leaf pass works even if getContextItems was never called first).
-    seedContextItems(conversationId);
+    seedContextItems(input.scope);
 
     // The covered run [start,end]: gather the message refIds it covers (only
     // `message`-refs link to lcd_messages — a `summary`-ref over a prior leaf is
     // possible in later phases but in 129 the eviction selects a message run).
     const coveredItems: LcdContextItem[] = [];
-    for (const raw of selectCtxItemsInRange.all(conversationId, input.startOrdinal, input.endOrdinal)) {
+    for (const raw of selectCtxItemsInRange.all(conversationId, agentId, tenantId, input.startOrdinal, input.endOrdinal)) {
       const parsed = ctxItemRowMapper.parseOptionalRow(raw);
       if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
       coveredItems.push({
@@ -148,7 +154,7 @@ export function buildAppendLeafSummaryTxn(
     const coveredSet = new Set(coveredMessageIds);
     let earliestAt = Number.POSITIVE_INFINITY;
     let latestAt = Number.NEGATIVE_INFINITY;
-    for (const rawMsg of selectMsgSeed.all(conversationId)) {
+    for (const rawMsg of selectMsgSeed.all(conversationId, agentId, tenantId)) {
       const parsed = messageSeedRowMapper.parseOptionalRow(rawMsg);
       if (!parsed.ok || !parsed.value) continue;
       if (!coveredSet.has(parsed.value.id)) continue;
@@ -186,7 +192,7 @@ export function buildAppendLeafSummaryTxn(
     }
 
     // 3. Delete the [start,end] context_items rows (vacates those ordinals).
-    deleteCtxItemsInRange.run(conversationId, input.startOrdinal, input.endOrdinal);
+    deleteCtxItemsInRange.run(conversationId, agentId, tenantId, input.startOrdinal, input.endOrdinal);
 
     // 4. Insert the summary-ref at ordinal = startOrdinal (a now-vacated slot).
     insertCtxItem.run(
@@ -205,11 +211,11 @@ export function buildAppendLeafSummaryTxn(
     //    each target slot is already vacated (no transient UNIQUE-index dup).
     const shift = input.endOrdinal - input.startOrdinal;
     if (shift > 0) {
-      for (const raw of selectCtxOrdinalsAbove.all(conversationId, input.endOrdinal)) {
+      for (const raw of selectCtxOrdinalsAbove.all(conversationId, agentId, tenantId, input.endOrdinal)) {
         const parsed = ctxOrdinalRowMapper.parseOptionalRow(raw);
         if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
         const ordinal = parsed.value.ordinal;
-        updateCtxItemOrdinal.run(ordinal - shift, conversationId, ordinal);
+        updateCtxItemOrdinal.run(ordinal - shift, conversationId, agentId, tenantId, ordinal);
       }
     }
 
@@ -253,10 +259,14 @@ export function buildAppendCondensedSummaryTxn(
 
   return db.transaction((input: AppendCondensedSummaryInput): string => {
     const conversationId = input.scope.conversationId;
+    // R4 (132-03): agent-scoped range ops (per (conversation, agent, tenant)) —
+    // a condense pass touches ONLY the acting agent's view (WR-02).
+    const agentId = input.scope.agentId;
+    const tenantId = input.scope.tenantId;
     // Ensure the model-facing view exists before range-replacing it (the same
     // auto-seed guard the leaf txn uses — a condensed pass works even if
     // getContextItems was never called first).
-    seedContextItems(conversationId);
+    seedContextItems(input.scope);
 
     // T-130 tamper guard (WR-02) — mirror the leaf path's T-129-22 discipline:
     // DERIVE the child set FROM the summary-refs actually living in the replaced
@@ -274,7 +284,7 @@ export function buildAppendCondensedSummaryTxn(
     //       caller's intent. The `input.childSummaryIds` are therefore advisory:
     //       the range is the single authority (one source of truth).
     const inRangeChildIds: string[] = [];
-    for (const raw of selectCtxItemsInRange.all(conversationId, input.startOrdinal, input.endOrdinal)) {
+    for (const raw of selectCtxItemsInRange.all(conversationId, agentId, tenantId, input.startOrdinal, input.endOrdinal)) {
       const parsed = ctxItemRowMapper.parseOptionalRow(raw);
       if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
       if (parsed.value.ref_kind !== "summary") {
@@ -292,7 +302,7 @@ export function buildAppendCondensedSummaryTxn(
     let descendantCount = 0;
     let earliestAt = Number.POSITIVE_INFINITY;
     let latestAt = Number.NEGATIVE_INFINITY;
-    for (const raw of selectSummaries.all(conversationId)) {
+    for (const raw of selectSummaries.all(conversationId, agentId, tenantId)) {
       const parsed = summaryRowMapper.parseOptionalRow(raw);
       if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
       if (!childSet.has(parsed.value.summary_id)) continue;
@@ -335,7 +345,7 @@ export function buildAppendCondensedSummaryTxn(
     }
 
     // 3. Delete the [start,end] context_items rows (vacates those ordinals).
-    deleteCtxItemsInRange.run(conversationId, input.startOrdinal, input.endOrdinal);
+    deleteCtxItemsInRange.run(conversationId, agentId, tenantId, input.startOrdinal, input.endOrdinal);
 
     // 4. Insert the condensed summary-ref at ordinal = startOrdinal (a condensed
     //    summary is still a `summary`-ref, same as a leaf).
@@ -355,11 +365,11 @@ export function buildAppendCondensedSummaryTxn(
     //    vacated (no transient UNIQUE-index dup). Identical to the leaf txn.
     const shift = input.endOrdinal - input.startOrdinal;
     if (shift > 0) {
-      for (const raw of selectCtxOrdinalsAbove.all(conversationId, input.endOrdinal)) {
+      for (const raw of selectCtxOrdinalsAbove.all(conversationId, agentId, tenantId, input.endOrdinal)) {
         const parsed = ctxOrdinalRowMapper.parseOptionalRow(raw);
         if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
         const ordinal = parsed.value.ordinal;
-        updateCtxItemOrdinal.run(ordinal - shift, conversationId, ordinal);
+        updateCtxItemOrdinal.run(ordinal - shift, conversationId, agentId, tenantId, ordinal);
       }
     }
 
