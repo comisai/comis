@@ -144,6 +144,13 @@ vi.mock("@comis/skills/tools", () => ({
     checkWallClock: vi.fn(() => undefined),
     forget: vi.fn(),
   })),
+  // In-session expansion-loop ctx_* factories (Phase 131, E1/E2). The real
+  // wireContextTools (imported relatively from ./setup-context-tools.js — NOT
+  // mocked) resolves these from @comis/skills/tools, so the dag-gated wiring
+  // pushes named tools the gate test can assert on.
+  createCtxSearchTool: vi.fn(() => ({ name: "ctx_search", execute: vi.fn() })),
+  createCtxInspectTool: vi.fn(() => ({ name: "ctx_inspect", execute: vi.fn() })),
+  createCtxExpandTool: vi.fn(() => ({ name: "ctx_expand", execute: vi.fn() })),
 }));
 
 // `createPlatformToolRegistry` mock returns descriptors that delegate back
@@ -1722,6 +1729,85 @@ describe("setupTools", () => {
       expect(registry.get).not.toHaveBeenCalled();
       const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
       expect(pipelineArgs.fileStateTracker).toBe(explicitTracker);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 131-05: dag-gated ctx_* in-session expansion-loop wiring (E1/E2)
+  // -------------------------------------------------------------------------
+
+  describe("ctx_* in-session expansion tools (dag-gated wiring)", () => {
+    const CTX_NAMES = ["ctx_search", "ctx_inspect", "ctx_expand"];
+
+    /** A no-op ContextStorePort double (only the wiring identity matters here). */
+    function makeFakeLcdStore() {
+      return {
+        searchLcd: vi.fn(() => []),
+        getSummaries: vi.fn(() => []),
+        getSummaryChildren: vi.fn(() => []),
+        getSummaryMessages: vi.fn(() => []),
+        getMessages: vi.fn(() => []),
+      } as any;
+    }
+
+    /** Build a deps object with the agent pinned to a given contextEngine version. */
+    function depsWithVersion(version: "dag" | "pipeline", lcdStore?: unknown) {
+      return createMinimalDeps({
+        agents: {
+          "agent-1": {
+            skills: {
+              builtinTools: { browser: false, exec: false, process: false },
+              toolPolicy: { profile: "default" },
+              discoveryPaths: [],
+              execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+            },
+            contextEngine: { version, maxExpandTokens: 4_000 },
+          } as any,
+        },
+        ...(lcdStore !== undefined ? { lcdStore: lcdStore as any } : {}),
+      });
+    }
+
+    it("wires ctx_search/ctx_inspect/ctx_expand when contextEngine version is dag and a store is present", async () => {
+      const deps = depsWithVersion("dag", makeFakeLcdStore());
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+
+      await assembleToolsForAgent("agent-1");
+
+      const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      const toolNames = tools.map((t: any) => t.name);
+      for (const name of CTX_NAMES) {
+        expect(toolNames).toContain(name);
+      }
+    });
+
+    it("does NOT wire the ctx_* tools in pipeline mode (even with a store present)", async () => {
+      const deps = depsWithVersion("pipeline", makeFakeLcdStore());
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+
+      await assembleToolsForAgent("agent-1");
+
+      const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      const toolNames = tools.map((t: any) => t.name);
+      for (const name of CTX_NAMES) {
+        expect(toolNames).not.toContain(name);
+      }
+    });
+
+    it("does NOT wire the ctx_* tools in dag mode when no lcdStore is injected", async () => {
+      const deps = depsWithVersion("dag"); // no lcdStore on ToolsDeps
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+
+      await assembleToolsForAgent("agent-1");
+
+      const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      const toolNames = tools.map((t: any) => t.name);
+      for (const name of CTX_NAMES) {
+        expect(toolNames).not.toContain(name);
+      }
     });
   });
 
