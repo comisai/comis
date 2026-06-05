@@ -33,7 +33,12 @@ const CtxSearchParams = Type.Object({
     Type.String({ description: "messages | summaries | both (default both)" }),
   ),
   limit: Type.Optional(
-    Type.Integer({ description: "Max hits (default 10, max 30)", minimum: 1, maximum: 30 }),
+    // NO hard minimum/maximum: the handler is the single clamp authority
+    // (Math.min(Math.max(1, requested), 30)). A hard schema bound made the agent
+    // framework REJECT an out-of-range value (e.g. the LLM's round-number limit:50)
+    // before execute() could clamp it, turning a recoverable lookup into a
+    // [tool failure]. Keep it an integer; the description states the effective range.
+    Type.Integer({ description: "Max hits (default 10, clamped to 1..30)" }),
   ),
 });
 
