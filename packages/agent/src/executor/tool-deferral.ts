@@ -718,7 +718,13 @@ export function createDiscoverTool(
       let embeddingUsed = false;
       if (embeddingPort && ranked.length > 0) {
         try {
-          const queryResult = await embeddingPort.embed(query);
+          // FIX: cap the query length before embedding. A ~69K-token query
+          // overflows a local embedding model's context window ("Input is longer
+          // than the context size") and would drop the semantic lane entirely;
+          // the leading MAX_EMBED_QUERY_CHARS preserve the query's signal. The
+          // BM25 lane above already ran on the full query, so recall is intact.
+          const embedQuery = query.length > MAX_EMBED_QUERY_CHARS ? query.slice(0, MAX_EMBED_QUERY_CHARS) : query;
+          const queryResult = await embeddingPort.embed(embedQuery);
           if (queryResult.ok) {
             const queryVec = queryResult.value;
             const textsToEmbed = ranked.map(r => {
