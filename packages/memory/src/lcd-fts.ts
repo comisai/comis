@@ -90,8 +90,15 @@ function safeStringify(value: unknown): string {
  * compiled). Runs a trivial prepared MATCH against `lcd_summaries_fts` in a try;
  * a `no such module: fts5` (uncompiled) OR `no such table` (DDL guarded off /
  * base-tables-only db) verdict is `false`. Memoized per db.
+ *
+ * Exported (WR-03) so the lcd-store append-path populate can GATE its
+ * contentless-FTS insert on this verdict — turning the expected "FTS5 absent"
+ * case into a clean conditional skip rather than an exception swallowed by an
+ * over-broad bare `catch {}`, so the narrowed remaining catch covers only a
+ * genuinely-exceptional populate failure (the same WeakMap memo is reused, so the
+ * per-append cost is one cache hit after the first probe).
  */
-function isFtsAvailable(db: Database.Database): boolean {
+export function isFtsAvailable(db: Database.Database): boolean {
   const cached = ftsAvailabilityCache.get(db);
   if (cached !== undefined) return cached;
   // Probe in an IIFE so `available` is assigned exactly once (no dead

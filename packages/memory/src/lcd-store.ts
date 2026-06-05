@@ -62,7 +62,7 @@ import type { LcdSearchHit } from "@comis/core";
 import type { Message } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { renderMessageFtsText, searchLcdImpl } from "./lcd-fts.js";
+import { renderMessageFtsText, searchLcdImpl, isFtsAvailable } from "./lcd-fts.js";
 import { createIngestSerializer } from "./lcd-ingest-serializer.js";
 import {
   buildAppendCondensedSummaryTxn,
@@ -108,6 +108,14 @@ const ctxOrdinalRowMapper = createRowMapper(CtxOrdinalRowSchema);
 /** Single-column message-id projection for the E1 leaf→message walk (no `as` cast). */
 const SummaryMessageIdRowSchema = z.strictObject({ message_id: z.string() });
 const summaryMessageIdRowMapper = createRowMapper(SummaryMessageIdRowSchema);
+
+/**
+ * Single-column rowid projection for the contentless-FTS populate (WR-03 — the
+ * sanctioned `createRowMapper(z.strictObject)` read replacing the raw
+ * `as { rowid: number } | undefined` cast the §6.8 untyped-sqlite rule forbids).
+ */
+const MessageRowidRowSchema = z.strictObject({ rowid: z.number() });
+const messageRowidRowMapper = createRowMapper(MessageRowidRowSchema);
 
 /** The verbatim canonical block is opaque at the row layer (F1). */
 const LcdPartMetadataSchema = z.looseObject({
@@ -419,22 +427,41 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     // part-text so ctx_search finds this message. lcd_messages has no content
     // column (text is JSON in the parts), so the adapter — not a trigger — is the
     // only place that can render + index it; keep the FTS rowid in step with the
-    // lcd_messages rowid (joinable). GUARDED: an FTS5-less host (no table) must
-    // NOT fail the append — search degrades to LIKE.
-    try {
-      const rowidRow = selectMessageRowid.get(messageId) as { rowid: number } | undefined;
-      if (rowidRow) {
-        insertMessageFts.run(
-          rowidRow.rowid,
-          renderMessageFtsText(input.parts),
-          input.scope.conversationId,
-          input.scope.agentId, // R4: agent_id UNINDEXED so the FTS MATCH filters by agent (WR-02)
-          messageId,
-        );
+    // lcd_messages rowid (joinable).
+    //
+    // WR-03: GATE the populate on isFtsAvailable(db) (memoized per db). On an
+    // FTS5-uncompiled host the lcd_*_fts tables are absent, so this is a CLEAN
+    // CONDITIONAL SKIP — the EXPECTED degraded-host case no longer rides the
+    // exception path (the old bare `catch {}` swallowed it indistinguishably from
+    // a genuine fault, masking a real populate regression — search would silently
+    // degrade with no signal). The remaining narrow try/catch then covers ONLY a
+    // genuinely-exceptional populate failure (e.g. on-disk FTS corruption after a
+    // healthy boot). The swallow is RETAINED — and must be — because appendTxn is
+    // a db.transaction: re-throwing would roll back the message+parts write the
+    // contentless index is merely best-effort for (LOSSLESS-CLAW §4: the lossless
+    // base tables are authoritative; search is a recoverable derived index that
+    // the LIKE fallback also covers). @comis/memory is intentionally logger-free
+    // (AGENTS.md §2.4 — no getLogger import), so this content-free swallow is the
+    // floor; the agent-side boundary-observability line for FTS-populate health
+    // rides the injected-logger write path (Plan 128), not this layer.
+    if (isFtsAvailable(db)) {
+      try {
+        const parsedRowid = messageRowidRowMapper.parseOptionalRow(selectMessageRowid.get(messageId));
+        if (parsedRowid.ok && parsedRowid.value) {
+          insertMessageFts.run(
+            parsedRowid.value.rowid,
+            renderMessageFtsText(input.parts),
+            input.scope.conversationId,
+            input.scope.agentId, // R4: agent_id UNINDEXED so the FTS MATCH filters by agent (WR-02)
+            messageId,
+          );
+        }
+      } catch {
+        // FTS available at boot but the populate INSERT failed (genuinely
+        // exceptional — e.g. FTS index corruption). Best-effort: skip indexing
+        // THIS message rather than fail the authoritative base-table write
+        // (cannot re-throw inside the txn). The LIKE fallback still covers it.
       }
-    } catch {
-      // No lcd_messages_fts table (FTS5 uncompiled) → skip indexing; the LIKE
-      // fallback in searchLcd covers this message. Never fails the write path.
     }
   });
 
