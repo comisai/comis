@@ -72,7 +72,7 @@ describe.skipIf(!isLive)("Live — smoke (FND rig self-validation)", () => {
     await runLogOracle(logLines, { expectedErrors: [] });
   });
 
-  it("daemon boots and health RPC responds", async () => {
+  it("returns a truthy response when daemon boots and health RPC is called", async () => {
     const health = await rpcRequest(
       handle.gatewayUrl,
       "health",
