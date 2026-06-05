@@ -386,6 +386,36 @@ export function resetPairedMemoryDedupForTests(): void {
 }
 
 /**
+ * Decide whether the LCD afterTurn store passes (ingest + leaf + condense) run
+ * for this turn, based on the agent's effective context-engine version.
+ *
+ * The daemon injects the LCD ContextStorePort UNCONDITIONALLY
+ * (setup-agents-runtime.ts), but ONLY the dag engine READS the store: the
+ * assembler's dag branch (context-engine.ts — gated `version === "dag"`) and the
+ * ctx_* expansion tools (setup-tools.ts — gated `version === "dag" && lcdStore`).
+ * A pipeline agent therefore must NOT write `lcd_messages` or fire leaf/condense
+ * LLM summarization — that work is pure wasted cost + latency because nothing
+ * reads it.
+ *
+ * Symmetry with the read side: the executor resolves an ABSENT
+ * `config.contextEngine` via `ContextEngineConfigSchema.parse({})`, whose
+ * `version` defaults to "dag" (executor-context-engine-setup.ts). So an absent
+ * contextEngine (and an absent `version` within a present contextEngine) is
+ * treated as dag — exactly what the assembler does — and only an EXPLICIT
+ * `version: "pipeline"` skips the passes. This keeps write and read in agreement
+ * and makes the dag default flip non-breaking. The gate reads per-turn config,
+ * so flipping an agent pipeline→dag later takes effect on the very next turn (the
+ * first dag turn catches up via the ingest delta from an empty store).
+ *
+ * Pure: no I/O, no side effects. Exported for unit tests.
+ */
+export function shouldRunLcdStorePasses(config: {
+  contextEngine?: { version?: "pipeline" | "dag" };
+}): boolean {
+  return (config.contextEngine?.version ?? "dag") === "dag";
+}
+
+/**
  * Map an SDK finishReason to the SessionMetadata.sessionEnd.endReason enum.
  * Unknown reasons fall through to "error" — that's a defensive bucket for
  * provider strings we haven't classified yet (rather than dropping the
@@ -933,6 +963,16 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // injected clock, non-fatal (ingestTurn wraps each append per-entry). The
   // body lives in lcd-ingest.ts (this file is over the 800L cap).
   //
+  // FIX A: the block is gated on BOTH the store's presence AND the effective
+  // engine being dag (`shouldRunLcdStorePasses`). The daemon injects the store
+  // unconditionally, but ONLY dag mode READS it (the assembler's dag branch +
+  // the ctx_* tools). A pipeline agent that wrote `lcd_messages` and fired
+  // leaf/condense LLM summarization here paid pure wasted cost + latency because
+  // nothing reads the store in pipeline mode. The version decision mirrors the
+  // read side exactly (absent contextEngine ⇒ dag, matching the executor's
+  // `ContextEngineConfigSchema.parse({})` default); only an explicit
+  // `version: "pipeline"` skips the passes. See shouldRunLcdStorePasses.
+  //
   // Idempotency (T-128-09): the high-water mark `getMessages(conversationId).length`
   // is the persisted count (survives restarts); the delta `live.slice(persisted)`
   // appends only the not-yet-persisted tail. A retry with no new messages appends
@@ -941,7 +981,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // WARNs (errorKind `precondition`) rather than slicing past the end and either
   // persisting nothing forever or colliding on the unique (conversationId, seq)
   // index.
-  if (deps.contextStore) {
+  if (deps.contextStore && shouldRunLcdStorePasses(config)) {
     const conversationId = formattedKey;
     const scope: ContextStoreScope = {
       conversationId,
