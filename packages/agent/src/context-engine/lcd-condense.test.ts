@@ -23,7 +23,19 @@
  */
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, it, expect, vi } from "vitest";
+
+// B-5 twin (260605-ney): mock the SDK generateSummary so the test can read the
+// `model` argument buildCondenseSummarizeFn passes it. Hoisted above the SUT
+// import, exactly as lcd-leaf-summarizer.test.ts does for buildLeafSummarizeFn.
+// The existing summarizeCondensedChunk tests inject a stub `summarize` and never
+// reach buildCondenseSummarizeFn → generateSummary, so this mock does not affect them.
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+  generateSummary: vi.fn(async () => "summary"),
+}));
+import { generateSummary } from "@earendil-works/pi-coding-agent";
+
 import {
+  buildCondenseSummarizeFn,
   selectCondensableTier,
   summarizeCondensedChunk,
   type CondenseChildSummary,
@@ -224,5 +236,63 @@ describe("summarizeCondensedChunk — 3-level escalation, before-size is Σ chil
     });
     expect(result.level).toBe(1);
     expect(result.tokenCount).toBeLessThan(900);
+  });
+});
+
+// ===========================================================================
+// B-5 twin (260605-ney): buildCondenseSummarizeFn must pass a REAL pi-ai
+// Model<any> to generateSummary on the PRIMARY path — NOT the 4-field
+// CompactionModelSnapshot. Mirrors the leaf B-5 test (cf781ac7) verbatim in
+// shape: the snapshot lacks the provider-client runtime the SDK invokes, so
+// handing it to generateSummary throws every condense LLM call. The real Model is
+// the executor-resolved model threaded via deps.getRealModel.
+// ===========================================================================
+describe("buildCondenseSummarizeFn passes a REAL Model to generateSummary (B-5 twin)", () => {
+  // A sentinel "real Model" — carries a marker the 4-field snapshot lacks, so the
+  // test can prove the snapshot is NOT what generateSummary received.
+  const realModel = { id: "claude", provider: "anthropic", generate: () => {}, __realModel: true };
+  const snapshot = { provider: "anthropic", contextWindow: 200_000, reasoning: true } as const;
+
+  function condenseMessages(): AgentMessage[] {
+    return [
+      { role: "user", content: "summary alpha\n\n---\n\nsummary beta" } as unknown as AgentMessage,
+    ];
+  }
+
+  it("passes the real Model (deps.getRealModel()), not the 4-field snapshot, on the primary path (no override)", async () => {
+    (generateSummary as unknown as ReturnType<typeof vi.fn>).mockClear();
+    const summarize = buildCondenseSummarizeFn({
+      // The snapshot getter is present (capability reads) but MUST NOT be the LLM arg.
+      getModel: () => ({ ...snapshot }),
+      getRealModel: () => realModel,
+      getApiKey: async () => "test-key",
+    });
+
+    await summarize(condenseMessages(), { reserveTokens: 1_000 });
+
+    const call = (generateSummary as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    const modelArg = call[1]; // generateSummary(messages, model, reserveTokens, apiKey, ...)
+    // It is the REAL Model sentinel (carries the marker the snapshot lacks)…
+    expect(modelArg).toBe(realModel);
+    expect((modelArg as { __realModel?: boolean }).__realModel).toBe(true);
+    // …and is NOT the 4-field snapshot.
+    expect(modelArg).not.toEqual(snapshot);
+    expect((modelArg as { contextWindow?: number }).contextWindow).toBeUndefined();
+  });
+
+  it("still prefers the override's real Model when overrideModel is present (precedence unchanged)", async () => {
+    (generateSummary as unknown as ReturnType<typeof vi.fn>).mockClear();
+    const realOverride = { id: "haiku", provider: "anthropic", generate: () => {}, __override: true };
+    const summarize = buildCondenseSummarizeFn({
+      getModel: () => ({ ...snapshot }),
+      getRealModel: () => realModel,
+      getApiKey: async () => "primary-key",
+      overrideModel: { model: realOverride, getApiKey: async () => "override-key" },
+    });
+
+    await summarize(condenseMessages(), { reserveTokens: 1_000 });
+
+    const call = (generateSummary as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(call[1]).toBe(realOverride);
   });
 });
