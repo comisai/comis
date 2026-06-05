@@ -318,8 +318,8 @@ export async function maybeRunLeafPass(
 ): Promise<void> {
   // Gated on the summarizer deps + a positive window (a missing getter / model
   // is a clean skip, not a fault — mirrors the `deps.contextStore` ingest gate).
-  if (summarizerDeps === undefined) return;
-  if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) return;
+  if (summarizerDeps === undefined) { logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "no-summarizer-deps" }, "lcd leaf pass gate skip"); return; }
+  if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) { logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "bad-window", windowTokens: opts.windowTokens }, "lcd leaf pass gate skip"); return; }
 
   const conversationId = scope.conversationId;
   // O1: capture a pass-START clock read at entry (the injected clock CALLABLE —
@@ -335,7 +335,7 @@ export async function maybeRunLeafPass(
     // selects LIVE message-refs that resolve to an ordinal window (it collapses
     // the NEXT chunk instead of re-hitting the already-summarized oldest).
     const { history, ordinalById, resolvedTokens } = resolveContext(store, scope);
-    if (history.length === 0) return;
+    if (history.length === 0) { logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "empty-history", resolvedTokens, windowTokens: opts.windowTokens }, "lcd leaf pass gate skip"); return; }
 
     // Utilization = resolved context tokens / W. The numerator is the RESOLVED
     // view (summary-ref tokens + surviving message-ref tokens), the same set the
@@ -343,6 +343,7 @@ export async function maybeRunLeafPass(
     // and would keep the trigger perpetually over threshold). Tokens are the
     // stored authority (Pitfall 2): a re-estimate would EXCLUDE F3 thinking.
     const utilization = resolvedTokens / opts.windowTokens;
+    logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", historyLength: history.length, resolvedTokens, windowTokens: opts.windowTokens, utilization: Math.round(utilization * 1000) / 1000, contextThreshold: opts.contextThreshold }, "lcd leaf pass evaluated");
     if (utilization <= opts.contextThreshold) return; // inert below threshold.
 
     // Select the oldest out-of-tail chunk (pair-safe, capped at leafChunkTokens)
