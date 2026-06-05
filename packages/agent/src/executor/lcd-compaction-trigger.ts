@@ -69,6 +69,10 @@ import {
   type LeafChunkItem,
   type LeafSummarizerDeps,
 } from "../context-engine/lcd-leaf-summarizer.js";
+import type {
+  CondenseChildSummary,
+  SummaryRefRun,
+} from "../context-engine/lcd-condense.js";
 
 /**
  * The gating + sizing knobs for one leaf pass, sourced from `config.contextEngine`
@@ -96,7 +100,7 @@ export interface LeafPassOptions {
  * (raw never shrinks) yet make no progress (it re-selects the already-collapsed
  * oldest and fails the ordinal-window lookup).
  */
-interface ResolvedContext {
+export interface ResolvedContext {
   /**
    * The contiguous run of `message`-ref items, oldest-first, that FOLLOWS any
    * leading `summary`-refs (a leaf never re-summarizes a prior summary in 129;
@@ -115,6 +119,18 @@ interface ResolvedContext {
    * performed (CR-02) — not the un-compacted raw history.
    */
   resolvedTokens: number;
+  /**
+   * The per-depth CONTIGUOUS summary-ref runs (Phase 130, C2 — RESEARCH Open Q2):
+   * walking `context_items` in order, every maximal run of `summary`-refs sharing
+   * one `depth` is one {@link SummaryRefRun}; a run BREAKS at any message-ref or a
+   * depth change. The condense pass selects the shallowest run ≥ fanout from this
+   * list — so utilization (CR-02), leaf selection (CR-01) AND condense selection
+   * all come from the SAME single `getContextItems`/`getMessages`/`getSummaries`
+   * read (the "one resolved view is source of truth" invariant). Because a run is
+   * contiguous by construction, the condense window can never span a
+   * non-contiguous fanout (Pitfall 3 / T-130-08).
+   */
+  summaryRunsByDepth: SummaryRefRun[];
 }
 
 /**
@@ -127,41 +143,99 @@ interface ResolvedContext {
  * contiguous). Summary-ref tokens are summed across the WHOLE view for
  * utilization even though they are not selectable chunk items.
  */
-function resolveContext(store: ContextStorePort, conversationId: string): ResolvedContext {
+export function resolveContext(store: ContextStorePort, conversationId: string): ResolvedContext {
   const items = store.getContextItems(conversationId);
   const rowById = new Map(store.getMessages(conversationId).map((r) => [r.id, r]));
-  const summaryTokensById = new Map(
-    store.getSummaries(conversationId).map((s) => [s.summaryId, s.tokenCount]),
-  );
+  // Index summaries by id for BOTH the utilization token sum (CR-02) AND the
+  // per-depth contiguous-run construction (C2): the run needs each child's
+  // depth/content/tokenCount, all on the `LcdSummary` row.
+  const summaryById = new Map(store.getSummaries(conversationId).map((s) => [s.summaryId, s]));
 
   const history: LeafChunkItem[] = [];
   const ordinalById = new Map<string, number>();
   let resolvedTokens = 0;
 
+  // Per-depth contiguous summary-ref run accumulation (C2). `summaryRunsByDepth`
+  // collects every COMPLETED run; `openRun` is the run currently being extended
+  // (flushed when the next item is a message-ref OR a summary-ref of a different
+  // depth). The leaf `history`/`ordinalById`/`resolvedTokens` are UNCHANGED — the
+  // condense data rides alongside on the SAME single walk (one resolved view).
+  const summaryRunsByDepth: SummaryRefRun[] = [];
+  let openRun: SummaryRefRun | undefined;
+  const flushOpenRun = (): void => {
+    if (openRun !== undefined) {
+      summaryRunsByDepth.push(openRun);
+      openRun = undefined;
+    }
+  };
+
+  // The leaf-history collection STOPS after the first contiguous message run (it
+  // never spans a summary boundary so the leaf window stays contiguous). The
+  // condense-run + token accumulation walk the WHOLE view regardless — so a
+  // Pitfall-3 layout `[s0 m1 s2 s3 s4]` still captures the trailing s2..s4 run
+  // even though the leaf walk stopped at s2. One read, two derived views.
+  let leafWalkStopped = false;
+
   for (const item of items) {
     if (item.refKind !== "message") {
-      // A summary terminal: it is part of the model-facing view (count its
-      // tokens for utilization), but it is NOT a selectable chunk item. Skip a
-      // LEADING summary (an already-collapsed oldest leaf); once the contiguous
-      // message run has started, STOP — never span across a summary so the
-      // persisted [startOrdinal, endOrdinal] window stays contiguous.
-      resolvedTokens += summaryTokensById.get(item.refId) ?? 0;
-      if (history.length === 0) continue;
-      break;
+      // A summary terminal. For utilization (CR-02) count its tokens across the
+      // WHOLE view. For the CONDENSE half it is a candidate child: extend the open
+      // same-depth run or start a new one (a depth change breaks the prior run).
+      const summary = summaryById.get(item.refId);
+      resolvedTokens += summary?.tokenCount ?? 0;
+
+      if (summary !== undefined) {
+        const childItem: CondenseChildSummary = {
+          summaryId: summary.summaryId,
+          ordinal: item.ordinal,
+          depth: summary.depth,
+          content: summary.content,
+          tokenCount: summary.tokenCount,
+        };
+        if (openRun !== undefined && openRun.depth === summary.depth) {
+          openRun.children.push(childItem);
+          openRun.endOrdinal = item.ordinal;
+        } else {
+          flushOpenRun();
+          openRun = {
+            depth: summary.depth,
+            children: [childItem],
+            startOrdinal: item.ordinal,
+            endOrdinal: item.ordinal,
+          };
+        }
+      }
+
+      // LEAF-half contiguity (UNCHANGED semantics): skip a LEADING summary (an
+      // already-collapsed oldest leaf); once the contiguous message run has
+      // started, the leaf walk is DONE (never span across a summary). The condense
+      // accumulation above already ran for this item, so the full summary-ref
+      // prefix/suffix is captured even though the leaf walk stopped.
+      if (history.length > 0) leafWalkStopped = true;
+      continue;
     }
+    // A message-ref breaks any open summary run (Pitfall 3: a run never spans a
+    // surviving message-ref).
+    flushOpenRun();
     const row = rowById.get(item.refId);
     if (row === undefined) continue;
-    history.push({
-      id: row.id,
-      msg: partsToMessage(row) as unknown as AgentMessage,
-      tokens: row.tokenCount,
-      createdAt: row.createdAt,
-    });
-    ordinalById.set(row.id, item.ordinal);
+    // Only collect leaf history for the FIRST contiguous message run (do not span
+    // a summary boundary). resolvedTokens still sums every message-ref.
+    if (!leafWalkStopped) {
+      history.push({
+        id: row.id,
+        msg: partsToMessage(row) as unknown as AgentMessage,
+        tokens: row.tokenCount,
+        createdAt: row.createdAt,
+      });
+      ordinalById.set(row.id, item.ordinal);
+    }
     resolvedTokens += row.tokenCount;
   }
+  // Flush a run still open at the end of the view (a trailing summary-ref run).
+  flushOpenRun();
 
-  return { history, ordinalById, resolvedTokens };
+  return { history, ordinalById, resolvedTokens, summaryRunsByDepth };
 }
 
 /**

@@ -64,6 +64,14 @@ import { ingestTurnGuarded } from "./lcd-ingest.js";
 // the 800L cap); the call here is a single non-fatal invocation. The
 // agent↛memory cut: the trigger imports only the core port type + the core codec.
 import { runLeafPassAfterTurn } from "./lcd-compaction-trigger.js";
+// LCD afterTurn CONDENSE pass (Phase 130, C2). A second thin gated call right
+// after the leaf pass: when ≥condensedMinFanout contiguous same-depth summaries
+// have accumulated, fold the shallowest run into one depth+1 condensed summary.
+// Runs AFTER the leaf pass so a turn that just created the Nth leaf can fold it.
+// The body lives in lcd-condense-trigger.ts (this file is over the 800L cap); the
+// call here is a single non-fatal invocation. The agent↛memory cut: the condense
+// trigger imports only core types + the agent-side condense summarizer.
+import { runCondensePassAfterTurn } from "./lcd-condense-trigger.js";
 import type { LeafSummarizerDeps } from "../context-engine/lcd-leaf-summarizer.js";
 // In-package pure attribution fn (the agent↛memory cut — core types
 // only; the write-back is the daemon's job, off the recall-used bus event).
@@ -912,6 +920,23 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       scope,
       contextEngine: config.contextEngine,
       getSummarizerDeps: deps.getSummarizerDeps,
+      now: deps.clock.now(),
+      logger: deps.logger,
+      eventBus: deps.eventBus,
+    });
+
+    // NEW 130 (C2): afterTurn condense pass — fold ≥condensedMinFanout contiguous
+    // same-depth summaries into one depth+1 condensed summary. Runs AFTER the leaf
+    // pass (so the Nth leaf just created can immediately fold). REUSES the same
+    // getSummarizerDeps getter — the summarize seam summarizes whatever messages
+    // it is given (a leaf chunk OR a concatenated summary-of-summaries), so no new
+    // daemon dep is threaded. NON-FATAL (T-130-07): never rejects, so awaiting it
+    // cannot surface an error to the live turn. Body in lcd-condense-trigger.ts.
+    await runCondensePassAfterTurn({
+      store: deps.contextStore,
+      scope,
+      contextEngine: config.contextEngine,
+      getCondenseSummarizerDeps: deps.getSummarizerDeps,
       now: deps.clock.now(),
       logger: deps.logger,
       eventBus: deps.eventBus,
