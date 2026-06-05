@@ -928,6 +928,168 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
   });
 });
 
+describe("B-19: consecutive summary-ref head (defensive coalesce)", () => {
+  // DEFENSIVE guard — a documented NON-ISSUE on the mainline. EVIDENCE (planning):
+  // pi-ai's transform-messages.ts + anthropic.js convertMessages do NOT coalesce
+  // consecutive user-role messages, so ≥2 contiguous summary-refs reach the wire as
+  // separate `user` entries — BUT the Anthropic Messages API EXPLICITLY merges
+  // consecutive same-role turns server-side (no 400), which is why the real
+  // openai-codex run with a 3-leaf + 2-condensed head SUCCEEDED. Coalescing LOCALLY
+  // still earns its keep: (i) it stops distinct summaries from being silently
+  // muddied by an opaque server merge, and (ii) it is safe for STRICTER
+  // Anthropic-compatible endpoints (the z.ai-style ones pi-ai special-cases) that
+  // may enforce role alternation. So this is a small, local hardening, not a fix for
+  // a mainline crash.
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Seed N completed user/assistant text turns into the store (seq 0..2N-1). */
+  function seedTextTurns(count: number): Message[] {
+    const msgs: Message[] = [];
+    for (let i = 0; i < count; i++) {
+      msgs.push(userMsg(`u${i}`));
+      msgs.push(assistantText(`a${i}`));
+    }
+    for (let i = 0; i < msgs.length; i++) append(store, msgs[i] as Message, i);
+    return msgs;
+  }
+
+  it("Test B-19.1: ≥2 contiguous summary-refs at the head coalesce into ONE user message — no provider-invalid consecutive-same-role summary run", async () => {
+    // 6 turns (12 messages, seq 0..11 → ordinals 0..11: u0,a0,u1,a1,u2,a2,…).
+    // Force the lazy 1:1 seed, then range-replace TWO oldest ranges with TWO leaf
+    // summary-refs (as Plan05 Test A does once) so the resolved head is ≥2
+    // contiguous user-role summary-refs FOLLOWED BY an assistant message-ref (so
+    // coalescing the summary run yields a cleanly-alternating head — the plan only
+    // coalesces the summary run; message-refs alternate naturally).
+    const msgs = seedTextTurns(6);
+    store.getContextItems(SCOPE);
+    const SUMMARY_A = "LEAF-SUMMARY-A-OLDEST";
+    const SUMMARY_B = "LEAF-SUMMARY-B-NEXT";
+    // Collapse [0,1] (u0,a0) → summary A at ord 0; view re-densifies to
+    // [A@0, u1@1, a1@2, u2@3, a2@4, …].
+    store.appendLeafSummary({
+      scope: SCOPE,
+      tokenCount: 5,
+      content: SUMMARY_A,
+      descendantCount: 2,
+      earliestAt: FIXED_CREATED_AT,
+      latestAt: FIXED_CREATED_AT,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_CREATED_AT,
+      startOrdinal: 0,
+      endOrdinal: 1,
+    });
+    // Collapse [1,3] (u1,a1,u2) → summary B at ord 1; view: [A@0, B@1, a2@2, u3@3, …]
+    // → TWO contiguous summary-refs at the head, and the NEXT survivor is a2
+    // (ASSISTANT) so the post-coalesce head alternates.
+    store.appendLeafSummary({
+      scope: SCOPE,
+      tokenCount: 5,
+      content: SUMMARY_B,
+      descendantCount: 3,
+      earliestAt: FIXED_CREATED_AT,
+      latestAt: FIXED_CREATED_AT,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_CREATED_AT,
+      startOrdinal: 1,
+      endOrdinal: 3,
+    });
+
+    // freshTailTurns=1 keeps only the trailing assistant("a5") in the fresh tail, so
+    // BOTH summary-refs sit in the reconstructed-from-store history head.
+    const live: AgentMessage[] = msgs as AgentMessage[];
+    const { deps } = makeDeps(store);
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    const out = await engine.transformContext(live);
+
+    // PRIMARY GUARANTEE: the ≥2 summary-refs are coalesced into EXACTLY ONE
+    // user-role summary message — the head no longer emits a consecutive-same-role
+    // summary run. On pre-patch code each summary-ref is its own user message, so
+    // there are TWO summary-bearing user messages → this FAILS (RED).
+    const summaryBearingUserMsgs = out.filter(
+      (m) =>
+        roleOf(m) === "user" &&
+        JSON.stringify((m as unknown as { content: unknown }).content).includes("[LCD summary —"),
+    );
+    expect(summaryBearingUserMsgs).toHaveLength(1);
+
+    // With the summary run coalesced AND the next survivor an assistant, the WHOLE
+    // assembled output has NO run of ≥2 consecutive user-role messages.
+    const roles = out.map(roleOf);
+    for (let i = 1; i < roles.length; i++) {
+      expect(
+        !(roles[i] === "user" && roles[i - 1] === "user"),
+        `adjacent user-role messages at indices ${i - 1},${i} (roles=${roles.join(",")})`,
+      ).toBe(true);
+    }
+
+    // Both summaries' content survives inside the ONE coalesced user message, each
+    // with its OWN [LCD summary …] trusted header (not a flattened blob).
+    const coalesced = summaryBearingUserMsgs[0]!;
+    const text = JSON.stringify((coalesced as unknown as { content: unknown }).content);
+    expect(text).toContain(SUMMARY_A);
+    expect(text).toContain(SUMMARY_B);
+    expect((text.match(/\[LCD summary —/g) ?? []).length).toBe(2);
+    // Each summary body stays inside its OWN wrapExternalContent region (per-summary
+    // delimiters preserved — concatenation never weakens the taint wrapping).
+    expect((text.match(/<<<UNTRUSTED_[a-f0-9]+>>>/g) ?? []).length).toBe(2);
+  });
+
+  it("Test B-19.2: a SINGLE summary-ref at the head is unchanged (the run-of-1 degenerate case — no gratuitous rewrite)", async () => {
+    // The Plan05 Test A shape: ONE summary-ref. Coalescing a run of 1 is a no-op —
+    // the single summary renders exactly as before (regression guard that the
+    // defensive coalesce does not touch the common single-summary head). NOTE: the
+    // summary↔next-message-ref boundary may be user↔user (the plan does NOT repair
+    // message-ref alternation), so this test asserts ONLY the run-of-1 no-op, not a
+    // global no-adjacent-user invariant.
+    const msgs = seedTextTurns(6);
+    store.getContextItems(SCOPE);
+    const SOLO = "SOLO-LEAF-SUMMARY";
+    store.appendLeafSummary({
+      scope: SCOPE,
+      tokenCount: 5,
+      content: SOLO,
+      descendantCount: 4,
+      earliestAt: FIXED_CREATED_AT,
+      latestAt: FIXED_CREATED_AT,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_CREATED_AT,
+      startOrdinal: 0,
+      endOrdinal: 3,
+    });
+
+    const live: AgentMessage[] = msgs as AgentMessage[];
+    const { deps } = makeDeps(store);
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    const out = await engine.transformContext(live);
+
+    // Exactly ONE user message carries the summary, with exactly ONE header — the
+    // run-of-1 coalesce is a pass-through.
+    const summaryMsgs = out.filter(
+      (m) =>
+        roleOf(m) === "user" &&
+        JSON.stringify((m as unknown as { content: unknown }).content).includes(SOLO),
+    );
+    expect(summaryMsgs).toHaveLength(1);
+    const text = JSON.stringify((summaryMsgs[0] as unknown as { content: unknown }).content);
+    expect((text.match(/\[LCD summary —/g) ?? []).length).toBe(1);
+    // The single summary's wrapExternalContent region is intact (1 delimiter pair).
+    expect((text.match(/<<<UNTRUSTED_[a-f0-9]+>>>/g) ?? []).length).toBe(1);
+  });
+});
+
 describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
   let store: ContextStorePort;
 
