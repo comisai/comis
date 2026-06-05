@@ -486,7 +486,7 @@ async function runSessionLocked(
   const {
     deferralResult, deferredContext, capabilityIndexResult,
     modelTier, discoveryTracker, settingsManager,
-    resourceLoaderOptions, promptResult, cachedSystemTokensEstimate,
+    resourceLoaderOptions, promptResult, cachedSystemTokensEstimate, cachedRecallTokensEstimate,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
   const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories } = promptResult;
@@ -879,6 +879,7 @@ async function runSessionLocked(
     cacheBreakDetector,
     contextEngineRef,
     getCachedSystemTokensEstimate: () => cachedSystemTokensEstimate,
+    getCachedRecallTokensEstimate: () => cachedRecallTokensEstimate,
     getTokenAnchor: () => tokenAnchor,
     onAnchorReset: () => { tokenAnchor = null; },
     currentDiscoveryTracker,

@@ -111,6 +111,9 @@ export interface ContextEngineSetupParams {
   contextEngineRef: { current?: ContextEngine };
   /** Getter for cached system tokens estimate */
   getCachedSystemTokensEstimate: () => number;
+  /** I1: getter for the cached recall-injection token estimate (a SEPARATE budget
+   *  subtrahend — the dynamicPreamble + inlineMemory block, never folded into S). */
+  getCachedRecallTokensEstimate: () => number;
   /** Getter for current token anchor */
   getTokenAnchor: () => TokenAnchor | null;
   /** Callback to reset token anchor */
@@ -234,7 +237,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     config, deps, formattedKey, tenantId, msg, sm, session, executionOverrides,
     cacheBreakDetector,
     contextEngineRef,
-    getCachedSystemTokensEstimate, getTokenAnchor, onAnchorReset,
+    getCachedSystemTokensEstimate, getCachedRecallTokensEstimate, getTokenAnchor, onAnchorReset,
     currentDiscoveryTracker,
   } = params;
 
@@ -438,6 +441,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     getSessionManager: () => sm,  // Persistent write-back for observation masker
     objective: executionOverrides?.spawnPacket?.objective, // Objective reinforcement
     getSystemTokensEstimate: getCachedSystemTokensEstimate,
+    getRecallTokensEstimate: getCachedRecallTokensEstimate,
     // G-09: Notify cache break detector when observation masking modifies content
     onContentModified: () => cacheBreakDetector.notifyContentModification(formattedKey),
     // Accumulate signature-replay scrub counts per-execute. Only

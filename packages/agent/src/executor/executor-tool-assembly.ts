@@ -220,6 +220,9 @@ export interface ToolAssemblyResult {
   promptResult: ExecutionPromptResult;
   /** Estimated system token count (system prompt + tool definition overhead). */
   cachedSystemTokensEstimate: number;
+  /** I1: estimated recall-injection token count (dynamicPreamble + inlineMemory) —
+   *  a SEPARATE budget subtrahend, never folded into the system estimate above. */
+  cachedRecallTokensEstimate: number;
 }
 
 /** Parameters for the assembleTools function. */
@@ -500,6 +503,12 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const cachedSystemTokensEstimate = Math.ceil(
     (promptResult.systemPrompt.length + toolDefOverheadChars) / CHARS_PER_TOKEN_RATIO,
   );
+  // I1: the recall-injection token estimate — the SAME dynamicPreamble + inlineMemory
+  // block envelope-wrapper prepends into the user message, measured as a SEPARATE
+  // budget subtrahend (NOT folded into S above — the recall-dag-budget-partition lock).
+  const cachedRecallTokensEstimate = Math.ceil(
+    (promptResult.dynamicPreamble.length + (promptResult.inlineMemory?.length ?? 0)) / CHARS_PER_TOKEN_RATIO,
+  );
 
   // -------------------------------------------------------------------
   // 6. ResourceLoader options
@@ -764,5 +773,6 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     resourceLoaderOptions,
     promptResult,
     cachedSystemTokensEstimate,
+    cachedRecallTokensEstimate,
   };
 }
