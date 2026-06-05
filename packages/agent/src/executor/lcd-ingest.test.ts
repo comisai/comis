@@ -183,6 +183,44 @@ describe("ingestTurn", () => {
     expect(appended).toHaveLength(0); // a retry with no new messages persists nothing
   });
 
+  it("Test 2b: strips the injected inline-recall block from a USER message before storing (carve recall out of F1)", () => {
+    // The envelope-wrapper prepends the top-1 RAG memory inline to the user text;
+    // that TRANSIENT cross-session recall must NOT be persisted into the lossless
+    // store — otherwise a prior session's facts bloat the store, cross-contaminate
+    // the current conversation, and feed back into later recall. The recalled
+    // content contains a `]` (the `[user]` tag) to prove the strip is robust to
+    // nested brackets (matched to the date-anchored `(recorded …)]` terminator).
+    const { store, appended } = makeRecordingStore();
+    const logger = createMockLogger();
+    const recallPrefix =
+      "\n[Relevant context from memory: [user] a PRIOR session said the codeword is OLD-7 (recorded 2026-06-01)]\n";
+    const userText =
+      recallPrefix +
+      "[System context]\npreamble here\n[End system context]\n\n[gateway] web-user (5:05 PM):\nthe codeword is NEW-9";
+
+    ingestTurn(store, SCOPE, 0, [userMsg(userText) as AgentMessage], FIXED_NOW, logger);
+
+    expect(appended).toHaveLength(1);
+    const blob = JSON.stringify(appended[0]!.parts);
+    // The transient cross-session recall block is gone (text + payload) …
+    expect(blob).not.toContain("Relevant context from memory");
+    expect(blob).not.toContain("OLD-7");
+    // … but the real conversation AND the system-context envelope are preserved.
+    expect(blob).toContain("NEW-9");
+    expect(blob).toContain("System context");
+    // tokenCount reflects the stripped (smaller) content, not the recalled bloat.
+    expect(appended[0]!.tokenCount).toBe(estimateMessageTokens(userMsg(userText.replace(recallPrefix, "")) as unknown as Parameters<typeof estimateMessageTokens>[0]));
+  });
+
+  it("Test 2c: a NON-user message that happens to contain the recall phrasing is NOT stripped (scope = user turns only)", () => {
+    const { store, appended } = makeRecordingStore();
+    const logger = createMockLogger();
+    // An assistant message never carries the injected prefix; never mutate it.
+    const txt = "[Relevant context from memory: x (recorded 2026-06-01)] discussing the format";
+    ingestTurn(store, SCOPE, 0, [assistantText(txt) as AgentMessage], FIXED_NOW, logger);
+    expect(JSON.stringify(appended[0]!.parts)).toContain("Relevant context from memory");
+  });
+
   it("Test 3: tokenCount is computed agent-side via estimateMessageTokens; thinking tokens ARE counted (F3)", () => {
     const { store, appended } = makeRecordingStore();
     const logger = createMockLogger();
