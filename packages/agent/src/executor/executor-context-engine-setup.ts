@@ -29,6 +29,11 @@ import {
   buildLeafSummarizeFn,
   type LeafSummarizerDeps,
 } from "../context-engine/lcd-leaf-summarizer.js";
+import {
+  isSummarizerDegradeError,
+  type SummarizerSpendBreaker,
+} from "../safety/summarizer-spend-breaker.js";
+import type { LeafSummarizer } from "../context-engine/lcd-leaf-summarizer.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import type { ExecutionOverrides } from "./types.js";
 import { resolveOperationModel, resolveProviderFamily } from "../model/operation-model-resolver.js";
@@ -70,6 +75,13 @@ export interface ContextEngineSetupDeps {
    *  writes). TYPE-only core port (the agent↛memory cut); absent ⇒ the dag
    *  branch falls through to the pipeline. */
   contextStore?: import("@comis/core").ContextStorePort;
+  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker. When
+   *  present, `getSummarizerDeps` wraps the leaf summarizer seam with
+   *  `gate(tenantId, inner)` so an open breaker / over-cap tenant BYPASSES the LLM
+   *  → the leaf/condense ladder floors to truncation-only (no turn failure).
+   *  ONE daemon-owned instance (per-tenant aggregate across sessions/agents);
+   *  absent ⇒ the raw seam (non-daemon callers / tests). */
+  summarizerSpendBreaker?: SummarizerSpendBreaker;
 }
 
 /** Parameters for context engine creation. */
@@ -122,6 +134,71 @@ export interface ContextEngineSetupResult {
    *  pi-executor call site so the leaf pass fires live over threshold. Resolves
    *  the model fresh per call (honors mid-session model cycling). */
   getSummarizerDeps: () => LeafSummarizerDeps;
+}
+
+// ---------------------------------------------------------------------------
+// R1 (132-05) degrade observability
+// ---------------------------------------------------------------------------
+
+/** Identifiers + sinks the degrade observability wrapper needs (content-free). */
+interface DegradeObservabilityCtx {
+  eventBus: import("@comis/core").TypedEventBus;
+  logger: ComisLogger;
+  clock: import("@comis/core").ClockPort;
+  conversationId: string;
+  agentId: string;
+  sessionKey: string;
+}
+
+/**
+ * R1 (132-05): wrap a GATED {@link LeafSummarizer} so a spend/breaker DEGRADE
+ * bypass is OBSERVABLE at the wiring boundary (the breaker module itself is
+ * content-free + log-free by design — observability lives where the `ComisLogger`
+ * + `eventBus` are injected). On a {@link SummarizerDegradeError} we emit a
+ * content-free WARN (`errorKind` `dependency` for breaker_open, `resource` for
+ * spend_cap) + the `context:dag_degraded` event (reason `breaker_open`/`spend_cap`,
+ * from 132-04), then RE-THROW so the leaf/condense ladder floors to truncation-only.
+ * Any non-degrade throw (an inner LLM failure the gate already recorded) and every
+ * success pass straight through untouched. NEVER logs summary/message content —
+ * ids / reason / durationMs only (AGENTS.md §2.2; T-132-05-04).
+ */
+function wrapSummarizerWithDegradeObservability(
+  gated: LeafSummarizer,
+  ctx: DegradeObservabilityCtx,
+): LeafSummarizer {
+  return async (messages, opts): Promise<string> => {
+    const start = ctx.clock.now();
+    try {
+      return await gated(messages, opts);
+    } catch (err) {
+      if (isSummarizerDegradeError(err)) {
+        const reason = err.degradeReason; // closed union: "breaker_open" | "spend_cap"
+        const errorKind: ErrorKind = reason === "spend_cap" ? "resource" : "dependency";
+        ctx.logger.warn(
+          {
+            step: "lcd-summarizer-degrade",
+            reason,
+            errorKind,
+            durationMs: Math.max(0, ctx.clock.now() - start),
+            hint:
+              reason === "spend_cap"
+                ? "per-tenant summarizer token cap reached; compaction degraded to truncation-only — raise contextEngine.summarizerSpend or wait for the rolling window to drain"
+                : "summarizer circuit breaker open after repeated failures; compaction degraded to truncation-only — investigate the compaction model/provider",
+          },
+          "lcd summarizer degraded to truncation-only",
+        );
+        ctx.eventBus.emit("context:dag_degraded", {
+          conversationId: ctx.conversationId,
+          agentId: ctx.agentId,
+          sessionKey: ctx.sessionKey,
+          reason,
+          durationMs: Math.max(0, ctx.clock.now() - start),
+          timestamp: ctx.clock.now(),
+        });
+      }
+      throw err; // floor: the ladder catches this and degrades to Level-3.
+    }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -286,9 +363,26 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   // call so model cycling mid-session is honored (same as getCompactionDeps).
   const getSummarizerDeps = (): LeafSummarizerDeps => {
     const chain = resolveCompactionModelChain();
+    const inner = buildLeafSummarizeFn(chain);
+    // R1 (132-05): wrap the leaf summarizer seam with the daemon-owned per-tenant
+    // spend+breaker gate keyed on the LIVE tenantId (the SAME tenant the afterTurn
+    // ingest scope uses). On open-breaker / over-cap the gate THROWS the degrade
+    // signal → the leaf/condense ladder catches it (lcd-leaf-summarizer tryLevel)
+    // → deterministic Level-3 floor → truncation-only assembly → R2's Task-1
+    // fallback marker fires on the resulting fallback:true summary. NO retry of
+    // the inner LLM (the RESEARCH anti-pattern). The same getter feeds BOTH the
+    // leaf and the condense pass, so condense degrades identically. Absent breaker
+    // ⇒ the raw seam (non-daemon callers / tests).
+    const summarize = deps.summarizerSpendBreaker
+      ? wrapSummarizerWithDegradeObservability(
+          deps.summarizerSpendBreaker.gate(tenantId, inner),
+          { eventBus: deps.eventBus, logger: deps.logger, clock: deps.clock,
+            conversationId: formattedKey, agentId: agentId ?? "default", sessionKey: formattedKey },
+        )
+      : inner;
     return {
       logger: deps.logger,
-      summarize: buildLeafSummarizeFn(chain),
+      summarize,
       getModel: chain.getModel,
       getApiKey: chain.getApiKey,
       overrideModel: chain.overrideModel,

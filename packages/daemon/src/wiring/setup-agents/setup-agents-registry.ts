@@ -190,6 +190,10 @@ export async function setupAgents(deps: {
    *  shared db (`createLcdStore(db)`); injected as the core `ContextStorePort` TYPE
    *  (agent↛memory cut). Opt-in (`contextEngine.version: "dag"`); default pipeline. */
   lcdStore?: import("@comis/core").ContextStorePort;
+  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker; threaded
+   *  into each per-agent createPiExecutor -> setupContextEngine (the getSummarizerDeps
+   *  leaf-seam gate). ONE daemon instance, partitions by tenantId. */
+  summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker;
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
   temporalStore?: import("@comis/core").MemoryTemporalStore;
@@ -448,6 +452,7 @@ export async function setupAgents(deps: {
     rerankerModelPresent: deps.rerankerModelPresent,
     entityStore: deps.entityStore,
     lcdStore: deps.lcdStore,
+    summarizerSpendBreaker: deps.summarizerSpendBreaker,
     temporalStore: deps.temporalStore,
     causalStore: deps.causalStore,
     tripleStore: deps.tripleStore,

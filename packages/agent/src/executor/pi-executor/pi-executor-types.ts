@@ -47,6 +47,7 @@ import type { BudgetGuard } from "../../budget/budget-guard.js";
 import type { CostTracker } from "../../budget/cost-tracker.js";
 import type { StepCounter } from "../step-counter.js";
 import type { CircuitBreaker } from "../../safety/circuit-breaker.js";
+import type { SummarizerSpendBreaker } from "../../safety/summarizer-spend-breaker.js";
 import type { ProviderHealthMonitor } from "../../safety/provider-health-monitor.js";
 import type { ComisSessionManager } from "../../session/comis-session-manager.js";
 import type { AuthRotationAdapter } from "../../model/auth-rotation-adapter.js";
@@ -104,6 +105,15 @@ export interface PiExecutorDeps {
    *  Absent ⇒ no afterTurn ingest + the dag branch falls through to the
    *  pipeline (never crashes, never no-ops). */
   contextStore?: ContextStorePort;
+  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker. ONE
+   *  instance constructed at the composition root (mirrors the embedding breaker,
+   *  setup-memory.ts) and injected here so it bounds AGGREGATE per-tenant
+   *  summarizer spend across all of a tenant's sessions/agents. Threaded into
+   *  ContextEngineSetupDeps so `getSummarizerDeps` wraps the leaf seam with
+   *  `gate(tenantId, inner)` → open-breaker / over-cap bypasses the LLM → the
+   *  ladder floors to truncation-only. Absent ⇒ the raw seam (tests / non-daemon
+   *  callers). */
+  summarizerSpendBreaker?: SummarizerSpendBreaker;
   /** Optional cross-encoder reranker. Built in the daemon (setup-memory) only when an
    *  agent enables rerank; threaded into prompt-assembly's createMemoryRecall via
    *  ToolAssemblyDeps. Absent -> recall keeps fusion order. */

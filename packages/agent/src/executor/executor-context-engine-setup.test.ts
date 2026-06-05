@@ -67,7 +67,7 @@ import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { TypedEventBus } from "@comis/core";
 import type { ContextEngineSetupParams, ContextEngineSetupDeps } from "./executor-context-engine-setup.js";
-import type { SummarizerSpendBreaker } from "../safety/summarizer-spend-breaker.js";
+import { SummarizerDegradeError, type SummarizerSpendBreaker } from "../safety/summarizer-spend-breaker.js";
 import type { LeafSummarizer } from "../context-engine/lcd-leaf-summarizer.js";
 
 // Module-level clock for executor-session-state bounded maps.
@@ -408,7 +408,7 @@ describe("setupContextEngine — getSummarizerDeps per-tenant spend+breaker wiri
     return { breaker, seenTenantIds, sentinel };
   }
 
-  it("wraps the summarizer with the injected per-tenant gate keyed on the live tenantId", () => {
+  it("wraps the summarizer with the injected per-tenant gate keyed on the live tenantId", async () => {
     const { breaker, seenTenantIds, sentinel } = makeRecordingBreaker();
     const result = setupContextEngine(
       makeParams({
@@ -417,10 +417,17 @@ describe("setupContextEngine — getSummarizerDeps per-tenant spend+breaker wiri
       }),
     );
     const summarizerDeps = result.getSummarizerDeps();
-    // The returned summarizer is the gate's sentinel — the seam IS wrapped.
-    expect(summarizerDeps.summarize).toBe(sentinel);
     // The gate was keyed on the live tenantId threaded through the params.
+    expect(breaker.gate).toHaveBeenCalledTimes(1);
     expect(seenTenantIds).toContain("tenant-x");
+    // The returned summarizer delegates to the gate's sentinel — the seam IS
+    // wrapped (a successful call flows through the gate, not the raw seam).
+    const out = await summarizerDeps.summarize(
+      [] as unknown as Parameters<LeafSummarizer>[0],
+      { reserveTokens: 100 },
+    );
+    expect(out).toBe("SENTINEL-GATED-SUMMARY");
+    expect(sentinel).toHaveBeenCalledTimes(1);
   });
 
   it("returns the raw summarizer when no breaker is injected (optional/daemon-owned)", () => {
@@ -430,5 +437,61 @@ describe("setupContextEngine — getSummarizerDeps per-tenant spend+breaker wiri
     const summarizerDeps = result.getSummarizerDeps();
     // Absent breaker ⇒ a real (unwrapped) summarizer function, no crash.
     expect(typeof summarizerDeps.summarize).toBe("function");
+  });
+
+  it("emits a content-free context:dag_degraded (reason spend_cap) + re-throws when the gate degrades over-cap", async () => {
+    const eventBus = new TypedEventBus();
+    const events: Array<Record<string, unknown>> = [];
+    eventBus.on("context:dag_degraded", (e) => events.push(e as unknown as Record<string, unknown>));
+    // A gate whose returned summarizer throws the over-cap degrade signal.
+    const breaker: SummarizerSpendBreaker = {
+      gate: vi.fn((): LeafSummarizer => async () => {
+        throw new SummarizerDegradeError("spend_cap");
+      }),
+    };
+    const result = setupContextEngine(
+      makeParams({
+        tenantId: "tenant-cap",
+        formattedKey: "tenant-cap:user_a:chan-a",
+        sessionKey: "tenant-cap:user_a:chan-a",
+        deps: makeDeps({ summarizerSpendBreaker: breaker, eventBus }),
+      }),
+    );
+    // The degrade must RE-THROW so the leaf/condense ladder floors to truncation-only.
+    await expect(
+      result.getSummarizerDeps().summarize(
+        [] as unknown as Parameters<LeafSummarizer>[0],
+        { reserveTokens: 100 },
+      ),
+    ).rejects.toBeInstanceOf(SummarizerDegradeError);
+    // The event is emitted exactly once with the closed reason — and is content-free.
+    expect(events).toHaveLength(1);
+    expect(events[0].reason).toBe("spend_cap");
+    expect(events[0].conversationId).toBe("tenant-cap:user_a:chan-a");
+    expect(typeof events[0].durationMs).toBe("number");
+    // No summary/message content on the payload (ids/reason/durationMs only).
+    expect(JSON.stringify(events[0])).not.toContain("content");
+  });
+
+  it("emits reason breaker_open when the gate degrades on an open breaker", async () => {
+    const eventBus = new TypedEventBus();
+    const events: Array<Record<string, unknown>> = [];
+    eventBus.on("context:dag_degraded", (e) => events.push(e as unknown as Record<string, unknown>));
+    const breaker: SummarizerSpendBreaker = {
+      gate: vi.fn((): LeafSummarizer => async () => {
+        throw new SummarizerDegradeError("breaker_open");
+      }),
+    };
+    const result = setupContextEngine(
+      makeParams({ deps: makeDeps({ summarizerSpendBreaker: breaker, eventBus }) }),
+    );
+    await expect(
+      result.getSummarizerDeps().summarize(
+        [] as unknown as Parameters<LeafSummarizer>[0],
+        { reserveTokens: 100 },
+      ),
+    ).rejects.toBeInstanceOf(SummarizerDegradeError);
+    expect(events).toHaveLength(1);
+    expect(events[0].reason).toBe("breaker_open");
   });
 });

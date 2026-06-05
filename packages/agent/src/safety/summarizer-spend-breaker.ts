@@ -69,6 +69,33 @@ export interface SummarizerSpendBreaker {
   gate(tenantId: string, inner: LeafSummarizer): LeafSummarizer;
 }
 
+/** Closed reason for a degrade BYPASS — maps 1:1 onto the `context:dag_degraded`
+ *  reserved reasons so the wiring (132-05) can emit the right event/errorKind. */
+export type SummarizerDegradeReason = "breaker_open" | "spend_cap";
+
+/**
+ * The discriminated error the gate THROWS when it bypasses the inner LLM call
+ * (open breaker / over-cap). Carries the closed {@link SummarizerDegradeReason}
+ * so the wiring boundary can classify the WARN (`errorKind` dependency vs
+ * resource) + the `context:dag_degraded` reason WITHOUT string-parsing. The
+ * leaf/condense ladder catches it like any other throw and floors. Content-free.
+ */
+export class SummarizerDegradeError extends Error {
+  readonly degradeReason: SummarizerDegradeReason;
+  constructor(degradeReason: SummarizerDegradeReason) {
+    super(`summarizer degraded (${degradeReason})`);
+    this.name = "SummarizerDegradeError";
+    this.degradeReason = degradeReason;
+  }
+}
+
+/** Narrow an unknown caught value to a {@link SummarizerDegradeError} (the gate's
+ *  bypass) — distinguishes a degrade BYPASS from an inner-call failure at the
+ *  wiring boundary. */
+export function isSummarizerDegradeError(e: unknown): e is SummarizerDegradeError {
+  return e instanceof SummarizerDegradeError;
+}
+
 /** Internal timestamped usage entry for a tenant's rolling windows. */
 interface SpendEntry {
   timestamp: number;
@@ -124,10 +151,16 @@ export function createSummarizerSpendBreaker(
         const spend = spendFor(tenantId);
         const est = estimateInputTokens(messages, opts);
 
-        if (breaker.isOpen() || !spend.canSpend(est)) {
-          // DEGRADE: throw → leaf/condense ladder catches → deterministic L3 floor →
-          // truncation-only. No retry of inner (anti-pattern); inner is NOT called.
-          throw new Error("summarizer degraded (breaker open / tenant spend cap)");
+        if (breaker.isOpen()) {
+          // DEGRADE (breaker open): throw → leaf/condense ladder catches →
+          // deterministic L3 floor → truncation-only. No retry of inner
+          // (anti-pattern); inner is NOT called. The breaker is checked FIRST so an
+          // open breaker is reported as breaker_open even when also over-cap.
+          throw new SummarizerDegradeError("breaker_open");
+        }
+        if (!spend.canSpend(est)) {
+          // DEGRADE (over per-tenant token cap): same bypass → floor.
+          throw new SummarizerDegradeError("spend_cap");
         }
 
         try {

@@ -82,6 +82,12 @@ export interface SingleAgentDeps {
    *  @comis/memory). Absent ⇒ the `dag` branch falls back to pipeline. The `dag`
    *  engine is opt-in (`contextEngine.version: "dag"`); the default stays pipeline. */
   lcdStore?: import("@comis/core").ContextStorePort;
+  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker. Threaded
+   *  into each per-agent createPiExecutor (PiExecutorDeps.summarizerSpendBreaker)
+   *  -> setupContextEngine so getSummarizerDeps gates the leaf seam per tenant.
+   *  ONE daemon instance partitions by tenantId (aggregate per-tenant spend across
+   *  sessions/agents); absent ⇒ the raw seam. */
+  summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker;
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the shared
    *  db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator enables

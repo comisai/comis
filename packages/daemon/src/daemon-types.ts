@@ -384,6 +384,10 @@ export interface BootContext {
   backgroundIndexingPromise: Awaited<ReturnType<typeof setupMemory>>["backgroundIndexingPromise"];
   embeddingCacheStats: Awaited<ReturnType<typeof setupMemory>>["embeddingCacheStats"];
   embeddingCircuitBreakerState: Awaited<ReturnType<typeof setupMemory>>["embeddingCircuitBreakerState"];
+  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker — threaded
+   *  into setupAgents -> createPiExecutor -> setupContextEngine (the getSummarizerDeps
+   *  leaf-seam gate). Built in setup-memory; ONE instance partitions by tenantId. */
+  summarizerSpendBreaker: Awaited<ReturnType<typeof setupMemory>>["summarizerSpendBreaker"];
   rerankerPort: Awaited<ReturnType<typeof setupMemory>>["rerankerPort"];
   /** The no-download model-present probe result computed once in
    *  setup-memory. Carried through BootContext so bootAgents threads the SAME boolean into
