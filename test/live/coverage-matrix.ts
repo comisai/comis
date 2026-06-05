@@ -1,0 +1,1156 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Live-fire coverage matrix — source of truth for (dimension × mode-value) coverage.
+ *
+ * Mirrors the test/e2e/flow-matrix.ts typed-data pattern. Both the architecture
+ * gate test (test/architecture/live-coverage-matrix.test.ts) and the live runner
+ * consume this file.
+ *
+ * Shape: every §7.2 combination-generating dimension × mode-value cell. Each cell is:
+ *   - status="covered" with `reference` = repo-relative path to a passing
+ *     test file that exercises this (dimension × modeValue); OR
+ *   - status="skipped" with `reference` = non-empty, non-blocklisted reason
+ *     naming which phase covers it.
+ *
+ * Skip-reason discipline: the blocklist regex enforced by the matrix gate matches
+ * any reference that starts with a blocklisted word (see SKIP_REASON_BLOCKLIST in
+ * test/architecture/live-coverage-matrix.test.ts). Use "covered in Phase N (NAME)"
+ * format for deferred cells.
+ *
+ * // Total cells: 129
+ *
+ * @module
+ */
+
+export interface CoverageCell {
+  readonly dimension: string;
+  readonly modeValue: string;
+  readonly status: "covered" | "skipped";
+  /**
+   * For `status: "covered"` — repo-relative path to a test file that exercises
+   * this (dimension × modeValue) combination.
+   *
+   * For `status: "skipped"` — human-readable, case-specific reason explaining
+   * which phase covers it. MUST be non-empty and MUST NOT start with a blocklisted
+   * word (see SKIP_REASON_BLOCKLIST in live-coverage-matrix.test.ts).
+   */
+  readonly reference: string;
+  readonly phase?: string;
+}
+
+export const COVERAGE_DIMENSIONS = [
+  // Context engine
+  "contextEngine.version",
+  // Embedding
+  "embedding.provider",
+  "local.gpu",
+  "embeddingDimensions",
+  // Memory
+  "memory.costFeatures.enabled",
+  // Recall lanes
+  "recall.fts",
+  "recall.vector",
+  "recall.temporal",
+  "recall.causal",
+  "recall.graphSpread",
+  "recall.entity",
+  // RAG options
+  "rag.rerank.enabled",
+  "rag.mmr.enabled",
+  "rag.pinned.enabled",
+  "rag.forget.enabled",
+  "rag.feedback.enabled",
+  "rag.onlineTuning.enabled",
+  "rag.includeTrustLevels",
+  // Security
+  "security.storage",
+  // MCP
+  "mcp.transport",
+  "mcp.auth",
+  // Cache
+  "cacheRetention",
+  "adaptiveCacheRetention",
+  "cacheBreakpointStrategy",
+  "geminiCache",
+  // LLM
+  "thinkingLevel",
+  // Queue
+  "queue.defaultMode",
+  "queue.overflow",
+  // Streaming
+  "streaming.chunkMode",
+  "streaming.typingMode",
+  "streaming.tableMode",
+  "streaming.replyMode",
+  "streaming.useMarkdownIR",
+  // Session
+  "session.resetPolicy.mode",
+  "dmScope.mode",
+  // TTS
+  "tts.autoMode",
+  "tts.provider",
+  // Transcription
+  "transcription.provider",
+  "transcription.fallback",
+  // Vision
+  "vision.providers",
+  // Image generation
+  "image-gen",
+  // Search
+  "search",
+  // Failover
+  "modelFailover",
+  // Channel modes
+  "slack.mode",
+  "email.authType",
+  // Tools
+  "deferredTools.mode",
+  // Workspace
+  "workspace.profile",
+  // Bootstrap
+  "bootstrap.promptMode",
+] as const;
+
+export type DimensionName = (typeof COVERAGE_DIMENSIONS)[number];
+
+/**
+ * The 129-cell coverage matrix. All cells are initially status="skipped" with
+ * phase-reference reasons. Subsequent phases settle cells to "covered" as they
+ * build and run the corresponding live tests.
+ */
+export const coverageMatrix: readonly CoverageCell[] = [
+  // ===========================================================================
+  // contextEngine.version (2 cells)
+  // ===========================================================================
+  {
+    dimension: "contextEngine.version",
+    modeValue: "pipeline",
+    status: "skipped",
+    reference: "covered in Phase 138 (CTX) — pipeline context engine live-fire test",
+    phase: "138",
+  },
+  {
+    dimension: "contextEngine.version",
+    modeValue: "dag",
+    status: "skipped",
+    reference: "covered in Phase 138 (CTX) — DAG/LCD context engine live-fire test",
+    phase: "138",
+  },
+
+  // ===========================================================================
+  // embedding.provider (3 cells)
+  // ===========================================================================
+  {
+    dimension: "embedding.provider",
+    modeValue: "auto",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — auto embedding provider selection live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "embedding.provider",
+    modeValue: "local",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — local embedding provider live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "embedding.provider",
+    modeValue: "openai",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — OpenAI embedding provider live-fire test",
+    phase: "139",
+  },
+
+  // ===========================================================================
+  // local.gpu (5 cells)
+  // ===========================================================================
+  {
+    dimension: "local.gpu",
+    modeValue: "auto",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — local GPU auto-detect live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "local.gpu",
+    modeValue: "metal",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — Apple Metal GPU backend live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "local.gpu",
+    modeValue: "cuda",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — CUDA GPU backend live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "local.gpu",
+    modeValue: "vulkan",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — Vulkan GPU backend live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "local.gpu",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — CPU-only (no GPU) local embedding live-fire test",
+    phase: "139",
+  },
+
+  // ===========================================================================
+  // embeddingDimensions (3 cells)
+  // ===========================================================================
+  {
+    dimension: "embeddingDimensions",
+    modeValue: "768",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — 768-dimension embedding live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "embeddingDimensions",
+    modeValue: "1536",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — 1536-dimension embedding live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "embeddingDimensions",
+    modeValue: "3072",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — 3072-dimension embedding live-fire test",
+    phase: "139",
+  },
+
+  // ===========================================================================
+  // memory.costFeatures.enabled (2 cells)
+  // ===========================================================================
+  {
+    dimension: "memory.costFeatures.enabled",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — cost features enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "memory.costFeatures.enabled",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — cost features disabled live-fire test",
+    phase: "139",
+  },
+
+  // ===========================================================================
+  // recall lanes — each boolean dimension (12 cells: 6 lanes × on/off)
+  // ===========================================================================
+  {
+    dimension: "recall.fts",
+    modeValue: "on",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — FTS recall lane enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "recall.fts",
+    modeValue: "off",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — FTS recall lane disabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "recall.vector",
+    modeValue: "on",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — vector recall lane enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "recall.vector",
+    modeValue: "off",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — vector recall lane disabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "recall.temporal",
+    modeValue: "on",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — temporal recall lane enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "recall.temporal",
+    modeValue: "off",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — temporal recall lane disabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "recall.causal",
+    modeValue: "on",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — causal recall lane enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "recall.causal",
+    modeValue: "off",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — causal recall lane disabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "recall.graphSpread",
+    modeValue: "on",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — graphSpread recall lane enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "recall.graphSpread",
+    modeValue: "off",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — graphSpread recall lane disabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "recall.entity",
+    modeValue: "on",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — entity recall lane enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "recall.entity",
+    modeValue: "off",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — entity recall lane disabled live-fire test",
+    phase: "139",
+  },
+
+  // ===========================================================================
+  // RAG options (14 cells: 7 boolean dimensions × on/off, minus rag.includeTrustLevels)
+  // ===========================================================================
+  {
+    dimension: "rag.rerank.enabled",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG rerank enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.rerank.enabled",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG rerank disabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.mmr.enabled",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG MMR enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.mmr.enabled",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG MMR disabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.pinned.enabled",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG pinned results enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.pinned.enabled",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG pinned results disabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.forget.enabled",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG forget enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.forget.enabled",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG forget disabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.feedback.enabled",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG feedback enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.feedback.enabled",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG feedback disabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.onlineTuning.enabled",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG online tuning enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.onlineTuning.enabled",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG online tuning disabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.includeTrustLevels",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG include trust levels enabled live-fire test",
+    phase: "139",
+  },
+  {
+    dimension: "rag.includeTrustLevels",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — RAG include trust levels disabled live-fire test",
+    phase: "139",
+  },
+
+  // ===========================================================================
+  // security.storage (3 cells)
+  // ===========================================================================
+  {
+    dimension: "security.storage",
+    modeValue: "encrypted",
+    status: "skipped",
+    reference: "covered in Phase 146 (PLAT) — encrypted credential storage live-fire test",
+    phase: "146",
+  },
+  {
+    dimension: "security.storage",
+    modeValue: "file",
+    status: "skipped",
+    reference: "covered in Phase 146 (PLAT) — file-based credential storage live-fire test",
+    phase: "146",
+  },
+  {
+    dimension: "security.storage",
+    modeValue: "env",
+    status: "skipped",
+    reference: "covered in Phase 146 (PLAT) — env-var credential storage live-fire test",
+    phase: "146",
+  },
+
+  // ===========================================================================
+  // MCP transport (3 cells)
+  // ===========================================================================
+  {
+    dimension: "mcp.transport",
+    modeValue: "stdio",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — MCP stdio transport live-fire test",
+    phase: "140",
+  },
+  {
+    dimension: "mcp.transport",
+    modeValue: "sse",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — MCP SSE transport live-fire test",
+    phase: "140",
+  },
+  {
+    dimension: "mcp.transport",
+    modeValue: "http",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — MCP HTTP transport live-fire test",
+    phase: "140",
+  },
+
+  // ===========================================================================
+  // MCP auth (3 cells)
+  // ===========================================================================
+  {
+    dimension: "mcp.auth",
+    modeValue: "none",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — MCP no-auth live-fire test",
+    phase: "140",
+  },
+  {
+    dimension: "mcp.auth",
+    modeValue: "bearer",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — MCP bearer-token auth live-fire test",
+    phase: "140",
+  },
+  {
+    dimension: "mcp.auth",
+    modeValue: "oauth",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — MCP OAuth auth live-fire test",
+    phase: "140",
+  },
+
+  // ===========================================================================
+  // cacheRetention (3 cells)
+  // ===========================================================================
+  {
+    dimension: "cacheRetention",
+    modeValue: "none",
+    status: "skipped",
+    reference: "covered in Phase 137 (CACHE) — no cache retention live-fire test",
+    phase: "137",
+  },
+  {
+    dimension: "cacheRetention",
+    modeValue: "short",
+    status: "skipped",
+    reference: "covered in Phase 137 (CACHE) — short cache retention live-fire test",
+    phase: "137",
+  },
+  {
+    dimension: "cacheRetention",
+    modeValue: "long",
+    status: "skipped",
+    reference: "covered in Phase 137 (CACHE) — long cache retention live-fire test",
+    phase: "137",
+  },
+
+  // ===========================================================================
+  // adaptiveCacheRetention (2 cells)
+  // ===========================================================================
+  {
+    dimension: "adaptiveCacheRetention",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 137 (CACHE) — adaptive cache retention enabled live-fire test",
+    phase: "137",
+  },
+  {
+    dimension: "adaptiveCacheRetention",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 137 (CACHE) — adaptive cache retention disabled live-fire test",
+    phase: "137",
+  },
+
+  // ===========================================================================
+  // cacheBreakpointStrategy (3 cells)
+  // ===========================================================================
+  {
+    dimension: "cacheBreakpointStrategy",
+    modeValue: "auto",
+    status: "skipped",
+    reference: "covered in Phase 137 (CACHE) — auto cache breakpoint strategy live-fire test",
+    phase: "137",
+  },
+  {
+    dimension: "cacheBreakpointStrategy",
+    modeValue: "multi-zone",
+    status: "skipped",
+    reference: "covered in Phase 137 (CACHE) — multi-zone cache breakpoint strategy live-fire test",
+    phase: "137",
+  },
+  {
+    dimension: "cacheBreakpointStrategy",
+    modeValue: "single",
+    status: "skipped",
+    reference: "covered in Phase 137 (CACHE) — single cache breakpoint strategy live-fire test",
+    phase: "137",
+  },
+
+  // ===========================================================================
+  // geminiCache (2 cells)
+  // ===========================================================================
+  {
+    dimension: "geminiCache",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 137 (CACHE) — Gemini implicit caching enabled live-fire test",
+    phase: "137",
+  },
+  {
+    dimension: "geminiCache",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 137 (CACHE) — Gemini implicit caching disabled live-fire test",
+    phase: "137",
+  },
+
+  // ===========================================================================
+  // thinkingLevel (5 cells)
+  // ===========================================================================
+  {
+    dimension: "thinkingLevel",
+    modeValue: "off",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — thinking disabled live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "thinkingLevel",
+    modeValue: "low",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — thinking level low live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "thinkingLevel",
+    modeValue: "medium",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — thinking level medium live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "thinkingLevel",
+    modeValue: "high",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — thinking level high live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "thinkingLevel",
+    modeValue: "xhigh",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — thinking level extended-high live-fire test",
+    phase: "136",
+  },
+
+  // ===========================================================================
+  // queue.defaultMode (4 cells)
+  // ===========================================================================
+  {
+    dimension: "queue.defaultMode",
+    modeValue: "followup",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — queue followup mode live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "queue.defaultMode",
+    modeValue: "collect",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — queue collect mode live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "queue.defaultMode",
+    modeValue: "steer",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — queue steer mode live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "queue.defaultMode",
+    modeValue: "steer+followup",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — queue steer+followup mode live-fire test",
+    phase: "144",
+  },
+
+  // ===========================================================================
+  // queue.overflow (3 cells)
+  // ===========================================================================
+  {
+    dimension: "queue.overflow",
+    modeValue: "drop-old",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — queue drop-old overflow live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "queue.overflow",
+    modeValue: "drop-new",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — queue drop-new overflow live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "queue.overflow",
+    modeValue: "summarize",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — queue summarize overflow live-fire test",
+    phase: "144",
+  },
+
+  // ===========================================================================
+  // streaming booleans (10 cells: 5 dimensions × true/false)
+  // ===========================================================================
+  {
+    dimension: "streaming.chunkMode",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — streaming chunk mode enabled live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "streaming.chunkMode",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — streaming chunk mode disabled live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "streaming.typingMode",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — streaming typing mode enabled live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "streaming.typingMode",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — streaming typing mode disabled live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "streaming.tableMode",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — streaming table mode enabled live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "streaming.tableMode",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — streaming table mode disabled live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "streaming.replyMode",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — streaming reply mode enabled live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "streaming.replyMode",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — streaming reply mode disabled live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "streaming.useMarkdownIR",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — streaming Markdown IR enabled live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "streaming.useMarkdownIR",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — streaming Markdown IR disabled live-fire test",
+    phase: "144",
+  },
+
+  // ===========================================================================
+  // session.resetPolicy.mode (4 cells)
+  // ===========================================================================
+  {
+    dimension: "session.resetPolicy.mode",
+    modeValue: "daily",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — daily session reset policy live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "session.resetPolicy.mode",
+    modeValue: "idle",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — idle session reset policy live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "session.resetPolicy.mode",
+    modeValue: "hybrid",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — hybrid session reset policy live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "session.resetPolicy.mode",
+    modeValue: "none",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — no session reset policy live-fire test",
+    phase: "136",
+  },
+
+  // ===========================================================================
+  // dmScope.mode (4 cells)
+  // ===========================================================================
+  {
+    dimension: "dmScope.mode",
+    modeValue: "global",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — global DM scope live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "dmScope.mode",
+    modeValue: "agent",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — agent DM scope live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "dmScope.mode",
+    modeValue: "session",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — session DM scope live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "dmScope.mode",
+    modeValue: "channel",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — channel DM scope live-fire test",
+    phase: "136",
+  },
+
+  // ===========================================================================
+  // tts.autoMode (4 cells)
+  // ===========================================================================
+  {
+    dimension: "tts.autoMode",
+    modeValue: "off",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — TTS auto mode off live-fire test",
+    phase: "142",
+  },
+  {
+    dimension: "tts.autoMode",
+    modeValue: "always",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — TTS always-on auto mode live-fire test",
+    phase: "142",
+  },
+  {
+    dimension: "tts.autoMode",
+    modeValue: "inbound",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — TTS inbound-triggered auto mode live-fire test",
+    phase: "142",
+  },
+  {
+    dimension: "tts.autoMode",
+    modeValue: "tagged",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — TTS tagged auto mode live-fire test",
+    phase: "142",
+  },
+
+  // ===========================================================================
+  // tts.provider (3 cells)
+  // ===========================================================================
+  {
+    dimension: "tts.provider",
+    modeValue: "openai",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — OpenAI TTS provider live-fire test",
+    phase: "142",
+  },
+  {
+    dimension: "tts.provider",
+    modeValue: "elevenlabs",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — ElevenLabs TTS provider live-fire test",
+    phase: "142",
+  },
+  {
+    dimension: "tts.provider",
+    modeValue: "edge",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — Edge TTS provider live-fire test",
+    phase: "142",
+  },
+
+  // ===========================================================================
+  // transcription.provider (3 cells)
+  // ===========================================================================
+  {
+    dimension: "transcription.provider",
+    modeValue: "openai",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — OpenAI Whisper transcription live-fire test",
+    phase: "142",
+  },
+  {
+    dimension: "transcription.provider",
+    modeValue: "groq",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — Groq transcription provider live-fire test",
+    phase: "142",
+  },
+  {
+    dimension: "transcription.provider",
+    modeValue: "deepgram",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — Deepgram transcription provider live-fire test",
+    phase: "142",
+  },
+
+  // ===========================================================================
+  // transcription.fallback (2 cells)
+  // ===========================================================================
+  {
+    dimension: "transcription.fallback",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — transcription fallback chain enabled live-fire test",
+    phase: "142",
+  },
+  {
+    dimension: "transcription.fallback",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — transcription fallback chain disabled live-fire test",
+    phase: "142",
+  },
+
+  // ===========================================================================
+  // vision.providers (3 cells)
+  // ===========================================================================
+  {
+    dimension: "vision.providers",
+    modeValue: "openai",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — OpenAI vision provider live-fire test",
+    phase: "142",
+  },
+  {
+    dimension: "vision.providers",
+    modeValue: "anthropic",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — Anthropic vision provider live-fire test",
+    phase: "142",
+  },
+  {
+    dimension: "vision.providers",
+    modeValue: "google",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — Google vision provider live-fire test",
+    phase: "142",
+  },
+
+  // ===========================================================================
+  // image-gen (2 cells)
+  // ===========================================================================
+  {
+    dimension: "image-gen",
+    modeValue: "fal",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — fal.ai image generation live-fire test",
+    phase: "142",
+  },
+  {
+    dimension: "image-gen",
+    modeValue: "openai",
+    status: "skipped",
+    reference: "covered in Phase 142 (MEDIA) — OpenAI image generation live-fire test",
+    phase: "142",
+  },
+
+  // ===========================================================================
+  // search (8 cells)
+  // ===========================================================================
+  {
+    dimension: "search",
+    modeValue: "brave",
+    status: "skipped",
+    reference: "covered in Phase 143 (WEB) — Brave Search provider live-fire test",
+    phase: "143",
+  },
+  {
+    dimension: "search",
+    modeValue: "tavily",
+    status: "skipped",
+    reference: "covered in Phase 143 (WEB) — Tavily search provider live-fire test",
+    phase: "143",
+  },
+  {
+    dimension: "search",
+    modeValue: "duckduckgo",
+    status: "skipped",
+    reference: "covered in Phase 143 (WEB) — DuckDuckGo search provider live-fire test",
+    phase: "143",
+  },
+  {
+    dimension: "search",
+    modeValue: "searxng",
+    status: "skipped",
+    reference: "covered in Phase 143 (WEB) — SearXNG search provider live-fire test",
+    phase: "143",
+  },
+  {
+    dimension: "search",
+    modeValue: "exa",
+    status: "skipped",
+    reference: "covered in Phase 143 (WEB) — Exa search provider live-fire test",
+    phase: "143",
+  },
+  {
+    dimension: "search",
+    modeValue: "grok",
+    status: "skipped",
+    reference: "covered in Phase 143 (WEB) — Grok search provider live-fire test",
+    phase: "143",
+  },
+  {
+    dimension: "search",
+    modeValue: "perplexity",
+    status: "skipped",
+    reference: "covered in Phase 143 (WEB) — Perplexity search provider live-fire test",
+    phase: "143",
+  },
+  {
+    dimension: "search",
+    modeValue: "jina",
+    status: "skipped",
+    reference: "covered in Phase 143 (WEB) — Jina search provider live-fire test",
+    phase: "143",
+  },
+
+  // ===========================================================================
+  // modelFailover (2 cells)
+  // ===========================================================================
+  {
+    dimension: "modelFailover",
+    modeValue: "true",
+    status: "skipped",
+    reference: "covered in Phase 145 (SEC) — model failover enabled live-fire test",
+    phase: "145",
+  },
+  {
+    dimension: "modelFailover",
+    modeValue: "false",
+    status: "skipped",
+    reference: "covered in Phase 145 (SEC) — model failover disabled live-fire test",
+    phase: "145",
+  },
+
+  // ===========================================================================
+  // slack.mode (2 cells)
+  // ===========================================================================
+  {
+    dimension: "slack.mode",
+    modeValue: "socket",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — Slack Socket Mode live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "slack.mode",
+    modeValue: "http",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — Slack HTTP mode live-fire test",
+    phase: "144",
+  },
+
+  // ===========================================================================
+  // email.authType (2 cells)
+  // ===========================================================================
+  {
+    dimension: "email.authType",
+    modeValue: "password",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — email password authentication live-fire test",
+    phase: "144",
+  },
+  {
+    dimension: "email.authType",
+    modeValue: "oauth2",
+    status: "skipped",
+    reference: "covered in Phase 144 (CHAN) — email OAuth2 authentication live-fire test",
+    phase: "144",
+  },
+
+  // ===========================================================================
+  // deferredTools.mode (3 cells)
+  // ===========================================================================
+  {
+    dimension: "deferredTools.mode",
+    modeValue: "always",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — deferred tools always mode live-fire test",
+    phase: "140",
+  },
+  {
+    dimension: "deferredTools.mode",
+    modeValue: "auto",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — deferred tools auto mode live-fire test",
+    phase: "140",
+  },
+  {
+    dimension: "deferredTools.mode",
+    modeValue: "never",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — deferred tools never mode live-fire test",
+    phase: "140",
+  },
+
+  // ===========================================================================
+  // workspace.profile (2 cells)
+  // ===========================================================================
+  {
+    dimension: "workspace.profile",
+    modeValue: "full",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — full workspace profile live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "workspace.profile",
+    modeValue: "specialist",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — specialist workspace profile live-fire test",
+    phase: "136",
+  },
+
+  // ===========================================================================
+  // bootstrap.promptMode (3 cells)
+  // ===========================================================================
+  {
+    dimension: "bootstrap.promptMode",
+    modeValue: "full",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — full bootstrap prompt mode live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "bootstrap.promptMode",
+    modeValue: "minimal",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — minimal bootstrap prompt mode live-fire test",
+    phase: "136",
+  },
+  {
+    dimension: "bootstrap.promptMode",
+    modeValue: "none",
+    status: "skipped",
+    reference: "covered in Phase 136 (LOOP) — no-prompt bootstrap mode live-fire test",
+    phase: "136",
+  },
+] as const;
