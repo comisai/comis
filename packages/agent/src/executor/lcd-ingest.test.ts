@@ -37,7 +37,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
 import { initSchema, createLcdStore } from "@comis/memory";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { ingestTurn, ingestTurnGuarded } from "./lcd-ingest.js";
+import { ingestTurn, ingestTurnGuarded, isScopeSafeForIngest } from "./lcd-ingest.js";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { createLcdContextEngine } from "../context-engine/lcd-assembler.js";
 import type { ContextEngineDeps } from "../context-engine/types.js";
@@ -407,6 +407,144 @@ describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
     expect(appended.map((a) => a.role)).toEqual(["user", "assistant"]);
     // No divergence → no WARN.
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fail-closed rollover predicate (R3, Plan 132-04). LOSSLESS-CLAW §5: an
+// ambiguous/malformed scope must REFUSE the ingest write (skip + WARN,
+// errorKind "precondition") rather than silently reattach a turn's messages to
+// the WRONG (prior) conversation. The codebase invariant is
+// conversationId === sessionKey === formattedKey (executor-post-execution.ts:894);
+// an empty security column OR a conversationId/sessionKey conflict is internally
+// inconsistent — refuse, never guess. RED-first: today no such predicate exists,
+// so a malformed scope's write PROCEEDS.
+// ---------------------------------------------------------------------------
+
+describe("ingestTurnGuarded (R3 fail-closed rollover predicate)", () => {
+  const LIVE: AgentMessage[] = [userMsg("u0") as AgentMessage, assistantText("a0") as AgentMessage];
+
+  it("Test 11: an empty agentId is refused (write SKIPPED) and WARNs with errorKind precondition + hint", () => {
+    const { store, appended } = makeStoreWithPersistedCount(0);
+    const logger = createMockLogger();
+    const scope: ContextStoreScope = { ...SCOPE, agentId: "" };
+
+    ingestTurnGuarded(store, scope, LIVE, FIXED_NOW, logger);
+
+    // The write is refused — NOT a single append (a malformed-scope row would be
+    // cross-session-readable / mis-attached).
+    expect(appended).toHaveLength(0);
+    // The refuse branch WARNs with the §2.7 closed-union errorKind + an
+    // actionable hint. NO message content is logged.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "precondition",
+        hint: expect.any(String),
+        conversationId: CONVERSATION_ID,
+      }),
+      expect.any(String),
+    );
+  });
+
+  it("Test 12: an empty tenantId is refused (write SKIPPED) and WARNs", () => {
+    const { store, appended } = makeStoreWithPersistedCount(0);
+    const logger = createMockLogger();
+    const scope: ContextStoreScope = { ...SCOPE, tenantId: "" };
+
+    ingestTurnGuarded(store, scope, LIVE, FIXED_NOW, logger);
+
+    expect(appended).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "precondition", hint: expect.any(String) }),
+      expect.any(String),
+    );
+  });
+
+  it("Test 13: a blank (whitespace-only) sessionKey is refused (write SKIPPED) and WARNs", () => {
+    const { store, appended } = makeStoreWithPersistedCount(0);
+    const logger = createMockLogger();
+    // A whitespace-only column is as ambiguous as an empty one — trim before the check.
+    const scope: ContextStoreScope = { ...SCOPE, sessionKey: "   ", conversationId: "   " };
+
+    ingestTurnGuarded(store, scope, LIVE, FIXED_NOW, logger);
+
+    expect(appended).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "precondition", hint: expect.any(String) }),
+      expect.any(String),
+    );
+  });
+
+  it("Test 14: an empty conversationId is refused (write SKIPPED) and WARNs", () => {
+    const { store, appended } = makeStoreWithPersistedCount(0);
+    const logger = createMockLogger();
+    const scope: ContextStoreScope = { ...SCOPE, conversationId: "" };
+
+    ingestTurnGuarded(store, scope, LIVE, FIXED_NOW, logger);
+
+    expect(appended).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "precondition", hint: expect.any(String) }),
+      expect.any(String),
+    );
+  });
+
+  it("Test 15: a conversationId that conflicts with its sessionKey is refused rather than reattached", () => {
+    const { store, appended } = makeStoreWithPersistedCount(0);
+    const logger = createMockLogger();
+    // The codebase invariant is conversationId === sessionKey (both = formattedKey).
+    // A mismatch is internally inconsistent — refuse rather than guess WHICH
+    // conversation to attach to (the silent-cross-session-merge threat).
+    const scope: ContextStoreScope = { ...SCOPE, conversationId: "conv-A", sessionKey: "conv-B" };
+
+    ingestTurnGuarded(store, scope, LIVE, FIXED_NOW, logger);
+
+    expect(appended).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "precondition", hint: expect.any(String) }),
+      expect.any(String),
+    );
+  });
+
+  it("Test 16: a well-formed, consistent scope still ingests (the predicate does not over-refuse)", () => {
+    const { store, appended } = makeStoreWithPersistedCount(0);
+    const logger = createMockLogger();
+    // conversationId === sessionKey, all columns populated → safe → ingest proceeds.
+    const scope: ContextStoreScope = {
+      conversationId: "sess-ok",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "sess-ok",
+    };
+
+    ingestTurnGuarded(store, scope, LIVE, FIXED_NOW, logger);
+
+    // The delta is appended (no over-refusal) and no precondition WARN fired.
+    expect(appended).toHaveLength(2);
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "precondition" }),
+      expect.any(String),
+    );
+  });
+
+  it("Test 17: isScopeSafeForIngest reports ok for a consistent scope and not-ok with a reason for a malformed one", () => {
+    expect(
+      isScopeSafeForIngest({
+        conversationId: "k",
+        tenantId: "t",
+        agentId: "a",
+        sessionKey: "k",
+      }),
+    ).toEqual({ ok: true });
+
+    const bad = isScopeSafeForIngest({
+      conversationId: "k",
+      tenantId: "",
+      agentId: "a",
+      sessionKey: "k",
+    });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(typeof bad.reason).toBe("string");
   });
 });
 
