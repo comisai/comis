@@ -109,3 +109,68 @@ describe("buildCredentialRegistry — OPENAI_API_KEY present", () => {
     expect(categories).toContain("embedding(openai)");
   });
 });
+
+describe("CredentialRegistry — key-to-category mapping (XAI_API_KEY + JINA_API_KEY)", () => {
+  // Save and restore env around each test that mutates process.env
+  let saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    saved = {
+      XAI_API_KEY: process.env["XAI_API_KEY"],
+      JINA_API_KEY: process.env["JINA_API_KEY"],
+      ANTHROPIC_API_KEY: process.env["ANTHROPIC_API_KEY"],
+    };
+  });
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) {
+        delete process.env[k];
+      } else {
+        process.env[k] = v;
+      }
+    }
+  });
+
+  it("XAI_API_KEY present → getSkipVerdict('search(grok)') returns null", () => {
+    process.env["XAI_API_KEY"] = "test-key";
+    delete process.env["JINA_API_KEY"];
+    delete process.env["ANTHROPIC_API_KEY"];
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("search(grok)")).toBeNull();
+  });
+
+  it("XAI_API_KEY absent → getSkipVerdict('search(grok)') returns SKIPPED(no-creds)", () => {
+    delete process.env["XAI_API_KEY"];
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("search(grok)")).toBe("SKIPPED(no-creds)");
+  });
+
+  it("JINA_API_KEY present → getSkipVerdict('search(jina)') returns null", () => {
+    process.env["JINA_API_KEY"] = "test-key";
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("search(jina)")).toBeNull();
+  });
+
+  it("JINA_API_KEY absent → getSkipVerdict('search(jina)') returns SKIPPED(no-creds)", () => {
+    delete process.env["JINA_API_KEY"];
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("search(jina)")).toBe("SKIPPED(no-creds)");
+  });
+
+  it("GROK_API_KEY is not a recognized key (old key name removed)", () => {
+    // Setting the old key name must not unlock search(grok)
+    delete process.env["XAI_API_KEY"];
+    (process.env as Record<string, string>)["GROK_API_KEY"] = "test-key";
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("search(grok)")).toBe("SKIPPED(no-creds)");
+    delete (process.env as Record<string, string>)["GROK_API_KEY"];
+  });
+
+  it("ANTHROPIC_API_KEY present → LLM(anthropic) and CACHE(Anthropic) unlocked", () => {
+    process.env["ANTHROPIC_API_KEY"] = "test-key";
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("LLM(anthropic)")).toBeNull();
+    expect(registry.getSkipVerdict("CACHE(Anthropic)")).toBeNull();
+  });
+});

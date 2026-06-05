@@ -38,7 +38,7 @@ export type Capability = "vision" | "tools" | "structured-output" | "thinking";
 
 /**
  * Env-var → category mapping table (from design §4.3).
- * All 12 documented API keys listed here.
+ * All 13 documented API keys listed here.
  */
 const KEY_TO_CATEGORIES: Record<string, Category[]> = {
   ANTHROPIC_API_KEY: ["LLM(anthropic)", "CACHE(Anthropic)"],
@@ -52,7 +52,8 @@ const KEY_TO_CATEGORIES: Record<string, Category[]> = {
   TAVILY_API_KEY: ["search(tavily)"],
   EXA_API_KEY: ["search(exa)"],
   PERPLEXITY_API_KEY: ["search(perplexity)"],
-  GROK_API_KEY: ["search(grok)"],
+  XAI_API_KEY: ["search(grok)"],
+  JINA_API_KEY: ["search(jina)"],
 };
 
 /**
@@ -109,7 +110,7 @@ function isBwrapAvailable(): boolean {
 }
 
 /**
- * Build a CredentialRegistry by reading all 12 documented API keys from env
+ * Build a CredentialRegistry by reading all 13 documented API keys from env
  * at call time. The registry captures a boolean snapshot — key values never
  * escape the module boundary.
  */
