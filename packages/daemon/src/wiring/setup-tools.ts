@@ -68,8 +68,7 @@ import {
 } from "@comis/skills/tools";
 // Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
 import { wireTerminalTools, buildTerminalEgressDeps, buildTerminalWiringDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
-// In-session expansion-loop (v2.12 Phase 131, E1/E2) ctx_* wiring extracted to
-// setup-context-tools.ts — the dag-gated, never-export, direct-injection tool set.
+// In-session expansion-loop (v2.12 Phase 131, E1/E2) dag-gated ctx_* wiring.
 import { wireContextTools } from "./setup-context-tools.js";
 // Tool-audit DEBUG-line subscription extracted to setup-tool-audit.ts (file-size cap).
 import { setupToolAuditLogging } from "./setup-tool-audit.js";
@@ -172,12 +171,9 @@ export interface ToolsDeps {
   /** The daemon's injected `TimerPort` — threaded toward the terminal reaper (124-09 WR-01
    *  closure) so the idle-TTL/max-sessions sweep composes. Absent ⇒ no terminal reaper. */
   timers?: TimerPort;
-  /**
-   * The concrete LCD `ContextStorePort` (`createLcdStore`) from setupMemory. Injected so
-   * assembleToolsForAgent can wire the dag-mode `ctx_*` in-session expansion tools (E1/E2).
-   * The agent receives only the core `ContextStorePort` TYPE (the agent-to-store cut). Optional:
-   * absent ⇒ the ctx_* tools are not wired (pipeline-only / store-less deployments).
-   */
+  /** The concrete LCD `ContextStorePort` (`createLcdStore`) from setupMemory — injected so
+   *  assembleToolsForAgent wires the dag-mode `ctx_*` tools (E1/E2); the agent sees only the
+   *  core port TYPE (the agent-to-store cut). Absent ⇒ ctx_* not wired. */
   lcdStore?: ContextStorePort;
 }
 
@@ -539,12 +535,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         .map((d) => d.build(ctx))
         .filter((t): t is PlatformTool => t !== undefined);
 
-      // HOISTED to the closure scope (Phase 131): both the exec tool AND the
-      // dag-gated ctx_* wiring (below) reuse the ONE session tool-results
-      // resolver. Resolved at call time via ALS context. Matches the session
-      // path pattern from comis-session-manager + microcompaction-guard. The
-      // local is `alsCtx` (not `ctx`) to avoid shadowing the outer
-      // `PlatformToolBuildContext` variable created for the registry call.
+      // HOISTED (Phase 131) so BOTH the exec tool and the dag-gated ctx_* wiring (below) reuse
+      // the ONE ALS-resolved session tool-results resolver.
       const agentWorkspaceDir = workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
       const getToolResultsDir = (): string | undefined => {
         const alsCtx = tryGetContext();
@@ -590,9 +582,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         }
       }
 
-      // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering
-      // (agentWorkspaceDir + getToolResultsDir are HOISTED to the closure scope above —
-      //  shared with the dag-gated ctx_* wiring; do NOT re-derive them here.)
+      // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering.
+      // (agentWorkspaceDir + getToolResultsDir are HOISTED above — shared with the ctx_* wiring.)
       {
         const registry = getOrCreateRegistry(agentId);
 
@@ -643,21 +634,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       const terminalBase = { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers };
       wireTerminalTools(tools, terminalRegistries, agentId, buildTerminalWiringDeps(terminalBase, skillsConfig.terminal));
 
-      // Context expansion tools (v2.12 Phase 131, E1/E2): in-session lossless-store
-      // recovery (ctx_search/ctx_inspect/ctx_expand). Wired ONLY in dag mode AND
-      // when the store is present — meaningless in pipeline mode (there is no LCD
-      // store). Mirrors the capability-gated conditional precedent. never-export +
-      // distinct from the cross-session recall layer: the store is injected as the
-      // core ContextStorePort type, no in-process RPC dispatch. Reuses the ONE
-      // hoisted getToolResultsDir (the ctx_expand file-spill resolver) + systemNowMs
-      // (the sanctioned-root clock). NOT added to the platform-tool parity registry.
+      // Context expansion tools (v2.12 Phase 131, E1/E2): in-session lossless-store recovery
+      // (ctx_*). Wired ONLY in dag mode AND with a store present (inert in pipeline mode).
+      // never-export, OUTSIDE the parity registry; store injected as the core port type.
       if ((agentConfig?.contextEngine?.version ?? "pipeline") === "dag" && deps.lcdStore) {
-        wireContextTools(tools, deps.lcdStore, agentId, {
-          skillsLogger,
-          nowMs: systemNowMs,
-          maxExpandTokens: agentConfig?.contextEngine?.maxExpandTokens ?? 4000,
-          getToolResultsDir,
-        });
+        const maxExpandTokens = agentConfig?.contextEngine?.maxExpandTokens ?? 4000;
+        wireContextTools(tools, deps.lcdStore, agentId, { skillsLogger, nowMs: systemNowMs, maxExpandTokens, getToolResultsDir });
       }
 
       return tools;
