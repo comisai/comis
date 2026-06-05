@@ -515,6 +515,9 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "cacheRetention",
     modeValue: "none",
+    // CR-03/CR-02: "none" exercises the kill-switch path — cache-matrix.test.ts now
+    // asserts expectNoCacheWrite (cacheCreationInputTokens===0) for this combo,
+    // honestly covering the kill-switch behaviour rather than a broken write assertion.
     status: "covered",
     reference: "test/live/scenarios/cache/cache-matrix.test.ts",
     phase: "137",
@@ -583,8 +586,13 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "geminiCache",
     modeValue: "true",
+    // CR-03: geminiCache is a Google Gemini CachedContent feature. The only STRATEGY_MATRIX
+    // row with geminiCache=true used provider:"anthropic", which does not exercise the
+    // Gemini CachedContent API path. CACHE-02 (gemini-cache.test.ts) drives a real Google
+    // provider turn with geminiCache enabled and asserts both cacheCreationInputTokens>0
+    // and totalCacheSaved>0 — this is the honest reference for this cell.
     status: "covered",
-    reference: "test/live/scenarios/cache/cache-matrix.test.ts",
+    reference: "test/live/scenarios/cache/gemini-cache.test.ts",
     phase: "137",
   },
   {
