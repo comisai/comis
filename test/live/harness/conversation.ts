@@ -20,9 +20,10 @@
  * @module
  */
 
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   startTestDaemon,
   type TestDaemonHandle,
@@ -33,6 +34,7 @@ import {
   sendJsonRpc,
 } from "../../support/ws-helpers.js";
 import { createLogCapture } from "../../support/log-verifier.js";
+import { getFreePort } from "../../support/free-port.js";
 import { EchoChannelAdapter } from "@comis/channels";
 import type { SessionIndexEvent } from "@comis/observability";
 
@@ -53,6 +55,12 @@ export interface ConversationDriverOptions {
   timeoutMs?: number;
   /** Path to daemon config file (default: test/config/config.test.yaml). */
   configPath?: string;
+  /**
+   * Explicit gateway port to use for the test daemon. When omitted,
+   * `init()` allocates a free port via `getFreePort()` so that parallel
+   * vitest forks do not collide on the config-default port (4766).
+   */
+  gatewayPort?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +94,11 @@ export class ConversationDriver {
   private _provider: string;
   private _timeoutMs: number;
   private _configPath: string | undefined;
+  private _explicitGatewayPort: number | undefined;
+
+  // Allocated once in init() and reused for restart() so the daemon always
+  // re-binds the same port (restart survival semantics).
+  private _gatewayPort: number | undefined;
 
   // Set by init()
   private _handle: TestDaemonHandle | undefined;
@@ -101,6 +114,7 @@ export class ConversationDriver {
     this._provider = opts?.provider ?? "anthropic";
     this._timeoutMs = opts?.timeoutMs ?? 30_000;
     this._configPath = opts?.configPath;
+    this._explicitGatewayPort = opts?.gatewayPort;
 
     // Create isolated temp data dir — never pollutes ~/.comis
     this._dataDir = mkdtempSync(join(tmpdir(), "comis-live-loop-"));
@@ -124,14 +138,33 @@ export class ConversationDriver {
    * Must be called before sendTurn().
    */
   async init(): Promise<void> {
+    // Allocate a unique gateway port for this driver instance so that
+    // parallel vitest forks do not collide on the config-default port (4766).
+    // An explicit port from options takes priority; otherwise ask the OS for
+    // a free ephemeral port. The port is stored on the instance so restart()
+    // re-binds the same port (restart survival semantics — T-136-01).
+    if (this._gatewayPort === undefined) {
+      this._gatewayPort = this._explicitGatewayPort ?? await getFreePort();
+    }
+
+    // Write a per-driver temp config with the unique port substituted.
+    // The daemon reads its listen port from the YAML config — gatewayPort on
+    // TestDaemonOptions only controls the URL the harness connects to, not the
+    // actual bind port. By rewriting the config we guarantee the daemon and
+    // the harness agree on the same port (T-136-01, parallel-fork collision fix).
+    const resolvedConfigPath = this._buildPortedConfigPath(this._gatewayPort);
+
     // Log capture with raw payloads for log-oracle assertions (T-136-01-01)
     this._logCapture = createLogCapture();
 
-    // Boot the in-process daemon with log tee + raw payloads
+    // Boot the in-process daemon with log tee + raw payloads.
+    // Pass gatewayPort so the harness builds gatewayUrl from the same port
+    // the config tells the daemon to bind.
     this._handle = await startTestDaemon({
       logStream: this._logCapture.stream,
       disableRedaction: true,
-      ...(this._configPath ? { configPath: this._configPath } : {}),
+      configPath: resolvedConfigPath,
+      gatewayPort: this._gatewayPort,
     });
 
     // Register EchoChannelAdapter on both maps so the daemon can receive
@@ -267,10 +300,17 @@ export class ConversationDriver {
     // Create a fresh log capture for the new daemon instance
     this._logCapture = createLogCapture();
 
-    // Boot fresh daemon on same dataDir (SQLite state persists)
+    // Boot fresh daemon on same dataDir (SQLite state persists).
+    // Pass the same config (with the same unique port) that was used in init()
+    // so the restarted daemon binds the same port (restart survival semantics —
+    // T-136-01). Caller-supplied opts can override, but should rarely need to.
+    const resolvedConfigPath = this._gatewayPort !== undefined
+      ? this._buildPortedConfigPath(this._gatewayPort)
+      : undefined;
     this._handle = await startTestDaemon({
       logStream: this._logCapture.stream,
       disableRedaction: true,
+      ...(resolvedConfigPath ? { configPath: resolvedConfigPath, gatewayPort: this._gatewayPort } : {}),
       ...opts,
     });
 
@@ -418,5 +458,38 @@ export class ConversationDriver {
       );
     }
     return this._echo;
+  }
+
+  /**
+   * Build (or reuse) a per-driver temp config file with `gateway.port` set to
+   * the given port. The daemon reads the bind port from YAML — `gatewayPort`
+   * on TestDaemonOptions only controls the URL string the harness connects to,
+   * not the actual port the server listens on. Writing a per-driver config file
+   * ensures the daemon and the harness agree on the same port.
+   *
+   * If the caller provided an explicit `configPath` in options, we patch that
+   * file's port; otherwise we patch the default config.test.yaml.
+   *
+   * The temp file is written into the OS temp dir alongside the data dir and
+   * is not cleaned up explicitly — OS temp cleanup handles it.
+   */
+  private _buildPortedConfigPath(port: number): string {
+    // Resolve the base config path (caller-supplied or the standard default)
+    const here = dirname(fileURLToPath(import.meta.url));
+    const baseConfig = this._configPath
+      ?? resolve(here, "../../config/config.test.yaml");
+
+    const content = readFileSync(baseConfig, "utf-8");
+    // Replace the gateway port line. The YAML key is "  port: <N>" directly
+    // under the gateway: block. We use a targeted regex that matches the port
+    // line only within the gateway block (first occurrence after "gateway:").
+    const patched = content.replace(
+      /(gateway:\s*(?:\n[^\n]*)*?\n\s+port:\s*)\d+/,
+      `$1${port}`,
+    );
+    // Write to the same temp dir as the data dir so they share a lifetime.
+    const tempConfigPath = join(this._dataDir, "config.test.patched.yaml");
+    writeFileSync(tempConfigPath, patched, "utf-8");
+    return tempConfigPath;
   }
 }
