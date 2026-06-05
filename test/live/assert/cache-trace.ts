@@ -173,6 +173,31 @@ export async function expectCacheWrite(
 }
 
 // ---------------------------------------------------------------------------
+// Asserter: expectNoCacheWrite
+// ---------------------------------------------------------------------------
+
+/**
+ * Assert that NO cache-write event occurred (cacheCreationInputTokens === 0).
+ *
+ * Used for the kill-switch path (cacheRetention:"none") where the provider
+ * strips all cache_control markers so the model never receives cache annotations
+ * and must return cacheCreationInputTokens=0.
+ *
+ * @param cacheTraceLines - NDJSON lines from the cache-trace stream.
+ * @throws Error with actual counts when a write unexpectedly occurred.
+ */
+export async function expectNoCacheWrite(cacheTraceLines: string): Promise<void> {
+  const summary = readCacheTraceForTurn(cacheTraceLines);
+
+  if (summary.totalCreationTokens !== 0) {
+    throw new Error(
+      `expectNoCacheWrite: expected cacheCreationInputTokens=0 (kill-switch active) ` +
+        `but found ${summary.totalCreationTokens} across ${summary.traceCount} cache-trace entries.`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Asserter: expectCacheRead
 // ---------------------------------------------------------------------------
 
@@ -225,6 +250,16 @@ export function expectDigestChange(
   before: CacheTraceSummary,
   after: CacheTraceSummary,
 ): void {
+  // Guard: a zero-trace 'after' snapshot means the turn failed before emitting any
+  // cache-trace event. undefined vs. a real digest would compare as "changed",
+  // masking a broken turn as a successful cache miss. Throw explicitly instead.
+  if (after.traceCount === 0) {
+    throw new Error(
+      `expectDigestChange: 'after' snapshot has no qualifying trace lines (traceCount=0). ` +
+        `Cannot determine digest change — the turn may have failed before emitting a cache-trace event.`,
+    );
+  }
+
   const messagesChanged = before.lastMessagesDigest !== after.lastMessagesDigest;
   const systemChanged = before.lastSystemDigest !== after.lastSystemDigest;
 

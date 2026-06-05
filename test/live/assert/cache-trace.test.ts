@@ -14,6 +14,7 @@ import { describe, it, expect } from "vitest";
 import {
   readCacheTraceForTurn,
   expectCacheWrite,
+  expectNoCacheWrite,
   expectCacheRead,
   expectDigestChange,
   type CacheTraceSummary,
@@ -162,6 +163,37 @@ describe("expectCacheWrite", () => {
 });
 
 // ---------------------------------------------------------------------------
+// expectNoCacheWrite
+// ---------------------------------------------------------------------------
+
+describe("expectNoCacheWrite", () => {
+  it("resolves when there are no cache-trace lines (empty file)", async () => {
+    await expect(expectNoCacheWrite("")).resolves.toBeUndefined();
+  });
+
+  it("resolves when all model:after lines have cacheCreationInputTokens=0", async () => {
+    const lines = makeCacheRead(300); // read-only line, creation=0
+    await expect(expectNoCacheWrite(lines)).resolves.toBeUndefined();
+  });
+
+  it("resolves when cacheCreationInputTokens is 0 across multiple lines", async () => {
+    const line1 = makeCacheWrite(0);
+    const line2 = makeCacheRead(150);
+    await expect(expectNoCacheWrite([line1, line2].join("\n"))).resolves.toBeUndefined();
+  });
+
+  it("throws when any model:after line has cacheCreationInputTokens > 0", async () => {
+    const lines = makeCacheWrite(500);
+    await expect(expectNoCacheWrite(lines)).rejects.toThrow(/cacheCreationInputTokens=0/);
+  });
+
+  it("throws with actual token count in the message", async () => {
+    const lines = makeCacheWrite(1);
+    await expect(expectNoCacheWrite(lines)).rejects.toThrow(/found 1/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // expectCacheRead
 // ---------------------------------------------------------------------------
 
@@ -270,6 +302,27 @@ describe("expectDigestChange", () => {
       lastSystemDigest: undefined,
     };
     expect(() => expectDigestChange(before, after)).toThrow(/digest/i);
+  });
+
+  it("throws when 'after' has traceCount=0 — turn failed before emitting cache-trace", () => {
+    // WR-03: before has a real digest; after has traceCount=0 (undefined digest).
+    // Without the guard, before.lastMessagesDigest !== undefined evaluates to
+    // 'changed' and the function would NOT throw — masking a broken turn.
+    const before: CacheTraceSummary = {
+      totalCreationTokens: 0,
+      totalReadTokens: 0,
+      traceCount: 1,
+      lastMessagesDigest: "aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222",
+      lastSystemDigest: "dddd1111eeee2222ffff3333aaaa4444bbbb5555cccc6666dddd1111eeee2222",
+    };
+    const after: CacheTraceSummary = {
+      totalCreationTokens: 0,
+      totalReadTokens: 0,
+      traceCount: 0,        // turn produced no qualifying trace lines
+      lastMessagesDigest: undefined,
+      lastSystemDigest: undefined,
+    };
+    expect(() => expectDigestChange(before, after)).toThrow(/traceCount=0/);
   });
 });
 
