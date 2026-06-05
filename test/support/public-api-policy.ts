@@ -2257,6 +2257,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // importing this schema). No *RowFromSchema inferred type is exported — the
       // LcdSearchHit DTO lives in @comis/core's context-store-types.ts.
       "LcdSearchHitRowSchema",
+      // LCD LIKE-fallback hit row schema (v2.12, Phase 132 WR-02). The exact sibling
+      // of LcdSearchHitRowSchema MINUS the `rank` column — the LIKE scan has no
+      // ranking. Consumed intra-package by lcd-fts.ts via
+      // createRowMapper(LcdLikeHitRowSchema) so the LIKE-fallback rows degrade
+      // per-row (parseOptionalRow+skip) identically to the MATCH path, instead of a
+      // raw `as { ref_id, snippet }` cast that leaked an undefined snippet/refId.
+      // An intra-file value reference, NOT a cross-package import; barrel-surfaced
+      // through `export *`, so tracked here as a baseline orphan like the sibling
+      // LCD row schemas above (the ctx_* tools read hits via the searchLcd RETURN
+      // value, never by importing this schema).
+      "LcdLikeHitRowSchema",
       "VecSearchRowSchema",
       "VecSearchRowFromSchema",
       "FtsSearchRowSchema",
