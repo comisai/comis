@@ -33,12 +33,16 @@
 import type Database from "better-sqlite3";
 import type { LcdMessagePart, LcdSearchHit } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
-import { LcdSearchHitRowSchema } from "./row-schemas.js";
+import { LcdSearchHitRowSchema, LcdLikeHitRowSchema } from "./row-schemas.js";
 
 /** The scope of an LCD search — which tables to MATCH. Closed union (AGENTS.md §2.8). */
 type LcdSearchScope = "messages" | "summaries" | "both";
 
 const lcdSearchHitMapper = createRowMapper(LcdSearchHitRowSchema);
+// WR-02: the LIKE-fallback rows carry no `rank` column (no ranking) but MUST go
+// through the SAME per-row validate+skip discipline as the MATCH path so a
+// drifted/corrupt row is skipped, never surfaced with an undefined snippet/refId.
+const lcdLikeHitMapper = createRowMapper(LcdLikeHitRowSchema);
 
 /**
  * Memoized FTS5-availability verdict per Database handle. Probing once per db
@@ -292,8 +296,11 @@ function searchViaLike(
       LIMIT ?
     `);
     for (const raw of safeAll(() => stmt.all(conversationId, agentId, like, limit))) {
-      const row = raw as { ref_id: string; snippet: string };
-      hits.push({ kind: "summary", refId: row.ref_id, snippet: row.snippet, rank: undefined });
+      // WR-02: per-row validate+skip (mirror mapFtsRows / every other LCD read) —
+      // a corrupt/drifted row is skipped, never pushed with an undefined snippet.
+      const parsed = lcdLikeHitMapper.parseOptionalRow(raw);
+      if (!parsed.ok || !parsed.value) continue;
+      hits.push({ kind: "summary", refId: parsed.value.ref_id, snippet: parsed.value.snippet, rank: undefined });
     }
   }
 
@@ -317,10 +324,15 @@ function searchViaLike(
     `);
     const seen = new Set<string>();
     for (const raw of safeAll(() => stmt.all(conversationId, agentId, like, like, like, limit))) {
-      const row = raw as { ref_id: string; snippet: string };
-      if (seen.has(row.ref_id)) continue; // one hit per message
-      seen.add(row.ref_id);
-      hits.push({ kind: "message", refId: row.ref_id, snippet: row.snippet, rank: undefined });
+      // WR-02: per-row validate+skip BEFORE the de-dup so a corrupt row (e.g. a
+      // NULL projected id) is dropped rather than seeding `seen`/a hit with an
+      // undefined refId. Mirrors mapFtsRows + every other LCD read.
+      const parsed = lcdLikeHitMapper.parseOptionalRow(raw);
+      if (!parsed.ok || !parsed.value) continue;
+      const refId = parsed.value.ref_id;
+      if (seen.has(refId)) continue; // one hit per message
+      seen.add(refId);
+      hits.push({ kind: "message", refId, snippet: parsed.value.snippet, rank: undefined });
     }
   }
 

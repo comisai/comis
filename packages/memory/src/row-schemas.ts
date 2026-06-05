@@ -406,6 +406,20 @@ export const LcdSearchHitRowSchema = z.strictObject({
 });
 
 /**
+ * Schema for an LCD LIKE-fallback hit row (E1 ctx_search, FTS5 uncompiled). Same
+ * `ref_id`/`snippet` shape as the MATCH path but WITHOUT `rank` — the LIKE scan
+ * has no ranking, so the projection selects no `rank` column and the hit's `rank`
+ * is set to `undefined` by the contract. Routes through the SAME per-row
+ * `parseOptionalRow`+skip the MATCH path uses (WR-02) so both search paths degrade
+ * identically — a drifted/corrupt row is skipped, never surfaced with an
+ * `undefined` `snippet`/`refId` into `wrapExternalContent` at the tool boundary.
+ */
+export const LcdLikeHitRowSchema = z.strictObject({
+  ref_id: z.string(),
+  snippet: z.string(),
+});
+
+/**
  * Schema for the `named_graphs` table.
  * Paired with `NamedGraphRow` exported from `./types.js`.
  */
