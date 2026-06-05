@@ -404,11 +404,37 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     // getContextItems was never called first).
     seedContextItems(conversationId);
 
-    // Recompute descendantCount + time-range from the CHILD SUMMARY rows (store
-    // is authority — the input's advisory fields are ignored). Read the whole
-    // conversation's summaries once, index by id (WR-02 per-row degrade), filter
-    // to the linked children.
-    const childSet = new Set(input.childSummaryIds);
+    // T-130 tamper guard (WR-02) — mirror the leaf path's T-129-22 discipline:
+    // DERIVE the child set FROM the summary-refs actually living in the replaced
+    // [startOrdinal,endOrdinal] range, instead of trusting `input.childSummaryIds`
+    // and the range to agree (two independent inputs). Read the range rows once
+    // (per-row degrade), and:
+    //   (a) REJECT a range that still holds a surviving `message`-ref — a
+    //       condensed run is summary-refs ONLY; collapsing a raw message into a
+    //       condensed ref whose `lcd_summary_parents` links no message would break
+    //       losslessness for that message. The throw rolls back the whole txn
+    //       (non-fatal at the trigger, T-130-07).
+    //   (b) LINK the range-derived summary ids (not the caller input), so a
+    //       mismatched `childSummaryIds` can never corrupt the DAG edges — exactly
+    //       as the leaf path links the messages it READ from the range, never the
+    //       caller's intent. The `input.childSummaryIds` are therefore advisory:
+    //       the range is the single authority (one source of truth).
+    const inRangeChildIds: string[] = [];
+    for (const raw of selectCtxItemsInRange.all(conversationId, input.startOrdinal, input.endOrdinal)) {
+      const parsed = ctxItemRowMapper.parseOptionalRow(raw);
+      if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
+      if (parsed.value.ref_kind !== "summary") {
+        throw new Error("condensed range/child mismatch: range contains a non-summary ref");
+      }
+      inRangeChildIds.push(parsed.value.ref_id);
+    }
+    const inRangeSet = new Set(inRangeChildIds);
+
+    // Recompute descendantCount + time-range from the RANGE-DERIVED CHILD SUMMARY
+    // rows (store is authority — the input's advisory fields are ignored). Read
+    // the whole conversation's summaries once, index by id (WR-02 per-row
+    // degrade), filter to the derived children.
+    const childSet = inRangeSet;
     let descendantCount = 0;
     let earliestAt = Number.POSITIVE_INFINITY;
     let latestAt = Number.NEGATIVE_INFINITY;
@@ -447,9 +473,10 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       input.createdAt,
     );
 
-    // 2. Link one row per child summary id (losslessness ledger — children, not
-    //    messages).
-    for (const childId of input.childSummaryIds) {
+    // 2. Link one row per RANGE-DERIVED child summary id (losslessness ledger —
+    //    children, not messages). Derived from the range (WR-02), so the links and
+    //    the range-replaced window can never diverge.
+    for (const childId of inRangeChildIds) {
       insertSummaryParent.run(summaryId, childId);
     }
 

@@ -269,10 +269,11 @@ export interface AppendSummaryInput {
  * covers with one condensed summary-ref — all atomically.
  *
  * Mirrors AppendSummaryInput. NEW vs AppendSummaryInput: `childSummaryIds`
- * (the child summary ids this condensed node links via lcd_summary_parents)
- * and `depth` (= max(child depths) + 1). `descendantCount`/`earliestAt`/
- * `latestAt` are advisory — the store recomputes them from the child rows
- * (the store is the authority).
+ * (advisory — the store DERIVES the `lcd_summary_parents` links from the
+ * summary-refs in the replaced range, WR-02) and `depth` (= max(child depths)
+ * + 1). `descendantCount`/`earliestAt`/`latestAt` are likewise advisory — the
+ * store recomputes them from the range-derived child rows (the store is the
+ * authority; the range is the single source of truth for the linked set).
  */
 export interface AppendCondensedSummaryInput {
   scope: ContextStoreScope;
@@ -295,7 +296,14 @@ export interface AppendCondensedSummaryInput {
   /** Inclusive context_items ordinal range of SUMMARY-refs to replace. */
   startOrdinal: number;
   endOrdinal: number;
-  /** The child summary ids this condensed node links (lcd_summary_parents). */
+  /**
+   * Advisory — the agent's intended child summary ids. The store DERIVES the
+   * actual `lcd_summary_parents` links FROM the summary-refs in the replaced
+   * `[startOrdinal,endOrdinal]` range (the range is the single authority, WR-02),
+   * exactly as the leaf path derives its message links from the read range. A
+   * range that still holds a surviving `message`-ref is rejected (a condensed run
+   * is summary-refs only). Pass the same set the run was selected from.
+   */
   childSummaryIds: string[];
   /** = max(child depths) + 1. */
   depth: number;
