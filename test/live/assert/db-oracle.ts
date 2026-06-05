@@ -126,8 +126,19 @@ export function snapshotRowCounts(
 ): Record<string, number> {
   const db = new Database(dbPath, { readonly: true });
   try {
+    // Mirror the sqlite_master allowlist guard used in runDbOracle check 4
+    // to prevent caller-supplied table names from being interpolated directly
+    // into SQL without validation (WR-03 — injection hardening + consistency).
+    const existingTables = new Set<string>(
+      (
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+          .all() as { name: string }[]
+      ).map((r) => r.name),
+    );
     const counts: Record<string, number> = {};
     for (const t of tables) {
+      if (!existingTables.has(t)) continue; // skip tables not in the DB
       counts[t] = (
         db.prepare(`SELECT count(*) as c FROM ${t}`).get() as { c: number }
       ).c;
