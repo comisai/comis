@@ -41,6 +41,29 @@ const SCOPE_B: ContextStoreScope = {
   sessionKey: "sess-b",
 };
 
+// ── WR-02 (R4) cross-agent fixtures: the REAL shared-(tenant,user,channel) case ──
+// `formatSessionKey` omits agentId, so two agents legitimately share ONE
+// conversation_id + tenantId + sessionKey, distinguished ONLY by agentId. Reads
+// must filter on agent_id (and tenant_id) so agent A can never recover agent B's
+// compressed history. Same conv/tenant/session, DIFFERENT agentId.
+const SHARED_CONV = "conv-shared";
+const SHARED_TENANT = "tenant_shared";
+const SHARED_SESSION = "sess-shared";
+
+const SCOPE_AGENT_A: ContextStoreScope = {
+  conversationId: SHARED_CONV,
+  tenantId: SHARED_TENANT,
+  agentId: "agent-a",
+  sessionKey: SHARED_SESSION,
+};
+
+const SCOPE_AGENT_B: ContextStoreScope = {
+  conversationId: SHARED_CONV,
+  tenantId: SHARED_TENANT,
+  agentId: "agent-b",
+  sessionKey: SHARED_SESSION,
+};
+
 /** Build the assistant message's parts directly (DTO shape, codec-internal-independent). */
 function assistantParts(): LcdMessagePart[] {
   return [
@@ -1221,5 +1244,169 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
 
     const hits = bareStore.searchLcd("conv-a", "margin", { limit: 10, scope: "summaries" });
     expect(hits.some((h) => h.refId === "pre1")).toBe(true);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// createLcdStore — R4 cross-agent read isolation (the Phase-131 WR-02 close)
+// ───────────────────────────────────────────────────────────────────────────
+// Two agents (agent-a, agent-b) legitimately share ONE conversation_id +
+// tenantId + sessionKey (formatSessionKey omits agentId). Before R4, every read
+// filtered by conversation_id ONLY, so agent A could recover agent B's
+// compressed history across EVERY recovery surface. These tests pass the NEW
+// scope-carrying signature (`store.getMessages(scope)` etc.) and assert agent A
+// never sees agent B's rows within the shared conversation. They MUST fail on the
+// pre-patch tree (the conversation-only signature does not even compile, and the
+// reads do not filter agent_id/tenant_id). Each surface gets its own test.
+describe("createLcdStore — R4 cross-agent read isolation (WR-02)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createLcdStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Append N user text messages for `scope` at seq base..base+N-1. */
+  function seedMessages(scope: ContextStoreScope, count: number, seqBase: number): void {
+    for (let i = 0; i < count; i++) {
+      store.append({
+        scope,
+        seq: seqBase + i,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 1000 + (seqBase + i) * 10,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `${scope.agentId}-m${i}` }, rawType: "text" } }],
+      });
+    }
+  }
+
+  /** A minimal leaf AppendSummaryInput for `scope` over [start,end]. */
+  function leafInput(scope: ContextStoreScope, startOrdinal: number, endOrdinal: number): AppendSummaryInput {
+    return {
+      scope,
+      tokenCount: 5,
+      content: `${scope.agentId} leaf summary`,
+      descendantCount: 0,
+      earliestAt: 0,
+      latestAt: 0,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9999,
+      startOrdinal,
+      endOrdinal,
+    };
+  }
+
+  it("getMessages scoped to agent A returns only agent A's messages within a shared conversation", () => {
+    // Same conversationId, two agents. seq is monotonic per conversation, so use
+    // disjoint seq ranges (the UNIQUE (conversation_id, seq) index spans both).
+    seedMessages(SCOPE_AGENT_A, 2, 0); // seq 0,1
+    seedMessages(SCOPE_AGENT_B, 3, 2); // seq 2,3,4
+
+    const a = store.getMessages(SCOPE_AGENT_A);
+    const b = store.getMessages(SCOPE_AGENT_B);
+
+    // Agent A sees ONLY its own 2 messages; agent B's 3 are absent.
+    expect(a).toHaveLength(2);
+    expect(a.every((m) => m.seq <= 1)).toBe(true);
+    // Agent B sees ONLY its own 3.
+    expect(b).toHaveLength(3);
+    expect(b.every((m) => m.seq >= 2)).toBe(true);
+    // No agent A row id appears in agent B's read and vice-versa.
+    const aIds = new Set(a.map((m) => m.id));
+    expect(b.some((m) => aIds.has(m.id))).toBe(false);
+  });
+
+  it("getSummaries scoped to agent A returns only agent A's summaries within a shared conversation", () => {
+    seedMessages(SCOPE_AGENT_A, 2, 0);
+    seedMessages(SCOPE_AGENT_B, 2, 2);
+    // Seed a leaf summary for EACH agent (each scoped to its own agentId).
+    store.getContextItems(SCOPE_AGENT_A);
+    const aSummary = store.appendLeafSummary(leafInput(SCOPE_AGENT_A, 0, 0));
+    store.getContextItems(SCOPE_AGENT_B);
+    const bSummary = store.appendLeafSummary(leafInput(SCOPE_AGENT_B, 0, 0));
+
+    const a = store.getSummaries(SCOPE_AGENT_A);
+    const b = store.getSummaries(SCOPE_AGENT_B);
+
+    // Agent A sees only its summary, never agent B's.
+    expect(a.map((s) => s.summaryId)).toContain(aSummary);
+    expect(a.some((s) => s.summaryId === bSummary)).toBe(false);
+    expect(b.map((s) => s.summaryId)).toContain(bSummary);
+    expect(b.some((s) => s.summaryId === aSummary)).toBe(false);
+  });
+
+  it("getContextItems scoped to agent A returns only agent A's context items within a shared conversation", () => {
+    seedMessages(SCOPE_AGENT_A, 2, 0);
+    seedMessages(SCOPE_AGENT_B, 3, 2);
+
+    const a = store.getContextItems(SCOPE_AGENT_A);
+    const b = store.getContextItems(SCOPE_AGENT_B);
+
+    // Each agent's view is seeded 1:1 from ITS OWN messages only.
+    expect(a).toHaveLength(2);
+    expect(b).toHaveLength(3);
+    // A's refIds are A's message ids; none of B's appear.
+    const bMsgIds = new Set(store.getMessages(SCOPE_AGENT_B).map((m) => m.id));
+    expect(a.some((it) => bMsgIds.has(it.refId))).toBe(false);
+  });
+
+  it("getSummaryChildren scoped to agent A cannot reach agent B's condensed children within a shared conversation", () => {
+    // Build agent B a condensed summary with two leaf children, all under the
+    // shared conversation. Agent A must not be able to walk B's condensed edge.
+    seedMessages(SCOPE_AGENT_B, 4, 0);
+    store.getContextItems(SCOPE_AGENT_B);
+    const bLeaf0 = store.appendLeafSummary(leafInput(SCOPE_AGENT_B, 0, 1));
+    const bLeaf1 = store.appendLeafSummary(leafInput(SCOPE_AGENT_B, 1, 2));
+    const bCondensed = store.appendCondensedSummary({
+      scope: SCOPE_AGENT_B,
+      tokenCount: 9,
+      content: "agent-b condensed",
+      descendantCount: 0,
+      earliestAt: 0,
+      latestAt: 0,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 5555,
+      startOrdinal: 0,
+      endOrdinal: 1,
+      childSummaryIds: [bLeaf0, bLeaf1],
+      depth: 1,
+    });
+
+    // Agent B can walk its own condensed → children edge.
+    expect(store.getSummaryChildren(SCOPE_AGENT_B, bCondensed).map((c) => c.summaryId).sort()).toEqual(
+      [bLeaf0, bLeaf1].sort(),
+    );
+    // Agent A (SAME conversation, different agentId) CANNOT — the read is
+    // agent-scoped, so B's condensed children are unreachable.
+    expect(store.getSummaryChildren(SCOPE_AGENT_A, bCondensed)).toHaveLength(0);
+  });
+
+  it("getSummaryMessages scoped to agent A cannot reach agent B's covered message ids within a shared conversation", () => {
+    seedMessages(SCOPE_AGENT_B, 3, 0);
+    store.getContextItems(SCOPE_AGENT_B);
+    const bLeaf = store.appendLeafSummary(leafInput(SCOPE_AGENT_B, 0, 2)); // covers all 3 of B's messages
+
+    // Agent B recovers its own covered message ids.
+    expect(store.getSummaryMessages(SCOPE_AGENT_B, bLeaf)).toHaveLength(3);
+    // Agent A (shared conversation, different agentId) cannot reach B's covered ids.
+    expect(store.getSummaryMessages(SCOPE_AGENT_A, bLeaf)).toHaveLength(0);
+  });
+
+  it("a cross-tenant read returns nothing within the same conversation (defense-in-depth)", () => {
+    // Agent A under the shared tenant seeds messages; a read under a DIFFERENT
+    // tenant (but the SAME conversationId/agentId/sessionKey) must see nothing.
+    seedMessages(SCOPE_AGENT_A, 2, 0);
+    const crossTenant: ContextStoreScope = { ...SCOPE_AGENT_A, tenantId: "tenant_other" };
+
+    expect(store.getMessages(SCOPE_AGENT_A)).toHaveLength(2);
+    // tenant_id filter rejects the cross-tenant read even with the same conv+agent.
+    expect(store.getMessages(crossTenant)).toHaveLength(0);
   });
 });

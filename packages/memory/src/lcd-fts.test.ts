@@ -254,6 +254,93 @@ describe("lcd-fts — scope=both merges fairly across the two FTS tables (WR-03)
   });
 });
 
+// ───────────────────────────────────────────────────────────────────────────
+// lcd-fts — R4 cross-agent search isolation (the Phase-131 WR-02 close)
+// ───────────────────────────────────────────────────────────────────────────
+// Two agents (agent-a, agent-b) share ONE conversation_id (formatSessionKey omits
+// agentId). searchLcd must filter the FTS MATCH path AND the LIKE fallback by
+// agent_id so agent A never recovers agent B's hits within the shared
+// conversation (Pitfall 3 — BOTH paths must filter, not just the base-table
+// reads). These tests pass the NEW agent-scoped signature
+// (`searchLcdImpl(db, conversationId, agentId, query, opts)`) and MUST fail on the
+// pre-patch tree (the signature does not compile, and neither path filters
+// agent_id). The FTS path uses a real FTS5 db; the LIKE path uses a base-tables-
+// only db (the documented FTS-absent fallback shape).
+describe("lcd-fts — R4 cross-agent search isolation (WR-02)", () => {
+  /**
+   * A full LCD schema db (FTS5 present) seeded with one summary per agent under
+   * the SAME conversation, both matching the SAME term. The summaries-FTS path
+   * (lcd_summaries_fts, external-content + triggers) indexes both; only the
+   * agent-scoped read must return the caller's own row.
+   */
+  function ftsDbWithTwoAgentSummaries(term: string): Database.Database {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    ensureLcdTables(db);
+    const insert = db.prepare(`
+      INSERT INTO lcd_summaries
+        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+         earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      VALUES (?, 'conv-shared', 'tenant_shared', ?, 'sess-shared', 'leaf', 0, 1, 1, 1, 1, ?, '[]', 0, 0, ?)
+    `);
+    insert.run("sum-a", "agent-a", `agent-a note about ${term}`, 1);
+    insert.run("sum-b", "agent-b", `agent-b note about ${term}`, 2);
+    return db;
+  }
+
+  it("searchLcd via FTS scoped to agent A does not return agent B's hits within a shared conversation", () => {
+    const db = ftsDbWithTwoAgentSummaries("revenue");
+
+    // Agent A's scoped FTS search returns ONLY agent A's summary.
+    const aHits = searchLcdImpl(db, "conv-shared", "agent-a", "revenue", { limit: 10, scope: "summaries" });
+    expect(aHits.map((h) => h.refId)).toContain("sum-a");
+    expect(aHits.some((h) => h.refId === "sum-b")).toBe(false);
+
+    // Agent B's scoped search returns ONLY agent B's summary (symmetry).
+    const bHits = searchLcdImpl(db, "conv-shared", "agent-b", "revenue", { limit: 10, scope: "summaries" });
+    expect(bHits.map((h) => h.refId)).toContain("sum-b");
+    expect(bHits.some((h) => h.refId === "sum-a")).toBe(false);
+  });
+
+  it("searchLcd via the LIKE fallback scoped to agent A does not return agent B's hits within a shared conversation", () => {
+    // Base-tables-only db forces the LIKE fallback (no FTS vtables). Pitfall 3:
+    // the fallback MUST filter agent_id too, not just the FTS path.
+    const db = baseTablesOnlyDb();
+    const insert = db.prepare(`
+      INSERT INTO lcd_summaries
+        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+         earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      VALUES (?, 'conv-shared', 'tenant_shared', ?, 'sess-shared', 'leaf', 0, 1, 1, 1, 1, ?, '[]', 0, 0, ?)
+    `);
+    insert.run("sum-a", "agent-a", "agent-a margin figures", 1);
+    insert.run("sum-b", "agent-b", "agent-b margin figures", 2);
+
+    // The LIKE fallback (FTS absent) must still scope by agent_id.
+    const aHits = searchLcdImpl(db, "conv-shared", "agent-a", "margin", { limit: 10, scope: "summaries" });
+    expect(aHits.map((h) => h.refId)).toContain("sum-a");
+    expect(aHits.some((h) => h.refId === "sum-b")).toBe(false);
+    // Fallback hits carry no rank (the contract marker).
+    expect(aHits.every((h) => h.rank === undefined)).toBe(true);
+  });
+
+  it("searchLcd via the LIKE fallback scopes message hits by agent_id within a shared conversation", () => {
+    // The messages LIKE branch joins lcd_message_parts; it must add AND m.agent_id = ?.
+    const db = baseTablesOnlyDb();
+    db.prepare(`INSERT INTO lcd_messages VALUES ('m-a','conv-shared','tenant_shared','agent-a','sess-shared',0,'user',1,1)`).run();
+    db.prepare(`INSERT INTO lcd_message_parts VALUES ('p-a','m-a',0,'text',NULL,NULL,NULL,NULL,NULL,?)`).run(
+      JSON.stringify({ raw: { type: "text", text: "deploy the falcon build" }, rawType: "text" }),
+    );
+    db.prepare(`INSERT INTO lcd_messages VALUES ('m-b','conv-shared','tenant_shared','agent-b','sess-shared',1,'user',1,1)`).run();
+    db.prepare(`INSERT INTO lcd_message_parts VALUES ('p-b','m-b',0,'text',NULL,NULL,NULL,NULL,NULL,?)`).run(
+      JSON.stringify({ raw: { type: "text", text: "deploy the falcon build" }, rawType: "text" }),
+    );
+
+    const aHits = searchLcdImpl(db, "conv-shared", "agent-a", "falcon", { limit: 10, scope: "messages" });
+    expect(aHits.map((h) => h.refId)).toContain("m-a");
+    expect(aHits.some((h) => h.refId === "m-b")).toBe(false); // agent B's message excluded
+  });
+});
+
 describe("schema-lcd — boot-safety when FTS5 is uncompiled", () => {
   it("ensureLcdTables does not throw when the FTS5 CREATE VIRTUAL TABLE fails; base tables still created", () => {
     const real = new Database(":memory:");
