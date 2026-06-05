@@ -109,10 +109,12 @@ function previousSummaryAtDepth(summaries: LcdSummary[], depth: number): string 
 }
 
 /**
- * AfterTurn condense pass: fold the shallowest contiguous run of
- * ≥`opts.condensedMinFanout` same-depth summary-refs into one depth+1 condensed
- * summary, otherwise no-op. Non-fatal end-to-end (mirrors {@link maybeRunLeafPass}).
- * See the module header for the full contract.
+ * AfterTurn condense pass: fold the DEEPEST contiguous run of summary-refs that
+ * reaches the effective fanout (soft `condensedMinFanout`, or the hard
+ * `condensedMinFanoutHard` under high context pressure) into one depth+1 condensed
+ * summary, otherwise no-op — so the hierarchy climbs past depth 1 over successive
+ * turns. Non-fatal end-to-end (mirrors {@link maybeRunLeafPass}). See the module
+ * header for the full contract.
  *
  * @param store          The injected core ContextStorePort (daemon-injected concrete store).
  * @param scope          The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
@@ -151,15 +153,19 @@ export async function maybeRunCondensePass(
     // rides the selected children; `previousSummary` rides `summaries` — NO
     // second `getSummaries` call observes a possibly-diverged later snapshot.
     // R4 (132-03): resolveContext reads agent + tenant scoped (WR-02) via `scope`.
-    const { summaryRunsByDepth, summaries } = resolveContext(store, scope);
+    const { summaryRunsByDepth, summaries, resolvedTokens } = resolveContext(store, scope);
 
-    // TEMPORARY (pre-patch RED): pressure is hardcoded false and the deep-tier +
-    // hard-fanout consumption is not wired yet — the FIX 5 RED state.
+    // Context pressure = resolved-view tokens / W — the SAME utilization the leaf
+    // gate computes (CR-02). Above `contextThreshold` the condense selector drops to
+    // the HARD fanout so a pressured tier still drains; at/below it the soft fanout
+    // governs. The deepest qualifying run is selected so the hierarchy climbs past
+    // depth 1 (depth-1→depth-2 fires once enough contiguous depth-1 summaries exist).
+    const pressureHigh = resolvedTokens / opts.windowTokens > opts.contextThreshold;
     const run: SummaryRefRun | undefined = selectCondensableTier(
       summaryRunsByDepth,
       opts.condensedMinFanout,
       opts.condensedMinFanoutHard,
-      false,
+      pressureHigh,
     );
     if (run === undefined) return;
 

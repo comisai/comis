@@ -10,12 +10,17 @@
  * (no network):
  *
  *  1. {@link selectCondensableTier} — given the per-depth CONTIGUOUS summary-ref
- *     runs the trigger's resolved-view walk produces, return the SHALLOWEST depth
- *     whose contiguous run length ≥ `condensedMinFanout` (ties broken by the
- *     OLDEST run = lowest `startOrdinal`). Returns `undefined` when no depth meets
- *     fanout (the pass is a no-op). A run split by a message-ref is TWO separate
- *     runs (Pitfall 3): only a single contiguous run of length ≥ fanout qualifies
- *     — so the selected window can never span a non-contiguous fanout.
+ *     runs the trigger's resolved-view walk produces, return the DEEPEST depth
+ *     whose contiguous run length ≥ the EFFECTIVE fanout (the soft
+ *     `condensedMinFanout`, dropping to the hard `condensedMinFanoutHard` under
+ *     high context pressure; ties broken by the OLDEST run = lowest `startOrdinal`).
+ *     DEEPEST (not shallowest) is what lets the hierarchy climb past depth 1:
+ *     depth-0 folds until a tier of contiguous depth-1 summaries reaches fanout,
+ *     then THAT tier folds into depth-2, and so on. Returns `undefined` when no
+ *     depth meets the effective fanout (the pass is a no-op). A run split by a
+ *     message-ref is TWO separate runs (Pitfall 3): only a single contiguous run
+ *     of length ≥ fanout qualifies — so the selected window can never span a
+ *     non-contiguous fanout.
  *
  *  2. {@link summarizeCondensedChunk} — run the SAME mandatory 3-level escalation
  *     contract as `summarizeLeafChunk` (normal → aggressive → deterministic
@@ -146,12 +151,22 @@ export interface CondenseSummaryResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Select the SHALLOWEST contiguous same-depth run whose length ≥
- * `condensedMinFanout`. Ties (multiple qualifying runs at the same shallowest
- * depth — a Pitfall-3 layout where one depth has several disjoint runs) are
- * broken by the OLDEST run (lowest `startOrdinal`), so condensation always
- * collapses the oldest qualifying tier first. Returns `undefined` when no run
- * meets fanout (the pass is a no-op).
+ * Select the DEEPEST contiguous same-depth run whose length ≥ the EFFECTIVE
+ * fanout, so the hierarchy actually grows past depth 1. The effective fanout is
+ * the soft `condensedMinFanout` normally, dropping to the hard
+ * `condensedMinFanoutHard` lower bound when context pressure is HIGH
+ * (`pressureHigh`) — mirroring the leaf side's soft/hard knobs. Ties (multiple
+ * qualifying runs at the same deepest depth — a Pitfall-3 layout where one depth
+ * has several disjoint runs) break by the OLDEST run (lowest `startOrdinal`).
+ * Returns `undefined` when no run meets the effective fanout (the pass is a no-op).
+ *
+ * DEEPEST, not shallowest (the FIX): selecting the shallowest always re-folded the
+ * depth-0 leaves a turn keeps producing, so an accumulated contiguous run of
+ * depth-1 summaries was never folded into depth-2 — max depth stuck at 1 forever.
+ * Preferring the deepest QUALIFYING run means depth-0 keeps folding until a tier of
+ * ≥fanout contiguous depth-1 summaries exists, at which point THAT tier (now the
+ * deepest qualifying run) folds into depth-2, and so on — a bounded, monotone climb
+ * (each pass either deepens the tree or drains a tier; never both, never a loop).
  *
  * Because every {@link SummaryRefRun} is contiguous by construction (the
  * resolved-view walk breaks a run at any message-ref or depth change), the
@@ -160,25 +175,30 @@ export interface CondenseSummaryResult {
  * (Pitfall 3 / T-130-08).
  *
  * @param runs - the per-depth contiguous summary-ref runs from the resolved view
- * @param condensedMinFanout - the minimum run length that triggers condensation
- * @returns the shallowest oldest qualifying run, or `undefined`
+ * @param condensedMinFanout - the SOFT minimum run length (relaxed-pressure trigger)
+ * @param condensedMinFanoutHard - the HARD minimum run length (forced under pressure)
+ * @param pressureHigh - true ⇒ utilization > contextThreshold ⇒ use the hard fanout
+ * @returns the deepest oldest qualifying run, or `undefined`
  */
 export function selectCondensableTier(
   runs: SummaryRefRun[],
   condensedMinFanout: number,
-  _condensedMinFanoutHard: number,
-  _pressureHigh: boolean,
+  condensedMinFanoutHard: number,
+  pressureHigh: boolean,
 ): SummaryRefRun | undefined {
-  // TEMPORARY (pre-patch): still selects the SHALLOWEST run and ignores the hard
-  // fanout + pressure — the RED state the FIX 5 tests fail against.
+  // Under HIGH pressure the hard (lower) bound forces a condense the soft fanout
+  // would skip; otherwise the soft fanout governs. Clamp to ≥1 defensively (the
+  // schema floors both at 2, but a degenerate 0 must never select an empty run).
+  const effectiveFanout = Math.max(1, pressureHigh ? condensedMinFanoutHard : condensedMinFanout);
   let best: SummaryRefRun | undefined;
   for (const run of runs) {
-    if (run.children.length < condensedMinFanout) continue;
+    if (run.children.length < effectiveFanout) continue;
     if (best === undefined) {
       best = run;
       continue;
     }
-    if (run.depth < best.depth) best = run;
+    // DEEPEST depth wins; tie → the oldest run (lowest startOrdinal).
+    if (run.depth > best.depth) best = run;
     else if (run.depth === best.depth && run.startOrdinal < best.startOrdinal) best = run;
   }
   return best;

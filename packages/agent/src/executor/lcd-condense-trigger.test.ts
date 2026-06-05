@@ -670,25 +670,66 @@ describe("maybeRunCondensePass — deep tiering and hard-fanout (FIX 5)", () => 
     );
   }
 
-  it("produces a depth-2 condensed summary once enough contiguous depth-1 summaries accumulate", async () => {
-    // 16 contiguous depth-0 leaves. With condensedMinFanout=4, repeated passes
-    // first fold leaves into depth-1 summaries; once 4 contiguous depth-1 exist, a
-    // further pass MUST fold THEM into a depth-2 summary. Pre-patch the selector
-    // always picks the SHALLOWEST run, so depth-1 is never folded → max depth stays
-    // 1 no matter how many passes run (the bug).
-    seedHistory(store, 80, 100);
-    seedContiguousLeaves(store, 16, 4);
-    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "leaf").length).toBe(16);
+  /**
+   * Collapse the FIRST `width` surviving depth-0 leaf summary-refs (ordinal >
+   * `fromOrdinalAfter`) into ONE depth-1 condensed summary-ref via
+   * `appendCondensedSummary`. Mirrors {@link collapseLeaf} but over summary-refs, so
+   * successive calls produce ADJACENT depth-1 refs (a contiguous depth-1 run).
+   */
+  function collapseCondensed(fromOrdinalAfter: number, width: number): string {
+    const items = store.getContextItems(SCOPE);
+    const summaries = store.getSummaries(SCOPE);
+    const depthById = new Map(summaries.map((s) => [s.summaryId, s.depth]));
+    const leafRefs = items.filter(
+      (it) => it.refKind === "summary" && it.ordinal > fromOrdinalAfter && depthById.get(it.refId) === 0,
+    );
+    const windowRefs = leafRefs.slice(0, width);
+    const startOrdinal = windowRefs[0]!.ordinal;
+    const endOrdinal = windowRefs[windowRefs.length - 1]!.ordinal;
+    return store.appendCondensedSummary({
+      scope: SCOPE,
+      tokenCount: 5,
+      content: `DEPTH1 over ${width} leaves [${startOrdinal}..${endOrdinal}]`,
+      descendantCount: width,
+      earliestAt: 1000 + startOrdinal,
+      latestAt: 1000 + endOrdinal,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: FIXED_NOW,
+      startOrdinal,
+      endOrdinal,
+      childSummaryIds: windowRefs.map((r) => r.refId),
+      depth: 1,
+    });
+  }
 
-    // Run the pass enough times to drain depth-0 into depth-1 AND then fold depth-1
-    // into depth-2 (16 leaves → 4 depth-1 → 1 depth-2 needs at least 5 passes; run
-    // a few extra to be safe — the pass is a no-op once everything is condensed).
-    for (let i = 0; i < 8; i++) await runPass({ condensedMinFanout: 4 });
+  it("folds the DEEPEST qualifying tier so depth-1→depth-2 fires even when a depth-0 run ALSO qualifies", async () => {
+    // Seed 32 contiguous depth-0 leaves. Pre-fold the OLDEST 16 into FOUR contiguous
+    // depth-1 condensed summaries (4 leaves each), leaving the other 16 as depth-0
+    // leaf-refs. The resolved view is now [4× depth-1 run][16× depth-0 run] — TWO
+    // runs, BOTH ≥ condensedMinFanout (4). The pass must fold the DEEPER (depth-1)
+    // run into a depth-2 summary. Pre-patch the selector picks the SHALLOWEST run
+    // (depth-0), so it folds leaves into yet another depth-1 and NO depth-2 ever
+    // appears (max depth stuck at 1 — the bug).
+    seedHistory(store, 160, 100);
+    seedContiguousLeaves(store, 32, 4);
+    for (let i = 0; i < 4; i++) collapseCondensed(i - 1, 4); // 4 adjacent depth-1 refs at the oldest end
+
+    const itemsBefore = store.getContextItems(SCOPE);
+    const depthOf = (refId: string): number | undefined => store.getSummaries(SCOPE).find((x) => x.summaryId === refId)?.depth;
+    const depth1Before = itemsBefore.filter((it) => it.refKind === "summary" && depthOf(it.refId) === 1).length;
+    const depth0Before = itemsBefore.filter((it) => it.refKind === "summary" && depthOf(it.refId) === 0).length;
+    expect(depth1Before).toBe(4); // a contiguous depth-1 run ≥ fanout
+    expect(depth0Before).toBeGreaterThanOrEqual(4); // a contiguous depth-0 run ALSO ≥ fanout
+
+    await runPass({ condensedMinFanout: 4 });
 
     const summaries = store.getSummaries(SCOPE);
     const maxDepth = Math.max(...summaries.map((s) => s.depth));
     expect(maxDepth).toBeGreaterThanOrEqual(2);
-    // At least one genuine depth-2 condensed summary exists.
+    // A genuine depth-2 condensed summary now exists (the depth-1 run was folded,
+    // NOT the shallower depth-0 run).
     expect(summaries.some((s) => s.kind === "condensed" && s.depth === 2)).toBe(true);
   });
 
