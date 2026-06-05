@@ -999,6 +999,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         contextEngine: config.contextEngine,
         getSummarizerDeps: summarizerGetter,
         now: deps.clock.now(),
+        // O1: a clock CALLABLE so the trigger times the pass with two reads
+        // (entry → emit). Bound to the injected ClockPort — never Date.now().
+        nowFn: () => deps.clock.now(),
         logger: deps.logger,
         eventBus: deps.eventBus,
       });
@@ -1008,6 +1011,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         contextEngine: config.contextEngine,
         getCondenseSummarizerDeps: summarizerGetter,
         now: deps.clock.now(),
+        // O1: clock CALLABLE for the two-read pass timing (entry → emit).
+        nowFn: () => deps.clock.now(),
         logger: deps.logger,
         eventBus: deps.eventBus,
       });

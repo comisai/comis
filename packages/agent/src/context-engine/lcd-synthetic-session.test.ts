@@ -493,6 +493,7 @@ describe("LCD synthetic-session gate (Plan 02 Task 3 — C2 multi-tier leaf→co
         { condensedMinFanout, condensedTargetTokens: 2_000, windowTokens: 200_000 },
         deps,
         FIXED_CREATED_AT_BASE,
+        undefined, // nowFn — scalar-only caller (durationMs degrades to 0)
         deps.logger,
       );
       const after = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed").length;
@@ -556,6 +557,7 @@ describe("LCD synthetic-session gate (Plan 02 Task 3 — C2 multi-tier leaf→co
       { condensedMinFanout: CONDENSED_MIN_FANOUT, condensedTargetTokens: 2_000, windowTokens: CONTEXT_WINDOW },
       makeLeafDeps(oversizedStub),
       FIXED_CREATED_AT_BASE,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0)
       leafDeps.logger,
     );
 

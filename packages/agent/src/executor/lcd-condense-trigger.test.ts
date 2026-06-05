@@ -218,6 +218,7 @@ describe("maybeRunCondensePass — no-op below fanout", () => {
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(summarize, logger),
       FIXED_NOW,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -257,6 +258,7 @@ describe("maybeRunCondensePass — condenses at fanout and emits the real compac
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -290,6 +292,41 @@ describe("maybeRunCondensePass — condenses at fanout and emits the real compac
     expect(ordinals).toEqual(Array.from({ length: items.length }, (_, i) => i));
   });
 
+  it("emits a REAL durationMs (clock-at-emit minus clock-at-entry), not the hardcoded 0 stub; maxDepthReached stays depth", async () => {
+    // O1: identical fix to the leaf trigger — time the condense pass from the
+    // injected clock CALLABLE. A fake clock returns 2000 then 2090 → durationMs
+    // MUST be 90, never 0. RED on pre-patch (no nowFn param + durationMs is 0).
+    seedHistory(store, 40, 100);
+    seedContiguousLeaves(store, 4, 4);
+    const logger = createMockLogger();
+    const { bus, emits } = makeEventBus();
+    const clockReads = [2000, 2090];
+    let readIdx = 0;
+    const nowFn = (): number => clockReads[Math.min(readIdx++, clockReads.length - 1)]!;
+
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4 }),
+      makeSummarizerDeps(shortSummarizer(), logger),
+      FIXED_NOW,
+      nowFn,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    const compacted = emits.filter((e) => e.event === "context:dag_compacted");
+    expect(compacted.length).toBe(1);
+    // The REAL elapsed (2090 - 2000), > 0, NOT the old 0 stub.
+    expect(compacted[0]!.payload.durationMs).toBe(90);
+    // `timestamp` stays the injected scalar `now`.
+    expect(compacted[0]!.payload.timestamp).toBe(FIXED_NOW);
+    // Per-pass counts UNCHANGED; maxDepthReached is the REAL depth (1), not 0 (Pitfall 3).
+    expect(compacted[0]!.payload.condensedSummariesCreated).toBe(1);
+    expect(compacted[0]!.payload.leafSummariesCreated).toBe(0);
+    expect(compacted[0]!.payload.maxDepthReached).toBe(1);
+  });
+
   it("links the child leaf summaries via lcd_summary_parents (losslessness ledger)", async () => {
     seedHistory(store, 40, 100);
     const childIds = seedContiguousLeaves(store, 4, 4);
@@ -302,6 +339,7 @@ describe("maybeRunCondensePass — condenses at fanout and emits the real compac
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -369,6 +407,7 @@ describe("maybeRunCondensePass — contiguity (Pitfall 3)", () => {
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -427,6 +466,7 @@ describe("maybeRunCondensePass — non-fatal degrade", () => {
         condenseOpts({ condensedMinFanout: 4 }),
         makeSummarizerDeps(throwingSummarizer(), logger),
         FIXED_NOW,
+        undefined, // nowFn — scalar-only caller (durationMs degrades to 0)
         logger as unknown as LeafSummarizerDeps["logger"],
         bus,
       ),
@@ -464,6 +504,7 @@ describe("maybeRunCondensePass — non-fatal degrade", () => {
         condenseOpts({ condensedMinFanout: 4 }),
         makeSummarizerDeps(shortSummarizer(), logger),
         FIXED_NOW,
+        undefined, // nowFn — scalar-only caller (durationMs degrades to 0)
         logger as unknown as LeafSummarizerDeps["logger"],
         bus,
       ),
@@ -490,6 +531,7 @@ describe("maybeRunCondensePass — non-fatal degrade", () => {
         condenseOpts({ condensedMinFanout: 4 }),
         undefined,
         FIXED_NOW,
+        undefined, // nowFn — scalar-only caller (durationMs degrades to 0)
         logger as unknown as LeafSummarizerDeps["logger"],
         bus,
       ),
@@ -559,6 +601,7 @@ describe("maybeRunCondensePass — single resolved snapshot is the source of tru
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -584,6 +627,7 @@ describe("maybeRunCondensePass — single resolved snapshot is the source of tru
       condenseOpts({ condensedMinFanout: 4 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );

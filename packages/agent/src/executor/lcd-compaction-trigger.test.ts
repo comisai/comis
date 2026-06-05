@@ -180,6 +180,7 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
       opts({ windowTokens: 1_000 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -196,6 +197,44 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
     expect(compacted[0]!.payload.totalSummariesCreated).toBe(1);
     expect(typeof compacted[0]!.payload.durationMs).toBe("number");
     expect(compacted[0]!.payload.conversationId).toBe(CONVERSATION_ID);
+  });
+
+  it("emits a REAL durationMs (clock-at-emit minus clock-at-entry), not the hardcoded 0 stub", async () => {
+    // O1: the pass must time itself from the injected clock CALLABLE — capture a
+    // read at pass entry, a second at emit, emit the delta. Drive a fake clock
+    // that returns 1000 on the FIRST read (pass entry) and 1175 on the SECOND
+    // (emit) → durationMs MUST be 175, never the old hardcoded 0. The scalar
+    // `now` keeps stamping `timestamp` (its distinct semantic). RED on pre-patch:
+    // the trigger has no nowFn param + durationMs is 0.
+    seedHistory(store, 40, 100);
+    const logger = createMockLogger();
+    const { bus, emits } = makeEventBus();
+    // A deterministic advancing clock — NEVER Date.now() (globals.test.ts ban).
+    const clockReads = [1000, 1175];
+    let readIdx = 0;
+    const nowFn = (): number => clockReads[Math.min(readIdx++, clockReads.length - 1)]!;
+
+    await maybeRunLeafPass(
+      store,
+      SCOPE,
+      opts({ windowTokens: 1_000 }),
+      makeSummarizerDeps(shortSummarizer(), logger),
+      FIXED_NOW,
+      nowFn,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    const compacted = emits.filter((e) => e.event === "context:dag_compacted");
+    expect(compacted.length).toBe(1);
+    // The REAL elapsed (1175 - 1000), > 0, NOT the old 0 stub.
+    expect(compacted[0]!.payload.durationMs).toBe(175);
+    // `timestamp` stays the injected scalar `now` (not a clock read).
+    expect(compacted[0]!.payload.timestamp).toBe(FIXED_NOW);
+    // Per-pass counts are UNCHANGED (Pitfall 3 — honest per-pass).
+    expect(compacted[0]!.payload.leafSummariesCreated).toBe(1);
+    expect(compacted[0]!.payload.condensedSummariesCreated).toBe(0);
+    expect(compacted[0]!.payload.maxDepthReached).toBe(0);
   });
 
   it("range-replaces context_items at the EXACT first-covered-message ordinal (C3 regression guard)", async () => {
@@ -218,6 +257,7 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
       opts({ windowTokens: 1_000 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -258,6 +298,7 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
       opts({ windowTokens: 1_000 }),
       makeSummarizerDeps(shortSummarizer(), logger),
       FIXED_NOW,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -296,6 +337,7 @@ describe("maybeRunLeafPass — under threshold is inert", () => {
       opts({ windowTokens: 1_000_000 }),
       makeSummarizerDeps(summarize, logger),
       FIXED_NOW,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -319,6 +361,7 @@ describe("maybeRunLeafPass — under threshold is inert", () => {
       opts({ windowTokens: 1_000, freshTailTurns: 8 }),
       makeSummarizerDeps(summarize, logger),
       FIXED_NOW,
+      undefined, // nowFn — scalar-only caller (durationMs degrades to 0; timed separately in the O1 test)
       logger as unknown as LeafSummarizerDeps["logger"],
       bus,
     );
@@ -358,6 +401,7 @@ describe("maybeRunLeafPass — non-fatal degrade", () => {
         opts({ windowTokens: 1_000 }),
         makeSummarizerDeps(throwingSummarizer(), logger),
         FIXED_NOW,
+        undefined, // nowFn — scalar-only caller (durationMs degrades to 0)
         logger as unknown as LeafSummarizerDeps["logger"],
         bus,
       ),
@@ -388,6 +432,7 @@ describe("maybeRunLeafPass — non-fatal degrade", () => {
         opts({ windowTokens: 1_000 }),
         makeSummarizerDeps(shortSummarizer(), logger),
         FIXED_NOW,
+        undefined, // nowFn — scalar-only caller (durationMs degrades to 0)
         logger as unknown as LeafSummarizerDeps["logger"],
         bus,
       ),
@@ -414,6 +459,7 @@ describe("maybeRunLeafPass — non-fatal degrade", () => {
         opts({ windowTokens: 1_000 }),
         undefined,
         FIXED_NOW,
+        undefined, // nowFn — scalar-only caller (durationMs degrades to 0)
         logger as unknown as LeafSummarizerDeps["logger"],
         bus,
       ),
@@ -461,8 +507,8 @@ describe("maybeRunLeafPass — makes progress across passes (CR-01/CR-02)", () =
     const deps = makeSummarizerDeps(summarize, logger);
     const passOpts = opts({ windowTokens: 1_000, leafChunkTokens: 300, freshTailTurns: 8 });
 
-    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, logger as unknown as LeafSummarizerDeps["logger"], bus);
-    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, logger as unknown as LeafSummarizerDeps["logger"], bus);
+    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, undefined, logger as unknown as LeafSummarizerDeps["logger"], bus);
+    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, undefined, logger as unknown as LeafSummarizerDeps["logger"], bus);
 
     // TWO distinct leaf summaries, covering two DIFFERENT (non-overlapping) chunks.
     const summaries = store.getSummaries(SCOPE);
@@ -504,13 +550,13 @@ describe("maybeRunLeafPass — makes progress across passes (CR-01/CR-02)", () =
     const passOpts = opts({ windowTokens: 1_000, leafChunkTokens: 20_000, freshTailTurns: 8 });
 
     // Pass 1 fires and creates exactly one leaf.
-    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, logger as unknown as LeafSummarizerDeps["logger"], bus);
+    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, undefined, logger as unknown as LeafSummarizerDeps["logger"], bus);
     expect(store.getSummaries(SCOPE).length).toBe(1);
     const callsAfterPass1 = (summarize as ReturnType<typeof vi.fn>).mock.calls.length;
     const compactedAfterPass1 = emits.filter((e) => e.event === "context:dag_compacted").length;
 
     // Pass 2 must be INERT: the resolved view now fits under threshold.
-    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, logger as unknown as LeafSummarizerDeps["logger"], bus);
+    await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, undefined, logger as unknown as LeafSummarizerDeps["logger"], bus);
 
     // Still exactly one summary — no third was created, and pass 2 did not even
     // reach the summarizer or emit another compaction event.

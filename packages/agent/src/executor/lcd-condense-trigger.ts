@@ -104,7 +104,8 @@ function previousSummaryAtDepth(summaries: LcdSummary[], depth: number): string 
  * @param scope          The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
  * @param opts           The gating + sizing knobs from `config.contextEngine`.
  * @param summarizerDeps The injected summarizer + model getters (the 132 spend-governance seam). Absent ⇒ no-op.
- * @param now            Injected wall-clock ms (`deps.clock.now()`) — NEVER the ambient time global.
+ * @param now            Injected wall-clock ms (`deps.clock.now()`) — NEVER the ambient time global. Stamps `timestamp`.
+ * @param nowFn          Injected clock CALLABLE (`deps.clock.now`) for the two pass-timing reads (O1). Absent ⇒ durationMs 0.
  * @param logger         For the completion INFO + the non-fatal WARN.
  * @param eventBus       Optional bus to emit `context:dag_compacted` on a completed pass.
  */
@@ -114,6 +115,7 @@ export async function maybeRunCondensePass(
   opts: CondensePassOptions,
   summarizerDeps: LeafSummarizerDeps | undefined,
   now: number,
+  nowFn: (() => number) | undefined,
   logger: ComisLogger,
   eventBus?: TypedEventBus,
 ): Promise<void> {
@@ -123,6 +125,10 @@ export async function maybeRunCondensePass(
   if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) return;
 
   const conversationId = scope.conversationId;
+  // O1: capture a pass-START clock read at entry (the injected clock CALLABLE —
+  // NEVER Date.now()/performance.now(), the globals gate). The second read at
+  // emit gives the real elapsed; a scalar-only caller degrades to 0.
+  const passStart = nowFn?.() ?? now;
   try {
     // Resolve the model-facing context ONCE — the SAME walk the leaf pass uses,
     // now also returning the per-depth contiguous summary-ref runs + the
@@ -205,11 +211,11 @@ export async function maybeRunCondensePass(
       depth,
     });
 
-    // Inline synchronous pass in 130 — `durationMs` is 0 here (no second clock
-    // read; the injected clock is the only time source and the ambient wall-clock
-    // global is banned). Real pass-timing lands with deferred execution in Phase
-    // 132. The field is present for `context:dag_compacted` payload-shape parity.
-    const durationMs = 0;
+    // O1 (Phase 133): real pass-timing — a SECOND injected-clock read at emit
+    // minus the pass-entry `passStart`. The injected clock is the only time
+    // source (the ambient wall-clock global is banned); a scalar-only caller
+    // (no `nowFn`) degrades to 0 (passStart === now). Clamped non-negative.
+    const durationMs = Math.max(0, (nowFn?.() ?? now) - passStart);
     // Emit the existing compaction event with the REAL condensation metrics (the
     // leaf pass hardcodes condensedSummariesCreated:0 / maxDepthReached:0 — the
     // condense pass fills them). Counts only — never content.
@@ -277,8 +283,10 @@ export interface RunCondensePassAfterTurnParams {
    * condense pass is gated off cleanly (no trigger, no summary).
    */
   getCondenseSummarizerDeps: (() => LeafSummarizerDeps) | undefined;
-  /** Injected wall-clock ms (`deps.clock.now()`) — never the ambient time global. */
+  /** Injected wall-clock ms (`deps.clock.now()`) — never the ambient time global. Stamps `timestamp`. */
   now: number;
+  /** Injected clock CALLABLE (`deps.clock.now`) for the O1 two-read pass timing. Absent ⇒ durationMs 0. */
+  nowFn?: () => number;
   /** For the trigger's completion INFO + non-fatal WARN. */
   logger: ComisLogger;
   /** Optional bus for the `context:dag_compacted` emit on a completed pass. */
@@ -300,7 +308,7 @@ export interface RunCondensePassAfterTurnParams {
  * @param params - the minimal afterTurn inputs (see {@link RunCondensePassAfterTurnParams}).
  */
 export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnParams): Promise<void> {
-  const { store, scope, contextEngine, getCondenseSummarizerDeps, now, logger, eventBus } = params;
+  const { store, scope, contextEngine, getCondenseSummarizerDeps, now, nowFn, logger, eventBus } = params;
   // Gate: no summarizer-deps getter ⇒ the condense pass is off (clean skip).
   if (getCondenseSummarizerDeps === undefined) return;
   const summarizerDeps = getCondenseSummarizerDeps();
@@ -324,6 +332,7 @@ export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnP
     },
     summarizerDeps,
     now,
+    nowFn,
     logger,
     eventBus,
   );

@@ -301,7 +301,8 @@ function chunkOrdinalWindow(
  * @param scope          The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
  * @param opts           The gating + sizing knobs from `config.contextEngine`.
  * @param summarizerDeps The injected summarizer + model getters (the 132 spend-governance seam). Absent ⇒ no-op.
- * @param now            Injected wall-clock ms (`deps.clock.now()`) — NEVER the ambient time global.
+ * @param now            Injected wall-clock ms (`deps.clock.now()`) — NEVER the ambient time global. Stamps `timestamp`.
+ * @param nowFn          Injected clock CALLABLE (`deps.clock.now`) for the two pass-timing reads (O1). Absent ⇒ durationMs 0.
  * @param logger         For the completion INFO + the non-fatal WARN.
  * @param eventBus       Optional bus to emit `context:dag_compacted` on a completed pass.
  */
@@ -311,6 +312,7 @@ export async function maybeRunLeafPass(
   opts: LeafPassOptions,
   summarizerDeps: LeafSummarizerDeps | undefined,
   now: number,
+  nowFn: (() => number) | undefined,
   logger: ComisLogger,
   eventBus?: TypedEventBus,
 ): Promise<void> {
@@ -320,6 +322,11 @@ export async function maybeRunLeafPass(
   if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) return;
 
   const conversationId = scope.conversationId;
+  // O1: capture a pass-START clock read at entry (the injected clock CALLABLE —
+  // NEVER Date.now()/performance.now(), the globals gate). A second read at emit
+  // gives the real elapsed. When no callable is supplied (a scalar-only caller),
+  // passStart falls back to the scalar `now` so durationMs degrades to 0.
+  const passStart = nowFn?.() ?? now;
   try {
     // Resolve the model-facing context ONCE from context_items (CR-01/CR-02): the
     // utilization gate AND chunk selection both read this resolved view — never
@@ -407,12 +414,11 @@ export async function maybeRunLeafPass(
       endOrdinal: window.endOrdinal,
     });
 
-    // Inline synchronous pass in 129 — `durationMs` is 0 here (no second clock
-    // read; the injected clock is the only time source and the ambient
-    // wall-clock global is banned). Real pass-timing lands with deferred/background
-    // execution in Phase 132/133. The field is present for payload-shape
-    // compatibility with the existing `context:dag_compacted` event.
-    const durationMs = 0;
+    // O1 (Phase 133): real pass-timing — a SECOND injected-clock read at emit
+    // minus the pass-entry `passStart`. The injected clock is the only time
+    // source (the ambient wall-clock global is banned); a scalar-only caller
+    // (no `nowFn`) degrades to 0 (passStart === now). clamped non-negative.
+    const durationMs = Math.max(0, (nowFn?.() ?? now) - passStart);
     // Emit the existing compaction event (reuse, counts only — never content).
     eventBus?.emit("context:dag_compacted", {
       conversationId,
@@ -477,8 +483,10 @@ export interface RunLeafPassAfterTurnParams {
    * — the wiring gate, mirroring how the ingest gates on `deps.contextStore`.
    */
   getSummarizerDeps: (() => LeafSummarizerDeps) | undefined;
-  /** Injected wall-clock ms (`deps.clock.now()`) — never the ambient time global. */
+  /** Injected wall-clock ms (`deps.clock.now()`) — never the ambient time global. Stamps `timestamp`. */
   now: number;
+  /** Injected clock CALLABLE (`deps.clock.now`) for the O1 two-read pass timing. Absent ⇒ durationMs 0. */
+  nowFn?: () => number;
   /** For the trigger's completion INFO + non-fatal WARN. */
   logger: ComisLogger;
   /** Optional bus for the `context:dag_compacted` emit on a completed pass. */
@@ -500,7 +508,7 @@ export interface RunLeafPassAfterTurnParams {
  * @param params - the minimal afterTurn inputs (see {@link RunLeafPassAfterTurnParams}).
  */
 export async function runLeafPassAfterTurn(params: RunLeafPassAfterTurnParams): Promise<void> {
-  const { store, scope, contextEngine, getSummarizerDeps, now, logger, eventBus } = params;
+  const { store, scope, contextEngine, getSummarizerDeps, now, nowFn, logger, eventBus } = params;
   // Gate: no summarizer-deps getter ⇒ the leaf pass is off (clean skip).
   if (getSummarizerDeps === undefined) return;
   const summarizerDeps = getSummarizerDeps();
@@ -526,6 +534,7 @@ export async function runLeafPassAfterTurn(params: RunLeafPassAfterTurnParams): 
     },
     summarizerDeps,
     now,
+    nowFn,
     logger,
     eventBus,
   );
