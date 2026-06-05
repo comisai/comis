@@ -16,6 +16,12 @@
  *       Phase-130 swap point — untrusted by role, never system/assistant). Each
  *       resolved message carries its token authority (the stored `tokenCount`, or
  *       the summary's, Pitfall 2) for the budget pass.
+ *  2b.  COALESCE (B-19, defensive) — a maximal run of >=2 contiguous summary-refs
+ *       is merged into ONE user message (headers/bodies/tokens preserved). The
+ *       Anthropic API merges consecutive user turns server-side (no 400, confirmed
+ *       live), but local coalescing keeps distinct summaries from being opaquely
+ *       muddied by that merge and is safe for stricter Anthropic-compatible
+ *       endpoints that enforce role alternation. Message-refs are untouched.
  *  3.   FRESH TAIL — the last N STEPS of the LIVE array (an assistant message
  *       plus the tool results it triggered), sliced VERBATIM as the ORIGINAL
  *       structured blocks (never reconstructed-from-text). Never evicted (A1).
@@ -173,12 +179,12 @@ export function createLcdContextEngine(
       const summaryById = new Map<string, LcdSummary>(
         (readScope ? store.getSummaries(readScope) : []).map((s) => [s.summaryId, s]),
       );
-      const resolved: BudgetItem[] = [];
+      let resolved: BudgetItem[] = [];
       // Parallel to `resolved`: the ref kind of each resolved item, used by the
       // eviction seam (WR-01) to bound the fresh-tail overlap by the number of
       // TRAILING message-refs actually present so the evictable-prefix slice can
       // never cut across a summary boundary regardless of the collapse shape.
-      const resolvedKinds: LcdContextItem["refKind"][] = [];
+      let resolvedKinds: LcdContextItem["refKind"][] = [];
       let resolvedSummaryCount = 0;
       for (const item of contextItems) {
         const entry = resolveContextItem(item, rowById, summaryById);
@@ -199,6 +205,30 @@ export function createLcdContextEngine(
         },
         "lcd context_items resolved from store",
       );
+
+      // 2b. COALESCE consecutive summary-refs (B-19, defensive). A maximal run of
+      //     ≥2 contiguous summary-ref user messages is merged into ONE user message
+      //     (their rendered texts joined with "\n\n" so each `[LCD summary …]`
+      //     header + wrapped body + footer stays individually intact) with their
+      //     `tokens` SUMMED (the budget math is unchanged). Done BEFORE the eviction
+      //     overlap math so token accounting + ordering stay coherent; it is safe
+      //     for that math because summary-refs are at the HEAD and message-refs at
+      //     the TAIL, so coalescing a head/interior summary run never changes the
+      //     count of TRAILING message-refs the eviction seam relies on (WR-01).
+      //     Message-refs are NOT touched (they alternate with assistant turns
+      //     naturally) and the role stays "user" (the T-129-14 untrusted-by-role
+      //     ceiling). DEFENSIVE: the Anthropic API merges consecutive user turns
+      //     server-side (no 400, confirmed live), but local coalescing keeps
+      //     distinct summaries from being opaquely muddied by that server merge and
+      //     is safe for stricter Anthropic-compatible endpoints that enforce
+      //     alternation. Security is preserved: each summary body was already
+      //     individually wrapExternalContent-wrapped with its OWN per-session random
+      //     hex delimiter, so concatenation cannot weaken the taint boundary (the
+      //     delimiters differ per summary; the trusted headers stay outside each
+      //     wrapped region). A run of 1 is a no-op (the common single-summary head).
+      const coalesced = coalesceConsecutiveSummaryRefs(resolved, resolvedKinds);
+      resolved = coalesced.items;
+      resolvedKinds = coalesced.kinds;
 
       // 3. FRESH TAIL: the last N STEPS of the LIVE array, VERBATIM (original
       //    structured blocks — never reconstructed-from-text). A1.
@@ -455,6 +485,78 @@ function boundFreshTailToolResults(
     return { ...(m as object), content: result.content } as unknown as AgentMessage;
   });
   return { freshTail: bounded, boundedResults, charsRemoved };
+}
+
+/**
+ * B-19: defensively coalesce maximal runs of ≥2 contiguous SUMMARY-ref user
+ * messages into ONE user message. Pure — returns NEW `items`/`kinds` arrays
+ * (same length contract: kinds stays parallel to items). For each run of ≥2
+ * adjacent `"summary"` kinds, the run's rendered texts are joined with "\n\n"
+ * (so each `[LCD summary …]` header + its wrapExternalContent-wrapped body + footer
+ * stay individually intact + readable) and their `tokens` are SUMMED (budget math
+ * unchanged); the merged item keeps `role: "user"` (the T-129-14 ceiling). A run of
+ * 1 — the common single-summary head — and every message-ref pass through unchanged
+ * (message-refs are never coalesced; they alternate with assistant turns).
+ *
+ * Security: each summary body was already individually wrapExternalContent-wrapped
+ * with its OWN per-session random hex delimiter, so joining their rendered strings
+ * cannot weaken the taint boundary — the delimiters differ per summary and the
+ * trusted headers sit OUTSIDE each wrapped region.
+ *
+ * @param items - the resolved BudgetItems (summary-refs at the head, message-refs at the tail)
+ * @param kinds - the parallel ref-kind array
+ * @returns new `{ items, kinds }` with consecutive summary runs merged
+ */
+function coalesceConsecutiveSummaryRefs(
+  items: BudgetItem[],
+  kinds: LcdContextItem["refKind"][],
+): { items: BudgetItem[]; kinds: LcdContextItem["refKind"][] } {
+  const outItems: BudgetItem[] = [];
+  const outKinds: LcdContextItem["refKind"][] = [];
+  let i = 0;
+  while (i < items.length) {
+    if (kinds[i] !== "summary") {
+      // A message-ref (or any non-summary) passes through verbatim.
+      outItems.push(items[i]!);
+      outKinds.push(kinds[i]!);
+      i++;
+      continue;
+    }
+    // Gather the maximal contiguous run of summary-refs starting at i.
+    let j = i;
+    while (j < items.length && kinds[j] === "summary") j++;
+    const run = items.slice(i, j);
+    if (run.length === 1) {
+      // Run of 1 — no coalesce (the common single-summary head). Pass through.
+      outItems.push(run[0]!);
+    } else {
+      // Merge the run into ONE user message: join rendered texts with "\n\n",
+      // sum tokens. The role stays "user" (the untrusted-by-role ceiling).
+      const joinedText = run.map((it) => summaryItemText(it)).join("\n\n");
+      const tokens = run.reduce((sum, it) => sum + it.tokens, 0);
+      outItems.push({
+        msg: { role: "user", content: [{ type: "text", text: joinedText }] } as unknown as AgentMessage,
+        tokens,
+      });
+    }
+    outKinds.push("summary");
+    i = j;
+  }
+  return { items: outItems, kinds: outKinds };
+}
+
+/**
+ * Read the rendered text of a summary-ref BudgetItem (a `user` message whose
+ * content is a single `{ type: "text", text }` block, as produced by
+ * {@link summaryRefToMessage}). Falls back to "" for an unexpected shape so the
+ * join is never `undefined` (defensive; summary-refs always render this shape).
+ */
+function summaryItemText(item: BudgetItem): string {
+  const content = (item.msg as unknown as { content?: unknown }).content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((b) => (b as { type?: string; text?: string }).text ?? "")
+    .join("");
 }
 
 /**
