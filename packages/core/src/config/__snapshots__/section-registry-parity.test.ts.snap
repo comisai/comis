@@ -526,7 +526,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
-    "default": "pipeline",
+    "default": "dag",
     "immutable": true,
     "path": "agents.contextEngine.version",
     "type": "string"
@@ -15032,7 +15032,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "integer"
         },
         "version": {
-          "default": "pipeline",
+          "default": "dag",
           "enum": [
             "pipeline",
             "dag"
@@ -25091,7 +25091,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "integer"
               },
               "version": {
-                "default": "pipeline",
+                "default": "dag",
                 "enum": [
                   "pipeline",
                   "dag"
