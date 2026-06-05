@@ -11,18 +11,23 @@
  * @module
  */
 
+import { dirname } from "node:path";
 import { safePath } from "@comis/core";
 
 /**
- * Map a session JSONL file path to its `tool-results/` spill directory.
+ * Map a session JSONL file path to its sibling `tool-results/` spill directory.
+ *
+ * Take the `dirname()` of the JSONL path — the session DIRECTORY
+ * (`…/sessions/<tenant>/<channel>`) — and put `tool-results/` UNDER it, so the
+ * spill dir's parent is a real directory and `mkdirSync` succeeds. The dynamic
+ * `tool-results` segment still goes through `safePath` (no traversal).
  *
  * @param sessionJsonlPath - the absolute session JSONL FILE path from
  *   `sessionKeyToPath` (e.g. `…/sessions/<tenant>/<channel>/web-user.jsonl`).
- * @returns the absolute spill DIRECTORY.
+ * @returns the absolute spill DIRECTORY whose parent is the session directory
+ *   (e.g. `…/sessions/<tenant>/<channel>/tool-results`).
  */
 export function toolResultsDirFromSessionPath(sessionJsonlPath: string): string {
-  // BUG (pre-patch): treats the JSONL FILE path as a directory and appends
-  // `tool-results` onto it → `…/web-user.jsonl/tool-results`, whose parent is a
-  // regular file, so `mkdirSync` throws ENOTDIR.
-  return safePath(sessionJsonlPath, "tool-results");
+  const sessionDir = dirname(sessionJsonlPath);
+  return safePath(sessionDir, "tool-results");
 }

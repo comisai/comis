@@ -20,6 +20,7 @@ import {
 } from "@comis/core";
 import { sessionKeyToPath } from "@comis/agent";
 import type { SessionTrackerRegistry } from "@comis/agent";
+import { toolResultsDirFromSessionPath } from "./tool-results-dir.js";
 // Workspace helpers live in @comis/core.
 import {
   WORKSPACE_FILE_NAMES,
@@ -544,8 +545,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         const parsed = parseFormattedSessionKey(alsCtx.sessionKey);
         if (!parsed) return undefined;
         const sessionBaseDir = safePath(agentWorkspaceDir, "sessions");
-        const sessionDir = sessionKeyToPath(parsed, sessionBaseDir);
-        return safePath(sessionDir, "tool-results");
+        // FIX: derive the spill dir from the session DIR (sessionKeyToPath returns the .jsonl FILE path → ENOTDIR).
+        return toolResultsDirFromSessionPath(sessionKeyToPath(parsed, sessionBaseDir));
       };
 
       // Build per-agent sandbox config from daemon provider + agent config
