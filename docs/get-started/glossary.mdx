@@ -72,7 +72,7 @@ A higher-level summary in the DAG context engine created by merging multiple lea
 
 ## Context DAG
 
-The lossless context engine (the v2.12 "Lossless Context DAG" release), available as an opt-in mode (`contextEngine.version: "dag"`; the default stays `"pipeline"`). Unlike pipeline mode (which discards old content), DAG preserves the agent's full conversation history losslessly and reconstructs it verbatim each turn — every message, tool call, and tool result kept and paired by id — plus a verbatim [Fresh Tail](#fresh-tail) of the most recent steps. In this release DAG does lossless verbatim assembly only; compaction (summary nodes) and the on-demand recall tools land in later phases. See [Context Management](/agents/context-management#dag-mode-opt-in).
+The lossless context engine (the v2.12 "Lossless Context DAG" release) — the **default** context engine (`contextEngine.version` defaults to `"dag"`; set `"pipeline"` to opt into the simpler engine). Unlike pipeline mode (which discards old content), DAG preserves the agent's full conversation history losslessly and reconstructs it verbatim each turn — every message, tool call, and tool result kept and paired by id — plus a verbatim [Fresh Tail](#fresh-tail) of the most recent steps. DAG zoomably compresses the oldest history under a token budget and exposes the in-session `ctx_*` expansion tools to recover compressed detail. See [Context Management](/agents/context-management#dag-mode-the-default-engine).
 
 ## Context Engine
 
@@ -132,7 +132,7 @@ When an agent uses a tool, it may need another thinking step to process the tool
 
 ## Fresh Tail
 
-The most recent **steps** in a DAG-mode conversation that are always kept verbatim (an assistant message plus the tool results it triggered counts as one step — not user-turns), configured via `contextEngine.freshTailTurns` (default 8). The fresh tail is sliced as the original structured blocks (never reconstructed-from-text) and is never evicted. This is a DAG context engine concept; DAG is a working opt-in engine (`contextEngine.version: "dag"`; the default stays `"pipeline"`). See [Context Management](/agents/context-management#dag-mode-opt-in).
+The most recent **steps** in a DAG-mode conversation that are always kept verbatim (an assistant message plus the tool results it triggered counts as one step — not user-turns), configured via `contextEngine.freshTailTurns` (default 8). The fresh tail is sliced as the original structured blocks (never reconstructed-from-text) and is never evicted. This is a DAG context engine concept; DAG is the default engine (`contextEngine.version` defaults to `"dag"`; set `"pipeline"` to opt into the simpler engine). See [Context Management](/agents/context-management#dag-mode-the-default-engine).
 
 ## Gateway
 

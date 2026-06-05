@@ -491,7 +491,7 @@ action: screenshot
 
 ## Context Tools
 
-Context tools help your agent search and recall information from the current conversation session. In the default **pipeline** mode the available tool is `session_search`. The DAG (LCD) context engine adds three **in-session** expansion tools -- `ctx_search`, `ctx_inspect`, and `ctx_expand` -- that recover detail the summary hierarchy compressed away within the current conversation. They are active only in DAG mode (`contextEngine.version: "dag"`), `never-export`, and distinct from cross-session recall (`memory_search`, `session_search`). See [Context expansion tools](/agent-tools/sessions#context-expansion-tools) and [Compaction](/agents/compaction) for how the engines work.
+Context tools help your agent search and recall information from the current conversation session. In the default **DAG** (LCD) mode the available tools are three **in-session** expansion tools -- `ctx_search`, `ctx_inspect`, and `ctx_expand` -- that recover detail the summary hierarchy compressed away within the current conversation. They are active only in DAG mode (`contextEngine.version` defaults to `"dag"`), `never-export`, and distinct from cross-session recall (`memory_search`, `session_search`). In the opt-in **pipeline** mode the available tool is `session_search` instead. See [Context expansion tools](/agent-tools/sessions#context-expansion-tools) and [Compaction](/agents/compaction) for how the engines work.
 
 ### Availability
 

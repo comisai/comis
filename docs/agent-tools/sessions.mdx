@@ -304,8 +304,9 @@ compressed region back to its underlying messages.
 current conversation's lossless store and share no code with the long-term recall
 tools. Use `memory_search` / `session_search` to recall information from *other*
 sessions; use `ctx_*` to recover detail the summarizer compressed away *within
-this* session. The `ctx_*` tools are **DAG-mode-only** (inactive in the default
-`pipeline` mode), **never-export** (never reachable via the Comis MCP server), and
+this* session. The `ctx_*` tools are **DAG-mode-only** — active by default (DAG is
+the default engine) and inactive only in the opt-in `pipeline` mode — **never-export**
+(never reachable via the Comis MCP server), and
 read-only -- they never reach another session or tenant.
 </Note>
 

@@ -274,7 +274,7 @@ agents:
   default:
     contextEngine:
       enabled: true
-      # version: "pipeline"  # This is the default
+      # version: "dag"  # This is the default; set "pipeline" for the simpler engine
       thinkingKeepTurns: 10
       historyTurns: 15
       observationKeepWindow: 25
@@ -285,11 +285,11 @@ agents:
 
 <Note>
   The DAG mode (the `dag` engine version) — the v2.12 "Lossless Context DAG"
-  lossless engine — is available as an **opt-in** mode: set `version: "dag"` to
-  use it (the default stays `"pipeline"` until a later release). In the current
-  release DAG does lossless verbatim assembly (full faithful history + a verbatim
-  fresh tail + transcript repair); compaction, summarization, and the on-demand
-  recall tools land in later phases. See [Compaction](/agents/compaction) for details.
+  lossless engine — is the **default**: `version` defaults to `"dag"` (set
+  `"pipeline"` to opt into the simpler engine). DAG keeps the full faithful
+  history losslessly (a verbatim fresh tail + transcript repair), zoomably
+  compresses the oldest history under a token budget, and exposes the in-session
+  `ctx_*` expansion tools. See [Compaction](/agents/compaction) for details.
 </Note>
 
 See [Config Reference](/reference/config-yaml) for the complete list of all 27

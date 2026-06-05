@@ -401,7 +401,7 @@ agents:
       enabled: true                 # opt-in (default false) -- LLM cron, a cost gate
       schedule: "30 3 * * *"
     contextEngine:
-      version: pipeline             # the default; set "dag" to opt into the lossless LCD engine
+      version: dag                  # the default lossless LCD engine; set "pipeline" for the simpler engine
 
 memory:
   rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
@@ -485,14 +485,14 @@ Per-agent configuration for Gemini explicit CachedContent caching. When enabled,
 
 #### Context Engine (agents.*.contextEngine)
 
-Context engine configuration. Controls the system that manages what your agent sees each turn. The default is **pipeline** (the sequential layered engine). The **dag** value (the v2.12 lossless LCD engine) is available as an **opt-in** mode — set `version: "dag"` to use it (the default stays `"pipeline"` until a later release). In the current release DAG does lossless verbatim assembly (full faithful history + a verbatim fresh tail of the most recent steps + transcript repair); compaction, summarization, and the on-demand recall tools land in later phases. See [Compaction](/agents/compaction) for a user-friendly explanation.
+Context engine configuration. Controls the system that manages what your agent sees each turn. The default is **dag** (the v2.12 lossless LCD engine). The **pipeline** value (the simpler sequential layered engine) is the first-class **opt-in** — set `version: "pipeline"` to use it. DAG does lossless verbatim assembly (full faithful history + a verbatim fresh tail of the most recent steps + transcript repair), zoomably compresses the oldest history under a token budget, and exposes the in-session `ctx_*` expansion tools. See [Compaction](/agents/compaction) for a user-friendly explanation.
 
 **Core fields**
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Master toggle for the context engine |
-| `version` | `string` | `"pipeline"` | Operating mode: `"pipeline"` (default, the sequential layered system) or `"dag"` (opt-in lossless LCD engine — lossless verbatim assembly; compaction/recall land later) |
+| `version` | `string` | `"dag"` | Operating mode: `"dag"` (default, the lossless LCD engine) or `"pipeline"` (opt-in, the sequential layered system) |
 
 **Shared fields** (both modes)
 

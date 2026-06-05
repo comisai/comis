@@ -462,9 +462,12 @@ Every payload is **counts, booleans, and IDs only** — never query text, memory
 | `memory:reranked` | When a rerank stage ran (rerank opt-in) | `candidateCount`, `hitCount`, `rerankerAvailable`, `timedOut`, `fellBack`, `durationMs` |
 | `memory:entities_linked` | After an entity resolve-and-link pass (memory-review job) | `entityCount`, `newEntities`, `durationMs` |
 | `memory:consolidated` | After a consolidation run (consolidation job) | `clustersProcessed`, `observationsCreated`, `dedupHits`, `durationMs` |
+| `context:evicted` | When the LCD/DAG assembler evicts the oldest out-of-tail history to fit the token budget | `agentId`, `sessionKey`, `evictedCount`, `evictedChars`, `categories`, `timestamp` |
+| `context:dag_compacted` | After a DAG compaction pass updates the summary hierarchy (DAG mode) | `conversationId`, `agentId`, `sessionKey`, `leafSummariesCreated`, `condensedSummariesCreated`, `maxDepthReached`, `totalSummariesCreated`, `durationMs`, `timestamp` |
+| `context:dag_expanded` | When an in-session expansion tool (`ctx_search`/`ctx_inspect`/`ctx_expand`) recovers compressed detail (DAG mode) | `conversationId`, `agentId`, `sessionKey`, `tool`, `recoveredCount`, `durationMs`, `timestamp` |
 | `context:mode_switched` | On an actual `pipeline`⇄`dag` engine direction change | `from`, `to`, `fullImport`, `importedCount`, `durationMs` |
 
-`memory:recalled.finalCount == 0` means recall returned nothing for that turn. `memory:reranked.fellBack` / `.timedOut` flag the graceful-degradation paths (see below). `context:mode_switched` fires only on a real engine-mode direction change and reports the one-time reconciliation `importedCount`. The `dag` (LCD) engine is available as an opt-in mode, but the mid-conversation `pipeline`⇄`dag` reconciliation that emits this event lands in a later phase, so the event is currently dormant.
+`memory:recalled.finalCount == 0` means recall returned nothing for that turn. `memory:reranked.fellBack` / `.timedOut` flag the graceful-degradation paths (see below). `context:evicted` and `context:dag_compacted` both fire in DAG mode (the default engine) — `context:dag_compacted.durationMs` reports the real wall-clock of each compaction pass; `context:dag_expanded` reports an in-session zoom into the DAG (counts/`durationMs` only — never message or summary content). `context:mode_switched` fires only on a real engine-mode direction change and reports the one-time reconciliation `importedCount`; the mid-conversation `pipeline`⇄`dag` reconciliation that emits it lands in a later phase, so that one event is currently dormant.
 
 ### 15.3 No-silent-degradation signals (`errorKind` + `hint`)
 
