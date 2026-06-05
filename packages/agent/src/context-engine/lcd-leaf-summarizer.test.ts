@@ -48,7 +48,11 @@ import {
   LEAF_FALLBACK_TARGET_TOKENS,
   COMPACTION_MAX_RETRIES,
 } from "./constants.js";
-import { estimateMessageTokens } from "../safety/token-estimator.js";
+import {
+  estimateMessageChars,
+  estimateMessageTokens,
+  CHARS_PER_TOKEN,
+} from "../safety/token-estimator.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createSummarizerSpendBreaker } from "../safety/summarizer-spend-breaker.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
@@ -130,6 +134,30 @@ function throwingSummarizer(): LeafSummarizer {
   return vi.fn(async () => {
     throw new Error("summarizer boom");
   });
+}
+
+/**
+ * B-4 (260605-ney): a SPY-with-PROPORTIONAL-OUTPUT summarizer — models a real
+ * model writing TO its token target. It records every `reserveTokens` it is
+ * handed (`seenReserveTokens`) and returns a string of `reserveTokens * k *
+ * CHARS_PER_TOKEN` chars, so its measured summary tokens ≈ `reserveTokens * k`
+ * (estimateMessageTokens of a user string is `ceil(len / 4)`). With the chunk
+ * sized so the rendered-4:1 shrink ceiling sits BELOW the full configured target
+ * (1200/2000) but ABOVE the bounded effective target (≈ floor(ceiling * 0.5)),
+ * the SAME stub FLOORS pre-patch (it sees the full target → its output exceeds
+ * the chunk → escalate → Level-3) and REDUCES post-patch (it sees the bounded
+ * target → its output is below the ceiling → accepted at Level 1). `k = 1`.
+ */
+function proportionalSpySummarizer(k = 1): {
+  fn: LeafSummarizer;
+  seenReserveTokens: () => number[];
+} {
+  const seen: number[] = [];
+  const fn: LeafSummarizer = vi.fn(async (_messages, opts) => {
+    seen.push(opts.reserveTokens);
+    return "x".repeat(Math.max(0, Math.round(opts.reserveTokens * k * CHARS_PER_TOKEN)));
+  });
+  return { fn, seenReserveTokens: () => seen };
 }
 
 function makeDeps(summarize: LeafSummarizer): {
@@ -596,5 +624,125 @@ describe("buildLeafSummarizeFn passes a REAL Model to generateSummary (B-5)", ()
 
     const call = (generateSummary as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(call[1]).toBe(realOverride);
+  });
+});
+
+// ===========================================================================
+// B-4 (260605-ney): the spurious deterministic floor on a SMALL chunk.
+//
+// Live real-LLM testing showed one leaf falling to `escalationLevel:3
+// fallback:true` (the deterministic count-only floor) on a 3-message chunk while
+// sibling leaves summarized fine at level 1. ROOT CAUSE (verified — the dominant
+// lever): the summarize TARGET (`reserveTokens` = leafTargetTokens, default 1200)
+// can EXCEED a small chunk, so the model is told to write up to 1200 tokens for a
+// ~100-token chunk → the summary cannot be smaller → guaranteed non-reduction →
+// floor. The fix BOUNDS the effective target below the chunk's rendered-4:1 shrink
+// ceiling (`effectiveReserveTokens = min(reserve, floor(ceiling * 0.5))`) AND makes
+// the shrink-CHECK self-consistent (the candidate and the ceiling are BOTH measured
+// at 4:1 rendered prose — no 4:1-prose-vs-mixed-stored comparison). The STORED Σ
+// tokenCount stays the budget/floor authority (the Level-3 floor still beats it).
+//
+// The SPY+proportional stub (`proportionalSpySummarizer`) is the key to a clean
+// RED: it writes TO its target, so the SAME stub floors at the full 1200 target
+// (pre-patch) and reduces at the bounded target (post-patch).
+// ===========================================================================
+describe("summarizeLeafChunk does not spuriously floor a small chunk — bounds the target + self-consistent ceiling (B-4)", () => {
+  const SHRINK_TARGET_FRACTION = 0.5; // mirrors the production constant.
+
+  /** The rendered-4:1 shrink ceiling over a chunk's messages (what the fix uses). */
+  function renderedCeiling(items: LeafChunkItem[]): number {
+    const renderedChars = items.reduce(
+      (acc, it) => acc + estimateMessageChars(it.msg as unknown as Message),
+      0,
+    );
+    return Math.ceil(renderedChars / CHARS_PER_TOKEN);
+  }
+
+  /** The bounded effective target the fix derives from the rendered ceiling. */
+  function boundedTarget(items: LeafChunkItem[]): number {
+    return Math.max(1, Math.floor(renderedCeiling(items) * SHRINK_TARGET_FRACTION));
+  }
+
+  it("(i) structured small chunk: a user prompt + tool call + tool result is accepted at level 1, not floored", async () => {
+    // A realistic 3-message tool-use chunk whose Σ STORED tokenCount is modest
+    // (well under leafTargetTokens 1200). Stored counts mirror the content-aware
+    // estimator (3:1 for the structured toolCall/toolResult) so the fixture is honest.
+    const args = { path: "/etc/app/database-config-settings.yaml", recursive: true, includeHidden: false, maxDepth: 5 };
+    const trText =
+      "database host is db.internal.example.com port 5432 pool size 20 ssl mode require timeout 30s schema public migrations applied";
+    const chunk: LeafChunkItem[] = [
+      item("u0", userMsg("please read the config file and report what you find about the database settings"), 20, 100),
+      item("t1", assistantToolCall("c1", "read", args), 40, 101),
+      item("r1", toolResult("c1", "read", trText), 40, 102),
+    ];
+    const before = chunkTokens(chunk);
+    expect(before).toBeLessThan(1_200); // the target would otherwise exceed the chunk.
+
+    const spy = proportionalSpySummarizer(1);
+    const { deps } = makeDeps(spy.fn);
+    const result = await summarizeLeafChunk(chunk, deps, { reserveTokens: 1_200 });
+
+    // Post-fix: accepted at level 1 (the bounded target produces a reducing summary).
+    // Pre-patch the spy sees 1200 → its proportional summary (~1200 tok) exceeds the
+    // chunk → escalates to the Level-3 deterministic floor (level 3, fallback true).
+    expect(result.level).toBe(1);
+    expect(result.fallback).toBe(false);
+    // The summarizer was handed a target BOUNDED below the chunk's rendered-4:1
+    // ceiling (≤ floor(ceiling * 0.5)) — pre-patch it would be the full 1200.
+    const cap = boundedTarget(chunk);
+    expect(cap).toBeLessThan(1_200);
+    for (const seen of spy.seenReserveTokens()) {
+      expect(seen).toBeLessThanOrEqual(cap);
+    }
+    // The accepted summary is strictly smaller than the chunk (the C1 invariant).
+    expect(summaryTokens(result.content)).toBeLessThan(before);
+  });
+
+  it("(ii) pure-text small chunk: a small all-text chunk is accepted at level 1, not floored", async () => {
+    // All-text (stored 4:1 == rendered 4:1, no structured component), Σ < 1200.
+    const chunk: LeafChunkItem[] = [
+      item("u0", userMsg("can you summarize the meeting notes from yesterday about the launch plan"), 18, 100),
+      item("a1", assistantText("the launch is scheduled for next friday with marketing and engineering aligned on the rollout"), 23, 101),
+      item("u2", userMsg("great, what are the open risks we still need to track before then"), 16, 102),
+    ];
+    const before = chunkTokens(chunk);
+    expect(before).toBeLessThan(1_200);
+
+    const spy = proportionalSpySummarizer(1);
+    const { deps } = makeDeps(spy.fn);
+    const result = await summarizeLeafChunk(chunk, deps, { reserveTokens: 1_200 });
+
+    expect(result.level).toBe(1);
+    expect(result.fallback).toBe(false);
+    const cap = boundedTarget(chunk);
+    expect(cap).toBeLessThan(1_200);
+    for (const seen of spy.seenReserveTokens()) {
+      expect(seen).toBeLessThanOrEqual(cap);
+    }
+    expect(summaryTokens(result.content)).toBeLessThan(before);
+  });
+
+  it("(iii) invariant preserved: a truly non-reducing (oversized) summary still floors strictly below the STORED Σ", async () => {
+    // The bound only caps the TARGET; an oversized summarizer ignores the target
+    // and returns a fixed 500_000-char string that exceeds ANY chunk → the ladder
+    // must STILL fall through to the deterministic Level-3 floor, and that floor
+    // must STILL be strictly below the STORED Σ (the always-reduces-or-floors
+    // terminator + the floor's stored-Σ authority are unchanged).
+    const chunk: LeafChunkItem[] = [
+      item("u0", userMsg("a small prompt that on its own is well under the leaf target"), 18, 100),
+      item("a1", assistantText("a short reply that also stays well under the configured leaf target tokens"), 19, 101),
+      item("u2", userMsg("and one more short follow-up question to round out the tiny chunk"), 16, 102),
+    ];
+    const before = chunkTokens(chunk);
+    const { deps } = makeDeps(oversizedSummarizer());
+    const result = await summarizeLeafChunk(chunk, deps, { reserveTokens: 1_200 });
+
+    expect(result.level).toBe(3);
+    expect(result.fallback).toBe(true);
+    expect(result.content.startsWith(LEAF_FALLBACK_SUMMARY_MARKER)).toBe(true);
+    // Strictly below the STORED Σ (NOT the smaller rendered ceiling — the floor's
+    // authority is the stored before-size) and bounded by the fallback target.
+    expect(summaryTokens(result.content)).toBeLessThan(before);
+    expect(summaryTokens(result.content)).toBeLessThanOrEqual(LEAF_FALLBACK_TARGET_TOKENS);
   });
 });

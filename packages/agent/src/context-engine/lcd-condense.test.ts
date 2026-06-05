@@ -44,6 +44,11 @@ import {
 } from "./lcd-condense.js";
 import { CONDENSED_FALLBACK_SUMMARY_MARKER } from "./constants.js";
 import type { LeafSummarizerDeps } from "./lcd-leaf-summarizer.js";
+import {
+  estimateMessageChars,
+  CHARS_PER_TOKEN,
+} from "../safety/token-estimator.js";
+import type { Message } from "@earendil-works/pi-ai";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
@@ -98,6 +103,27 @@ function throwingSummarizer(): CondenseSummarizer {
   return vi.fn(async () => {
     throw new Error("condense summarizer boom");
   });
+}
+
+/**
+ * B-4 (260605-ney): a SPY-with-PROPORTIONAL-OUTPUT condense summarizer — models a
+ * real model writing TO its token target. Records every `reserveTokens` it is
+ * handed and returns a string of `reserveTokens * k * CHARS_PER_TOKEN` chars
+ * (measured tokens ≈ `reserveTokens * k`). The SAME stub FLOORS pre-patch (it sees
+ * the full 2000 target → its output exceeds the run's rendered-4:1 ceiling →
+ * escalate → Level-3) and REDUCES post-patch (it sees the bounded effective target
+ * → its output is below the ceiling → accepted at Level 1). `k = 1`.
+ */
+function proportionalSpySummarizer(k = 1): {
+  fn: CondenseSummarizer;
+  seenReserveTokens: () => number[];
+} {
+  const seen: number[] = [];
+  const fn: CondenseSummarizer = vi.fn(async (_messages, opts) => {
+    seen.push(opts.reserveTokens);
+    return "x".repeat(Math.max(0, Math.round(opts.reserveTokens * k * CHARS_PER_TOKEN)));
+  });
+  return { fn, seenReserveTokens: () => seen };
 }
 
 function makeDeps(summarize: CondenseSummarizer): LeafSummarizerDeps {
@@ -294,5 +320,77 @@ describe("buildCondenseSummarizeFn passes a REAL Model to generateSummary (B-5 t
 
     const call = (generateSummary as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(call[1]).toBe(realOverride);
+  });
+});
+
+// ===========================================================================
+// B-4 (260605-ney): the spurious deterministic floor on a SMALL condense run —
+// the leaf B-4 fix mirrored at the condense tier. The summarize TARGET
+// (`reserveTokens` = condensedTargetTokens, default 2000) can EXCEED a small run's
+// rendered size → the model is told to write more than it compresses → guaranteed
+// non-reduction → floor. The fix BOUNDS the effective target below the run's
+// rendered-4:1 shrink ceiling AND makes the shrink-CHECK self-consistent (candidate
+// and ceiling both measured at 4:1 rendered prose). The STORED Σ child tokenCount
+// stays the budget/floor authority (the Level-3 floor still beats it).
+// ===========================================================================
+describe("summarizeCondensedChunk does not spuriously floor a small run — bounds the target + self-consistent ceiling (B-4)", () => {
+  const SHRINK_TARGET_FRACTION = 0.5; // mirrors the production constant.
+
+  /** The rendered-4:1 shrink ceiling over the run's ONE concatenated pseudo-message. */
+  function renderedCeiling(children: CondenseChildSummary[]): number {
+    const joined = children.map((c) => c.content).join("\n\n---\n\n");
+    const renderedChars = estimateMessageChars({ role: "user", content: joined } as Message);
+    return Math.ceil(renderedChars / CHARS_PER_TOKEN);
+  }
+
+  /** The bounded effective target the fix derives from the rendered ceiling. */
+  function boundedTarget(children: CondenseChildSummary[]): number {
+    return Math.max(1, Math.floor(renderedCeiling(children) * SHRINK_TARGET_FRACTION));
+  }
+
+  it("(iv) small run: a run whose Σ child tokenCount is under condensedTargetTokens is accepted at level 1, not floored", async () => {
+    // A run whose Σ STORED child tokenCount (modest) is well under condensedTargetTokens (2000).
+    const children = [
+      child("s0", 0, { tokenCount: 90, content: "alpha: decided to use postgres; ran read tool; succeeded; file config.yaml updated" }),
+      child("s1", 1, { tokenCount: 80, content: "beta: attempted write to cache layer; failed with timeout; retry scheduled" }),
+      child("s2", 2, { tokenCount: 70, content: "gamma: open question about whether to shard the events table before launch" }),
+    ];
+    const before = children.reduce((acc, c) => acc + c.tokenCount, 0);
+    expect(before).toBeLessThan(2_000); // the target would otherwise exceed the run.
+
+    const spy = proportionalSpySummarizer(1);
+    const result = await summarizeCondensedChunk(children, makeDeps(spy.fn), { reserveTokens: 2_000 });
+
+    // Post-fix: accepted at level 1. Pre-patch the spy sees 2000 → its proportional
+    // summary (~2000 tok) exceeds the run's rendered ceiling → escalates to Level-3.
+    expect(result.level).toBe(1);
+    expect(result.fallback).toBe(false);
+    // The summarizer was handed a target BOUNDED below the run's rendered-4:1 ceiling.
+    const cap = boundedTarget(children);
+    expect(cap).toBeLessThan(2_000);
+    for (const seen of spy.seenReserveTokens()) {
+      expect(seen).toBeLessThanOrEqual(cap);
+    }
+    // The accepted summary is strictly smaller than the STORED Σ (the C2 invariant).
+    expect(result.tokenCount).toBeLessThan(before);
+  });
+
+  it("(v) invariant preserved: a truly non-reducing (oversized) summary still floors strictly below the STORED Σ", async () => {
+    // The bound only caps the TARGET; an oversized summarizer ignores it and returns
+    // a fixed string exceeding ANY run → the ladder must STILL fall through to the
+    // deterministic Level-3 floor, strictly below the STORED Σ child tokenCount
+    // (the floor's authority is the stored before-size, not the rendered ceiling).
+    const children = [
+      child("s0", 0, { tokenCount: 90, content: "alpha: a short condensed child summary about the build" }),
+      child("s1", 1, { tokenCount: 80, content: "beta: another short condensed child summary about the deploy" }),
+      child("s2", 2, { tokenCount: 70, content: "gamma: a third short condensed child summary about the test run" }),
+    ];
+    const before = children.reduce((acc, c) => acc + c.tokenCount, 0);
+    const result = await summarizeCondensedChunk(children, makeDeps(oversizedSummarizer()), { reserveTokens: 2_000 });
+
+    expect(result.level).toBe(3);
+    expect(result.fallback).toBe(true);
+    expect(result.content.startsWith(CONDENSED_FALLBACK_SUMMARY_MARKER)).toBe(true);
+    expect(result.tokenCount).toBeLessThan(before);
   });
 });
