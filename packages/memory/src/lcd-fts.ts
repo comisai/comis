@@ -197,11 +197,27 @@ function ftsMessageHits(
   return mapFtsRows(safeAll(() => stmt.all(query, conversationId, limit)), "message");
 }
 
-/** Map FTS rows through the strict row schema (degrade per-result-set to []). */
+/**
+ * Map FTS rows through the strict row schema, degrading PER ROW (WR-02), not
+ * per result-set. `parseRows` returns err on the FIRST malformed row and
+ * discards every already-validated sibling — so a single corrupt/drifted FTS
+ * hit would silently null ALL hits for the scope (the "one bad row drops good
+ * siblings" failure WR-02 was introduced to prevent). Mirror every sibling LCD
+ * read (`getMessages`/`getSummaries`/`getSummaryChildren`/`getSummaryMessages`,
+ * lcd-store.ts): validate each row with `parseOptionalRow` and skip ONLY the bad
+ * row, keeping its good siblings. Ordering is preserved (we iterate the ORDER BY
+ * rank result in order). The skip is silent by design — the memory package has
+ * no infra-logging dependency (AGENTS.md §2.4); a schema-violating row is
+ * unreachable via the typed write path (it requires on-disk corruption / drift).
+ */
 function mapFtsRows(rawRows: unknown[], kind: "message" | "summary"): LcdSearchHit[] {
-  const parsed = lcdSearchHitMapper.parseRows(rawRows);
-  const rows = parsed.ok ? parsed.value : []; // degrade-on-validation-error (recall-FTS precedent)
-  return rows.map((r) => ({ kind, refId: r.ref_id, snippet: r.snippet, rank: r.rank }));
+  const out: LcdSearchHit[] = [];
+  for (const raw of rawRows) {
+    const parsed = lcdSearchHitMapper.parseOptionalRow(raw);
+    if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
+    out.push({ kind, refId: parsed.value.ref_id, snippet: parsed.value.snippet, rank: parsed.value.rank });
+  }
+  return out;
 }
 
 /**
