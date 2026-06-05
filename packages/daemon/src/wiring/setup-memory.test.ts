@@ -216,9 +216,14 @@ const mockCreateCircuitBreaker = vi.hoisted(() => vi.fn(() => ({
   getState: vi.fn(() => "closed"),
   reset: vi.fn(),
 })));
-vi.mock("@comis/agent", () => ({
-  createCircuitBreaker: mockCreateCircuitBreaker,
-}));
+// Partial mock: override only createCircuitBreaker (the embedding breaker stub);
+// keep the REAL createSummarizerSpendBreaker + estimateMessageTokens (both pure,
+// deterministic, no I/O) so the R1 (132-05) daemon-owned breaker construction is
+// exercised end-to-end against the actual unit, not a stand-in.
+vi.mock("@comis/agent", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, createCircuitBreaker: mockCreateCircuitBreaker };
+});
 
 vi.mock("@comis/shared", async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
