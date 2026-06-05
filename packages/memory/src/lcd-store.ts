@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: WR-02 condensed range/child tamper guard in appendCondensedSummaryTxn — a throw inside db.transaction is the rollback mechanism (atomic) and the afterTurn condense trigger's outer try/catch degrades it non-fatally (T-130-07).
 /**
  * SQLite adapter implementing ContextStorePort — the LCD (Lossless Context DAG)
  * lossless store. Mirrors createSessionStore: prepared statements bound once,
@@ -63,6 +62,10 @@ import type { Message } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { renderMessageFtsText, searchLcdImpl } from "./lcd-fts.js";
+import {
+  buildAppendCondensedSummaryTxn,
+  buildAppendLeafSummaryTxn,
+} from "./lcd-store-writes.js";
 import { createRowMapper } from "./row-mapper.js";
 import {
   LcdContextItemRowSchema,
@@ -326,234 +329,33 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     seedContextItems(conversationId);
   });
 
-  // One atomic write: persist the leaf summary, link every covered message, and
-  // range-replace the covered context_items message-refs with one summary-ref —
-  // ordinals stay dense, gap-free, ordered (C3). NEVER deletes lcd_messages
-  // (Pitfall 5 — FK RESTRICT enforces losslessness; expansion in Phase 131
-  // recovers the underlying rows).
-  const appendLeafSummaryTxn = db.transaction((input: AppendSummaryInput): string => {
-    const conversationId = input.scope.conversationId;
-    // Ensure the model-facing view exists before range-replacing it (auto-seed
-    // so a leaf pass works even if getContextItems was never called first).
-    seedContextItems(conversationId);
-
-    // The covered run [start,end]: gather the message refIds it covers (only
-    // `message`-refs link to lcd_messages — a `summary`-ref over a prior leaf is
-    // possible in later phases but in 129 the eviction selects a message run).
-    const coveredItems: LcdContextItem[] = [];
-    for (const raw of selectCtxItemsInRange.all(conversationId, input.startOrdinal, input.endOrdinal)) {
-      const parsed = ctxItemRowMapper.parseOptionalRow(raw);
-      if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
-      coveredItems.push({
-        ordinal: parsed.value.ordinal,
-        refKind: parsed.value.ref_kind as LcdRefKind,
-        refId: parsed.value.ref_id,
-      });
-    }
-    const coveredMessageIds = coveredItems
-      .filter((it) => it.refKind === "message")
-      .map((it) => it.refId);
-
-    // Recompute descendantCount + time-range from the COVERED messages (the
-    // store is the authority — the input's descendantCount/earliest/latest are
-    // advisory; C3 correctness requires they match the actual covered run).
-    const coveredSet = new Set(coveredMessageIds);
-    let earliestAt = Number.POSITIVE_INFINITY;
-    let latestAt = Number.NEGATIVE_INFINITY;
-    for (const rawMsg of selectMsgSeed.all(conversationId)) {
-      const parsed = messageSeedRowMapper.parseOptionalRow(rawMsg);
-      if (!parsed.ok || !parsed.value) continue;
-      if (!coveredSet.has(parsed.value.id)) continue;
-      if (parsed.value.created_at < earliestAt) earliestAt = parsed.value.created_at;
-      if (parsed.value.created_at > latestAt) latestAt = parsed.value.created_at;
-    }
-    const descendantCount = coveredMessageIds.length;
-    // Degrade to the caller-supplied range when nothing matched (defensive; an
-    // empty covered run yields a zero-descendant summary, never NaN bounds).
-    const resolvedEarliest = Number.isFinite(earliestAt) ? earliestAt : input.earliestAt;
-    const resolvedLatest = Number.isFinite(latestAt) ? latestAt : input.latestAt;
-
-    // 1. Persist the leaf summary row (depth 0, kind 'leaf', taint/fallback 0/1).
-    const summaryId = randomUUID();
-    insertSummary.run(
-      summaryId,
-      conversationId,
-      input.scope.tenantId,
-      input.scope.agentId,
-      input.scope.sessionKey,
-      resolvedEarliest,
-      resolvedLatest,
-      descendantCount,
-      input.tokenCount,
-      input.content,
-      JSON.stringify(input.fileIds),
-      input.taint ? 1 : 0,
-      input.fallback ? 1 : 0,
-      input.createdAt,
-    );
-
-    // 2. Link one row per covered message id (losslessness ledger).
-    for (const messageId of coveredMessageIds) {
-      insertSummaryMessage.run(summaryId, messageId);
-    }
-
-    // 3. Delete the [start,end] context_items rows (vacates those ordinals).
-    deleteCtxItemsInRange.run(conversationId, input.startOrdinal, input.endOrdinal);
-
-    // 4. Insert the summary-ref at ordinal = startOrdinal (a now-vacated slot).
-    insertCtxItem.run(
-      randomUUID(),
-      conversationId,
-      input.scope.tenantId,
-      input.scope.agentId,
-      input.scope.sessionKey,
-      input.startOrdinal,
-      "summary" satisfies LcdRefKind,
-      summaryId,
-    );
-
-    // 5. Shift every ordinal strictly above the replaced range DOWN by
-    //    (endOrdinal - startOrdinal), one row at a time in ascending order so
-    //    each target slot is already vacated (no transient UNIQUE-index dup).
-    const shift = input.endOrdinal - input.startOrdinal;
-    if (shift > 0) {
-      for (const raw of selectCtxOrdinalsAbove.all(conversationId, input.endOrdinal)) {
-        const parsed = ctxOrdinalRowMapper.parseOptionalRow(raw);
-        if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
-        const ordinal = parsed.value.ordinal;
-        updateCtxItemOrdinal.run(ordinal - shift, conversationId, ordinal);
-      }
-    }
-
-    return summaryId;
-  });
-
-  // One atomic write (Phase 130, C2): persist ONE condensed (depth>0) summary,
-  // link it to its CHILD SUMMARIES via lcd_summary_parents (NOT
-  // lcd_summary_messages), and range-replace the covered contiguous run of
-  // SUMMARY-refs with one condensed summary-ref — ordinals stay dense, gap-free,
-  // ordered. A SIBLING CLONE of appendLeafSummaryTxn (steps 3-5 are IDENTICAL —
-  // delete/shift operate on ordinals regardless of refKind). DIFFERENCES: the
-  // recompute reads the CHILD SUMMARY rows (descendantCount = Σ
-  // child.descendantCount; earliest/latest = min/max of the children — the store
-  // is the authority); depth/taint/fallback/tokenCount/content are persisted
-  // from the INPUT (the agent-side condense summarizer derives them); the link
-  // is to children, not messages. NEVER deletes the child lcd_summaries rows (FK
-  // RESTRICT enforces losslessness for the multi-tier DAG). Never logs content.
-  const appendCondensedSummaryTxn = db.transaction((input: AppendCondensedSummaryInput): string => {
-    const conversationId = input.scope.conversationId;
-    // Ensure the model-facing view exists before range-replacing it (the same
-    // auto-seed guard the leaf txn uses — a condensed pass works even if
-    // getContextItems was never called first).
-    seedContextItems(conversationId);
-
-    // T-130 tamper guard (WR-02) — mirror the leaf path's T-129-22 discipline:
-    // DERIVE the child set FROM the summary-refs actually living in the replaced
-    // [startOrdinal,endOrdinal] range, instead of trusting `input.childSummaryIds`
-    // and the range to agree (two independent inputs). Read the range rows once
-    // (per-row degrade), and:
-    //   (a) REJECT a range that still holds a surviving `message`-ref — a
-    //       condensed run is summary-refs ONLY; collapsing a raw message into a
-    //       condensed ref whose `lcd_summary_parents` links no message would break
-    //       losslessness for that message. The throw rolls back the whole txn
-    //       (non-fatal at the trigger, T-130-07).
-    //   (b) LINK the range-derived summary ids (not the caller input), so a
-    //       mismatched `childSummaryIds` can never corrupt the DAG edges — exactly
-    //       as the leaf path links the messages it READ from the range, never the
-    //       caller's intent. The `input.childSummaryIds` are therefore advisory:
-    //       the range is the single authority (one source of truth).
-    const inRangeChildIds: string[] = [];
-    for (const raw of selectCtxItemsInRange.all(conversationId, input.startOrdinal, input.endOrdinal)) {
-      const parsed = ctxItemRowMapper.parseOptionalRow(raw);
-      if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
-      if (parsed.value.ref_kind !== "summary") {
-        throw new Error("condensed range/child mismatch: range contains a non-summary ref");
-      }
-      inRangeChildIds.push(parsed.value.ref_id);
-    }
-    const inRangeSet = new Set(inRangeChildIds);
-
-    // Recompute descendantCount + time-range from the RANGE-DERIVED CHILD SUMMARY
-    // rows (store is authority — the input's advisory fields are ignored). Read
-    // the whole conversation's summaries once, index by id (WR-02 per-row
-    // degrade), filter to the derived children.
-    const childSet = inRangeSet;
-    let descendantCount = 0;
-    let earliestAt = Number.POSITIVE_INFINITY;
-    let latestAt = Number.NEGATIVE_INFINITY;
-    for (const raw of selectSummaries.all(conversationId)) {
-      const parsed = summaryRowMapper.parseOptionalRow(raw);
-      if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
-      if (!childSet.has(parsed.value.summary_id)) continue;
-      descendantCount += parsed.value.descendant_count;
-      if (parsed.value.earliest_at < earliestAt) earliestAt = parsed.value.earliest_at;
-      if (parsed.value.latest_at > latestAt) latestAt = parsed.value.latest_at;
-    }
-    // Degrade to the caller-supplied advisory range when no child matched
-    // (defensive; an empty child set yields a zero-descendant summary, never
-    // NaN bounds).
-    const resolvedEarliest = Number.isFinite(earliestAt) ? earliestAt : input.earliestAt;
-    const resolvedLatest = Number.isFinite(latestAt) ? latestAt : input.latestAt;
-
-    // 1. Persist the condensed summary row (kind 'condensed', depth from input).
-    const summaryId = randomUUID();
-    insertCondensedSummary.run(
-      summaryId,
-      conversationId,
-      input.scope.tenantId,
-      input.scope.agentId,
-      input.scope.sessionKey,
-      "condensed",
-      input.depth,
-      resolvedEarliest,
-      resolvedLatest,
-      descendantCount,
-      input.tokenCount,
-      input.content,
-      JSON.stringify(input.fileIds),
-      input.taint ? 1 : 0,
-      input.fallback ? 1 : 0,
-      input.createdAt,
-    );
-
-    // 2. Link one row per RANGE-DERIVED child summary id (losslessness ledger —
-    //    children, not messages). Derived from the range (WR-02), so the links and
-    //    the range-replaced window can never diverge.
-    for (const childId of inRangeChildIds) {
-      insertSummaryParent.run(summaryId, childId);
-    }
-
-    // 3. Delete the [start,end] context_items rows (vacates those ordinals).
-    deleteCtxItemsInRange.run(conversationId, input.startOrdinal, input.endOrdinal);
-
-    // 4. Insert the condensed summary-ref at ordinal = startOrdinal (a condensed
-    //    summary is still a `summary`-ref, same as a leaf).
-    insertCtxItem.run(
-      randomUUID(),
-      conversationId,
-      input.scope.tenantId,
-      input.scope.agentId,
-      input.scope.sessionKey,
-      input.startOrdinal,
-      "summary" satisfies LcdRefKind,
-      summaryId,
-    );
-
-    // 5. Shift every ordinal strictly above the replaced range DOWN by
-    //    (endOrdinal - startOrdinal), ascending so each target slot is already
-    //    vacated (no transient UNIQUE-index dup). Identical to the leaf txn.
-    const shift = input.endOrdinal - input.startOrdinal;
-    if (shift > 0) {
-      for (const raw of selectCtxOrdinalsAbove.all(conversationId, input.endOrdinal)) {
-        const parsed = ctxOrdinalRowMapper.parseOptionalRow(raw);
-        if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
-        const ordinal = parsed.value.ordinal;
-        updateCtxItemOrdinal.run(ordinal - shift, conversationId, ordinal);
-      }
-    }
-
-    return summaryId;
-  });
+  // The leaf + condensed summary write transactions are extracted to
+  // ./lcd-store-writes.ts (mirroring the ./lcd-fts.ts extract) so this adapter
+  // stays under the 800-line cap with headroom for the R4 read-filter edits.
+  // The prepared statements + mappers + seed helper are passed in so the
+  // "prepare once" discipline is preserved — the closures are byte-identical
+  // relocations (NO SQL/column/ordering/error-handling change). The condensed
+  // txn's WR-02 tamper-guard throw (the rollback mechanism) lives there now.
+  const summaryWriteDeps = {
+    seedContextItems,
+    selectCtxItemsInRange,
+    selectMsgSeed,
+    selectSummaries,
+    insertSummary,
+    insertCondensedSummary,
+    insertSummaryMessage,
+    insertSummaryParent,
+    insertCtxItem,
+    deleteCtxItemsInRange,
+    selectCtxOrdinalsAbove,
+    updateCtxItemOrdinal,
+    ctxItemRowMapper,
+    messageSeedRowMapper,
+    summaryRowMapper,
+    ctxOrdinalRowMapper,
+  };
+  const appendLeafSummaryTxn = buildAppendLeafSummaryTxn(db, summaryWriteDeps);
+  const appendCondensedSummaryTxn = buildAppendCondensedSummaryTxn(db, summaryWriteDeps);
 
   // One atomic write: the message row + its N part rows commit together (F1).
   const appendTxn = db.transaction((input: AppendMessageInput) => {
