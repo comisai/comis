@@ -50,6 +50,7 @@ function child(
     depth: opts.depth ?? 0,
     content: opts.content ?? `summary-${summaryId} content`,
     tokenCount: opts.tokenCount ?? 100,
+    taint: opts.taint ?? false,
   };
 }
 

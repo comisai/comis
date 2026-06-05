@@ -54,6 +54,7 @@ import type {
   ContextStoreScope,
   ComisLogger,
   ErrorKind,
+  LcdSummary,
   TypedEventBus,
   ContextEngineConfig,
 } from "@comis/core";
@@ -81,18 +82,16 @@ export interface CondensePassOptions {
 
 /**
  * The most recent EXISTING summary at `depth` (for continuity) — passed to the
- * condense summarizer as `previousSummary`. `getSummaries` returns oldest-first,
- * so the LAST same-depth summary is the most recent. `undefined` when none exists
- * yet at the target depth.
+ * condense summarizer as `previousSummary`. Operates on the ALREADY-READ
+ * oldest-first `getSummaries` snapshot from `resolveContext` (WR-01: one resolved
+ * view is the source of truth — never a second store read), so the LAST
+ * same-depth summary is the most recent. `undefined` when none exists yet at the
+ * target depth.
  */
-function previousSummaryAtDepth(
-  store: ContextStorePort,
-  conversationId: string,
-  depth: number,
-): string | undefined {
-  const summaries = store.getSummaries(conversationId).filter((s) => s.depth === depth);
-  if (summaries.length === 0) return undefined;
-  return summaries[summaries.length - 1]!.content;
+function previousSummaryAtDepth(summaries: LcdSummary[], depth: number): string | undefined {
+  const atDepth = summaries.filter((s) => s.depth === depth);
+  if (atDepth.length === 0) return undefined;
+  return atDepth[atDepth.length - 1]!.content;
 }
 
 /**
@@ -126,10 +125,12 @@ export async function maybeRunCondensePass(
   const conversationId = scope.conversationId;
   try {
     // Resolve the model-facing context ONCE — the SAME walk the leaf pass uses,
-    // now also returning the per-depth contiguous summary-ref runs (CR-01/CR-02:
-    // one resolved view is the source of truth). The condense selection reads ONLY
-    // `summaryRunsByDepth` from this snapshot.
-    const { summaryRunsByDepth } = resolveContext(store, conversationId);
+    // now also returning the per-depth contiguous summary-ref runs + the
+    // `getSummaries` snapshot (CR-01/CR-02 + WR-01: one resolved view is the
+    // source of truth). The condense selection reads `summaryRunsByDepth`; taint
+    // rides the selected children; `previousSummary` rides `summaries` — NO
+    // second `getSummaries` call observes a possibly-diverged later snapshot.
+    const { summaryRunsByDepth, summaries } = resolveContext(store, conversationId);
 
     // Select the shallowest contiguous run ≥ fanout (ties → oldest startOrdinal).
     // `undefined` ⇒ no depth meets fanout → no-op (no event, no append).
@@ -157,24 +158,22 @@ export async function maybeRunCondensePass(
     }
 
     // Derive the condensed node's metadata from the children (RESEARCH A6):
-    // depth = max(child depth) + 1; taint = OR(children.taint is not on the child
-    // unit — taint propagation reads the store rows below); descendantCount /
+    // depth = max(child depth) + 1; taint = OR(children.taint); descendantCount /
     // time-range are recomputed STORE-SIDE from the child rows (advisory here).
     const depth = Math.max(...run.children.map((c) => c.depth)) + 1;
     const childSummaryIds = run.children.map((c) => c.summaryId);
-    // taint = OR(children.taint): read the child summary rows from the SAME store
-    // (the resolved-view `CondenseChildSummary` carries content/tokenCount/depth
-    // but not taint — taint propagation is a security flag, read it authoritatively
-    // from getSummaries). A tainted child taints the condensed parent (T-130 trust
-    // boundary; enforcement lands in Phase 132 / Plan 03 P1).
-    const childIdSet = new Set(childSummaryIds);
-    const taint = store
-      .getSummaries(conversationId)
-      .some((s) => childIdSet.has(s.summaryId) && s.taint);
+    // taint = OR(children.taint): read taint off the SELECTED children — the
+    // resolved-view `CondenseChildSummary` carries `taint` from the SAME
+    // `getSummaries` snapshot the run was selected from (WR-01). A second
+    // `getSummaries` call could observe a diverged later snapshot (the pass goes
+    // deferred/async in Phase 132) and silently mis-propagate the trust boundary.
+    // A tainted child taints the condensed parent (T-130; enforcement is Phase 132).
+    const taint = run.children.some((c) => c.taint);
 
     // Summarize the child CONTENT via the 3-level escalation (non-fatal inside —
     // always returns a result). The before-size is the STORED Σ child tokenCount.
-    const previousSummary = previousSummaryAtDepth(store, conversationId, depth);
+    // `previousSummary` reads the SAME resolved snapshot (WR-01) — not a re-query.
+    const previousSummary = previousSummaryAtDepth(summaries, depth);
     const result = await summarizeCondensedChunk(run.children, summarizerDeps, {
       reserveTokens: opts.condensedTargetTokens,
       previousSummary,

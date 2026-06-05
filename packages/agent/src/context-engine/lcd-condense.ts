@@ -79,7 +79,9 @@ export type CondenseSummarizer = LeafSummarizer;
  * authority (`tokenCount` — the before-size summand, NEVER re-estimated), its
  * `depth` (for the `depth = max(child)+1` derivation), its stable `summaryId`
  * (the `lcd_summary_parents` link + the child set), its `content` (the
- * summarizer input), and its `context_items` `ordinal` (the contiguous window).
+ * summarizer input), its `context_items` `ordinal` (the contiguous window), and
+ * its `taint` flag (the untrusted-content bit propagated to the condensed parent
+ * as `taint = OR(children)`).
  */
 export interface CondenseChildSummary {
   /** Stable summary id (the LCD `lcd_summaries.summaryId`) — linked as a child. */
@@ -92,6 +94,14 @@ export interface CondenseChildSummary {
   content: string;
   /** Pre-computed stored token count (the before-size summand; NEVER re-estimated). */
   tokenCount: number;
+  /**
+   * Untrusted-content flag — propagated to the condensed parent (`taint = OR`).
+   * Carried on the unit from the SINGLE resolved-view `getSummaries` snapshot so
+   * the trigger derives `taint` WITHOUT a second store read (WR-01: the one
+   * resolved view is the source of truth — a later, possibly-diverged snapshot
+   * must never re-decide taint propagation).
+   */
+  taint: boolean;
 }
 
 /**

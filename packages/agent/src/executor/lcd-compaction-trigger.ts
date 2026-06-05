@@ -57,6 +57,7 @@ import type {
   ContextStoreScope,
   ComisLogger,
   ErrorKind,
+  LcdSummary,
   TypedEventBus,
 } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -131,6 +132,14 @@ export interface ResolvedContext {
    * non-contiguous fanout (Pitfall 3 / T-130-08).
    */
   summaryRunsByDepth: SummaryRefRun[];
+  /**
+   * The SAME oldest-first `getSummaries` snapshot the runs/utilization were
+   * derived from (WR-01). The condense trigger reads `previousSummary` (the
+   * most-recent same-depth summary content, for continuity) from THIS array —
+   * never a second `getSummaries` call — so the whole pass observes one resolved
+   * view and a later, possibly-diverged snapshot can never re-decide continuity.
+   */
+  summaries: LcdSummary[];
 }
 
 /**
@@ -148,8 +157,11 @@ export function resolveContext(store: ContextStorePort, conversationId: string):
   const rowById = new Map(store.getMessages(conversationId).map((r) => [r.id, r]));
   // Index summaries by id for BOTH the utilization token sum (CR-02) AND the
   // per-depth contiguous-run construction (C2): the run needs each child's
-  // depth/content/tokenCount, all on the `LcdSummary` row.
-  const summaryById = new Map(store.getSummaries(conversationId).map((s) => [s.summaryId, s]));
+  // depth/content/tokenCount/taint, all on the `LcdSummary` row. Read
+  // `getSummaries` ONCE here (WR-01) and carry the array out on `ResolvedContext`
+  // so the trigger derives taint + previousSummary from this single snapshot.
+  const summaries = store.getSummaries(conversationId);
+  const summaryById = new Map(summaries.map((s) => [s.summaryId, s]));
 
   const history: LeafChunkItem[] = [];
   const ordinalById = new Map<string, number>();
@@ -191,6 +203,10 @@ export function resolveContext(store: ContextStorePort, conversationId: string):
           depth: summary.depth,
           content: summary.content,
           tokenCount: summary.tokenCount,
+          // Carry `taint` from THIS snapshot so the condense trigger reads
+          // `taint = OR(children)` off the selected run — never a second,
+          // possibly-diverged getSummaries read (WR-01).
+          taint: summary.taint,
         };
         if (openRun !== undefined && openRun.depth === summary.depth) {
           openRun.children.push(childItem);
@@ -235,7 +251,7 @@ export function resolveContext(store: ContextStorePort, conversationId: string):
   // Flush a run still open at the end of the view (a trailing summary-ref run).
   flushOpenRun();
 
-  return { history, ordinalById, resolvedTokens, summaryRunsByDepth };
+  return { history, ordinalById, resolvedTokens, summaryRunsByDepth, summaries };
 }
 
 /**
