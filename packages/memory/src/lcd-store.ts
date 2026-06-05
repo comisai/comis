@@ -63,6 +63,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { renderMessageFtsText, searchLcdImpl } from "./lcd-fts.js";
+import { createIngestSerializer } from "./lcd-ingest-serializer.js";
 import {
   buildAppendCondensedSummaryTxn,
   buildAppendLeafSummaryTxn,
@@ -375,6 +376,13 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   const appendLeafSummaryTxn = buildAppendLeafSummaryTxn(db, summaryWriteDeps);
   const appendCondensedSummaryTxn = buildAppendCondensedSummaryTxn(db, summaryWriteDeps);
 
+  // R3 (132-04): the per-conversation single-flight serializer the store
+  // exposes via runOnConversation. The store is the single writer BOTH the live
+  // ingest and the deferred (C4) compaction flow through, so the per-conversation
+  // queue naturally sits at the store boundary. Infra-free (it only orders fns —
+  // no logging, no SQL); the agent reaches it through the port method.
+  const ingestSerializer = createIngestSerializer();
+
   // One atomic write: the message row + its N part rows commit together (F1).
   const appendTxn = db.transaction((input: AppendMessageInput) => {
     const messageId = randomUUID();
@@ -611,6 +619,16 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // FTS MATCH path AND the LIKE fallback filter agent_id (WR-02, Pitfall 3);
       // the conversation_id prefix carries the tenant boundary. Never throws.
       return searchLcdImpl(db, scope.conversationId, scope.agentId, query, opts);
+    },
+
+    runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T> {
+      // R3 (132-04): serialize the live ingest write and the deferred (C4)
+      // compaction write per conversation so they cannot interleave on the
+      // (conversation_id, agent_id, tenant_id, seq) unique index / context_items
+      // ordinals (Pitfall 2). Different conversations run concurrently (the
+      // queue is per-conversation). The store does not log here — observability
+      // is agent-side (Plan 132-04 Task 3).
+      return ingestSerializer.runOnConversation(conversationId, fn);
     },
   };
 }

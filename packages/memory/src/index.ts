@@ -11,6 +11,13 @@ export { createSessionStore } from "./session-store.js";
 // LCD lossless context store (ContextStorePort impl — Phase 127)
 export { createLcdStore, reconstructLcdMessage } from "./lcd-store.js";
 
+// LCD per-conversation single-flight ingest serializer (R3, Plan 132-04).
+// The store constructs one internally and exposes it via
+// ContextStorePort.runOnConversation; the factory is also exported so the
+// daemon composition root (or a test) can construct one directly.
+export { createIngestSerializer } from "./lcd-ingest-serializer.js";
+export type { IngestSerializer } from "./lcd-ingest-serializer.js";
+
 // SQLite memory adapter (MemoryPort implementation)
 export { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 

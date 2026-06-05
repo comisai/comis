@@ -115,4 +115,18 @@ export interface ContextStorePort {
     query: string,
     opts: { limit: number; scope?: "messages" | "summaries" | "both" },
   ): LcdSearchHit[];
+  /**
+   * Per-conversation single-flight (R3, Plan 132-04): run `fn` on the queue
+   * dedicated to `conversationId`. Serializes the live ingest write and the
+   * deferred (C4) compaction write so they cannot interleave on
+   * (conversation_id, agent_id, tenant_id, seq) / the lcd_context_items ordinals
+   * — the integrity boundary the deferred second writer requires (Pitfall 2).
+   * Operations on the same conversation are strictly one-at-a-time; operations
+   * on different conversations run concurrently (the queue is per-conversation,
+   * never a global lock). Accepts a synchronous OR async `fn` (the live ingest's
+   * better-sqlite3 append is synchronous; the deferred compaction is async). The
+   * agent has no p-queue dependency, so it reaches the memory-owned per-
+   * conversation queue ONLY through this port method (the agent↛memory cut holds).
+   */
+  runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T>;
 }
