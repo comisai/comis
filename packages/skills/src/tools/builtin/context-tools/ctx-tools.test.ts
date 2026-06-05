@@ -12,8 +12,8 @@
  * store / FTS / filesystem session dir is touched beyond the tmpdir spill file.
  *
  * These tools are direct-injection (they read the injected `ContextStorePort`),
- * NOT the RPC `session_search`/`memory_search` recall path — there is ZERO
- * `rpcCall`/`memory.*`/`@comis/memory` code path here (the E2/I2 boundary).
+ * NOT the RPC recall path (session-search / memory-search) — there is ZERO RPC
+ * call, recall dispatch, or cross-package memory import here (the E2/I2 boundary).
  *
  * @module
  */
