@@ -213,8 +213,8 @@ async function runOneLeafPass(
   | { summaryId: string; chunkTokens: number; summaryTokens: number; fallback: boolean }
   | undefined
 > {
-  const items = store.getContextItems(CONVERSATION_ID);
-  const rows = store.getMessages(CONVERSATION_ID);
+  const items = store.getContextItems(SCOPE);
+  const rows = store.getMessages(SCOPE);
   const rowById = new Map<string, LcdMessage>(rows.map((r) => [r.id, r]));
 
   // Build the resolved-history LeafChunkItems, tracking each item's context_items
@@ -306,6 +306,7 @@ function makeDagDeps(store: ContextStorePort, contextWindow: number): ContextEng
     contextStore: store,
     conversationId: CONVERSATION_ID,
     agentId: "agent_a",
+    tenantId: "tenant_a", // R4 (132-03): full read scope (else the assembler fails closed — WR-02)
     sessionKey: "sess-a",
   };
 }
@@ -431,7 +432,7 @@ describe("LCD synthetic-session gate (Plan 05 Task 2 — C1/A3 headline)", () =>
     expect(out!.fallback).toBe(true);
 
     // The persisted summary carries the deterministic fallback marker.
-    const summaries = store.getSummaries(CONVERSATION_ID);
+    const summaries = store.getSummaries(SCOPE);
     const persisted = summaries.find((s) => s.summaryId === out!.summaryId)!;
     expect(persisted.fallback).toBe(true);
     expect(persisted.content.startsWith(LEAF_FALLBACK_SUMMARY_MARKER)).toBe(true);
@@ -485,7 +486,7 @@ describe("LCD synthetic-session gate (Plan 02 Task 3 — C2 multi-tier leaf→co
     maxRounds = 10,
   ): Promise<number> {
     for (let r = 0; r < maxRounds; r++) {
-      const before = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed").length;
+      const before = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed").length;
       await maybeRunCondensePass(
         store,
         SCOPE,
@@ -494,10 +495,10 @@ describe("LCD synthetic-session gate (Plan 02 Task 3 — C2 multi-tier leaf→co
         FIXED_CREATED_AT_BASE,
         deps.logger,
       );
-      const after = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed").length;
+      const after = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed").length;
       if (after === before) break; // no progress → stable
     }
-    return store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed").length;
+    return store.getSummaries(SCOPE).filter((s) => s.kind === "condensed").length;
   }
 
   it("folds ≥condensedMinFanout depth-0 leaf summaries into a depth-1 condensed summary that surfaces in the assembled prefix (descendantCount/time-range correct, parents linked, ordering preserved, NO network)", async () => {
@@ -527,7 +528,7 @@ describe("LCD synthetic-session gate (Plan 02 Task 3 — C2 multi-tier leaf→co
     expect(rounds).toBeGreaterThan(0);
 
     // Enough leaf summaries accumulated to trigger condensation.
-    const leavesBefore = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "leaf");
+    const leavesBefore = store.getSummaries(SCOPE).filter((s) => s.kind === "leaf");
     expect(leavesBefore.length).toBeGreaterThanOrEqual(CONDENSED_MIN_FANOUT);
 
     // Snapshot the FULL contiguous depth-0 run the condense pass will fold. The
@@ -535,7 +536,7 @@ describe("LCD synthetic-session gate (Plan 02 Task 3 — C2 multi-tier leaf→co
     // condensedMinFanout) — the leaves all sit at the oldest end as one contiguous
     // summary-ref run, so the children are every LEADING contiguous summary-ref
     // (up to the first surviving message-ref).
-    const items = store.getContextItems(CONVERSATION_ID);
+    const items = store.getContextItems(SCOPE);
     const leadingSummaryRefIds: string[] = [];
     for (const it of items) {
       if (it.refKind !== "summary") break; // the run ends at the first message-ref
@@ -559,7 +560,7 @@ describe("LCD synthetic-session gate (Plan 02 Task 3 — C2 multi-tier leaf→co
     );
 
     // ---- A depth-1 condensed summary now exists with correct coverage. ----
-    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    const condensed = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed");
     expect(condensed.length).toBe(1);
     const node = condensed[0]!;
     expect(node.depth).toBe(1);
@@ -584,7 +585,7 @@ describe("LCD synthetic-session gate (Plan 02 Task 3 — C2 multi-tier leaf→co
     expect(linkedChildren).toEqual(expectedChildren.map((s) => s.summaryId).sort());
 
     // ---- Ordering preserved: context_items stays dense + gap-free + ordered. ----
-    const after = store.getContextItems(CONVERSATION_ID);
+    const after = store.getContextItems(SCOPE);
     const ordinals = after.map((it) => it.ordinal);
     expect(ordinals).toEqual(Array.from({ length: after.length }, (_, i) => i));
     // The condensed summary-ref sits at the oldest end (ordinal 0).

@@ -287,6 +287,7 @@ describe("ingestTurn", () => {
       contextStore: store,
       conversationId: CONVERSATION_ID,
       agentId: "agent_a",
+      tenantId: "tenant_a", // R4 (132-03): the assembler reads with the full scope (else fails closed — WR-02)
       sessionKey: "sess-a",
     };
     const engine = createLcdContextEngine(dagConfig(1), deps);

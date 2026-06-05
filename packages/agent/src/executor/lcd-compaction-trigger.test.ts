@@ -185,7 +185,7 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
     );
 
     // A leaf summary was persisted.
-    const summaries = store.getSummaries(CONVERSATION_ID);
+    const summaries = store.getSummaries(SCOPE);
     expect(summaries.length).toBe(1);
     expect(summaries[0]!.kind).toBe("leaf");
 
@@ -207,7 +207,7 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
     // ordinals 0..39. The leaf covers the oldest contiguous prefix starting at
     // ordinal 0, so the summary-ref MUST land at ordinal 0 (the first covered
     // message-ref's ordinal == startOrdinal).
-    const before = store.getContextItems(CONVERSATION_ID);
+    const before = store.getContextItems(SCOPE);
     expect(before.length).toBe(40);
     expect(before.every((it) => it.refKind === "message")).toBe(true);
     expect(before[0]!.ordinal).toBe(0);
@@ -222,8 +222,8 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
       bus,
     );
 
-    const after = store.getContextItems(CONVERSATION_ID);
-    const summaries = store.getSummaries(CONVERSATION_ID);
+    const after = store.getContextItems(SCOPE);
+    const summaries = store.getSummaries(SCOPE);
     expect(summaries.length).toBe(1);
     const summaryId = summaries[0]!.summaryId;
 
@@ -262,7 +262,7 @@ describe("maybeRunLeafPass — over threshold fires a leaf pass", () => {
       bus,
     );
 
-    const summaries = store.getSummaries(CONVERSATION_ID);
+    const summaries = store.getSummaries(SCOPE);
     expect(summaries.length).toBe(1);
     expect(summaries[0]!.createdAt).toBe(FIXED_NOW);
   });
@@ -300,7 +300,7 @@ describe("maybeRunLeafPass — under threshold is inert", () => {
       bus,
     );
 
-    expect(store.getSummaries(CONVERSATION_ID).length).toBe(0);
+    expect(store.getSummaries(SCOPE).length).toBe(0);
     expect(summarize).not.toHaveBeenCalled();
     expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(0);
   });
@@ -323,7 +323,7 @@ describe("maybeRunLeafPass — under threshold is inert", () => {
       bus,
     );
 
-    expect(store.getSummaries(CONVERSATION_ID).length).toBe(0);
+    expect(store.getSummaries(SCOPE).length).toBe(0);
     expect(summarize).not.toHaveBeenCalled();
     expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(0);
   });
@@ -419,7 +419,7 @@ describe("maybeRunLeafPass — non-fatal degrade", () => {
       ),
     ).resolves.toBeUndefined();
 
-    expect(store.getSummaries(CONVERSATION_ID).length).toBe(0);
+    expect(store.getSummaries(SCOPE).length).toBe(0);
     expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(0);
   });
 });
@@ -465,13 +465,13 @@ describe("maybeRunLeafPass — makes progress across passes (CR-01/CR-02)", () =
     await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, logger as unknown as LeafSummarizerDeps["logger"], bus);
 
     // TWO distinct leaf summaries, covering two DIFFERENT (non-overlapping) chunks.
-    const summaries = store.getSummaries(CONVERSATION_ID);
+    const summaries = store.getSummaries(SCOPE);
     expect(summaries.length).toBe(2);
     expect(summaries[0]!.summaryId).not.toBe(summaries[1]!.summaryId);
 
     // Two summary-refs now sit at the oldest end of the context view, in order,
     // and the message-ref count dropped by the two chunks' worth of coverage.
-    const items = store.getContextItems(CONVERSATION_ID);
+    const items = store.getContextItems(SCOPE);
     const summaryRefs = items.filter((it) => it.refKind === "summary");
     expect(summaryRefs.length).toBe(2);
     const totalCovered = summaries.reduce((acc, s) => acc + s.descendantCount, 0);
@@ -505,7 +505,7 @@ describe("maybeRunLeafPass — makes progress across passes (CR-01/CR-02)", () =
 
     // Pass 1 fires and creates exactly one leaf.
     await maybeRunLeafPass(store, SCOPE, passOpts, deps, FIXED_NOW, logger as unknown as LeafSummarizerDeps["logger"], bus);
-    expect(store.getSummaries(CONVERSATION_ID).length).toBe(1);
+    expect(store.getSummaries(SCOPE).length).toBe(1);
     const callsAfterPass1 = (summarize as ReturnType<typeof vi.fn>).mock.calls.length;
     const compactedAfterPass1 = emits.filter((e) => e.event === "context:dag_compacted").length;
 
@@ -514,7 +514,7 @@ describe("maybeRunLeafPass — makes progress across passes (CR-01/CR-02)", () =
 
     // Still exactly one summary — no third was created, and pass 2 did not even
     // reach the summarizer or emit another compaction event.
-    expect(store.getSummaries(CONVERSATION_ID).length).toBe(1);
+    expect(store.getSummaries(SCOPE).length).toBe(1);
     expect((summarize as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterPass1);
     expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(compactedAfterPass1);
 

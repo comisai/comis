@@ -21,10 +21,10 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { tryGetContext, type LcdSummary } from "@comis/core";
+import { type LcdSummary } from "@comis/core";
 
 import { jsonResult, throwToolError, readStringParam } from "../../../platform-tools/tool-helpers.js";
-import type { ContextToolDeps } from "./context-tools-shared.js";
+import { requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
 
 const CtxInspectParams = Type.Object({
   summaryId: Type.String({ description: "The summaryId (from a ctx_search summary hit or a <summary> footer) to inspect." }),
@@ -45,19 +45,15 @@ export function createCtxInspectTool(deps: ContextToolDeps): AgentTool<typeof Ct
     parameters: CtxInspectParams,
 
     async execute(_toolCallId: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
-      // SCOPE — derive per-call, never cache; fail closed with no live session.
-      const ctx = tryGetContext();
-      if (!ctx?.sessionKey) {
-        throwToolError("permission_denied", "ctx_inspect operates only inside a live session.", {
-          hint: "This tool inspects the current conversation's compressed history; it cannot run outside a session.",
-        });
-      }
-      const conversationId = ctx.sessionKey;
+      // SCOPE — build the (conversation, agent, tenant) read scope from the LIVE
+      // context per-call (R4 / WR-02); fail closed without a fully-scoped session.
+      const ctxScope = requireCtxScope();
+      const conversationId = ctxScope.conversationId;
       const summaryId = readStringParam(params, "summaryId", true)!;
 
-      // Filter the (tens-of) summaries for this conversation — no single-summary getter (YAGNI, Q2).
+      // Filter this agent's summaries (R4 agent-scoped) — no single-summary getter (YAGNI, Q2).
       const summary: LcdSummary | undefined = deps.store
-        .getSummaries(conversationId)
+        .getSummaries(ctxScope)
         .find((s) => s.summaryId === summaryId);
       if (!summary) {
         throwToolError("not_found", `No summary with id "${summaryId}" in this conversation.`, {
@@ -65,9 +61,9 @@ export function createCtxInspectTool(deps: ContextToolDeps): AgentTool<typeof Ct
         });
       }
 
-      // Compose the structural edges (the new region-walk methods).
-      const children = deps.store.getSummaryChildren(conversationId, summaryId);
-      const coveredMessageIds = deps.store.getSummaryMessages(conversationId, summaryId);
+      // Compose the structural edges (the new region-walk methods) — agent-scoped.
+      const children = deps.store.getSummaryChildren(ctxScope, summaryId);
+      const coveredMessageIds = deps.store.getSummaryMessages(ctxScope, summaryId);
 
       // ids/counts/timestamps only — NEVER the summary content.
       deps.logger.debug(

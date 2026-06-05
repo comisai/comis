@@ -21,11 +21,11 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { tryGetContext, wrapExternalContent, type LcdSearchHit } from "@comis/core";
+import { wrapExternalContent, type LcdSearchHit } from "@comis/core";
 
 import { jsonResult, throwToolError, readStringParam, readNumberParam } from "../../../platform-tools/tool-helpers.js";
 import { sanitizeFts5Query } from "../../../platform-tools/tools/fts5-sanitizer.js";
-import type { ContextToolDeps } from "./context-tools-shared.js";
+import { requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
 
 const CtxSearchParams = Type.Object({
   query: Type.String({ description: "Full-text query over THIS conversation's compressed history." }),
@@ -74,14 +74,11 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
     parameters: CtxSearchParams,
 
     async execute(_toolCallId: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
-      // (1) SCOPE — derive per-call, never cache; fail closed with no live session.
-      const ctx = tryGetContext();
-      if (!ctx?.sessionKey) {
-        throwToolError("permission_denied", "ctx_search operates only inside a live session.", {
-          hint: "This tool searches the current conversation's compressed history; it cannot run outside a session.",
-        });
-      }
-      const conversationId = ctx.sessionKey;
+      // (1) SCOPE — build the (conversation, agent, tenant) read scope from the
+      //     LIVE context per-call (R4 / WR-02); fail closed without a fully-scoped
+      //     session. NEVER a wiring closure (multi-agent-safe, Pitfall 4).
+      const ctxScope = requireCtxScope();
+      const conversationId = ctxScope.conversationId;
 
       // (2) SANITIZE — strip FTS5 special chars in the tool, before the store sees it.
       const q = sanitizeFts5Query(readStringParam(params, "query", true)!);
@@ -90,7 +87,7 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       const limit = Math.min(Math.max(1, requested), 30);
 
       const t0 = deps.nowMs();
-      const hits: LcdSearchHit[] = deps.store.searchLcd(conversationId, q, { limit, scope });
+      const hits: LcdSearchHit[] = deps.store.searchLcd(ctxScope, q, { limit, scope });
 
       // (3) TAINT — wrap every recovered snippet as untrusted before it leaves the tool.
       const safeHits = hits.map((h) => ({

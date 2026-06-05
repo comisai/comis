@@ -95,7 +95,7 @@ function collapseLeaf(
   width: number,
   summaryTokens: number,
 ): string {
-  const items = store.getContextItems(CONVERSATION_ID);
+  const items = store.getContextItems(SCOPE);
   const msgRefs = items.filter((it) => it.refKind === "message" && it.ordinal > fromOrdinalAfter);
   const windowRefs = msgRefs.slice(0, width);
   const startOrdinal = windowRefs[0]!.ordinal;
@@ -206,7 +206,7 @@ describe("maybeRunCondensePass — no-op below fanout", () => {
     seedHistory(store, 40, 100);
     // Only 3 contiguous leaf summaries < condensedMinFanout 4.
     seedContiguousLeaves(store, 3, 4);
-    expect(store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "leaf").length).toBe(3);
+    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "leaf").length).toBe(3);
 
     const logger = createMockLogger();
     const { bus, emits } = makeEventBus();
@@ -223,7 +223,7 @@ describe("maybeRunCondensePass — no-op below fanout", () => {
     );
 
     // No condensed summary was created, no event fired, the summarizer was never called.
-    expect(store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed").length).toBe(0);
+    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "condensed").length).toBe(0);
     expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(0);
     expect(summarize).not.toHaveBeenCalled();
   });
@@ -262,7 +262,7 @@ describe("maybeRunCondensePass — condenses at fanout and emits the real compac
     );
 
     // Exactly one depth-1 condensed summary now exists.
-    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    const condensed = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed");
     expect(condensed.length).toBe(1);
     expect(condensed[0]!.depth).toBe(1);
     // descendantCount = Σ child descendantCount (each leaf covered 4 msgs → 16).
@@ -281,7 +281,7 @@ describe("maybeRunCondensePass — condenses at fanout and emits the real compac
 
     // The four child leaves are range-replaced by ONE condensed summary-ref at the
     // oldest end; ordinals stay dense + gap-free + ordered.
-    const items = store.getContextItems(CONVERSATION_ID);
+    const items = store.getContextItems(SCOPE);
     const sRefs = summaryRefs(items);
     expect(sRefs.length).toBe(1);
     expect(sRefs[0]!.refId).toBe(condensed[0]!.summaryId);
@@ -306,7 +306,7 @@ describe("maybeRunCondensePass — condenses at fanout and emits the real compac
       bus,
     );
 
-    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    const condensed = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed");
     expect(condensed.length).toBe(1);
     const parentId = condensed[0]!.summaryId;
 
@@ -349,7 +349,7 @@ describe("maybeRunCondensePass — contiguity (Pitfall 3)", () => {
       collapseLeaf(store, 1 + k, 3, 5);
     }
 
-    const items = store.getContextItems(CONVERSATION_ID);
+    const items = store.getContextItems(SCOPE);
     // Sanity on the constructed layout: s0 at 0, a message-ref at 1, then ≥4
     // contiguous summary-refs from ordinal 2.
     expect(items[0]!.refKind).toBe("summary");
@@ -359,7 +359,7 @@ describe("maybeRunCondensePass — contiguity (Pitfall 3)", () => {
       contiguousAfterSep.push(items[i]!);
     }
     expect(contiguousAfterSep.length).toBeGreaterThanOrEqual(4);
-    const leafCountBefore = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "leaf").length;
+    const leafCountBefore = store.getSummaries(SCOPE).filter((s) => s.kind === "leaf").length;
 
     const logger = createMockLogger();
     const { bus } = makeEventBus();
@@ -374,7 +374,7 @@ describe("maybeRunCondensePass — contiguity (Pitfall 3)", () => {
     );
 
     // One condensed summary was created — covering the CONTIGUOUS trailing run.
-    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    const condensed = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed");
     expect(condensed.length).toBe(1);
     const parentId = condensed[0]!.summaryId;
 
@@ -389,13 +389,13 @@ describe("maybeRunCondensePass — contiguity (Pitfall 3)", () => {
 
     // The separator message-ref STILL survives (the condensed run never spanned it),
     // and s0 still exists as a leaf in context_items.
-    const after = store.getContextItems(CONVERSATION_ID);
+    const after = store.getContextItems(SCOPE);
     expect(after[0]!.refKind).toBe("summary"); // s0 untouched at the oldest end
     expect(after[0]!.refId).not.toBe(parentId);
     expect(after.some((it) => it.refKind === "message")).toBe(true); // the separator survives
     // Leaf count is unchanged by the condense pass (children are NEVER deleted —
     // FK RESTRICT losslessness): leaves before == leaves after.
-    const leafCountAfter = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "leaf").length;
+    const leafCountAfter = store.getSummaries(SCOPE).filter((s) => s.kind === "leaf").length;
     expect(leafCountAfter).toBe(leafCountBefore);
   });
 });
@@ -433,7 +433,7 @@ describe("maybeRunCondensePass — non-fatal degrade", () => {
     ).resolves.toBeUndefined();
 
     // The deterministic Level-3 floor still produced a bounded condensed summary.
-    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    const condensed = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed");
     expect(condensed.length).toBe(1);
     expect(condensed[0]!.fallback).toBe(true);
     expect(condensed[0]!.content.startsWith(CONDENSED_FALLBACK_SUMMARY_MARKER)).toBe(true);
@@ -495,7 +495,7 @@ describe("maybeRunCondensePass — non-fatal degrade", () => {
       ),
     ).resolves.toBeUndefined();
 
-    expect(store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed").length).toBe(0);
+    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "condensed").length).toBe(0);
     expect(emits.filter((e) => e.event === "context:dag_compacted").length).toBe(0);
   });
 });
@@ -565,7 +565,7 @@ describe("maybeRunCondensePass — single resolved snapshot is the source of tru
 
     // The condensed summary inherits taint from the children IN THE SELECTION
     // SNAPSHOT (taint=true), not from the later diverged read (taint=false).
-    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    const condensed = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed");
     expect(condensed.length).toBe(1);
     expect(condensed[0]!.taint).toBe(true);
   });

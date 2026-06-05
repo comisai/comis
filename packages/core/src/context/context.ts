@@ -34,11 +34,19 @@ export type UserTrustLevel = z.infer<typeof UserTrustLevelSchema>;
  * post-queue. Post-queue callers (execution-execute.ts) continue to set
  * both fields. An empty string "" is still rejected — only undefined is
  * acceptable as the "not yet resolved" state.
+ *
+ * agentId is likewise optional (NOT known at channel ingress) — the executor
+ * populates it at the per-turn entry. The in-session ctx_* tools read it
+ * per-call from the LIVE context to scope LCD store reads by agent (R4 132-03;
+ * the Phase-131 WR-02 cross-agent close) — never a wiring-time closure that
+ * could serve multiple agents the same scope.
  */
 export const RequestContextSchema = z.strictObject({
     tenantId: z.string().min(1).default("default"),
     userId: z.string().min(1).optional(),
     sessionKey: z.string().min(1).optional(),
+    /** Resolved agent id for the turn — populated at the executor entry (optional, not known at channel ingress, like sessionKey). Read per-call by the ctx_* tools to scope LCD reads by agent (R4 / WR-02). */
+    agentId: z.string().min(1).optional(),
     traceId: z.guid(),
     startedAt: z.number().int().positive(),
     trustLevel: UserTrustLevelSchema.default("admin"),

@@ -130,7 +130,8 @@ export async function maybeRunCondensePass(
     // source of truth). The condense selection reads `summaryRunsByDepth`; taint
     // rides the selected children; `previousSummary` rides `summaries` — NO
     // second `getSummaries` call observes a possibly-diverged later snapshot.
-    const { summaryRunsByDepth, summaries } = resolveContext(store, conversationId);
+    // R4 (132-03): resolveContext reads agent + tenant scoped (WR-02) via `scope`.
+    const { summaryRunsByDepth, summaries } = resolveContext(store, scope);
 
     // Select the shallowest contiguous run ≥ fanout (ties → oldest startOrdinal).
     // `undefined` ⇒ no depth meets fanout → no-op (no event, no append).

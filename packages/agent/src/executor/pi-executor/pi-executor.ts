@@ -295,6 +295,15 @@ export function createPiExecutor(
       if (alsCtx && resolvedModel) {
         (alsCtx as Record<string, unknown>).resolvedModel = `${resolvedModel.provider}:${resolvedModel.id}`;
       }
+      // R4 (132-03): populate the turn's agentId onto the LIVE RequestContext so
+      // the in-session ctx_* tools scope LCD reads by THIS agent per-call (WR-02).
+      // The agentId arrives as a positional execute() arg (not in the context set
+      // at the channel/RPC boundary); mirror the resolvedModel mutation above. The
+      // tools read `tryGetContext().agentId` — a wiring-time closure would be
+      // unsafe when one wiring serves multiple agents (the exact WR-02 threat).
+      if (alsCtx && agentId) {
+        (alsCtx as Record<string, unknown>).agentId = agentId;
+      }
 
       // Derive compat config via normalizeModelCompat (xAI auto-detection).
       const modelCompat = resolvedModel ? normalizeModelCompat({
@@ -860,7 +869,12 @@ async function runSessionLocked(
   // TypeScript declares transformContext as private, but it's a plain instance property
   // accessible at runtime. Same pattern as streamFn override above.
   const ceSetup = setupContextEngine({
-    config, deps: frozenDeps, formattedKey, sessionKey: formattedKey, msg, sm, session,
+    config, deps: frozenDeps, formattedKey, sessionKey: formattedKey,
+    // R4 (132-03): the dag assembler's LCD read scope tenant — the SAME source
+    // executor-post-execution uses for the ingest scope (deps.tenantId ?? the
+    // session key's tenant), so read + write scopes agree (WR-02).
+    tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
+    msg, sm, session,
     resolvedModel, executionOverrides,
     cacheBreakDetector,
     contextEngineRef,

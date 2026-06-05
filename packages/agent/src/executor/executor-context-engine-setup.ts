@@ -78,6 +78,11 @@ export interface ContextEngineSetupParams {
   deps: ContextEngineSetupDeps;
   formattedKey: string;
   sessionKey: string;
+  /** R4 (132-03): the tenant for the dag assembler's LCD read scope (the SAME
+   *  source executor-post-execution uses for the ingest scope:
+   *  `deps.tenantId ?? sessionKey.tenantId`). Threaded onto ContextEngineDeps so
+   *  the assembler builds an agent + tenant scoped read (WR-02). */
+  tenantId: string;
   msg: { channelType?: string; channelId?: string };
   sm: unknown;  // SessionManager -- typed as unknown to avoid SDK type export
   session: { agent: { state: { model: { reasoning?: boolean; contextWindow?: number; maxTokens?: number; id?: string; provider?: string; api?: string } | undefined } }; abortCompaction(): void };
@@ -140,7 +145,7 @@ export interface ContextEngineSetupResult {
  */
 export function setupContextEngine(params: ContextEngineSetupParams): ContextEngineSetupResult {
   const {
-    config, deps, formattedKey, msg, sm, session, executionOverrides,
+    config, deps, formattedKey, tenantId, msg, sm, session, executionOverrides,
     cacheBreakDetector,
     contextEngineRef,
     getCachedSystemTokensEstimate, getTokenAnchor, onAnchorReset,
@@ -295,6 +300,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     eventBus: deps.eventBus,
     agentId,
     sessionKey: formattedKey,
+    // R4 (132-03): the dag assembler builds an agent + tenant scoped LCD read
+    // from agentId + tenantId + conversationId (the WR-02 close).
+    tenantId,
     getModel: () => {
       // Lazy model getter handles model cycling mid-session
       const model = session.agent.state.model;

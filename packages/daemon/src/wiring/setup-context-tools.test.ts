@@ -81,18 +81,30 @@ describe("wireContextTools — daemon composition root", () => {
     const ctxSearch = tools.find((t) => t.name === "ctx_search");
     expect(ctxSearch).toBeDefined();
 
-    // Drive execute inside a live-session scope so the per-call scope-gate passes.
+    // Drive execute inside a live, FULLY-SCOPED session so the per-call scope-gate
+    // passes (R4 132-03: the ctx tools require a live agentId + tenantId — WR-02).
     await runWithContext(
-      { sessionKey: "default:chan_a:user_a", contentDelimiter: "DELIM" } as never,
+      {
+        tenantId: "default",
+        sessionKey: "default:chan_a:user_a",
+        agentId: "agent-a",
+        contentDelimiter: "DELIM",
+      } as never,
       async () => {
         await ctxSearch!.execute("call-1", { query: "needle" });
       },
     );
 
-    // The wiring passed the SAME store instance through — not a fresh one.
+    // The wiring passed the SAME store instance through — not a fresh one. R4:
+    // searchLcd now receives the full ContextStoreScope built from the LIVE
+    // context (conversationId + agentId + tenantId), never a bare conversation id.
     expect(searchLcd).toHaveBeenCalledTimes(1);
     expect(searchLcd).toHaveBeenCalledWith(
-      "default:chan_a:user_a",
+      expect.objectContaining({
+        conversationId: "default:chan_a:user_a",
+        agentId: "agent-a",
+        tenantId: "default",
+      }),
       expect.any(String),
       expect.objectContaining({ limit: expect.any(Number) }),
     );

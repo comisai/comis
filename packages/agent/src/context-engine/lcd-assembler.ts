@@ -50,6 +50,7 @@
 import { partsToMessage, systemDateFrom, systemNowMs, wrapExternalContent } from "@comis/core";
 import type {
   ContextStorePort,
+  ContextStoreScope,
   LcdContextItem,
   LcdMessage,
   LcdSummary,
@@ -82,6 +83,23 @@ export function createLcdContextEngine(
   // is the sanctioned system-clock wrapper for the no-injected-clock unit case.
   const now = (): number => (deps.clock ? deps.clock.now() : systemNowMs());
 
+  // R4 (132-03): build the per-(conversation, agent, tenant) read scope ONCE.
+  // FAIL CLOSED (mirrors the T-128-08 empty-column guard): if agentId or tenantId
+  // is absent we CANNOT safely read (an unscoped read would leak another agent's
+  // history within a shared conversation_id — WR-02), so `readScope` is undefined
+  // and the assembler reads NOTHING (an empty history) rather than reading
+  // conversation-wide. The session_key falls back to conversationId (the store
+  // never filters on it; the 4th field is carried for shape symmetry).
+  const readScope: ContextStoreScope | undefined =
+    deps.agentId !== undefined && deps.agentId.length > 0 && deps.tenantId !== undefined && deps.tenantId.length > 0
+      ? {
+          conversationId,
+          agentId: deps.agentId,
+          tenantId: deps.tenantId,
+          sessionKey: deps.sessionKey ?? conversationId,
+        }
+      : undefined;
+
   return {
     lastBreakpointIndex: undefined,
     lastTrimOffset: 0,
@@ -98,11 +116,29 @@ export function createLcdContextEngine(
       //      role, never system/assistant; T-129-14). Token authority (Pitfall 2):
       //      a message-ref carries its STORED `tokenCount` (counts F3 thinking); a
       //      summary-ref carries the summary's `tokenCount`.
-      const contextItems: LcdContextItem[] = store.getContextItems(conversationId);
-      const rows: LcdMessage[] = store.getMessages(conversationId);
+      // R4 (132-03): read ONLY with a fully-built agent+tenant scope. When the
+      // scope is incomplete (`readScope` undefined) we fail closed — read nothing
+      // rather than risk a cross-agent leak (WR-02 / T-132-03-04). A turn with no
+      // resolvable history still ships its fresh tail below (A1), so the live turn
+      // is never broken; the WARN flags the misconfiguration for an operator.
+      if (readScope === undefined) {
+        deps.logger.warn(
+          {
+            step: "lcd-resolve",
+            conversationId,
+            agentId: deps.agentId,
+            tenantId: deps.tenantId,
+            hint: "LCD dag assembly could not build a full (conversation, agent, tenant) read scope; reading no history this turn to avoid a cross-agent leak (R4/WR-02) — ensure setupContextEngine threads agentId + tenantId",
+            errorKind: "precondition",
+          },
+          "lcd assembly read scope incomplete — failing closed",
+        );
+      }
+      const contextItems: LcdContextItem[] = readScope ? store.getContextItems(readScope) : [];
+      const rows: LcdMessage[] = readScope ? store.getMessages(readScope) : [];
       const rowById = new Map<string, LcdMessage>(rows.map((row) => [row.id, row]));
       const summaryById = new Map<string, LcdSummary>(
-        store.getSummaries(conversationId).map((s) => [s.summaryId, s]),
+        (readScope ? store.getSummaries(readScope) : []).map((s) => [s.summaryId, s]),
       );
       const resolved: BudgetItem[] = [];
       let resolvedSummaryCount = 0;

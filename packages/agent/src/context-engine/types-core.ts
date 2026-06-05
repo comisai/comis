@@ -135,10 +135,18 @@ export interface ContextEngineDeps {
   // --- Observability event emission ---
   /** Optional event bus for emitting context engine lifecycle events. */
   eventBus?: { emit(event: string, data: unknown): void };
-  /** Agent ID for event attribution and structured logging. */
+  /** Agent ID for event attribution and structured logging. Also the R4 read
+   *  scope (132-03): the dag assembler builds a ContextStoreScope from it so LCD
+   *  reads are agent-isolated (WR-02). */
   agentId?: string;
   /** Formatted session key for event correlation and structured logging. */
   sessionKey?: string;
+  /** Tenant ID for the R4 LCD read scope (132-03). The dag assembler builds a
+   *  ContextStoreScope { conversationId, agentId, tenantId, sessionKey } from it
+   *  so reads filter by tenant + agent (WR-02). Threaded from
+   *  executor-context-engine-setup.ts (the same source executor-post-execution
+   *  uses: deps.tenantId ?? sessionKey.tenantId). */
+  tenantId?: string;
 
   // --- Objective reinforcement ---
   /** Subagent objective for post-compaction reinforcement. */

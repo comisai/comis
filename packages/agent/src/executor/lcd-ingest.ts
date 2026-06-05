@@ -142,7 +142,11 @@ export function ingestTurnGuarded(
   now: number,
   logger: ComisLogger,
 ): void {
-  const persisted = store.getMessages(scope.conversationId).length;
+  // R4 (132-03): the high-water mark is AGENT-SCOPED — getMessages(scope) counts
+  // ONLY this agent's persisted rows, so each agent in a shared conversation owns
+  // an independent seq sequence (WR-02). The unique (conversation_id, agent_id,
+  // tenant_id, seq) index is the per-agent backstop against a duplicate seq.
+  const persisted = store.getMessages(scope).length;
   if (live.length < persisted) {
     logger.warn(
       {

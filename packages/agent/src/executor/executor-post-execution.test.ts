@@ -688,7 +688,7 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
       eventBus: undefined,
     });
 
-    const summaries = store.getSummaries("conv-wire");
+    const summaries = store.getSummaries(scope);
     expect(summaries.length).toBe(1);
     expect(summaries[0]!.kind).toBe("leaf");
     expect(summaries[0]!.createdAt).toBe(7000);
@@ -748,6 +748,6 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(store.getSummaries("conv-gated").length).toBe(0);
+    expect(store.getSummaries(scope).length).toBe(0);
   });
 });

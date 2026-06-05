@@ -323,7 +323,16 @@ function appendTurnToStore(store: ContextStorePort, messages: AgentMessage[]): v
 function makeDagEngine(store: ContextStorePort, freshTailTurns: number): ContextEngine {
   return createContextEngine(
     { ...pipelineConfig, version: "dag", freshTailTurns } as unknown as ContextEngineConfig,
-    { ...makeDeps(), contextStore: store, conversationId: DAG_CONVERSATION_ID },
+    // R4 (132-03): thread agentId + tenantId so the dag assembler builds the full
+    // read scope (matching dagScope's appends) — else it fails closed (WR-02).
+    {
+      ...makeDeps(),
+      contextStore: store,
+      conversationId: DAG_CONVERSATION_ID,
+      agentId: dagScope.agentId,
+      tenantId: dagScope.tenantId,
+      sessionKey: dagScope.sessionKey,
+    },
   );
 }
 

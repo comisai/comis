@@ -73,6 +73,12 @@ export function wireContextTools(
   _agentId: string,
   deps: ContextWiringDeps,
 ): void {
+  // R4 (132-03): `_agentId` stays UNUSED. The ctx_* tools read the live agentId
+  // (+ tenantId) from the per-call RequestContext (`tryGetContext()`), NOT from
+  // this wiring-time closure — multi-agent-safe (Pitfall 4). One wiring can serve
+  // multiple agents per channel, so a closure-captured agentId would scope every
+  // agent's reads to whichever agent wired the tools (the exact WR-02 cross-agent
+  // threat). The store read scope therefore comes from the live turn, never here.
   const shared: ContextToolDeps = {
     store,
     logger: deps.skillsLogger,

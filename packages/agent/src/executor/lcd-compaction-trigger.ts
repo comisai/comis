@@ -152,15 +152,19 @@ export interface ResolvedContext {
  * contiguous). Summary-ref tokens are summed across the WHOLE view for
  * utilization even though they are not selectable chunk items.
  */
-export function resolveContext(store: ContextStorePort, conversationId: string): ResolvedContext {
-  const items = store.getContextItems(conversationId);
-  const rowById = new Map(store.getMessages(conversationId).map((r) => [r.id, r]));
+export function resolveContext(store: ContextStorePort, scope: ContextStoreScope): ResolvedContext {
+  // R4 (132-03): the three reads are scoped by (conversation, agent, tenant) so a
+  // leaf/condense pass observes ONLY the acting agent's view (WR-02). `scope` is
+  // the SAME scope the afterTurn ingest stamped; the assembler uses the matching
+  // read scope, so trigger + assembler agree on what the agent sees.
+  const items = store.getContextItems(scope);
+  const rowById = new Map(store.getMessages(scope).map((r) => [r.id, r]));
   // Index summaries by id for BOTH the utilization token sum (CR-02) AND the
   // per-depth contiguous-run construction (C2): the run needs each child's
   // depth/content/tokenCount/taint, all on the `LcdSummary` row. Read
   // `getSummaries` ONCE here (WR-01) and carry the array out on `ResolvedContext`
   // so the trigger derives taint + previousSummary from this single snapshot.
-  const summaries = store.getSummaries(conversationId);
+  const summaries = store.getSummaries(scope);
   const summaryById = new Map(summaries.map((s) => [s.summaryId, s]));
 
   const history: LeafChunkItem[] = [];
@@ -257,10 +261,11 @@ export function resolveContext(store: ContextStorePort, conversationId: string):
 /**
  * The most recent leaf summary content (for continuity) — passed to the
  * summarizer as `previousSummary` (the 8th `generateSummary` param). The store
- * returns summaries oldest-first, so the LAST element is the most recent.
+ * returns summaries oldest-first, so the LAST element is the most recent. R4
+ * (132-03): the read is agent + tenant scoped via `scope` (WR-02).
  */
-function previousSummaryContent(store: ContextStorePort, conversationId: string): string | undefined {
-  const summaries = store.getSummaries(conversationId);
+function previousSummaryContent(store: ContextStorePort, scope: ContextStoreScope): string | undefined {
+  const summaries = store.getSummaries(scope);
   if (summaries.length === 0) return undefined;
   return summaries[summaries.length - 1]!.content;
 }
@@ -322,7 +327,7 @@ export async function maybeRunLeafPass(
     // compaction (a pass that fit under threshold goes inert) and the next pass
     // selects LIVE message-refs that resolve to an ordinal window (it collapses
     // the NEXT chunk instead of re-hitting the already-summarized oldest).
-    const { history, ordinalById, resolvedTokens } = resolveContext(store, conversationId);
+    const { history, ordinalById, resolvedTokens } = resolveContext(store, scope);
     if (history.length === 0) return;
 
     // Utilization = resolved context tokens / W. The numerator is the RESOLVED
@@ -377,7 +382,7 @@ export async function maybeRunLeafPass(
       .filter((it): it is LeafChunkItem => it !== undefined);
 
     // Summarize (3-level escalation; non-fatal inside — always returns a result).
-    const previousSummary = previousSummaryContent(store, conversationId);
+    const previousSummary = previousSummaryContent(store, scope);
     const result = await summarizeLeafChunk(chunkItems, summarizerDeps, {
       reserveTokens: opts.leafTargetTokens,
       previousSummary,

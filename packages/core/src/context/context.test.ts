@@ -188,6 +188,39 @@ describe("RequestContext", () => {
       });
       expect(result.success).toBe(false);
     });
+
+    it("RequestContext carries agentId when provided; absent stays undefined (R4 132-03)", () => {
+      // R4 (132-03): agentId is OPTIONAL (not known at channel ingress, like
+      // sessionKey) and populated at the executor entry; the ctx_* tools read it
+      // per-call to scope LCD reads by agent (WR-02).
+      const withAgent = RequestContextSchema.parse({
+        userId: "u1",
+        sessionKey: "t1:u1:c1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        agentId: "agent-a",
+      });
+      expect(withAgent.agentId).toBe("agent-a");
+
+      // Absent → undefined (no default, matching sessionKey).
+      const withoutAgent = RequestContextSchema.parse({
+        userId: "u1",
+        sessionKey: "t1:u1:c1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+      });
+      expect(withoutAgent.agentId).toBeUndefined();
+
+      // An empty-string agentId is rejected (only undefined is the "not resolved" state).
+      const empty = RequestContextSchema.safeParse({
+        userId: "u1",
+        sessionKey: "t1:u1:c1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        agentId: "",
+      });
+      expect(empty.success).toBe(false);
+    });
   });
 
   describe("trustLevel", () => {

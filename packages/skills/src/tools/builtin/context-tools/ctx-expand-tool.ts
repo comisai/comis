@@ -28,10 +28,10 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { tryGetContext, wrapExternalContent, scrubSecretsFromText, safePath, type LcdMessage } from "@comis/core";
+import { wrapExternalContent, scrubSecretsFromText, safePath, type LcdMessage } from "@comis/core";
 
-import { jsonResult, throwToolError, readStringParam } from "../../../platform-tools/tool-helpers.js";
-import { estimateTokens, renderMessageText, type ContextToolDeps } from "./context-tools-shared.js";
+import { jsonResult, readStringParam } from "../../../platform-tools/tool-helpers.js";
+import { estimateTokens, renderMessageText, requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
 
 const CtxExpandParams = Type.Object({
   summaryId: Type.String({ description: "The summaryId (from ctx_search / ctx_inspect) whose covered messages to recover." }),
@@ -55,21 +55,20 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
     parameters: CtxExpandParams,
 
     async execute(toolCallId: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
-      // (1) SCOPE — derive per-call, never cache; fail closed with no live session.
-      const ctx = tryGetContext();
-      if (!ctx?.sessionKey) {
-        throwToolError("permission_denied", "ctx_expand operates only inside a live session.", {
-          hint: "This tool recovers the current conversation's compressed history; it cannot run outside a session.",
-        });
-      }
-      const conversationId = ctx.sessionKey;
+      // (1) SCOPE — build the (conversation, agent, tenant) read scope from the
+      //     LIVE context per-call (R4 / WR-02); fail closed without a fully-scoped
+      //     session. NEVER a wiring closure (multi-agent-safe, Pitfall 4).
+      const ctxScope = requireCtxScope();
+      const conversationId = ctxScope.conversationId;
       const summaryId = readStringParam(params, "summaryId", true)!;
       const t0 = deps.nowMs();
 
       // (2) WALK + RECONSTRUCT — id-keyed map; skip a drifted id, never throw.
-      const messageIds = deps.store.getSummaryMessages(conversationId, summaryId);
+      //     Agent-scoped reads (R4) — a different agent's covered ids / messages
+      //     are unreachable within a shared conversation (WR-02).
+      const messageIds = deps.store.getSummaryMessages(ctxScope, summaryId);
       const byId = new Map<string, LcdMessage>(
-        deps.store.getMessages(conversationId).map((r) => [r.id, r]),
+        deps.store.getMessages(ctxScope).map((r) => [r.id, r]),
       );
       const parts: string[] = [];
       let unrecoverable = 0;

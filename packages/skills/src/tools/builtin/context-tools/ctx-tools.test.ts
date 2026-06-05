@@ -28,6 +28,7 @@ import {
   runWithContext,
   type RequestContext,
   type ContextStorePort,
+  type ContextStoreScope,
   type LcdSummary,
   type LcdMessage,
   type LcdSearchHit,
@@ -76,12 +77,13 @@ function flattenLoggedValues(logs: CapturedLog[]): string {
     .join(" ");
 }
 
-/** A neutral RequestContext with a live session (AGENTS.md §2.2 neutral fixtures). */
+/** A neutral RequestContext with a live, fully-scoped session (AGENTS.md §2.2). */
 function liveCtx(overrides: Partial<RequestContext> = {}): RequestContext {
   return {
     tenantId: "default",
     userId: "user_a",
     sessionKey: "default:user_a:chan_a",
+    agentId: "agent_a", // R4: the ctx tools read the live agentId per-call (WR-02)
     traceId: randomUUID(),
     startedAt: 1_000_000,
     trustLevel: "user",
@@ -133,7 +135,10 @@ function makeSummary(overrides: Partial<LcdSummary> = {}): LcdSummary {
  * given SUT touches need to be set; the rest stay no-ops (cast to the port).
  */
 interface StoreStub {
-  searchLcdArgs: Array<{ conversationId: string; query: string; opts: unknown }>;
+  /** Records the FULL ContextStoreScope each searchLcd call received (R4 — proves the live-context scope). */
+  searchLcdArgs: Array<{ scope: ContextStoreScope; query: string; opts: unknown }>;
+  /** Records the scope of every scoped read (getSummaries/Children/Messages/getMessages) for multi-agent assertions. */
+  readScopes: ContextStoreScope[];
   searchLcdReturn: LcdSearchHit[];
   getSummariesReturn: LcdSummary[];
   getSummaryChildrenReturn: LcdSummary[];
@@ -144,6 +149,7 @@ interface StoreStub {
 function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: ContextStorePort } {
   const stub: StoreStub = {
     searchLcdArgs: [],
+    readScopes: [],
     searchLcdReturn: [],
     getSummariesReturn: [],
     getSummaryChildrenReturn: [],
@@ -152,20 +158,24 @@ function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: Con
     ...over,
   };
   const store = {
-    searchLcd(conversationId: string, query: string, opts: unknown): LcdSearchHit[] {
-      stub.searchLcdArgs.push({ conversationId, query, opts });
+    searchLcd(scope: ContextStoreScope, query: string, opts: unknown): LcdSearchHit[] {
+      stub.searchLcdArgs.push({ scope, query, opts });
       return stub.searchLcdReturn;
     },
-    getSummaries(_conversationId: string): LcdSummary[] {
+    getSummaries(scope: ContextStoreScope): LcdSummary[] {
+      stub.readScopes.push(scope);
       return stub.getSummariesReturn;
     },
-    getSummaryChildren(_conversationId: string, _parentSummaryId: string): LcdSummary[] {
+    getSummaryChildren(scope: ContextStoreScope, _parentSummaryId: string): LcdSummary[] {
+      stub.readScopes.push(scope);
       return stub.getSummaryChildrenReturn;
     },
-    getSummaryMessages(_conversationId: string, _summaryId: string): string[] {
+    getSummaryMessages(scope: ContextStoreScope, _summaryId: string): string[] {
+      stub.readScopes.push(scope);
       return stub.getSummaryMessagesReturn;
     },
-    getMessages(_conversationId: string): LcdMessage[] {
+    getMessages(scope: ContextStoreScope): LcdMessage[] {
+      stub.readScopes.push(scope);
       return stub.getMessagesReturn;
     },
   } as unknown as ContextStorePort;
@@ -226,7 +236,54 @@ describe("ctx_search tool", () => {
     expect(stub.searchLcdArgs[0].query).toBe(sanitizeFts5Query(raw));
     expect(stub.searchLcdArgs[0].query).not.toBe(raw);
     // And it is scoped to the live conversation, never a caller-supplied id.
-    expect(stub.searchLcdArgs[0].conversationId).toBe("default:user_a:chan_a");
+    expect(stub.searchLcdArgs[0].scope.conversationId).toBe("default:user_a:chan_a");
+  });
+
+  it("ctx_search builds its store scope from the live context agentId + tenantId, not a wiring closure (multi-agent safety, WR-02)", async () => {
+    // ONE wired tool, TWO different live RequestContexts → TWO different scopes.
+    // The tool must read the LIVE agentId/tenantId per-call (tryGetContext()), not
+    // a wiring-time closure that would serve every agent the same scope (the exact
+    // WR-02 cross-agent threat, Pitfall 4).
+    const { stub, store } = makeStore({
+      searchLcdReturn: [{ kind: "message", refId: "m1", snippet: "hit", rank: -1 }],
+    });
+    const { deps } = makeDeps(store);
+    const tool = createCtxSearchTool(deps);
+
+    await runExecute(
+      tool,
+      "call-A",
+      { query: "x" },
+      liveCtx({ tenantId: "tenant_one", agentId: "agent-one", sessionKey: "tenant_one:user_a:chan_a" }),
+    );
+    await runExecute(
+      tool,
+      "call-B",
+      { query: "x" },
+      liveCtx({ tenantId: "tenant_two", agentId: "agent-two", sessionKey: "tenant_two:user_b:chan_b" }),
+    );
+
+    expect(stub.searchLcdArgs).toHaveLength(2);
+    // Each call's scope mirrors ITS OWN live context — never a single shared closure.
+    expect(stub.searchLcdArgs[0].scope.agentId).toBe("agent-one");
+    expect(stub.searchLcdArgs[0].scope.tenantId).toBe("tenant_one");
+    expect(stub.searchLcdArgs[0].scope.conversationId).toBe("tenant_one:user_a:chan_a");
+    expect(stub.searchLcdArgs[1].scope.agentId).toBe("agent-two");
+    expect(stub.searchLcdArgs[1].scope.tenantId).toBe("tenant_two");
+    expect(stub.searchLcdArgs[1].scope.conversationId).toBe("tenant_two:user_b:chan_b");
+    // The two scopes are genuinely distinct (one wired tool, two agents).
+    expect(stub.searchLcdArgs[0].scope.agentId).not.toBe(stub.searchLcdArgs[1].scope.agentId);
+  });
+
+  it("ctx_search fails closed with permission_denied when the live context lacks an agentId (R4 fail-closed)", async () => {
+    // A session with sessionKey but NO agentId must REFUSE — never read
+    // conversation-wide (the partially-built-scope leak, T-132-03-04).
+    const { store } = makeStore();
+    const { deps } = makeDeps(store);
+    const tool = createCtxSearchTool(deps);
+    await expect(
+      runExecute(tool, "call-noagent", { query: "x" }, liveCtx({ agentId: undefined })),
+    ).rejects.toThrow(/permission_denied/);
   });
 
   it("ctx_search taint-wraps every returned hit snippet before it leaves the tool", async () => {

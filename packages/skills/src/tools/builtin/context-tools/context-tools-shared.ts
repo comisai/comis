@@ -21,7 +21,8 @@
  * @module
  */
 
-import type { ContextStorePort, LcdMessage, LcdMessagePart } from "@comis/core";
+import { tryGetContext, type ContextStorePort, type ContextStoreScope, type LcdMessage, type LcdMessagePart } from "@comis/core";
+import { throwToolError } from "../../../platform-tools/tool-helpers.js";
 
 /**
  * Minimal pino-compatible structural logger — NOT `getLogger` from
@@ -51,6 +52,36 @@ export interface ContextToolDeps {
   readonly maxExpandTokens: number;
   /** Per-call session tool-results dir resolver (the exec-tool precedent). `undefined` ⇒ no live session dir. */
   readonly getToolResultsDir: () => string | undefined;
+}
+
+/**
+ * Build the per-call `ContextStoreScope` for a ctx_* tool from the LIVE request
+ * context (R4 132-03 — the WR-02 close). Reads `tryGetContext()` EVERY call (NOT
+ * a wiring-time closure): one wired tool can serve multiple agents per channel,
+ * so the agent/tenant scope MUST come from the live turn, never a cached id (the
+ * exact WR-02 cross-agent threat, Pitfall 4).
+ *
+ * FAIL CLOSED (T-132-03-04): throws `permission_denied` when there is no live
+ * session OR the agentId/tenantId is absent — a tool running outside a fully
+ * scoped session REFUSES rather than reading conversation-wide (which would leak
+ * another agent's history within a shared conversation_id). `conversationId` is
+ * the live `sessionKey` (its first segment is the tenant); `sessionKey` on the
+ * scope is the same value (the store does not filter on the 4th field — it is
+ * carried for shape symmetry with the write path).
+ */
+export function requireCtxScope(): ContextStoreScope {
+  const ctx = tryGetContext();
+  if (!ctx?.sessionKey || !ctx.agentId || !ctx.tenantId) {
+    throwToolError("permission_denied", "ctx_* tools operate only inside a live, fully-scoped session.", {
+      hint: "These tools read THIS conversation's compressed history scoped to the live agent; they cannot run outside a session with a resolved agentId + tenantId.",
+    });
+  }
+  return {
+    conversationId: ctx.sessionKey,
+    agentId: ctx.agentId,
+    tenantId: ctx.tenantId,
+    sessionKey: ctx.sessionKey,
+  };
 }
 
 /**
