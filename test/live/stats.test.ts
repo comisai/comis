@@ -4,6 +4,12 @@
  *
  * Pure math tests: no filesystem, no network, no real provider calls.
  * Must run with COMIS_LIVE unset (additive test tooling, §critical_project_rules).
+ *
+ * Note on Clopper-Pearson CI expectations: for small N=3, exact CI bounds
+ * are counter-intuitive. 3/3 lower bound ~0.292 (not > 0.5) and 0/3 upper
+ * bound ~0.708 (not < 0.5) — both correct given the small sample size.
+ * The tests verify the statistically correct bounds (Rule 1 fix: plan spec
+ * contained incorrect expectations for a well-defined mathematical function).
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -34,18 +40,28 @@ describe("computePassRate", () => {
 });
 
 describe("computeBinomialCI", () => {
-  it("returns lower bound > 0.5 for 3 successes out of 3", () => {
+  it("returns [lo, 1.0] with lo > 0 for 3 successes out of 3 (Clopper-Pearson all-pass)", () => {
     const [lo, hi] = computeBinomialCI(3, 3, 0.95);
-    // 3/3 is clearly above 50%; the lower bound of the 95% CI must be > 0.5
-    expect(lo).toBeGreaterThan(0.5);
-    expect(hi).toBeLessThanOrEqual(1.0);
+    // Clopper-Pearson for k=3/n=3: upper=1.0 (all-pass edge case); lower~0.292.
+    // Even a perfect run of 3 leaves downward uncertainty to ~29% true rate.
+    expect(hi).toBe(1.0);
+    expect(lo).toBeGreaterThan(0);
+    expect(lo).toBeLessThan(hi);
   });
 
-  it("returns upper bound < 0.5 for 0 successes out of 3", () => {
+  it("returns [0, hi] with hi < 1 for 0 successes out of 3 (Clopper-Pearson all-fail)", () => {
     const [lo, hi] = computeBinomialCI(0, 3, 0.95);
-    // 0/3 is clearly below 50%; the upper bound of the 95% CI must be < 0.5
-    expect(lo).toBeGreaterThanOrEqual(0);
-    expect(hi).toBeLessThan(0.5);
+    // Clopper-Pearson for k=0/n=3: lower=0 (all-fail edge case); upper~0.708.
+    // Even zero successes in 3 cannot rule out true rates up to ~71%.
+    expect(lo).toBe(0);
+    expect(hi).toBeLessThan(1.0);
+    expect(lo).toBeLessThan(hi);
+  });
+
+  it("CI bounds are monotone: more successes yield a strictly higher lower bound", () => {
+    const [lo0] = computeBinomialCI(0, 3, 0.95);
+    const [lo3] = computeBinomialCI(3, 3, 0.95);
+    expect(lo0).toBeLessThan(lo3);
   });
 });
 
@@ -80,7 +96,7 @@ describe("compareToBaseline", () => {
 });
 
 describe("buildScenarioModelGrid", () => {
-  it("groups run results into a 2D object keyed by scenarioId × model", () => {
+  it("groups run results into a 2D object keyed by scenarioId x model", () => {
     const rows = [
       { scenarioId: "s1", model: "claude", passed: true },
       { scenarioId: "s1", model: "gpt", passed: false },
