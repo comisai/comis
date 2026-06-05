@@ -90,6 +90,17 @@ describe("buildMemoryRecallSection", () => {
     expect(buildMemoryRecallSection(false, false)).toEqual([]);
   });
 
+  it("frames recalled memory with current-conversation precedence (facet #2: a stale memory must never override the live turn)", () => {
+    // A real-LLM retest surfaced this: recall surfaced a PRIOR session's codeword
+    // and the model answered it over the current conversation's fresh value. The
+    // section must establish that the current conversation is authoritative on
+    // conflicts and that recalled memories may be outdated.
+    const joined = buildMemoryRecallSection(true, false).join("\n").toLowerCase();
+    expect(joined).toContain("authoritative");
+    expect(joined).toContain("current conversation");
+    expect(joined).toMatch(/outdated|stale/);
+  });
+
   it("returns Memory heading with mandatory recall topics and tool descriptions", () => {
     const result = buildMemoryRecallSection(true, false);
     const joined = result.join("\n");

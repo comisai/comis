@@ -84,6 +84,17 @@ describe("formatMemorySection", () => {
     expect(result).toContain("Hello world");
   });
 
+  it("the header frames recalled memories as past + potentially outdated, with current-conversation precedence (facet #2)", () => {
+    const results: MemorySearchResult[] = [
+      createMockResult({ content: "Hello world", trustLevel: "system", createdAt: 1700000000000 }),
+    ];
+    const result = formatMemorySection(results, 4000).toLowerCase();
+    // A stale recalled fact must not override the live turn — the section header
+    // tells the model the current conversation is authoritative on conflicts.
+    expect(result).toContain("outdated");
+    expect(result).toContain("current conversation is authoritative");
+  });
+
   it("stops adding entries when budget exceeded", () => {
     // Use system trust entries to avoid external content wrapping inflating line size
     const results: MemorySearchResult[] = [
