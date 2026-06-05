@@ -96,6 +96,23 @@ export function computeTokenBudget(
   // the whole preamble, not just recall (the only window reservation for it).
   const P = Math.max(0, freshTailPreambleTokensEstimate);
 
+  // B-1 (260605-oa7) — TOKEN-AUTHORITY DECISION (deliberate, do NOT "align"):
+  // The S and P this function subtracts are produced at the executor call sites
+  // (executor-tool-assembly.ts:518-519 / :530-531) by dividing CHARS by
+  // CHARS_PER_TOKEN_RATIO = 3.5, whereas the LCD history items the resulting H
+  // bounds carry their STORED tokenCount computed by estimateMessageTokens (4:1 for
+  // text, 3:1 for structured). This is a real unit mismatch, but its direction is
+  // CONSERVATIVE and intentional: for the SAME text, ÷3.5 yields MORE tokens than
+  // ÷4, so S and P OVER-reserve relative to how that text would be counted as
+  // history → H below comes out SMALLER (the ceiling is TIGHTER), and the assembled
+  // prompt stays UNDER the real free window. The real-LLM review's "H larger than
+  // the true free budget → overflow" reads the direction BACKWARDS (the same
+  // reversal the B-4 fix corrected, 260605-ney). Moving S/P from 3.5 → 4 would make
+  // them SMALLER and WIDEN H — the UNSAFE direction, and exactly what the
+  // recall-dag-budget-partition invariant guards against. So the 3.5 ratio at the
+  // call sites is kept on purpose. Executable proof + regression guard:
+  // executor/prompt-runner/lcd-token-authority-characterization.test.ts.
+  //
   // H: available history -- clamp to zero (not negative)
   const H = Math.max(0, W - S - O - M - R - P);
 
