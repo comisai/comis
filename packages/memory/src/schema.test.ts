@@ -295,13 +295,25 @@ describe("initSchema", () => {
     expect(() => ensureLcdTables(db)).not.toThrow();
     expect(() => ensureLcdTables(db)).not.toThrow();
 
-    // The six LCD tables: lcd_messages + lcd_message_parts (Phase 127), the
-    // three Phase-129 compaction tables (summaries / summary_messages /
+    // The six LCD BUSINESS tables: lcd_messages + lcd_message_parts (Phase 127),
+    // the three Phase-129 compaction tables (summaries / summary_messages /
     // context_items), plus the Phase-130 lcd_summary_parents condensed→child edge.
+    // The Phase-131 FTS5 virtual tables (lcd_*_fts) + their shadow tables
+    // (lcd_*_fts_data/_idx/_content/_docsize/_config) are EXCLUDED here — they are
+    // an index, not a business table; their presence is asserted separately below.
     const tables = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lcd_%'")
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lcd_%' AND name NOT LIKE '%\\_fts%' ESCAPE '\\'")
       .all() as Array<{ name: string }>;
     expect(tables).toHaveLength(6);
+
+    // The two Phase-131 FTS5 virtual tables exist after ensureLcdTables (E1
+    // ctx_search). On a host whose better-sqlite3 lacks compiled FTS5 the guarded
+    // DDL skips them — this assertion documents the FTS5-present expectation; the
+    // FTS5-absent boot-safety path is covered by lcd-fts.test.ts.
+    const ftsTables = db
+      .prepare("SELECT name FROM sqlite_master WHERE name IN ('lcd_summaries_fts','lcd_messages_fts')")
+      .all() as Array<{ name: string }>;
+    expect(ftsTables.map((t) => t.name).sort()).toEqual(["lcd_messages_fts", "lcd_summaries_fts"]);
   });
 
   it("deleting an lcd_messages row cascades to its lcd_message_parts (ON DELETE CASCADE)", () => {
