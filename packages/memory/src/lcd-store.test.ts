@@ -22,6 +22,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import Database from "better-sqlite3";
 import { describe, it, expect, beforeEach } from "vitest";
 import { initSchema } from "./schema.js";
+import { ensureLcdTables } from "./schema-lcd.js";
 import { createLcdStore } from "./lcd-store.js";
 
 const FIXED_CREATED_AT = 1000; // injected clock — no Date.now() in expectations
@@ -999,5 +1000,226 @@ describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => 
     expect(store.getSummaries("conv-a").length).toBe(summariesBefore);
     const itemsAfter = store.getContextItems("conv-a");
     expect(itemsAfter.map((i) => i.refId)).toEqual(itemsBefore.map((i) => i.refId));
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// createLcdStore — E1 region walk + FTS5 search (Phase 131, Plan 02)
+// ───────────────────────────────────────────────────────────────────────────
+// The three E1 read methods on top of the lossless store:
+//   - getSummaryChildren  → walks lcd_summary_parents (condensed → child edge)
+//   - getSummaryMessages  → walks lcd_summary_messages (leaf → message edge)
+//   - searchLcd           → FTS5 MATCH over lcd_summaries_fts / lcd_messages_fts
+//                           with a LIKE-scan fallback (the LIKE/boot-safety half
+//                           lives in lcd-fts.test.ts), all scoped by conversation.
+// Plus the A5 backfill: searchLcd MUST find a summary appended BEFORE the FTS
+// index existed (the 'rebuild' idiom over the external-content summaries table).
+describe("createLcdStore — E1 region walk + FTS5 search", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createLcdStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Append N plain user text messages (seq 0..N-1) at distinct createdAt. */
+  function seedMessages(count: number, scope: ContextStoreScope = SCOPE_A): void {
+    for (let i = 0; i < count; i++) {
+      store.append({
+        scope,
+        seq: i,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 1000 + i * 10,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `m${i}` }, rawType: "text" } }],
+      });
+    }
+  }
+
+  /** Append one message whose single text part carries `text`. Returns its id. */
+  function appendTextMessage(text: string, seq: number, scope: ContextStoreScope = SCOPE_A): string {
+    store.append({
+      scope,
+      seq,
+      role: "user",
+      tokenCount: 1,
+      createdAt: 1000 + seq * 10,
+      parts: [{ kind: "text", metadata: { raw: { type: "text", text }, rawType: "text" } }],
+    });
+    // The store assigns ids internally; resolve by seq from the read path.
+    const msg = store.getMessages(scope.conversationId).find((m) => m.seq === seq);
+    return msg!.id;
+  }
+
+  /** A minimal valid AppendSummaryInput (leaf) over [start,end]. */
+  function leafInput(
+    startOrdinal: number,
+    endOrdinal: number,
+    overrides: Partial<AppendSummaryInput> = {},
+  ): AppendSummaryInput {
+    return {
+      scope: SCOPE_A,
+      tokenCount: 5,
+      content: "leaf summary text",
+      descendantCount: 0,
+      earliestAt: 0,
+      latestAt: 0,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9999,
+      startOrdinal,
+      endOrdinal,
+      ...overrides,
+    };
+  }
+
+  /** A minimal valid AppendCondensedSummaryInput over [start,end] linking childSummaryIds. */
+  function condensedInput(
+    childSummaryIds: string[],
+    startOrdinal: number,
+    endOrdinal: number,
+    overrides: Partial<AppendCondensedSummaryInput> = {},
+  ): AppendCondensedSummaryInput {
+    return {
+      scope: SCOPE_A,
+      tokenCount: 9,
+      content: "condensed summary text",
+      descendantCount: 0,
+      earliestAt: 0,
+      latestAt: 0,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 5555,
+      startOrdinal,
+      endOrdinal,
+      childSummaryIds,
+      depth: 1,
+      ...overrides,
+    };
+  }
+
+  it("getSummaryChildren returns the condensed summary's immediate child summaries scoped by conversation", () => {
+    // m0..m3 → collapse [0,1]→leaf0, [1,2]→leaf1, then condense [0,1]→condensed.
+    seedMessages(4);
+    store.getContextItems("conv-a");
+    const leaf0 = store.appendLeafSummary(leafInput(0, 1));
+    const leaf1 = store.appendLeafSummary(leafInput(1, 2));
+    const condensedId = store.appendCondensedSummary(condensedInput([leaf0, leaf1], 0, 1, { depth: 1 }));
+
+    const children = store.getSummaryChildren("conv-a", condensedId);
+    expect(children.map((c) => c.summaryId).sort()).toEqual([leaf0, leaf1].sort());
+    // Every returned child is a full LcdSummary DTO (not just an id).
+    expect(children.every((c) => c.kind === "leaf" && typeof c.content === "string")).toBe(true);
+
+    // A DIFFERENT conversation never sees these children.
+    expect(store.getSummaryChildren("conv-b", condensedId)).toHaveLength(0);
+    // A leaf (no children) returns [].
+    expect(store.getSummaryChildren("conv-a", leaf0)).toHaveLength(0);
+  });
+
+  it("getSummaryMessages returns the message ids a leaf summary covers in order", () => {
+    seedMessages(4); // m0..m3
+    const ids = store.getMessages("conv-a").map((m) => m.id); // seq order
+    store.getContextItems("conv-a");
+    // Collapse [1,3] → covers m1,m2,m3.
+    const leafId = store.appendLeafSummary(leafInput(1, 3));
+
+    const covered = store.getSummaryMessages("conv-a", leafId);
+    expect(covered).toEqual([ids[1], ids[2], ids[3]]);
+
+    // Unknown summaryId → [].
+    expect(store.getSummaryMessages("conv-a", "does-not-exist")).toHaveLength(0);
+    // Wrong conversation → [] (scoped).
+    expect(store.getSummaryMessages("conv-b", leafId)).toHaveLength(0);
+  });
+
+  it("searchLcd finds a summary by full-text content when FTS5 is available", () => {
+    seedMessages(2);
+    store.getContextItems("conv-a");
+    const summaryId = store.appendLeafSummary(
+      leafInput(0, 1, { content: "Q3 quarterly revenue grew sharply" }),
+    );
+
+    const hits = store.searchLcd("conv-a", "revenue", { limit: 10 });
+    const hit = hits.find((h) => h.refId === summaryId);
+    expect(hit).toBeDefined();
+    expect(hit!.kind).toBe("summary");
+    expect(typeof hit!.rank).toBe("number"); // FTS5 available → BM25 rank present
+    expect(hit!.snippet).toContain("revenue");
+  });
+
+  it("searchLcd finds a message by rendered part text when FTS5 is available", () => {
+    const messageId = appendTextMessage("we should deploy the canary build first", 0);
+
+    const hits = store.searchLcd("conv-a", "canary", { limit: 10, scope: "messages" });
+    const hit = hits.find((h) => h.refId === messageId);
+    expect(hit).toBeDefined();
+    expect(hit!.kind).toBe("message");
+    expect(typeof hit!.rank).toBe("number");
+  });
+
+  it("searchLcd scope 'both' unions message and summary hits", () => {
+    // A message + a summary that both match "alpha".
+    appendTextMessage("the alpha rollout", 0);
+    appendTextMessage("unrelated text", 1);
+    store.getContextItems("conv-a");
+    store.appendLeafSummary(leafInput(1, 1, { content: "alpha summary note" }));
+
+    const both = store.searchLcd("conv-a", "alpha", { limit: 10, scope: "both" });
+    const kinds = new Set(both.map((h) => h.kind));
+    expect(kinds.has("message")).toBe(true);
+    expect(kinds.has("summary")).toBe(true);
+  });
+
+  it("searchLcd is scoped by conversation — a second conversation's matching rows are not returned", () => {
+    appendTextMessage("shared keyword zebra", 0, SCOPE_A);
+    appendTextMessage("shared keyword zebra", 0, SCOPE_B);
+
+    const aHits = store.searchLcd("conv-a", "zebra", { limit: 10, scope: "messages" });
+    expect(aHits.length).toBeGreaterThan(0);
+    // Every hit belongs to conv-a — none of conv-b's message ids appear.
+    const bIds = new Set(store.getMessages("conv-b").map((m) => m.id));
+    expect(aHits.some((h) => bIds.has(h.refId))).toBe(false);
+  });
+
+  it("A5: searchLcd finds a summary appended BEFORE the FTS index was created (rebuild backfill)", () => {
+    // Open a fresh db and create ONLY the base LCD tables — NO FTS index yet.
+    const bare = new Database(":memory:");
+    bare.pragma("foreign_keys = ON");
+    bare.exec(`
+      CREATE TABLE lcd_messages (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL, session_key TEXT NOT NULL, seq INTEGER NOT NULL,
+        role TEXT NOT NULL, token_count INTEGER NOT NULL, created_at INTEGER NOT NULL
+      );
+      CREATE TABLE lcd_summaries (
+        summary_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL, session_key TEXT NOT NULL, kind TEXT NOT NULL, depth INTEGER NOT NULL,
+        earliest_at INTEGER NOT NULL, latest_at INTEGER NOT NULL, descendant_count INTEGER NOT NULL,
+        token_count INTEGER NOT NULL, content TEXT NOT NULL, file_ids TEXT NOT NULL DEFAULT '[]',
+        taint INTEGER NOT NULL DEFAULT 0, fallback INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+      );
+    `);
+    // Insert a summary row DIRECTLY (the index does not exist yet — this is the
+    // pre-index history the rebuild backfill must cover).
+    bare.prepare(`
+      INSERT INTO lcd_summaries
+        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+         earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      VALUES ('pre1','conv-a','t','a','s','leaf',0,1,1,1,1,'preexisting margin figures','[]',0,0,1)
+    `).run();
+
+    // NOW run ensureLcdTables — it must add the FTS tables AND backfill ('rebuild')
+    // the pre-existing summary row so searchLcd finds it.
+    ensureLcdTables(bare);
+    const bareStore = createLcdStore(bare);
+
+    const hits = bareStore.searchLcd("conv-a", "margin", { limit: 10, scope: "summaries" });
+    expect(hits.some((h) => h.refId === "pre1")).toBe(true);
   });
 });
