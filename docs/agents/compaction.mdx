@@ -333,7 +333,8 @@ A three-tier escalation ensures summaries always fit within their target size:
 
 - **Normal** -- Structured summary with key details preserved.
 - **Aggressive** -- Compact summary that prioritizes brevity.
-- **Truncation** -- Cuts at the nearest sentence boundary (guaranteed to fit).
+- **Truncation** -- A bounded count-only note (marker-prefixed, guaranteed to
+  fit and to shrink below the source it replaces).
 
 The most recent turns (the "fresh tail", default 8 turns) are always protected
 from compaction, ensuring your agent has full, uncompressed access to the latest
