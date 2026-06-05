@@ -1108,6 +1108,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
   const hasMemoryTools = stableToolNames.includes("memory_store") || stableToolNames.includes("memory_search");
 
+  // P2: include the Compressed-context uncertainty clause when the DAG (LCD)
+  // engine is enabled. Gated on the per-session, operator-only
+  // `contextEngine.version` (stable config) -- NOT per-turn store state -- so the
+  // cache-stable system-prompt prefix is not thrashed on every compaction.
+  const dagModeEnabled = config.contextEngine?.version === "dag";
+
   // Snapshot promptSkillsXml on first turn to keep system prompt stable.
   // Skills created mid-session grow the XML (~540 chars per skill), invalidating
   // the entire system prompt cache prefix on every subsequent turn.
@@ -1184,6 +1190,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     excludeBootstrapFromContext: true, // BOOTSTRAP.md is either elevated (onboarding) or dead weight (post-onboarding); never useful in Project Context
     workspaceProfile: config.workspace?.profile,
     sepEnabled: params.sepEnabled,
+    dagModeEnabled,
   };
 
   let systemPrompt = assembleRichSystemPrompt(assemblerParams);

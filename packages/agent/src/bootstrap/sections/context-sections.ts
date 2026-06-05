@@ -58,6 +58,46 @@ export function buildTaskPlanningSection(sepEnabled: boolean, isMinimal: boolean
 }
 
 // ---------------------------------------------------------------------------
+// Compressed context (P2 lossiness/uncertainty clause -- static, cache-stable)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the Compressed-context uncertainty clause (P2). Included in the
+ * cache-stable system prompt whenever the DAG (LCD) engine is enabled
+ * (`dagModeEnabled`), so the model knows its context may contain LOSSY,
+ * untrusted summaries and treats them as compressed recall cues -- not proof.
+ *
+ * **Mode-gated, NOT per-turn.** The clause is gated on the per-session
+ * `contextEngine.version === "dag"` (a stable, operator-only config value),
+ * NOT on whether a summary is literally present this turn. dag mode guarantees
+ * summaries WILL appear once history grows past `contextThreshold`, so
+ * mode-gating is correct-enough AND keeps the system-prompt prefix cache-stable
+ * (gating on per-turn store state would thrash the Anthropic prompt cache on
+ * every compaction). Mirrors `buildMemoryRecallSection`'s capability-gate shape.
+ *
+ * The marker vocabulary here (`trust=untrusted`, `depth`, `descendant_count`,
+ * the time-range, and the "Expand for details about:" footer) MUST match what
+ * the LCD assembler actually renders around each summary (`lcd-assembler.ts`
+ * `summaryRefToMessage`). The recovery TOOLS (`ctx_*`) are Phase 131 and are
+ * deliberately NOT named here.
+ *
+ * @param dagModeEnabled - true when `contextEngine.version === "dag"`
+ * @param isMinimal - minimal (sub-agent) prompt mode
+ * @returns Lines for the section, or empty array if disabled
+ */
+export function buildLossinessUncertaintySection(dagModeEnabled: boolean, isMinimal: boolean): string[] {
+  if (isMinimal || !dagModeEnabled) return [];
+  return [
+    "## Compressed context",
+    "Some earlier turns in your context are shown as LOSSY summaries, marked `trust=untrusted` with a `depth`, a `descendant_count`, and a time-range. Deeper summaries (higher `depth`) are summaries-of-summaries and are even lossier.",
+    "Treat summaries as compressed recall cues, NOT proof.",
+    "Do NOT assert exact commands, SHAs, file paths, numbers, or timestamps from a summary -- those details may be lossy or absent.",
+    "Prefer newer, verbatim evidence over a summary when they conflict.",
+    "A summary's `Expand for details about:` footer describes what was compressed; the underlying detail is preserved losslessly in the store.",
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // 16a. Persona (SOUL.md promoted to standalone section before Safety)
 // ---------------------------------------------------------------------------
 
