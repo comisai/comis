@@ -343,3 +343,130 @@ describe("summarizeLeafChunk always reduces tokens or falls back deterministical
     expect(result.descendantCount).toBe(withOversized.length);
   });
 });
+
+// ===========================================================================
+// WR-01 — the deterministic Level-3 floor must shrink even a TINY chunk
+// ===========================================================================
+//
+// The C1 "always strictly smaller" invariant must hold for the smallest
+// reachable chunk too: `selectLeafChunk` always includes at least one message,
+// so a single tiny out-of-tail message on a small-window model can be a
+// sub-5-token chunk. The pre-fix `Math.max(MARKER.length, …)` floor pins the
+// Level-3 output at the 19-char marker (≈5 tokens at the estimator's 4:1),
+// LARGER than a 2–3-token chunk — the opposite of compaction. The bound must be
+// the estimator itself (truncate until estimateMessageTokens < chunkTokens),
+// not a hand-derived 3.5-chars-per-token ceiling (which also drops IN-03's
+// 3.5-vs-4 mismatch).
+
+describe("summarizeLeafChunk Level-3 floor shrinks even a tiny chunk (WR-01)", () => {
+  for (const chunkTok of [3, 2]) {
+    it(`a ${chunkTok}-token chunk + oversized stub yields a Level-3 summary strictly smaller than the chunk`, async () => {
+      // One tiny message carrying exactly `chunkTok` stored tokens.
+      const tiny: LeafChunkItem[] = [item("tiny", userMsg("hi"), chunkTok, 100)];
+      const before = chunkTokens(tiny);
+      expect(before).toBe(chunkTok);
+      const { deps } = makeDeps(oversizedSummarizer());
+      const result = await summarizeLeafChunk(tiny, deps, { reserveTokens: 1_200 });
+      // It lands on the deterministic floor (both LLM levels fail to reduce a
+      // tiny chunk), and that floor MUST be strictly smaller than the chunk.
+      expect(result.level).toBe(3);
+      expect(result.fallback).toBe(true);
+      expect(summaryTokens(result.content)).toBeLessThan(before);
+      // And still bounded by the fallback target.
+      expect(summaryTokens(result.content)).toBeLessThanOrEqual(LEAF_FALLBACK_TARGET_TOKENS);
+    });
+  }
+
+  it("a THROWING stub on a tiny chunk also yields a strictly-smaller Level-3 summary", async () => {
+    const tiny: LeafChunkItem[] = [item("tiny", userMsg("x"), 3, 100)];
+    const before = chunkTokens(tiny);
+    const { deps } = makeDeps(throwingSummarizer());
+    const result = await summarizeLeafChunk(tiny, deps, { reserveTokens: 1_200 });
+    expect(result.level).toBe(3);
+    expect(summaryTokens(result.content)).toBeLessThan(before);
+  });
+
+  it("a normal-size chunk still carries the identifiable fallback marker at the head", async () => {
+    // The marker semantics are preserved for normal-size chunks (only a tiny
+    // chunk may truncate the marker). A 5-message @ 200-tok chunk has ample room.
+    const normal = textHistory(5, 200);
+    const { deps } = makeDeps(oversizedSummarizer());
+    const result = await summarizeLeafChunk(normal, deps, { reserveTokens: 1_200 });
+    expect(result.level).toBe(3);
+    expect(result.content.startsWith(LEAF_FALLBACK_SUMMARY_MARKER)).toBe(true);
+  });
+});
+
+// ===========================================================================
+// WR-03 — an all-oversized chunk must still attempt Level 2 (aggressive)
+// ===========================================================================
+//
+// `previousSummary` continuity is documented as threaded at Levels 1 and 2. The
+// pre-fix Level-2 path filters out every message above
+// OVERSIZED_MESSAGE_CHARS_THRESHOLD; when EVERY message is oversized the filtered
+// set is empty and Level 2 is skipped entirely — the ladder jumps straight to the
+// count-only floor, dropping the chance an aggressive LLM summary of the full set
+// would have reduced. When the filter empties the set, one aggressive attempt on
+// the FULL (unfiltered) set must be made before the deterministic floor.
+
+describe("summarizeLeafChunk attempts aggressive Level 2 on an all-oversized chunk (WR-03)", () => {
+  function allOversized(): LeafChunkItem[] {
+    // Three messages, each well above OVERSIZED_MESSAGE_CHARS_THRESHOLD (50_000).
+    return [
+      item("o0", userMsg("A".repeat(60_000)), 20_000, 100),
+      item("o1", userMsg("B".repeat(60_000)), 20_000, 101),
+      item("o2", userMsg("C".repeat(60_000)), 20_000, 102),
+    ];
+  }
+
+  it("invokes the summarizer with aggressive=true (on the full set) before falling to Level 3", async () => {
+    let aggressiveCallSeen = false;
+    let aggressiveMsgCount = 0;
+    // Always returns oversized so Levels 1+2 never ACCEPT — but we assert the
+    // aggressive Level-2 ATTEMPT is made (the summarizer is invoked aggressive).
+    const summarize: LeafSummarizer = vi.fn(async (messages, opts) => {
+      if (opts.aggressive === true) {
+        aggressiveCallSeen = true;
+        aggressiveMsgCount = messages.length;
+      }
+      return "X".repeat(500_000);
+    });
+    const { deps } = makeDeps(summarize);
+    const chunk = allOversized();
+    const result = await summarizeLeafChunk(chunk, deps, { reserveTokens: 1_200 });
+
+    // A Level-2 aggressive attempt was made on the FULL (unfiltered) set ...
+    expect(aggressiveCallSeen).toBe(true);
+    expect(aggressiveMsgCount).toBe(chunk.length);
+    // ... and only THEN did it fall through to the deterministic floor.
+    expect(result.level).toBe(3);
+    expect(result.fallback).toBe(true);
+    expect(summaryTokens(result.content)).toBeLessThan(chunkTokens(chunk));
+  });
+
+  it("accepts a Level-2 aggressive summary of an all-oversized chunk when it reduces (continuity forwarded)", async () => {
+    const chunk = allOversized();
+    const before = chunkTokens(chunk);
+    // The aggressive pass returns a short summary → accepted at Level 2 even
+    // though every message is oversized (the full set IS summarized aggressively).
+    const summarize: LeafSummarizer = vi.fn(async (_messages, opts) =>
+      opts.aggressive === true ? "AGG-SHORT" : "X".repeat(500_000),
+    );
+    const { deps } = makeDeps(summarize);
+    const result = await summarizeLeafChunk(chunk, deps, {
+      reserveTokens: 1_200,
+      previousSummary: "PRIOR",
+    });
+    expect(result.level).toBe(2);
+    expect(result.fallback).toBe(false);
+    expect(result.content).toBe("AGG-SHORT");
+    expect(summaryTokens(result.content)).toBeLessThan(before);
+    expect(result.descendantCount).toBe(chunk.length);
+    // Continuity is still forwarded on the aggressive full-set attempt.
+    const aggCall = (summarize as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[1] as { aggressive?: boolean }).aggressive === true,
+    );
+    expect(aggCall).toBeDefined();
+    expect((aggCall![1] as { previousSummary?: string }).previousSummary).toBe("PRIOR");
+  });
+});
