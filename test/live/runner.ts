@@ -46,13 +46,20 @@ const VITEST_CONFIG = "test/vitest.config.ts";
  * Parse the live-fire runner's CLI arguments.
  *
  * @param argv - Array of argument strings (e.g. process.argv.slice(2))
- * @returns Parsed options: dry flag and mode string
+ * @returns Parsed options: dry flag, mode string, and optional profile name
  */
-export function parseArgs(argv: string[]): { dry: boolean; mode: string } {
+export function parseArgs(argv: string[]): { dry: boolean; mode: string; profile?: string } {
   const dry = argv.includes("--dry");
-  // Mode is the first non-flag argument (flags start with '--')
-  const mode = argv.find((a) => !a.startsWith("--")) ?? "all";
-  return { dry, mode };
+  // Parse --profile <name> flag
+  const profileIdx = argv.indexOf("--profile");
+  const profile = profileIdx !== -1 && profileIdx + 1 < argv.length
+    ? argv[profileIdx + 1]
+    : undefined;
+  // Mode is the first non-flag argument (flags start with '--');
+  // skip the value that follows --profile since it is not a positional mode arg.
+  const mode =
+    argv.find((a, i) => !a.startsWith("--") && argv[i - 1] !== "--profile") ?? "all";
+  return { dry, mode, profile };
 }
 
 // ---------------------------------------------------------------------------
@@ -74,7 +81,15 @@ function loadLiveEnv(): void {
     const eqIdx = trimmed.indexOf("=");
     if (eqIdx === -1) continue;
     const key = trimmed.slice(0, eqIdx).trim();
-    const val = trimmed.slice(eqIdx + 1).trim();
+    let val = trimmed.slice(eqIdx + 1).trim();
+    // Strip surrounding single or double quotes (standard .env convention).
+    // e.g. KEY="sk-ant-api03-..." or KEY='sk-ant-...' → strip outer quotes.
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1);
+    }
     // Only set if not already present in the environment.
     if (key && !(key in process.env)) {
       process.env[key] = val;
