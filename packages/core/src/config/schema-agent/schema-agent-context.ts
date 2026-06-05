@@ -175,18 +175,17 @@ export const ContextEngineConfigSchema = z.strictObject({
 
   /** Master toggle for the context engine pipeline (enabled by default). */
   enabled: z.boolean().default(true),
-  /** Operating mode: "pipeline" for sequential layer composition (the default
-   *  sequential-layer engine). "dag" (= the v2.12 LCD engine) is a WORKING
-   *  OPT-IN engine: it keeps a lossless verbatim history (full faithful
+  /** Operating mode: "dag" (= the v2.12 LCD engine) is the DEFAULT
+   *  working-context engine — it keeps a lossless verbatim history (full faithful
    *  reconstruction via the parts codec + a verbatim fresh tail of the last N
-   *  steps + transcript repair) instead of dropping/masking old content. The
-   *  DEFAULT remains "pipeline"; "dag" becomes the default in a later release
-   *  (Phase 133). Selecting "dag" activates the LCD engine when a context store
-   *  is wired (the daemon injects it); without a store it falls back to pipeline
-   *  with a logged warning (e.g. a non-daemon unit context). Compaction /
-   *  summarization / recall tools land in later phases — "dag" in this release is
-   *  lossless verbatim assembly only. */
-  version: z.enum(["pipeline", "dag"]).default("pipeline"),
+   *  steps + transcript repair, multi-tier zoomable compaction, and the in-session
+   *  expansion loop) instead of dropping/masking old content. "pipeline" is the
+   *  first-class opt-in (`version: "pipeline"`): the simpler sequential-layer
+   *  engine, retained as the fallback. The daemon injects the ContextStorePort
+   *  unconditionally, so "dag" "just works" for every daemon agent; a storeless
+   *  context (a non-daemon unit caller) falls back to pipeline with a logged
+   *  warning — behaviorally identical, never a crash. */
+  version: z.enum(["pipeline", "dag"]).default("dag"),
 
   // --- Shared (both modes) ---
 

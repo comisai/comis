@@ -16,7 +16,7 @@ describe("ContextEngineConfigSchema", () => {
     expect(result).toEqual({
       // Core
       enabled: true,
-      version: "pipeline",
+      version: "dag",
       // Shared
       thinkingKeepTurns: 10,
       replayDriftIdleMs: 30 * 60_000,
@@ -199,13 +199,14 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("version", () => {
-    it("version defaults to 'pipeline' when unset (Phase 126: pipeline is the live default engine)", () => {
-      // Phase 126 demolition flips the default dag -> pipeline. The working
-      // sequential-layer pipeline engine is now the live default; the dag/LCD
-      // engine is being reimplemented (re-enabled Phase 133) and is not the
-      // default. This is the durable regression gate for the keystone flip.
+    it("version defaults to 'dag' when unset (Phase 133 re-enables dag as the default working-context engine)", () => {
+      // Phase 133 (the v2.12 GA keystone) flips the default pipeline -> dag.
+      // The lossless LCD (dag) engine is now the live default for every agent
+      // that omits `version`; the simpler sequential-layer pipeline engine is
+      // the first-class opt-in. This is the durable regression gate for the
+      // keystone flip.
       const result = ContextEngineConfigSchema.parse({});
-      expect(result.version).toBe("pipeline");
+      expect(result.version).toBe("dag");
     });
 
     it("accepts the explicit 'pipeline' version value", () => {
@@ -213,11 +214,12 @@ describe("ContextEngineConfigSchema", () => {
       expect(result.version).toBe("pipeline");
     });
 
-    it("guard: explicit version 'dag' still parses to 'dag' (Q2 stub value retained, not narrowed)", () => {
-      // Phase 126 keeps "dag" in the enum as a stub value (NOT narrowed to
-      // ["pipeline"]) so the pipeline|dag mode-switch types stay intact and
-      // the Phase-133 re-enable is a one-line flip. Selecting it does not throw;
-      // the factory falls back to pipeline with a logged warning (see Test C in
+    it("explicit version 'dag' parses to 'dag' (the default LCD engine, explicitly pinned)", () => {
+      // "dag" (the LCD engine) is the default since Phase 133; pinning it
+      // explicitly is equivalent to omitting `version`. Selecting it does not
+      // throw; with a context store wired the factory builds the LCD engine,
+      // and a storeless caller falls back to pipeline with a logged warning
+      // (see the c2 test in
       // packages/agent/src/context-engine/context-engine.test.ts).
       expect(() => ContextEngineConfigSchema.parse({ version: "dag" })).not.toThrow();
       const result = ContextEngineConfigSchema.parse({ version: "dag" });

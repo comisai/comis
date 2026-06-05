@@ -134,15 +134,17 @@ describe("createContextEngine", () => {
     }
   });
 
-  it("c2) version 'dag' is a stub: warns with errorKind config and runs the pipeline (no contextStore required)", async () => {
-    // Phase 126 keystone: with version: "dag" selected but the DAG engine
-    // being reimplemented (re-enabled Phase 133), the factory must NOT
-    // instantiate any DAG engine. It WARN-logs (errorKind: "config") and
-    // falls through to the pipeline assembly. The deps here deliberately omit
-    // any contextStore/conversationId -- the pipeline does not need them, so a
-    // config pinned to "dag" boots cleanly on pipeline rather than crashing.
-    // This is a PERMANENT regression gate: after Plan 02 deletes
-    // createDagContextEngine, it must still pass via the pipeline fall-through.
+  it("c2) version 'dag' (the default) without a contextStore warns with errorKind config and runs the pipeline (the storeless safety net)", async () => {
+    // The storeless safety net that makes dag the default non-breaking: with
+    // version: "dag" (now the default since Phase 133) selected but NO
+    // ContextStorePort/conversationId wired, the factory must NOT instantiate
+    // the LCD engine. It WARN-logs (errorKind: "config") and falls through to
+    // the pipeline assembly. The deps here deliberately omit any
+    // contextStore/conversationId -- the pipeline does not need them, so a
+    // storeless context (a non-daemon unit caller) defaulting to "dag" boots
+    // cleanly on pipeline rather than crashing. This is a PERMANENT regression
+    // gate: the daemon always wires the store, so production never hits this
+    // fall-through, but a storeless caller must stay behaviorally identical.
     const { deps, logger } = createMockDeps({ reasoning: true });
     const dagConfig: ContextEngineConfig = { ...enabledConfig, version: "dag" };
 
