@@ -149,13 +149,18 @@ function searchViaFts(
       hits.push(...ftsMessageHits(db, conversationId, query, limit));
       break;
     case "both": {
-      // Union both tables, then re-sort by rank (lower BM25 = better) and cap.
-      const merged = [
-        ...ftsSummaryHits(db, conversationId, query, limit),
-        ...ftsMessageHits(db, conversationId, query, limit),
-      ];
-      merged.sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0));
-      return merged.slice(0, limit);
+      // Merge the two tables by WITHIN-TABLE rank POSITION, not by raw BM25
+      // (WR-03). BM25 `rank` is corpus-relative — only comparable inside ONE
+      // FTS index, never across two virtual tables with different document
+      // populations + average lengths. Each table's hits already arrive
+      // best-first (the per-table `ORDER BY rank`), so a fair round-robin —
+      // each table's best, then each table's second, … — gives both tables
+      // representation up to `limit` without pretending the two scales are
+      // comparable (and without the old `?? 0` fallback, which would have
+      // sorted an unranked hit as MOST relevant since BM25 ranks are negative).
+      const summaries = ftsSummaryHits(db, conversationId, query, limit);
+      const messages = ftsMessageHits(db, conversationId, query, limit);
+      return interleaveByRank(summaries, messages, limit);
     }
     default: {
       const _exhaustive: never = scope;
@@ -163,6 +168,32 @@ function searchViaFts(
     }
   }
   return hits.slice(0, limit);
+}
+
+/**
+ * Round-robin merge of two per-table-ranked hit lists for `scope="both"`
+ * (WR-03). Each input is already best-first within its own table. We take the
+ * best from each in turn (summary, message, summary, message, …) so neither
+ * table is starved when the merged set is truncated to `limit`, draining
+ * whichever list still has hits once the other is exhausted. This compares only
+ * within-table RANK POSITIONS — never the two incomparable raw BM25 scales —
+ * and preserves each table's own relevance order. Summaries lead each round
+ * (mirrors the prior `[...summaryHits, ...messageHits]` source order); the
+ * choice is deterministic, not relevance-meaningful across tables.
+ */
+function interleaveByRank(
+  summaries: LcdSearchHit[],
+  messages: LcdSearchHit[],
+  limit: number,
+): LcdSearchHit[] {
+  const out: LcdSearchHit[] = [];
+  const maxLen = Math.max(summaries.length, messages.length);
+  for (let i = 0; i < maxLen && out.length < limit; i++) {
+    if (i < summaries.length) out.push(summaries[i]);
+    if (out.length >= limit) break;
+    if (i < messages.length) out.push(messages[i]);
+  }
+  return out;
 }
 
 function ftsSummaryHits(
