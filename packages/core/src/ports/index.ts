@@ -21,6 +21,7 @@ export type {
 export type { EmbeddingPort } from "./embedding.js";
 export type { RerankerPort } from "./reranker.js";
 export type { MemoryEntityStore, EntityScope, EntityRow } from "./memory-entity-store.js";
+export type { MemoryPinnedStore } from "./memory-pinned-store.js";
 export type { MemoryTemporalStore } from "./memory-temporal-store.js";
 export type { MemoryEmbeddingStore } from "./memory-embedding-store.js";
 export type { MemoryCausalStore, CausalScope } from "./memory-causal-store.js";

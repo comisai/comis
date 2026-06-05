@@ -108,6 +108,9 @@ export const MemoryEntrySchema = z.strictObject({
      * observationKind="inductive". Additive `.optional()` closed enum.
      */
     patternType: z.enum(["preference", "behavior", "personality", "tendency", "correlation"]).optional(),
+    /** Pin marker: true = always-inject in recall regardless of fused score.
+     *  Absent/undefined = not pinned. The SQLite adapter maps row.pinned === 1 → entry.pinned: true. */
+    pinned: z.boolean().optional(),
   });
 
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;

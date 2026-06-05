@@ -7,10 +7,10 @@
  * by the memory system. Uses better-sqlite3 for synchronous DDL and
  * sqlite-vec for vector search support (with graceful degradation).
  */
-
 import type Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { ensureLcdTables } from "./schema-lcd.js";
+import { ensurePinnedColumn } from "./schema-pinned.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
 let vecAvailable = false;
@@ -600,13 +600,13 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureRelationshipTable(db); // directional relationships
   ensureTunedAlphaTable(db); // tuned ranking alphas
   ensureLcdTables(db); // LCD lossless message + parts store (Phase 127)
+  ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
 
   // --- Observation partial indexes (design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).
   // `idx_memories_unconsol` serves the candidate scan (WHERE consolidated_at IS NULL);
-  // `idx_memories_observations` serves the observation lookup (WHERE
-  // proof_count IS NOT NULL). The design's third "live" index (exact-dup-retirement)
-  // is OMITTED — that filter + its column are deferred to a later phase.
+  // `idx_memories_observations` serves the observation lookup (WHERE proof_count IS NOT NULL).
+  // The design's third "live" index (exact-dup-retirement) is OMITTED — deferred to a later phase.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_memories_unconsol
       ON memories(agent_id, created_at) WHERE consolidated_at IS NULL;

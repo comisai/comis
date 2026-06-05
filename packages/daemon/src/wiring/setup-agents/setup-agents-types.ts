@@ -114,6 +114,16 @@ export interface SingleAgentDeps {
    *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator
    *  enables `agents.<id>.rag.feedback.enabled` (default OFF). */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+  /** Pinned-memory store. The SAME `memoryAdapter` (SqliteMemoryAdapter) already
+   *  threaded as `memoryPort` — it implements both `MemoryPort` AND `MemoryPinnedStore`.
+   *  Supplied HERE as the segregated `MemoryPinnedStore` port so each per-agent
+   *  createPiExecutor can inject it into createMemoryRecall's Step-0 pinned-first lane.
+   *  Without this field, the lane gate (`cfg_pinned?.enabled === true && deps.pinnedStore !== undefined`)
+   *  is always false and pinned memories are silently absent from every recall result (R6 blocker).
+   *  DEFAULT-OFF BYTE-IDENTITY: with `rag.pinned.enabled=false` (the default), no pinnedStore
+   *  query runs even when the store is injected. The segregated port TYPE is from @comis/core
+   *  (the agent↛memory cut) — the agent package never imports @comis/memory. */
+  pinnedStore?: import("@comis/core").MemoryPinnedStore;
   /** Per-user representation store. Threaded into each per-agent
    *  createPiExecutor (the executor recall read path -> prompt-assembly's LLM-free `<user_profile>`
    *  standing-block injection). Built in setup-memory on the shared db handle; the segregated port

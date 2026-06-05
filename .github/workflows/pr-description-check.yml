@@ -1,0 +1,95 @@
+name: PR Description Check
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened]
+
+# Least-privilege: only write access needed is to post/edit a PR comment.
+# NEVER add contents: write or packages: write here.
+permissions:
+  contents: read          # required by actions/checkout
+  pull-requests: write    # required to post/update PR comments
+
+jobs:
+  check-pr-description:
+    # Skip bot-authored PRs entirely (Renovate, dependabot, comis-agent).
+    if: github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+
+    steps:
+      # SECURITY: ref is github.base_ref (trusted base branch), NOT the PR head ref.
+      # Checking out the fork contributor's head would let them run arbitrary
+      # code with this workflow's write token — the textbook pwn-request attack.
+      # sparse-checkout: only .github/scripts from the trusted base branch.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ github.base_ref }}
+          sparse-checkout: |
+            .github/scripts
+          sparse-checkout-cone-mode: false
+          fetch-depth: 1
+
+      - name: Validate PR description
+        id: check
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node .github/scripts/check-pr-description.mjs
+
+      - name: Post or update check comment
+        if: failure()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const MARKER = '<!-- comis-pr-description-check -->';
+            const body = `${MARKER}\n### PR description incomplete\n\n` +
+              `Please fill in all required sections before this PR can be reviewed.\n\n` +
+              `**Required sections:** Description, Related Issue, Type of Change, ` +
+              `Checklist, RED Test Proof.\n\n` +
+              `For code changes in \`packages/*/src/**\`, paste the failing test output ` +
+              `(test name + assertion error) from before the production patch in the ` +
+              `**RED Test Proof** section, or write \`EXEMPT: <reason>\` for ` +
+              `docs/CI/config-only PRs.\n\n` +
+              `See [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md) for the full contribution bar.`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(MARKER));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+            core.setFailed('PR description is missing required sections.');
+
+      - name: Clear check comment on success
+        if: success()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const MARKER = '<!-- comis-pr-description-check -->';
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(MARKER));
+            if (existing) {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+              });
+            }

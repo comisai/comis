@@ -3042,3 +3042,272 @@ describe("llm-free", () => {
     expect(getModel).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Pinned-first recall lane (SC1 + SC2-cap + SC4-mmr)
+//
+// DEFAULT-OFF: with pinnedStore absent or pinned.enabled=false, the pinned lane
+// is never executed — the recall pipeline is byte-identical to pre-pinning.
+// When enabled, the Step-0 lane fetches pinned entries and prepends them to the
+// final result AFTER the fused/mmr/dedup pipeline, bounded by maxPinnedInjection.
+// ---------------------------------------------------------------------------
+
+import type { MemoryPinnedStore } from "@comis/core";
+
+describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", () => {
+  /** Minimal MemoryPinnedStore stub returning a canned pinned result list. */
+  function createMockPinnedStore(
+    pinnedEntries: Array<{ id: string; content: string; score: number }>,
+  ): MemoryPinnedStore {
+    return {
+      async pin() {
+        return ok(true);
+      },
+      async unpin() {
+        return ok(true);
+      },
+      async listPinned(_scope: { tenantId: string; agentId: string }, limit: number) {
+        const capped = pinnedEntries.slice(0, limit);
+        return ok(
+          capped.map((e) => ({
+            entry: {
+              id: e.id,
+              tenantId: "tenant_x",
+              agentId: "default",
+              userId: "user_a",
+              content: e.content,
+              trustLevel: "system" as const,
+              source: { who: "agent" },
+              tags: [],
+              createdAt: NOW,
+            } as unknown as MemorySearchResult["entry"],
+            score: e.score,
+          })),
+        );
+      },
+    };
+  }
+
+  const NEUTRAL_SCORING: ScoringAlphas = {
+    recencyAlpha: 0,
+    temporalAlpha: 0,
+    proofAlpha: 0,
+    trustAlpha: 0,
+    usefulnessAlpha: 0,
+  };
+
+  it("returns a pinned entry first even when its fused score ranks below top-K", async () => {
+    // SC1: the pinned-first lane ensures pinned entries are returned at the head of
+    // the result regardless of their fused relevance score.
+    // Pre-patch (no lane): pinnedId is ABSENT from recall → test FAILS.
+    // Post-patch (Step-0 lane): pinnedId is result[0] → test PASSES.
+    const pinnedId = "pinned-low-score-001";
+    const mockPinnedStore = createMockPinnedStore([
+      { id: pinnedId, content: "standing instruction: always use metric units", score: 1.0 },
+    ]);
+    const nonPinnedResults = [
+      makeResult("high-a", { base: 0.95 }),
+      makeResult("high-b", { base: 0.90 }),
+      makeResult("high-c", { base: 0.85 }),
+      makeResult("high-d", { base: 0.80 }),
+      makeResult("high-e", { base: 0.75 }),
+    ];
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(nonPinnedResults),
+        pinnedStore: mockPinnedStore,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL_SCORING,
+        pinned: { enabled: true, maxPinnedInjection: 5 },
+      }),
+    );
+    const result = await recall.recall("some query returning high-score non-pinned entries", SESSION_KEY_OBJ, "default");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const ids = result.value.map((r) => r.entry.id);
+    expect(ids).toContain(pinnedId);
+    expect(result.value[0].entry.id).toBe(pinnedId); // pinned is FIRST
+  });
+
+  it("maxPinnedInjection cap limits injected pins when count exceeds the configured cap", async () => {
+    // SC2-cap: listPinned is called with limit=maxPinnedInjection; only cap entries injected.
+    // Pre-patch (no lane): all 10 would be absent → test FAILS on count.
+    // Post-patch: exactly 5 pinned entries in result (cap=5 out of 10 available).
+    const tenEntries = Array.from({ length: 10 }, (_, i) => ({
+      id: `pin-${i}`,
+      content: `pinned content ${i}`,
+      score: 1.0,
+    }));
+    const mockPinnedStore = createMockPinnedStore(tenEntries);
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort([]),
+        pinnedStore: mockPinnedStore,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL_SCORING,
+        pinned: { enabled: true, maxPinnedInjection: 5 },
+      }),
+    );
+    const result = await recall.recall("query", SESSION_KEY_OBJ, "default");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Only the first 5 of 10 pinned entries should be injected (cap enforced via limit param)
+    const pinnedInResult = result.value.filter((r) => r.entry.id.startsWith("pin-"));
+    expect(pinnedInResult).toHaveLength(5);
+  });
+
+  it("pinned IDs are excluded from MMR candidates preventing double injection in results", async () => {
+    // SC4-mmr: a pinned entry that also ranks highly in fused results must appear
+    // exactly once (as the prepended pin), never twice.
+    // Pre-patch (no dedup): overlap-001 appears in both fused ranked and prepended → twice.
+    // Post-patch (Step 5b-pre filter): overlap-001 filtered from ranked before MMR → once.
+    const overlapId = "overlap-001";
+    const mockPinnedStore = createMockPinnedStore([
+      { id: overlapId, content: "pinned and high-ranked entry", score: 1.0 },
+    ]);
+    // The fused recall also returns overlap-001 (high score 0.9)
+    const fusedResults = [
+      makeResult(overlapId, { base: 0.9, content: "pinned and high-ranked entry" }),
+      makeResult("other-a", { base: 0.7 }),
+      makeResult("other-b", { base: 0.5 }),
+    ];
+    // Use a simple embedding store for MMR so we can test the dedup path
+    const embeddingsMap = new Map<string, number[]>([
+      [overlapId, [1, 0, 0]],
+      ["other-a", [0, 1, 0]],
+      ["other-b", [0, 0, 1]],
+    ]);
+    const fakeEmbStore = {
+      async readEmbeddings(ids: string[]) {
+        return ok(embeddingsMap as ReadonlyMap<string, number[]>);
+      },
+    };
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(fusedResults),
+        pinnedStore: mockPinnedStore,
+        embeddingStore: fakeEmbStore,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL_SCORING,
+        pinned: { enabled: true, maxPinnedInjection: 5 },
+        mmr: { enabled: true, lambda: 0.5 },
+      }),
+    );
+    const result = await recall.recall("overlapping query", SESSION_KEY_OBJ, "default");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const ids = result.value.map((r) => r.entry.id);
+    // overlap-001 must appear exactly once (as pinned — not duplicated by fused)
+    const overlapCount = ids.filter((id) => id === overlapId).length;
+    expect(overlapCount).toBe(1);
+    // It should be the first result (pinned = prepended)
+    expect(ids[0]).toBe(overlapId);
+  });
+
+  it("pinned lane is DEFAULT-OFF: absent pinnedStore leaves recall byte-identical to pre-pinning", async () => {
+    // Safety gate: without pinnedStore the pipeline is completely unchanged.
+    const input = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.6 })];
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        // NO pinnedStore injected
+        clock: fixedClock,
+        logger: noopLogger,
+      },
+      baseConfig({ scoring: NEUTRAL_SCORING }),
+    );
+    const result = await recall.recall("q", SESSION_KEY, "default");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.map((r) => r.entry.id)).toEqual(["a", "b"]);
+  });
+
+  it("CR-04: pinned entry with a disallowed trustLevel is filtered out before prepend", async () => {
+    // CR-04: pinned entries bypass the trust filter. A pinned entry whose trustLevel
+    // is NOT in cfg.includeTrustLevels must be excluded from finalRanked.
+    // Pre-patch: the entry is prepended unconditionally → it appears in results.
+    // Post-patch: filtered → it does NOT appear in results.
+    const disallowedPinnedId = "pinned-external-001";
+    const disallowedTrustStore: MemoryPinnedStore = {
+      async pin() { return ok(true); },
+      async unpin() { return ok(true); },
+      async listPinned(_scope, _limit) {
+        return ok([
+          {
+            entry: {
+              id: disallowedPinnedId,
+              tenantId: "t",
+              agentId: "default",
+              userId: "u",
+              content: "disallowed pinned content",
+              trustLevel: "external" as const,
+              source: { who: "agent" },
+              tags: [],
+              createdAt: NOW,
+            } as unknown as MemorySearchResult["entry"],
+            score: 1.0,
+          },
+        ]);
+      },
+    };
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort([]),
+        pinnedStore: disallowedTrustStore,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL_SCORING,
+        // Only "learned" and "system" are allowed — "external" is NOT.
+        includeTrustLevels: ["learned", "system"],
+        pinned: { enabled: true, maxPinnedInjection: 5 },
+      }),
+    );
+    const result = await recall.recall("query", SESSION_KEY_OBJ, "default");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const ids = result.value.map((r) => r.entry.id);
+    expect(ids).not.toContain(disallowedPinnedId); // external-trust pinned entry must be filtered
+  });
+
+  it("WR-03: pinned lane WARN log on failure includes durationMs", async () => {
+    // WR-03: the WARN emitted when listPinned fails must include durationMs per AGENTS.md §2.7.
+    // Pre-patch: the WARN omits durationMs.
+    // Post-patch: durationMs is present.
+    const warnMock = vi.fn();
+    const failingPinnedStore: MemoryPinnedStore = {
+      async pin() { return ok(true); },
+      async unpin() { return ok(true); },
+      async listPinned() {
+        return { ok: false, error: new Error("simulated listPinned failure") } as Awaited<ReturnType<MemoryPinnedStore["listPinned"]>>;
+      },
+    };
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort([]),
+        pinnedStore: failingPinnedStore,
+        clock: fixedClock,
+        logger: { info: vi.fn(), warn: warnMock, debug: vi.fn() },
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL_SCORING,
+        pinned: { enabled: true, maxPinnedInjection: 5 },
+      }),
+    );
+    await recall.recall("query", SESSION_KEY_OBJ, "default");
+    expect(warnMock).toHaveBeenCalledOnce();
+    const warnPayload = warnMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(warnPayload).toHaveProperty("durationMs"); // AGENTS.md §2.7 requirement
+    expect(typeof warnPayload.durationMs).toBe("number");
+  });
+});

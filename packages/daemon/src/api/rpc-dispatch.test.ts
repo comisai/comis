@@ -34,6 +34,20 @@ vi.mock("./memory-handlers.js", () => ({
   })),
 }));
 
+vi.mock("./memory-portability-handlers.js", () => ({
+  createMemoryPortabilityHandlers: vi.fn(() => ({
+    "memory.portability.export": vi.fn(async () => ({ entries: [] })),
+    "memory.portability.import": vi.fn(async () => ({ imported: 0 })),
+  })),
+}));
+
+vi.mock("./memory-pinning-handlers.js", () => ({
+  createMemoryPinningHandlers: vi.fn(() => ({
+    "memory.pin": vi.fn(async () => ({ pinned: true })),
+    "memory.unpin": vi.fn(async () => ({ unpinned: true })),
+  })),
+}));
+
 vi.mock("./session-handlers/index.js", () => ({
   createSessionHandlers: vi.fn(() => ({
     "session.list": vi.fn(async () => ({ sessions: [] })),

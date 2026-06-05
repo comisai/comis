@@ -1180,3 +1180,118 @@ describe("SqliteMemoryAdapter occurredAtRange — narrows on search + searchLane
     }
   });
 });
+
+// ── pin / unpin agent-id scoping (CR-01) ─────────────────────────────
+describe("SqliteMemoryAdapter — pin/unpin agent-id scoping (CR-01)", () => {
+  let adapter: SqliteMemoryAdapter;
+
+  beforeEach(() => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+  });
+
+  afterEach(() => {
+    adapter.close();
+  });
+
+  function makeEntry(overrides?: Partial<MemoryEntry>): MemoryEntry {
+    return {
+      id: overrides?.id ?? crypto.randomUUID(),
+      tenantId: overrides?.tenantId ?? "t1",
+      agentId: overrides?.agentId ?? "agent-a",
+      userId: "user-1",
+      content: "test content",
+      trustLevel: "learned",
+      source: { who: "agent" },
+      tags: [],
+      createdAt: Date.now(),
+    };
+  }
+
+  it("CR-01: pin with agentId does NOT pin the same id owned by a different agent", async () => {
+    // Two entries with the SAME id prefix but owned by different agents.
+    // Pinning for agent-a must NOT pin agent-b's entry.
+    const idA = "shared-id-" + crypto.randomUUID();
+    const entryA = makeEntry({ id: idA, tenantId: "t1", agentId: "agent-a" });
+    const entryB = makeEntry({ id: crypto.randomUUID(), tenantId: "t1", agentId: "agent-b" });
+    // Insert both entries directly so we can test scoping.
+    await adapter.store(entryA);
+    await adapter.store(entryB);
+
+    // Pin agent-a's entry scoped to agent-a.
+    const r = await adapter.pin(idA, "t1", "agent-a");
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.value).toBe(true); // found + pinned
+
+    // Verify entryB is NOT pinned (it belongs to agent-b).
+    const pinnedB = adapter.getDb()
+      .prepare("SELECT pinned FROM memories WHERE id = ?")
+      .get(entryB.id) as { pinned: number } | undefined;
+    expect(pinnedB?.pinned).toBe(0);
+
+    // Verify entryA IS pinned.
+    const pinnedA = adapter.getDb()
+      .prepare("SELECT pinned FROM memories WHERE id = ?")
+      .get(idA) as { pinned: number } | undefined;
+    expect(pinnedA?.pinned).toBe(1);
+  });
+
+  it("CR-01: pin with wrong agentId returns ok(false) — id exists but in different agent scope", async () => {
+    // Entry owned by agent-b; trying to pin it as agent-a must return ok(false) (not found in scope).
+    const id = crypto.randomUUID();
+    const entry = makeEntry({ id, tenantId: "t1", agentId: "agent-b" });
+    await adapter.store(entry);
+
+    // Pin with the wrong agentId — must be a no-op (returns false, not an error).
+    const r = await adapter.pin(id, "t1", "agent-a");
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.value).toBe(false); // NOT found in agent-a's scope
+
+    // The entry must remain unpinned.
+    const row = adapter.getDb()
+      .prepare("SELECT pinned FROM memories WHERE id = ?")
+      .get(id) as { pinned: number } | undefined;
+    expect(row?.pinned).toBe(0);
+  });
+});
+
+// ── listPinned expiry filter (CR-02) ─────────────────────────────────
+describe("SqliteMemoryAdapter — listPinned does not return expired pinned entries (CR-02)", () => {
+  let adapter: SqliteMemoryAdapter;
+
+  beforeEach(() => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+  });
+
+  afterEach(() => {
+    adapter.close();
+  });
+
+  it("CR-02: listPinned excludes an expired pinned entry", async () => {
+    const db = adapter.getDb();
+    const now = Date.now();
+    // Insert a pinned entry that is already expired.
+    const expiredId = crypto.randomUUID();
+    db.prepare(
+      `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type,
+        source_who, tags, created_at, expires_at, has_embedding)
+       VALUES (?, 't1', 'agent-a', 'user-1', 'expired pinned', 'learned', 'semantic', 'agent', '[]', ?, ?, 0)`,
+    ).run(expiredId, now - 10000, now - 1000); // expires_at in the past
+    db.prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(expiredId);
+
+    // Insert a live pinned entry.
+    const liveId = crypto.randomUUID();
+    db.prepare(
+      `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type,
+        source_who, tags, created_at, expires_at, has_embedding)
+       VALUES (?, 't1', 'agent-a', 'user-1', 'live pinned', 'learned', 'semantic', 'agent', '[]', ?, NULL, 0)`,
+    ).run(liveId, now - 5000);
+    db.prepare("UPDATE memories SET pinned = 1 WHERE id = ?").run(liveId);
+
+    const result = await adapter.listPinned({ tenantId: "t1", agentId: "agent-a" }, 10);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const ids = result.value.map((r) => r.entry.id);
+    expect(ids).toContain(liveId);
+    expect(ids).not.toContain(expiredId); // expired entries must NOT appear
+  });
+});

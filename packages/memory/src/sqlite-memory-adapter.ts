@@ -11,6 +11,7 @@
 
 import type {
   MemoryPort,
+  MemoryPinnedStore,
   MemorySearchOptions,
   MemorySearchResult,
   MemoryEntry,
@@ -18,7 +19,7 @@ import type {
   MemoryConfig,
   EmbeddingPort,
 } from "@comis/core";
-import { ok, err, type Result } from "@comis/shared";
+import { ok, err, fromPromise, type Result } from "@comis/shared";
 import type Database from "better-sqlite3";
 import { hybridSearch, searchByText, searchByVector } from "./hybrid-search.js";
 import { initSchema } from "./schema.js";
@@ -40,7 +41,7 @@ interface MemoryLogger {
 
 // ── SqliteMemoryAdapter ──────────────────────────────────────────────
 
-export class SqliteMemoryAdapter implements MemoryPort {
+export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
   private readonly db: Database.Database;
   private readonly config: MemoryConfig;
   private readonly embeddingPort?: EmbeddingPort;
@@ -449,6 +450,74 @@ export class SqliteMemoryAdapter implements MemoryPort {
       checkpointed: number;
     }>;
     return result[0]?.checkpointed ?? 0;
+  }
+
+  // ── pin ──────────────────────────────────────────────────────────
+
+  async pin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>> {
+    return fromPromise((async () => {
+      const sql =
+        tenantId !== undefined && agentId !== undefined
+          ? "UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ? AND agent_id = ?"
+          : tenantId !== undefined
+          ? "UPDATE memories SET pinned = 1 WHERE id = ? AND tenant_id = ?"
+          : "UPDATE memories SET pinned = 1 WHERE id = ?";
+      const info =
+        tenantId !== undefined && agentId !== undefined
+          ? this.db.prepare(sql).run(id, tenantId, agentId)
+          : tenantId !== undefined
+          ? this.db.prepare(sql).run(id, tenantId)
+          : this.db.prepare(sql).run(id);
+      return info.changes > 0;
+    })());
+  }
+
+  // ── unpin ────────────────────────────────────────────────────────
+
+  async unpin(id: string, tenantId?: string, agentId?: string): Promise<Result<boolean, Error>> {
+    return fromPromise((async () => {
+      const sql =
+        tenantId !== undefined && agentId !== undefined
+          ? "UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ? AND agent_id = ?"
+          : tenantId !== undefined
+          ? "UPDATE memories SET pinned = 0 WHERE id = ? AND tenant_id = ?"
+          : "UPDATE memories SET pinned = 0 WHERE id = ?";
+      const info =
+        tenantId !== undefined && agentId !== undefined
+          ? this.db.prepare(sql).run(id, tenantId, agentId)
+          : tenantId !== undefined
+          ? this.db.prepare(sql).run(id, tenantId)
+          : this.db.prepare(sql).run(id);
+      return info.changes > 0;
+    })());
+  }
+
+  // ── listPinned ───────────────────────────────────────────────────
+
+  async listPinned(
+    scope: { tenantId: string; agentId: string },
+    limit: number,
+  ): Promise<Result<MemorySearchResult[], Error>> {
+    return fromPromise((async () => {
+      // CR-02 fix: exclude expired entries (mirrors the other read paths in
+      // hydrateLane and search — `expires_at IS NULL OR expires_at > nowMs`).
+      const nowMs = systemNowMs();
+      const parsed = memoryRowMapper.parseRows(
+        this.db
+          .prepare(
+            "SELECT * FROM memories " +
+              "WHERE tenant_id = ? AND agent_id = ? AND pinned = 1 " +
+              "AND (expires_at IS NULL OR expires_at > ?) " +
+              "ORDER BY created_at DESC LIMIT ?",
+          )
+          .all(scope.tenantId, scope.agentId, nowMs, limit),
+      );
+      if (!parsed.ok) return [];
+      return parsed.value.map((row) => ({
+        entry: rowToEntry(row),
+        score: 1.0,
+      }));
+    })());
   }
 
   // ── close ────────────────────────────────────────────────────────

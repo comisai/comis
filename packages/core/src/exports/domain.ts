@@ -84,6 +84,10 @@ export {
   RequiredToolsUnreachableError,
   toolReachableGroups,
   computeReachableToolNames,
+  // MemoryExportEnvelope
+  MemoryExportEnvelopeSchema,
+  MemoryExportEntrySchema,
+  parseMemoryExportEnvelope,
 } from "../domain/index.js";
 
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";
@@ -96,6 +100,9 @@ export type {
   // Per-user representation prefix type
   UserRepresentationType,
   MemoryEntry,
+  // MemoryExportEnvelope
+  MemoryExportEnvelope,
+  MemoryExportEntry,
   // Structured extraction + domain target
   MemorySource,
   ExtractedEntity,

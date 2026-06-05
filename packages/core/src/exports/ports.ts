@@ -27,6 +27,7 @@ export type {
   MemoryEntityStore,
   EntityScope,
   EntityRow,
+  MemoryPinnedStore,
   MemoryTemporalStore,
   MemoryEmbeddingStore,
   MemoryCausalStore,

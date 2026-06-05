@@ -326,6 +326,72 @@ describe("memory_manage tool", () => {
   });
 
   // -----------------------------------------------------------------------
+  // pin action
+  // -----------------------------------------------------------------------
+
+  describe("pin action", () => {
+    it("memory_manage tool pin action calls memory.pin RPC with correct params", async () => {
+      mockRpcCall.mockResolvedValue({ pinned: true, id: "mem-abc" });
+
+      const tool = createMemoryManageTool(mockRpcCall);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-pin1", { action: "pin", id: "mem-abc" } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("memory.pin", expect.objectContaining({
+        id: "mem-abc",
+        _trustLevel: "admin",
+      }));
+      expect(result.details).toEqual(expect.objectContaining({ pinned: true, id: "mem-abc" }));
+    });
+
+    it("memory_manage tool pin action rejects missing id parameter", async () => {
+      const tool = createMemoryManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-pin2", { action: "pin" } as never),
+        ),
+      ).rejects.toThrow(/\[missing_param\] id is required for pin action/);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // unpin action
+  // -----------------------------------------------------------------------
+
+  describe("unpin action", () => {
+    it("memory_manage tool unpin action calls memory.unpin RPC with correct params", async () => {
+      mockRpcCall.mockResolvedValue({ unpinned: true, id: "mem-xyz" });
+
+      const tool = createMemoryManageTool(mockRpcCall);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-unpin1", { action: "unpin", id: "mem-xyz" } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("memory.unpin", expect.objectContaining({
+        id: "mem-xyz",
+        _trustLevel: "admin",
+      }));
+      expect(result.details).toEqual(expect.objectContaining({ unpinned: true, id: "mem-xyz" }));
+    });
+
+    it("memory_manage tool unpin action rejects missing id parameter", async () => {
+      const tool = createMemoryManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-unpin2", { action: "unpin" } as never),
+        ),
+      ).rejects.toThrow(/\[missing_param\] id is required for unpin action/);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // unknown action
   // -----------------------------------------------------------------------
 

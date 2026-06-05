@@ -58,9 +58,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import * as os from "node:os";
-
 import type { RpcHandler } from "./types.js";
-
 /** Max chars of an observation body surfaced as a provenance PREVIEW
  *  (never the full body unbounded; mirrors memory.search_files). */
 const OBSERVATION_PREVIEW_MAX = 500;

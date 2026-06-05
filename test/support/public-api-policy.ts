@@ -705,16 +705,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createEditPlaceRenderer",
       "EditPlaceDeps",
     ])],
-    // @comis/cli: 3 documented external-API entries (withClient,
-    // credentialsStep, RpcClient). All register*Command factories and
+    // @comis/cli: 4 documented external-API entries (withClient,
+    // credentialsStep, RpcClient, callTyped). All register*Command factories and
     // output utilities (success/error/warn/info/json/renderTable/
     // renderKeyValue/withSpinner) are not re-exported from the package;
     // they remain accessible to the bin only via ./commands/*.js /
     // ./output/*.js direct source paths.
+    // callTyped is an intentional embedding entrypoint: used heavily
+    // inside @comis/cli itself via relative imports and by the integration
+    // test harness via `@comis/cli` bare-package import.
     ["@comis/cli", new Set<string>([
       "withClient",
       "credentialsStep",
       "RpcClient",
+      "callTyped",
     ])],
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
@@ -1478,8 +1482,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // self-imports). MEMORY_DIAGNOSTIC_CONTRACTS is the
       // diagnostic group, now folded into MEMORY_CONTRACTS but still surfaced
       // on the public barrel for symmetry with the other domain arrays.
+      // MEMORY_PORTABILITY_CONTRACTS is the portability-methods slice array
+      // (extracted to keep memory.ts ≤ 800 lines); spread into MEMORY_CONTRACTS
+      // intra-package — same pattern as MEMORY_DIAGNOSTIC_CONTRACTS.
+      // MEMORY_PINNING_CONTRACTS is the pinning-methods slice array (memory.pin/
+      // memory.unpin), extracted to memory-pinning.ts and spread into
+      // MEMORY_CONTRACTS intra-package — same pattern as the arrays above.
       "MEMORY_CONTRACTS",
       "MEMORY_DIAGNOSTIC_CONTRACTS",
+      "MEMORY_PORTABILITY_CONTRACTS",
+      "MEMORY_PINNING_CONTRACTS",
       // (The memory.ask cross-wave seam is now closed: MemoryAskContract
       // is spread into MEMORY_CONTRACTS in the same diff that landed its daemon
       // handler in memory-handlers.ts — its in-repo consumer now exists — so it was
@@ -1705,6 +1717,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryConsolidationStore",
       "ConsolidationCandidate",
       "ConsolidationPlan",
+      // ── Memory pinning (interface-first foundation) ──
+      // The segregated MemoryPinnedStore port is the agent↛memory build-cut
+      // type: recall-types.ts imports this from @comis/core; the concrete
+      // adapter lives in @comis/memory. In-repo consumers land across plans
+      // 03-02..03-05. Shrink this entry as each consumer lands.
+      "MemoryPinnedStore",
       // Provider-catalog symbols. The broker
       // in @comis/infra imports resolveBinding, applyInjections, normalizeHost,
       // BrokerBinding, InjectionRule, HostRule, InjectionInput — all consumed.
@@ -1784,6 +1802,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // consumer) but does not import the return type name directly, so it is an
       // orphan export that shrinks when a real cross-package consumer materializes.
       "StorageModePreRead",
+      // Memory-portability envelope types + schemas. The CLI imports
+      // parseMemoryExportEnvelope (the value function — satisfies the gate) but
+      // does NOT import the schema values (MemoryExportEnvelopeSchema /
+      // MemoryExportEntrySchema) or the inferred types (MemoryExportEnvelope /
+      // MemoryExportEntry) by name — these are structural consumers only. Tracked
+      // here as planned-orphan policy entries; shrink when a cross-package
+      // consumer imports them by name.
+      "MemoryExportEnvelopeSchema",
+      "MemoryExportEntrySchema",
+      "MemoryExportEnvelope",
+      "MemoryExportEntry",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,

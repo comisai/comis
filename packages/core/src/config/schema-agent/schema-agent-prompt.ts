@@ -246,6 +246,16 @@ export const RagConfigSchema = z.strictObject({
      *  a stray field (e.g. a smuggled `forgetAlpha`) is REJECTED at parse, structurally enforcing
      *  the single-knob invariant. */
     forget: z.strictObject({ enabled: z.boolean().default(true) }).default(() => ({ enabled: true })),
+    /** Pinned-memory injection knobs. Default-OFF (new surface; opt-in).
+     *  enabled=true activates the pinned-first recall lane.
+     *  maxPinnedInjection caps the bounded set (default 5 entries).
+     *  At ~100 chars/entry × 5 = ~500 chars of the 4000-char maxContextChars budget (12.5%). */
+    pinned: z
+      .strictObject({
+        enabled: z.boolean().default(false),
+        maxPinnedInjection: z.number().int().positive().default(5),
+      })
+      .default(() => ({ enabled: false, maxPinnedInjection: 5 })),
     /** LLM-free query understanding. Opt-out posture: all
      *  default-ON. $0 at recall — each toggle is an additive DETERMINISTIC, LLM-FREE capability
      *  over the existing recall path (NO LLM call on the recall hot path — binding constraint #1).

@@ -36,13 +36,15 @@ describe("memory + context domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("MEMORY_CONTRACTS has exactly 13 entries (9 memory + 4 diagnostics)", () => {
+  it("MEMORY_CONTRACTS has exactly 17 entries (9 memory + 2 portability + 2 pinning + 4 diagnostics)", () => {
     // The diagnostics cross-wave seam was closed (the 4 MEMORY_DIAGNOSTIC_CONTRACTS).
-    // The memory.ask cross-wave seam was closed too: MemoryAskContract is
-    // now spread in (9 + 4 = 13), in the same diff that landed its daemon handler,
-    // so the registry ↔ handler set stays 1:1. The 7 context.* contracts were
-    // removed in v2.12 (Phase 126) with the DAG context engine.
-    expect(MEMORY_CONTRACTS.length).toBe(13);
+    // The memory.ask cross-wave seam was closed too: MemoryAskContract is spread in.
+    // The v1.7 milestone added the portability (export/import) and pinning (pin/unpin)
+    // contracts — spread in via MEMORY_PORTABILITY_CONTRACTS + MEMORY_PINNING_CONTRACTS —
+    // in the same diffs that landed their daemon handlers, so the registry ↔ handler
+    // set stays 1:1. The 7 context.* contracts were removed in v2.12 (Phase 126) with
+    // the DAG context engine (reintroduced fresh as LCD tools, not RPC contracts).
+    expect(MEMORY_CONTRACTS.length).toBe(17);
   });
 
   it("MEMORY_CONTRACTS method names cover every handler-factory method", () => {

@@ -1,0 +1,90 @@
+---
+title: "Known Limitations"
+description: "Candid listing of current platform limitations operators should factor into production deployments"
+icon: "triangle-exclamation"
+---
+
+<Info>
+  **Source:** `THREAT_MODEL.md` §7 — G1, G2, G3, G4, G5, G6. These items are candid self-disclosures
+  tracked in the project's living threat model; they are documented gaps, not defects. See
+  [`THREAT_MODEL.md`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md) for full context and
+  per-item severity ratings.
+</Info>
+
+## Linux-only kernel sandbox
+
+The kernel sandbox (`bwrap`) that confines tool execution is **Linux-only**. macOS falls back to
+best-effort `sandbox-exec` (SBPL); Docker Desktop and Windows run the `exec` and `terminal` tools
+without kernel-level confinement. Linux is the documented production target.
+
+<Warning>
+  Operators on non-Linux hosts should treat `exec` and `terminal` tool invocations as unconfined.
+  Running Comis in production on macOS or Windows is unsupported.
+</Warning>
+
+## `exec` tool fails open; `terminal` fails closed
+
+When no kernel sandbox provider is detected (e.g. `bwrap` absent from `PATH`), the `exec` tool
+**fails open** and runs `/bin/bash -c` directly — it does not refuse the command. The `terminal`
+driver has the opposite behavior: it **fails closed** (refuses to start) when the sandbox is absent.
+
+Operators on hosts without `bwrap` should treat every `exec` tool invocation as unconfined shell
+access. Ensure `bwrap` is installed and accessible before enabling exec-capable agents in production.
+
+## Credential broker scope
+
+The credential broker injects API keys and bearer tokens for configured host + path bindings.
+**OAuth-flow CLIs** (tools that run their own browser-redirect or device-flow auth) are not
+brokered — they receive their own token outside the broker's per-request injection path.
+
+Only `apiKey` and `bearer`-type bindings defined in `security.credentialBroker.bindings` are
+intercepted and rewritten at the network boundary. OAuth-authenticated CLIs manage their own
+credential stores.
+
+## DNS-rebinding TOCTOU window in `validateUrl`
+
+`validateUrl` resolves the target hostname and then performs the fetch in a separate
+step. A DNS rebinding attack can change the resolved address between the check and the
+fetch, bypassing the private-range SSRF guard. For tool paths running under broker-only
+egress this window is eliminated; non-sandboxed `web.fetch` paths retain a narrow
+exposure.
+
+## File-size governance debt
+
+The project enforces a `≤800`-line cap on production TypeScript files, tracked by
+`test/architecture/file-size.test.ts`. Approximately 35 files carry `deferred` allowlist entries
+that exceed the cap — most are Lit web views with tightly DOM-coupled state, plus the daemon
+composition root (`daemon.ts`, ~2,900 lines) and several executor-adjacent files.
+
+These are tracked as shrink-only entries and are not regressions; **new files must stay under 800
+lines**. The allowlist in `test/support/architecture-allowlist.ts` is governed by the
+shrink-only allowlists contribution rule: adding a new `deferred` entry will not be accepted.
+
+## Self-reported benchmark caveats
+
+Memory accuracy numbers are **self-authored, small-N (N=8 for the head-to-head run), and graded by
+LLM judges** — directional indicators, not independently verified guarantees.
+
+The headline result is a **tie with mem0** (both 7/8 at N=8), not a win. The documented
+differentiator is cost and locality: Comis recall is LLM-free and runs on-device at $0; mem0 uses
+paid OpenAI fact-extraction at ingest. This is an economics advantage, not a measured accuracy edge.
+
+The benchmark is self-reported with a disclosed conflict of interest (Comis authored it; vendor-reported
+competitor numbers are non-comparable across protocols). See [Memory Benchmarks](/agents/memory-benchmarks)
+for the full methodology, conflict-of-interest disclosure, and reproducible harness.
+
+## Documentation accuracy
+
+Two public claims were inaccurate and are corrected as part of the v1.7 milestone that introduced
+[`THREAT_MODEL.md`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md):
+
+1. **`SECURITY.md`** previously described skills as running in `isolated-vm`. The real mechanism is
+   OS-level `bwrap` (Linux) or `sandbox-exec` (macOS) — the Node.js `vm` module is not used for
+   skill or tool confinement.
+
+2. **`README`** implied "no external SDK dependency" for agent execution. The agent runtime is built
+   on `@earendil-works/pi-coding-agent` (exact-pinned, bundled, part of the supply-chain threat model —
+   see [`THREAT_MODEL.md §5.8`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md)).
+
+Both claims are corrected in the current documentation. A CI guard (`test/architecture/security-doc-claims.test.ts`)
+now prevents regressions by statically checking the corrected text in `SECURITY.md`.

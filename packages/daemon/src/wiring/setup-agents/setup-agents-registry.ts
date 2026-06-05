@@ -209,6 +209,13 @@ export async function setupAgents(deps: {
   /** Usefulness store. Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall usefulness read path). Built in setup-memory on the shared db. */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+  /** Pinned-memory store (the `MemoryPinnedStore` face of `memoryAdapter`). Threaded into
+   *  each per-agent createPiExecutor so the recall pipeline's Step-0 pinned-first lane can fire.
+   *  Without this the lane gate is always false and pinned memories are silently absent from every
+   *  agent response (R6 blocker). The same `SqliteMemoryAdapter` already passed as `memoryPort`
+   *  implements `MemoryPinnedStore`; the daemon supplies it here as the segregated port TYPE.
+   *  Built in setup-memory on the shared db. */
+  pinnedStore?: import("@comis/core").MemoryPinnedStore;
   /** Per-user representation store. Threaded into each per-agent
    *  createPiExecutor like entityStore (the recall LLM-free `<user_profile>` injection read path).
    *  Built in setup-memory on the shared db. */
@@ -458,6 +465,7 @@ export async function setupAgents(deps: {
     tripleStore: deps.tripleStore,
     embeddingStore: deps.embeddingStore,
     usefulnessStore: deps.usefulnessStore,
+    pinnedStore: deps.pinnedStore,
     userRepresentationStore: deps.userRepresentationStore,
     relationshipStore: deps.relationshipStore,
     tunedAlphaStore: deps.tunedAlphaStore,

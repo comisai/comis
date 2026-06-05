@@ -68,17 +68,21 @@ describe("registerMemoryCommand", () => {
     expect(yesOpt).toBeDefined();
   });
 
-  it("has all subcommands under memory (incl. diagnostics)", () => {
+  it("has all subcommands under memory (incl. diagnostics and portability)", () => {
     const memoryCmd = program.commands.find((c) => c.name() === "memory");
     const subcommands = memoryCmd!.commands.map((c) => c.name()).sort();
     expect(subcommands).toEqual([
       "clear",
       "entities",
+      "export",
+      "import",
       "inspect",
       "observations",
+      "pin",
       "recall-trace",
       "search",
       "stats",
+      "unpin",
     ]);
   });
 
@@ -256,5 +260,359 @@ describe("memory stats error handling", () => {
       consoleErrSpy.mockRestore();
       exitSpy.mockRestore();
     }
+  });
+});
+
+// ============================================================================
+// Export + import subcommand unit tests
+// ============================================================================
+
+vi.mock("../client/rpc-client.js", () => ({
+  withClient: vi.fn(),
+  callTyped: vi.fn(),
+}));
+
+vi.mock("node:fs/promises", () => ({
+  writeFile: vi.fn(),
+  readFile: vi.fn(),
+}));
+
+import { withClient, callTyped } from "../client/rpc-client.js";
+import * as fsPromises from "node:fs/promises";
+import {
+  MemoryPortabilityExportContract,
+  MemoryPortabilityImportContract,
+  MemoryPinContract,
+  MemoryUnpinContract,
+  type MemoryExportEnvelope,
+} from "@comis/core";
+
+const mockWithClient = vi.mocked(withClient);
+const mockCallTyped = vi.mocked(callTyped);
+const mockWriteFile = vi.mocked(fsPromises.writeFile);
+const mockReadFile = vi.mocked(fsPromises.readFile);
+
+const FAKE_ENVELOPE: MemoryExportEnvelope = {
+  schemaVersion: "comis-memory-export-v1",
+  exportedAt: 1748000000000,
+  scope: { tenantId: "test", agentId: "test-agent" },
+  entryCount: 1,
+  entries: [
+    {
+      id: "entry-1",
+      content: "Hello from test",
+      trust_level: "learned",
+      memory_type: "semantic",
+      tags: ["test"],
+      source_who: "test-user",
+      source_channel: null,
+      source_session_key: null,
+      created_at: 1748000000000,
+      occurred_at: null,
+      proof_count: null,
+      source_ids: null,
+      confidence: null,
+      observation_kind: null,
+      pattern_type: null,
+    },
+  ],
+};
+
+describe("memory export subcommand", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockWithClient.mockImplementation(async (fn) => fn({ call: vi.fn(), close: vi.fn(), onNotification: vi.fn() }));
+    mockCallTyped.mockResolvedValue(FAKE_ENVELOPE);
+    mockWriteFile.mockResolvedValue(undefined);
+  });
+
+  it("registers the export subcommand under memory", () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+    const memoryCmd = program.commands.find((c) => c.name() === "memory");
+    const exportCmd = memoryCmd!.commands.find((c) => c.name() === "export");
+    expect(exportCmd).toBeDefined();
+    expect(exportCmd!.description()).toContain("Export");
+  });
+
+  it("calls callTyped with MemoryPortabilityExportContract and agent_id option", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await program.parseAsync([
+        "node", "test", "memory", "export", "--agent", "test-agent",
+      ]);
+    } catch {
+      // may throw from withClient/callTyped not being real
+    } finally {
+      consoleSpy.mockRestore();
+    }
+
+    expect(mockCallTyped).toHaveBeenCalledWith(
+      expect.anything(),
+      MemoryPortabilityExportContract,
+      expect.objectContaining({ agent_id: "test-agent" }),
+    );
+  });
+
+  it("writes the returned envelope to a file with mode 0o600 when --output is specified", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await program.parseAsync([
+        "node", "test", "memory", "export", "--agent", "test-agent", "--output", "/tmp/test-export.json",
+      ]);
+    } catch {
+      // spinner/process.exit noise
+    } finally {
+      consoleSpy.mockRestore();
+    }
+
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      "/tmp/test-export.json",
+      expect.any(String),
+      expect.objectContaining({ mode: 0o600 }),
+    );
+  });
+});
+
+describe("memory import subcommand", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockWithClient.mockImplementation(async (fn) => fn({ call: vi.fn(), close: vi.fn(), onNotification: vi.fn() }));
+    mockCallTyped.mockResolvedValue({
+      imported: 1,
+      blocked: 0,
+      downgraded: 0,
+      total: 1,
+      dryRun: false,
+    });
+    mockReadFile.mockResolvedValue(JSON.stringify(FAKE_ENVELOPE));
+  });
+
+  it("registers the import subcommand under memory", () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+    const memoryCmd = program.commands.find((c) => c.name() === "memory");
+    const importCmd = memoryCmd!.commands.find((c) => c.name() === "import");
+    expect(importCmd).toBeDefined();
+    expect(importCmd!.description()).toContain("Import");
+  });
+
+  it("exits with error when envelope schemaVersion is invalid without calling callTyped", async () => {
+    mockReadFile.mockResolvedValue(JSON.stringify({ schemaVersion: "bad-version", entries: [] }));
+
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleErrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as never);
+
+    try {
+      await program.parseAsync([
+        "node", "test", "memory", "import", "bad-file.json", "--agent", "test-agent",
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+      const errOutput = consoleErrSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(errOutput).toContain("comis-memory-export-v1");
+    } finally {
+      consoleSpy.mockRestore();
+      consoleErrSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    expect(mockCallTyped).not.toHaveBeenCalled();
+  });
+
+  it("calls callTyped with MemoryPortabilityImportContract when envelope is valid", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await program.parseAsync([
+        "node", "test", "memory", "import", "file.json", "--agent", "test-agent",
+      ]);
+    } catch {
+      // ignore output noise
+    } finally {
+      consoleSpy.mockRestore();
+    }
+
+    expect(mockCallTyped).toHaveBeenCalledWith(
+      expect.anything(),
+      MemoryPortabilityImportContract,
+      expect.objectContaining({ agent_id: "test-agent", entries: FAKE_ENVELOPE.entries }),
+    );
+  });
+
+  it("passes dry_run true to callTyped when --dry-run flag is set", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await program.parseAsync([
+        "node", "test", "memory", "import", "file.json", "--agent", "test-agent", "--dry-run",
+      ]);
+    } catch {
+      // ignore output noise
+    } finally {
+      consoleSpy.mockRestore();
+    }
+
+    expect(mockCallTyped).toHaveBeenCalledWith(
+      expect.anything(),
+      MemoryPortabilityImportContract,
+      expect.objectContaining({ dry_run: true }),
+    );
+  });
+});
+
+// ============================================================================
+// WR-02: export --limit NaN guard
+// RED: passing --limit abc calls callTyped with NaN (no guard before RPC)
+// GREEN: CLI exits with clear error message before invoking callTyped
+// ============================================================================
+
+describe("memory export --limit NaN guard (WR-02)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockWithClient.mockImplementation(async (fn) => fn({ call: vi.fn(), close: vi.fn(), onNotification: vi.fn() }));
+    mockCallTyped.mockResolvedValue(FAKE_ENVELOPE);
+    mockWriteFile.mockResolvedValue(undefined);
+  });
+
+  it("exits with a clear error message when --limit is non-numeric, before calling callTyped", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+
+    const consoleErrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as never);
+
+    try {
+      await program.parseAsync([
+        "node", "test", "memory", "export", "--agent", "test-agent", "--limit", "abc",
+      ]);
+    } catch (e) {
+      // RED: no guard → callTyped called with NaN; process.exit never triggered.
+      // GREEN: process.exit called with error message before callTyped.
+      expect((e as Error).message).toBe("process.exit called");
+      const errOutput = consoleErrSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(errOutput).toMatch(/[Ii]nvalid.*limit|limit.*invalid|positive integer/i);
+    } finally {
+      consoleSpy.mockRestore();
+      consoleErrSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    expect(mockCallTyped).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// memory pin + unpin subcommand behavioral tests (W4)
+// ============================================================================
+
+describe("memory pin subcommand", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockWithClient.mockImplementation(async (fn) => fn({ call: vi.fn(), close: vi.fn(), onNotification: vi.fn() }));
+    mockCallTyped.mockResolvedValue({ pinned: true, id: "mem-test-001" });
+  });
+
+  it("memory pin subcommand calls MemoryPinContract via callTyped", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await program.parseAsync([
+        "node", "test", "memory", "pin", "mem-test-001",
+      ]);
+    } catch {
+      // ignore spinner/output noise
+    } finally {
+      consoleSpy.mockRestore();
+    }
+
+    expect(mockCallTyped).toHaveBeenCalledWith(
+      expect.anything(),
+      MemoryPinContract,
+      expect.objectContaining({ id: "mem-test-001" }),
+    );
+  });
+
+  it("memory pin subcommand registers with --agent and --tenant options", () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+    const memoryCmd = program.commands.find((c) => c.name() === "memory");
+    const pinCmd = memoryCmd!.commands.find((c) => c.name() === "pin");
+    expect(pinCmd).toBeDefined();
+    expect(pinCmd!.options.find((o) => o.long === "--agent")).toBeDefined();
+    expect(pinCmd!.options.find((o) => o.long === "--tenant")).toBeDefined();
+  });
+});
+
+describe("memory unpin subcommand", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockWithClient.mockImplementation(async (fn) => fn({ call: vi.fn(), close: vi.fn(), onNotification: vi.fn() }));
+    mockCallTyped.mockResolvedValue({ unpinned: true, id: "mem-test-002" });
+  });
+
+  it("memory unpin subcommand calls MemoryUnpinContract via callTyped", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await program.parseAsync([
+        "node", "test", "memory", "unpin", "mem-test-002",
+      ]);
+    } catch {
+      // ignore spinner/output noise
+    } finally {
+      consoleSpy.mockRestore();
+    }
+
+    expect(mockCallTyped).toHaveBeenCalledWith(
+      expect.anything(),
+      MemoryUnpinContract,
+      expect.objectContaining({ id: "mem-test-002" }),
+    );
+  });
+
+  it("memory unpin subcommand registers with --agent and --tenant options", () => {
+    const program = new Command();
+    program.exitOverride();
+    registerMemoryCommand(program);
+    const memoryCmd = program.commands.find((c) => c.name() === "memory");
+    const unpinCmd = memoryCmd!.commands.find((c) => c.name() === "unpin");
+    expect(unpinCmd).toBeDefined();
+    expect(unpinCmd!.options.find((o) => o.long === "--agent")).toBeDefined();
+    expect(unpinCmd!.options.find((o) => o.long === "--tenant")).toBeDefined();
   });
 });

@@ -10,7 +10,7 @@
 // ./commands/X.js directly.
 
 // RPC client (embedding-code helper for daemon connections)
-export { withClient } from "./client/rpc-client.js";
+export { withClient, callTyped } from "./client/rpc-client.js";
 export type { RpcClient } from "./client/rpc-client.js";
 
 // Wizard step — exported for integration tests in

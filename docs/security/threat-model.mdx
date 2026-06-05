@@ -1,0 +1,92 @@
+---
+title: "Threat Model"
+description: "Trust boundaries, what Comis defends and does not defend against, and known limitations"
+icon: "shield-halved"
+---
+
+Comis is a **headless, multi-agent daemon** that connects autonomous AI agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). It runs on a single trusted host, is mTLS/token-gated, and binds to loopback (`127.0.0.1:4766`) by default.
+
+<Note>
+  The canonical, version-controlled threat model is [`THREAT_MODEL.md`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md) in the repository root — this page mirrors it. Vulnerability reporting and the disclosure SLA live in [`SECURITY.md`](https://github.com/comisai/comis/blob/main/SECURITY.md).
+</Note>
+
+The defining assumption is load-bearing: **the LLM agent is treated as a potential adversary.** A model can be steered by prompt injection embedded in any content it reads — an inbound message, a fetched web page, an email, a transcript, an MCP tool result. The architecture is built to contain what a *steered* agent can do, not merely to authenticate the humans talking to it.
+
+## Trust boundaries
+
+| Zone / principal | Trust | Rationale |
+| --- | --- | --- |
+| Operator + host OS | **Trusted** | Holds the master key, config, and SQLite DB. |
+| Gateway / RPC / WS clients | **Authenticated** | mTLS and/or scoped, constant-time bearer tokens. No human passwords — identity is cryptographic. |
+| LLM agent + model provider | **Semi-trusted** | Output and tool requests are constrained, classified, and filtered. |
+| Tools / skills | **Confined** | Kernel sandbox with broker-mediated egress; risk-classified. |
+| External content | **Untrusted** | Wrapped as data before reaching a prompt; never placed in the system role. |
+| Other agents in the fleet | **Mutually isolated** | Per-agent scoped secrets, config, workspace, and budgets. |
+
+## What Comis defends against
+
+| Threat | Primary control(s) |
+| --- | --- |
+| Prompt-injection to tool/shell abuse | Kernel sandbox, action classification (destructive requires confirmation), broker-only egress, output scanning |
+| Secret exfiltration | No-enumeration `SecretManager`, the credential broker (agent holds only a placeholder), Pino redaction, output guard, memory-write validation |
+| Unauthorized gateway/RPC access | mTLS + scoped, `timingSafeEqual` tokens; loopback-by-default bind |
+| SSRF from web tools | `validateUrl()` (blocks private/loopback/link-local + cloud-metadata ranges) plus kernel broker-only egress |
+| Memory poisoning | `validateMemoryWrite()` (block / downgrade-to-`external` / store) and trust-ranked recall |
+| Malicious or vulnerable MCP servers | OSV pre-spawn scan, sandboxed spawn, circuit breakers; default-deny MCP server endpoint |
+| Supply-chain tampering | Exact-pinned deps, bundled private packages, sigstore provenance, `pnpm audit`, CodeQL |
+| Path traversal / symlink escape | `safePath()` (raw `path.join` is ESLint-banned) |
+
+## What Comis does not defend against
+
+<Warning>
+  Stated plainly, in the spirit of an honest threat model.
+</Warning>
+
+- **A compromised host or malicious operator** — the operator holds the master key, config, and DB.
+- **Full kernel sandboxing on non-Linux hosts** — `bwrap` is Linux-only; macOS uses best-effort `sandbox-exec`; Docker-Desktop/Windows run the exec/terminal tools unsandboxed.
+- **The `exec` tool on a host with no sandbox provider** — it currently fails open.
+- **A fully adversarial model provider** beyond what injection-wrapping and the output guard catch.
+- **Brokering OAuth / subscription-token CLIs** — only header/query API-key and bearer injection is brokered today.
+- **Resource exhaustion / DoS from the operator's own agents** — budgets are a cost aid, not a hard boundary.
+- **Confidentiality of data the operator deliberately routes to third-party providers or chat platforms.**
+- **Physical access, side channels, and compromise of Node.js or the OS itself.**
+
+## Agent action classification
+
+Every agent-driven action is classified by `ActionClassifier`. **Unknown actions default to `destructive` (fail-closed)**, and the registry is locked after bootstrap so a malicious plugin cannot downgrade a classification at runtime.
+
+| Class | Disposition | Examples |
+| --- | --- | --- |
+| `read` | No side effects — auto-approved | `file.read`, `web.fetch`, `memory.search`, `channels.list` |
+| `mutate` | Reversible side effects — logged, auto-approved | `file.write`, `message.send`, `memory.store`, `browser.navigate` |
+| `destructive` | Irreversible / high-risk — **requires confirmation** | `file.delete`, `memory.clear`, `system.exec`, `tokens.revoke`, `agents.delete` |
+
+Confirmation gating is covered in [Approvals](/security/approvals); classified actions are recorded per [Audit Logging](/security/audit).
+
+## Defense in depth
+
+| Layer | Controls |
+| --- | --- |
+| Compile-time / CI | `eslint-plugin-security` + custom rules (ban `eval`, raw `path.join`, direct `process.env`); architecture tests including a secret-residency walker; CodeQL; `pnpm audit --prod` |
+| Runtime | Kernel sandbox + broker-only egress; `ActionClassifier` (fail-closed, locked registry); no-enumeration `SecretManager`; `validateUrl` SSRF guard; output guard + canary tokens; `validateMemoryWrite`; Node `--permission` model |
+| Supply chain | Exact pins, bundled private packages, sigstore provenance, MCP OSV scan |
+
+See [Defense in Depth](/security/defense-in-depth), [Skill Sandboxing](/security/sandbox), [Exec Sandbox](/security/exec-sandbox), and the [Credential Broker](/security/credential-broker).
+
+## Known limitations
+
+Severity is the impact *if* the precondition is met.
+
+| Gap | Severity | Status / mitigation |
+| --- | --- | --- |
+| Kernel sandbox is Linux-only | High (non-Linux) | Linux is the supported production target; treat tool execution as unconfined elsewhere |
+| `exec` tool fails open when no sandbox provider is present | High (misconfigured host) | Tracked; defense-in-depth (command firewall, secret scrubber, `SecretManager`) still applies |
+| Credential broker does not broker OAuth / subscription CLIs | Medium | Only header/query API-key + bearer injection today |
+| DNS-rebinding TOCTOU window in `validateUrl` | Low–Medium | Broker-only egress eliminates it for sandboxed tools |
+| File-size governance debt | Low | Tracked via the shrink-only `fileSizeAllowlist` |
+
+Self-reported benchmark figures (memory accuracy, cache savings) are self-authored, small-N, and LLM-judged — directional, not independent guarantees.
+
+## Reporting a vulnerability
+
+Do **not** open public issues for vulnerabilities. Use the private reporting channel and follow the coordinated-disclosure process documented in [`SECURITY.md`](https://github.com/comisai/comis/blob/main/SECURITY.md).

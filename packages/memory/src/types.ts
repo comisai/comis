@@ -50,6 +50,9 @@ export interface MemoryRow {
   updated_at: number | null;
   /** Unix timestamp in milliseconds, null if no expiry */
   expires_at: number | null;
+  /** Always-inject pin marker. 0 = not pinned, 1 = pinned.
+   *  NOT NULL DEFAULT 0 after ensurePinnedColumn() runs. */
+  pinned: number;
   /** 0 or 1 -- whether vec_memories has an embedding for this entry */
   has_embedding: number;
 }

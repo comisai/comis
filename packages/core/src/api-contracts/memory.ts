@@ -69,6 +69,24 @@ import { defineContract } from "./types.js";
 // MEMORY_CONTRACTS below (the `export { ... } from` re-export further down is
 // type/barrel-only and does not create a usable local value binding).
 import { MEMORY_DIAGNOSTIC_CONTRACTS } from "./memory-diagnostics.js";
+// Portability contracts extracted to keep this file within the 800-line cap.
+export {
+  MemoryPortabilityExportContract,
+  MemoryPortabilityImportContract,
+  MEMORY_PORTABILITY_CONTRACTS,
+} from "./memory-portability.js";
+// Only the array is needed as a local value (spread into MEMORY_CONTRACTS below);
+// the two contract objects are re-exported via the `export { ... } from` above.
+import { MEMORY_PORTABILITY_CONTRACTS } from "./memory-portability.js";
+
+// Pinning contracts extracted to memory-pinning.ts (file-size cap §4.1).
+// @contract-deferred-handler annotations removed in plan 03-03 (same diff as handler creation).
+export {
+  MemoryPinContract,
+  MemoryUnpinContract,
+  MEMORY_PINNING_CONTRACTS,
+} from "./memory-pinning.js";
+import { MEMORY_PINNING_CONTRACTS } from "./memory-pinning.js";
 
 // ===========================================================================
 // --- memory-handlers.ts ---
@@ -463,6 +481,10 @@ export const MEMORY_CONTRACTS = [
   MemoryDeleteContract,
   MemoryFlushContract,
   MemoryExportContract,
+  // Portability contracts extracted to memory-portability.ts.
+  ...MEMORY_PORTABILITY_CONTRACTS,
+  // Pinning contracts extracted to memory-pinning.ts.
+  ...MEMORY_PINNING_CONTRACTS,
   // --- memory-handlers.ts (diagnostic surface) ---
   ...MEMORY_DIAGNOSTIC_CONTRACTS,
   // NOTE: the 7 context.* contracts (context-handlers.ts) were removed in v2.12

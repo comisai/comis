@@ -411,11 +411,13 @@ describe("no-backward-compat", () => {
     ).toEqual([]);
   });
 
-  it("cli/src/index.ts public value exports are exactly { withClient, credentialsStep }", () => {
+  it("cli/src/index.ts public value exports are exactly { withClient, callTyped, credentialsStep }", () => {
     const cliIndexAbs = resolve(PACKAGES_ROOT, "cli/src/index.ts");
     const text = readFileSync(cliIndexAbs, "utf8");
     const lines = text.split(/\r?\n/);
-    const allowedValueExports = new Set(["withClient", "credentialsStep"]);
+    // callTyped added in phase-02-plan-03: integration tests import it from @comis/cli
+    // to drive round-trip RPC assertions (daemon-harness pattern).
+    const allowedValueExports = new Set(["withClient", "callTyped", "credentialsStep"]);
     const violations: ViolationCitation[] = [];
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? "";
@@ -448,7 +450,7 @@ describe("no-backward-compat", () => {
       violations,
       formatViolations({
         description:
-          "cli/src/index.ts public value exports must be exactly { withClient, credentialsStep } (plus any number of signature-required type re-exports). This surface was narrowed deliberately.",
+          "cli/src/index.ts public value exports must be exactly { withClient, callTyped, credentialsStep } (plus any number of signature-required type re-exports). This surface was narrowed deliberately.",
         violations,
         suggestedFix:
           "Remove the unexpected export. If the symbol is needed by the CLI bin entry point (cli.ts), import it directly from ./commands/X.js or ./output/X.js — those modules remain importable, but are NOT part of the documented @comis/cli external API.",

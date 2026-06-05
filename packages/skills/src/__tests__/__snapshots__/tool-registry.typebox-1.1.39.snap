@@ -1569,12 +1569,24 @@
             {
               "const": "export",
               "type": "string"
+            },
+            {
+              "const": "pin",
+              "type": "string"
+            },
+            {
+              "const": "unpin",
+              "type": "string"
             }
           ],
-          "description": "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), flush (clear all entries for scope), export (full JSON export)"
+          "description": "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), flush (clear all entries for scope), export (full JSON export), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)"
         },
         "agent_id": {
           "description": "Agent ID scope for filtering",
+          "type": "string"
+        },
+        "id": {
+          "description": "Memory entry ID (required for pin/unpin actions)",
           "type": "string"
         },
         "ids": {

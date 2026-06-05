@@ -33,6 +33,8 @@ registerActivityLabelSpec("memory_manage", {
     delete: { label: "deleting memory entries" },
     flush: { label: "flushing memory" },
     export: { label: "exporting memory" },
+    pin:   { label: "pinning memory entry" },
+    unpin: { label: "unpinning memory entry" },
   },
 });
 
@@ -48,8 +50,10 @@ const MemoryManageToolParams = Type.Object({
       Type.Literal("delete"),
       Type.Literal("flush"),
       Type.Literal("export"),
+      Type.Literal("pin"),
+      Type.Literal("unpin"),
     ],
-    { description: "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), flush (clear all entries for scope), export (full JSON export)" },
+    { description: "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), flush (clear all entries for scope), export (full JSON export), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)" },
   ),
   tenant_id: Type.Optional(
     Type.String({
@@ -100,18 +104,23 @@ const MemoryManageToolParams = Type.Object({
       description: "Filter by tags (entries must have all specified tags)",
     }),
   ),
+  id: Type.Optional(
+    Type.String({
+      description: "Memory entry ID (required for pin/unpin actions)",
+    }),
+  ),
 });
 
 type MemoryManageToolParamsType = Static<typeof MemoryManageToolParams>;
 
-const VALID_ACTIONS = ["stats", "browse", "delete", "flush", "export"] as const;
+const VALID_ACTIONS = ["stats", "browse", "delete", "flush", "export", "pin", "unpin"] as const;
 
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
 /**
- * Create a memory management tool with 5 actions.
+ * Create a memory management tool with 7 actions.
  *
  * Actions:
  * - **stats** -- Get memory statistics (DB size, entry counts, FTS health)
@@ -119,6 +128,8 @@ const VALID_ACTIONS = ["stats", "browse", "delete", "flush", "export"] as const;
  * - **delete** -- Delete specific memory entries by ID array (requires approval)
  * - **flush** -- Flush all memory entries for a scope (requires approval)
  * - **export** -- Export full memory entries as JSON
+ * - **pin** -- Mark a memory entry as always-injected in recall (requires id)
+ * - **unpin** -- Remove the always-inject mark from a memory entry (requires id)
  *
  * @param rpcCall - RPC call function for delegating to the daemon backend
  * @param approvalGate - Optional approval gate for delete/flush actions
@@ -134,7 +145,7 @@ export function createMemoryManageTool(
     name: "memory_manage",
     label: "Memory Management",
     description:
-      "Admin memory CRUD: stats, browse, delete, flush, export. Delete/flush require approval.",
+      "Admin memory CRUD: stats, browse, delete, flush, export, pin, unpin. Delete/flush require approval. Pin/unpin require id.",
     parameters: MemoryManageToolParams,
 
     async execute(
@@ -235,6 +246,32 @@ export function createMemoryManageTool(
             const result = await rpcCall("memory.export", {
               offset: p.offset,
               limit: p.limit,
+              tenant_id: p.tenant_id,
+              agent_id: p.agent_id,
+              _trustLevel,
+            });
+            return jsonResult(result);
+          }
+
+          case "pin": {
+            if (!p.id || typeof p.id !== "string") {
+              throwToolError("missing_param", "id is required for pin action");
+            }
+            const result = await rpcCall("memory.pin", {
+              id: p.id as string,
+              tenant_id: p.tenant_id,
+              agent_id: p.agent_id,
+              _trustLevel,
+            });
+            return jsonResult(result);
+          }
+
+          case "unpin": {
+            if (!p.id || typeof p.id !== "string") {
+              throwToolError("missing_param", "id is required for unpin action");
+            }
+            const result = await rpcCall("memory.unpin", {
+              id: p.id as string,
               tenant_id: p.tenant_id,
               agent_id: p.agent_id,
               _trustLevel,
