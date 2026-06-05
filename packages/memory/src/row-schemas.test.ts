@@ -39,6 +39,7 @@ import type {
   LcdMessagePartRow,
   LcdSummaryRow,
   LcdSummaryMessageRow,
+  LcdSummaryParentRow,
   LcdContextItemRow,
 } from "./types.js";
 import type { SessionData, SessionListEntry, SessionDetailedEntry } from "@comis/core";
@@ -78,6 +79,7 @@ import {
   LcdMessagePartRowSchema,
   LcdSummaryRowSchema,
   LcdSummaryMessageRowSchema,
+  LcdSummaryParentRowSchema,
   LcdContextItemRowSchema,
 } from "./row-schemas.js";
 
@@ -121,6 +123,10 @@ describe("row-schemas — type-equality with paired interfaces", () => {
 
   it("LcdSummaryMessageRowSchema z.infer matches LcdSummaryMessageRow interface from types.ts", () => {
     expectTypeOf<z.infer<typeof LcdSummaryMessageRowSchema>>().toEqualTypeOf<LcdSummaryMessageRow>();
+  });
+
+  it("LcdSummaryParentRowSchema z.infer matches LcdSummaryParentRow interface from types.ts", () => {
+    expectTypeOf<z.infer<typeof LcdSummaryParentRowSchema>>().toEqualTypeOf<LcdSummaryParentRow>();
   });
 
   it("LcdContextItemRowSchema z.infer matches LcdContextItemRow interface from types.ts", () => {
@@ -870,6 +876,25 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
       LcdSummaryMessageRowSchema.safeParse({
         summary_id: "sum-1",
         message_id: "msg-1",
+        rogue: "x",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("LcdSummaryParentRowSchema parses the condensed→child link row", () => {
+    expect(
+      LcdSummaryParentRowSchema.safeParse({
+        parent_summary_id: "cond-1",
+        child_summary_id: "leaf-1",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("LcdSummaryParentRowSchema rejects an unexpected extra column (z.strictObject keeps the edge minimal)", () => {
+    expect(
+      LcdSummaryParentRowSchema.safeParse({
+        parent_summary_id: "cond-1",
+        child_summary_id: "leaf-1",
         rogue: "x",
       }).success,
     ).toBe(false);

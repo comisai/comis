@@ -295,12 +295,13 @@ describe("initSchema", () => {
     expect(() => ensureLcdTables(db)).not.toThrow();
     expect(() => ensureLcdTables(db)).not.toThrow();
 
-    // The five LCD tables: lcd_messages + lcd_message_parts (Phase 127) plus the
-    // three Phase-129 compaction tables (summaries / summary_messages / context_items).
+    // The six LCD tables: lcd_messages + lcd_message_parts (Phase 127), the
+    // three Phase-129 compaction tables (summaries / summary_messages /
+    // context_items), plus the Phase-130 lcd_summary_parents condensed→child edge.
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lcd_%'")
       .all() as Array<{ name: string }>;
-    expect(tables).toHaveLength(5);
+    expect(tables).toHaveLength(6);
   });
 
   it("deleting an lcd_messages row cascades to its lcd_message_parts (ON DELETE CASCADE)", () => {
@@ -352,6 +353,7 @@ describe("initSchema", () => {
 
     expect(names).toContain("lcd_summaries");
     expect(names).toContain("lcd_summary_messages");
+    expect(names).toContain("lcd_summary_parents");
     expect(names).toContain("lcd_context_items");
   });
 
@@ -381,25 +383,35 @@ describe("initSchema", () => {
     expect(colNames).toContain("created_at");
   });
 
-  it("lcd_summaries.kind CHECK rejects a non-leaf kind (closed union; condensed kinds = Phase 130)", () => {
+  it("lcd_summaries.kind CHECK accepts leaf + condensed and rejects an out-of-union kind (Phase 130 widened closed union)", () => {
     initSchema(db, 1536);
 
+    // An out-of-union kind is still rejected (the constraint is not removed).
     const insertBadKind = () =>
       db
         .prepare(
           "INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .run("s_bad", "conv-1", "t1", "a1", "sess-1", "condensed", 1, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
+        .run("s_bad", "conv-1", "t1", "a1", "sess-1", "bogus", 1, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
     expect(insertBadKind).toThrow(/CHECK constraint/i);
 
-    // A leaf kind still inserts (the constraint is not over-broad).
-    const insertGoodKind = () =>
+    // A leaf kind inserts.
+    const insertLeaf = () =>
       db
         .prepare(
           "INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .run("s_ok", "conv-1", "t1", "a1", "sess-1", "leaf", 0, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
-    expect(insertGoodKind).not.toThrow();
+        .run("s_leaf", "conv-1", "t1", "a1", "sess-1", "leaf", 0, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
+    expect(insertLeaf).not.toThrow();
+
+    // A condensed kind now ALSO inserts (Phase 130 widened the union).
+    const insertCondensed = () =>
+      db
+        .prepare(
+          "INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("s_cond", "conv-1", "t1", "a1", "sess-1", "condensed", 1, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
+    expect(insertCondensed).not.toThrow();
   });
 
   it("lcd_summary_messages.message_id FK is ON DELETE RESTRICT (losslessness — a summarized message cannot be deleted)", () => {
@@ -469,6 +481,54 @@ describe("initSchema", () => {
     // ...but the message row survives (losslessness — never deleted).
     expect(
       (db.prepare("SELECT COUNT(*) AS c FROM lcd_messages").get() as { c: number }).c,
+    ).toBe(1);
+  });
+
+  it("lcd_summary_parents.child_summary_id FK is ON DELETE RESTRICT (losslessness — a condensed child cannot be deleted)", () => {
+    initSchema(db, 1536);
+
+    const fks = db.prepare("PRAGMA foreign_key_list(lcd_summary_parents)").all() as Array<{
+      table: string;
+      from: string;
+      to: string;
+      on_delete: string;
+    }>;
+    const childFk = fks.find((fk) => fk.from === "child_summary_id");
+    expect(childFk).toBeDefined();
+    expect(childFk!.table).toBe("lcd_summaries");
+    expect(childFk!.on_delete).toBe("RESTRICT");
+
+    // The parent FK cascades (deleting the condensed parent drops its edges).
+    const parentFk = fks.find((fk) => fk.from === "parent_summary_id");
+    expect(parentFk).toBeDefined();
+    expect(parentFk!.on_delete).toBe("CASCADE");
+  });
+
+  it("lcd_summary_parents RESTRICT blocks deleting a child lcd_summaries row that a condensed summary covers", () => {
+    initSchema(db, 1536);
+    db.pragma("foreign_keys = ON"); // production sets this via openSqliteDatabase
+
+    db.prepare(
+      `INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+       VALUES ('leaf-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 'leaf', 0, 1, 2, 1, 10, 'leaf', '[]', 0, 0, 1700000000000)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+       VALUES ('cond-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 'condensed', 1, 1, 2, 1, 12, 'cond', '[]', 0, 0, 1700000001000)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO lcd_summary_parents (parent_summary_id, child_summary_id) VALUES ('cond-1', 'leaf-1')`,
+    ).run();
+
+    // The child summary is referenced by a condensed parent → RESTRICT throws.
+    expect(() => db.prepare("DELETE FROM lcd_summaries WHERE summary_id = 'leaf-1'").run()).toThrow(
+      /FOREIGN KEY constraint/i,
+    );
+    // The child row is still present (losslessness preserved).
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM lcd_summaries WHERE summary_id = 'leaf-1'").get() as {
+        c: number;
+      }).c,
     ).toBe(1);
   });
 

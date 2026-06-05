@@ -10,6 +10,7 @@
  * then read back through SQLite round-trips losslessly.
  */
 import {
+  type AppendCondensedSummaryInput,
   type AppendMessageInput,
   type AppendSummaryInput,
   type ContextStoreScope,
@@ -701,5 +702,246 @@ describe("createLcdStore — appendLeafSummary + getContextItems (C3)", () => {
     store.getContextItems("conv-a");
     const input: AppendSummaryInput = summaryInput(0, 0);
     expect(() => store.appendLeafSummary(input)).not.toThrow();
+  });
+});
+
+// =====================================================================
+// createLcdStore — appendCondensedSummary (Phase 130, C2 condensed tier)
+//
+// The depth>0 condensation tier: a CONDENSED summary links its CHILD
+// SUMMARIES (via lcd_summary_parents, NOT lcd_summary_messages) and
+// range-replaces the contiguous run of SUMMARY-refs it covers with one
+// condensed summary-ref — keeping ordinals dense, gap-free and ordered. The
+// store recomputes descendantCount = Σ child.descendantCount and the
+// time-range = min/max of the children (the store is the authority); the
+// agent supplies depth/taint/fallback/tokenCount/content. The green 129
+// appendLeafSummary leaf path is unchanged (Test D).
+// =====================================================================
+
+describe("createLcdStore — appendCondensedSummary (C2 condensed tier)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createLcdStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON"); // production sets this via openSqliteDatabase
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Append N plain user text messages (seq 0..N-1) at distinct createdAt. */
+  function seedMessages(count: number, scope: ContextStoreScope = SCOPE_A): void {
+    for (let i = 0; i < count; i++) {
+      store.append({
+        scope,
+        seq: i,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 1000 + i * 10,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `m${i}` }, rawType: "text" } }],
+      });
+    }
+  }
+
+  /** A minimal valid AppendSummaryInput (leaf) over [start,end]. */
+  function leafInput(
+    startOrdinal: number,
+    endOrdinal: number,
+    overrides: Partial<AppendSummaryInput> = {},
+  ): AppendSummaryInput {
+    return {
+      scope: SCOPE_A,
+      tokenCount: 5,
+      content: "leaf summary text",
+      descendantCount: 0,
+      earliestAt: 0,
+      latestAt: 0,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9999,
+      startOrdinal,
+      endOrdinal,
+      ...overrides,
+    };
+  }
+
+  /** A minimal valid AppendCondensedSummaryInput over [start,end] linking childSummaryIds. */
+  function condensedInput(
+    childSummaryIds: string[],
+    startOrdinal: number,
+    endOrdinal: number,
+    overrides: Partial<AppendCondensedSummaryInput> = {},
+  ): AppendCondensedSummaryInput {
+    return {
+      scope: SCOPE_A,
+      tokenCount: 9,
+      content: "condensed summary text",
+      descendantCount: 0, // advisory — the store recomputes from the children
+      earliestAt: 0, // advisory
+      latestAt: 0, // advisory
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 5555,
+      startOrdinal,
+      endOrdinal,
+      childSummaryIds,
+      depth: 1,
+      ...overrides,
+    };
+  }
+
+  /**
+   * Seed two CONTIGUOUS depth-0 leaf summary-refs at ordinals [0,1] by
+   * appending two leaf summaries over disjoint message runs. After this the
+   * context_items view is [summary(leaf0, ord0), summary(leaf1, ord1)]. Returns
+   * the two leaf summaryIds.
+   */
+  function seedTwoContiguousLeaves(): { leaf0: string; leaf1: string } {
+    seedMessages(4); // m0..m3, createdAt 1000,1010,1020,1030 → ordinals 0..3
+    store.getContextItems("conv-a"); // seed the view
+    // Collapse [0,1] (m0,m1) → leaf0 at ord 0; view now [leaf0, m2, m3].
+    const leaf0 = store.appendLeafSummary(leafInput(0, 1));
+    // Collapse [1,2] (m2,m3) → leaf1 at ord 1; view now [leaf0, leaf1].
+    const leaf1 = store.appendLeafSummary(leafInput(1, 2));
+    return { leaf0, leaf1 };
+  }
+
+  // ── Test A: condensed round-trip through getSummaries + context_items ──
+  it("appendCondensedSummary persists a depth-1 condensed summary that round-trips through getSummaries with recomputed descendantCount + time-range", () => {
+    const { leaf0, leaf1 } = seedTwoContiguousLeaves();
+
+    // The two contiguous leaf summary-refs occupy ordinals [0,1].
+    const itemsBefore = store.getContextItems("conv-a");
+    expect(itemsBefore).toHaveLength(2);
+    expect(itemsBefore.every((i) => i.refKind === "summary")).toBe(true);
+
+    // Read the children so we can assert the store's recompute.
+    const before = store.getSummaries("conv-a");
+    const child0 = before.find((s) => s.summaryId === leaf0)!;
+    const child1 = before.find((s) => s.summaryId === leaf1)!;
+
+    const condensedId = store.appendCondensedSummary(
+      condensedInput([leaf0, leaf1], 0, 1, { depth: 1 }),
+    );
+
+    // The condensed summary round-trips through getSummaries with kind/depth.
+    const after = store.getSummaries("conv-a");
+    const condensed = after.find((s) => s.summaryId === condensedId);
+    expect(condensed).toBeDefined();
+    expect(condensed!.kind).toBe("condensed");
+    expect(condensed!.depth).toBe(1);
+    // descendantCount = Σ child.descendantCount (store recomputes, advisory input ignored).
+    expect(condensed!.descendantCount).toBe(child0.descendantCount + child1.descendantCount);
+    // time-range = min/max of the children (store recomputes).
+    expect(condensed!.earliestAt).toBe(Math.min(child0.earliestAt, child1.earliestAt));
+    expect(condensed!.latestAt).toBe(Math.max(child0.latestAt, child1.latestAt));
+    // agent-supplied fields persisted verbatim.
+    expect(condensed!.tokenCount).toBe(9);
+    expect(condensed!.content).toBe("condensed summary text");
+
+    // context_items: the two summary-refs are replaced by ONE condensed
+    // summary-ref at startOrdinal; ordinals stay dense/gap-free.
+    const items = store.getContextItems("conv-a");
+    expect(items).toHaveLength(1);
+    expect(items[0]!.ordinal).toBe(0);
+    expect(items[0]!.refKind).toBe("summary");
+    expect(items[0]!.refId).toBe(condensedId);
+  });
+
+  // ── Test B: lcd_summary_parents links exactly the two child ids ──
+  it("appendCondensedSummary links the condensed summary to each child via lcd_summary_parents (exactly the child ids, not messages)", () => {
+    const { leaf0, leaf1 } = seedTwoContiguousLeaves();
+
+    const condensedId = store.appendCondensedSummary(
+      condensedInput([leaf0, leaf1], 0, 1),
+    );
+
+    const linkedChildIds = (
+      db
+        .prepare(
+          "SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ? ORDER BY child_summary_id",
+        )
+        .all(condensedId) as Array<{ child_summary_id: string }>
+    ).map((r) => r.child_summary_id);
+    expect(linkedChildIds.sort()).toEqual([leaf0, leaf1].sort());
+
+    // The condensed summary linked NO messages (it links children, not messages).
+    const linkedMessageRows = db
+      .prepare("SELECT COUNT(*) AS c FROM lcd_summary_messages WHERE summary_id = ?")
+      .get(condensedId) as { c: number };
+    expect(linkedMessageRows.c).toBe(0);
+  });
+
+  // ── Test C: the widened kind CHECK + z.string() row schema accept condensed ──
+  it("a persisted condensed row is readable through getSummaries — the widened kind CHECK + row schema accept kind='condensed'", () => {
+    const { leaf0, leaf1 } = seedTwoContiguousLeaves();
+
+    const condensedId = store.appendCondensedSummary(
+      condensedInput([leaf0, leaf1], 0, 1),
+    );
+
+    // Reading back through getSummaries proves the widened CHECK accepted the
+    // insert AND the z.string() row schema parses kind='condensed' (no drift).
+    const condensed = store.getSummaries("conv-a").find((s) => s.summaryId === condensedId);
+    expect(condensed).toBeDefined();
+    expect(condensed!.kind).toBe("condensed");
+
+    // The raw row carries kind='condensed' on disk.
+    const rawKind = db
+      .prepare("SELECT kind FROM lcd_summaries WHERE summary_id = ?")
+      .get(condensedId) as { kind: string };
+    expect(rawKind.kind).toBe("condensed");
+  });
+
+  // ── Test D: no regression — the leaf path is unchanged ──
+  it("appendLeafSummary still produces a kind='leaf' depth-0 row under the widened union (no regression)", () => {
+    seedMessages(3);
+    store.getContextItems("conv-a");
+
+    const leafId = store.appendLeafSummary(leafInput(0, 1));
+
+    const leaf = store.getSummaries("conv-a").find((s) => s.summaryId === leafId);
+    expect(leaf).toBeDefined();
+    expect(leaf!.kind).toBe("leaf");
+    expect(leaf!.depth).toBe(0);
+  });
+
+  // ── Boundary: a condensed summary is itself a `summary`-ref (single-child run) ──
+  it("appendCondensedSummary collapsing a single-summary range [k,k] replaces exactly that one summary-ref", () => {
+    const { leaf0, leaf1 } = seedTwoContiguousLeaves(); // view [leaf0, leaf1] at ord 0,1
+
+    // Condense just leaf1 at ordinal 1.
+    const condensedId = store.appendCondensedSummary(
+      condensedInput([leaf1], 1, 1, { depth: 1 }),
+    );
+
+    const items = store.getContextItems("conv-a");
+    expect(items).toHaveLength(2); // [leaf0, condensed]
+    expect(items.map((i) => i.ordinal)).toEqual([0, 1]);
+    expect(items[0]!.refId).toBe(leaf0);
+    expect(items[1]!.refKind).toBe("summary");
+    expect(items[1]!.refId).toBe(condensedId);
+  });
+
+  // ── Losslessness: a condensed pass NEVER deletes the child summary rows ──
+  it("appendCondensedSummary NEVER deletes the child lcd_summaries rows — the children survive (losslessness ledger)", () => {
+    const { leaf0, leaf1 } = seedTwoContiguousLeaves();
+    expect(store.getSummaries("conv-a")).toHaveLength(2);
+
+    store.appendCondensedSummary(condensedInput([leaf0, leaf1], 0, 1));
+
+    // Both children + the new condensed summary are all present (3 total).
+    const summaries = store.getSummaries("conv-a");
+    expect(summaries).toHaveLength(3);
+    expect(summaries.some((s) => s.summaryId === leaf0)).toBe(true);
+    expect(summaries.some((s) => s.summaryId === leaf1)).toBe(true);
+  });
+
+  it("AppendCondensedSummaryInput type is the C2 condensation write-path contract", () => {
+    const { leaf0, leaf1 } = seedTwoContiguousLeaves();
+    const input: AppendCondensedSummaryInput = condensedInput([leaf0, leaf1], 0, 1);
+    expect(() => store.appendCondensedSummary(input)).not.toThrow();
   });
 });
