@@ -110,7 +110,7 @@ Message lifecycle, session management, subagent lifecycle, compaction, context e
 | `session:sub_agent_lifecycle_ended` | runId, agentId, parentSessionKey, endReason, durationMs, tokensUsed, cost, condensationLevel, timestamp |
 
 The `context:*` events provide per-turn observability into context engine decisions:
-- **`context:evicted`** fires when the dead content evictor removes superseded tool results (pipeline mode).
+- **`context:evicted`** fires when context history is dropped to fit the token budget — in pipeline mode when the dead content evictor removes superseded tool results, and in DAG mode when the LCD assembler evicts older history under budget (`categories.lcd_history` carries the dropped count). Counts and ids only; never message content.
 - **`context:reread`** fires when the re-read detector identifies duplicate tool calls in the session (pipeline mode).
 - **`context:pipeline`** fires after every pipeline run with a full metrics snapshot (pipeline mode). This is always emitted, even when no optimization was needed.
 - **`context:pipeline:cache`** fires post-LLM to patch cache-specific metrics (cache hit/write/miss tokens) once the API response is available.
