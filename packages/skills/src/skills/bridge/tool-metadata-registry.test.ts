@@ -40,12 +40,36 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 // ===========================================================================
 
 describe("tool-metadata-registry -- registry count", () => {
-  it("registers exactly 56 unique tools (registry count assertion)", () => {
-    // 56 = 47 prior tools + the nine terminal_session_* names registered
-    // never-export. 47 = 51 − the 4 ctx_* DAG read tools deleted in Phase 126
-    // (DAG demolition); the governed expansion surface is rebuilt in Phase 131.
+  it("registers exactly 59 unique tools (registry count assertion)", () => {
+    // 59 = 56 prior + the 3 ctx_* in-session expansion tools (ctx_search /
+    // ctx_inspect / ctx_expand) rebuilt in Phase 131 (E1/E2). The 4 OLD ctx_*
+    // DAG read tools were deleted in Phase 126; these 3 are the governed TOOL
+    // surface over the LCD store.
     const all = getAllToolMetadata();
-    expect(all.size).toBe(56);
+    expect(all.size).toBe(59);
+  });
+});
+
+// ===========================================================================
+// Context expansion — all three ctx_* tools never-export + read-only (E2)
+// ===========================================================================
+
+describe("tool-metadata-registry -- context expansion governance", () => {
+  // The three in-session expansion tools (Phase 131, E1/E2). All MUST be
+  // never-export: they live inside Comis's trust boundary over the LCD store
+  // and must never reach the MCP-exported set. They only READ the store, so
+  // they are also isReadOnly. The mcp-export-policy.test.ts AST gate
+  // additionally requires every registered name to carry an explicit policy.
+  const CTX_TOOLS = ["ctx_search", "ctx_inspect", "ctx_expand"] as const;
+
+  it.each(CTX_TOOLS)("%s resolves to mcpExportPolicy 'never-export'", (name) => {
+    const meta = getToolMetadata(name);
+    expect(meta, `${name} must be registered`).toBeDefined();
+    expect(meta!.mcpExportPolicy).toBe("never-export");
+  });
+
+  it.each(CTX_TOOLS)("%s resolves to isReadOnly true", (name) => {
+    expect(getToolMetadata(name)!.isReadOnly).toBe(true);
   });
 });
 

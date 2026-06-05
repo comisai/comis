@@ -93,6 +93,12 @@ export function registerAllToolMetadata(): void {
 
   registerToolMetadata("discover_tools", { isReadOnly: true });
 
+  // Context expansion (3) — in-session lossless-store recovery (E1/E2). They
+  // only READ the LCD store, so they are read-only (parallel-execution safe).
+  registerToolMetadata("ctx_search",  { isReadOnly: true });
+  registerToolMetadata("ctx_inspect", { isReadOnly: true });
+  registerToolMetadata("ctx_expand",  { isReadOnly: true });
+
   // --- Mutating tools (25) ---
   registerToolMetadata("edit",        { isReadOnly: false });
   registerToolMetadata("write",       { isReadOnly: false });
@@ -686,6 +692,11 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("terminal_session_status",    { mcpExportPolicy: "never-export" });
   registerToolMetadata("terminal_session_resize",    { mcpExportPolicy: "never-export" });
   registerToolMetadata("terminal_session_kill",      { mcpExportPolicy: "never-export" });
+  // Context expansion (3) — never-export; in-session lossless-store recovery (E1/E2),
+  // NOT an MCP-exported surface and DISTINCT from cross-session recall.
+  registerToolMetadata("ctx_search",  { mcpExportPolicy: "never-export" });
+  registerToolMetadata("ctx_inspect", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("ctx_expand",  { mcpExportPolicy: "never-export" });
 
   // =========================================================================
   // Failure Detectors (§16.10/§16.11)
