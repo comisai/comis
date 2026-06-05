@@ -173,4 +173,102 @@ describe("CredentialRegistry — key-to-category mapping (XAI_API_KEY + JINA_API
     expect(registry.getSkipVerdict("LLM(anthropic)")).toBeNull();
     expect(registry.getSkipVerdict("CACHE(Anthropic)")).toBeNull();
   });
+
+  it("ANTHROPIC_API_KEY present → vision(anthropic) unlocked (CR-02)", () => {
+    process.env["ANTHROPIC_API_KEY"] = "test-key";
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("vision(anthropic)")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CR-01: keyless categories — always runnable regardless of credentials
+// ---------------------------------------------------------------------------
+
+describe("buildCredentialRegistry — keyless categories (CR-01)", () => {
+  let saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    saved = {
+      ANTHROPIC_API_KEY: process.env["ANTHROPIC_API_KEY"],
+      OPENAI_API_KEY: process.env["OPENAI_API_KEY"],
+      SEARCH_API_KEY: process.env["SEARCH_API_KEY"],
+    };
+    // Remove all credentials so we verify keyless categories work without any key
+    delete process.env["ANTHROPIC_API_KEY"];
+    delete process.env["OPENAI_API_KEY"];
+    delete process.env["SEARCH_API_KEY"];
+  });
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) {
+        delete process.env[k];
+      } else {
+        process.env[k] = v;
+      }
+    }
+  });
+
+  it("TTS(edge) returns null (runnable) even with no credentials", () => {
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("TTS(edge)")).toBeNull();
+  });
+
+  it("search(duckduckgo) returns null (runnable) even with no credentials", () => {
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("search(duckduckgo)")).toBeNull();
+  });
+
+  it("search(searxng) returns null (runnable) even with no credentials", () => {
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("search(searxng)")).toBeNull();
+  });
+
+  it("mcp.transport=stdio returns null (runnable) even with no credentials", () => {
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("mcp.transport=stdio")).toBeNull();
+  });
+
+  it("channel-echo returns null (runnable) even with no credentials", () => {
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("channel-echo")).toBeNull();
+  });
+
+  it("absent-keyed category (e.g. LLM(anthropic)) still returns SKIPPED(no-creds) without key", () => {
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("LLM(anthropic)")).toBe("SKIPPED(no-creds)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-02: canonical Brave env var is SEARCH_API_KEY (not BRAVE_API_KEY)
+// ---------------------------------------------------------------------------
+
+describe("buildCredentialRegistry — SEARCH_API_KEY unlocks search(brave) (WR-02)", () => {
+  let savedSearchKey: string | undefined;
+
+  beforeEach(() => {
+    savedSearchKey = process.env["SEARCH_API_KEY"];
+  });
+
+  afterEach(() => {
+    if (savedSearchKey === undefined) {
+      delete process.env["SEARCH_API_KEY"];
+    } else {
+      process.env["SEARCH_API_KEY"] = savedSearchKey;
+    }
+  });
+
+  it("SEARCH_API_KEY present → search(brave) returns null (runnable)", () => {
+    process.env["SEARCH_API_KEY"] = "BSAtest-key";
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("search(brave)")).toBeNull();
+  });
+
+  it("SEARCH_API_KEY absent → search(brave) returns SKIPPED(no-creds)", () => {
+    delete process.env["SEARCH_API_KEY"];
+    const registry = buildCredentialRegistry();
+    expect(registry.getSkipVerdict("search(brave)")).toBe("SKIPPED(no-creds)");
+  });
 });

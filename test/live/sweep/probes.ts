@@ -377,7 +377,7 @@ registerProbe({
   run: (registry, _governor) =>
     runProbe("TTS(edge)", registry, async () => {
       // Edge TTS is keyless — verify the module can be imported (module-import probe)
-      // category "TTS(edge)" is not credential-gated; registry will return null
+      // category "TTS(edge)" is in KEYLESS_CATEGORIES; getSkipVerdict returns null (runnable)
       await import("@comis/channels");
     }),
 });
@@ -545,7 +545,8 @@ registerProbe({
   costTier: "cent",
   run: (registry, _governor) =>
     runProbe("search(brave)", registry, async () => {
-      const key = process.env["BRAVE_API_KEY"];
+      // WR-02: canonical env var is SEARCH_API_KEY (matches wizard types.ts + docs)
+      const key = process.env["SEARCH_API_KEY"];
       const res = await fetch("https://api.search.brave.com/res/v1/web/search?q=test&count=1", {
         headers: { "X-Subscription-Token": key ?? "", Accept: "application/json" },
         signal: AbortSignal.timeout(10_000),

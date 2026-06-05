@@ -41,20 +41,33 @@ export type Capability = "vision" | "tools" | "structured-output" | "thinking";
  * All 13 documented API keys listed here.
  */
 const KEY_TO_CATEGORIES: Record<string, Category[]> = {
-  ANTHROPIC_API_KEY: ["LLM(anthropic)", "CACHE(Anthropic)"],
+  ANTHROPIC_API_KEY: ["LLM(anthropic)", "CACHE(Anthropic)", "vision(anthropic)"],
   OPENAI_API_KEY: ["LLM(openai)", "STT(openai)", "TTS(openai)", "vision(openai)", "image-gen(openai)", "embedding(openai)"],
   GOOGLE_API_KEY: ["LLM(google)", "CACHE(Gemini)", "vision(google)", "vision-video(google)"],
   GROQ_API_KEY: ["LLM(groq)", "STT(groq)"],
   DEEPGRAM_API_KEY: ["STT(deepgram)"],
   ELEVENLABS_API_KEY: ["TTS(elevenlabs)"],
   FAL_KEY: ["image-gen(fal)"],
-  BRAVE_API_KEY: ["search(brave)"],
+  SEARCH_API_KEY: ["search(brave)"],
   TAVILY_API_KEY: ["search(tavily)"],
   EXA_API_KEY: ["search(exa)"],
   PERPLEXITY_API_KEY: ["search(perplexity)"],
   XAI_API_KEY: ["search(grok)"],
   JINA_API_KEY: ["search(jina)"],
 };
+
+/**
+ * Categories that do not require any API key — these are keyless probes
+ * that must always be runnable regardless of what credentials are present.
+ * T-135-CR01: getSkipVerdict returns null for these before the no-creds fallthrough.
+ */
+const KEYLESS_CATEGORIES = new Set<string>([
+  "TTS(edge)",
+  "search(duckduckgo)",
+  "search(searxng)",
+  "mcp.transport=stdio",
+  "channel-echo",
+]);
 
 /**
  * Per-model capability registry — pinned model snapshot IDs mapped to
@@ -160,6 +173,11 @@ export function buildCredentialRegistry(): CredentialRegistry {
 
       if (categoryOrPlatform === "macos-only") {
         return process.platform !== "darwin" ? "SKIPPED(macos-only)" : null;
+      }
+
+      // Keyless categories: always runnable, no credentials required
+      if (KEYLESS_CATEGORIES.has(categoryOrPlatform)) {
+        return null;
       }
 
       // Category-level check: not in unlockedCategories → SKIPPED(no-creds)
