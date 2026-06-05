@@ -13,6 +13,7 @@ import {
   CORE_TOOLS,
   DEFERRAL_RULES,
   supportsToolSearch,
+  MAX_EMBED_QUERY_CHARS,
 } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult, DeferredToolEntry } from "./tool-deferral.js";
 import type { EmbeddingPort } from "@comis/core";
@@ -895,6 +896,40 @@ describe("discover_tools score-floor filter", () => {
       expect(mockEmbedding.embed).toHaveBeenCalled();
       expect(mockEmbedding.embedBatch).toHaveBeenCalled();
     }
+  });
+
+  it("truncates an oversized query to MAX_EMBED_QUERY_CHARS before calling embed (FIX 4)", async () => {
+    const logger = createMockLogger();
+    // A real local embedding model throws "Input is longer than the context size"
+    // on a ~69K-token query, collapsing vector recall to FTS5-only. The query must
+    // be capped BEFORE the embed call so the semantic re-rank still runs on a
+    // truncated query rather than failing. Capture the text the embed fn receives.
+    let embeddedText: string | undefined;
+    const mockEmbedding: EmbeddingPort = {
+      provider: "mock",
+      dimensions: 4,
+      modelId: "mock-embed",
+      embed: vi.fn().mockImplementation((text: string) => {
+        embeddedText = text;
+        return Promise.resolve({ ok: true, value: [1, 0, 0, 0] });
+      }),
+      embedBatch: vi.fn().mockImplementation((texts: string[]) =>
+        Promise.resolve({ ok: true, value: texts.map(() => [0, 1, 0, 0]) }),
+      ),
+    };
+
+    // The query shares the "tokens" / "billing" tokens with the fixture so BM25
+    // returns a non-empty ranked list (the embed re-rank branch fires), but it is
+    // padded far past the cap to exercise the truncation.
+    const hugeQuery = "billing tokens ".repeat(20_000); // ~300K chars
+    const discoverTool = createDiscoverTool(makeNoiseFixture(), logger, mockEmbedding, undefined, new Set<string>());
+    await discoverTool.execute!("call-cap", { query: hugeQuery });
+
+    expect(mockEmbedding.embed).toHaveBeenCalled();
+    expect(embeddedText).toBeDefined();
+    // The embed fn must never receive the full ~300K-char query.
+    expect((embeddedText as string).length).toBeLessThanOrEqual(MAX_EMBED_QUERY_CHARS);
+    expect((embeddedText as string).length).toBeLessThan(hugeQuery.length);
   });
 });
 

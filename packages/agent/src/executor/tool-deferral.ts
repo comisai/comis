@@ -26,6 +26,21 @@ import type { ModelTier } from "../bootstrap/sections/tooling-sections.js";
 import { LEAN_TOOL_DESCRIPTIONS } from "../bootstrap/sections/tool-descriptions.js";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Hard character cap on the query text fed to `EmbeddingPort.embed` for the
+ * discover_tools semantic re-rank. A very large user message (~69K tokens) used
+ * as the query throws `Input is longer than the context size` in a local
+ * embedding model, collapsing the re-rank to BM25-only. Capping the query keeps
+ * the semantic lane running on a truncated query instead of failing. ~8K chars
+ * ≈ 2K tokens at the conservative 4-chars/token ratio — well inside any
+ * embedding context window while preserving the query's leading signal.
+ */
+export const MAX_EMBED_QUERY_CHARS = 8_000;
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
