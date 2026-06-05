@@ -374,16 +374,17 @@ describe("SqliteMemoryAdapter", () => {
         // Store a memory so search has something to work with
         await adapterWithEmbed.store(makeEntry({ content: "some memory content" }));
 
-        // Create a query longer than the truncation threshold (1536 tokens * 4 chars/token = 6144 chars)
+        // Create a query longer than the truncation threshold (1536 tokens * 3 chars/token = 4608 chars —
+        // the densest-ratio cap so dense queries stay under the 2048-token embedding context).
         const longQuery = "a".repeat(8000);
         const result = await adapterWithEmbed.search(testSessionKey, longQuery);
 
         expect(result.ok).toBe(true);
-        // Verify embed was called with a truncated string (<= 6144 chars)
+        // Verify embed was called with a truncated string at the conservative cap.
         expect(embedSpy).toHaveBeenCalledOnce();
         const passedQuery = embedSpy.mock.calls[0]![0];
-        expect(passedQuery.length).toBeLessThanOrEqual(6144);
-        expect(passedQuery.length).toBe(6144);
+        expect(passedQuery.length).toBeLessThanOrEqual(4608);
+        expect(passedQuery.length).toBe(4608);
       } finally {
         adapterWithEmbed.close();
       }
