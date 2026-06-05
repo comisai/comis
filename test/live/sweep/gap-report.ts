@@ -133,7 +133,12 @@ export function writeGapReport(
   const sha = gitSha ?? getGitSha();
   const report = buildGapReport(result, sha);
   const date = new Date(result.ranAt).toISOString().slice(0, 10);
-  const ledgerDir = resolve(benchmarksDir, `live/${date}-${sha}`);
+  // WR-04: append a millisecond-precision timestamp suffix to the ledger dir
+  // so that same-date same-SHA re-runs produce distinct directories and never
+  // silently overwrite a prior run's artifacts. The ranAt field is already
+  // an ISO string from Date.now(), so it is unique per-run.
+  const ts = new Date(result.ranAt).toISOString().replace(/[:.]/g, "-").replace("Z", "");
+  const ledgerDir = resolve(benchmarksDir, `live/${date}-${sha}-${ts}`);
   mkdirSync(ledgerDir, { recursive: true });
   const json = JSON.stringify(report, null, 2);
   // T-135-10: secret-sweep gate BEFORE writeFileSync — no exception
@@ -164,9 +169,12 @@ export function writeGapReadiness(report: GapReport, outputPath: string): void {
     return `| ${i + 1} | Phase ${p} | ${redCount} |`;
   });
 
-  const verdictRows = report.probeVerdicts.map(
-    (v) => `| ${v.id} | ${v.category} | ${v.status} | ${v.reason ?? ""} |`,
-  );
+  // WR-03: sanitize reason before inserting into Markdown table — pipes and
+  // newlines in API error messages corrupt the table structure.
+  const verdictRows = report.probeVerdicts.map((v) => {
+    const safeReason = (v.reason ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ");
+    return `| ${v.id} | ${v.category} | ${v.status} | ${safeReason} |`;
+  });
 
   const lines = [
     "# Gap Report",

@@ -121,8 +121,9 @@ describe("writeGapReport", () => {
     expect(Array.isArray(parsed.probeVerdicts)).toBe(true);
     expect(Array.isArray(parsed.phaseOrder)).toBe(true);
     expect(typeof parsed.summary).toBe("object");
-    // Ledger dir path must match benchmarks/live/<date>-<sha>/ pattern
-    expect(ledgerDir).toMatch(/live\/\d{4}-\d{2}-\d{2}-abc1234$/);
+    // WR-04: Ledger dir path now includes a timestamp suffix for collision safety
+    // Pattern: benchmarks/live/<date>-<sha>-<ISO-timestamp-safe>
+    expect(ledgerDir).toMatch(/live\/\d{4}-\d{2}-\d{2}-abc1234-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}/);
   });
 
   it("Test 6: writeGapReport throws SECRET LEAK when verdict reason contains a secret-shaped string", () => {
@@ -136,6 +137,24 @@ describe("writeGapReport", () => {
       },
     ]);
     expect(() => writeGapReport(result, tmpDir, "abc1234")).toThrow("SECRET LEAK");
+  });
+
+  it("Test WR-04: two runs with the same SHA produce two distinct ledger directories", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "gap-report-test-"));
+    // Create two SweepResults with different ranAt times to ensure distinct timestamps
+    const result1 = makeSweepResult([{ status: "green" }]);
+    // Slightly later ranAt (1ms later)
+    const result2: SweepResult = {
+      ...result1,
+      ranAt: new Date(new Date(result1.ranAt).getTime() + 1).toISOString(),
+    };
+    const ledgerDir1 = writeGapReport(result1, tmpDir, "samesha1");
+    const ledgerDir2 = writeGapReport(result2, tmpDir, "samesha1");
+    // Must be different directories — second run does not clobber first
+    expect(ledgerDir1).not.toBe(ledgerDir2);
+    // Both gap-report.json files must exist
+    expect(existsSync(join(ledgerDir1, "gap-report.json"))).toBe(true);
+    expect(existsSync(join(ledgerDir2, "gap-report.json"))).toBe(true);
   });
 });
 
@@ -168,5 +187,26 @@ describe("writeGapReadiness", () => {
     expect(content).toContain("Probe Verdicts");
     expect(content).toContain("search-brave");
     expect(content).toContain("stt-openai");
+  });
+
+  it("Test WR-03: pipe characters in reason are escaped to avoid breaking Markdown table", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "gap-report-test-"));
+    const result = makeSweepResult([
+      {
+        id: "search-brave",
+        category: "search(brave)",
+        status: "red",
+        reason: "connection refused | ECONNREFUSED",
+      },
+    ]);
+    const report = buildGapReport(result, "pipe001");
+    const outputPath = join(tmpDir, "gap-readiness.md");
+    writeGapReadiness(report, outputPath);
+
+    const content = readFileSync(outputPath, "utf-8");
+    // The raw pipe in the reason must be backslash-escaped
+    expect(content).toContain("connection refused \\| ECONNREFUSED");
+    // The un-escaped form (bare | between the two reason words) must not appear
+    expect(content).not.toContain("connection refused | ECONNREFUSED");
   });
 });
