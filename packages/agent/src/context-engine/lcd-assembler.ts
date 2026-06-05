@@ -145,12 +145,18 @@ export function createLcdContextEngine(
         (readScope ? store.getSummaries(readScope) : []).map((s) => [s.summaryId, s]),
       );
       const resolved: BudgetItem[] = [];
+      // Parallel to `resolved`: the ref kind of each resolved item, used by the
+      // eviction seam (WR-01) to bound the fresh-tail overlap by the number of
+      // TRAILING message-refs actually present so the evictable-prefix slice can
+      // never cut across a summary boundary regardless of the collapse shape.
+      const resolvedKinds: LcdContextItem["refKind"][] = [];
       let resolvedSummaryCount = 0;
       for (const item of contextItems) {
         const entry = resolveContextItem(item, rowById, summaryById);
         if (entry === undefined) continue; // a dangling ref (drift) is skipped, not fatal
         if (item.refKind === "summary") resolvedSummaryCount++;
         resolved.push(entry);
+        resolvedKinds.push(item.refKind);
       }
       deps.logger.debug(
         {
@@ -190,16 +196,37 @@ export function createLcdContextEngine(
       //
       //    The evictable prefix is the resolved history MINUS the trailing items
       //    the fresh tail already covers. The fresh tail covers `live[tailStart..]`;
-      //    the trailing `overlapCount = max(0, persistedMsgCount − tailStart)`
-      //    resolved items are raw message-refs for those same recent messages
-      //    (summaries only ever collapse the OLDEST run, so the tail of
-      //    `context_items` is always raw). Excluding exactly those is drop-free and
-      //    double-free for BOTH L>H (mid-turn: the store lags the live array by the
-      //    in-flight delta, so `overlapCount` < freshTail.length and the in-flight
-      //    tail rides only via `freshTail` — CR-01) and L<=H (a heal shrank the live
-      //    array — WR-01). Transcript repair (step 6) re-pairs the seam regardless.
+      //    the trailing `rawOverlap = max(0, persistedMsgCount − tailStart)`
+      //    PERSISTED rows are the recent messages the fresh tail re-includes, and
+      //    those map to RAW message-refs at the END of `context_items` (summaries
+      //    collapse the OLDEST run, so the tail of the view is raw).
+      //
+      //    WR-01 robustness: `rawOverlap` is a RAW-message count (`rows.length`),
+      //    while the slice indexes into the COLLAPSED `resolved` view
+      //    (`resolved.length ≤ rows.length` once any leaf/condense pass has run).
+      //    Subtracting `rawOverlap` from `resolved.length` directly is correct ONLY
+      //    under the oldest-run-collapse invariant; if the fresh-tail window reaches
+      //    back further than the trailing raw run (a large `freshTailTurns`, or a
+      //    future non-oldest collapse), `resolved.length − rawOverlap` would slice
+      //    ACROSS the head summary-ref and silently DROP the oldest history. So we
+      //    bound the exclusion by `trailingMessageRefs` — the count of message-refs
+      //    at the END of `resolved`, stopping at the first summary-ref — so the
+      //    evictable-prefix slice can NEVER cut into a summary-ref. Under the normal
+      //    invariant `rawOverlap ≤ trailingMessageRefs`, so this is byte-identical
+      //    to the prior behavior; when the invariant is stressed it degrades to a
+      //    benign double at the seam (transcript repair re-pairs it) rather than a
+      //    silent drop.
+      //
+      //    Drop-free + double-free for BOTH L>H (mid-turn: the store lags the live
+      //    array by the in-flight delta, so the in-flight tail rides only via
+      //    `freshTail` — CR-01) and L<=H (a heal shrank the live array — WR-01).
       const persistedMsgCount = rows.length;
-      const overlapCount = Math.max(0, persistedMsgCount - tailStart);
+      const rawOverlap = Math.max(0, persistedMsgCount - tailStart);
+      let trailingMessageRefs = 0;
+      for (let i = resolvedKinds.length - 1; i >= 0 && resolvedKinds[i] === "message"; i--) {
+        trailingMessageRefs++;
+      }
+      const overlapCount = Math.min(rawOverlap, trailingMessageRefs);
       const evictable = resolved.slice(0, Math.max(0, resolved.length - overlapCount));
 
       const W = deps.getModel().contextWindow;
