@@ -98,13 +98,17 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       }));
 
       // (4) OBSERVABILITY — ids/counts/durationMs/step ONLY; never the query or a snippet.
+      // WR-03: read the end-instant ONCE and reuse it for the DEBUG durationMs, the
+      // emit durationMs, AND the emit timestamp, so the three are a single
+      // consistent clock snapshot (the afterTurn triggers' one-read pattern).
+      const endMs = deps.nowMs();
       deps.logger.debug(
         {
           toolName: "ctx_search",
           conversationId,
           scope,
           hitCount: hits.length,
-          durationMs: deps.nowMs() - t0,
+          durationMs: endMs - t0,
           step: "ctx_search",
         },
         "ctx_search complete",
@@ -124,8 +128,8 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         sessionKey: ctxScope.sessionKey,
         tool: "ctx_search",
         recoveredCount: hits.length,
-        durationMs: deps.nowMs() - t0,
-        timestamp: deps.nowMs(),
+        durationMs: endMs - t0,
+        timestamp: endMs,
       });
 
       return jsonResult({ hits: safeHits });

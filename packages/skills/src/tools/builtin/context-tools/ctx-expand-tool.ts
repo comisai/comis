@@ -90,6 +90,10 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         mkdirSync(dir, { recursive: true });
         const persistPath = safePath(dir, `ctx-expand-${toolCallId}.txt`); // toolCallId, NOT agent text
         writeFileSync(persistPath, scrubbed, "utf-8");
+        // WR-03: read the end-instant ONCE for the DEBUG durationMs AND the emit
+        // durationMs + timestamp, so the three are a single consistent snapshot
+        // (the afterTurn triggers' one-read pattern).
+        const endMs = deps.nowMs();
         deps.logger.debug(
           {
             toolName: "ctx_expand",
@@ -98,7 +102,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
             recoveredCount: parts.length,
             unrecoverable,
             spilled: true,
-            durationMs: deps.nowMs() - t0,
+            durationMs: endMs - t0,
             step: "ctx_expand",
           },
           "ctx_expand spilled",
@@ -113,8 +117,8 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
           sessionKey: ctxScope.sessionKey,
           tool: "ctx_expand",
           recoveredCount: parts.length,
-          durationMs: deps.nowMs() - t0,
-          timestamp: deps.nowMs(),
+          durationMs: endMs - t0,
+          timestamp: endMs,
         });
         return jsonResult({
           fullOutputPath: persistPath,
@@ -125,6 +129,9 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
 
       // (4) INLINE — taint-wrap the recovered body before it leaves the tool.
       const body = wrapExternalContent(rawBody, { source: "unknown" });
+      // WR-03: read the end-instant ONCE for the DEBUG durationMs AND the emit
+      // durationMs + timestamp (the afterTurn triggers' one-read pattern).
+      const endMs = deps.nowMs();
       deps.logger.debug(
         {
           toolName: "ctx_expand",
@@ -133,7 +140,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
           recoveredCount: parts.length,
           unrecoverable,
           spilled: false,
-          durationMs: deps.nowMs() - t0,
+          durationMs: endMs - t0,
           step: "ctx_expand",
         },
         "ctx_expand complete",
@@ -148,8 +155,8 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         sessionKey: ctxScope.sessionKey,
         tool: "ctx_expand",
         recoveredCount: parts.length,
-        durationMs: deps.nowMs() - t0,
-        timestamp: deps.nowMs(),
+        durationMs: endMs - t0,
+        timestamp: endMs,
       });
       return jsonResult({ body, unrecoverable });
     },

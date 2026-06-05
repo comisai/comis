@@ -85,14 +85,17 @@ export function createCtxInspectTool(deps: ContextToolDeps): AgentTool<typeof Ct
       // recoveredCount = the covered-message count the inspection surfaced.
       // WR-02: GUARDED — a throwing subscriber must never fail this completed
       // metadata read (see emitExpansionMetric).
+      // WR-03: read the end-instant ONCE so durationMs and timestamp are a single
+      // consistent snapshot (the afterTurn triggers' one-read pattern).
+      const endMs = deps.nowMs();
       emitExpansionMetric(deps, "ctx_inspect", {
         conversationId: ctxScope.conversationId,
         agentId: ctxScope.agentId,
         sessionKey: ctxScope.sessionKey,
         tool: "ctx_inspect",
         recoveredCount: coveredMessageIds.length,
-        durationMs: deps.nowMs() - t0,
-        timestamp: deps.nowMs(),
+        durationMs: endMs - t0,
+        timestamp: endMs,
       });
 
       // METADATA ONLY — deliberately NOT taint-wrapped (metadata is not content;
