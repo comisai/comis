@@ -98,11 +98,9 @@ export {
   MemoryPortabilityImportContract,
   MEMORY_PORTABILITY_CONTRACTS,
 } from "./memory-portability.js";
-import {
-  MemoryPortabilityExportContract,
-  MemoryPortabilityImportContract,
-  MEMORY_PORTABILITY_CONTRACTS,
-} from "./memory-portability.js";
+// Only the array is needed as a local value (spread into MEMORY_CONTRACTS below);
+// the two contract objects are re-exported via the `export { ... } from` above.
+import { MEMORY_PORTABILITY_CONTRACTS } from "./memory-portability.js";
 
 // Pinning contracts extracted to memory-pinning.ts (file-size cap §4.1).
 // @contract-deferred-handler annotations removed in plan 03-03 (same diff as handler creation).

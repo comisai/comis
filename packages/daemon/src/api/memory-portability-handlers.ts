@@ -169,7 +169,9 @@ export function createMemoryPortabilityHandlers(
         // Memory-poisoning firewall — mirrors memory.store handler.
         // CRITICAL: block + continue (do NOT throw — batch must not abort on one poisoned entry).
         // WARN: downgrade trust to "external" + add "security-tainted" tag.
-        let entryTrustLevel: "learned" | "external" = "learned";
+        // Assigned on every non-skipped path below (warn → "external"; clean → envelope-derived);
+        // the critical branch `continue`s before this is read. No initializer needed.
+        let entryTrustLevel: "learned" | "external";
         const entryExtraTags: string[] = [];
 
         const importValidation = deps.memoryWriteValidator(entryContent);

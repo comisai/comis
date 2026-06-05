@@ -68,6 +68,9 @@ export default tseslint.config(
       "scripts/**/*.mjs",
       "skills/*/scripts/**/*.js",
       "skills/*/scripts/**/*.mjs",
+      // CI workflow runner scripts (e.g. check-pr-description.mjs) run under Node.
+      ".github/scripts/**/*.js",
+      ".github/scripts/**/*.mjs",
     ],
     languageOptions: {
       globals: {
