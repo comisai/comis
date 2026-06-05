@@ -22,7 +22,7 @@
     "clean": "node scripts/clean-build-artifacts.mjs",
     "build:clean": "pnpm clean && pnpm build",
     "contracts:generate": "npx tsx scripts/contracts/generate-web-artifact.ts",
-    "cycles": "madge --circular --extensions ts packages/*/dist",
+    "cycles": "node scripts/check-cycles.mjs",
     "cycles:refs": "tsc -b --dry packages/comis",
     "lint:security": "eslint --config eslint.config.js",
     "lint:fixtures": "bash scripts/check-fixture-diff.sh",
