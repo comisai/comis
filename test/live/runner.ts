@@ -197,6 +197,10 @@ async function runMain(): Promise<void> {
       console.log("Loop scenarios (LOOP-01..04): multi-turn, tool-call, restart, streaming");
       console.log("  test/live/scenarios/loop/*.test.ts");
       console.log("  Cost tier: ¢ (real LLM; cheapest available model per provider)");
+    } else if (args.mode === "cache") {
+      console.log("Cache scenarios (CACHE-01..03): Anthropic write/hit/invalidate, Gemini CachedContent, retention×adaptive×strategy matrix");
+      console.log("  test/live/scenarios/cache/*.test.ts");
+      console.log("  Cost tier: ¢ (real LLM; cheapest available model per provider)");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -256,6 +260,20 @@ async function runMain(): Promise<void> {
 
     try {
       execSync(loopCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "cache") {
+    // Phase 137: LLM cache scenarios (CACHE-01..03)
+    const CACHE_TEST_GLOB = "test/live/scenarios/cache/*.test.ts";
+    const cacheCmd = [
+      "npx vitest run",
+      `"${CACHE_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(cacheCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
     } catch {
       testsFailed = true;
     }
