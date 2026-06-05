@@ -350,16 +350,18 @@ Consolidation is **non-destructive** (source memories are kept) and **opt-in
 configuration lives in the [config reference](/reference/config-yaml); this page
 describes the concept.
 
-## DAG context store (opt-in; recall tools land later)
+## DAG context store (opt-in; in-session expansion tools)
 
 The DAG (LCD) context store preserves the full conversation history losslessly —
 every message, tool call, and tool result kept verbatim and paired by id. It backs
 the **opt-in** lossless DAG engine (`contextEngine.version: "dag"` — full details
-in [Context Management](/agents/context-management#dag-mode-opt-in)). In the
-current release the engine reconstructs that history verbatim each turn; the
-dedicated `ctx_*` recall tools (`ctx_search`, `ctx_inspect`, `ctx_recall`) that
-let an agent query the store on demand, and the compaction that creates summary
-nodes, land in a later phase — they are **not** present yet. The default context
+in [Context Management](/agents/context-management#dag-mode-opt-in)). In DAG mode
+the engine compresses old turns into a zoomable summary hierarchy, and three
+dedicated **in-session** expansion tools (`ctx_search`, `ctx_inspect`,
+`ctx_expand`) let the agent query that store on demand and recover detail the
+summarizer compressed away — see
+[Context expansion tools](/agent-tools/sessions#context-expansion-tools). They are
+`never-export` and **distinct from cross-session recall**. The default context
 engine remains **pipeline** mode (`contextEngine.version: "pipeline"`); in
 pipeline mode, the `session_search` tool searches the raw session history. The long-term memory
 described above (semantic store, recall, consolidation) is independent of the DAG

@@ -252,7 +252,7 @@ A technique where the agent searches its long-term memory for relevant informati
 
 ## Recall Grant
 
-A time-limited authorization token that allows a recall sub-agent to expand and inspect DAG summaries, governed by a daily quota (`contextEngine.maxRecallsPerDay`, default 10). Recall grants and the `ctx_recall` tool belong to the DAG (LCD) context engine. That engine is available as an opt-in mode (`contextEngine.version: "dag"`), but recall grants and the recall tools land in a later phase and are **not** present yet — the current release does lossless verbatim assembly without recall. See [Compaction](/agents/compaction).
+A time-limited authorization token that allows a recall sub-agent to expand and inspect DAG summaries, governed by a daily quota (`contextEngine.maxRecallsPerDay`, default 10). The recall-grant token/quota subsystem belongs to the DAG (LCD) context engine and lands in a later phase. It is distinct from the agent's own **in-session expansion tools** (`ctx_search`, `ctx_inspect`, `ctx_expand`), which let the agent directly recover compressed detail from the current conversation in DAG mode — see [Context expansion tools](/agent-tools/sessions#context-expansion-tools). See [Compaction](/agents/compaction).
 
 ## Result Type
 

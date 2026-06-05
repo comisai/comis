@@ -123,11 +123,14 @@ today can recall them weeks later in a completely different conversation.
 ### Context
 
 In the default **pipeline** mode, `session_search` searches the raw session
-history (case-insensitive substring match, role-scoped). The DAG context engine's
-`ctx_*` recall tools (`ctx_search`, `ctx_inspect`, `ctx_recall`, `ctx_expand`)
-were removed pending the v2.12 "Lossless Context DAG" reimplementation and return
-with the LCD engine. See [Context Tools](/skills/built-in-tools#context-tools) for
-the `session_search` parameter reference.
+history (case-insensitive substring match, role-scoped). The DAG (LCD) context
+engine adds three **in-session** expansion tools (`ctx_search`, `ctx_inspect`,
+`ctx_expand`) that recover detail the summary hierarchy compressed away within the
+current conversation -- available in DAG mode (`contextEngine.version: "dag"`),
+`never-export`, and distinct from cross-session recall (`memory_search`,
+`session_search`). See [Context expansion tools](/agent-tools/sessions#context-expansion-tools)
+and [Context Tools](/skills/built-in-tools#context-tools) for the `session_search`
+parameter reference.
 
 ### Fleet Management
 
