@@ -48,7 +48,6 @@ import type { ComisLogger } from "@comis/core";
 import {
   COMPACTION_MAX_RETRIES,
   OVERSIZED_MESSAGE_CHARS_THRESHOLD,
-  CHARS_PER_TOKEN_RATIO,
   LEAF_FALLBACK_TARGET_TOKENS,
   LEAF_FALLBACK_SUMMARY_MARKER,
 } from "./constants.js";
@@ -56,6 +55,21 @@ import {
   estimateMessageTokens,
   estimateMessageChars,
 } from "../safety/token-estimator.js";
+
+// ---------------------------------------------------------------------------
+// Public constants
+// ---------------------------------------------------------------------------
+
+/**
+ * The smallest chunk (in tokens) a leaf pass can usefully summarize. The
+ * deterministic Level-3 floor must end up STRICTLY smaller than the chunk with
+ * NON-EMPTY content; the smallest non-empty summary is 1 token
+ * (`estimateMessageTokens` of a 1–4-char user string), so a chunk must be ≥ 2
+ * tokens for any non-empty summary to be strictly smaller. A 1-token chunk is
+ * already trivially tiny — there is nothing to gain — so the caller skips the
+ * pass entirely (WR-01) rather than emitting a degenerate empty/larger fallback.
+ */
+export const MIN_SHRINKABLE_LEAF_CHUNK_TOKENS = 2;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -428,14 +442,25 @@ async function tryLevel(
 
 /**
  * Build the deterministic Level-3 leaf summary: a count-only note prefixed with
- * `LEAF_FALLBACK_SUMMARY_MARKER`, hard-capped at `LEAF_FALLBACK_TARGET_TOKENS`
- * (and additionally clamped strictly below the chunk so even a tiny chunk still
- * shrinks). This is the guaranteed terminator — it NEVER exceeds the chunk and
- * NEVER calls an LLM.
+ * `LEAF_FALLBACK_SUMMARY_MARKER`, bounded strictly below BOTH the chunk it
+ * replaces AND `LEAF_FALLBACK_TARGET_TOKENS`. This is the guaranteed terminator —
+ * it NEVER exceeds the chunk and NEVER calls an LLM.
+ *
+ * The bound is the token ESTIMATOR ITSELF, not a hand-derived chars-per-token
+ * ceiling (WR-01 / IN-03): the prior code clamped chars with `CHARS_PER_TOKEN_RATIO`
+ * (3.5) while the result is measured by `estimateMessageTokens` (4:1 for a
+ * user-role string), and a `Math.max(MARKER.length, …)` floor overrode the clamp
+ * for tiny chunks — so a 3-token chunk produced a 19-char marker = 5 tokens,
+ * LARGER than the chunk. Truncating the note in a loop that re-measures with the
+ * estimator until it is strictly below the chunk removes both the 3.5-vs-4
+ * mismatch and the marker-floor overshoot. The marker survives intact for any
+ * normal-size chunk; only a sub-marker chunk truncates it (and a chunk too small
+ * to ever shrink with non-empty content is skipped by the {@link summarizeLeafChunk}
+ * caller before this is reached, so `maxTokens` here is always ≥ 1).
  *
  * @param messageCount - number of chunk messages (recorded in the note)
  * @param chunkTokens - the chunk's token count (the strict ceiling to beat)
- * @returns a bounded, marker-prefixed summary string
+ * @returns a bounded, marker-prefixed summary string strictly smaller than the chunk
  */
 function buildDeterministicFallback(messageCount: number, chunkTokens: number): string {
   const note =
@@ -443,20 +468,31 @@ function buildDeterministicFallback(messageCount: number, chunkTokens: number): 
     `(~${chunkTokens} tokens) were truncated without an LLM summary; ` +
     `their content is preserved losslessly in the message store.`;
 
-  // Char ceiling from the fallback token target (4:1 text ratio via the shared
-  // estimator → CHARS_PER_TOKEN_RATIO is the conservative chars-per-token).
-  const targetChars = Math.floor(LEAF_FALLBACK_TARGET_TOKENS * CHARS_PER_TOKEN_RATIO);
-  // Also stay strictly below the chunk: a summary must shrink even a tiny chunk.
-  // Reserve one token of headroom so token-count is strictly less than chunkTokens.
-  const chunkCeilingChars = Math.max(0, (chunkTokens - 1)) * CHARS_PER_TOKEN_RATIO;
-  const maxChars = Math.max(
-    LEAF_FALLBACK_SUMMARY_MARKER.length,
-    Math.floor(Math.min(targetChars, chunkCeilingChars)),
-  );
+  // The strict ceiling: strictly below the chunk AND at/below the fallback
+  // target. The chunk-too-small-to-shrink case (maxTokens < 1) is guarded by the
+  // caller; clamp defensively so this never returns a non-shrinking note.
+  const maxTokens = Math.min(chunkTokens - 1, LEAF_FALLBACK_TARGET_TOKENS);
+  if (maxTokens < 1) return ""; // unreachable in practice (caller guards); empty is strictly smaller.
 
-  if (note.length <= maxChars) return note;
-  // Truncate, keeping the marker identifiable at the head.
-  return note.slice(0, maxChars);
+  // Measure with the SAME estimator the result is judged by (a user-role string).
+  const tokensOf = (content: string): number =>
+    estimateMessageTokens({ role: "user", content } as Message);
+
+  if (tokensOf(note) <= maxTokens) return note;
+
+  // Truncate keeping the marker at the head, re-measuring with the estimator each
+  // step (the estimator is the bound, not a fixed ratio). estimateMessageTokens is
+  // monotonic in a user string's length, so stepping the length down by the
+  // over-by amount (≥1 char) converges in a handful of iterations and terminates
+  // at worst at the empty string.
+  let len = note.length;
+  while (len > 0 && tokensOf(note.slice(0, len)) > maxTokens) {
+    const over = tokensOf(note.slice(0, len)) - maxTokens;
+    // CHARS_PER_TOKEN (4) is only a convergence STEP here — correctness comes from
+    // re-measuring tokensOf in the loop condition, not from this multiplier.
+    len = Math.max(0, len - Math.max(1, over * 4));
+  }
+  return note.slice(0, len);
 }
 
 // ---------------------------------------------------------------------------

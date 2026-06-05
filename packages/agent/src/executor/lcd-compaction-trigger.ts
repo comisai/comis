@@ -65,6 +65,7 @@ import { ContextEngineConfigSchema } from "@comis/core";
 import {
   selectLeafChunk,
   summarizeLeafChunk,
+  MIN_SHRINKABLE_LEAF_CHUNK_TOKENS,
   type LeafChunkItem,
   type LeafSummarizerDeps,
 } from "../context-engine/lcd-leaf-summarizer.js";
@@ -247,6 +248,12 @@ export async function maybeRunLeafPass(
     // a context_items ordinal (the second-pass divergence is structurally gone).
     const chunk = selectLeafChunk(history, opts.freshTailTurns, opts.leafChunkTokens);
     if (chunk === undefined) return; // no evictable out-of-tail history — no-op.
+
+    // Skip a trivially-tiny chunk (WR-01): a chunk below the minimum shrinkable
+    // size cannot be replaced by any non-empty summary that is STRICTLY smaller,
+    // so summarizing it would only emit a degenerate (empty/larger) leaf. Leave
+    // the chunk in the context view unchanged rather than the deterministic floor.
+    if (chunk.tokens < MIN_SHRINKABLE_LEAF_CHUNK_TOKENS) return;
 
     // Map the chunk's message range → the contiguous context_items ordinal window
     // BEFORE summarizing (so a divergence skips cheaply, without an LLM call). The
