@@ -700,19 +700,20 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     return out.length - liveTail;
   }
 
-  it("I1: a heavy recall block evicts MORE history than a light one (recall is visible to the budget)", async () => {
+  it("I1 / WR-01: a heavier fresh-tail preamble evicts MORE history than a light one (the preamble is visible to the budget)", async () => {
     // 10 turns (20 messages), each store tokenCount=1. Window 13_667 with the
     // O+M+R reserves (8192 + 2048-floor + 3417) leaves H_light = 10 tokens → the
-    // newest 10 evictable messages kept; a 5-token recall block drops H to 5 →
-    // only 5 kept. Heavier recall ⇒ harder compaction (FEWER evictable steps).
+    // newest 10 evictable messages kept; a 5-token preamble block drops H to 5 →
+    // only 5 kept. Heavier preamble (recall is a strict subset of it) ⇒ harder
+    // compaction (FEWER evictable steps).
     const msgs = seedTextTurns(10);
     const live: AgentMessage[] = msgs as AgentMessage[];
 
-    const baseDeps = (recall: number): ContextEngineDeps => ({
+    const baseDeps = (preamble: number): ContextEngineDeps => ({
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
       getModel: () => ({ reasoning: true, contextWindow: 13_667, maxTokens: 256 }),
       getSystemTokensEstimate: () => 0,
-      getRecallTokensEstimate: () => recall,
+      getFreshTailPreambleTokensEstimate: () => preamble,
       contextStore: store,
       conversationId: CONVERSATION_ID,
       agentId: "agent_a",
@@ -727,9 +728,9 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     const keptLight = keptEvictableCount(lightOut, live);
     const keptHeavy = keptEvictableCount(heavyOut, live);
 
-    // The load-bearing assertion: a larger getRecallTokensEstimate keeps FEWER
-    // store-history steps (it ate into H). On the pre-patch 2-arg budget call the
-    // recall dep is ignored, so keptHeavy === keptLight and this FAILS (RED).
+    // The load-bearing assertion: a larger getFreshTailPreambleTokensEstimate keeps
+    // FEWER store-history steps (it ate into H). On a 2-arg budget call the preamble
+    // dep is ignored, so keptHeavy === keptLight and this FAILS (RED).
     expect(keptHeavy).toBeLessThan(keptLight);
 
     // The fresh tail is intact in BOTH runs (A1/A3 — never evicted).
@@ -737,7 +738,7 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     expect(heavyOut[heavyOut.length - 1]).toBe(live[live.length - 1]);
   });
 
-  it("I1: with no getRecallTokensEstimate dep (omitted), eviction is byte-identical to today", async () => {
+  it("I1 / WR-01: with no getFreshTailPreambleTokensEstimate dep (omitted), eviction is byte-identical to today", async () => {
     // Mirrors Plan05 Test B (tiny window forces H=0) but asserts the omitted-dep
     // path matches the documented behavior: the whole evictable prefix drops, the
     // fresh tail ships, oldest turns gone.
@@ -748,7 +749,7 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
       getModel: () => ({ reasoning: true, contextWindow: 1_000, maxTokens: 256 }),
       getSystemTokensEstimate: () => 0,
-      // getRecallTokensEstimate intentionally OMITTED.
+      // getFreshTailPreambleTokensEstimate intentionally OMITTED.
       contextStore: store,
       conversationId: CONVERSATION_ID,
       agentId: "agent_a",

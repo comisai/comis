@@ -220,9 +220,14 @@ export interface ToolAssemblyResult {
   promptResult: ExecutionPromptResult;
   /** Estimated system token count (system prompt + tool definition overhead). */
   cachedSystemTokensEstimate: number;
-  /** I1: estimated recall-injection token count (dynamicPreamble + inlineMemory) —
-   *  a SEPARATE budget subtrahend, never folded into the system estimate above. */
-  cachedRecallTokensEstimate: number;
+  /** I1 / WR-01: estimated WHOLE fresh-tail preamble token count (the entire
+   *  `dynamicPreamble` + `inlineMemory` blob envelope-wrapper prepends into the
+   *  latest user message — skills XML, MCP instructions, deferred-tools context,
+   *  date/channel lines, recalled memory, …, NOT just recall) — a SEPARATE budget
+   *  subtrahend, never folded into the system estimate above. The whole preamble is
+   *  counted on purpose (it rides the unconditionally-shipped fresh tail and is
+   *  reserved nowhere else); see token-budget.ts WR-01. */
+  cachedFreshTailPreambleTokens: number;
 }
 
 /** Parameters for the assembleTools function. */
@@ -503,10 +508,16 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const cachedSystemTokensEstimate = Math.ceil(
     (promptResult.systemPrompt.length + toolDefOverheadChars) / CHARS_PER_TOKEN_RATIO,
   );
-  // I1: the recall-injection token estimate — the SAME dynamicPreamble + inlineMemory
-  // block envelope-wrapper prepends into the user message, measured as a SEPARATE
-  // budget subtrahend (NOT folded into S above — the recall-dag-budget-partition lock).
-  const cachedRecallTokensEstimate = Math.ceil(
+  // I1 / WR-01: the WHOLE fresh-tail preamble token estimate — the entire
+  // dynamicPreamble + inlineMemory blob envelope-wrapper prepends into the latest
+  // user message (skills XML, MCP instructions, deferred-tools context, date/channel
+  // lines, recalled memory, …, NOT just recall), measured as a SEPARATE budget
+  // subtrahend (NOT folded into S above — the recall-dag-budget-partition lock).
+  // The whole preamble is counted deliberately: it rides the unconditionally-shipped
+  // fresh tail and is reserved nowhere else, so this is the only window-headroom
+  // reservation for it (recall is a strict subset → a heavier recall block still
+  // grows this and compacts harder, preserving I1's intent). See token-budget.ts WR-01.
+  const cachedFreshTailPreambleTokens = Math.ceil(
     (promptResult.dynamicPreamble.length + (promptResult.inlineMemory?.length ?? 0)) / CHARS_PER_TOKEN_RATIO,
   );
 
@@ -773,6 +784,6 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     resourceLoaderOptions,
     promptResult,
     cachedSystemTokensEstimate,
-    cachedRecallTokensEstimate,
+    cachedFreshTailPreambleTokens,
   };
 }

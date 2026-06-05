@@ -20,14 +20,14 @@ export type { TokenAnchor };
 /**
  * Token budget breakdown computed by `computeTokenBudget()`.
  *
- * Formula: H = W - S - O - M - R - Recall
+ * Formula: H = W - S - O - M - R - P
  * Where:
  * - W = windowTokens (model context window)
  * - S = systemTokens (system prompt + tools estimate)
  * - O = outputReserveTokens (reserved for model output)
  * - M = safetyMarginTokens (percentage-based with absolute floor)
  * - R = contextRotBufferTokens (percentage-based decay buffer)
- * - Recall = recallTokens (recall-injection estimate; I1)
+ * - P = freshTailPreambleTokens (the WHOLE fresh-tail preamble estimate; I1/WR-01)
  * - H = availableHistoryTokens (remaining budget for conversation history)
  */
 export interface TokenBudget {
@@ -41,11 +41,15 @@ export interface TokenBudget {
   safetyMarginTokens: number;
   /** R: context rot buffer tokens (percentage-based). */
   contextRotBufferTokens: number;
-  /** Recall-injection tokens subtracted from H (I1) — the `dynamicPreamble` +
-   *  `inlineMemory` block prepended into the user message by envelope-wrapper.
-   *  A SEPARATE term, never folded into S (preserves the recall-dag-budget
-   *  partition invariant). Clamped to >= 0. */
-  recallTokens: number;
+  /** P: fresh-tail preamble tokens subtracted from H (I1 / WR-01) — the WHOLE
+   *  `dynamicPreamble` + `inlineMemory` block prepended into the latest user
+   *  message by envelope-wrapper (skills XML, MCP instructions, deferred-tools
+   *  context, date/channel lines, recalled memory, …), NOT just recalled memory.
+   *  Counting the whole preamble is deliberate: that blob rides the
+   *  unconditionally-shipped fresh tail and is reserved nowhere else, so this is
+   *  the only window-headroom reservation for it. A SEPARATE term, never folded
+   *  into S (preserves the recall-dag-budget partition invariant). Clamped to >= 0. */
+  freshTailPreambleTokens: number;
   /** H: available tokens for conversation history (clamped to >= 0). */
   availableHistoryTokens: number;
   /** Message index at or below which content must not be modified.
@@ -164,12 +168,14 @@ export interface ContextEngineDeps {
    *  Returns 0 when not provided (backward-compatible). */
   getSystemTokensEstimate?: () => number;
 
-  // --- I1: recall-injection budget seam ---
-  /** Lazy getter for the recall-injection token estimate (the `dynamicPreamble`
-   *  + `inlineMemory` block prepended by envelope-wrapper). Called on each run.
+  // --- I1 / WR-01: fresh-tail preamble budget seam ---
+  /** Lazy getter for the WHOLE fresh-tail preamble token estimate (the
+   *  `dynamicPreamble` + `inlineMemory` block prepended by envelope-wrapper —
+   *  skills XML, MCP instructions, deferred-tools context, date/channel lines,
+   *  recalled memory, …, NOT just recall; see WR-01). Called on each run.
    *  Subtracted from H as a SEPARATE budget term (NOT folded into S — preserves
    *  the recall-dag-budget-partition invariant). Returns 0 when not provided. */
-  getRecallTokensEstimate?: () => number;
+  getFreshTailPreambleTokensEstimate?: () => number;
 
   // --- G-09: Content modification notification ---
   /** Called when observation masking modifies content (maskedCount > 0).

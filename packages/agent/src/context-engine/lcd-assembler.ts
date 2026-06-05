@@ -229,16 +229,22 @@ export function createLcdContextEngine(
       const overlapCount = Math.min(rawOverlap, trailingMessageRefs);
       const evictable = resolved.slice(0, Math.max(0, resolved.length - overlapCount));
 
-      // I1: the recall-injection block (`dynamicPreamble` + `inlineMemory`, prepended
-      // into the latest user message by envelope-wrapper) rides the fresh tail and is
-      // invisible to S by design (the recall-dag-budget-partition invariant). Subtract
-      // it as a SEPARATE budget term so a heavier recall block compacts older history
-      // harder — NEVER fold it into S. Pass `-1` for the (defaulted) cacheFenceIndex to
-      // reach the 4th positional `recallTokensEstimate` slot.
+      // I1 / WR-01: the WHOLE fresh-tail preamble block (`dynamicPreamble` +
+      // `inlineMemory`, prepended into the latest user message by envelope-wrapper —
+      // skills XML, MCP instructions, deferred-tools context, date/channel lines,
+      // recalled memory, …, NOT just recall) rides the fresh tail and is invisible to
+      // S by design (the recall-dag-budget-partition invariant). Subtract it as a
+      // SEPARATE budget term so a heavier preamble (recall is a strict subset of it)
+      // compacts older history harder — NEVER fold it into S. Counting the whole
+      // preamble is deliberate: the fresh tail ships UNCONDITIONALLY below and is
+      // reserved nowhere else, so this is the only window-headroom reservation for it
+      // (measuring only recall would under-reserve H and risk a fresh-tail overflow).
+      // Pass `-1` for the (defaulted) cacheFenceIndex to reach the 4th positional
+      // `freshTailPreambleTokensEstimate` slot.
       const W = deps.getModel().contextWindow;
       const S = deps.getSystemTokensEstimate?.() ?? 0;
-      const recallTokens = deps.getRecallTokensEstimate?.() ?? 0;
-      const budget = computeTokenBudget(W, S, -1, recallTokens);
+      const freshTailPreambleTokens = deps.getFreshTailPreambleTokensEstimate?.() ?? 0;
+      const budget = computeTokenBudget(W, S, -1, freshTailPreambleTokens);
       const budgeted = evictHistoryUnderBudget(evictable, budget.availableHistoryTokens);
       const droppedCount = evictable.length - budgeted.length;
       deps.logger.debug(
@@ -247,7 +253,7 @@ export function createLcdContextEngine(
           budgetTokens: budget.availableHistoryTokens,
           windowTokens: W,
           systemTokens: S,
-          recallTokens,
+          freshTailPreambleTokens,
           evictableCount: evictable.length,
           keptCount: budgeted.length,
           droppedCount,

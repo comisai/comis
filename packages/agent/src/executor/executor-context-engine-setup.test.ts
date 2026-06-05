@@ -126,7 +126,7 @@ function makeParams(overrides?: Partial<ContextEngineSetupParams>): ContextEngin
     cacheBreakDetector: { notifyContentModification: vi.fn() },
     contextEngineRef: { current: undefined },
     getCachedSystemTokensEstimate: () => 4_000,
-    getCachedRecallTokensEstimate: () => 0,
+    getCachedFreshTailPreambleTokens: () => 0,
     getTokenAnchor: () => null,
     onAnchorReset: vi.fn(),
     ...overrides,
@@ -171,13 +171,13 @@ describe("setupContextEngine — createContextEngine() dependency wiring", () =>
     expect(ref.current).toBe(captured.calls[0].engineHandle);
   });
 
-  it("threads getCachedRecallTokensEstimate into the engine deps as getRecallTokensEstimate (I1 — separate from getSystemTokensEstimate)", () => {
-    setupContextEngine(makeParams({ getCachedRecallTokensEstimate: () => 321 }));
+  it("threads getCachedFreshTailPreambleTokens into the engine deps as getFreshTailPreambleTokensEstimate (I1 / WR-01 — separate from getSystemTokensEstimate)", () => {
+    setupContextEngine(makeParams({ getCachedFreshTailPreambleTokens: () => 321 }));
     const deps = captured.calls[0].deps;
-    // The recall estimate is wired as its OWN lazy getter (the budget subtrahend),
-    // distinct from the system-tokens getter.
-    expect(typeof deps.getRecallTokensEstimate).toBe("function");
-    expect(deps.getRecallTokensEstimate()).toBe(321);
+    // The fresh-tail preamble estimate is wired as its OWN lazy getter (the budget
+    // subtrahend), distinct from the system-tokens getter.
+    expect(typeof deps.getFreshTailPreambleTokensEstimate).toBe("function");
+    expect(deps.getFreshTailPreambleTokensEstimate!()).toBe(321);
   });
 });
 
