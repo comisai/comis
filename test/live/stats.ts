@@ -189,7 +189,7 @@ function incompleteBeta(x: number, a: number, b: number): number {
   return front * h;
 }
 
-/** log(Beta(a,b)) = log Γ(a) + log Γ(b) − log Γ(a+b) via Stirling. */
+/** log(Beta(a,b)) = log Γ(a) + log Γ(b) − log Γ(a+b) via Lanczos (delegated to logGamma). */
 function logBeta(a: number, b: number): number {
   return logGamma(a) + logGamma(b) - logGamma(a + b);
 }
