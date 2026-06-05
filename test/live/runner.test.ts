@@ -42,12 +42,12 @@ describe("parseArgs", () => {
   });
 
   // WR-02: --profile flag parsing
-  it("parseArgs(['--profile', 'lean-cloud']) → profile: 'lean-cloud', mode: 'all'", () => {
+  it("returns profile:'lean-cloud' and mode:'all' when given ['--profile','lean-cloud']", () => {
     const result = parseArgs(["--profile", "lean-cloud"]);
     expect(result).toEqual({ dry: false, mode: "all", profile: "lean-cloud" });
   });
 
-  it("parseArgs(['core', '--profile', 'privacy-device']) → mode: 'core', profile: 'privacy-device'", () => {
+  it("returns mode:'core' and profile:'privacy-device' when given ['core','--profile','privacy-device']", () => {
     const result = parseArgs(["core", "--profile", "privacy-device"]);
     expect(result).toEqual({ dry: false, mode: "core", profile: "privacy-device" });
   });
@@ -81,12 +81,12 @@ describe("parseArgs", () => {
 // ---------------------------------------------------------------------------
 
 describe("runner sweep dispatch contract", () => {
-  it("parseArgs(['sweep']) → mode: 'sweep'", () => {
+  it("returns mode:'sweep' when given ['sweep']", () => {
     const result = parseArgs(["sweep"]);
     expect(result.mode).toBe("sweep");
   });
 
-  it("parseArgs(['sweep', '--dry']) → mode: 'sweep', dry: true", () => {
+  it("returns mode:'sweep' and dry:true when given ['sweep','--dry']", () => {
     const result = parseArgs(["sweep", "--dry"]);
     expect(result).toEqual({ dry: true, mode: "sweep", profile: undefined });
   });
