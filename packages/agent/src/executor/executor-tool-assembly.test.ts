@@ -476,6 +476,65 @@ describe("assembleTools — system token estimate from systemPrompt length + too
 });
 
 // ---------------------------------------------------------------------------
+// I1: cachedRecallTokensEstimate — the SEPARATE recall-injection estimate
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — recall token estimate from the dynamicPreamble + inlineMemory block (I1)", () => {
+  // The budget-path char ratio (constants.ts CHARS_PER_TOKEN_RATIO = 3.5), NOT the
+  // ctx-tools' /4 — the recall estimate must match the token-budget heuristic the
+  // DAG subtracts it against.
+  const CHARS_PER_TOKEN_RATIO = 3.5;
+
+  it("computes ceil((dynamicPreamble.length + inlineMemory.length) / 3.5) for a non-empty recall block", async () => {
+    const dynamicPreamble = "P".repeat(350);
+    const inlineMemory = "M".repeat(700);
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(100),
+      dynamicPreamble,
+      inlineMemory,
+    });
+    const r = await assembleTools(makeParams());
+    expect(r.cachedRecallTokensEstimate).toBe(
+      Math.ceil((dynamicPreamble.length + inlineMemory.length) / CHARS_PER_TOKEN_RATIO),
+    );
+    // A non-empty recall block yields a > 0 estimate.
+    expect(r.cachedRecallTokensEstimate).toBeGreaterThan(0);
+  });
+
+  it("yields 0 for an empty recall block (no dynamicPreamble, no inlineMemory)", async () => {
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(100),
+      dynamicPreamble: "",
+      inlineMemory: undefined,
+    });
+    const r = await assembleTools(makeParams());
+    expect(r.cachedRecallTokensEstimate).toBe(0);
+  });
+
+  it("is SEPARATE from cachedSystemTokensEstimate — growing the recall block does NOT change S", async () => {
+    // The recall estimate must NOT be folded into S (the recall-dag-budget-partition
+    // invariant). Identical systemPrompt + tools, only the recall block grows.
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(200),
+      dynamicPreamble: "",
+      inlineMemory: undefined,
+    });
+    const light = await assembleTools(makeParams());
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(200),
+      dynamicPreamble: "P".repeat(1_000),
+      inlineMemory: "M".repeat(1_000),
+    });
+    const heavy = await assembleTools(makeParams());
+
+    // S is identical (recall is NOT in S) …
+    expect(heavy.cachedSystemTokensEstimate).toBe(light.cachedSystemTokensEstimate);
+    // … while the recall estimate grew.
+    expect(heavy.cachedRecallTokensEstimate).toBeGreaterThan(light.cachedRecallTokensEstimate);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tool pipeline chain — every stage is invoked
 // ---------------------------------------------------------------------------
 
