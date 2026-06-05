@@ -59,9 +59,38 @@ import type { ContextEngineConfig } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
 import { computeTokenBudget } from "./token-budget.js";
-import { CHARS_PER_TOKEN_RATIO, LCD_FALLBACK_HEADER_MARKER } from "./constants.js";
+import {
+  CHARS_PER_TOKEN_RATIO,
+  LCD_FALLBACK_HEADER_MARKER,
+  LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS,
+} from "./constants.js";
 import { evictHistoryUnderBudget, type BudgetItem } from "./lcd-budget-eviction.js";
+import {
+  createToolResultSizeGuard,
+  type ContentBlock,
+} from "../safety/tool-result-size-guard.js";
 import type { ContextEngine, ContextEngineDeps } from "./types.js";
+
+/**
+ * B-8: the single shared tool-result size guard for the dag assembler's fresh-tail
+ * bounding. Built ONCE at module scope (stateless factory) so each
+ * `transformContext` reuses it. The default head+tail+marker config is fine; the
+ * honest lossless-recovery suffix is appended to the marker via `toolHint` per call
+ * (it survives `truncateIfNeeded`'s `Hint:` formatting). Reusing this factory —
+ * NOT a hand-rolled truncation — satisfies the AGENTS.md don't-hand-roll rule and
+ * keeps the masking identical to the pipeline microcompaction guard.
+ */
+const FRESH_TAIL_TOOL_RESULT_GUARD = createToolResultSizeGuard();
+
+/**
+ * Honest taint/marker suffix appended to every bounded fresh-tail tool result via
+ * the guard's `toolHint`. Masking a fresh-tail tool result is acceptable ONLY
+ * because the LCD store keeps the full content losslessly and `ctx_expand` recovers
+ * it — parity with the deterministic-fallback note wording
+ * (lcd-leaf-summarizer.ts:582). Content-free by construction (no message text).
+ */
+const FRESH_TAIL_BOUND_RECOVERY_HINT =
+  "the full content is preserved losslessly in the LCD store and is recoverable";
 
 /**
  * Build the `dag`-mode LCD `ContextEngine`. The caller (`createContextEngine`'s
@@ -174,18 +203,59 @@ export function createLcdContextEngine(
       // 3. FRESH TAIL: the last N STEPS of the LIVE array, VERBATIM (original
       //    structured blocks — never reconstructed-from-text). A1.
       const tailStart = freshTailBoundaryIndex(liveMessages, config.freshTailTurns);
-      const freshTail = liveMessages.slice(tailStart);
+      const rawFreshTail = liveMessages.slice(tailStart);
       deps.logger.debug(
         {
           step: "lcd-fresh-tail",
           freshTailSteps: config.freshTailTurns,
-          freshTailCount: freshTail.length,
+          freshTailCount: rawFreshTail.length,
           tailStart,
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
         },
         "lcd fresh tail sliced verbatim",
       );
+
+      // 3b. FRESH-TAIL TOOL-RESULT BOUNDING (B-8). The fresh tail ships
+      //     UNCONDITIONALLY below (A1/A3) and the dag path runs NEITHER the
+      //     observation masker NOR the dead-content evictor (pipeline-only), so a
+      //     turn whose last steps carry a huge tool output would overflow the model
+      //     window before any budget pass sees it. Bound each oversized tool RESULT
+      //     to LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS via the shared
+      //     createToolResultSizeGuard() (head+tail+honest marker — NOT hand-rolled).
+      //     Invariant reconciliation:
+      //       - A1 (verbatim) is preserved for EVERYTHING that fits: the guard is a
+      //         no-op below the cap, and non-toolResult messages pass through
+      //         referentially unchanged (boundFreshTailToolResults returns the same
+      //         object when nothing truncated).
+      //       - Masking a fresh-tail tool result is acceptable because the LCD store
+      //         keeps the full content losslessly and `ctx_expand` recovers it (the
+      //         honest marker advertises this).
+      //       - A2 (pairing) stays valid: this step ONLY shrinks a toolResult's
+      //         CONTENT — it never removes/reorders a message and never touches the
+      //         `toolCallId` — so sanitizeToolUseResultPairing (step 6) still sees
+      //         the same id on the (shrunk-content) toolResult.
+      const { freshTail, boundedResults, charsRemoved } = boundFreshTailToolResults(
+        rawFreshTail,
+        LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS,
+      );
+      if (boundedResults > 0) {
+        // Content-free DEBUG (AGENTS.md §2.2 / the lossless-store content-free rule):
+        // counts only — NEVER the message text. Closes the B-13-class silent-path gap
+        // for this new branch so a bounded fresh tail is diagnosable from logs alone.
+        deps.logger.debug(
+          {
+            step: "lcd-fresh-tail-bound",
+            conversationId,
+            boundedResults,
+            charsRemoved,
+            capChars: LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS,
+            agentId: deps.agentId,
+            sessionKey: deps.sessionKey,
+          },
+          "lcd fresh-tail tool results bounded",
+        );
+      }
 
       // 4. BUDGET + EVICTION (A3) at the documented seam. Compute H from the model
       //    window (W) and the system-tokens estimate (S) via the centralized
@@ -340,6 +410,52 @@ export function freshTailBoundaryIndex(messages: AgentMessage[], freshTailSteps:
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
+
+/**
+ * B-8: bound oversized tool RESULTS inside the unconditional fresh tail. Pure +
+ * non-mutating — for each `toolResult` message whose total text exceeds `cap`, run
+ * the shared {@link createToolResultSizeGuard} (head+tail+honest marker) and return
+ * a NEW message carrying the truncated content; every non-toolResult message and
+ * every toolResult that fits passes through REFERENTIALLY unchanged (A1 preserved
+ * for what fits). The guard's marker carries the lossless-recovery hint via
+ * `toolHint`, so the model is honestly told the full content is recoverable.
+ *
+ * Only CONTENT shrinks here — no message is removed/reordered and the `toolCallId`
+ * is never touched — so the later `sanitizeToolUseResultPairing` (A2) still re-pairs
+ * the (shrunk-content) result with its `tool_use`.
+ *
+ * @param freshTail - the verbatim fresh-tail slice (the last N steps of the live array)
+ * @param cap - the per-tool-RESULT char cap (`LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS`)
+ * @returns the bounded fresh tail + counts (results bounded, chars removed) for the content-free DEBUG
+ */
+function boundFreshTailToolResults(
+  freshTail: AgentMessage[],
+  cap: number,
+): { freshTail: AgentMessage[]; boundedResults: number; charsRemoved: number } {
+  let boundedResults = 0;
+  let charsRemoved = 0;
+  const bounded = freshTail.map((m) => {
+    if (roleOf(m) !== "toolResult") return m;
+    const content = (m as unknown as { content?: unknown }).content;
+    // A toolResult with non-array content (string shorthand / absent) cannot carry
+    // an oversized text-block payload through the guard's block API — leave it
+    // verbatim (A1). The guard only bounds array-of-blocks content.
+    if (!Array.isArray(content)) return m;
+    const toolName = (m as unknown as { toolName?: string }).toolName;
+    const result = FRESH_TAIL_TOOL_RESULT_GUARD.truncateIfNeeded(
+      content as ContentBlock[],
+      cap,
+      FRESH_TAIL_BOUND_RECOVERY_HINT,
+    );
+    if (!result.truncated) return m; // fits below the cap — byte-identical (A1).
+    boundedResults++;
+    charsRemoved += (result.metadata?.originalChars ?? 0) - (result.metadata?.truncatedChars ?? 0);
+    // Return a NEW message with ONLY the content replaced (non-mutating, like
+    // normalizeAssistantContent) — the role, toolCallId, toolName, etc. are intact.
+    return { ...(m as object), content: result.content } as unknown as AgentMessage;
+  });
+  return { freshTail: bounded, boundedResults, charsRemoved };
+}
 
 /**
  * Resolve one ordered `context_items` row into a canonical message paired with
