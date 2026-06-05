@@ -105,6 +105,22 @@ const messageSeedRowMapper = createRowMapper(MessageSeedRowSchema);
 const CtxOrdinalRowSchema = z.strictObject({ ordinal: z.number() });
 const ctxOrdinalRowMapper = createRowMapper(CtxOrdinalRowSchema);
 
+/**
+ * Single-column COUNT projection — the sanctioned createRowMapper read replacing
+ * the raw count cast the §6.8 untyped-sqlite rule forbids. Used for the
+ * context_items seed gate (the legacy-conversation backfill trigger).
+ */
+const CtxCountRowSchema = z.strictObject({ c: z.number() });
+const ctxCountRowMapper = createRowMapper(CtxCountRowSchema);
+
+/**
+ * `MAX(ordinal)` projection for the per-append dense-view maintenance (CRIT-2).
+ * `MAX` over zero rows returns SQL NULL → `maxOrdinal` is nullable; the next
+ * ordinal is `(maxOrdinal ?? -1) + 1` (0 for the first row). No `as` cast.
+ */
+const CtxMaxOrdinalRowSchema = z.strictObject({ maxOrdinal: z.number().nullable() });
+const ctxMaxOrdinalRowMapper = createRowMapper(CtxMaxOrdinalRowSchema);
+
 /** Single-column message-id projection for the E1 leaf→message walk (no `as` cast). */
 const SummaryMessageIdRowSchema = z.strictObject({ message_id: z.string() });
 const summaryMessageIdRowMapper = createRowMapper(SummaryMessageIdRowSchema);
@@ -319,34 +335,86 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
   );
 
+  // CRIT-2: the highest ordinal currently in the (conversation, agent, tenant)
+  // view — the per-append insert lands at MAX(ordinal)+1 (0 for the first row).
+  // `MAX` over zero rows is SQL NULL (the nullable mapper handles it). R4: scoped
+  // by agent_id+tenant_id so each agent keeps its OWN dense 0..N-1 sequence.
+  const selectMaxCtxOrdinal = db.prepare(
+    "SELECT MAX(ordinal) AS maxOrdinal FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
+  );
+
+  // CRIT-2 incremental backfill: the seq-ordered (id, created_at) of THIS agent's
+  // messages NOT YET represented in the model-facing view — neither a context_items
+  // message-ref NOR a leaf/condensed summary_messages link. A message is
+  // "represented" once it has a ref OR was collapsed into a summary, so this returns
+  // EMPTY for a live append-maintained conversation (every message has a ref) and
+  // for a fully-summarized run (the messages are in lcd_summary_messages) — the
+  // backfill is then a clean no-op. It returns the full set only for a PRE-EXISTING
+  // (legacy) conversation whose messages predate the per-append insert (zero refs,
+  // zero summaries). R4: agent-scoped throughout (WR-02).
+  const selectUnseededMsgs = db.prepare(`
+    SELECT m.id AS id, m.created_at AS created_at
+    FROM lcd_messages m
+    WHERE m.conversation_id = ? AND m.agent_id = ? AND m.tenant_id = ?
+      AND m.id NOT IN (
+        SELECT ci.ref_id FROM lcd_context_items ci
+        WHERE ci.conversation_id = ? AND ci.agent_id = ? AND ci.tenant_id = ?
+          AND ci.ref_kind = 'message'
+      )
+      AND m.id NOT IN (
+        SELECT sm.message_id FROM lcd_summary_messages sm
+        JOIN lcd_summaries s ON s.summary_id = sm.summary_id
+        WHERE s.conversation_id = ? AND s.agent_id = ? AND s.tenant_id = ?
+      )
+    ORDER BY m.seq
+  `);
+
   /**
-   * Lazily seed context_items 1:1 from lcd_messages for a (conversation, agent,
-   * tenant) with zero rows (A4 — no migration). One message-ref per message,
-   * ordinal = seq index, refId = message id. R4 (132-03): the count gate AND the
-   * source `selectMsgs` are AGENT-SCOPED, so two agents sharing a conversation_id
-   * each seed a DENSE 0..N-1 view over their OWN messages (the view is per
-   * (conversation, agent, tenant); the UNIQUE index keys on all three). Scope
-   * columns are stamped from `scope` (uniform within the agent-scoped read).
-   * Caller runs this inside a txn. Skips silently when the agent has no messages.
+   * Idempotent INCREMENTAL backfill of the model-facing view from lcd_messages
+   * (CRIT-2). The view is maintained live by `appendTxn` (one message-ref per
+   * append at the next ordinal), so on the live path this finds NOTHING to seed
+   * and is a clean no-op. Its only real work is the migration/backfill for a
+   * PRE-EXISTING conversation whose messages predate the per-append insert: it
+   * seeds every message NOT YET represented (neither a context_items message-ref
+   * NOR a summary_messages link), appending at `MAX(ordinal)+1` in seq order so
+   * the dense sequence continues without colliding with any surviving summary-ref.
+   *
+   * Idempotent: calling it repeatedly seeds only the still-uncovered gap, never
+   * duplicating — `selectUnseededMsgs` excludes anything already in the view or
+   * already collapsed into a summary, and the running ordinal starts past the
+   * current max. R4 (132-03): every read/write below is agent-scoped, so two
+   * agents sharing a conversation_id each backfill a DENSE view over their OWN
+   * uncovered messages (the UNIQUE index keys on all three scope columns). Caller
+   * runs this inside a txn. Skips silently when the agent has nothing to seed.
    */
   function seedContextItems(scope: ContextStoreScope): void {
-    if ((countCtxItems.get(scope.conversationId, scope.agentId, scope.tenantId) as { c: number }).c > 0) return;
-    // The agent-scoped message rows (R4) — only THIS agent's messages seed THIS
-    // agent's dense view.
-    let ordinal = 0;
-    for (const rawMsg of selectMsgs.all(scope.conversationId, scope.agentId, scope.tenantId)) {
-      const parsed = messageRowMapper.parseOptionalRow(rawMsg);
+    const maxRow = ctxMaxOrdinalRowMapper.parseOptionalRow(
+      selectMaxCtxOrdinal.get(scope.conversationId, scope.agentId, scope.tenantId),
+    );
+    // The next dense ordinal: continue past the current max (NULL/absent → -1 → 0).
+    let ordinal = (maxRow.ok && maxRow.value ? maxRow.value.maxOrdinal ?? -1 : -1) + 1;
+    for (const rawMsg of selectUnseededMsgs.all(
+      scope.conversationId,
+      scope.agentId,
+      scope.tenantId,
+      scope.conversationId,
+      scope.agentId,
+      scope.tenantId,
+      scope.conversationId,
+      scope.agentId,
+      scope.tenantId,
+    )) {
+      const parsed = messageSeedRowMapper.parseOptionalRow(rawMsg);
       if (!parsed.ok || !parsed.value) continue; // skip only the bad message row (WR-02)
-      const row = parsed.value;
       insertCtxItem.run(
         randomUUID(),
-        row.conversation_id,
-        row.tenant_id,
-        row.agent_id,
-        row.session_key,
+        scope.conversationId,
+        scope.tenantId,
+        scope.agentId,
+        scope.sessionKey,
         ordinal,
         "message" satisfies LcdRefKind,
-        row.id,
+        parsed.value.id,
       );
       ordinal++;
     }
@@ -422,6 +490,31 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       );
       ordinal++;
     }
+
+    // CRIT-2: maintain the dense model-facing view INCREMENTALLY — insert ONE
+    // message-ref lcd_context_items row at the next ordinal for this message's
+    // (conversation, agent, tenant) scope, inside the SAME txn so the message and
+    // its context-item commit atomically. This keeps context_items a true 1:1 view
+    // that grows with appends (the seed-once read-time guard used to freeze it at
+    // the first read while lcd_messages kept growing — DAG-CRIT-2). The new row
+    // stamps the SAME scope columns as the message row, so two agents sharing a
+    // conversation_id each keep their own dense 0..N-1 view (the UNIQUE index keys
+    // on conversation_id+agent_id+tenant_id+ordinal — WR-02). `MAX(ordinal)` over
+    // zero rows is NULL → nextOrdinal 0 for the first message.
+    const maxRow = ctxMaxOrdinalRowMapper.parseOptionalRow(
+      selectMaxCtxOrdinal.get(input.scope.conversationId, input.scope.agentId, input.scope.tenantId),
+    );
+    const nextOrdinal = (maxRow.ok && maxRow.value ? maxRow.value.maxOrdinal ?? -1 : -1) + 1;
+    insertCtxItem.run(
+      randomUUID(),
+      input.scope.conversationId,
+      input.scope.tenantId,
+      input.scope.agentId,
+      input.scope.sessionKey,
+      nextOrdinal,
+      "message" satisfies LcdRefKind,
+      messageId,
+    );
 
     // E1 (gap #1): populate the CONTENTLESS lcd_messages_fts with the rendered
     // part-text so ctx_search finds this message. lcd_messages has no content
@@ -530,11 +623,19 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     },
 
     getContextItems(scope: ContextStoreScope): LcdContextItem[] {
-      // Lazy-seed 1:1 from lcd_messages on first read (A4 — no migration). The
-      // seed runs in its own txn so the SELECT below sees the inserted rows. R4:
-      // the count gate + seed are agent-scoped, so each agent gets a dense view
-      // over its OWN messages within a shared conversation (WR-02).
-      if ((countCtxItems.get(scope.conversationId, scope.agentId, scope.tenantId) as { c: number }).c === 0) {
+      // The view is maintained live by appendTxn (CRIT-2), so a live conversation
+      // already has its rows here and this gate is a no-op. It still fires for a
+      // PRE-EXISTING (legacy) conversation whose messages predate the per-append
+      // insert (zero rows) → one incremental backfill in its own txn so the SELECT
+      // below sees the inserted rows; thereafter append keeps it current. Gating on
+      // `== 0` avoids taking a write transaction on every read of a maintained view.
+      // R4: the count gate + seed are agent-scoped, so each agent gets a dense view
+      // over its OWN messages within a shared conversation (WR-02). The count read
+      // goes through ctxCountRowMapper, not a raw count cast (§6.8 untyped-sqlite).
+      const countRow = ctxCountRowMapper.parseOptionalRow(
+        countCtxItems.get(scope.conversationId, scope.agentId, scope.tenantId),
+      );
+      if (countRow.ok && countRow.value && countRow.value.c === 0) {
         seedTxn(scope);
       }
 
