@@ -544,9 +544,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         if (!alsCtx?.sessionKey) return undefined;
         const parsed = parseFormattedSessionKey(alsCtx.sessionKey);
         if (!parsed) return undefined;
-        const sessionBaseDir = safePath(agentWorkspaceDir, "sessions");
         // FIX: derive the spill dir from the session DIR (sessionKeyToPath returns the .jsonl FILE path → ENOTDIR).
-        return toolResultsDirFromSessionPath(sessionKeyToPath(parsed, sessionBaseDir));
+        return toolResultsDirFromSessionPath(sessionKeyToPath(parsed, safePath(agentWorkspaceDir, "sessions")));
       };
 
       // Build per-agent sandbox config from daemon provider + agent config
