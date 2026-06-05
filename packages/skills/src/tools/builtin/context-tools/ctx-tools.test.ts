@@ -768,3 +768,82 @@ describe("ctx_* tools: the O1 emit reads the end-instant ONCE so durationMs + ti
     expect((p.timestamp as number) - (p.durationMs as number)).toBe(BASE);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WR-04: oversized recovered body with NO tool-results dir must still be
+//        bounded AND secret-scrubbed — never inlined raw/unbounded/unscrubbed.
+// ---------------------------------------------------------------------------
+
+describe("ctx_expand: an oversized body with no tool-results dir is bounded + scrubbed, not inlined raw (WR-04)", () => {
+  // The spill guard is `if (oversized && dir)`: when getToolResultsDir() returns
+  // undefined (a heartbeat/cron/ephemeral context, or a parse failure), the
+  // oversized branch is skipped and control falls through to the INLINE path,
+  // which wraps and returns the FULL rawBody — unbounded AND skipping the
+  // scrubSecretsFromText defense that only runs on the spill branch. That is an
+  // unbounded-inline + unscrubbed-egress leak the cap exists to prevent.
+
+  it("bounds an oversized no-dir body to the maxExpandTokens cap rather than inlining it whole", async () => {
+    const maxExpandTokens = 100;
+    // estimateTokens is chars/4, so the cap is maxExpandTokens * 4 chars.
+    const capChars = maxExpandTokens * 4;
+    const big = "X".repeat(40_000); // ~10_000 tokens >> the 100-token cap
+    const { store } = makeStore({
+      getSummaryMessagesReturn: ["m1"],
+      getMessagesReturn: [makeMessage("m1", 1, big)],
+    });
+    // NO tool-results dir available (the degraded/ephemeral path).
+    const { deps } = makeDeps(store, { maxExpandTokens, getToolResultsDir: () => undefined });
+    const tool = createCtxExpandTool(deps);
+    const result = (await runExecute(tool, "wr04-nodir-bound", { summaryId: "sum-1" }, liveCtx())) as {
+      details: { body?: string; fullOutputPath?: string; truncated?: boolean };
+    };
+    // No file handle (no dir) — it is inlined, but the inlined body MUST be bounded.
+    expect(result.details.fullOutputPath).toBeUndefined();
+    expect(result.details.body).toBeDefined();
+    // The whole 40_000-char raw body must NOT be inlined; the body is bounded by
+    // the cap (plus the wrapExternalContent envelope overhead, which is small and
+    // fixed). The pre-patch code inlines all 40_000 chars → this FAILS (RED).
+    expect((result.details.body as string).length).toBeLessThan(capChars + 2_000);
+    expect(result.details.truncated).toBe(true);
+  });
+
+  it("scrubs secrets from an oversized no-dir body before inlining it", async () => {
+    const secret = "sk-ant-" + "A".repeat(64);
+    // Put the secret at the very FRONT so truncation cannot be what removes it —
+    // the scrub must be what redacts it.
+    const big = secret + " " + "Y".repeat(40_000);
+    const { store } = makeStore({
+      getSummaryMessagesReturn: ["m1"],
+      getMessagesReturn: [makeMessage("m1", 1, big)],
+    });
+    const { deps } = makeDeps(store, { maxExpandTokens: 100, getToolResultsDir: () => undefined });
+    const tool = createCtxExpandTool(deps);
+    const result = (await runExecute(tool, "wr04-nodir-scrub", { summaryId: "sum-1" }, liveCtx())) as {
+      details: { body?: string };
+    };
+    // The secret must be redacted in the inlined body (the spill-branch scrub must
+    // also run on the no-dir inline path). Pre-patch inlines it raw → this FAILS.
+    expect(result.details.body).toBeDefined();
+    expect(result.details.body).not.toContain(secret);
+    expect(result.details.body).toContain("[REDACTED]");
+  });
+
+  it("leaves a small no-dir body inlined verbatim (the WR-04 fix only affects the OVERSIZED no-dir case)", async () => {
+    // Regression guard: the bound + scrub apply ONLY when oversized. A small body
+    // with no dir must still inline verbatim (taint-wrapped), unchanged by the fix.
+    const small = "an ordinary small recovered body";
+    const { store } = makeStore({
+      getSummaryMessagesReturn: ["m1"],
+      getMessagesReturn: [makeMessage("m1", 1, small)],
+    });
+    const { deps } = makeDeps(store, { maxExpandTokens: 4000, getToolResultsDir: () => undefined });
+    const tool = createCtxExpandTool(deps);
+    const result = (await runExecute(tool, "wr04-nodir-small", { summaryId: "sum-1" }, liveCtx())) as {
+      details: { body?: string; truncated?: boolean };
+    };
+    expect(result.details.body).toContain(small);
+    expect(result.details.body).toContain("UNTRUSTED");
+    // Not truncated (it was never oversized).
+    expect(result.details.truncated).toBeFalsy();
+  });
+});
