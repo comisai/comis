@@ -48,6 +48,10 @@ import {
   type LeafSummarizer,
   type LeafSummarizerDeps,
 } from "./lcd-leaf-summarizer.js";
+// Phase 130, C2: the afterTurn condense pass that folds ≥condensedMinFanout
+// contiguous same-depth leaf summaries into one depth+1 condensed summary.
+import { maybeRunCondensePass } from "../executor/lcd-condense-trigger.js";
+import { CONDENSED_FALLBACK_SUMMARY_MARKER } from "./constants.js";
 import { computeTokenBudget } from "./token-budget.js";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 import type { ContextEngineDeps } from "./types.js";
@@ -440,5 +444,180 @@ describe("LCD synthetic-session gate (Plan 05 Task 2 — C1/A3 headline)", () =>
     const summary = await shortStub([], { reserveTokens: 1_200 });
     expect(typeof summary).toBe("string");
     expect(summary.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The multi-tier gate (Phase 130, C2 — Plan 02 Task 3)
+// ---------------------------------------------------------------------------
+//
+// Composes the leaf pass (selectLeafChunk/summarizeLeafChunk + appendLeafSummary)
+// and the NEW condense pass (maybeRunCondensePass) over a LONG session and proves
+// the C2 success criterion end-to-end with a STUB summarizer (no network): a long
+// session is summarized by repeated leaf passes until ≥condensedMinFanout depth-0
+// leaf summaries accumulate as a contiguous run, then a condense pass folds them
+// into ONE depth-1 condensed summary that surfaces in the assembled prefix with
+// accurate descendantCount + time-range + linked parents, ordering preserved.
+//
+// Boundary with Plan 03 (independently testable on the same file set): this test
+// asserts the condensed summary EXISTS + has correct coverage via getSummaries()
+// (kind/depth/descendantCount/time-range) and that its recognizable Level-3
+// content (the deterministic [lcd-condensed-fallback] marker, via the oversized
+// stub) surfaces in the assembled prefix — it does NOT assert the P1 header
+// wording ("[LCD summary — depth=… trust=…]"), which Plan 03 owns.
+
+describe("LCD synthetic-session gate (Plan 02 Task 3 — C2 multi-tier leaf→condense)", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Drive condense passes until no further depth-1 condensed summary is created
+   *  (bounded), using the SAME injected stub. Returns the condensed-summary count. */
+  async function condenseUntilStable(
+    deps: LeafSummarizerDeps,
+    condensedMinFanout: number,
+    maxRounds = 10,
+  ): Promise<number> {
+    for (let r = 0; r < maxRounds; r++) {
+      const before = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed").length;
+      await maybeRunCondensePass(
+        store,
+        SCOPE,
+        { condensedMinFanout, condensedTargetTokens: 2_000, windowTokens: 200_000 },
+        deps,
+        FIXED_CREATED_AT_BASE,
+        deps.logger,
+      );
+      const after = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed").length;
+      if (after === before) break; // no progress → stable
+    }
+    return store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed").length;
+  }
+
+  it("folds ≥condensedMinFanout depth-0 leaf summaries into a depth-1 condensed summary that surfaces in the assembled prefix (descendantCount/time-range correct, parents linked, ordering preserved, NO network)", async () => {
+    const FRESH_TAIL_STEPS = 8;
+    // A SMALL leaf chunk cap → MANY leaf passes, so ≥condensedMinFanout (4) leaf
+    // summaries accumulate as a contiguous run at the oldest end.
+    const LEAF_CHUNK_TOKENS = 500;
+    const LEAF_TARGET_TOKENS = 1_200;
+    const CONDENSED_MIN_FANOUT = 4;
+    const CONTEXT_WINDOW = 20_000;
+
+    // 64 turns ≈ 140+ messages (every 4th turn is a tool pair).
+    const live = buildLongSession(store, 64) as AgentMessage[];
+
+    // Drive leaf passes until the oldest out-of-tail history is fully compacted —
+    // the OVERSIZED stub forces every leaf to the deterministic Level-3 floor, so
+    // each leaf's stored tokenCount is small + bounded (the condense before-size is
+    // then a clean Σ of those stored counts).
+    const leafDeps = makeLeafDeps(oversizedStub);
+    const rounds = await compactUntilStable(
+      store,
+      leafDeps,
+      FRESH_TAIL_STEPS,
+      LEAF_CHUNK_TOKENS,
+      LEAF_TARGET_TOKENS,
+    );
+    expect(rounds).toBeGreaterThan(0);
+
+    // Enough leaf summaries accumulated to trigger condensation.
+    const leavesBefore = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "leaf");
+    expect(leavesBefore.length).toBeGreaterThanOrEqual(CONDENSED_MIN_FANOUT);
+
+    // Snapshot the FULL contiguous depth-0 run the condense pass will fold. The
+    // pass condenses the ENTIRE contiguous same-depth run (not just the first
+    // condensedMinFanout) — the leaves all sit at the oldest end as one contiguous
+    // summary-ref run, so the children are every LEADING contiguous summary-ref
+    // (up to the first surviving message-ref).
+    const items = store.getContextItems(CONVERSATION_ID);
+    const leadingSummaryRefIds: string[] = [];
+    for (const it of items) {
+      if (it.refKind !== "summary") break; // the run ends at the first message-ref
+      leadingSummaryRefIds.push(it.refId);
+    }
+    expect(leadingSummaryRefIds.length).toBeGreaterThanOrEqual(CONDENSED_MIN_FANOUT);
+    const leafById = new Map(leavesBefore.map((s) => [s.summaryId, s]));
+    const expectedChildren = leadingSummaryRefIds.map((id) => leafById.get(id)!);
+    const expectedDescendantCount = expectedChildren.reduce((acc, s) => acc + s.descendantCount, 0);
+    const expectedEarliest = Math.min(...expectedChildren.map((s) => s.earliestAt));
+    const expectedLatest = Math.max(...expectedChildren.map((s) => s.latestAt));
+
+    // Run ONE condense pass (folds the shallowest contiguous run ≥ fanout).
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      { condensedMinFanout: CONDENSED_MIN_FANOUT, condensedTargetTokens: 2_000, windowTokens: CONTEXT_WINDOW },
+      makeLeafDeps(oversizedStub),
+      FIXED_CREATED_AT_BASE,
+      leafDeps.logger,
+    );
+
+    // ---- A depth-1 condensed summary now exists with correct coverage. ----
+    const condensed = store.getSummaries(CONVERSATION_ID).filter((s) => s.kind === "condensed");
+    expect(condensed.length).toBe(1);
+    const node = condensed[0]!;
+    expect(node.depth).toBe(1);
+    // descendantCount === Σ child descendantCounts (the store recomputed it).
+    expect(node.descendantCount).toBe(expectedDescendantCount);
+    expect(node.descendantCount).toBeGreaterThan(0);
+    // Time-range spans all children.
+    expect(node.earliestAt).toBe(expectedEarliest);
+    expect(node.latestAt).toBe(expectedLatest);
+    // Escalation reduced: the condensed tokenCount < Σ child tokenCounts.
+    const sumChildTokens = expectedChildren.reduce((acc, s) => acc + s.tokenCount, 0);
+    expect(node.tokenCount).toBeLessThan(sumChildTokens);
+    // The oversized stub forced the deterministic Level-3 floor (fallback marker).
+    expect(node.fallback).toBe(true);
+    expect(node.content.startsWith(CONDENSED_FALLBACK_SUMMARY_MARKER)).toBe(true);
+
+    // ---- lcd_summary_parents links the folded children (losslessness ledger). ----
+    const parentRows = db
+      .prepare("SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ? ORDER BY child_summary_id")
+      .all(node.summaryId) as Array<{ child_summary_id: string }>;
+    const linkedChildren = parentRows.map((r) => r.child_summary_id).sort();
+    expect(linkedChildren).toEqual(expectedChildren.map((s) => s.summaryId).sort());
+
+    // ---- Ordering preserved: context_items stays dense + gap-free + ordered. ----
+    const after = store.getContextItems(CONVERSATION_ID);
+    const ordinals = after.map((it) => it.ordinal);
+    expect(ordinals).toEqual(Array.from({ length: after.length }, (_, i) => i));
+    // The condensed summary-ref sits at the oldest end (ordinal 0).
+    const condensedRef = after.find((it) => it.refKind === "summary" && it.refId === node.summaryId);
+    expect(condensedRef).toBeDefined();
+    expect(condensedRef!.ordinal).toBe(0);
+
+    // ---- The condensed summary surfaces in the ASSEMBLED prefix (resolved through
+    //      the assembler), recognizable by its deterministic Level-3 marker (NOT
+    //      the Plan-03 header wording). ----
+    const engine = createLcdContextEngine(dagConfig(FRESH_TAIL_STEPS), makeDagDeps(store, CONTEXT_WINDOW));
+    const out = await engine.transformContext(live);
+    const tailStart = freshTailBoundaryIndex(live, FRESH_TAIL_STEPS);
+    const freshTail = live.slice(tailStart);
+    const prefix = out.slice(0, out.length - freshTail.length);
+    const sawCondensed = prefix.some((m) =>
+      roleOf(m) === "user" &&
+      JSON.stringify((m as unknown as { content?: unknown }).content ?? "").includes(
+        CONDENSED_FALLBACK_SUMMARY_MARKER,
+      ),
+    );
+    expect(sawCondensed).toBe(true);
+  });
+
+  it("the multi-tier path uses NO network — the condense pass runs on a plain stub summarizer and resolves", async () => {
+    // Guard: even with a non-trivial session + condense pass, the injected stub is
+    // a plain function — if a live client leaked in, this would hang / need a key.
+    buildLongSession(store, 24);
+    const leafDeps = makeLeafDeps(shortStub);
+    await compactUntilStable(store, leafDeps, 8, 500, 1_200);
+    const condensedCount = await condenseUntilStable(makeLeafDeps(shortStub), 4);
+    // The condense pass executed without I/O (it resolved); a fold may or may not
+    // have happened depending on the contiguous run length, but the path is clean.
+    expect(condensedCount).toBeGreaterThanOrEqual(0);
   });
 });
