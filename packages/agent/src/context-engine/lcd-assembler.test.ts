@@ -656,7 +656,7 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
       scope: SCOPE,
       tokenCount: 5,
       content: SUMMARY_TEXT,
-      descendantCount: 5,
+      descendantCount: 99, // advisory — the store RECOMPUTES from the covered range
       earliestAt: FIXED_CREATED_AT, // 1000ms epoch → 1970-01-01
       latestAt: FIXED_CREATED_AT,
       fileIds: [],
@@ -664,14 +664,16 @@ describe("summaryRefToMessage (P1 honest, taint-safe render)", () => {
       taint: false,
       createdAt: FIXED_CREATED_AT,
       startOrdinal: 0,
-      endOrdinal: 3,
+      endOrdinal: 3, // covers ordinals 0..3 = 4 messages (u0,a0,u1,a1)
     });
 
     const text = await renderSummaryText(msgs as AgentMessage[], SUMMARY_TEXT);
 
-    // TRUSTED markers (computed from the store row, NOT parsed from content).
+    // TRUSTED markers (computed from the store row, NOT parsed from content). The
+    // store recomputes descendant_count from the COVERED range [0,3] = 4 messages
+    // (the advisory input 99 is ignored — the store is the authority).
     expect(text).toContain("depth=0"); // a leaf is depth 0
-    expect(text).toContain("descendant_count=5"); // covers 5 messages
+    expect(text).toContain("descendant_count=4"); // covers 4 messages (range [0,3])
     expect(text).toContain("1970-01-01"); // ISO time-range from earliestAt..latestAt
     expect(text).toContain("trust=untrusted"); // the un-spoofable trust marker
 

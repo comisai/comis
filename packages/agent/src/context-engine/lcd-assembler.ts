@@ -47,7 +47,7 @@
  * @module
  */
 
-import { partsToMessage, systemNowMs } from "@comis/core";
+import { partsToMessage, systemDateFrom, systemNowMs, wrapExternalContent } from "@comis/core";
 import type {
   ContextStorePort,
   LcdContextItem,
@@ -273,19 +273,72 @@ function resolveContextItem(
 }
 
 /**
- * Inject a leaf summary as a plain `user`-role text message — the ONE seam Phase
- * 130 swaps for the honest `trust="untrusted"` XML wrapper (P1/P2). 129 does NOT
- * claim to mitigate injection (T-129-14): it only avoids ELEVATING summary text
- * to a privileged role — a summary derived from possibly-untrusted history is
- * carried as `user` (untrusted by role), NEVER `system`/`assistant`. The
- * injection-stripping wrapper + taint-escape are Phase 130/132. Keep this the
- * single resolution point so that swap touches one function.
+ * Render a summary as an HONEST, TAINT-SAFE `user`-role message (P1) — the ONE
+ * seam Phase 130 swaps from the plain text passthrough Phase 129 left here.
+ *
+ * The honesty markers (depth / descendant_count / ISO time-range / trust) are
+ * computed from the STORE ROW (`summary.depth`/`descendantCount`/`earliestAt`/
+ * `latestAt`), NEVER parsed from `content`, and placed in the TRUSTED header +
+ * footer OUTSIDE the `wrapExternalContent` untrusted region. A poisoned summary
+ * body therefore cannot forge them: the per-session random hex delimiter is
+ * unpredictable, and `replaceMarkers` neutralizes any injected `<<<UNTRUSTED_…>>>`
+ * / `<<<END_UNTRUSTED_…>>>` marker the content tries to smuggle in (RED-proven:
+ * a body forging `trust=trusted` + a fake end-delimiter still renders the real
+ * `trust=untrusted` and the forged delimiter collapses to `[[END_MARKER_SANITIZED]]`).
+ *
+ * Role stays `"user"` — the documented ceiling (T-129-14): a summary derived from
+ * possibly-untrusted history is carried untrusted-by-role, NEVER `system`/
+ * `assistant`. The body is wrapped via `wrapExternalContent` (the AGENTS.md §2.2
+ * taint primitive) rather than hand-rolled XML escaping.
+ *
+ * The expand footer is an honest ADVERTISEMENT of WHAT was compressed (depth +
+ * count + time-range); the recovery TOOLS (`ctx_*`) are Phase 131 — DECISION
+ * GATE #3 / RESEARCH A4: do NOT name them here. Keep this the single resolution
+ * point so future swaps touch one function.
  */
 function summaryRefToMessage(summary: LcdSummary): AgentMessage {
+  // `trust` is ALWAYS "untrusted" at Phase 130 — the marker reflects the row's
+  // untrusted-by-derivation status; taint ENFORCEMENT (escaping/blocking driven
+  // by `summary.taint`/`summary.fallback`) is Phase 132, not this marker text.
+  const trust = "untrusted";
+  const range = isoRange(summary.earliestAt, summary.latestAt);
+  const header =
+    `[LCD summary — depth=${summary.depth}, ` +
+    `descendant_count=${summary.descendantCount}, ` +
+    `${range}, trust=${trust}]`;
+  // The body is UNTRUSTED — wrap it. `source: "unknown"` (label "External") is the
+  // generic untrusted-text source; the `ExternalContentSource` union has no
+  // `lcd_summary` label and a P1 plan does not edit the core security enum. The
+  // honesty markers live OUTSIDE this wrapped region (the trusted header/footer),
+  // so no `includeWarning` wall is needed per summary — the header + the P2 system
+  // clause carry the policy.
+  const safeBody = wrapExternalContent(summary.content, {
+    source: "unknown",
+    includeWarning: false,
+  });
+  const footer =
+    `Expand for details about: the ${summary.descendantCount} compressed ` +
+    `message(s) at depth ${summary.depth} spanning ${range}.`;
+  const text = `${header}\n${safeBody}\n${footer}`;
   return {
     role: "user",
-    content: [{ type: "text", text: summary.content }],
+    content: [{ type: "text", text }],
   } as unknown as AgentMessage;
+}
+
+/**
+ * Format the inclusive `[earliestAtMs, latestAtMs]` epoch-millisecond span as an
+ * ISO date range `YYYY-MM-DD..YYYY-MM-DD`, collapsing to a single `YYYY-MM-DD`
+ * when both ends fall on the same day. Pure formatting of already-known values —
+ * NOT a clock read — but the globals classifier flags `new Date(arg)` regardless
+ * of its argument, so the conversion goes through the sanctioned-root
+ * `systemDateFrom` indirection (the AGENTS.md §1 helper for `new Date(stored)`
+ * display formatting; the `rag-retriever.ts` precedent).
+ */
+function isoRange(earliestAtMs: number, latestAtMs: number): string {
+  const start = systemDateFrom(earliestAtMs).toISOString().slice(0, 10);
+  const end = systemDateFrom(latestAtMs).toISOString().slice(0, 10);
+  return start === end ? start : `${start}..${end}`;
 }
 
 /**
