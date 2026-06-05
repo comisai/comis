@@ -29,6 +29,8 @@ import { fileURLToPath } from "node:url";
 import { CostGovernor } from "./cost.js";
 import { buildCredentialRegistry } from "./credentials.js";
 import { writeReport, type LiveTestReport } from "./report.js";
+import { runSweep, parseProbeFilter } from "./sweep/sweep.js";
+import { writeGapReport } from "./sweep/gap-report.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
@@ -36,6 +38,7 @@ const LIVE_ENV_PATH = join(__dirname, "live.env");
 const REPORT_FILE = resolve(PROJECT_ROOT, ".test-live-report.json");
 const SMOKE_TEST = "test/live/scenarios/smoke.test.ts";
 const VITEST_CONFIG = "test/vitest.config.ts";
+const BENCHMARKS_DIR = resolve(PROJECT_ROOT, "benchmarks");
 
 // ---------------------------------------------------------------------------
 // parseArgs — exported named export, no side effects.
@@ -184,9 +187,17 @@ async function runMain(): Promise<void> {
     console.log("");
     console.log(`Mode: ${args.mode}`);
     console.log("");
-    console.log(
-      "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
-    );
+
+    if (args.mode === "sweep") {
+      const probeIds = parseProbeFilter();
+      const result = await runSweep(credentialRegistry, governor, { dry: true, probeIds });
+      console.log(`Sweep probes (${result.verdicts.length}): ${result.verdicts.map(v => v.id).join(", ")}`);
+      console.log("(dry run — no real calls, no report written)");
+    } else {
+      console.log(
+        "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
+      );
+    }
     console.log("");
     process.exit(0);
   }
@@ -197,17 +208,52 @@ async function runMain(): Promise<void> {
 
   let testsFailed = false;
 
-  // Phase 134: only the smoke test is available
-  const smokeCmd = [
-    "npx vitest run",
-    SMOKE_TEST,
-    `--config ${VITEST_CONFIG}`,
-  ].join(" ");
+  if (args.mode === "sweep") {
+    // Phase 135: sweep mode — run all probes, write gap report
+    const probeIds = parseProbeFilter();
+    const result = await runSweep(credentialRegistry, governor, { dry: args.dry, probeIds });
 
-  try {
-    execSync(smokeCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
-  } catch {
-    testsFailed = true;
+    if (!args.dry) {
+      try {
+        const ledgerDir = writeGapReport(result, BENCHMARKS_DIR);
+        console.log(`Gap report written: ${ledgerDir}/gap-report.json`);
+      } catch (err) {
+        console.error("Gap report write failed:", err);
+        // Secret leak in report — still counts as a failure
+        testsFailed = true;
+      }
+    }
+
+    // Print sweep summary
+    console.log("");
+    console.log("=== Sweep Summary ===");
+    console.log(`  Green: ${result.verdicts.filter(v => v.status === "green").length}`);
+    console.log(`  Red:   ${result.verdicts.filter(v => v.status === "red").length}`);
+    console.log(`  Skip:  ${result.verdicts.filter(v => v.status === "skip").length}`);
+    const redProbes = result.verdicts.filter(v => v.status === "red");
+    if (redProbes.length > 0) {
+      console.log("");
+      console.log("Red probes:");
+      for (const v of redProbes) {
+        console.log(`  [RED] ${v.id} (${v.category}): ${v.reason ?? "unknown error"}`);
+      }
+      testsFailed = true;
+    }
+    console.log("");
+
+  } else {
+    // Default: smoke test (Phase 134 baseline, and all future modes not yet wired)
+    const smokeCmd = [
+      "npx vitest run",
+      SMOKE_TEST,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(smokeCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
   }
 
   // Write report
@@ -227,7 +273,7 @@ async function runMain(): Promise<void> {
     })(),
     mode: args.mode,
     budget_usd: governor.tally(),
-    total_cost_usd: 0, // Phase 134: smoke only, $0 tier
+    total_cost_usd: 0,
     verdicts: [],
   };
 
