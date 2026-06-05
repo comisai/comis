@@ -949,4 +949,158 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
     expect(keys).not.toContain("text");
     expect(keys).not.toContain("messages");
   });
+
+  // WR-04: the DEFERRED (C4) compaction closure is enqueued detached and can run
+  // AFTER postExecution returns + `session.dispose()` tears the session down. The
+  // deferred passes resolve the summarizer deps WHEN THEY RUN — and getModel()
+  // re-reads `session.agent.state.model` (executor-context-engine-setup.ts:307,
+  // and again inside buildLeafSummarizeFn). If the SDK dispose nulls
+  // session.agent.state, a deferred pass that resolves the model post-dispose
+  // reads a torn-down session. The fix snapshots the model identity into the
+  // deferred closure BEFORE returning (snapshotSummarizerDepsForDefer), so the
+  // detached pass never re-reads the disposed session — it completes non-fatally
+  // and still persists a correct summary against the LIVE store.
+  it("behavior — snapshotSummarizerDepsForDefer captures the model BEFORE dispose so a deferred pass does not re-read a torn-down session and still persists (WR-04)", async () => {
+    const [{ default: Database }, memory, core, trigger, postExecMod, mockLoggerMod] =
+      await Promise.all([
+        import("better-sqlite3"),
+        import("@comis/memory"),
+        import("@comis/core"),
+        import("./lcd-compaction-trigger.js"),
+        import("./executor-post-execution.js"),
+        import("../../../../test/support/mock-logger.js"),
+      ]);
+    const { initSchema, createLcdStore } = memory as unknown as {
+      initSchema: (db: unknown, dim: number) => void;
+      createLcdStore: (db: unknown) => import("@comis/core").ContextStorePort;
+    };
+    const { messageToParts } = core as unknown as {
+      messageToParts: (m: unknown) => import("@comis/core").LcdMessagePart[];
+    };
+    const { runLeafPassAfterTurn } = trigger as unknown as {
+      runLeafPassAfterTurn: (params: Record<string, unknown>) => Promise<void>;
+    };
+    type SnapshotModel = import("../context-engine/lcd-leaf-summarizer.js").LeafSummarizerDeps extends {
+      getModel: () => infer M;
+    }
+      ? M
+      : never;
+    type SummarizerDepsGetter = (
+      modelSnapshot?: SnapshotModel,
+    ) => import("../context-engine/lcd-leaf-summarizer.js").LeafSummarizerDeps;
+    // The new lifetime helper the fix adds — RED on the pre-patch tree (the export
+    // does not exist, so the import is undefined and the call below throws).
+    const { snapshotSummarizerDepsForDefer } = postExecMod as unknown as {
+      snapshotSummarizerDepsForDefer: (
+        getSummarizerDeps: SummarizerDepsGetter | undefined,
+      ) => SummarizerDepsGetter | undefined;
+    };
+    const createMockLogger = (mockLoggerMod as { createMockLogger: () => unknown }).createMockLogger;
+    type SummarizerDeps = import("../context-engine/lcd-leaf-summarizer.js").LeafSummarizerDeps;
+
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const scope: import("@comis/core").ContextStoreScope = {
+      conversationId: "conv-dispose",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      sessionKey: "sess-a",
+    };
+
+    // Over-threshold history (40 msgs × 100 tokens = 4000; window 1000 → util 4.0).
+    for (let i = 0; i < 40; i++) {
+      const msg =
+        i % 2 === 0
+          ? ({ role: "user", content: `u${i}`, timestamp: 1000 } as unknown)
+          : ({
+              role: "assistant",
+              content: [{ type: "text", text: `a${i}` }],
+              api: "anthropic.messages",
+              provider: "anthropic",
+              model: "claude-test",
+              usage: { inputTokens: 1, outputTokens: 1 },
+              stopReason: "stop",
+              timestamp: 1000,
+            } as unknown);
+      store.append({
+        scope,
+        seq: i,
+        role: (msg as { role: import("@comis/core").LcdRole }).role,
+        tokenCount: 100,
+        createdAt: 1000 + i,
+        parts: messageToParts(msg),
+      });
+    }
+
+    const logger = createMockLogger();
+
+    // A summarizer-deps getter that models the production SESSION COUPLING +
+    // snapshot seam (executor-context-engine-setup.ts resolveCompactionModelChain):
+    // WITHOUT an injected model snapshot, getModel() reads a
+    // `session.agent.state.model` that becomes UNREADABLE after dispose (the read
+    // throws — the opaque SDK dispose tearing down the state), and `summarize`
+    // re-reads it too (mirrors buildLeafSummarizeFn:554 calling chain.getModel()).
+    // WITH an injected snapshot the chain uses it verbatim, never touching the
+    // session — the lifetime severance the deferred path needs. The fix's helper
+    // resolves the LIVE model once (pre-dispose) and re-binds the getter to inject
+    // that snapshot on every later resolution.
+    let disposed = false;
+    const sessionState: { model: SnapshotModel | undefined } = {
+      model: { provider: "anthropic", contextWindow: 1_000, reasoning: true },
+    };
+    const readModel = (): SnapshotModel => {
+      if (disposed) throw new Error("session.agent.state read after dispose");
+      return sessionState.model!;
+    };
+    const getSummarizerDeps: SummarizerDepsGetter = (modelSnapshot?: SnapshotModel): SummarizerDeps => {
+      // Mirror resolveCompactionModelChain: the injected snapshot (when present)
+      // is the model authority; otherwise read the live session.
+      const resolveModel = (): SnapshotModel => modelSnapshot ?? readModel();
+      return {
+        logger: logger as unknown as SummarizerDeps["logger"],
+        summarize: async () => {
+          resolveModel(); // buildLeafSummarizeFn:554 — chain.getModel() at LLM time
+          return "DEFERRED-LEAF-SUMMARY";
+        },
+        getModel: () => resolveModel(),
+        getApiKey: async () => "test-key",
+      };
+    };
+
+    // 1. Snapshot the deps BEFORE dispose (what the deferred branch does at enqueue):
+    //    capture the LIVE model identity and re-bind the getter to inject it.
+    const deferredGetter = snapshotSummarizerDepsForDefer(getSummarizerDeps);
+    expect(deferredGetter).toBeDefined();
+
+    // 2. The session disposes (postExecution returns → session.dispose()). Any
+    //    later read of session.agent.state.model now throws.
+    disposed = true;
+
+    // 3. The DEFERRED pass runs AFTER dispose using the snapshotted getter. With
+    //    the fix it reads the captured model snapshot (never the torn-down
+    //    session), so it completes non-fatally AND persists a correct summary.
+    await expect(
+      runLeafPassAfterTurn({
+        store,
+        scope,
+        contextEngine: {
+          contextThreshold: 0.75,
+          leafChunkTokens: 20_000,
+          leafTargetTokens: 1_200,
+          freshTailTurns: 8,
+        },
+        getSummarizerDeps: deferredGetter,
+        now: 9000,
+        logger,
+        eventBus: undefined,
+      }),
+    ).resolves.toBeUndefined();
+
+    // The deferred pass wrote to the LIVE store despite the disposed session.
+    const summaries = store.getSummaries(scope);
+    expect(summaries.length).toBe(1);
+    expect(summaries[0]!.kind).toBe("leaf");
+    expect(summaries[0]!.createdAt).toBe(9000);
+  });
 });
