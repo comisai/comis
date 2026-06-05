@@ -90,17 +90,20 @@ function safeStringify(value: unknown): string {
 function isFtsAvailable(db: Database.Database): boolean {
   const cached = ftsAvailabilityCache.get(db);
   if (cached !== undefined) return cached;
-  let available = false;
-  try {
-    // A MATCH that returns no rows but COMPILES + EXECUTES only when the FTS5
-    // module + the virtual table both exist.
-    db.prepare("SELECT rowid FROM lcd_summaries_fts WHERE lcd_summaries_fts MATCH ? LIMIT 1").all(
-      "__lcd_fts_probe__",
-    );
-    available = true;
-  } catch {
-    available = false;
-  }
+  // Probe in an IIFE so `available` is assigned exactly once (no dead
+  // initializer — no-useless-assignment): the MATCH below COMPILES + EXECUTES
+  // only when the FTS5 module + the virtual table both exist; any throw
+  // (`no such module: fts5` / `no such table`) verdicts to false.
+  const available = ((): boolean => {
+    try {
+      db.prepare(
+        "SELECT rowid FROM lcd_summaries_fts WHERE lcd_summaries_fts MATCH ? LIMIT 1",
+      ).all("__lcd_fts_probe__");
+      return true;
+    } catch {
+      return false;
+    }
+  })();
   ftsAvailabilityCache.set(db, available);
   return available;
 }
