@@ -74,9 +74,23 @@ import { resolveContext } from "./lcd-compaction-trigger.js";
 export interface CondensePassOptions {
   /** Min contiguous same-depth fan-out that triggers condensation (`condensedMinFanout`, 4). */
   condensedMinFanout: number;
+  /**
+   * Hard minimum contiguous same-depth fan-out (`condensedMinFanoutHard`, 2) — the
+   * LOWER bound that forces a condense when the soft `condensedMinFanout` has not
+   * been met but context pressure is HIGH (utilization > `contextThreshold`).
+   * Mirrors the leaf side's soft/hard knobs: the soft fanout governs the relaxed
+   * case, the hard fanout keeps a pressured tier draining.
+   */
+  condensedMinFanoutHard: number;
+  /**
+   * Utilization fraction above which context pressure is HIGH (`contextThreshold`,
+   * 0.75) — the SAME gate the leaf pass uses. At/below it the soft fanout governs;
+   * above it `condensedMinFanoutHard` is allowed to force a condense.
+   */
+  contextThreshold: number;
   /** Condensed summary token target (`condensedTargetTokens`, 2_000) → the SDK `reserveTokens`. */
   condensedTargetTokens: number;
-  /** The model's context window W (carried for parity / a positive-window gate). */
+  /** The model's context window W (the utilization denominator + positive-window gate). */
   windowTokens: number;
 }
 
@@ -139,11 +153,13 @@ export async function maybeRunCondensePass(
     // R4 (132-03): resolveContext reads agent + tenant scoped (WR-02) via `scope`.
     const { summaryRunsByDepth, summaries } = resolveContext(store, scope);
 
-    // Select the shallowest contiguous run ≥ fanout (ties → oldest startOrdinal).
-    // `undefined` ⇒ no depth meets fanout → no-op (no event, no append).
+    // TEMPORARY (pre-patch RED): pressure is hardcoded false and the deep-tier +
+    // hard-fanout consumption is not wired yet — the FIX 5 RED state.
     const run: SummaryRefRun | undefined = selectCondensableTier(
       summaryRunsByDepth,
       opts.condensedMinFanout,
+      opts.condensedMinFanoutHard,
+      false,
     );
     if (run === undefined) return;
 
@@ -327,6 +343,8 @@ export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnP
     scope,
     {
       condensedMinFanout: cfg.condensedMinFanout,
+      condensedMinFanoutHard: cfg.condensedMinFanoutHard,
+      contextThreshold: cfg.contextThreshold,
       condensedTargetTokens: cfg.condensedTargetTokens,
       windowTokens,
     },

@@ -166,7 +166,11 @@ export interface CondenseSummaryResult {
 export function selectCondensableTier(
   runs: SummaryRefRun[],
   condensedMinFanout: number,
+  _condensedMinFanoutHard: number,
+  _pressureHigh: boolean,
 ): SummaryRefRun | undefined {
+  // TEMPORARY (pre-patch): still selects the SHALLOWEST run and ignores the hard
+  // fanout + pressure — the RED state the FIX 5 tests fail against.
   let best: SummaryRefRun | undefined;
   for (const run of runs) {
     if (run.children.length < condensedMinFanout) continue;
@@ -174,7 +178,6 @@ export function selectCondensableTier(
       best = run;
       continue;
     }
-    // Shallowest depth wins; tie → the oldest run (lowest startOrdinal).
     if (run.depth < best.depth) best = run;
     else if (run.depth === best.depth && run.startOrdinal < best.startOrdinal) best = run;
   }

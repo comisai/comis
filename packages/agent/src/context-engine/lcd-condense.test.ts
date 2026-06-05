@@ -139,17 +139,17 @@ function makeDeps(summarize: CondenseSummarizer): LeafSummarizerDeps {
 // selectCondensableTier — shallowest contiguous run ≥ fanout
 // ===========================================================================
 
-describe("selectCondensableTier — picks the shallowest contiguous run at/over fanout", () => {
-  it("returns undefined when no depth has a contiguous run reaching condensedMinFanout", () => {
+describe("selectCondensableTier — picks the DEEPEST contiguous run at/over the effective fanout", () => {
+  it("returns undefined when no depth has a contiguous run reaching the soft fanout (no pressure)", () => {
     const runs: SummaryRefRun[] = [
       run(0, [child("s0", 0), child("s1", 1), child("s2", 2)]),
     ];
-    expect(selectCondensableTier(runs, 4)).toBeUndefined();
+    expect(selectCondensableTier(runs, 4, 2, false)).toBeUndefined();
   });
 
-  it("selects the run whose contiguous length reaches condensedMinFanout (exact boundary)", () => {
+  it("selects the run whose contiguous length reaches the soft fanout (exact boundary)", () => {
     const d0 = run(0, [child("s0", 0), child("s1", 1), child("s2", 2), child("s3", 3)]);
-    const picked = selectCondensableTier([d0], 4);
+    const picked = selectCondensableTier([d0], 4, 2, false);
     expect(picked).toBeDefined();
     expect(picked!.depth).toBe(0);
     expect(picked!.children.map((c) => c.summaryId)).toEqual(["s0", "s1", "s2", "s3"]);
@@ -157,41 +157,70 @@ describe("selectCondensableTier — picks the shallowest contiguous run at/over 
     expect(picked!.endOrdinal).toBe(3);
   });
 
-  it("prefers the SHALLOWEST depth when multiple depths each reach fanout", () => {
+  it("prefers the DEEPEST depth when multiple depths each reach fanout, so depth-1→depth-2 can fire", () => {
+    // The CORE FIX: a depth-1 run that reaches fanout must be condensed (→ depth-2)
+    // rather than always re-folding the shallowest depth-0 run. Selecting shallowest
+    // (the old behavior) left depth-1→depth-2 unreachable — max depth stuck at 1.
     const d1 = run(1, [child("c0", 10, { depth: 1 }), child("c1", 11, { depth: 1 }), child("c2", 12, { depth: 1 }), child("c3", 13, { depth: 1 })]);
     const d0 = run(0, [child("s0", 0), child("s1", 1), child("s2", 2), child("s3", 3)]);
-    // Pass the deeper run FIRST to prove the selection is by depth, not order.
-    const picked = selectCondensableTier([d1, d0], 4);
+    // Pass the shallow run FIRST to prove the selection is by depth, not order.
+    const picked = selectCondensableTier([d0, d1], 4, 2, false);
     expect(picked).toBeDefined();
-    expect(picked!.depth).toBe(0);
-    expect(picked!.children[0]!.summaryId).toBe("s0");
+    expect(picked!.depth).toBe(1);
+    expect(picked!.children[0]!.summaryId).toBe("c0");
   });
 
-  it("breaks ties at the same depth by the OLDEST run (lowest startOrdinal)", () => {
-    // Two separate contiguous depth-0 runs (Pitfall-3 layout: split by a
-    // message-ref between them), both at fanout — the older (lower startOrdinal)
-    // is condensed first.
+  it("falls back to the shallower tier when only it reaches fanout (deeper tier below fanout)", () => {
+    // depth-1 has only 2 (< soft 4) → not selectable at soft; depth-0 has 4 → it is
+    // the deepest QUALIFYING run. So depth-0 keeps folding until depth-1 accumulates
+    // enough, at which point depth-1 becomes deepest-qualifying (previous test).
+    const d1 = run(1, [child("c0", 10, { depth: 1 }), child("c1", 11, { depth: 1 })]);
+    const d0 = run(0, [child("s0", 0), child("s1", 1), child("s2", 2), child("s3", 3)]);
+    const picked = selectCondensableTier([d0, d1], 4, 2, false);
+    expect(picked).toBeDefined();
+    expect(picked!.depth).toBe(0);
+  });
+
+  it("breaks ties at the same (deepest) depth by the OLDEST run (lowest startOrdinal)", () => {
     const older = run(0, [child("s0", 0), child("s1", 1), child("s2", 2), child("s3", 3)]);
     const newer = run(0, [child("s5", 5), child("s6", 6), child("s7", 7), child("s8", 8)]);
-    const picked = selectCondensableTier([newer, older], 4);
+    const picked = selectCondensableTier([newer, older], 4, 2, false);
     expect(picked).toBeDefined();
     expect(picked!.startOrdinal).toBe(0);
     expect(picked!.children[0]!.summaryId).toBe("s0");
   });
 
   it("never selects across a non-contiguous boundary — only a single run of length >= fanout qualifies (Pitfall 3)", () => {
-    // Layout [s0(d0) | m1 | s2 s3 s4 (d0)] with fanout=4: the leading singleton
-    // run {s0} has length 1; the trailing run {s2,s3,s4} has length 3. NEITHER
-    // reaches fanout 4, so nothing is selectable — proving s0 is NEVER merged
-    // with s2,s3,s4 across the surviving message-ref.
     const lead = run(0, [child("s0", 0)]);
     const trail = run(0, [child("s2", 2), child("s3", 3), child("s4", 4)]);
-    expect(selectCondensableTier([lead, trail], 4)).toBeUndefined();
+    expect(selectCondensableTier([lead, trail], 4, 2, false)).toBeUndefined();
     // …but the SAME trailing run reaches fanout 3 → it (and ONLY it) is selected.
-    const picked = selectCondensableTier([lead, trail], 3);
+    const picked = selectCondensableTier([lead, trail], 3, 2, false);
     expect(picked).toBeDefined();
     expect(picked!.children.map((c) => c.summaryId)).toEqual(["s2", "s3", "s4"]);
     expect(picked!.startOrdinal).toBe(2);
+  });
+
+  it("under HIGH pressure drops to the HARD fanout, condensing a run the soft fanout would skip (condensedMinFanoutHard)", () => {
+    // A depth-0 run of 2 summaries: below the SOFT fanout (4) but at/over the HARD
+    // lower bound (2). With pressure HIGH the hard bound forces a condense so the
+    // tier still drains; with pressure LOW it stays a no-op (soft governs).
+    const d0 = run(0, [child("s0", 0), child("s1", 1)]);
+    expect(selectCondensableTier([d0], 4, 2, false)).toBeUndefined(); // soft → skip
+    const picked = selectCondensableTier([d0], 4, 2, true); // hard under pressure → condense
+    expect(picked).toBeDefined();
+    expect(picked!.depth).toBe(0);
+    expect(picked!.children.map((c) => c.summaryId)).toEqual(["s0", "s1"]);
+  });
+
+  it("still selects the deepest qualifying run when pressure is high (hard fanout applied per tier)", () => {
+    // depth-1 has 2 (≥ hard 2), depth-0 has 3 (≥ hard 2): under pressure BOTH qualify
+    // at the hard bound, so the DEEPEST (depth-1) is condensed → depth-2.
+    const d1 = run(1, [child("c0", 10, { depth: 1 }), child("c1", 11, { depth: 1 })]);
+    const d0 = run(0, [child("s0", 0), child("s1", 1), child("s2", 2)]);
+    const picked = selectCondensableTier([d0, d1], 4, 2, true);
+    expect(picked).toBeDefined();
+    expect(picked!.depth).toBe(1);
   });
 });
 

@@ -178,6 +178,8 @@ function makeEventBus(): { bus: TypedEventBus; emits: Array<{ event: string; pay
 function condenseOpts(overrides: Partial<CondensePassOptions> = {}): CondensePassOptions {
   return {
     condensedMinFanout: 4,
+    condensedMinFanoutHard: 2,
+    contextThreshold: 0.75,
     condensedTargetTokens: 2_000,
     windowTokens: 200_000,
     ...overrides,
@@ -635,5 +637,96 @@ describe("maybeRunCondensePass — single resolved snapshot is the source of tru
     // A condensing pass resolves ONE getSummaries snapshot; taint + previousSummary
     // ride that snapshot. Additional reads reintroduce the two-sources-of-truth bug.
     expect(getSummariesCalls()).toBe(1);
+  });
+});
+
+// ===========================================================================
+// FIX 5 — deep tiering (depth-1 → depth-2) + condensedMinFanoutHard under pressure
+// ===========================================================================
+
+describe("maybeRunCondensePass — deep tiering and hard-fanout (FIX 5)", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Run ONE condense pass with the given options (short summarizer, no event bus needed). */
+  async function runPass(opts: Partial<CondensePassOptions>): Promise<void> {
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts(opts),
+      makeSummarizerDeps(shortSummarizer(), logger),
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+  }
+
+  it("produces a depth-2 condensed summary once enough contiguous depth-1 summaries accumulate", async () => {
+    // 16 contiguous depth-0 leaves. With condensedMinFanout=4, repeated passes
+    // first fold leaves into depth-1 summaries; once 4 contiguous depth-1 exist, a
+    // further pass MUST fold THEM into a depth-2 summary. Pre-patch the selector
+    // always picks the SHALLOWEST run, so depth-1 is never folded → max depth stays
+    // 1 no matter how many passes run (the bug).
+    seedHistory(store, 80, 100);
+    seedContiguousLeaves(store, 16, 4);
+    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "leaf").length).toBe(16);
+
+    // Run the pass enough times to drain depth-0 into depth-1 AND then fold depth-1
+    // into depth-2 (16 leaves → 4 depth-1 → 1 depth-2 needs at least 5 passes; run
+    // a few extra to be safe — the pass is a no-op once everything is condensed).
+    for (let i = 0; i < 8; i++) await runPass({ condensedMinFanout: 4 });
+
+    const summaries = store.getSummaries(SCOPE);
+    const maxDepth = Math.max(...summaries.map((s) => s.depth));
+    expect(maxDepth).toBeGreaterThanOrEqual(2);
+    // At least one genuine depth-2 condensed summary exists.
+    expect(summaries.some((s) => s.kind === "condensed" && s.depth === 2)).toBe(true);
+  });
+
+  it("condenses a sub-soft-fanout depth-0 run under HIGH pressure via condensedMinFanoutHard", async () => {
+    // 2 contiguous depth-0 leaves: below the soft fanout (4) but at the hard bound
+    // (2). The resolved view is engineered ABOVE contextThreshold so pressure is
+    // HIGH → the hard bound forces a condense the soft fanout alone would skip.
+    // Pre-patch `condensedMinFanoutHard` is dead config (never consumed), so NO
+    // condensed summary is produced.
+    seedHistory(store, 6, 100);
+    seedContiguousLeaves(store, 2, 1); // 2 contiguous depth-0 leaves, each tokenCount 5
+
+    // windowTokens tiny so resolved/window utilization exceeds contextThreshold.
+    await runPass({
+      condensedMinFanout: 4,
+      condensedMinFanoutHard: 2,
+      contextThreshold: 0.5,
+      windowTokens: 20,
+    });
+
+    const condensed = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed");
+    expect(condensed.length).toBe(1);
+    expect(condensed[0]!.depth).toBe(1);
+  });
+
+  it("does NOT condense a sub-soft-fanout run when pressure is LOW (hard bound only fires under pressure)", async () => {
+    // Same 2-leaf layout, but a HUGE window → utilization well below contextThreshold
+    // → pressure LOW → the hard bound does NOT fire, the soft fanout governs, no-op.
+    seedHistory(store, 6, 100);
+    seedContiguousLeaves(store, 2, 1);
+
+    await runPass({
+      condensedMinFanout: 4,
+      condensedMinFanoutHard: 2,
+      contextThreshold: 0.75,
+      windowTokens: 1_000_000,
+    });
+
+    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "condensed").length).toBe(0);
   });
 });
