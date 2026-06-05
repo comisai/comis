@@ -1,0 +1,227 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Live-fire test runner — tsx-driven orchestrator.
+ *
+ * Usage:
+ *   pnpm test:live [mode] [--dry] [--profile <name>]
+ *   pnpm test:live --dry          # dry run: print plan + cost estimate, no real calls
+ *   pnpm test:live core           # run core-loop scenarios (requires COMIS_LIVE=1)
+ *   pnpm test:live all            # run all available scenarios
+ *
+ * Master gate: COMIS_LIVE env var. When unset, exits 0 immediately with a
+ * "Live tier skipped" message. No provider call, no network, no cost.
+ *
+ * live.env loading: if test/live/live.env exists it is read and injected
+ * into process.env before the COMIS_LIVE gate check. Values are never
+ * logged — T-134-18 (Information Disclosure) mitigation.
+ *
+ * parseArgs is a named export so runner.test.ts can unit-test it without
+ * triggering any side effects (process.exit, env reads, execSync).
+ * All side effects live inside runMain() which is guarded by isMain.
+ *
+ * @module
+ */
+
+import { execSync } from "node:child_process";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { CostGovernor } from "./cost.js";
+import { buildCredentialRegistry } from "./credentials.js";
+import { writeReport, type LiveTestReport } from "./report.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = resolve(__dirname, "../..");
+const LIVE_ENV_PATH = join(__dirname, "live.env");
+const REPORT_FILE = resolve(PROJECT_ROOT, ".test-live-report.json");
+const SMOKE_TEST = "test/live/scenarios/smoke.test.ts";
+const VITEST_CONFIG = "test/vitest.config.ts";
+
+// ---------------------------------------------------------------------------
+// parseArgs — exported named export, no side effects.
+// Unit tests import only this symbol; main script execution is guarded below.
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the live-fire runner's CLI arguments.
+ *
+ * @param argv - Array of argument strings (e.g. process.argv.slice(2))
+ * @returns Parsed options: dry flag and mode string
+ */
+export function parseArgs(argv: string[]): { dry: boolean; mode: string } {
+  const dry = argv.includes("--dry");
+  // Mode is the first non-flag argument (flags start with '--')
+  const mode = argv.find((a) => !a.startsWith("--")) ?? "all";
+  return { dry, mode };
+}
+
+// ---------------------------------------------------------------------------
+// live.env loading — T-134-18: values are injected into process.env only;
+// never logged or passed to external processes as visible strings.
+// ---------------------------------------------------------------------------
+
+function loadLiveEnv(): void {
+  if (!existsSync(LIVE_ENV_PATH)) return;
+  let content: string;
+  try {
+    content = readFileSync(LIVE_ENV_PATH, "utf-8");
+  } catch {
+    return;
+  }
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    const val = trimmed.slice(eqIdx + 1).trim();
+    // Only set if not already present in the environment.
+    if (key && !(key in process.env)) {
+      process.env[key] = val;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main orchestration — guarded so unit tests can import parseArgs without
+// triggering process.exit or any side effects.
+// ---------------------------------------------------------------------------
+
+// ESM main-script detection: tsx sets process.argv[1] to the resolved file path.
+const isMain =
+  typeof process !== "undefined" &&
+  process.argv[1] !== undefined &&
+  (process.argv[1].endsWith("/runner.ts") ||
+    process.argv[1].endsWith("/runner.js") ||
+    process.argv[1] === __filename);
+
+if (isMain) {
+  // Load live.env BEFORE the COMIS_LIVE gate check so the env file can set it.
+  loadLiveEnv();
+
+  // COMIS_LIVE gate — exit 0 immediately when unset.
+  if (!process.env["COMIS_LIVE"]) {
+    console.log(
+      "Live tier skipped (COMIS_LIVE not set). " +
+        "Set COMIS_LIVE=1 in test/live/live.env to run live tests.",
+    );
+    process.exit(0);
+  }
+
+  runMain().catch((err: unknown) => {
+    console.error("Live runner fatal error:", err);
+    process.exit(1);
+  });
+}
+
+async function runMain(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const governor = new CostGovernor();
+  const credentialRegistry = buildCredentialRegistry();
+
+  // Banner
+  console.log("");
+  console.log("=".repeat(60));
+  console.log("  Comis Live-Fire Test Runner");
+  console.log(`  Started: ${new Date().toISOString()}`);
+  console.log("=".repeat(60));
+  console.log("");
+
+  // --dry mode: print plan + cost estimate and exit 0
+  if (args.dry) {
+    console.log("=== Live-fire dry run === " + new Date().toISOString());
+    console.log("");
+    console.log(
+      `Budget: $${governor.tally().toFixed(2)} (ceiling: COMIS_LIVE_BUDGET_USD)`,
+    );
+    console.log("");
+
+    const unlockedCategories = credentialRegistry.getUnlockedCategories();
+    if (unlockedCategories.length > 0) {
+      console.log("Available categories: " + unlockedCategories.join(", "));
+    } else {
+      console.log(
+        "Available categories: (none — no API keys found in env)",
+      );
+    }
+
+    // List skipped categories (sampling the most common ones)
+    const commonCategories = [
+      "LLM(anthropic)",
+      "LLM(openai)",
+      "LLM(google)",
+    ];
+    const skippedCategories = commonCategories.filter(
+      (cat) => credentialRegistry.getSkipVerdict(cat) !== null,
+    );
+    if (skippedCategories.length > 0) {
+      console.log(
+        "SKIPPED categories: " +
+          skippedCategories
+            .map(
+              (cat) =>
+                `${cat} (${credentialRegistry.getSkipVerdict(cat) ?? "ok"})`,
+            )
+            .join(", "),
+      );
+    }
+
+    console.log("");
+    console.log(`Mode: ${args.mode}`);
+    console.log("");
+    console.log(
+      "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
+    );
+    console.log("");
+    process.exit(0);
+  }
+
+  // Live mode: dispatch to scenario runner
+  console.log(`Mode: ${args.mode}`);
+  console.log("");
+
+  let testsFailed = false;
+
+  // Phase 134: only the smoke test is available
+  const smokeCmd = [
+    "npx vitest run",
+    SMOKE_TEST,
+    `--config ${VITEST_CONFIG}`,
+  ].join(" ");
+
+  try {
+    execSync(smokeCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+  } catch {
+    testsFailed = true;
+  }
+
+  // Write report
+  const report: LiveTestReport = {
+    runId: `live-${Date.now()}`,
+    ts: new Date().toISOString(),
+    git_sha: (() => {
+      try {
+        return execSync("git rev-parse --short HEAD", {
+          stdio: ["pipe", "pipe", "pipe"],
+        })
+          .toString()
+          .trim();
+      } catch {
+        return "unknown";
+      }
+    })(),
+    mode: args.mode,
+    budget_usd: governor.tally(),
+    total_cost_usd: 0, // Phase 134: smoke only, $0 tier
+    verdicts: [],
+  };
+
+  try {
+    writeReport(report, REPORT_FILE);
+    console.log(`Report written: ${REPORT_FILE}`);
+  } catch (err) {
+    console.error("Report write failed:", err);
+  }
+
+  process.exit(testsFailed ? 1 : 0);
+}
