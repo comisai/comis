@@ -27,7 +27,11 @@ export type { ContextWindowGuard, ContextWindowStatus, ContextWindowGuardOptions
 export { createToolResultSizeGuard } from "./safety/tool-result-size-guard.js";
 export type { ToolResultSizeGuard, TruncationMetadata, ToolResultSizeGuardOptions } from "./safety/tool-result-size-guard.js";
 export { createSummarizerSpendBreaker } from "./safety/summarizer-spend-breaker.js";
-export type { SummarizerSpendBreaker, SummarizerSpendBreakerDeps, SummarizerSpendConfig } from "./safety/summarizer-spend-breaker.js";
+// SummarizerSpendBreakerDeps + SummarizerSpendConfig are NOT re-exported: they are
+// consumed only intra-package (the factory's own signature in
+// summarizer-spend-breaker.ts). The daemon composition root imports
+// createSummarizerSpendBreaker + the SummarizerSpendBreaker instance type only.
+export type { SummarizerSpendBreaker } from "./safety/summarizer-spend-breaker.js";
 
 // Token estimator
 export { estimateMessageChars, estimateContextChars, estimateMessageTokens, estimateContextTokens, CHARS_PER_TOKEN, IMAGE_TOKEN_ESTIMATE } from "./safety/token-estimator.js";

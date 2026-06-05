@@ -12,11 +12,11 @@ export { createSessionStore } from "./session-store.js";
 export { createLcdStore, reconstructLcdMessage } from "./lcd-store.js";
 
 // LCD per-conversation single-flight ingest serializer (R3, Plan 132-04).
-// The store constructs one internally and exposes it via
-// ContextStorePort.runOnConversation; the factory is also exported so the
-// daemon composition root (or a test) can construct one directly.
-export { createIngestSerializer } from "./lcd-ingest-serializer.js";
-export type { IngestSerializer } from "./lcd-ingest-serializer.js";
+// createIngestSerializer + IngestSerializer are NOT re-exported: the store
+// constructs the serializer internally (lcd-store.ts) and exposes its effect via
+// ContextStorePort.runOnConversation. No external consumer constructs one
+// directly, so the symbols stay package-internal (consumed via the relative
+// ./lcd-ingest-serializer.js import only).
 
 // SQLite memory adapter (MemoryPort implementation)
 export { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
