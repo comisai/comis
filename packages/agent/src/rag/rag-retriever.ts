@@ -28,7 +28,9 @@ export function formatMemorySection(
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"],
 ): string {
   const header =
-    "## Relevant Memories\n\nThe following are memories from past interactions, ranked by relevance:\n";
+    "## Relevant Memories\n\nThe following are memories from past interactions, ranked by relevance. " +
+    "They may be outdated; if any conflicts with what the user has said in the current conversation, " +
+    "the current conversation is authoritative:\n";
 
   let charCount = header.length;
   let body = "";
