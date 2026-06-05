@@ -353,7 +353,7 @@ describe("memory_manage tool", () => {
         runWithContext(makeContext("admin"), () =>
           tool.execute("call-pin2", { action: "pin" } as never),
         ),
-      ).rejects.toThrow(/id is required for pin action/);
+      ).rejects.toThrow(/\[missing_param\] id is required for pin action/);
       expect(mockRpcCall).not.toHaveBeenCalled();
     });
   });
@@ -386,7 +386,7 @@ describe("memory_manage tool", () => {
         runWithContext(makeContext("admin"), () =>
           tool.execute("call-unpin2", { action: "unpin" } as never),
         ),
-      ).rejects.toThrow(/id is required for unpin action/);
+      ).rejects.toThrow(/\[missing_param\] id is required for unpin action/);
       expect(mockRpcCall).not.toHaveBeenCalled();
     });
   });
