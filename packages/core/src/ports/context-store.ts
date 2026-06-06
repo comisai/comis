@@ -22,8 +22,10 @@ import type {
   AppendCondensedSummaryInput,
   AppendMessageInput,
   AppendSummaryInput,
+  ContextBrowseScope,
   ContextStoreScope,
   LcdContextItem,
+  LcdConversationPage,
   LcdMessage,
   LcdSearchHit,
   LcdSummary,
@@ -129,4 +131,35 @@ export interface ContextStorePort {
    * conversation queue ONLY through this port method (the agent↛memory cut holds).
    */
   runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T>;
+}
+
+/**
+ * ContextBrowsePort: the READ-ONLY operator-browse boundary over the same LCD
+ * lossless store.
+ *
+ * This is a SEPARATE, additive port — NOT a method on {@link ContextStorePort}.
+ * ContextStorePort is the write+assemble surface that the agent/skills/daemon
+ * wire deeply (dozens of stubs implement it); the operator Context DAG browser
+ * needs only one capability ContextStorePort lacks — enumerate the distinct
+ * conversations an agent owns — so it gets its own minimal port rather than
+ * widening the heavily-implemented one (KISS / blast-radius). It is consumed
+ * ONLY by the daemon's context.* RPC handlers; the rest of the read surface the
+ * browser needs (a conversation's context_items + summaries) is already on
+ * ContextStorePort (`getContextItems` / `getSummaries`).
+ *
+ * Synchronous (better-sqlite3 is synchronous), mirroring ContextStorePort.
+ */
+export interface ContextBrowsePort {
+  /**
+   * List the distinct LCD conversations owned by ONE agent within ONE tenant,
+   * most-recently-updated first, paginated. R4 (WR-02): filters by `agentId`
+   * AND `tenantId`, so two agents that legitimately share one conversation_id
+   * never see each other's conversations, and one tenant never sees another's.
+   * Returns a page of metadata rows (IDs/counts/time-bounds only — NEVER any
+   * message or summary content) plus the unpaginated `total`.
+   */
+  listConversations(
+    scope: ContextBrowseScope,
+    opts: { limit: number; offset: number },
+  ): LcdConversationPage;
 }

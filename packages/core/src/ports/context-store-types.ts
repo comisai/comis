@@ -230,6 +230,53 @@ export interface LcdContextItem {
 }
 
 /**
+ * The agent+tenant isolation key for the operator browse surface
+ * ({@link ContextBrowsePort}). Unlike {@link ContextStoreScope} this names NO
+ * single conversation — it is the (tenant, agent) bucket whose distinct
+ * conversations are being enumerated. R4: both fields are mandatory so the
+ * browse query can never widen past one agent within one tenant (WR-02).
+ */
+export interface ContextBrowseScope {
+  tenantId: string;
+  agentId: string;
+}
+
+/**
+ * One distinct LCD conversation row returned by
+ * {@link ContextBrowsePort.listConversations}. The LCD store has no per-
+ * conversation title column, so `title` is always null; `createdAt` /
+ * `updatedAt` are the min / max message `created_at` for the conversation, and
+ * `messageCount` is the number of `lcd_messages` rows in the (conversation,
+ * agent, tenant) scope. IDs/counts only — NEVER carries message or summary
+ * content (the browse list is a metadata index; content recovery is a separate,
+ * taint-wrapped read).
+ */
+export interface LcdConversationSummary {
+  conversationId: string;
+  tenantId: string;
+  agentId: string;
+  /** Equal to conversationId in the current single-session-per-conversation model. */
+  sessionKey: string;
+  /** Always null — the LCD store has no per-conversation title. */
+  title: string | null;
+  /** Min `created_at` (epoch ms) across the conversation's messages. */
+  createdAt: number;
+  /** Max `created_at` (epoch ms) across the conversation's messages. */
+  updatedAt: number;
+  /** Count of `lcd_messages` rows in the (conversation, agent, tenant) scope. */
+  messageCount: number;
+}
+
+/**
+ * A page of {@link LcdConversationSummary} rows plus the unpaginated `total`
+ * (so the operator UI can render "showing N of TOTAL" + enable/disable paging).
+ */
+export interface LcdConversationPage {
+  conversations: LcdConversationSummary[];
+  total: number;
+}
+
+/**
  * One FTS/scan hit from {@link ContextStorePort.searchLcd} (E1). `snippet` is
  * recovered/UNTRUSTED content — the calling tool MUST taint-wrap it via
  * wrapExternalContent before it re-enters the model context, and MUST NEVER

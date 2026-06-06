@@ -11,6 +11,9 @@ export { createSessionStore } from "./session-store.js";
 // LCD lossless context store (ContextStorePort impl — Phase 127)
 export { createLcdStore, reconstructLcdMessage } from "./lcd-store.js";
 
+// LCD read-only operator-browse adapter (ContextBrowsePort impl — context.* RPCs).
+export { createLcdBrowseStore } from "./lcd-browse-store.js";
+
 // LCD per-conversation single-flight ingest serializer (R3, Plan 132-04).
 // createIngestSerializer + IngestSerializer are NOT re-exported: the store
 // constructs the serializer internally (lcd-store.ts) and exposes its effect via
