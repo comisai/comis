@@ -75,11 +75,18 @@ export function buildMemConfig(opts: MemConfigOpts): string {
   let content = readFileSync(base, "utf-8");
 
   // ── embedding.provider ────────────────────────────────────────────────────
+  // WR-03 fix: scope the provider: replacement to within the embedding: block
+  // only. A bare /provider:\s*\S+/ would match ANY provider: key in the file
+  // (e.g. agents.default.provider or llm.provider) if it appears before the
+  // embedding: block. Use a look-behind anchored to the embedding block.
   if (opts.embeddingProvider !== undefined) {
     if (/embedding:/.test(content)) {
-      // Patch existing embedding.provider line
-      if (/provider:\s*\S+/.test(content)) {
-        content = content.replace(/provider:\s*\S+/, `provider: ${opts.embeddingProvider}`);
+      // Patch existing embedding.provider line — scoped to the embedding block.
+      // The regex matches "provider: <value>" only when preceded (somewhere in
+      // the embedding block) by "embedding:\n" + optional indented lines.
+      const embProviderPattern = /(embedding:\s*\n(?:\s+[^\n]*\n)*?\s+provider:\s*)\S+/;
+      if (embProviderPattern.test(content)) {
+        content = content.replace(embProviderPattern, `$1${opts.embeddingProvider}`);
       } else {
         // embedding block exists but no provider line — inject after "embedding:"
         content = content.replace(
@@ -97,9 +104,15 @@ export function buildMemConfig(opts: MemConfigOpts): string {
   }
 
   // ── embedding.local.gpu ───────────────────────────────────────────────────
+  // WR-03 fix: scope the gpu: replacement to within the embedding: block only.
+  // A bare /gpu:\s*\S+/ would match any gpu: key in the file if it appears
+  // before the embedding: block. Use a look-behind anchored to the embedding
+  // block's local: sub-block.
   if (opts.localGpu !== undefined) {
-    if (/gpu:\s*\S+/.test(content)) {
-      content = content.replace(/gpu:\s*\S+/, `gpu: ${opts.localGpu}`);
+    // gpu: only appears inside embedding.local — scope to embedding block
+    const embGpuPattern = /(embedding:[\s\S]*?local:[\s\S]*?gpu:\s*)\S+/;
+    if (embGpuPattern.test(content)) {
+      content = content.replace(embGpuPattern, `$1${opts.localGpu}`);
     } else if (/embedding:/.test(content)) {
       // embedding block exists — inject local.gpu after "embedding:" or "local:"
       if (/local:\s*\n/.test(content)) {

@@ -102,23 +102,45 @@ export async function runDbOracle(
       }
     }
 
-    // ── Check 3c: memory_fts ↔ vec_memories ↔ memories sync ─────────────────
+    // ── Check 3c: memory_fts ↔ memories (ALL rows) sync ─────────────────────
     // The memory_fts virtual table is an external-content FTS5 table backed by
-    // memories. Its row count must equal memories WHERE has_embedding=1.
-    // A desynced FTS table means text-search queries return stale/missing results.
-    // Per FND-11 (§5.2 point 4): memory_fts/vec desync is a production risk.
+    // the FULL memories table. Its after-insert/update/delete triggers fire on
+    // every INSERT/DELETE/UPDATE OF content ON memories with NO has_embedding
+    // filter (see packages/memory/src/schema.ts lines 553-565). The correct
+    // invariant is COUNT(*) FROM memory_fts == COUNT(*) FROM memories (total),
+    // NOT the has_embedding=1 subset. A desynced FTS means text-search queries
+    // return stale/missing results. Per FND-11 (§5.2 point 4): memory_fts/vec
+    // desync is a production risk.
     // Only runs when both "memories" and "memory_fts" tables exist in the DB.
     if (tables.includes("memories") && tables.includes("memory_fts")) {
-      const memCount = (
-        db.prepare("SELECT COUNT(*) AS c FROM memories WHERE has_embedding=1").get() as { c: number }
+      const totalMemCount = (
+        db.prepare("SELECT COUNT(*) AS c FROM memories").get() as { c: number }
       ).c;
       const ftsCount = (
         db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as { c: number }
       ).c;
-      if (memCount !== ftsCount) {
+      if (totalMemCount !== ftsCount) {
         throw new Error(
-          `[db-oracle check 3c] memory_fts desynced: memories(has_embedding=1)=${memCount}, fts=${ftsCount}`,
+          `[db-oracle check 3c] memory_fts desynced: memories=${totalMemCount}, fts=${ftsCount}`,
         );
+      }
+
+      // ── Check 3d: vec_memories ↔ memories(has_embedding=1) sync ────────────
+      // vec_memories tracks only embedded rows (has_embedding=1). Its row count
+      // must equal COUNT(*) FROM memories WHERE has_embedding=1.
+      // Only runs when vec_memories table also exists.
+      if (tables.includes("vec_memories")) {
+        const embCount = (
+          db.prepare("SELECT COUNT(*) AS c FROM memories WHERE has_embedding=1").get() as { c: number }
+        ).c;
+        const vecCount = (
+          db.prepare("SELECT COUNT(*) AS c FROM vec_memories").get() as { c: number }
+        ).c;
+        if (embCount !== vecCount) {
+          throw new Error(
+            `[db-oracle check 3d] vec_memories desynced: memories(has_embedding=1)=${embCount}, vec=${vecCount}`,
+          );
+        }
       }
     }
 
