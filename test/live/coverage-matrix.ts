@@ -125,15 +125,15 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "contextEngine.version",
     modeValue: "pipeline",
-    status: "skipped",
-    reference: "covered in Phase 138 (CTX) — pipeline context engine live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/ctx/pipeline.test.ts",
     phase: "138",
   },
   {
     dimension: "contextEngine.version",
     modeValue: "dag",
-    status: "skipped",
-    reference: "covered in Phase 138 (CTX) — DAG/LCD context engine live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/ctx/dag-invariants.test.ts",
     phase: "138",
   },
 
