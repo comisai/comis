@@ -10,6 +10,10 @@ import {
 } from "@comis/agent";
 import { createMemoryHandlers } from "./memory-handlers.js";
 import type { MemoryHandlerDeps } from "./memory-handlers.js";
+// FIX 2: the empty-content rejection must be a typed ValidationError so the RPC
+// dispatcher classifies it as warn/validation (not error/internal).
+import { ValidationError } from "./errors.js";
+import { classifyRpcError } from "./rpc-dispatch.js";
 // Portability handlers are composed at the dispatch layer (rpc-dispatch.ts), not
 // via memory-handlers.ts (handler-sibling invariant). These blocks exercise the
 // portability unit directly.
@@ -672,6 +676,78 @@ describe("memory.store - write validation", () => {
     })) as { stored: boolean };
 
     expect(result.stored).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // FIX 2 (LOW logging hygiene) — empty/whitespace memory.store content is a
+  // CALLER/VALIDATION error, not an internal fault.
+  //
+  // Bug: the empty-content guard threw a BARE `Error("Missing required
+  // parameter: content")`. The RPC dispatcher's classifyRpcError only
+  // short-circuits typed errors (PreconditionError/ValidationError) to
+  // warn-level — a bare Error falls through to the default `errorKind:
+  // "internal"`, `level: "error"` (rpc-dispatch.ts:105). So a routine
+  // empty-content rejection logged at level:50 (ERROR) with
+  // errorKind:"internal", polluting error dashboards with a caller mistake.
+  //
+  // FIX: throw a ValidationError so classifyRpcError maps it to
+  // errorKind:"validation", level:"warn" (40). The rejection BEHAVIOR is
+  // unchanged — the call is still rejected, the turn is still graceful, and
+  // the user-facing message stays "Missing required parameter: content" (the
+  // 15+ existing memory-handlers.test.ts assertions rely on it).
+  //
+  // RED-first: on the pre-patch tree the thrown error is a bare Error (name
+  // "Error"), so the ValidationError instanceof + the classifyRpcError
+  // validation/warn assertions FAIL.
+  // -------------------------------------------------------------------------
+  describe("empty-content rejection is a validation (caller) error, not internal", () => {
+    async function captureStoreError(content: unknown): Promise<unknown> {
+      const deps = makeDeps();
+      const handlers = createMemoryHandlers(deps);
+      try {
+        await handlers["memory.store"]!(
+          content === undefined ? {} : ({ content } as Record<string, unknown>),
+        );
+      } catch (err) {
+        return err;
+      }
+      throw new Error("expected memory.store to reject empty content but it resolved");
+    }
+
+    it("still rejects empty content with the user-facing message (behavior unchanged)", async () => {
+      const err = await captureStoreError("");
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toBe("Missing required parameter: content");
+      // The memoryAdapter must NOT have been reached for an empty-content call.
+      // (Behavior preserved: the call is rejected before any persistence.)
+    });
+
+    it("throws a ValidationError (so the dispatcher logs warn/validation, NOT error/internal)", async () => {
+      const err = await captureStoreError("");
+      // The thrown error is the TYPED ValidationError — the only path
+      // classifyRpcError short-circuits to warn-level. A bare Error (pre-patch)
+      // fails this instanceof + the name check.
+      expect(err).toBeInstanceOf(ValidationError);
+      expect((err as Error).name).toBe("ValidationError");
+    });
+
+    it("classifyRpcError maps the empty-content rejection to errorKind=validation at warn level (NOT internal/error)", async () => {
+      const err = await captureStoreError("");
+      const classified = classifyRpcError(err);
+      expect(classified.errorKind).toBe("validation");
+      expect(classified.level).toBe("warn");
+      // Explicitly NOT the internal/error misclassification.
+      expect(classified.errorKind).not.toBe("internal");
+      expect(classified.level).not.toBe("error");
+    });
+
+    it("a MISSING content param is also a ValidationError → warn/validation", async () => {
+      const err = await captureStoreError(undefined);
+      expect(err).toBeInstanceOf(ValidationError);
+      const classified = classifyRpcError(err);
+      expect(classified.errorKind).toBe("validation");
+      expect(classified.level).toBe("warn");
+    });
   });
 });
 
