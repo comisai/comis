@@ -63,7 +63,7 @@ describe("WEB-01 Stage-A — provider / keyless / category constants", () => {
     expect(WEB_SEARCH_PROVIDERS.length).toBe(8);
   });
 
-  it("SEARCH_KEYLESS == [duckduckgo, searxng]", () => {
+  it("lists exactly [duckduckgo, searxng] as the keyless providers (SEARCH_KEYLESS)", () => {
     expect([...SEARCH_KEYLESS]).toEqual(["duckduckgo", "searxng"]);
   });
 

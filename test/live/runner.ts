@@ -225,6 +225,10 @@ async function runMain(): Promise<void> {
       console.log("Media scenarios (MEDIA-01..04): voice-roundtrip, fallback-chain, vision, image-gen");
       console.log("  test/live/scenarios/media/*.test.ts");
       console.log("  Cost tier: $0 Stage-A/B (ffmpeg-absent text-fallback / STT fallback-chain routing / vision capability-routing / autoMode delivery — all keyless/deterministic); Stage-C needs COMIS_LIVE + STT/TTS/vision/image-gen keys (+ ffmpeg for voice conversion)");
+    } else if (args.mode === "web") {
+      console.log("Web scenarios (WEB-01..03): search-providers, link-understanding, document-extraction");
+      console.log("  test/live/scenarios/web/*.test.ts");
+      console.log("  Cost tier: $0 Stage-B (doc extraction CSV/text + maxChars truncation + DOCX unsupported_mime / wrapWebContent taint markers + marker-sanitization / 8-provider search config-shape + key-gating + freshness — all keyless/deterministic); Stage-C needs COMIS_LIVE + search keys (judged answers) / network (link fetch + DuckDuckGo) / a vision key (PDF OCR fallback)");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -382,6 +386,20 @@ async function runMain(): Promise<void> {
 
     try {
       execSync(mediaCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "web") {
+    // Phase 143: WEB — search providers, link understanding, document extraction (WEB-01..03)
+    const WEB_TEST_GLOB = "test/live/scenarios/web/*.test.ts";
+    const webCmd = [
+      "npx vitest run",
+      `"${WEB_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(webCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
     } catch {
       testsFailed = true;
     }

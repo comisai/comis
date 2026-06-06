@@ -1025,61 +1025,66 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // ===========================================================================
   // search (8 cells)
   // ===========================================================================
+  // Phase 143 (WEB-01) deepens the Phase-135 connectivity probe: search-providers.test.ts
+  // exercises each provider's config-shape + per-provider key-gating + the freshness param
+  // (asserted on the PUBLIC WebSearchParams schema) at Stage-B. The real judged per-provider
+  // query is Stage-C/it.skip (credential/network-gated). The sweep probe (sweep/probes.ts)
+  // still runs in `pnpm test:live sweep`; these cells now reference the deeper depth-phase test.
   {
     dimension: "search",
     modeValue: "brave",
     status: "covered",
-    reference: "test/live/sweep/probes.ts",
-    phase: "135",
+    reference: "test/live/scenarios/web/search-providers.test.ts",
+    phase: "143",
   },
   {
     dimension: "search",
     modeValue: "tavily",
     status: "covered",
-    reference: "test/live/sweep/probes.ts",
-    phase: "135",
+    reference: "test/live/scenarios/web/search-providers.test.ts",
+    phase: "143",
   },
   {
     dimension: "search",
     modeValue: "duckduckgo",
     status: "covered",
-    reference: "test/live/sweep/probes.ts",
-    phase: "135",
+    reference: "test/live/scenarios/web/search-providers.test.ts",
+    phase: "143",
   },
   {
     dimension: "search",
     modeValue: "searxng",
     status: "covered",
-    reference: "test/live/sweep/probes.ts",
-    phase: "135",
+    reference: "test/live/scenarios/web/search-providers.test.ts",
+    phase: "143",
   },
   {
     dimension: "search",
     modeValue: "exa",
     status: "covered",
-    reference: "test/live/sweep/probes.ts",
-    phase: "135",
+    reference: "test/live/scenarios/web/search-providers.test.ts",
+    phase: "143",
   },
   {
     dimension: "search",
     modeValue: "grok",
     status: "covered",
-    reference: "test/live/sweep/probes.ts",
-    phase: "135",
+    reference: "test/live/scenarios/web/search-providers.test.ts",
+    phase: "143",
   },
   {
     dimension: "search",
     modeValue: "perplexity",
     status: "covered",
-    reference: "test/live/sweep/probes.ts",
-    phase: "135",
+    reference: "test/live/scenarios/web/search-providers.test.ts",
+    phase: "143",
   },
   {
     dimension: "search",
     modeValue: "jina",
     status: "covered",
-    reference: "test/live/sweep/probes.ts",
-    phase: "135",
+    reference: "test/live/scenarios/web/search-providers.test.ts",
+    phase: "143",
   },
 
   // ===========================================================================
