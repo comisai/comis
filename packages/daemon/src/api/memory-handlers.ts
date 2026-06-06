@@ -487,6 +487,17 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         entries = entries.slice().reverse();
       }
 
+      // P4: `total` must be the FULL filtered match count (so the UI can page
+      // past the first window), NOT the page length. count() applies the SAME
+      // filters as the inspect() above but ignores limit/offset.
+      const total = deps.memoryApi.count({
+        tenantId,
+        agentId,
+        memoryType: memoryType as "working" | "episodic" | "semantic" | "procedural" | undefined,
+        trustLevel: trustLevel as "system" | "learned" | "external" | undefined,
+        tags,
+      });
+
       const result = {
         entries: entries.map((e) => ({
           id: e.id,
@@ -497,10 +508,11 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
           agentId: e.agentId,
           createdAt: e.createdAt,
         })),
-        total: entries.length,
+        total,
         offset,
         limit,
-        hasMore: entries.length === limit,
+        // More entries exist beyond this window when the page ends before total.
+        hasMore: offset + entries.length < total,
       };
       if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryBrowseContract.response.parse(result);

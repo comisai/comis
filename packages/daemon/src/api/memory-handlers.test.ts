@@ -44,6 +44,7 @@ function makeDeps(overrides?: Partial<MemoryHandlerDeps>): MemoryHandlerDeps {
       ]),
       search: vi.fn(async () => []),
       clear: vi.fn(() => 3),
+      count: vi.fn(() => 1),
       stats: vi.fn(() => ({
         totalEntries: 42,
         byType: { episodic: 20, semantic: 22 },
@@ -145,6 +146,7 @@ describe("createMemoryHandlers - memory management", () => {
               createdAt: Date.now(),
             },
           ]),
+          count: vi.fn(() => 1),
           search: vi.fn(async () => []),
           clear: vi.fn(() => 0),
           stats: vi.fn(() => ({})),
@@ -193,8 +195,10 @@ describe("createMemoryHandlers - memory management", () => {
       );
     });
 
-    it("returns hasMore=true when entries.length equals limit", async () => {
-      // Create mock data where entry count matches the limit
+    it("reports the FULL match count as total (not the page length) so pagination can advance past one page", async () => {
+      // P4: a full page (5 entries at limit 5) where the store holds 383 total.
+      // `total` must be the count() value (383), NOT entries.length (5) — the old
+      // bug reported '1-5 of 5' and disabled Next even with 378 more entries.
       const entries = Array.from({ length: 5 }, (_, i) => ({
         id: `mem-${i}`,
         content: `Content ${i}`,
@@ -205,9 +209,11 @@ describe("createMemoryHandlers - memory management", () => {
         source: {},
         createdAt: Date.now(),
       }));
+      const countFn = vi.fn(() => 383);
       const deps = makeDeps({
         memoryApi: {
           inspect: vi.fn(() => entries),
+          count: countFn,
           search: vi.fn(async () => []),
           clear: vi.fn(() => 0),
           stats: vi.fn(() => ({})),
@@ -218,10 +224,13 @@ describe("createMemoryHandlers - memory management", () => {
       const result = (await handlers["memory.browse"]!({ limit: 5 })) as {
         hasMore: boolean;
         total: number;
+        entries: unknown[];
       };
 
+      expect(countFn).toHaveBeenCalled();
+      expect(result.entries).toHaveLength(5);
       expect(result.hasMore).toBe(true);
-      expect(result.total).toBe(5);
+      expect(result.total).toBe(383); // the FULL total, not the page length
     });
 
     it("works without _trustLevel (agent-level operation)", async () => {
