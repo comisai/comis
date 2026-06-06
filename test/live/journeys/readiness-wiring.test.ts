@@ -31,11 +31,11 @@ import type { JourneyResult, UserStory } from "./types.js";
 // ---------------------------------------------------------------------------
 
 describe("journeyResultToVerdict — JourneyResult → CategoryVerdict", () => {
-  it("passed → CERTIFIED", () => {
+  it("maps a passed journey result to a CERTIFIED category verdict", () => {
     expect(journeyResultToVerdict({ storyId: "x", status: "passed" })).toBe("CERTIFIED");
   });
 
-  it("failed → BLOCKED", () => {
+  it("maps a failed journey result to a BLOCKED category verdict", () => {
     expect(journeyResultToVerdict({ storyId: "x", status: "failed" })).toBe("BLOCKED");
   });
 

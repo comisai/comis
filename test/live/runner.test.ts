@@ -61,6 +61,26 @@ describe("parseArgs", () => {
     expect(result).toEqual({ dry: true, mode: "journeys", profile: undefined });
   });
 
+  // Phase 148: the prove mode (PROVE-01..05). parseArgs's {dry,mode,profile} shape
+  // is unchanged — --readiness is parsed separately inside runMain, so it never
+  // appears in this return.
+  it("parseArgs(['prove']) → { dry: false, mode: 'prove', profile: undefined }", () => {
+    const result = parseArgs(["prove"]);
+    expect(result).toEqual({ dry: false, mode: "prove", profile: undefined });
+  });
+
+  it("parseArgs(['prove', '--dry']) → { dry: true, mode: 'prove', profile: undefined }", () => {
+    const result = parseArgs(["prove", "--dry"]);
+    expect(result).toEqual({ dry: true, mode: "prove", profile: undefined });
+  });
+
+  it("parseArgs(['--readiness']) keeps the {dry,mode,profile} shape (readiness parsed in runMain, mode defaults 'all')", () => {
+    // --readiness is a flag (starts with --), so `mode` falls through to the
+    // default "all"; parseArgs does NOT surface a readiness key (shape invariant).
+    const result = parseArgs(["--readiness"]);
+    expect(result).toEqual({ dry: false, mode: "all", profile: undefined });
+  });
+
   // WR-02: --profile flag parsing
   it("returns profile:'lean-cloud' and mode:'all' when given ['--profile','lean-cloud']", () => {
     const result = parseArgs(["--profile", "lean-cloud"]);

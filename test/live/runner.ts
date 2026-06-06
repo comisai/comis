@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import { CostGovernor } from "./cost.js";
 import { buildCredentialRegistry } from "./credentials.js";
 import { writeReport, type LiveTestReport } from "./report.js";
+import { writeReadinessReport } from "./readiness.js";
 import { runSweep, parseProbeFilter } from "./sweep/sweep.js";
 import { writeGapReport } from "./sweep/gap-report.js";
 
@@ -36,8 +37,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
 const LIVE_ENV_PATH = join(__dirname, "live.env");
 const REPORT_FILE = resolve(PROJECT_ROOT, ".test-live-report.json");
+const READINESS_FILE = resolve(PROJECT_ROOT, "READINESS.md");
 const SMOKE_TEST = "test/live/scenarios/smoke.test.ts";
-const VITEST_CONFIG = "test/vitest.config.ts";
+// Phase 148 (260606-live-tier-daemon-concurrency-flake fix): the dedicated
+// live-tier config sets fileParallelism:false so daemon-booting scenarios do not
+// oversubscribe the host — the gate is reliable WITHOUT the manual
+// --no-file-parallelism flag every mode previously needed.
+const VITEST_CONFIG = "test/live/vitest.config.ts";
 const BENCHMARKS_DIR = resolve(PROJECT_ROOT, "benchmarks");
 
 // ---------------------------------------------------------------------------
@@ -117,6 +123,18 @@ if (isMain) {
   // Load live.env BEFORE the COMIS_LIVE gate check so the env file can set it.
   loadLiveEnv();
 
+  // --readiness: generate the honest READINESS.md and exit. This runs BEFORE the
+  // COMIS_LIVE gate — the keyless PARTIAL readiness IS the headline §16 DoD
+  // artifact (most categories PARTIAL: deterministic Stage-A/B certified, real-
+  // provider Stage-C deferred §20; NO faked CERTIFIED). An operator run with
+  // COMIS_LIVE set generates the live readiness. Parsed from process.argv directly
+  // so parseArgs's {dry,mode,profile} shape is unchanged (runner.test.ts toEqual).
+  if (process.argv.slice(2).includes("--readiness")) {
+    writeReadinessReport({ isLive: !!process.env["COMIS_LIVE"] }, READINESS_FILE);
+    console.log(`READINESS.md written: ${READINESS_FILE}`);
+    process.exit(0);
+  }
+
   // COMIS_LIVE gate — exit 0 immediately when unset.
   if (!process.env["COMIS_LIVE"]) {
     console.log(
@@ -136,6 +154,9 @@ async function runMain(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const governor = new CostGovernor();
   const credentialRegistry = buildCredentialRegistry();
+
+  // (--readiness is handled in the isMain block above, before the COMIS_LIVE gate,
+  // so it works on a keyless build — it never reaches runMain.)
 
   // Banner
   console.log("");
@@ -245,6 +266,14 @@ async function runMain(): Promise<void> {
       console.log("E2E journey scenarios (E2E-01..05): user-story library + generic journey-runner");
       console.log("  test/live/journeys/*.test.ts");
       console.log("  Cost tier: $0 Stage-A/B (zod UserStory schema + self-registering STORY_LIBRARY + the open/closed zero-harness-change extensibility test + the generic journey-runner interpreting a story on echo+mock + requires→skip gating + coverage auto-wiring + the 8 seed-story shapes US-01..08 — all in-process/keyless/deterministic, no model); Stage-C/D needs COMIS_LIVE + a real provider + the component Stage-C certs (136–146) for the real-LLM multi-turn journey execution (goal-achieved + judged task-success + one stitched traceId + obs.billing, N-run pass-rate × model grid); J7 terminal-driven is SKIPPED(no-bwrap/linux-only) on macOS");
+    } else if (args.mode === "prove") {
+      console.log("PROVE scenarios (PROVE-01..05): obs-meta, cold-start, soak-smoke");
+      console.log("  test/live/scenarios/prove/*.test.ts");
+      console.log("  Cost tier: $0 Stage-A/B (the observability meta-validation [billed=response token agreement + reconstruct-from-trace over a seeded session-index + no ERROR/WARN without hint+errorKind via runLogOracle], the tarball-smoke bundle mechanics + the doctor/health finding shape, and the short deterministic soak smoke [the runSoak harness reuses the STORY_LIBRARY as traffic + parses the daemon health line] are all deterministic and assert against the real product code); the real multi-hour Linux-VPS soak is SKIPPED(operator), the full cold-start install→configure→boot→green is SKIPPED(linux/validate:full), and the real-provider full-run meta is SKIPPED(no-live). Run `pnpm test:live --readiness` to publish READINESS.md.");
+    } else if (args.mode === "all") {
+      console.log("ALL modes — every scenario + journey + the PROVE pillars within the higher budget ceiling");
+      console.log("  test/live/scenarios/**/*.test.ts + test/live/journeys/*.test.ts");
+      console.log("  Cost tier: $$ (the full real-provider suite — operator/scheduled run within COMIS_LIVE_BUDGET_USD); keyless ⇒ the deterministic Stage-A/B layers run + the real-provider Stage-C self-skips (skip≠fail)");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -475,8 +504,41 @@ async function runMain(): Promise<void> {
     } catch {
       testsFailed = true;
     }
+  } else if (args.mode === "prove") {
+    // Phase 148: PROVE — obs-meta + cold-start + soak-smoke (PROVE-01..05).
+    // NOTE: vitest treats a positional arg as a path-SUBSTRING filter (NOT a shell
+    // glob — a quoted `*.test.ts` matches nothing). Pass the directory path so the
+    // live-tier config's include (test/live/**/*.test.ts) is filtered to the prove dir.
+    const proveCmd = [
+      "npx vitest run",
+      "test/live/scenarios/prove",
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(proveCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "all") {
+    // Phase 148: the FULL tier — every test under test/live (every scenario incl.
+    // prove + the smoke, every journey, the harness unit tests), run sequentially
+    // under the dedicated live-tier config (fileParallelism:false). This is the
+    // scheduled release-gate run; keyless ⇒ the deterministic Stage-A/B layers run
+    // + the real-provider Stage-C self-skips (skip ≠ fail). No positional filter →
+    // the config's full include (test/live/**/*.test.ts) runs.
+    const allCmd = [
+      "npx vitest run",
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(allCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
   } else {
-    // Default: smoke test (Phase 134 baseline)
+    // Default (unknown mode): smoke test (Phase 134 baseline)
     const smokeCmd = [
       "npx vitest run",
       SMOKE_TEST,

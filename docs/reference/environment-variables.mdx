@@ -369,6 +369,27 @@ export COMIS_LIVE_BUDGET_USD=5.00   # raise for a full suite sweep
 export COMIS_LIVE_BUDGET_USD=0.50   # lower for a single scenario
 ```
 
+### `COMIS_LIVE_JUDGE_PROVIDER` / `COMIS_LIVE_JUDGE_MODEL` / `COMIS_LIVE_JUDGE_API_KEY`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | The live-fire judge wrapper (`test/live/judge.ts` `judgeAnswer`) for judged Stage-C scoring |
+| **Format** | Provider name / pinned model snapshot id / API key (the rubric-judge model lane) |
+| **Default** | unset — judged scenarios skip (skip is not fail) |
+
+The judge model lane for behavioral / answer-quality scoring (reuses the `bench-memory`
+judge discipline). When all three are present, `judgeAnswer` invokes the real judge at
+temperature 0 and returns a scored `pass`/`fail`; when absent, it returns a skip (judged
+Stage-C scenarios then skip — never fail). For any **published** readiness claim, use
+**cross-judge ≥2** (a second judge model + agreement) to avoid self-preference bias. The
+judge prompt, output, and key are never logged or written to a report (secret residency).
+
+```bash
+export COMIS_LIVE_JUDGE_PROVIDER=anthropic
+export COMIS_LIVE_JUDGE_MODEL=claude-3-5-haiku-20241022
+export COMIS_LIVE_JUDGE_API_KEY=sk-ant-...
+```
+
 ### `COMIS_LIVE_PROBES`
 
 | Property | Value |
