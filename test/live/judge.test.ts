@@ -21,11 +21,26 @@ import { judgeAnswer, sweepSecrets } from "./judge.js";
 
 const JUDGE_PROVIDER_KEY = "COMIS_LIVE_JUDGE_PROVIDER";
 const JUDGE_API_KEY_KEY = "COMIS_LIVE_JUDGE_API_KEY";
+const JUDGE_MODEL_KEY = "COMIS_LIVE_JUDGE_MODEL";
 
 afterEach(() => {
   delete process.env[JUDGE_PROVIDER_KEY];
   delete process.env[JUDGE_API_KEY_KEY];
+  delete process.env[JUDGE_MODEL_KEY];
 });
+
+// ---------------------------------------------------------------------------
+// fakeJudgeComplete — a deterministic DI stub mirroring
+// packages/agent/src/memory/benchmark/__fixtures__/qa-judge-stub.ts `fakeComplete`:
+// a thunk resolving to one text content block. Lets the NON-skip path run WITHOUT
+// a real provider/key (the Stage-C wiring proof, deterministic).
+// ---------------------------------------------------------------------------
+const fakeJudgeComplete =
+  (reply: string) =>
+  async () => ({
+    content: [{ type: "text" as const, text: reply }],
+    usage: { totalTokens: 7 },
+  });
 
 // ---------------------------------------------------------------------------
 // judgeAnswer — skip-on-no-creds
@@ -56,6 +71,68 @@ describe("judgeAnswer", () => {
     });
     expect(result.verdict).toBe("skip");
     expect(result.judgeId).toBe("none");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// judgeAnswer — the NON-skip path (judge env present), driven by a STUB complete
+// fn so the real qa-judge invocation is exercised WITHOUT a real provider/key.
+// This is the 260606-judge-qa-harness-wiring fix-forward: judgeAnswer must now
+// actually score (pass|fail) when the judge env is present, KEEP the no-env skip,
+// and treat an unparseable judge verdict as skip (never a wrong answer).
+// ---------------------------------------------------------------------------
+
+describe("judgeAnswer — non-skip path (env present, stubbed judge)", () => {
+  it("Test 9: a stubbed correct verdict → verdict 'pass' + a real judgeId (not 'pending'/'none')", async () => {
+    process.env[JUDGE_PROVIDER_KEY] = "anthropic";
+    process.env[JUDGE_API_KEY_KEY] = "test-fixture-not-a-real-key";
+    process.env[JUDGE_MODEL_KEY] = "claude-3-5-haiku-20241022";
+    const result = await judgeAnswer(
+      { question: "What is 2+2?", context: "math", answer: "4", rubric: "correct iff the answer is 4" },
+      { complete: fakeJudgeComplete('{"correct": true, "reasoning": "4 is right"}') },
+    );
+    expect(result.verdict).toBe("pass");
+    expect(result.judgeId).not.toBe("pending");
+    expect(result.judgeId).not.toBe("none");
+    expect(result.judgeId).toContain("anthropic");
+    expect(result.judgeId).toContain("claude-3-5-haiku-20241022");
+    expect(typeof result.reason).toBe("string");
+    expect(result.reason.length).toBeGreaterThan(0);
+  });
+
+  it("Test 10: a stubbed incorrect verdict → verdict 'fail'", async () => {
+    process.env[JUDGE_PROVIDER_KEY] = "openai";
+    process.env[JUDGE_API_KEY_KEY] = "test-fixture-not-a-real-key";
+    const result = await judgeAnswer(
+      { question: "What is 2+2?", context: "math", answer: "5", rubric: "correct iff the answer is 4" },
+      { complete: fakeJudgeComplete('{"correct": false, "reasoning": "5 is wrong"}') },
+    );
+    expect(result.verdict).toBe("fail");
+  });
+
+  it("Test 11: an UNPARSEABLE judge output → verdict 'skip' (invalid, NOT scored as pass/fail)", async () => {
+    process.env[JUDGE_PROVIDER_KEY] = "anthropic";
+    process.env[JUDGE_API_KEY_KEY] = "test-fixture-not-a-real-key";
+    const result = await judgeAnswer(
+      { question: "Q", context: "C", answer: "A", rubric: "R" },
+      { complete: fakeJudgeComplete("I am unable to decide; here is some prose with no verdict token.") },
+    );
+    // An unparseable judge is INVALID — excluded, not counted wrong (bench discipline).
+    expect(result.verdict).toBe("skip");
+    expect(result.verdict).not.toBe("pass");
+    expect(result.verdict).not.toBe("fail");
+  });
+
+  it("Test 12: the returned reason never contains the api-key value (residency)", async () => {
+    const secret = "test-fixture-not-a-real-key";
+    process.env[JUDGE_PROVIDER_KEY] = "anthropic";
+    process.env[JUDGE_API_KEY_KEY] = secret;
+    const result = await judgeAnswer(
+      { question: "Q", context: "C", answer: "A", rubric: "R" },
+      { complete: fakeJudgeComplete('{"correct": true, "reasoning": "ok"}') },
+    );
+    expect(result.reason).not.toContain(secret);
+    expect(result.judgeId).not.toContain(secret);
   });
 });
 
