@@ -126,3 +126,31 @@ describe("compressLabel — output never grows relative to the input", () => {
     expect(out).toBe("tavily.com/search");
   });
 });
+
+describe("compressLabel — hard-clamps to the 120-char schema cap (FIX 3)", () => {
+  it("clamps a label longer than 120 chars to at most 120, truncating the tail with an ellipsis", () => {
+    // A label with no compressible shape (plain prose) that is far over the cap.
+    // The ActivityEvent schema enforces defaultLabel.max(120); a longer label is
+    // REJECTED by parseActivityEvent (a level-50 ERROR → the event is DROPPED).
+    const long = "a very long activity label ".repeat(20); // ~540 chars
+    const out = compressLabel(long);
+    expect(out.length).toBeLessThanOrEqual(120);
+    // The head is preserved; the truncation carries an ellipsis tail.
+    expect(out.startsWith("a very long activity label")).toBe(true);
+    expect(out.endsWith("…")).toBe(true);
+  });
+
+  it("leaves a label at or under 120 chars untouched (clamp is a no-op below the cap)", () => {
+    const exactly120 = "x".repeat(120);
+    expect(compressLabel(exactly120)).toBe(exactly120);
+    const short = "reading config";
+    expect(compressLabel(short)).toBe(short);
+  });
+
+  it("is idempotent at the cap boundary (a clamped 120-char output is a fixed point)", () => {
+    const long = "z".repeat(400);
+    const once = compressLabel(long);
+    expect(once.length).toBeLessThanOrEqual(120);
+    expect(compressLabel(once)).toBe(once);
+  });
+});

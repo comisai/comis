@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { LitElement, html, css, nothing } from "lit";
+import { LitElement, html, css, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { DataTableColumn } from "../../api/types/index.js";
@@ -235,6 +235,15 @@ export class IcDataTable extends LitElement {
   /** Rows per page */
   @property({ type: Number }) pageSize = 25;
 
+  /**
+   * Suppress the built-in pagination footer. Set when a parent owns paging
+   * (e.g. the memory inspector's browse mode renders its own server-side pager),
+   * so the table does not render a SECOND, redundant pager. Default false — every
+   * other consumer keeps the built-in pager. The page clamp + slicing still run;
+   * only the footer controls are hidden.
+   */
+  @property({ type: Boolean }) hidePagination = false;
+
   /** Show row selection checkboxes */
   @property({ type: Boolean }) selectable = false;
 
@@ -272,6 +281,24 @@ export class IcDataTable extends LitElement {
   private _resizing: { key: string; startX: number; startWidth: number } | null = null;
   private _boundPointerMove = this._handlePointerMove.bind(this);
   private _boundPointerUp = this._handlePointerUp.bind(this);
+
+  /**
+   * Keep `_page` within range whenever the row set changes. A common parent
+   * pattern is to filter `rows` while the table is on a later page (e.g. session
+   * filters): without this clamp the stale `_page` slices past the shorter array
+   * and renders an EMPTY page with Next disabled (P3). Clamping to the last
+   * valid page (0 when the filtered set fits on one page) restores a visible
+   * page. Only fires when `rows` actually changed, so a same-size re-render
+   * (sort, selection) does not disturb the current page.
+   */
+  protected override willUpdate(changed: PropertyValues<this>): void {
+    if (changed.has("rows") || changed.has("pageSize")) {
+      const maxPage = this._getTotalPages() - 1;
+      if (this._page > maxPage) {
+        this._page = Math.max(0, maxPage);
+      }
+    }
+  }
 
   private _getRowId(row: unknown): string {
     if (this.columns.length === 0) return "";
@@ -554,6 +581,9 @@ export class IcDataTable extends LitElement {
             )}
           </div>
         </div>
+        ${this.hidePagination
+          ? nothing
+          : html`
         <div class="pagination">
           <span class="pagination-info">${start}-${end} of ${this.rows.length}</span>
           <div class="pagination-controls">
@@ -575,6 +605,7 @@ export class IcDataTable extends LitElement {
             </button>
           </div>
         </div>
+          `}
       </div>
     `;
   }

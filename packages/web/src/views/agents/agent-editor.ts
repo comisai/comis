@@ -605,11 +605,16 @@ export class IcAgentEditor extends LitElement {
       return;
     }
     this._loadState = "loading";
+    // Clear any prior error up-front so a retry starts from a clean slate and
+    // the stale error bar does not flash through the loading state (P6).
+    this._error = "";
     try {
       const result = await this.rpcClient.call<{ agentId: string; config: Record<string, unknown> }>("agents.get", { agentId: this.agentId });
       const agent = this._mapConfigToDetail(result.agentId, result.config);
       this._populateForm(agent);
       this._loadState = "loaded";
+      // Belt-and-suspenders: a successful (re)load leaves no error text behind.
+      this._error = "";
     } catch (e) {
       this._loadState = "error";
       this._error = e instanceof Error ? e.message : "Failed to load agent";

@@ -93,9 +93,13 @@ function blocks(m: AgentMessage): Block[] {
   return Array.isArray(c) ? (c as Block[]) : [];
 }
 
+// The call-block type aliases the production `isToolCallBlock` recognizes; the
+// helper must match the same set or it would miss an alias-shaped call.
+const CALL_BLOCK_TYPES = new Set(["toolCall", "tool_call", "toolUse", "tool_use"]);
+
 function callIdsOf(m: AgentMessage): string[] {
   return blocks(m)
-    .filter((b) => b.type === "toolCall")
+    .filter((b) => CALL_BLOCK_TYPES.has(b.type))
     .map((b) => b.id as string);
 }
 
@@ -188,6 +192,29 @@ describe("sanitizeToolUseResultPairing (A2 pairing invariant)", () => {
 
     expect(out.some((m) => role(m) === "toolResult" && resultCallId(m) === "tu_orphan")).toBe(false);
     expect(out.some((m) => role(m) === "toolResult")).toBe(false);
+  });
+
+  it("Test 3b — alias call types (tool_use|tool_call|toolUse) are recognized, so their paired results are NOT dropped as orphans", () => {
+    // The PIPELINE feeds raw, un-normalized messages whose call block may carry
+    // any of these `type` aliases (the canonical pi-ai shape is `toolCall`, but
+    // the Anthropic Messages shape is `tool_use`). The repair MUST recognize all
+    // of them — else it treats a legitimately-paired call as absent and drops the
+    // result as an orphan. Every other pipeline layer already accepts these.
+    for (const aliasType of ["tool_use", "tool_call", "toolUse"]) {
+      const callBlock: Block = { type: aliasType, id: "tu_alias", name: "do_thing", arguments: {} };
+      const input = [
+        userMsg("hi"),
+        assistantMsg([callBlock], "toolUse"),
+        toolResultMsg("tu_alias", "ok"),
+      ];
+
+      const out = sanitizeToolUseResultPairing(input, NOW);
+
+      const survives = out.some((m) => role(m) === "toolResult" && resultCallId(m) === "tu_alias");
+      expect(survives, `alias '${aliasType}' must keep its paired result`).toBe(true);
+      expect(out.filter((m) => role(m) === "toolResult")).toHaveLength(1);
+      assertEveryResultFollowsItsCall(out);
+    }
   });
 
   it("Test 4 — drop-duplicate: keeps exactly one tool_result per call, placed after its call", () => {

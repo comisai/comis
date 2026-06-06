@@ -4,7 +4,7 @@ import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import Database from "better-sqlite3";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createBatchIndexer } from "./embedding-batch-indexer.js";
+import { createBatchIndexer, truncateForEmbedding } from "./embedding-batch-indexer.js";
 import { initSchema } from "./schema.js";
 
 const DIMS = 4;
@@ -255,14 +255,41 @@ describe("createBatchIndexer", () => {
 
     const indexer = createBatchIndexer(db, capturingPort);
 
-    // Insert a memory with content exceeding 6144 chars (1536 tokens * 4 chars/token)
+    // Insert a memory exceeding the cap (1536 tokens * 3 chars/token = 4608 —
+    // the DENSEST-ratio cap so dense content stays under the 2048-token context).
     const oversizedContent = "x".repeat(50_000);
     insertMemory(db, "m1", oversizedContent);
 
     await indexer.indexUnembedded();
 
-    // The text passed to embedBatch should be truncated to 6144 chars
+    // The text passed to embedBatch should be truncated to the conservative cap.
     expect(capturedTexts.length).toBe(1);
-    expect(capturedTexts[0].length).toBe(6_144);
+    expect(capturedTexts[0].length).toBe(4_608);
+  });
+});
+
+describe("truncateForEmbedding", () => {
+  it("returns text shorter than the cap unchanged", () => {
+    expect(truncateForEmbedding("hello world")).toBe("hello world");
+  });
+
+  it("caps long text so DENSE content stays under the embedding context", () => {
+    // A real-LLM edge case: a ~31K-token design-note message (dense structured
+    // text — request IDs, metric names, correlation ids — tokenizes denser than
+    // prose's 4:1) used as a recall QUERY exceeded the 2048-token embedding
+    // context and crashed the embedder (degraded to FTS5-only, losing vector
+    // recall). The char cap must assume the DENSEST plausible ratio, NOT 4:1
+    // (which under-counts tokens for dense content and lets the "truncated" text
+    // still blow the model context).
+    const long = "x".repeat(100_000);
+    const out = truncateForEmbedding(long, 1536);
+    expect(out.length).toBeLessThanOrEqual(1536 * 3); // RED on the old ×4 (6144)
+    // Even at a dense 2.5 chars/token, the truncated text stays under 2048 tokens.
+    expect(out.length / 2.5).toBeLessThan(2048);
+  });
+
+  it("respects a custom maxTokens with the same conservative ratio", () => {
+    const long = "y".repeat(100_000);
+    expect(truncateForEmbedding(long, 100).length).toBeLessThanOrEqual(100 * 3);
   });
 });

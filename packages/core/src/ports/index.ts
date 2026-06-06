@@ -73,7 +73,7 @@ export type {
   SessionListEntry,
   SessionDetailedEntry,
 } from "./session-store-types.js";
-export type { ContextStorePort } from "./context-store.js";
+export type { ContextStorePort, ContextBrowsePort } from "./context-store.js";
 export type {
   LcdMessage,
   LcdMessagePart,
@@ -81,6 +81,9 @@ export type {
   LcdPartKind,
   LcdRole,
   ContextStoreScope,
+  ContextBrowseScope,
+  LcdConversationSummary,
+  LcdConversationPage,
   AppendMessageInput,
   LcdSummary,
   LcdSummaryKind,

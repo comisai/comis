@@ -35,6 +35,7 @@
  */
 
 import { messageToParts } from "@comis/core"; // CORE codec (allowed; the agent↛memory cut keeps the concrete store injected)
+import { stripInlineRecalledMemory } from "../rag/hybrid-memory-injector.js";
 import type { ContextStorePort, ContextStoreScope, ComisLogger, ErrorKind } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
@@ -52,6 +53,42 @@ import { estimateMessageTokens } from "../safety/token-estimator.js";
  * @param now      Injected wall-clock ms (`deps.clock.now()` from the caller) — NOT Date.now().
  * @param logger   For the per-entry failure WARN + the success DEBUG.
  */
+/**
+ * Carve the TRANSIENT inline-recall block out of a USER message before it is
+ * persisted (the F1 lossless store must keep the conversation, not the per-turn
+ * rendered prompt's recalled memory). The envelope-wrapper prepends the top-1 RAG
+ * memory to the user text for the model; persisting it cross-contaminates the
+ * session, bloats the store, and feeds back into later recall. Assistant /
+ * toolResult messages never carry the prefix → pass through referentially
+ * unchanged. Pure: returns a NEW message only when something was stripped, so the
+ * common (no-recall) path keeps the verbatim original (F1).
+ */
+function stripRecallFromUserMessage(m: Message): Message {
+  if (m.role !== "user") return m;
+  const content = (m as { content: unknown }).content;
+  if (typeof content === "string") {
+    const cleaned = stripInlineRecalledMemory(content);
+    return cleaned === content ? m : ({ ...m, content: cleaned } as Message);
+  }
+  if (Array.isArray(content)) {
+    let changed = false;
+    const next = content.map((b) => {
+      // The recall is prepended to the message text → it rides the FIRST text block.
+      if (!changed && b && (b as { type?: string }).type === "text") {
+        const t = (b as { text: string }).text;
+        const cleaned = stripInlineRecalledMemory(t);
+        if (cleaned !== t) {
+          changed = true;
+          return { ...b, text: cleaned };
+        }
+      }
+      return b;
+    });
+    return changed ? ({ ...m, content: next } as Message) : m;
+  }
+  return m;
+}
+
 export function ingestTurn(
   store: ContextStorePort,
   scope: ContextStoreScope,
@@ -64,8 +101,10 @@ export function ingestTurn(
   let appended = 0;
   for (const msg of messages) {
     // The agent message is structurally the pi-ai canonical Message at this
-    // boundary; the codec + estimator are typed against pi-ai `Message`.
-    const m = msg as unknown as Message;
+    // boundary; the codec + estimator are typed against pi-ai `Message`. Carve the
+    // transient inline-recall block out of user turns BEFORE token-count + parts so
+    // BOTH reflect the clean conversation (not the per-turn recalled prompt) — F1.
+    const m = stripRecallFromUserMessage(msg as unknown as Message);
     const currentSeq = seq;
     seq += 1;
     try {

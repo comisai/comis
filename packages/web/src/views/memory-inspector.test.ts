@@ -178,6 +178,78 @@ describe("IcMemoryInspector", () => {
     expect(priv(el)._mode).toBe("browse");
   });
 
+  it("enables Browse-All Next and pages forward when the total exceeds the page size (P4)", async () => {
+    // A full first page (25 of 383). The Next button must be ENABLED and a click
+    // advances the offset by the page size — the old bug reported total === page
+    // length, leaving '1-25 of 25' with Next disabled (no way past 25).
+    const page = Array.from({ length: 25 }, (_, i) => ({
+      id: `m-${i}`,
+      content: `entry ${i}`,
+      trustLevel: "learned",
+      tags: [],
+      agentId: "default",
+      createdAt: Date.now(),
+    }));
+    const browseMemory = vi.fn().mockResolvedValue({ entries: page, total: 383 });
+    const el = await createElement();
+    el.apiClient = createMockApiClient({ browseMemory } as Partial<ApiClient>);
+    await (el as any).updateComplete;
+
+    priv(el)._handleModeChange("browse");
+    await (el as any).updateComplete;
+    await priv(el)._browse();
+    await (el as any).updateComplete;
+
+    expect(priv(el)._total).toBe(383);
+
+    // The "of N" header reflects the FULL total, not the page length.
+    const info = el.shadowRoot?.querySelector(".browse-info");
+    expect(info?.textContent?.replace(/\s+/g, " ").trim()).toBe("1-25 of 383");
+
+    // Next is enabled (offset 0 + limit 25 < 383).
+    const browseBtns = el.shadowRoot?.querySelectorAll(".browse-btn");
+    const nextBtn = browseBtns?.[1] as HTMLButtonElement;
+    expect(nextBtn.disabled).toBe(false);
+
+    // Clicking Next advances the offset by the page size and re-queries.
+    const callsBefore = browseMemory.mock.calls.length;
+    nextBtn.click();
+    await (el as any).updateComplete;
+    expect(priv(el)._browseOffset).toBe(25);
+    expect(browseMemory.mock.calls.length).toBe(callsBefore + 1);
+  });
+
+  it("renders exactly one pager in browse mode (no duplicate from the inner table) (P5)", async () => {
+    const page = Array.from({ length: 25 }, (_, i) => ({
+      id: `m-${i}`,
+      content: `entry ${i}`,
+      trustLevel: "learned",
+      tags: [],
+      agentId: "default",
+      createdAt: Date.now(),
+    }));
+    const browseMemory = vi.fn().mockResolvedValue({ entries: page, total: 383 });
+    const el = await createElement();
+    el.apiClient = createMockApiClient({ browseMemory } as Partial<ApiClient>);
+    await (el as any).updateComplete;
+
+    priv(el)._handleModeChange("browse");
+    await (el as any).updateComplete;
+    await priv(el)._browse();
+    await (el as any).updateComplete;
+
+    // The view renders its own server-side pager (browse-controls) exactly once.
+    expect(el.shadowRoot?.querySelectorAll(".browse-controls").length).toBe(1);
+
+    // The inner memory table must have its built-in pager suppressed so the two
+    // pagers no longer stack — assert both the forwarded flag AND that the
+    // nested data-table renders no .pagination footer.
+    const memTable = el.shadowRoot?.querySelector("ic-memory-table") as HTMLElement & { hidePagination: boolean };
+    expect(memTable.hidePagination).toBe(true);
+    const innerTable = memTable.shadowRoot?.querySelector("ic-data-table");
+    expect(innerTable?.shadowRoot?.querySelector(".pagination")).toBeNull();
+  });
+
   it("filter checkboxes for memory type are rendered (4 types)", async () => {
     const el = await createElement();
     const filterGroups = el.shadowRoot?.querySelectorAll(".filter-group");

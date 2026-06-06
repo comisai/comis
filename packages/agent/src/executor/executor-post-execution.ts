@@ -26,6 +26,13 @@ import {
   type ContextStorePort,
   type ContextStoreScope,
   tryGetContext,
+  // Secret-egress guard (the keystone). Used to gate the paired-conversation
+  // memory write so user-pasted secrets never reach the memories table / vector
+  // index — the SAME guard the derived-memory writes on this file already apply
+  // (memory-user-representation-job.ts, memory-relationship-job.ts,
+  // memory-consolidation-job.ts). validateMemoryWrite REJECTS (severity
+  // "critical") when the secret-egress scan finds a redaction.
+  validateMemoryWrite,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError, isSilentResponse } from "@comis/shared";
@@ -383,6 +390,149 @@ export function isDuplicatePairedMemory(content: string, agentId: string, clock:
 /** Reset the paired-memory dedup cache. Exported for unit tests. */
 export function resetPairedMemoryDedupForTests(): void {
   pairedMemoryDedup.clear();
+}
+
+/** Minimal logger surface the paired-store helper needs (debug/warn only). */
+interface PairedStoreLogger {
+  debug: (obj: Record<string, unknown>, msg: string) => void;
+  warn: (obj: Record<string, unknown>, msg: string) => void;
+}
+
+/** Args for {@link storePairedConversationMemory}. */
+export interface StorePairedConversationMemoryArgs {
+  memoryPort: MemoryPort;
+  /** The built "[user] …\n[agent] …" paired content (already quality-gated + deduped). */
+  pairedContent: string;
+  effectiveAgentId: string;
+  sessionKey: { tenantId: string; userId: string };
+  channelType: string | undefined;
+  formattedKey: string;
+  now: number;
+  logger: PairedStoreLogger;
+  /** Embedding enqueue (vector-index recall path). Omitted ⇒ no embedding. */
+  embeddingEnqueue?: (entryId: string, content: string) => void;
+}
+
+/**
+ * Persist a paired-conversation memory through the secret-egress firewall.
+ *
+ * SECURITY (FIX 1): the paired-conversation write is the highest-volume memory
+ * path (every qualifying turn) and was the ONLY agent-visible memory write that
+ * bypassed `validateMemoryWrite`. A user who pasted a secret into chat had it
+ * written VERBATIM to the `memories` table AND embedded into the vector index —
+ * recallable across sessions — even though the explicit `memory_store` tool
+ * refuses it (cosmetic for data-at-rest). The DERIVED-memory writes
+ * (user-representation, relationship, consolidation) all run `validateMemoryWrite`
+ * FIRST; this helper applies the SAME guard to the paired write for parity.
+ *
+ * `validateMemoryWrite` REJECTS (returns severity `critical`) when the secret-
+ * egress scan finds a redaction — it does NOT scrub-and-return content. So a
+ * non-`clean` verdict SKIPS the write (no row, no embedding) with a CONTENT-FREE
+ * WARN, byte-identical to the user-representation path
+ * (memory-user-representation-job.ts:390-406): the high-trust `learned` floor has
+ * no reduced-weight tier to down-store a `warn` into, so both `warn` AND
+ * `critical` are skipped, not downgraded. Non-secret content stores unchanged.
+ *
+ * The skip log is CONTENT-FREE (Pino redaction / AGENTS.md §2.7): the planted
+ * secret value never appears in any field — only `severity` + `patterns` (the
+ * verdict's pattern-source tags, e.g. `secret-egress-guard`, never the matched
+ * text) + an actionable hint.
+ *
+ * Non-fatal: a store error is logged (dependency) and swallowed — execution never
+ * fails due to a memory write. Exported for unit tests (the secret-egress gate is
+ * unit-tested with a mock memoryPort capturing `.store` inputs; scaffolding all
+ * 30+ postExecution deps is impractical).
+ */
+export async function storePairedConversationMemory(
+  args: StorePairedConversationMemoryArgs,
+): Promise<void> {
+  const {
+    memoryPort, pairedContent, effectiveAgentId, sessionKey,
+    channelType, formattedKey, now, logger, embeddingEnqueue,
+  } = args;
+
+  // Secret-egress firewall FIRST (mirrors the derived-memory writes). A
+  // non-`clean` verdict (secret OR dangerous/suspicious pattern) SKIPS the
+  // write — the paired memory has the high-trust `learned` floor with no
+  // reduced-weight tier, so a `warn` is skipped exactly like a `critical`
+  // (parity with memory-user-representation-job.ts). The skip is CONTENT-FREE:
+  // never log pairedContent or the matched secret value.
+  const verdict = validateMemoryWrite(pairedContent);
+  if (verdict.severity !== "clean") {
+    logger.warn(
+      {
+        agentId: effectiveAgentId,
+        sessionKey: formattedKey,
+        severity: verdict.severity,
+        // Pattern-source tags only (e.g. "secret-egress-guard") — NEVER the
+        // matched secret text. The verdict carries sources, not the content.
+        patterns: verdict.patterns,
+        hint: "Paired conversation memory matched a secret/dangerous/suspicious pattern — skipped (the learned-trust conversation memory has no reduced-weight tier); the secret value is never logged or persisted",
+        errorKind: "validation" as ErrorKind,
+      },
+      "Paired memory skipped: failed the memory-write security scan",
+    );
+    return;
+  }
+
+  try {
+    const userEntryId = randomUUID();
+    const userStoreResult = await memoryPort.store({
+      id: userEntryId,
+      tenantId: sessionKey.tenantId,
+      agentId: effectiveAgentId,
+      userId: sessionKey.userId,
+      content: pairedContent,
+      trustLevel: "learned",
+      source: {
+        who: sessionKey.userId,
+        channel: channelType ?? "unknown",
+        sessionKey: formattedKey,
+      },
+      tags: ["conversation", "paired"],
+      createdAt: now,
+    });
+    if (!userStoreResult.ok) {
+      logger.warn(
+        { err: userStoreResult.error.message, hint: "Check database connectivity and disk space", errorKind: "dependency" as ErrorKind },
+        "Memory store failed for user message",
+      );
+    } else if (embeddingEnqueue) {
+      embeddingEnqueue(userEntryId, pairedContent);
+    }
+  } catch {
+    // Memory storage failure is non-fatal -- errors already logged per-entry
+  }
+}
+
+/**
+ * Decide whether the LCD afterTurn store passes (ingest + leaf + condense) run
+ * for this turn, based on the agent's effective context-engine version.
+ *
+ * The daemon injects the LCD ContextStorePort UNCONDITIONALLY
+ * (setup-agents-runtime.ts), but ONLY the dag engine READS the store: the
+ * assembler's dag branch (context-engine.ts — gated `version === "dag"`) and the
+ * ctx_* expansion tools (setup-tools.ts — gated `version === "dag" && lcdStore`).
+ * A pipeline agent therefore must NOT write `lcd_messages` or fire leaf/condense
+ * LLM summarization — that work is pure wasted cost + latency because nothing
+ * reads it.
+ *
+ * Symmetry with the read side: the executor resolves an ABSENT
+ * `config.contextEngine` via `ContextEngineConfigSchema.parse({})`, whose
+ * `version` defaults to "dag" (executor-context-engine-setup.ts). So an absent
+ * contextEngine (and an absent `version` within a present contextEngine) is
+ * treated as dag — exactly what the assembler does — and only an EXPLICIT
+ * `version: "pipeline"` skips the passes. This keeps write and read in agreement
+ * and makes the dag default flip non-breaking. The gate reads per-turn config,
+ * so flipping an agent pipeline→dag later takes effect on the very next turn (the
+ * first dag turn catches up via the ingest delta from an empty store).
+ *
+ * Pure: no I/O, no side effects. Exported for unit tests.
+ */
+export function shouldRunLcdStorePasses(config: {
+  contextEngine?: { version?: "pipeline" | "dag" };
+}): boolean {
+  return (config.contextEngine?.version ?? "dag") === "dag";
 }
 
 /**
@@ -884,34 +1034,24 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         "Paired memory skipped: duplicate content within dedup window",
       );
     } else {
-      try {
-        const userEntryId = randomUUID();
-        const userStoreResult = await deps.memoryPort.store({
-          id: userEntryId,
-          tenantId: sessionKey.tenantId,
-          agentId: effectiveAgentId,
-          userId: sessionKey.userId,
-          content: pairedContent,
-          trustLevel: "learned",
-          source: {
-            who: sessionKey.userId,
-            channel: msg.channelType ?? "unknown",
-            sessionKey: formattedKey,
-          },
-          tags: ["conversation", "paired"],
-          createdAt: now,
-        });
-        if (!userStoreResult.ok) {
-          deps.logger.warn(
-            { err: userStoreResult.error.message, hint: "Check database connectivity and disk space", errorKind: "dependency" as ErrorKind },
-            "Memory store failed for user message",
-          );
-        } else if (deps.embeddingEnqueue) {
-          deps.embeddingEnqueue(userEntryId, pairedContent);
-        }
-      } catch {
-        // Memory storage failure is non-fatal -- errors already logged per-entry
-      }
+      // SECURITY (FIX 1): route the paired-conversation write through the
+      // secret-egress firewall (validateMemoryWrite) — the SAME guard the
+      // derived-memory writes (user-representation/relationship/consolidation)
+      // apply. A user-pasted secret is REJECTED (verdict critical) so it is
+      // never persisted to the memories table nor embedded into the vector index
+      // (recallable across sessions). The skip is content-free. Non-secret
+      // content stores unchanged. Helper is exported for unit-testing the gate.
+      await storePairedConversationMemory({
+        memoryPort: deps.memoryPort,
+        pairedContent,
+        effectiveAgentId,
+        sessionKey: { tenantId: sessionKey.tenantId, userId: sessionKey.userId },
+        channelType: msg.channelType,
+        formattedKey,
+        now,
+        logger: deps.logger,
+        embeddingEnqueue: deps.embeddingEnqueue,
+      });
     }
   } else if (deps.memoryPort && result.response && msg.text) {
     // Memory not stored -- distinguish the two skip reasons for observability.
@@ -933,6 +1073,16 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // injected clock, non-fatal (ingestTurn wraps each append per-entry). The
   // body lives in lcd-ingest.ts (this file is over the 800L cap).
   //
+  // FIX A: the block is gated on BOTH the store's presence AND the effective
+  // engine being dag (`shouldRunLcdStorePasses`). The daemon injects the store
+  // unconditionally, but ONLY dag mode READS it (the assembler's dag branch +
+  // the ctx_* tools). A pipeline agent that wrote `lcd_messages` and fired
+  // leaf/condense LLM summarization here paid pure wasted cost + latency because
+  // nothing reads the store in pipeline mode. The version decision mirrors the
+  // read side exactly (absent contextEngine ⇒ dag, matching the executor's
+  // `ContextEngineConfigSchema.parse({})` default); only an explicit
+  // `version: "pipeline"` skips the passes. See shouldRunLcdStorePasses.
+  //
   // Idempotency (T-128-09): the high-water mark `getMessages(conversationId).length`
   // is the persisted count (survives restarts); the delta `live.slice(persisted)`
   // appends only the not-yet-persisted tail. A retry with no new messages appends
@@ -941,7 +1091,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // WARNs (errorKind `precondition`) rather than slicing past the end and either
   // persisting nothing forever or colliding on the unique (conversationId, seq)
   // index.
-  if (deps.contextStore) {
+  if (deps.contextStore && shouldRunLcdStorePasses(config)) {
     const conversationId = formattedKey;
     const scope: ContextStoreScope = {
       conversationId,

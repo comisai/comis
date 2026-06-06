@@ -84,6 +84,17 @@ describe("formatMemorySection", () => {
     expect(result).toContain("Hello world");
   });
 
+  it("the header frames recalled memories as past + potentially outdated, with current-conversation precedence (facet #2)", () => {
+    const results: MemorySearchResult[] = [
+      createMockResult({ content: "Hello world", trustLevel: "system", createdAt: 1700000000000 }),
+    ];
+    const result = formatMemorySection(results, 4000).toLowerCase();
+    // A stale recalled fact must not override the live turn — the section header
+    // tells the model the current conversation is authoritative on conflicts.
+    expect(result).toContain("outdated");
+    expect(result).toContain("current conversation is authoritative");
+  });
+
   it("stops adding entries when budget exceeded", () => {
     // Use system trust entries to avoid external content wrapping inflating line size
     const results: MemorySearchResult[] = [
@@ -92,9 +103,10 @@ describe("formatMemorySection", () => {
       createMockResult({ content: "Third entry", trustLevel: "system", score: 0.7 }),
     ];
 
-    // Budget is tight -- only header + first entry should fit
+    // Budget is tight -- only header + first entry should fit. The header string
+    // must mirror formatMemorySection's (it carries the facet-#2 precedence note).
     const headerLen =
-      "## Relevant Memories\n\nThe following are memories from past interactions, ranked by relevance:\n"
+      "## Relevant Memories\n\nThe following are memories from past interactions, ranked by relevance. They may be outdated; if any conflicts with what the user has said in the current conversation, the current conversation is authoritative:\n"
         .length;
     const firstLineApprox = "- [system] (recorded 2023-11-14): First entry\n".length;
     const result = formatMemorySection(results, headerLen + firstLineApprox + 5);

@@ -101,6 +101,21 @@ describe("IcTopbar", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
+  it("navigates to the security (pending approvals) view when the bell is clicked (P7)", async () => {
+    // P7: the notification bell was a dead button (no handler). It must take the
+    // operator to where pending approvals are actioned (the Security view).
+    const el = await createElement<IcTopbar>("ic-topbar", { notificationCount: 3 });
+    const handler = vi.fn();
+    el.addEventListener("navigate", handler as EventListener);
+
+    const bell = el.shadowRoot?.querySelector(".bell-btn") as HTMLElement;
+    expect(bell).toBeTruthy();
+    bell.click();
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect((handler.mock.calls[0]![0] as CustomEvent<string>).detail).toBe("security");
+  });
+
   it("dispatches 'logout' event from user menu logout action", async () => {
     const el = await createElement<IcTopbar>("ic-topbar");
     const handler = vi.fn();

@@ -737,6 +737,107 @@ describe("tool retry breaker", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Non-zero COMMAND exits are corrective feedback, not tool unavailability.
+  //
+  // Regression: Telegram session 678314278 (daemon.1.log, 2026-06-06 20:27).
+  // The agent ran `npm run build` on a TypeScript project it was actively
+  // editing. `tsc` exited 2 (legit compile errors). pi-event-bridge.ts:593-602
+  // flips toolSuccess=false for ANY result whose `details.exitCode` is a
+  // non-zero number, and pi-event-bridge.ts:719 then feeds that "failure" to
+  // recordResult(). The exec wrapper's serialized envelope tags as the fallback
+  // `exitcode_2_stdout_...` (NOT a PARAMETER_VALIDATION_TAG), so after two
+  // same-tag exits the breaker declared exec "unavailable. DO NOT retry this
+  // tool" (20:27:19) — killing the edit→build→fix loop mid-task and forcing the
+  // agent to bluff "Done — game is built and ready" without being able to
+  // verify (endReason: completed_with_tool_errors).
+  //
+  // A command that RAN TO COMPLETION and exited non-zero (tsc errors, failing
+  // tests, `grep`/`diff` exit 1) is the normal signal of a coding loop, not
+  // evidence that the tool is broken. It MUST NOT count toward any breaker
+  // threshold — exactly like PARAMETER_VALIDATION_TAGS above. The discriminator
+  // is the presence of a numeric exitCode in the envelope: process ran (exempt)
+  // vs. process never ran / infra fault (spawn ENOENT, EPERM — still blocks).
+  describe("non-zero command exits do not count as failures", () => {
+    const cfg = {
+      // Real production defaults (core/schema-agent-model.ts): 3 / 5 / 2.
+      maxConsecutiveFailures: 3,
+      maxToolFailures: 5,
+      suggestAlternatives: true,
+      maxConsecutiveErrorPatterns: 2,
+    };
+
+    // Faithful reproduction of the errorText the breaker receives. The bridge
+    // hands it extractErrorText(result) (bridge-event-handlers.ts:63), which
+    // JSON.stringify's the full exec envelope — verified against the live WARN
+    // payload in daemon.1.log. The inner `text` is the pretty-printed command
+    // result; `details.exitCode` carries the numeric exit code.
+    function execExitEnvelope(exitCode: number, stdout: string, stderr = ""): string {
+      const inner = JSON.stringify({ exitCode, stdout, stderr }, null, 2);
+      return JSON.stringify({
+        content: [{ type: "text", text: inner }],
+        details: { exitCode, stdout, stderr },
+      });
+    }
+
+    const TSC_BUILD_FAIL = execExitEnvelope(
+      2,
+      "\n> typescript-snake@1.0.0 build\n> tsc\n\n" +
+        "src/main.ts(55,3): error TS18047: 'ctx' is possibly 'null'.\n",
+    );
+
+    it("does not block on repeated identical non-zero exits (the build-fix loop)", () => {
+      const breaker = createToolRetryBreaker(cfg);
+      const args = { command: "npm run build", cwd: "projects/snake-game" };
+
+      // Same command, same exit-2 result, four times — exceeds BOTH the
+      // signature threshold (3) and the error-pattern threshold (2).
+      for (let i = 0; i < 4; i++) {
+        breaker.recordResult("exec", args, false, TSC_BUILD_FAIL);
+      }
+
+      // The agent fixed the code and wants to re-run the build. It must be
+      // allowed to: a non-zero exit is not tool unavailability.
+      expect(breaker.beforeToolCall("exec", args).block).toBe(false);
+      expect(breaker.getBlockedTools()).toEqual([]);
+    });
+
+    it("does not trip the tool-total backstop across different non-zero-exit commands", () => {
+      const breaker = createToolRetryBreaker(cfg);
+
+      // Six distinct commands that each ran and exited non-zero (failing
+      // tests, type errors in different files). maxToolFailures (5) would
+      // block the whole tool if these counted.
+      breaker.recordResult("exec", { command: "npm test" }, false, execExitEnvelope(1, "2 failing"));
+      breaker.recordResult("exec", { command: "npm run build" }, false, TSC_BUILD_FAIL);
+      breaker.recordResult("exec", { command: "tsc -p a" }, false, execExitEnvelope(2, "a.ts(1,1): error"));
+      breaker.recordResult("exec", { command: "tsc -p b" }, false, execExitEnvelope(2, "b.ts(1,1): error"));
+      breaker.recordResult("exec", { command: "eslint ." }, false, execExitEnvelope(1, "3 problems"));
+      breaker.recordResult("exec", { command: "grep TODO src" }, false, execExitEnvelope(1, ""));
+
+      expect(breaker.getBlockedTools()).toEqual([]);
+      expect(breaker.beforeToolCall("exec", { command: "npm run build" }).block).toBe(false);
+    });
+
+    it("still blocks genuine tool-infrastructure faults with no exit code (spawn ENOENT)", () => {
+      // Boundary guard: when the process NEVER RAN (sandbox failed to spawn),
+      // there is no exitCode and it IS a real tool failure — the breaker's
+      // original purpose. The exemption must not swallow this.
+      const breaker = createToolRetryBreaker(cfg);
+      const args = { command: "python3 analyze.py" };
+      const spawnFault = JSON.stringify({
+        content: [{ type: "text", text: "spawn sandbox-exec ENOENT" }],
+        details: {},
+      });
+
+      for (let i = 0; i < 3; i++) {
+        breaker.recordResult("exec", args, false, spawnFault);
+      }
+
+      expect(breaker.beforeToolCall("exec", args).block).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Config-driven toolAlternatives
   // ---------------------------------------------------------------------------
 

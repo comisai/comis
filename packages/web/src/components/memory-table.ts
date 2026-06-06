@@ -48,6 +48,10 @@ export class IcMemoryTable extends LitElement {
   /** Whether checkboxes are shown for selection. */
   @property({ type: Boolean }) selectable = false;
 
+  /** Suppress the inner data-table's pager (the parent owns paging — e.g. the
+   *  memory inspector's server-side browse pager). Forwarded to ic-data-table. */
+  @property({ type: Boolean }) hidePagination = false;
+
   /** Whether entries have score values (search mode). */
   private _hasScores(): boolean {
     return this.entries.some((e) => e.score !== undefined && e.score !== null);
@@ -159,6 +163,7 @@ export class IcMemoryTable extends LitElement {
         .columns=${columns}
         .rows=${this.entries}
         ?selectable=${this.selectable}
+        ?hidePagination=${this.hidePagination}
         emptyMessage="No memory entries found"
         @row-click=${this._handleRowClick}
         @selection-change=${this._handleSelectionChange}

@@ -52,6 +52,8 @@ import {
   wrapExternalContent,
 } from "@comis/core";
 import type { SessionKey } from "@comis/core";
+// ValidationError: typed caller-error → dispatcher logs warn/validation (FIX 2).
+import { ValidationError } from "./errors.js";
 import { assembleSynthesis, citationChains, orderByTrust, sanitizeToolOutput } from "@comis/agent";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 import { randomUUID } from "node:crypto";
@@ -333,8 +335,10 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // stays "Missing required parameter: content" (matches existing
       // memory-handlers.test.ts assertions). The contract `.min(1)` is
       // defense-in-depth that fires only if the bespoke guard is bypassed.
+      // FIX 2: ValidationError (not bare Error) → dispatcher logs warn/validation,
+      // not error/internal — behavior unchanged (still rejected, same message).
       const storeContentRaw = rawParams.content as string | undefined;
-      if (!storeContentRaw) throw new Error("Missing required parameter: content");
+      if (!storeContentRaw) throw new ValidationError("Missing required parameter: content");
 
       // Strip internals + contract-parse for type narrowing. The `_agentId`
       // and `_trustLevel` internals are read from rawParams BELOW (BEFORE
@@ -464,24 +468,24 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
       const sort = params.sort ?? "newest";
-      const memoryType = params.memory_type;
-      const trustLevel = params.trust_level;
       const tags = params.tags;
-
-      let entries = deps.memoryApi.inspect({
+      // Shared filters for the page read + the full-count (P4: total = FULL count(), not page length).
+      const filters = {
         tenantId,
         agentId,
-        limit,
-        offset,
-        memoryType: memoryType as "working" | "episodic" | "semantic" | "procedural" | undefined,
-        trustLevel: trustLevel as "system" | "learned" | "external" | undefined,
+        memoryType: params.memory_type as "working" | "episodic" | "semantic" | "procedural" | undefined,
+        trustLevel: params.trust_level as "system" | "learned" | "external" | undefined,
         tags,
-      });
+      };
+
+      let entries = deps.memoryApi.inspect({ ...filters, limit, offset });
 
       // inspect() always sorts DESC (newest first). Reverse for "oldest".
       if (sort === "oldest") {
         entries = entries.slice().reverse();
       }
+
+      const total = deps.memoryApi.count(filters);
 
       const result = {
         entries: entries.map((e) => ({
@@ -493,10 +497,10 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
           agentId: e.agentId,
           createdAt: e.createdAt,
         })),
-        total: entries.length,
+        total,
         offset,
         limit,
-        hasMore: entries.length === limit,
+        hasMore: offset + entries.length < total, // more rows exist past this window
       };
       if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryBrowseContract.response.parse(result);

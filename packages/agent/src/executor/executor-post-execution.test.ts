@@ -15,8 +15,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory } from "./executor-post-execution.js";
+import { describe, it, expect, vi } from "vitest";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses } from "./executor-post-execution.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Learned-recall write side: the turn-end emit threads classifyIntent(msg.text).
 // Imported here for the deterministic-bucket behavior probe (the emit's intent source).
@@ -559,6 +559,86 @@ describe("modelAcknowledgedFailure word-boundary regression", () => {
 });
 
 // ---------------------------------------------------------------------------
+// FIX A — the LCD afterTurn store passes (ingest + leaf + condense) run ONLY
+// when the agent's effective context engine is `dag`.
+//
+// Bug: the `if (deps.contextStore)` block was PRESENCE-gated, not version-gated.
+// The daemon injects the LCD ContextStorePort UNCONDITIONALLY
+// (setup-agents-runtime.ts:447 `contextStore: deps.lcdStore`), so a PIPELINE
+// agent wrote `lcd_messages` every turn AND fired leaf/condense LLM
+// summarization calls — yet NOTHING reads the store in pipeline mode (the
+// assembler's dag branch at context-engine.ts:240 is gated `version === "dag"`,
+// and the ctx_* tools at setup-tools.ts:640 are gated
+// `version === "dag" && lcdStore`). Pure wasted cost + latency.
+//
+// FIX: gate the block additionally on the effective engine being dag. The
+// decision MIRRORS the READ side exactly: the executor resolves an absent
+// `config.contextEngine` via `ContextEngineConfigSchema.parse({})` whose
+// `version` defaults to "dag" (executor-context-engine-setup.ts:265), so an
+// ABSENT contextEngine is treated as dag (the assembler reads the dag engine in
+// that case). Pipeline is skipped ONLY when `version === "pipeline"` is set.
+//
+// Invariants preserved:
+//   - dag agents still ingest + compact exactly as before (predicate true).
+//   - storeless ⇒ pipeline fallback unchanged (the outer `if (deps.contextStore)`
+//     presence guard stays; the version gate is ANDed onto it).
+//   - switching pipeline→dag later still works: the gate reads per-turn config,
+//     so the next turn after a `version: "dag"` flip ingests; the first dag turn
+//     catches up via the ingest delta (live.slice(persisted)) from an empty store.
+//
+// The decision is extracted into the pure exported predicate
+// `shouldRunLcdStorePasses(config)` so the dag-vs-pipeline branch is unit-testable
+// without scaffolding all 30+ postExecution deps (mirrors shouldStorePairedMemory).
+// A source-grep locks the predicate into the `if (deps.contextStore)` gate.
+// All FAIL on the pre-patch tree (the export does not exist) — RED-first.
+// ---------------------------------------------------------------------------
+describe("FIX A — LCD store passes run only when the effective engine is dag", () => {
+  it("behavior — pipeline version (explicit) does NOT run the store passes", () => {
+    // An explicit pipeline agent must NOT ingest/leaf/condense — the store is
+    // injected unconditionally but nothing reads it in pipeline mode.
+    expect(shouldRunLcdStorePasses({ contextEngine: { version: "pipeline" } })).toBe(false);
+  });
+
+  it("behavior — dag version (explicit) DOES run the store passes (dag path unchanged)", () => {
+    expect(shouldRunLcdStorePasses({ contextEngine: { version: "dag" } })).toBe(true);
+  });
+
+  it("behavior — absent contextEngine is treated as dag (mirrors the executor's parse({}) default)", () => {
+    // executor-context-engine-setup.ts:265 resolves an absent contextEngine via
+    // ContextEngineConfigSchema.parse({}) → version "dag". The write gate must
+    // agree with that read-side resolution: absent ⇒ run the passes.
+    expect(shouldRunLcdStorePasses({})).toBe(true);
+    expect(shouldRunLcdStorePasses({ contextEngine: undefined })).toBe(true);
+  });
+
+  it("behavior — absent version within a present contextEngine is treated as dag", () => {
+    // A contextEngine object with other knobs set but no explicit version still
+    // resolves to the schema default ("dag") on the read side.
+    expect(shouldRunLcdStorePasses({ contextEngine: { freshTailTurns: 8 } as never })).toBe(true);
+  });
+
+  it("source-grep — the predicate gates the `if (deps.contextStore)` block (write/read symmetry)", () => {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    // The contextStore block guard must reference the version predicate — the
+    // presence-only `if (deps.contextStore)` is no longer sufficient on its own.
+    expect(stripped).toMatch(/shouldRunLcdStorePasses/);
+    // The guard ANDs the predicate with the store-presence check (either order).
+    expect(stripped).toMatch(
+      /if\s*\(\s*deps\.contextStore\s*&&\s*shouldRunLcdStorePasses\(config\)\s*\)|if\s*\(\s*shouldRunLcdStorePasses\(config\)\s*&&\s*deps\.contextStore\s*\)/,
+    );
+    // The ingest + both passes still live behind that single guard.
+    expect(stripped).toMatch(/ingestTurnGuarded/);
+    expect(stripped).toMatch(/runLeafPassAfterTurn/);
+    expect(stripped).toMatch(/runCondensePassAfterTurn/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // LCD afterTurn leaf-pass wiring (Plan 129-06, C1/C3) — RED-first
 //
 // The wiring is PRODUCTION source in packages/agent/src/** (CLAUDE.md
@@ -594,7 +674,7 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
     // … and it must sit INSIDE the `if (deps.contextStore)` block: between the
     // block open and the next top-level statement after the ingest. We slice from
     // the `if (deps.contextStore)` to the recall-attribution block that follows it.
-    const blockStart = stripped.indexOf("if (deps.contextStore)");
+    const blockStart = stripped.indexOf("if (deps.contextStore");
     expect(blockStart).toBeGreaterThan(-1);
     const afterBlock = stripped.indexOf("attributeRecallUsage", blockStart);
     const block = stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
@@ -786,7 +866,7 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
   }
 
   function contextStoreBlock(stripped: string): string {
-    const blockStart = stripped.indexOf("if (deps.contextStore)");
+    const blockStart = stripped.indexOf("if (deps.contextStore");
     expect(blockStart).toBeGreaterThan(-1);
     const afterBlock = stripped.indexOf("attributeRecallUsage", blockStart);
     return stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
@@ -1104,3 +1184,219 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
     expect(summaries[0]!.createdAt).toBe(9000);
   });
 });
+
+// ---------------------------------------------------------------------------
+// FIX 1 (HIGH security) — the UNGUARDED paired-conversation ingest path must
+// apply the SAME secret-egress guard the DERIVED-memory writes on this file use
+// (user-representation ~:390, relationship, consolidation all call
+// validateMemoryWrite FIRST). A user who pastes a secret (e.g. an `sk-proj-…`
+// key) into chat had it written VERBATIM to the `memories` table AND embedded
+// into the vector index via the paired store — recallable across sessions — even
+// though the explicit memory_store tool refuses it. The refusal is cosmetic for
+// data-at-rest; the highest-volume write path (every qualifying turn) bypassed
+// the guard entirely.
+//
+// validateMemoryWrite REJECTS (returns severity "critical") when the
+// secret-egress scan finds a redaction — it does NOT scrub-and-return-content.
+// So FIX 1 GATES the paired store on it: a non-`clean` verdict SKIPS the write
+// (no row, no embedding), with a content-free WARN — byte-identical to the
+// user-representation path (memory-user-representation-job.ts:390-406). Non-secret
+// paired content still stores unchanged.
+//
+// The gate is extracted into the exported async helper
+// `storePairedConversationMemory(...)` (mirrors the existing shouldStorePairedMemory
+// / isDuplicatePairedMemory extractions) so the secret-egress decision is unit-
+// testable with a mock memoryPort capturing `.store` inputs — scaffolding all 30+
+// postExecution deps is impractical (see the markRead block above). A source-grep
+// locks the helper into the paired-store call site. ALL FAIL on the pre-patch tree
+// (the export does not exist + the gate is absent) — RED-first.
+//
+// IMPORTANT (Pino redaction / §2.7): the skip is CONTENT-FREE — the planted
+// secret value never appears in any log field.
+// ---------------------------------------------------------------------------
+describe("FIX 1 — paired-conversation memory store applies the secret-egress guard", () => {
+  function readPostExec(): { src: string; stripped: string } {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    return { src, stripped };
+  }
+
+  // A planted secret that the secret-egress scan flags: `sk-proj-` starts with
+  // the `sk-` prefix (PREFIX_MIN_BODY_LENGTHS `sk-` ⇒ 16); the body below is
+  // ≥16 chars so scrubSecretsFromText redacts it ⇒ validateMemoryWrite ⇒ critical.
+  const PLANTED_SECRET = "sk-proj-LEAK0000000000000000ABCDEF";
+
+  async function loadHelper(): Promise<{
+    storePairedConversationMemory: (args: Record<string, unknown>) => Promise<void>;
+  }> {
+    const mod = (await import("./executor-post-execution.js")) as unknown as {
+      storePairedConversationMemory?: (args: Record<string, unknown>) => Promise<void>;
+    };
+    // RED on the pre-patch tree: the export does not exist yet.
+    expect(typeof mod.storePairedConversationMemory).toBe("function");
+    return mod as { storePairedConversationMemory: (args: Record<string, unknown>) => Promise<void> };
+  }
+
+  interface CapturingMemoryPort {
+    store: ReturnType<typeof vi.fn>;
+  }
+  function makeCapturingMemoryPort(): CapturingMemoryPort {
+    return {
+      store: vi.fn(async (entry: { id: string }) => ({ ok: true as const, value: entry })),
+    };
+  }
+
+  const clock = { now: () => 1_700_000_000_000 };
+
+  it("behavior — a paired memory whose content carries a planted secret is NOT written to memoryPort.store (gated, not stored)", async () => {
+    const { storePairedConversationMemory } = await loadHelper();
+    const memoryPort = makeCapturingMemoryPort();
+    const enqueued: Array<{ id: string; content: string }> = [];
+
+    await storePairedConversationMemory({
+      memoryPort,
+      pairedContent: `[user] my key is ${PLANTED_SECRET}\n[agent] noted`,
+      effectiveAgentId: "agent_a",
+      sessionKey: { tenantId: "tenant_a", userId: "user_a" },
+      channelType: "discord",
+      formattedKey: "agent_a:discord:chan-1",
+      now: clock.now(),
+      logger: makeSilentLogger(),
+      embeddingEnqueue: (id: string, content: string) => enqueued.push({ id, content }),
+    });
+
+    // The secret-bearing paired memory NEVER reaches the store …
+    expect(memoryPort.store).not.toHaveBeenCalled();
+    // … and is never enqueued for embedding (no vector-index recall path either).
+    expect(enqueued).toHaveLength(0);
+  });
+
+  it("behavior — a paired memory with NO secret still stores unchanged (gate does not regress the happy path)", async () => {
+    const { storePairedConversationMemory } = await loadHelper();
+    const memoryPort = makeCapturingMemoryPort();
+    const enqueued: Array<{ id: string; content: string }> = [];
+    const clean = "[user] what is the comparison chart for Q1 vs Q2\n[agent] here is the chart you asked for";
+
+    await storePairedConversationMemory({
+      memoryPort,
+      pairedContent: clean,
+      effectiveAgentId: "agent_a",
+      sessionKey: { tenantId: "tenant_a", userId: "user_a" },
+      channelType: "discord",
+      formattedKey: "agent_a:discord:chan-1",
+      now: clock.now(),
+      logger: makeSilentLogger(),
+      embeddingEnqueue: (id: string, content: string) => enqueued.push({ id, content }),
+    });
+
+    // Non-secret content is stored VERBATIM (content preserved, gate is a pass-through).
+    expect(memoryPort.store).toHaveBeenCalledTimes(1);
+    const stored = memoryPort.store.mock.calls[0]![0] as { content: string; trustLevel: string; tags: string[] };
+    expect(stored.content).toBe(clean);
+    expect(stored.trustLevel).toBe("learned");
+    expect(stored.tags).toEqual(["conversation", "paired"]);
+    // The clean entry IS enqueued for embedding (RAG recall path intact).
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]!.content).toBe(clean);
+  });
+
+  it("behavior — the skip is CONTENT-FREE: the planted secret value never appears in any log field (Pino redaction / §2.7)", async () => {
+    const { storePairedConversationMemory } = await loadHelper();
+    const memoryPort = makeCapturingMemoryPort();
+    const logRecords: Array<{ obj: unknown; msg: string }> = [];
+    const capturingLogger = {
+      debug: (obj: unknown, msg: string) => logRecords.push({ obj, msg }),
+      info: (obj: unknown, msg: string) => logRecords.push({ obj, msg }),
+      warn: (obj: unknown, msg: string) => logRecords.push({ obj, msg }),
+      error: (obj: unknown, msg: string) => logRecords.push({ obj, msg }),
+    };
+
+    await storePairedConversationMemory({
+      memoryPort,
+      pairedContent: `[user] token ${PLANTED_SECRET}\n[agent] ok`,
+      effectiveAgentId: "agent_a",
+      sessionKey: { tenantId: "tenant_a", userId: "user_a" },
+      channelType: "discord",
+      formattedKey: "agent_a:discord:chan-1",
+      now: clock.now(),
+      logger: capturingLogger,
+      embeddingEnqueue: () => {},
+    });
+
+    // The secret value must appear in NONE of the captured log lines (neither
+    // the message nor any structured field), and store must not be called.
+    expect(memoryPort.store).not.toHaveBeenCalled();
+    const serialized = JSON.stringify(logRecords);
+    expect(serialized).not.toContain(PLANTED_SECRET);
+    expect(serialized).not.toContain("LEAK0000000000000000");
+    // The gate did emit an observability line (a content-free skip WARN/DEBUG).
+    expect(logRecords.length).toBeGreaterThan(0);
+  });
+
+  it("behavior — the skip is logged at WARN/DEBUG with errorKind validation (caller-error, not internal)", async () => {
+    const { storePairedConversationMemory } = await loadHelper();
+    const memoryPort = makeCapturingMemoryPort();
+    let warnRecord: { obj: Record<string, unknown>; msg: string } | undefined;
+    const capturingLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: (obj: Record<string, unknown>, msg: string) => {
+        warnRecord = { obj, msg };
+      },
+      error: (obj: Record<string, unknown>) => {
+        // The skip must NOT log at ERROR — a secret in user input is a caller/
+        // validation concern, not an internal fault.
+        throw new Error(`secret-egress skip must not log at ERROR: ${JSON.stringify(obj)}`);
+      },
+    };
+
+    await storePairedConversationMemory({
+      memoryPort,
+      pairedContent: `[user] ${PLANTED_SECRET}\n[agent] ok this is a long enough combined message`,
+      effectiveAgentId: "agent_a",
+      sessionKey: { tenantId: "tenant_a", userId: "user_a" },
+      channelType: "discord",
+      formattedKey: "agent_a:discord:chan-1",
+      now: clock.now(),
+      logger: capturingLogger,
+      embeddingEnqueue: () => {},
+    });
+
+    expect(memoryPort.store).not.toHaveBeenCalled();
+    expect(warnRecord, "a content-free skip WARN must be emitted").toBeDefined();
+    expect(warnRecord!.obj.errorKind).toBe("validation");
+  });
+
+  it("source-grep — validateMemoryWrite gates the paired-store call site (the agent↛memory cut held: imported from @comis/core)", () => {
+    const { stripped } = readPostExec();
+    // The secret-egress guard must be imported from @comis/core (same source the
+    // derived-memory writes use) …
+    expect(stripped).toMatch(/import\s*\{[^}]*\bvalidateMemoryWrite\b[^}]*\}\s*from\s*"@comis\/core"/);
+    // … and referenced in the production source (the gate exists).
+    expect(stripped).toMatch(/validateMemoryWrite\s*\(/);
+    // The paired-store helper exists and is the seam the call site routes through.
+    expect(stripped).toMatch(/storePairedConversationMemory/);
+  });
+
+  it("behavior — validateMemoryWrite REJECTS the planted secret (severity critical) — the guard's contract this fix relies on", async () => {
+    const core = (await import("@comis/core")) as unknown as {
+      validateMemoryWrite: (c: string) => { severity: string };
+    };
+    expect(core.validateMemoryWrite(`[user] ${PLANTED_SECRET}\n[agent] ok`).severity).toBe("critical");
+    // A clean conversation is clean (the happy path the gate must preserve).
+    expect(core.validateMemoryWrite("[user] hello there\n[agent] hi, how can I help").severity).toBe("clean");
+  });
+});
+
+function makeSilentLogger(): {
+  debug: () => void;
+  info: () => void;
+  warn: () => void;
+  error: () => void;
+} {
+  return { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+}

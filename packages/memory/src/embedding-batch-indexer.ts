@@ -41,11 +41,15 @@ export interface BatchIndexer {
 
 /**
  * Truncate text to a safe character limit for embedding context windows.
- * Uses a conservative chars-to-tokens ratio (~4 chars/token for English).
- * Default maxTokens=1536 leaves ~25% headroom below 2048 context.
+ * Uses the DENSEST plausible chars-to-tokens ratio (3, not 4): dense structured
+ * content (code, JSON, ids/metrics) tokenizes at ~2.5-3 chars/token, so a 4:1 cap
+ * UNDER-counts tokens and lets the "truncated" text still exceed the model context
+ * (observed: a ~31K-token dense recall query crashed the local 2048-ctx embedder).
+ * Default maxTokens=1536 → 4608 chars, which stays under the 2048-token context
+ * even at a dense 2.5 chars/token (4608/2.5 ≈ 1843 tokens).
  */
 export function truncateForEmbedding(text: string, maxTokens = 1536): string {
-  const maxChars = maxTokens * 4; // Conservative: ~4 chars per token
+  const maxChars = maxTokens * 3; // densest-ratio cap (dense content ~3 chars/token)
   if (text.length <= maxChars) return text;
   return text.slice(0, maxChars);
 }

@@ -38,6 +38,18 @@
 // eslint-disable-next-line security/detect-unsafe-regex -- linear: disjoint char-class stars, no nested quantifier (proven by the long-input never-grows test)
 const URL_RE = /https?:\/\/([^\s/?#]+)(\/[^\s?#]*)?(?:[?#]\S*)?/;
 
+/**
+ * The hard length cap for an activity `defaultLabel` — mirrors the
+ * `z.string().max(120)` bound on `ActivityEvent.defaultLabel` in
+ * `core/activity/activity-event.ts`. A label longer than this is REJECTED by
+ * `parseActivityEvent` (a level-50 ERROR → the event is DROPPED), so the
+ * compressor + the marker-prepend sites clamp to it.
+ */
+export const ACTIVITY_LABEL_MAX_CHARS = 120;
+
+/** The single-character ellipsis appended when a label is truncated at the cap. */
+const ELLIPSIS = "…";
+
 /** A leading `api.` / `www.` host label to drop (display noise). */
 const HOST_PREFIX_RE = /^(?:api|www)\./;
 
@@ -75,11 +87,28 @@ function compressUrl(host: string, path: string | undefined): string {
 }
 
 /**
+ * Hard-clamp a label to at most `max` characters, truncating the TAIL and
+ * appending a single-character ellipsis so the marker / semantic head survives.
+ * A label already within the cap is returned UNCHANGED (a fixed point — so a
+ * second clamp is idempotent and the "never grows" invariant holds). Pure; no
+ * I/O. Applied both inside {@link compressLabel} and at the marker-prepend sites
+ * in `activity-stream.ts`, where the running marker is added AFTER compression
+ * and could otherwise push the final `defaultLabel` past the schema cap.
+ */
+export function clampLabel(label: string, max: number = ACTIVITY_LABEL_MAX_CHARS): string {
+  if (label.length <= max) return label;
+  // Reserve one char for the ellipsis so the result is exactly `max` long.
+  return label.slice(0, max - ELLIPSIS.length) + ELLIPSIS;
+}
+
+/**
  * One-pass, idempotent display-shortener for an activity label.
  *
- * Shortens a URL, an ISO timestamp, or a long `mcp_` tool name. Everything else
- * — including already-compacted paths and secret-shaped strings that redactValue
- * masked upstream — is returned unchanged. Output never exceeds the input length.
+ * Shortens a URL, an ISO timestamp, or a long `mcp_` tool name, then hard-clamps
+ * the result to {@link ACTIVITY_LABEL_MAX_CHARS}. Everything else — including
+ * already-compacted paths and secret-shaped strings that redactValue masked
+ * upstream — is returned unchanged (modulo the cap). Output never exceeds the
+ * input length.
  */
 export function compressLabel(label: string): string {
   // (1) URL → host + last meaningful path segment (scheme/api./version/query dropped).
@@ -98,5 +127,10 @@ export function compressLabel(label: string): string {
   // (4) PATHS: nothing to do. redactValue already compacted `$HOME`→`~` and
   //     absolute paths to their last 2 segments; a `~`-rooted or ≤2-segment path
   //     is a fixed point here, and none of the regexes above match one.
-  return out;
+  //
+  // (5) CLAMP: hard-cap the produced label to the schema bound (FIX 3). The
+  //     category transforms never grow the input, but the input itself can exceed
+  //     120 chars (a long static label / a verbose template render). Clamping last
+  //     keeps every direct consumer + the buildLabel returns within the cap.
+  return clampLabel(out);
 }

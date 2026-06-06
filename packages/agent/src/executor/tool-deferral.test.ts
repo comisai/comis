@@ -13,6 +13,7 @@ import {
   CORE_TOOLS,
   DEFERRAL_RULES,
   supportsToolSearch,
+  MAX_EMBED_QUERY_CHARS,
 } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult, DeferredToolEntry } from "./tool-deferral.js";
 import type { EmbeddingPort } from "@comis/core";
@@ -895,6 +896,88 @@ describe("discover_tools score-floor filter", () => {
       expect(mockEmbedding.embed).toHaveBeenCalled();
       expect(mockEmbedding.embedBatch).toHaveBeenCalled();
     }
+  });
+
+  it("truncates an oversized query to MAX_EMBED_QUERY_CHARS before calling embed (FIX 4)", async () => {
+    const logger = createMockLogger();
+    // A real local embedding model throws "Input is longer than the context size"
+    // on a ~69K-token query, collapsing vector recall to FTS5-only. The query must
+    // be capped BEFORE the embed call so the semantic re-rank still runs on a
+    // truncated query rather than failing. Capture the text the embed fn receives.
+    let embeddedText: string | undefined;
+    const mockEmbedding: EmbeddingPort = {
+      provider: "mock",
+      dimensions: 4,
+      modelId: "mock-embed",
+      embed: vi.fn().mockImplementation((text: string) => {
+        embeddedText = text;
+        return Promise.resolve({ ok: true, value: [1, 0, 0, 0] });
+      }),
+      embedBatch: vi.fn().mockImplementation((texts: string[]) =>
+        Promise.resolve({ ok: true, value: texts.map(() => [0, 1, 0, 0]) }),
+      ),
+    };
+
+    // The query shares the "tokens" / "billing" tokens with the fixture so BM25
+    // returns a non-empty ranked list (the embed re-rank branch fires), but it is
+    // padded far past the cap to exercise the truncation.
+    const hugeQuery = "billing tokens ".repeat(20_000); // ~300K chars
+    const discoverTool = createDiscoverTool(makeNoiseFixture(), logger, mockEmbedding, undefined, new Set<string>());
+    await discoverTool.execute!("call-cap", { query: hugeQuery });
+
+    expect(mockEmbedding.embed).toHaveBeenCalled();
+    expect(embeddedText).toBeDefined();
+    // The embed fn must never receive the full ~300K-char query.
+    expect((embeddedText as string).length).toBeLessThanOrEqual(MAX_EMBED_QUERY_CHARS);
+    expect((embeddedText as string).length).toBeLessThan(hugeQuery.length);
+  });
+
+  // FIX B — the cap must fit the local 2048-token embedding context.
+  //
+  // The prior FIX-4 cap was 8000 chars, but 8000 chars of DENSE content
+  // (~2.5-3 chars/token) ≈ 2700-3200 tokens > the 2048-token embedding context,
+  // so a dense query at the cap STILL throws "Input is longer than the context
+  // size" and collapses vector recall to FTS5-only. The recall path already uses
+  // the safe bound truncateForEmbedding(_, 1536) = maxTokens × 3 = 4608 chars
+  // (embedding-batch-indexer.ts), documented to stay under 2048 tokens even at a
+  // dense 2.5 chars/token (4608/2.5 ≈ 1843). discover_tools must match that bound.
+  const SAFE_EMBED_CTX_CHARS = 4_608; // 1536 tokens × 3 (densest-ratio cap)
+
+  it("caps the embed query to the safe 2048-token embedding bound (<=4608 chars) (FIX B)", () => {
+    // The constant itself must not exceed the densest-ratio safe bound — a value
+    // above 4608 lets a dense query overflow the 2048-token context.
+    expect(MAX_EMBED_QUERY_CHARS).toBeLessThanOrEqual(SAFE_EMBED_CTX_CHARS);
+  });
+
+  it("a long dense query receives <=4608 chars at the embed call (FIX B)", async () => {
+    const logger = createMockLogger();
+    // Dense, low-whitespace content like the recall path sees (code/JSON/ids).
+    // At 8000 chars this packs ~2700-3200 tokens and overflows a 2048 context;
+    // the cap must bring the embed-call text down to <=4608 chars.
+    let embeddedText: string | undefined;
+    const mockEmbedding: EmbeddingPort = {
+      provider: "mock",
+      dimensions: 4,
+      modelId: "mock-embed",
+      embed: vi.fn().mockImplementation((text: string) => {
+        embeddedText = text;
+        return Promise.resolve({ ok: true, value: [1, 0, 0, 0] });
+      }),
+      embedBatch: vi.fn().mockImplementation((texts: string[]) =>
+        Promise.resolve({ ok: true, value: texts.map(() => [0, 1, 0, 0]) }),
+      ),
+    };
+
+    // Leading shared tokens so BM25 returns a non-empty ranked list (the embed
+    // re-rank branch fires), then a long dense (no-space) tail well past the cap.
+    const denseQuery = "billing tokens " + "x".repeat(20_000);
+    const discoverTool = createDiscoverTool(makeNoiseFixture(), logger, mockEmbedding, undefined, new Set<string>());
+    await discoverTool.execute!("call-densecap", { query: denseQuery });
+
+    expect(mockEmbedding.embed).toHaveBeenCalled();
+    expect(embeddedText).toBeDefined();
+    // The dense query must be truncated to within the safe embedding-context bound.
+    expect((embeddedText as string).length).toBeLessThanOrEqual(SAFE_EMBED_CTX_CHARS);
   });
 });
 

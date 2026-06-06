@@ -74,8 +74,23 @@ interface AssistantLike {
   stopReason?: string;
 }
 
+/**
+ * The set of `type` aliases a tool-call (a.k.a. tool_use) content block can
+ * carry at the context-engine boundary. The canonical pi-ai shape is
+ * `"toolCall"`, but the PIPELINE path operates on raw, un-normalized messages
+ * whose call blocks may also arrive as `"tool_call"`, `"toolUse"`, or
+ * `"tool_use"` (the Anthropic Messages-API shape) depending on the provider /
+ * persisted source. The other pipeline layers already accept these aliases
+ * (history-window: toolCall|toolUse; dead-content-evictor: toolCall|tool_use;
+ * signature-replay-scrubber: toolCall|tool_call) — transcript repair MUST too,
+ * or it would mistake a legitimately-paired call for ABSENT and DROP its result
+ * as an orphan. The DAG/LCD path only ever emits `"toolCall"`, so the extra
+ * aliases are a strict superset there (no behavior change).
+ */
+const TOOL_CALL_BLOCK_TYPES = new Set(["toolCall", "tool_call", "toolUse", "tool_use"]);
+
 interface ToolCallBlock extends ContentBlock {
-  type: "toolCall";
+  type: "toolCall" | "tool_call" | "toolUse" | "tool_use";
   id: string;
   name?: string;
 }
@@ -111,7 +126,7 @@ function asToolResult(m: AgentMessage): ToolResultLike | null {
 }
 
 function isToolCallBlock(b: ContentBlock): b is ToolCallBlock {
-  return b.type === "toolCall" && typeof (b as ToolCallBlock).id === "string";
+  return TOOL_CALL_BLOCK_TYPES.has(b.type) && typeof (b as ToolCallBlock).id === "string";
 }
 
 function isAbortedAssistant(m: AssistantLike): boolean {

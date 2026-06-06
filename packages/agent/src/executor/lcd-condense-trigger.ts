@@ -74,9 +74,23 @@ import { resolveContext } from "./lcd-compaction-trigger.js";
 export interface CondensePassOptions {
   /** Min contiguous same-depth fan-out that triggers condensation (`condensedMinFanout`, 4). */
   condensedMinFanout: number;
+  /**
+   * Hard minimum contiguous same-depth fan-out (`condensedMinFanoutHard`, 2) — the
+   * LOWER bound that forces a condense when the soft `condensedMinFanout` has not
+   * been met but context pressure is HIGH (utilization > `contextThreshold`).
+   * Mirrors the leaf side's soft/hard knobs: the soft fanout governs the relaxed
+   * case, the hard fanout keeps a pressured tier draining.
+   */
+  condensedMinFanoutHard: number;
+  /**
+   * Utilization fraction above which context pressure is HIGH (`contextThreshold`,
+   * 0.75) — the SAME gate the leaf pass uses. At/below it the soft fanout governs;
+   * above it `condensedMinFanoutHard` is allowed to force a condense.
+   */
+  contextThreshold: number;
   /** Condensed summary token target (`condensedTargetTokens`, 2_000) → the SDK `reserveTokens`. */
   condensedTargetTokens: number;
-  /** The model's context window W (carried for parity / a positive-window gate). */
+  /** The model's context window W (the utilization denominator + positive-window gate). */
   windowTokens: number;
 }
 
@@ -95,10 +109,12 @@ function previousSummaryAtDepth(summaries: LcdSummary[], depth: number): string 
 }
 
 /**
- * AfterTurn condense pass: fold the shallowest contiguous run of
- * ≥`opts.condensedMinFanout` same-depth summary-refs into one depth+1 condensed
- * summary, otherwise no-op. Non-fatal end-to-end (mirrors {@link maybeRunLeafPass}).
- * See the module header for the full contract.
+ * AfterTurn condense pass: fold the DEEPEST contiguous run of summary-refs that
+ * reaches the effective fanout (soft `condensedMinFanout`, or the hard
+ * `condensedMinFanoutHard` under high context pressure) into one depth+1 condensed
+ * summary, otherwise no-op — so the hierarchy climbs past depth 1 over successive
+ * turns. Non-fatal end-to-end (mirrors {@link maybeRunLeafPass}). See the module
+ * header for the full contract.
  *
  * @param store          The injected core ContextStorePort (daemon-injected concrete store).
  * @param scope          The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
@@ -137,13 +153,19 @@ export async function maybeRunCondensePass(
     // rides the selected children; `previousSummary` rides `summaries` — NO
     // second `getSummaries` call observes a possibly-diverged later snapshot.
     // R4 (132-03): resolveContext reads agent + tenant scoped (WR-02) via `scope`.
-    const { summaryRunsByDepth, summaries } = resolveContext(store, scope);
+    const { summaryRunsByDepth, summaries, resolvedTokens } = resolveContext(store, scope);
 
-    // Select the shallowest contiguous run ≥ fanout (ties → oldest startOrdinal).
-    // `undefined` ⇒ no depth meets fanout → no-op (no event, no append).
+    // Context pressure = resolved-view tokens / W — the SAME utilization the leaf
+    // gate computes (CR-02). Above `contextThreshold` the condense selector drops to
+    // the HARD fanout so a pressured tier still drains; at/below it the soft fanout
+    // governs. The deepest qualifying run is selected so the hierarchy climbs past
+    // depth 1 (depth-1→depth-2 fires once enough contiguous depth-1 summaries exist).
+    const pressureHigh = resolvedTokens / opts.windowTokens > opts.contextThreshold;
     const run: SummaryRefRun | undefined = selectCondensableTier(
       summaryRunsByDepth,
       opts.condensedMinFanout,
+      opts.condensedMinFanoutHard,
+      pressureHigh,
     );
     if (run === undefined) return;
 
@@ -327,6 +349,8 @@ export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnP
     scope,
     {
       condensedMinFanout: cfg.condensedMinFanout,
+      condensedMinFanoutHard: cfg.condensedMinFanoutHard,
+      contextThreshold: cfg.contextThreshold,
       condensedTargetTokens: cfg.condensedTargetTokens,
       windowTokens,
     },

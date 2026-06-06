@@ -53,7 +53,7 @@
  * @module
  */
 
-import { partsToMessage, systemDateFrom, systemNowMs, wrapExternalContent } from "@comis/core";
+import { partsToMessage, scrubSecretsFromText, systemDateFrom, systemNowMs, wrapExternalContent } from "@comis/core";
 import type {
   ContextStorePort,
   ContextStoreScope,
@@ -642,13 +642,19 @@ function summaryRefToMessage(summary: LcdSummary): AgentMessage {
     `[LCD summary — depth=${summary.depth}, ` +
     `descendant_count=${summary.descendantCount}, ` +
     `${range}, trust=${trust}${fallbackMarker}]`;
-  // The body is UNTRUSTED — wrap it. `source: "unknown"` (label "External") is the
-  // generic untrusted-text source; the `ExternalContentSource` union has no
-  // `lcd_summary` label and a P1 plan does not edit the core security enum. The
-  // honesty markers live OUTSIDE this wrapped region (the trusted header/footer),
-  // so no `includeWarning` wall is needed per summary — the header + the P2 system
-  // clause carry the policy.
-  const safeBody = wrapExternalContent(summary.content, {
+  // The body is UNTRUSTED — scrub secrets, THEN wrap it. `source: "unknown"`
+  // (label "External") is the generic untrusted-text source; the
+  // `ExternalContentSource` union has no `lcd_summary` label and a P1 plan does not
+  // edit the core security enum. The honesty markers live OUTSIDE this wrapped
+  // region (the trusted header/footer), so no `includeWarning` wall is needed per
+  // summary — the header + the P2 system clause carry the policy.
+  //
+  // Egress scrub (FIX 2c): a summary is DERIVED from a region that can legitimately
+  // contain a credential (the F1 lossless store keeps the raw conversation). The
+  // summary re-enters the model context every turn it is assembled, so the derived
+  // body must never carry the secret verbatim — scrub this egress copy (the base
+  // store stays lossless), mirroring the ctx_expand / ctx_search egress scrub.
+  const safeBody = wrapExternalContent(scrubSecretsFromText(summary.content).text, {
     source: "unknown",
     includeWarning: false,
   });

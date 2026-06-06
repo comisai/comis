@@ -220,6 +220,30 @@ describe("MemoryApi", () => {
     });
   });
 
+  // ── count (full match count, ignoring limit/offset) ───────────────
+  describe("count", () => {
+    it("counts ALL matching entries independent of the inspect page limit", () => {
+      // 10 entries are seeded (no tenant filter ⇒ all tenants counted). A small
+      // page limit must NOT shrink the count — this is the P4 fix: memory.browse
+      // needs the FULL total to drive its pagination, not the page length.
+      const page = api.inspect({ limit: 3, offset: 0 });
+      expect(page.length).toBe(3);
+
+      const total = api.count({ limit: 3, offset: 0 });
+      expect(total).toBe(10);
+    });
+
+    it("applies the same trust/type/tenant filters as inspect", () => {
+      expect(api.count({ trustLevel: "system" })).toBe(api.inspect({ trustLevel: "system", limit: 1000 }).length);
+      expect(api.count({ memoryType: "semantic" })).toBe(api.inspect({ memoryType: "semantic", limit: 1000 }).length);
+      expect(api.count({ tenantId: "tenant-b" })).toBe(1);
+    });
+
+    it("counts the tag-intersection set (matching inspect's tag post-filter)", () => {
+      expect(api.count({ trustLevel: "learned", tags: ["animals"] })).toBe(2);
+    });
+  });
+
   // ── inspect expiry filtering ──────────────────────────────────────
 
   describe("inspect expiry filtering", () => {

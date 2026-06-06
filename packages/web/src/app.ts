@@ -412,6 +412,7 @@ export class IcApp extends LitElement implements AppHost {
             .notificationCount=${this._pendingApprovals}
             .tokenId=${this._token}
             @toggle-sidebar=${() => { this._sidebarOpen = !this._sidebarOpen; }}
+            @navigate=${(e: CustomEvent<string>) => { this._router?.navigate(e.detail); }}
             @logout=${() => this._handleLogout()}
           ></ic-topbar>
           <main class="content" role="main" aria-label="Main content" @navigate=${(e: CustomEvent<string>) => { this._router?.navigate(e.detail); }}>

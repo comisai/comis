@@ -174,8 +174,13 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         return jsonResult({ body: cappedBody, unrecoverable, truncated });
       }
 
-      // (4) INLINE — taint-wrap the recovered body before it leaves the tool.
-      const body = wrapExternalContent(rawBody, { source: "unknown" });
+      // (4) INLINE — scrub secrets, THEN taint-wrap the recovered body before it
+      //     leaves the tool. The egress scrub mirrors the oversized spill branch:
+      //     the recovered region can legitimately contain a credential (the F1
+      //     lossless store keeps the raw conversation), but it must never reach the
+      //     model context / be re-injected via summaries verbatim. The base store is
+      //     untouched — only this derived egress copy is scrubbed.
+      const body = wrapExternalContent(scrubSecretsFromText(rawBody).text, { source: "unknown" });
       // WR-03: read the end-instant ONCE for the DEBUG durationMs AND the emit
       // durationMs + timestamp (the afterTurn triggers' one-read pattern).
       const endMs = deps.nowMs();

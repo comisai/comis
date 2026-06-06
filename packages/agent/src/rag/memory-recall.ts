@@ -521,6 +521,9 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
                 agentId,
                 rerankCandidates: docs.length,
                 errorKind: "dependency" as const,
+                // §2.7: carry the underlying reranker cause so a real outage is
+                // diagnosable (was dropped — only errorKind+hint were logged).
+                err: scored.error,
                 hint,
               },
               "rerank fallback",

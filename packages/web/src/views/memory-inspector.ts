@@ -1500,6 +1500,7 @@ export class IcMemoryInspector extends LitElement {
               <ic-memory-table
                 .entries=${filtered}
                 ?selectable=${true}
+                ?hidePagination=${this._mode === "browse"}
                 @detail-requested=${this._handleDetailRequested}
                 @selection-change=${this._handleSelectionChange}
               ></ic-memory-table>

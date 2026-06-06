@@ -15,6 +15,29 @@ import { systemDateFrom } from "@comis/core";
 import { sanitizeToolOutput } from "../safety/tool-output-safety.js";
 import { formatMemorySection } from "./rag-retriever.js";
 
+/**
+ * Matches the inline-recall block this module prepends to a user turn (see the
+ * `inlineMemory` template below: `\n[Relevant context from memory: <content>
+ * (recorded YYYY-MM-DD[, occurred YYYY-MM-DD])]\n`). KEEP IN SYNC with that
+ * template. Anchored at the start (the envelope-wrapper adds it as the OUTERMOST
+ * prefix) and matched to the date-anchored `(recorded …)]` terminator so recalled
+ * content containing `[`/`]` is handled without over-stripping.
+ */
+const INLINE_RECALL_BLOCK_RE =
+  /^\s*\[Relevant context from memory: [\s\S]*? \(recorded \d{4}-\d{2}-\d{2}(?:, occurred \d{4}-\d{2}-\d{2})?\)\]\n?/;
+
+/**
+ * Remove the leading inline-recall block from a user message's text. The single
+ * source of truth for carving this TRANSIENT cross-session recall back out before
+ * it is persisted into the LCD F1 lossless store — the store must keep the actual
+ * conversation, not the per-turn rendered prompt's recalled memory (which would
+ * bloat the store, cross-contaminate the session, and feed back into later
+ * recall). A no-op when no block is present.
+ */
+export function stripInlineRecalledMemory(text: string): string {
+  return text.replace(INLINE_RECALL_BLOCK_RE, "");
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------

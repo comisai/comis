@@ -190,6 +190,17 @@ export interface MemoryApiDeps {
    *  `wrapExternalContent` so a detected injection in recalled content is reported (the SAME
    *  hook rag-retriever threads). Optional; absent ⇒ no telemetry (sanitization still runs). */
   onSuspiciousContent?: import("@comis/core").WrapExternalContentOptions["onSuspiciousContent"];
+  /** LCD lossless-store read surface — the `context.tree` handler resolves a
+   *  conversation's context_items + summaries via `getContextItems` /
+   *  `getSummaries` (R4 agent+tenant scoped). The SAME ContextStorePort
+   *  setup-memory builds (`lcdStore`). Optional so existing handler tests build
+   *  deps without it; the context.* handlers fail-closed (empty result) when absent. */
+  lcdStore?: import("@comis/core").ContextStorePort;
+  /** LCD operator-browse read surface — the `context.conversations` handler
+   *  enumerates the agent's distinct conversations via `listConversations`
+   *  (R4 agent+tenant scoped). Built by setup-memory (`createLcdBrowseStore`).
+   *  Optional for the same handler-test reason; absent ⇒ empty result. */
+  contextBrowse?: import("@comis/core").ContextBrowsePort;
 }
 
 /**

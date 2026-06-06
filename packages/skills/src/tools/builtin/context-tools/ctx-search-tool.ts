@@ -21,7 +21,7 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { wrapExternalContent, type LcdSearchHit } from "@comis/core";
+import { wrapExternalContent, scrubSecretsFromText, type LcdSearchHit } from "@comis/core";
 
 import { jsonResult, throwToolError, readStringParam, readNumberParam } from "../../../platform-tools/tool-helpers.js";
 import { sanitizeFts5Query } from "../../../platform-tools/tools/fts5-sanitizer.js";
@@ -94,12 +94,16 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       const t0 = deps.nowMs();
       const hits: LcdSearchHit[] = deps.store.searchLcd(ctxScope, q, { limit, scope });
 
-      // (3) TAINT — wrap every recovered snippet as untrusted before it leaves the tool.
+      // (3) SCRUB + TAINT — scrub secrets out of every recovered snippet, THEN wrap
+      //     it as untrusted before it leaves the tool. A snippet can legitimately
+      //     contain a credential (the F1 lossless store keeps the raw conversation);
+      //     the egress copy must never carry it to the model context (mirrors the
+      //     ctx_expand egress scrub). The base store is untouched.
       const safeHits = hits.map((h) => ({
         kind: h.kind,
         refId: h.refId,
         rank: h.rank,
-        snippet: wrapExternalContent(h.snippet, { source: "unknown" }),
+        snippet: wrapExternalContent(scrubSecretsFromText(h.snippet).text, { source: "unknown" }),
       }));
 
       // (4) OBSERVABILITY — ids/counts/durationMs/step ONLY; never the query or a snippet.

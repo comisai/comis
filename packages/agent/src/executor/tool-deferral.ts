@@ -26,6 +26,28 @@ import type { ModelTier } from "../bootstrap/sections/tooling-sections.js";
 import { LEAN_TOOL_DESCRIPTIONS } from "../bootstrap/sections/tool-descriptions.js";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Hard character cap on the query text fed to `EmbeddingPort.embed` for the
+ * discover_tools semantic re-rank. A very large user message used as the query
+ * throws `Input is longer than the context size` in a local embedding model,
+ * collapsing the re-rank to BM25-only. Capping the query keeps the semantic lane
+ * running on a truncated query instead of failing.
+ *
+ * The value is the DENSEST-RATIO safe bound for a 2048-token embedding context:
+ * 1536 tokens × 3 chars/token = 4608 chars. A 4-chars/token estimate
+ * UNDER-counts dense content (code/JSON/ids tokenize at ~2.5-3 chars/token), so
+ * the earlier 8000-char cap still packed ~2700-3200 tokens and overflowed the
+ * 2048 context. 4608 chars stays under 2048 tokens even at a dense 2.5
+ * chars/token (4608/2.5 ≈ 1843). This MIRRORS the recall path's bound
+ * (`truncateForEmbedding(_, 1536)` in @comis/memory). The constant is kept local
+ * (not imported) to preserve the agent↛memory build cut.
+ */
+export const MAX_EMBED_QUERY_CHARS = 4_608;
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -703,7 +725,13 @@ export function createDiscoverTool(
       let embeddingUsed = false;
       if (embeddingPort && ranked.length > 0) {
         try {
-          const queryResult = await embeddingPort.embed(query);
+          // FIX: cap the query length before embedding. A ~69K-token query
+          // overflows a local embedding model's context window ("Input is longer
+          // than the context size") and would drop the semantic lane entirely;
+          // the leading MAX_EMBED_QUERY_CHARS preserve the query's signal. The
+          // BM25 lane above already ran on the full query, so recall is intact.
+          const embedQuery = query.length > MAX_EMBED_QUERY_CHARS ? query.slice(0, MAX_EMBED_QUERY_CHARS) : query;
+          const queryResult = await embeddingPort.embed(embedQuery);
           if (queryResult.ok) {
             const queryVec = queryResult.value;
             const textsToEmbed = ranked.map(r => {
