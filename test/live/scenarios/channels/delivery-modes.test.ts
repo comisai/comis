@@ -176,7 +176,7 @@ describe("CHAN-03 Stage-B — ordered delivery + delivery-timing config-shape", 
     const pending = await q.pendingEntries();
     expect(pending.ok).toBe(true);
     if (pending.ok) {
-      const times = pending.value.map((e) => e.createdAt);
+      const times = pending.value.map((e: { createdAt: number }) => e.createdAt);
       for (let i = 1; i < times.length; i++) {
         expect(times[i - 1]!).toBeLessThanOrEqual(times[i]!);
       }

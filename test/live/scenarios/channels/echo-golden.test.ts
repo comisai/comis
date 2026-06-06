@@ -102,12 +102,14 @@ describe("CHAN-01 Stage-B — echo golden round-trip (no COMIS_LIVE, in-process)
     const adapter = registry.getAdapter("echo") as EchoChannelAdapter;
     expect(adapter.isRunning()).toBe(true);
 
-    adapter.onMessage(async (m) => {
+    adapter.onMessage(async (m: NormalizedMessage) => {
       await adapter.sendMessage(m.channelId, `reply: ${m.text}`);
     });
     await adapter.injectMessage(makeEchoMsg({ text: "ping" }));
 
-    expect(adapter.getSentMessages().some((s) => s.text === "reply: ping")).toBe(true);
+    expect(
+      adapter.getSentMessages().some((s: { text: string }) => s.text === "reply: ping"),
+    ).toBe(true);
   });
 
   it("unregisterChannel emits channel:deregistered", () => {
