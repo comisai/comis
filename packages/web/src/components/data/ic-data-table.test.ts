@@ -236,6 +236,40 @@ describe("IcDataTable", () => {
     expect(nextBtn.disabled).toBe(true);
   });
 
+  it("clamps to a valid page when rows shrink below the current page (filter does not leave an empty page)", async () => {
+    // P3: 5 rows, pageSize 2 → 3 pages. Advance to the last page, then a filter
+    // shrinks the row set to 1 row (1 page). The old _page (2) would slice past
+    // the array and render an EMPTY page; the table must clamp back into range.
+    const el = await createElement<IcDataTable>("ic-data-table", {
+      columns: testColumns,
+      rows: [
+        { name: "A", age: 1, status: "x" },
+        { name: "B", age: 2, status: "x" },
+        { name: "C", age: 3, status: "x" },
+        { name: "D", age: 4, status: "x" },
+        { name: "E", age: 5, status: "x" },
+      ],
+      pageSize: 2,
+    });
+
+    // Go to page 3 (rows E only, "5-5 of 5").
+    const nextBtn = el.shadowRoot?.querySelectorAll(".page-btn")[1] as HTMLButtonElement;
+    nextBtn.click();
+    await el.updateComplete;
+    nextBtn.click();
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector(".pagination-info")?.textContent?.trim()).toBe("5-5 of 5");
+
+    // Filter applied upstream: rows shrink to a single row.
+    el.rows = [{ name: "A", age: 1, status: "x" }];
+    await el.updateComplete;
+
+    // The visible page must NOT be empty — it shows the single remaining row.
+    const visible = el.shadowRoot?.querySelectorAll(".grid-row");
+    expect(visible?.length).toBe(1);
+    expect(el.shadowRoot?.querySelector(".pagination-info")?.textContent?.trim()).toBe("1-1 of 1");
+  });
+
   it("row click dispatches row-click event with row data", async () => {
     const el = await createElement<IcDataTable>("ic-data-table", {
       columns: testColumns,
