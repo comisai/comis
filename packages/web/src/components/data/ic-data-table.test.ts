@@ -236,6 +236,28 @@ describe("IcDataTable", () => {
     expect(nextBtn.disabled).toBe(true);
   });
 
+  it("hides its own pagination controls when hidePagination is set (parent owns paging)", async () => {
+    // P5: a parent (memory inspector browse mode) renders its OWN server-side
+    // pager, so the table's built-in client-side pager must be suppressible to
+    // avoid two stacked pagers. Default keeps the pager; hidePagination removes it.
+    const withPager = await createElement<IcDataTable>("ic-data-table", {
+      columns: testColumns,
+      rows: testRows,
+      pageSize: 2,
+    });
+    expect(withPager.shadowRoot?.querySelector(".pagination")).toBeTruthy();
+
+    const noPager = await createElement<IcDataTable>("ic-data-table", {
+      columns: testColumns,
+      rows: testRows,
+      pageSize: 2,
+      hidePagination: true,
+    });
+    expect(noPager.shadowRoot?.querySelector(".pagination")).toBeNull();
+    // Rows still render — only the pager is gone.
+    expect(noPager.shadowRoot?.querySelectorAll(".grid-row").length).toBeGreaterThan(0);
+  });
+
   it("clamps to a valid page when rows shrink below the current page (filter does not leave an empty page)", async () => {
     // P3: 5 rows, pageSize 2 → 3 pages. Advance to the last page, then a filter
     // shrinks the row set to 1 row (1 page). The old _page (2) would slice past
