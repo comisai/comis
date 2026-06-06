@@ -303,9 +303,11 @@ describe("runDbOracle — check 3c: memory_fts absent → passes (no check run)"
 
 describe("runDbOracle — check 3c: memories absent → passes (no check run)", () => {
   it("resolves when memories table does not exist (FTS-only anomaly DB)", async () => {
-    // No memories table, only memory_fts → check 3c guard skips silently
+    // No memories table, only memory_fts → check 3c guard skips silently.
+    // Uses standard FTS5 (no external content) so the table is createable without
+    // the memories table being present.
     const dbPath = await writeMemoryDbToFile((db) => {
-      db.exec(`CREATE VIRTUAL TABLE memory_fts USING fts5(content, content="memories", content_rowid="rowid")`);
+      db.exec(`CREATE VIRTUAL TABLE memory_fts USING fts5(content)`);
     });
     await expect(runDbOracle(dbPath)).resolves.toBeUndefined();
   });
@@ -313,6 +315,9 @@ describe("runDbOracle — check 3c: memories absent → passes (no check run)", 
 
 describe("runDbOracle — check 3c: in-sync counts → passes", () => {
   it("resolves when memories(has_embedding=1) count equals memory_fts count", async () => {
+    // Uses standard FTS5 (NOT external-content) so COUNT(*) returns the actual
+    // FTS index entry count rather than the external content table row count.
+    // This correctly exercises the check 3c logic: memories(has_embedding=1) == memory_fts.
     const dbPath = await writeMemoryDbToFile((db) => {
       db.exec(MEMORIES_DDL);
       // Insert 2 rows: 1 with has_embedding=1, 1 with has_embedding=0
@@ -327,8 +332,8 @@ describe("runDbOracle — check 3c: in-sync counts → passes", () => {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run("mem-12", "tenant-1", "agent-1", "user-1", "not-embedded", "high", "episodic", "user", "[]", Date.now(), 0);
 
-      // memory_fts with 1 row (matches has_embedding=1 count)
-      db.exec(`CREATE VIRTUAL TABLE memory_fts USING fts5(content, content="memories", content_rowid="rowid")`);
+      // memory_fts (standard FTS5) with exactly 1 row — matches memories(has_embedding=1)=1
+      db.exec(`CREATE VIRTUAL TABLE memory_fts USING fts5(content)`);
       db.prepare(`INSERT INTO memory_fts(rowid, content) VALUES (?, ?)`).run(1, "embedded");
     });
     await expect(runDbOracle(dbPath)).resolves.toBeUndefined();
@@ -337,9 +342,11 @@ describe("runDbOracle — check 3c: in-sync counts → passes", () => {
 
 describe("runDbOracle — check 3c: desynced counts → throws with check 3c message", () => {
   it("throws '[db-oracle check 3c] memory_fts desynced' when counts differ", async () => {
+    // Uses standard FTS5 (NOT external-content) so COUNT(*) returns 1 (one entry),
+    // while memories has 2 rows with has_embedding=1 → desynced.
     const dbPath = await writeMemoryDbToFile((db) => {
       db.exec(MEMORIES_DDL);
-      // 2 rows with has_embedding=1 but memory_fts has only 1 row → desynced
+      // 2 rows with has_embedding=1 — FTS should have 2 but only has 1
       db.prepare(
         `INSERT INTO memories
          (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
@@ -351,8 +358,8 @@ describe("runDbOracle — check 3c: desynced counts → throws with check 3c mes
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run("mem-14", "tenant-1", "agent-1", "user-1", "second", "high", "episodic", "user", "[]", Date.now(), 1);
 
-      // memory_fts with only 1 row (desynced — should be 2)
-      db.exec(`CREATE VIRTUAL TABLE memory_fts USING fts5(content, content="memories", content_rowid="rowid")`);
+      // memory_fts (standard FTS5) with only 1 entry — desynced (should be 2)
+      db.exec(`CREATE VIRTUAL TABLE memory_fts USING fts5(content)`);
       db.prepare(`INSERT INTO memory_fts(rowid, content) VALUES (?, ?)`).run(1, "first");
     });
     await expect(runDbOracle(dbPath)).rejects.toThrow("[db-oracle check 3c]");

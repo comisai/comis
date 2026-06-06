@@ -102,6 +102,26 @@ export async function runDbOracle(
       }
     }
 
+    // ── Check 3c: memory_fts ↔ vec_memories ↔ memories sync ─────────────────
+    // The memory_fts virtual table is an external-content FTS5 table backed by
+    // memories. Its row count must equal memories WHERE has_embedding=1.
+    // A desynced FTS table means text-search queries return stale/missing results.
+    // Per FND-11 (§5.2 point 4): memory_fts/vec desync is a production risk.
+    // Only runs when both "memories" and "memory_fts" tables exist in the DB.
+    if (tables.includes("memories") && tables.includes("memory_fts")) {
+      const memCount = (
+        db.prepare("SELECT COUNT(*) AS c FROM memories WHERE has_embedding=1").get() as { c: number }
+      ).c;
+      const ftsCount = (
+        db.prepare("SELECT COUNT(*) AS c FROM memory_fts").get() as { c: number }
+      ).c;
+      if (memCount !== ftsCount) {
+        throw new Error(
+          `[db-oracle check 3c] memory_fts desynced: memories(has_embedding=1)=${memCount}, fts=${ftsCount}`,
+        );
+      }
+    }
+
     // ── Check 4: Row-delta diff ───────────────────────────────────────────────
     if (opts?.expectedDeltas && opts.beforeCounts) {
       for (const delta of opts.expectedDeltas) {
