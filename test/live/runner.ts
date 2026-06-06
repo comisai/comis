@@ -229,6 +229,10 @@ async function runMain(): Promise<void> {
       console.log("Web scenarios (WEB-01..03): search-providers, link-understanding, document-extraction");
       console.log("  test/live/scenarios/web/*.test.ts");
       console.log("  Cost tier: $0 Stage-B (doc extraction CSV/text + maxChars truncation + DOCX unsupported_mime / wrapWebContent taint markers + marker-sanitization / 8-provider search config-shape + key-gating + freshness — all keyless/deterministic); Stage-C needs COMIS_LIVE + search keys (judged answers) / network (link fetch + DuckDuckGo) / a vision key (PDF OCR fallback)");
+    } else if (args.mode === "channels") {
+      console.log("Channel scenarios (CHAN-01..03): echo-golden, delivery-modes");
+      console.log("  test/live/scenarios/channels/*.test.ts");
+      console.log("  Cost tier: $0 Stage-B (echo registry golden round-trip + 9-adapter credential-validation empty-input breadth + crash-safe SQLite delivery-queue resume + streaming/queue/overflow/dmScope config-shape — all in-process/keyless/deterministic); Stage-C needs COMIS_LIVE + a real channel account/network (real send→agent→reply, positive token validation, live Slack Socket Mode, live IMAP/OAuth email) — see test/live/RUNBOOK.md for the manual procedure");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -400,6 +404,20 @@ async function runMain(): Promise<void> {
 
     try {
       execSync(webCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "channels") {
+    // Phase 144: CHANNELS — echo golden + delivery modes (CHAN-01..03)
+    const CHAN_TEST_GLOB = "test/live/scenarios/channels/*.test.ts";
+    const chanCmd = [
+      "npx vitest run",
+      `"${CHAN_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(chanCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
     } catch {
       testsFailed = true;
     }

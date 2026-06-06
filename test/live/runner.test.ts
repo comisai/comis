@@ -41,6 +41,11 @@ describe("parseArgs", () => {
     expect(result).toEqual({ dry: true, mode: "cache", profile: undefined });
   });
 
+  it("parseArgs(['channels']) → { dry: false, mode: 'channels', profile: undefined }", () => {
+    const result = parseArgs(["channels"]);
+    expect(result).toEqual({ dry: false, mode: "channels", profile: undefined });
+  });
+
   // WR-02: --profile flag parsing
   it("returns profile:'lean-cloud' and mode:'all' when given ['--profile','lean-cloud']", () => {
     const result = parseArgs(["--profile", "lean-cloud"]);

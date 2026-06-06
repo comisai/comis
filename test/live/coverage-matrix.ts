@@ -690,29 +690,29 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "queue.defaultMode",
     modeValue: "followup",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — queue followup mode live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "queue.defaultMode",
     modeValue: "collect",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — queue collect mode live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "queue.defaultMode",
     modeValue: "steer",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — queue steer mode live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "queue.defaultMode",
     modeValue: "steer+followup",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — queue steer+followup mode live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
 
@@ -722,96 +722,101 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "queue.overflow",
     modeValue: "drop-old",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — queue drop-old overflow live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "queue.overflow",
     modeValue: "drop-new",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — queue drop-new overflow live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "queue.overflow",
     modeValue: "summarize",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — queue summarize overflow live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
 
   // ===========================================================================
   // streaming booleans (10 cells: 5 dimensions × true/false)
   // ===========================================================================
+  // Streaming chunk/typing/table/reply are ENUMS; the matrix models them true/false.
+  // delivery-modes.test.ts exercises BOTH the schema-default mode-value (the "true"/
+  // enabled cell) AND an alternate enum value (the "false"/alternate cell) for each
+  // dimension via the real Zod schema — so each true/false cell maps to a real assertion.
+  // useMarkdownIR is the one genuine boolean (both true/false round-tripped).
   {
     dimension: "streaming.chunkMode",
     modeValue: "true",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — streaming chunk mode enabled live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "streaming.chunkMode",
     modeValue: "false",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — streaming chunk mode disabled live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "streaming.typingMode",
     modeValue: "true",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — streaming typing mode enabled live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "streaming.typingMode",
     modeValue: "false",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — streaming typing mode disabled live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "streaming.tableMode",
     modeValue: "true",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — streaming table mode enabled live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "streaming.tableMode",
     modeValue: "false",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — streaming table mode disabled live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "streaming.replyMode",
     modeValue: "true",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — streaming reply mode enabled live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "streaming.replyMode",
     modeValue: "false",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — streaming reply mode disabled live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "streaming.useMarkdownIR",
     modeValue: "true",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — streaming Markdown IR enabled live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
   {
     dimension: "streaming.useMarkdownIR",
     modeValue: "false",
-    status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — streaming Markdown IR disabled live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/channels/delivery-modes.test.ts",
     phase: "144",
   },
 
@@ -850,33 +855,38 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // ===========================================================================
   // dmScope.mode (4 cells)
   // ===========================================================================
+  // NOTE: the modeValue labels {global,agent,session,channel} predate the schema —
+  // the REAL DmScopeConfigSchema.mode enum is {main,per-peer,per-channel-peer,
+  // per-account-channel-peer}. delivery-modes.test.ts exercises the config-shape
+  // against the REAL enum; these cells stay skipped (not fake-covered with a wrong
+  // modeValue). Re-labeling the dimension to the real enum is a fix-forward.
   {
     dimension: "dmScope.mode",
     modeValue: "global",
     status: "skipped",
-    reference: "not a LOOP dimension — deferred to Phase 146 (PLATFORM) which varies dmScope configuration",
-    phase: "146",
+    reference: "config-shape exercised against the REAL DmScopeConfigSchema enum {main,per-peer,per-channel-peer,per-account-channel-peer} in test/live/scenarios/channels/delivery-modes.test.ts; the modeValue label 'global' predates the schema — not fake-covered with a wrong modeValue (re-label is a fix-forward)",
+    phase: "144",
   },
   {
     dimension: "dmScope.mode",
     modeValue: "agent",
     status: "skipped",
-    reference: "not a LOOP dimension — deferred to Phase 146 (PLATFORM) which varies dmScope configuration",
-    phase: "146",
+    reference: "config-shape exercised against the REAL DmScopeConfigSchema enum {main,per-peer,per-channel-peer,per-account-channel-peer} in test/live/scenarios/channels/delivery-modes.test.ts; the modeValue label 'agent' predates the schema — not fake-covered with a wrong modeValue (re-label is a fix-forward)",
+    phase: "144",
   },
   {
     dimension: "dmScope.mode",
     modeValue: "session",
     status: "skipped",
-    reference: "not a LOOP dimension — deferred to Phase 146 (PLATFORM) which varies dmScope configuration",
-    phase: "146",
+    reference: "config-shape exercised against the REAL DmScopeConfigSchema enum {main,per-peer,per-channel-peer,per-account-channel-peer} in test/live/scenarios/channels/delivery-modes.test.ts; the modeValue label 'session' predates the schema — not fake-covered with a wrong modeValue (re-label is a fix-forward)",
+    phase: "144",
   },
   {
     dimension: "dmScope.mode",
     modeValue: "channel",
     status: "skipped",
-    reference: "not a LOOP dimension — deferred to Phase 146 (PLATFORM) which varies dmScope configuration",
-    phase: "146",
+    reference: "config-shape exercised against the REAL DmScopeConfigSchema enum {main,per-peer,per-channel-peer,per-account-channel-peer} in test/live/scenarios/channels/delivery-modes.test.ts; the modeValue label 'channel' predates the schema — not fake-covered with a wrong modeValue (re-label is a fix-forward)",
+    phase: "144",
   },
 
   // ===========================================================================
@@ -1112,14 +1122,14 @@ export const coverageMatrix: readonly CoverageCell[] = [
     dimension: "slack.mode",
     modeValue: "socket",
     status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — Slack Socket Mode live-fire test",
+    reference: "Stage-C live (requires COMIS_LIVE=1 + a real Slack workspace): Socket Mode needs a live Socket-Mode WebSocket connection; the deterministic socket-without-appToken credential branch is covered in test/live/scenarios/channels/echo-golden.test.ts — the live-connection cell stays no-account (see test/live/RUNBOOK.md)",
     phase: "144",
   },
   {
     dimension: "slack.mode",
     modeValue: "http",
     status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — Slack HTTP mode live-fire test",
+    reference: "Stage-C live (requires COMIS_LIVE=1 + a real Slack workspace + signing secret): HTTP Mode needs a live HTTP events endpoint; the deterministic http-without-signingSecret credential branch is covered in test/live/scenarios/channels/echo-golden.test.ts — the live-connection cell stays no-account (see test/live/RUNBOOK.md)",
     phase: "144",
   },
 
@@ -1130,14 +1140,14 @@ export const coverageMatrix: readonly CoverageCell[] = [
     dimension: "email.authType",
     modeValue: "password",
     status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — email password authentication live-fire test",
+    reference: "Stage-C live (requires COMIS_LIVE=1 + a real IMAP server): password auth needs a live IMAP connection (validateEmailCredentials connects immediately, no pre-network guard); recorded in test/live/RUNBOOK.md — no IMAP server in sandbox",
     phase: "144",
   },
   {
     dimension: "email.authType",
     modeValue: "oauth2",
     status: "skipped",
-    reference: "covered in Phase 144 (CHAN) — email OAuth2 authentication live-fire test",
+    reference: "Stage-C live (requires COMIS_LIVE=1 + IMAP OAuth2 credentials + server): OAuth2 IMAP needs a live token + server; recorded in test/live/RUNBOOK.md — no IMAP/OAuth in sandbox",
     phase: "144",
   },
 
