@@ -209,6 +209,14 @@ async function runMain(): Promise<void> {
       console.log("Memory scenarios (MEM-01..08): recall-golden, embedding-matrix, recall-lanes, trust-safety, consolidation, cost-features, budget-interaction");
       console.log("  test/live/scenarios/memory/*.test.ts");
       console.log("  Cost tier: $0 for Stage-B (local embeddings); Stage-C needs COMIS_LIVE + keys");
+    } else if (args.mode === "tools") {
+      console.log("Tools scenarios (TOOL-01..02): builtin-invoke, modes (deferred/cluster/lifecycle/detour)");
+      console.log("  test/live/scenarios/tools/*.test.ts");
+      console.log("  Cost tier: $0 Stage-A (no daemon); $0 Stage-B (config-driven, LLM-free); Stage-C needs COMIS_LIVE + LLM keys (¢)");
+    } else if (args.mode === "mcp") {
+      console.log("MCP scenarios (MCP-01..03): transport-auth, policy-ratelimit, trust-sandbox");
+      console.log("  test/live/scenarios/mcp/*.test.ts");
+      console.log("  Cost tier: $0 Stage-A (structural); $0 Stage-B (local mock server, LLM-free); Stage-C needs COMIS_LIVE + provider");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -310,6 +318,34 @@ async function runMain(): Promise<void> {
 
     try {
       execSync(memCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "tools") {
+    // Phase 140: TOOL+MCP — built-in tool invocation scenarios (TOOL-01..02)
+    const TOOLS_TEST_GLOB = "test/live/scenarios/tools/*.test.ts";
+    const toolsCmd = [
+      "npx vitest run",
+      `"${TOOLS_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(toolsCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "mcp") {
+    // Phase 140: TOOL+MCP — MCP transport×auth matrix + policy + trust scenarios (MCP-01..03)
+    const MCP_TEST_GLOB = "test/live/scenarios/mcp/*.test.ts";
+    const mcpCmd = [
+      "npx vitest run",
+      `"${MCP_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(mcpCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
     } catch {
       testsFailed = true;
     }
