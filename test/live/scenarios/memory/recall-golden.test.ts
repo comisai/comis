@@ -1,0 +1,158 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * MEM-01 — Default RAG store→recall round-trip.
+ *
+ * Stage-A (no COMIS_LIVE): unit tests for recall@k / MRR math.
+ * Stage-B (COMIS_LIVE, local embeddings, $0): real store→recall round-trip
+ *   via ConversationDriver; assertions on memories row delta + log-oracle + db-oracle.
+ * Stage-C (COMIS_LIVE + COMIS_LIVE_JUDGE_*): judged answer quality ≥ threshold.
+ *
+ * costTier: "$0" for Stage-B (local embeddings, no LLM keys needed for retrieval).
+ * costTier: "¢¢" for Stage-C (judged answer requires LLM call).
+ *
+ * @module
+ */
+import { describe, it, expect } from "vitest";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
+import { runLogOracle } from "../../assert/log-oracle.js";
+import { runDbOracle, snapshotRowCounts } from "../../assert/db-oracle.js";
+import { assertRecallAtK, recallAtK, meanReciprocalRank } from "../../assert/memory-recall.js";
+import { judgeAnswer } from "../../judge.js";
+import { buildMemConfig } from "../../harness/mem-config.js";
+
+const isLive = !!process.env["COMIS_LIVE"];
+const hasJudgeEnv =
+  !!process.env["COMIS_LIVE_JUDGE_PROVIDER"] && !!process.env["COMIS_LIVE_JUDGE_API_KEY"];
+
+const RECALL_TABLE = [
+  { embeddingProvider: "local" as const, label: "recall-golden-local" },
+] as const;
+
+const MEM_TABLES = ["memories", "memory_fts", "vec_memories"];
+
+// ---------------------------------------------------------------------------
+// Stage-A — recall@k / MRR math unit tests (no COMIS_LIVE, no daemon)
+// ---------------------------------------------------------------------------
+
+describe("MEM-01 Stage-A — recall@k / MRR math (no COMIS_LIVE)", () => {
+  it("recallAtK: 2 relevant in top-3 of 5 ranked → recall@3 = 1.0", () => {
+    expect(recallAtK(["a", "b", "c", "d", "e"], ["a", "b"], 3)).toBe(1.0);
+  });
+
+  it("recallAtK: 1 relevant at rank 1 → recall@3 = 1.0", () => {
+    expect(recallAtK(["x", "a", "b"], ["a"], 3)).toBe(1.0);
+  });
+
+  it("recallAtK: 0 relevant in top-3 → recall@3 = 0", () => {
+    expect(recallAtK(["x", "y", "z"], ["a"], 3)).toBe(0);
+  });
+
+  it("MRR: first relevant at rank 2 → RR ≈ 0.5", () => {
+    expect(meanReciprocalRank([["x", "a", "b"]], [["a"]])).toBeCloseTo(0.5);
+  });
+
+  it("RECALL_TABLE contains local provider entry with correct label", () => {
+    expect(RECALL_TABLE[0].embeddingProvider).toBe("local");
+    expect(RECALL_TABLE[0].label).toBe("recall-golden-local");
+  });
+
+  it("assertRecallAtK does NOT throw for 1/1 relevant in top-1", () => {
+    expect(() =>
+      assertRecallAtK({ rankedIds: ["a"], relevantIds: ["a"], k: 1, minRecall: 1.0 }),
+    ).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stage-B — store→recall round-trip (local embeddings, $0, real daemon)
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!isLive)(
+  "MEM-01 Stage-B — store→recall round-trip (local embeddings, $0)",
+  () => {
+    it.each(RECALL_TABLE)(
+      "recall round-trip: provider=$embeddingProvider",
+      async ({ embeddingProvider, label }) => {
+        const configPath = buildMemConfig({ embeddingProvider, label });
+        const driver = new ConversationDriver({
+          agentId: "mem-01-recall",
+          configPath,
+        });
+        await driver.init();
+        const dbPath = join(driver.getDataDir(), "memory.db");
+        const beforeCounts = existsSync(dbPath)
+          ? snapshotRowCounts(dbPath, MEM_TABLES)
+          : {};
+        try {
+          await driver.sendTurn("Remember: the Eiffel Tower is 330 meters tall.");
+          await driver.sendTurn("What is the height of the Eiffel Tower?");
+          await flushDaemonLogs(driver);
+          await runLogOracle(driver.capturedLogLines(), {
+            expectedErrors: ["JSON-RPC method error"],
+          });
+          if (existsSync(dbPath)) {
+            await runDbOracle(dbPath, {
+              expectedDeltas: [{ table: "memories", expectedRowDelta: 1 }],
+              beforeCounts,
+            });
+          }
+        } finally {
+          await driver.close().catch(() => {});
+          try {
+            rmSync(configPath, { force: true });
+          } catch {
+            /* ignore */
+          }
+        }
+      },
+      3 * 60_000,
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Stage-C — judged answer quality (requires COMIS_LIVE + judge env)
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!isLive)(
+  "MEM-01 Stage-C — judged answer quality (requires COMIS_LIVE + judge env)",
+  () => {
+    it.skipIf(!hasJudgeEnv)(
+      "judged recall answer meets quality threshold",
+      async () => {
+        const configPath = buildMemConfig({
+          embeddingProvider: "local",
+          label: "mem-01-judged",
+        });
+        const driver = new ConversationDriver({
+          agentId: "mem-01-judged",
+          configPath,
+        });
+        await driver.init();
+        try {
+          await driver.sendTurn("Remember: the Eiffel Tower is 330 meters tall.");
+          const answer = await driver.sendTurn("How tall is the Eiffel Tower?");
+          await flushDaemonLogs(driver);
+          const judgeResult = await judgeAnswer({
+            question: "How tall is the Eiffel Tower?",
+            context: "The Eiffel Tower is 330 meters tall.",
+            answer,
+            rubric: "Answer must mention 330 meters",
+          });
+          expect(judgeResult.verdict).not.toBe("fail");
+          await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
+        } finally {
+          await driver.close().catch(() => {});
+          try {
+            rmSync(configPath, { force: true });
+          } catch {
+            /* ignore */
+          }
+        }
+      },
+      5 * 60_000,
+    );
+  },
+);

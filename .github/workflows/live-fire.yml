@@ -1,0 +1,143 @@
+name: Live-Fire Release Gate
+
+# Phase 148 (PROVE-04) — the v2.13 live-fire framework wired as a repeatable,
+# budget-capped, SCHEDULED release gate that publishes READINESS.md per run.
+#
+# This is the new "safe to ship" gate — `pnpm test:live all` against REAL LLMs +
+# real providers — complementing (NOT replacing) `pnpm validate`. It runs on a
+# schedule + manual dispatch ONLY: real provider calls cost money, so this NEVER
+# runs per-PR. The pre-push hook stays mock-only; live never blocks a push.
+#
+# TWO HONEST MODES (never a success-shaped readiness claim on a keyless run):
+#   • KEYLESS (no live secrets configured): `pnpm test:live all` runs the
+#     deterministic Stage-A/B layers + the PROVE meta/soak smoke; the COMIS_LIVE
+#     gate is unset so the real-provider Stage-C self-SKIPS (skip ≠ fail). The
+#     published READINESS.md is the honest PARTIAL build (most categories PARTIAL —
+#     deterministic Stage-A/B certified; real-provider Stage-C deferred, §20). The
+#     job makes NO certified-readiness claim.
+#   • COSTED (live secrets configured as repository secrets): the job writes them
+#     into the git-ignored test/live/live.env at runtime (COMIS_LIVE=1 + provider/
+#     judge keys + the higher COMIS_LIVE_BUDGET_USD ceiling), runs the full `all`
+#     within budget (the cost governor aborts cleanly at the ceiling), and
+#     publishes the live READINESS.md.
+#
+# SECRETS DISCIPLINE (the binding invariant — mirrors bench-regression.yml):
+#   • Secrets arrive ONLY via the env: block (from GitHub repository secrets) and
+#     are written ONLY into the git-ignored test/live/live.env — NEVER inlined into
+#     a command, NEVER echoed, NEVER cat-ed.
+#   • Every secret value is masked with ::add-mask:: BEFORE first use.
+#   • The env-file write runs with command-echo OFF (`set +x`) and redirects to the
+#     file only — values never reach stdout. The runner's loadLiveEnv() then sources it.
+
+on:
+  schedule:
+    # Weekly, Mondays 04:00 UTC. Off-peak; bounded by COMIS_LIVE_BUDGET_USD.
+    # Distinct from bench-regression.yml's 06:00 Monday slot.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      budget_usd:
+        description: "Override COMIS_LIVE_BUDGET_USD for this run (the higher ceiling for the full `all` + soak)"
+        required: false
+        default: "10.00"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  live-fire:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        # The live framework imports @comis/* from dist (the Vitest alias) — build first.
+        run: pnpm build
+
+      - name: Write live secrets into test/live/live.env (masked; never echoed)
+        # Secrets arrive ONLY via the env: block (from repository secrets) and are
+        # written ONLY into the git-ignored test/live/live.env. `set +x` keeps
+        # command-echo OFF so values never reach the log; each is masked first.
+        # When live secrets are NOT configured, NO env file is written and the run
+        # is the KEYLESS honest build (the real-provider Stage-C self-skips).
+        env:
+          COMIS_LIVE_PROVIDERS: ${{ secrets.COMIS_LIVE_PROVIDERS }}
+          COMIS_LIVE_BUDGET_USD: ${{ github.event.inputs.budget_usd || secrets.COMIS_LIVE_BUDGET_USD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          COMIS_LIVE_JUDGE_PROVIDER: ${{ secrets.COMIS_LIVE_JUDGE_PROVIDER }}
+          COMIS_LIVE_JUDGE_MODEL: ${{ secrets.COMIS_LIVE_JUDGE_MODEL }}
+          COMIS_LIVE_JUDGE_API_KEY: ${{ secrets.COMIS_LIVE_JUDGE_API_KEY }}
+        run: |
+          set +x
+          ENV_FILE="test/live/live.env"
+          # Mask every secret value BEFORE use so an accidental print is redacted.
+          for v in \
+            "$ANTHROPIC_API_KEY" \
+            "$OPENAI_API_KEY" \
+            "$GOOGLE_API_KEY" \
+            "$COMIS_LIVE_JUDGE_API_KEY"; do
+            if [ -n "$v" ]; then echo "::add-mask::$v"; fi
+          done
+          # The costed path needs at least one provider key. Missing all → the
+          # keyless honest build (no paid run, no certified-readiness claim).
+          if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$OPENAI_API_KEY" ] && [ -z "$GOOGLE_API_KEY" ]; then
+            echo "No live provider keys configured → keyless honest build (real-provider Stage-C self-skips; READINESS.md is the PARTIAL build)"
+            exit 0
+          fi
+          # Costed path: write the secrets into the git-ignored env file ONLY. The
+          # printf redirects to the file; nothing is echoed to stdout. loadLiveEnv()
+          # sources it before the COMIS_LIVE gate.
+          umask 077
+          {
+            printf 'COMIS_LIVE=1\n'
+            [ -n "$COMIS_LIVE_PROVIDERS" ] && printf 'COMIS_LIVE_PROVIDERS=%s\n' "$COMIS_LIVE_PROVIDERS"
+            [ -n "$COMIS_LIVE_BUDGET_USD" ] && printf 'COMIS_LIVE_BUDGET_USD=%s\n' "$COMIS_LIVE_BUDGET_USD"
+            [ -n "$ANTHROPIC_API_KEY" ] && printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY"
+            [ -n "$OPENAI_API_KEY" ] && printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY"
+            [ -n "$GOOGLE_API_KEY" ] && printf 'GOOGLE_API_KEY=%s\n' "$GOOGLE_API_KEY"
+            [ -n "$COMIS_LIVE_JUDGE_PROVIDER" ] && printf 'COMIS_LIVE_JUDGE_PROVIDER=%s\n' "$COMIS_LIVE_JUDGE_PROVIDER"
+            [ -n "$COMIS_LIVE_JUDGE_MODEL" ] && printf 'COMIS_LIVE_JUDGE_MODEL=%s\n' "$COMIS_LIVE_JUDGE_MODEL"
+            [ -n "$COMIS_LIVE_JUDGE_API_KEY" ] && printf 'COMIS_LIVE_JUDGE_API_KEY=%s\n' "$COMIS_LIVE_JUDGE_API_KEY"
+          } > "$ENV_FILE"
+          echo "Live secrets written to $ENV_FILE (values never echoed)"
+
+      - name: Run the full live-fire tier (budget-capped)
+        # The runner sources test/live/live.env + honors the COMIS_LIVE gate: keyless
+        # ⇒ the real-provider Stage-C self-skips (skip ≠ fail); costed ⇒ the full
+        # `all` runs within COMIS_LIVE_BUDGET_USD (the cost governor aborts cleanly
+        # at the ceiling). NEVER fails merely for absent secrets (skip ≠ fail).
+        run: pnpm test:live all
+
+      - name: Generate READINESS.md
+        # Always publish a readiness summary — honest PARTIAL on a keyless run, the
+        # live verdicts on a costed run. Runs even if the tier had failures so a
+        # partial run still publishes its state.
+        if: always()
+        run: pnpm test:live --readiness
+
+      - name: Upload READINESS.md + ledger
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: live-fire-readiness
+          path: |
+            READINESS.md
+            benchmarks/live/**
+          if-no-files-found: warn

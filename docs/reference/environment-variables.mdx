@@ -328,6 +328,90 @@ Cost bound for the regression driver. Caps the number of real provider calls whe
 the suite is enabled; set to `0` for a record-only (`$0`) run that still executes
 the structural `stream:context` / `assembledShape` assertions without a live call.
 
+## Live-fire testing (operator)
+
+These variables gate the `pnpm test:live` real-provider test tier. They are **never
+required for normal operation** — when `COMIS_LIVE` is unset the entire live tier
+self-skips, so a default `pnpm test` / `pnpm validate` run makes no provider call
+and incurs no cost.
+
+### `COMIS_LIVE`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Live-fire test runner (`test/live/runner.ts`) |
+| **Format** | `1` to enable, unset to skip |
+| **Default** | (unset — the entire live tier is skipped) |
+
+Master gate for the real-provider live test tier. When unset, `pnpm test:live` exits 0
+immediately with a "Live tier skipped" message — no provider call, no network, no cost.
+When set to `1`, the runner dispatches to the scenario specified by the mode argument.
+
+```bash
+export COMIS_LIVE=1
+```
+
+### `COMIS_LIVE_BUDGET_USD`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Live-fire cost governor (`test/live/cost.ts`) |
+| **Format** | Decimal USD amount (e.g. `2.00`) |
+| **Default** | `2.00` |
+
+Hard-stop ceiling for a single `pnpm test:live` run. The cost governor accumulates
+per-call cost estimates and aborts the run with a non-zero exit when the running
+total exceeds this value, preventing runaway spend. Set a lower value for exploratory
+runs; raise it only for full suite sweeps.
+
+```bash
+export COMIS_LIVE_BUDGET_USD=5.00   # raise for a full suite sweep
+export COMIS_LIVE_BUDGET_USD=0.50   # lower for a single scenario
+```
+
+### `COMIS_LIVE_JUDGE_PROVIDER` / `COMIS_LIVE_JUDGE_MODEL` / `COMIS_LIVE_JUDGE_API_KEY`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | The live-fire judge wrapper (`test/live/judge.ts` `judgeAnswer`) for judged Stage-C scoring |
+| **Format** | Provider name / pinned model snapshot id / API key (the rubric-judge model lane) |
+| **Default** | unset — judged scenarios skip (skip is not fail) |
+
+The judge model lane for behavioral / answer-quality scoring (reuses the `bench-memory`
+judge discipline). When all three are present, `judgeAnswer` invokes the real judge at
+temperature 0 and returns a scored `pass`/`fail`; when absent, it returns a skip (judged
+Stage-C scenarios then skip — never fail). For any **published** readiness claim, use
+**cross-judge ≥2** (a second judge model + agreement) to avoid self-preference bias. The
+judge prompt, output, and key are never logged or written to a report (secret residency).
+
+```bash
+export COMIS_LIVE_JUDGE_PROVIDER=anthropic
+export COMIS_LIVE_JUDGE_MODEL=claude-3-5-haiku-20241022
+export COMIS_LIVE_JUDGE_API_KEY=sk-ant-...
+```
+
+### `COMIS_LIVE_PROBES`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Live-fire test runner (`pnpm test:live sweep`) |
+| **Format** | Comma-separated probe IDs or category prefixes |
+| **Default** | (unset — all probes run) |
+
+Filters which sweep probes run when executing `pnpm test:live sweep`. When unset, all probes
+in `PROBE_REGISTRY` are executed. When set, only probes whose `id` or `category` matches one of
+the comma-separated values are included.
+
+Parsed by `parseProbeFilter()` in `test/live/sweep/sweep.ts`.
+
+```bash
+# Run only LLM probes
+export COMIS_LIVE_PROBES="llm-anthropic,llm-openai,llm-groq"
+
+# Run all search probes
+export COMIS_LIVE_PROBES="search"
+```
+
 ## LLM Provider Keys
 
 At least one provider key is required. Each provider is detected at startup; missing keys disable the matching provider gracefully. All keys can also be stored encrypted via [`comis secrets set`](/reference/cli#comis-secrets) instead of plaintext in `.env`.

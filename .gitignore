@@ -40,6 +40,12 @@ website/dist/
 website/.astro/
 *.tsbuildinfo
 
+# Live-fire test tier — git-ignored runtime files (keys, cassettes, report)
+test/live/live.env
+test/live/cassettes/
+.test-live-report.json
+benchmarks/live/
+
 # Integration test artifacts
 test/.test-results.json
 test/.test-behavioral-metrics.json
