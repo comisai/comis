@@ -233,6 +233,10 @@ async function runMain(): Promise<void> {
       console.log("Channel scenarios (CHAN-01..03): echo-golden, delivery-modes");
       console.log("  test/live/scenarios/channels/*.test.ts");
       console.log("  Cost tier: $0 Stage-B (echo registry golden round-trip + 9-adapter credential-validation empty-input breadth + crash-safe SQLite delivery-queue resume + streaming/queue/overflow/dmScope config-shape — all in-process/keyless/deterministic); Stage-C needs COMIS_LIVE + a real channel account/network (real send→agent→reply, positive token validation, live Slack Socket Mode, live IMAP/OAuth email) — see test/live/RUNBOOK.md for the manual procedure");
+    } else if (args.mode === "sec") {
+      console.log("Security/failure scenarios (SEC-01..06): failure-injection, prompt-injection, memory-poisoning, secret-residency, gateway-scopes, sandbox-net");
+      console.log("  test/live/scenarios/sec/*.test.ts");
+      console.log("  Cost tier: $0 Stage-A/B (fault injectors + per-source wrapExternalContent neutralization + validateMemoryWrite classification + the SECRET-RESIDENCY scan [positive control + redaction-chain + report/ledger] + GatewayTokenSchema scope-disjointness + approval-gate pause/resolve + sandbox-exec exec-confinement — all in-process/keyless/deterministic); Stage-C needs COMIS_LIVE + a real provider/network (real-provider failover under a real 429/5xx, the AgentDojo/ASB injection benchmark, the real-LLM redaction-ON residency sweep, live gateway admin-RPC-denial + rate-limit-429); bwrap + net{open,broker-only} is SKIPPED(no-bwrap/linux-only) on macOS");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -418,6 +422,20 @@ async function runMain(): Promise<void> {
 
     try {
       execSync(chanCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "sec") {
+    // Phase 145: SECURITY & FAILURE INJECTION — SEC-01..06
+    const SEC_TEST_GLOB = "test/live/scenarios/sec/*.test.ts";
+    const secCmd = [
+      "npx vitest run",
+      `"${SEC_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(secCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
     } catch {
       testsFailed = true;
     }
