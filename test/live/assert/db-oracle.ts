@@ -129,17 +129,39 @@ export async function runDbOracle(
       // vec_memories tracks only embedded rows (has_embedding=1). Its row count
       // must equal COUNT(*) FROM memories WHERE has_embedding=1.
       // Only runs when vec_memories table also exists.
+      //
+      // vec_memories is a `vec0` virtual table (sqlite-vec). The oracle opens its
+      // OWN readonly connection, which does NOT load the optional sqlite-vec
+      // extension — so SELECT-ing from the vec0 vtable can throw "no such module:
+      // vec0" even though the table is structurally present in sqlite_master.
+      // That is a missing-optional-extension condition in the reader, NOT a
+      // desync defect, so it must not false-fail the oracle. We attempt the
+      // cross-check and skip ONLY on the vec0-module-load error; any other error
+      // (and any genuine count mismatch) still fails.
       if (tables.includes("vec_memories")) {
-        const embCount = (
-          db.prepare("SELECT COUNT(*) AS c FROM memories WHERE has_embedding=1").get() as { c: number }
-        ).c;
-        const vecCount = (
-          db.prepare("SELECT COUNT(*) AS c FROM vec_memories").get() as { c: number }
-        ).c;
-        if (embCount !== vecCount) {
-          throw new Error(
-            `[db-oracle check 3d] vec_memories desynced: memories(has_embedding=1)=${embCount}, vec=${vecCount}`,
-          );
+        let vecQueryable = true;
+        let vecCount = 0;
+        try {
+          vecCount = (
+            db.prepare("SELECT COUNT(*) AS c FROM vec_memories").get() as { c: number }
+          ).c;
+        } catch (e) {
+          if (e instanceof Error && /no such module: vec0/i.test(e.message)) {
+            // Reader lacks sqlite-vec — skip the vec sync cross-check (not a defect).
+            vecQueryable = false;
+          } else {
+            throw e;
+          }
+        }
+        if (vecQueryable) {
+          const embCount = (
+            db.prepare("SELECT COUNT(*) AS c FROM memories WHERE has_embedding=1").get() as { c: number }
+          ).c;
+          if (embCount !== vecCount) {
+            throw new Error(
+              `[db-oracle check 3d] vec_memories desynced: memories(has_embedding=1)=${embCount}, vec=${vecCount}`,
+            );
+          }
         }
       }
     }
