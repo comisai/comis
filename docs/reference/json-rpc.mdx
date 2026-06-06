@@ -1568,11 +1568,13 @@ List all configured agent IDs. This is a lightweight call that returns only the 
 
 Update an existing agent's configuration. Only the fields you provide are changed; everything else stays as-is. The agent continues running with the new settings immediately — no restart required.
 
+Pass `dryRun: true` to validate a configuration patch **without** applying it: the daemon runs the full validation path (schema parse, OAuth-profile existence checks, and the provider credential guard/probe when the provider changes) and returns the would-be result, but does **not** persist to `config.yaml`/`config.last-good.yaml` and does **not** hot-apply the change to the running agent. The web dashboard's "Validate" button uses this so checking a config never mutates a live agent.
+
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ agentId: string, name?: string, provider?: string, model?: string, ...config }` |
-| **Returns** | Updated agent configuration |
+| **Parameters** | `{ agentId: string, name?: string, provider?: string, model?: string, dryRun?: boolean, ...config }` |
+| **Returns** | Updated agent configuration (or, with `dryRun: true`, the validation outcome with no side effects) |
 
 <CodeGroup>
 ```json Request
