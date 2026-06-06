@@ -17,7 +17,7 @@
  * test/architecture/live-coverage-matrix.test.ts). Use "covered in Phase N (NAME)"
  * format for deferred cells.
  *
- * // Total cells: 129
+ * // Total cells: 135
  *
  * @module
  */
@@ -499,8 +499,8 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "mcp.transport",
     modeValue: "stdio",
-    status: "covered",
-    reference: "test/live/sweep/probes.ts",
+    status: "skipped",
+    reference: "stdio transport requires a child-process MCP server (HTTP mock + transport-auth.test.ts exclude it); covered live with a real stdio server — Stage-C",
     phase: "135",
   },
   {
@@ -1157,12 +1157,10 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // tooling.installDetours.mode (3 cells)
   // ===========================================================================
   {
-    // Stage-B test in modes.test.ts boots daemon with buildToolConfig({ installDetourMode: "observe" })
-    // and exercises the observe code path via the live event bus.
     dimension: "tooling.installDetours.mode",
     modeValue: "observe",
-    status: "covered",
-    reference: "test/live/scenarios/tools/modes.test.ts",
+    status: "skipped",
+    reference: "install-detour observe requires a real model running an exec command to trigger detection (modes.test.ts Stage-C, describe.skipIf(!isLive)); set COMIS_LIVE=1",
     phase: "140",
   },
   {
