@@ -197,6 +197,46 @@ export function isParameterValidationTag(tag: string): boolean {
   return PARAMETER_VALIDATION_TAGS.has(tag);
 }
 
+/**
+ * Returns true if `errorText` is a serialized tool-result envelope reporting a
+ * command that RAN TO COMPLETION and exited non-zero — i.e. it carries a
+ * numeric `details.exitCode`.
+ *
+ * Such results are corrective feedback for an agentic coding loop (a `tsc`
+ * build that exits 2 on type errors, a test runner that exits 1, `grep`/`diff`
+ * exit 1), NOT evidence that the `exec`/`process` tool is unavailable. The
+ * agent fixes its input and re-runs, so — exactly like PARAMETER_VALIDATION_TAGS
+ * — these MUST NOT count toward the breaker's signature, tool-total, or
+ * error-pattern thresholds. Counting them shut exec down mid-task in Telegram
+ * session 678314278 (daemon.1.log, 2026-06-06 20:27): repeated `npm run build`
+ * exits of 2 tripped maxConsecutiveErrorPatterns and the breaker told the model
+ * exec was "unavailable. DO NOT retry this tool", killing the edit→build→fix
+ * loop and forcing a bluffed completion.
+ *
+ * The discriminator is deliberately `details.exitCode` — the SAME field the
+ * pi-event bridge inspects to flip toolSuccess=false in the first place
+ * (`pi-event-bridge.ts`: `result.details.exitCode !== 0`). A process that NEVER
+ * RAN (the exec sandbox failing to spawn — `spawn sandbox-exec ENOENT` — or an
+ * EPERM sandbox deny) carries NO exitCode and is correctly NOT exempted: those
+ * are genuine tool faults and still accumulate and block as before. Keying on
+ * the inner-text exitCode instead would over-exempt those infra faults.
+ *
+ * Exported as a test seam alongside isParameterValidationTag.
+ */
+export function isCompletedCommandExit(errorText: string | undefined): boolean {
+  // Fast reject keeps JSON.parse off the hot path for the common bracket-tag
+  // errors (e.g. `[permission_denied] EPERM`) that carry no exit code.
+  if (!errorText || !errorText.includes("exitCode")) return false;
+  try {
+    const obj = JSON.parse(errorText) as { details?: { exitCode?: unknown } };
+    return typeof obj.details?.exitCode === "number";
+  } catch {
+    // Not a JSON envelope (e.g. a re-fed breaker block message) — not a
+    // structured command exit.
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -420,6 +460,16 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       // PARAMETER_VALIDATION_TAGS above for the full rationale.
       const errorTag = extractErrorTag(errorText ?? "unknown");
       if (PARAMETER_VALIDATION_TAGS.has(errorTag)) {
+        return;
+      }
+
+      // Skip counter updates for completed command exits — a command that ran
+      // to completion and exited non-zero (tsc build errors, failing tests,
+      // grep/diff exit 1) is corrective feedback the agent resolves by fixing
+      // its input and re-running, NOT tool unavailability. Genuine infra faults
+      // (spawn ENOENT, EPERM) carry no exitCode and still accumulate. See
+      // isCompletedCommandExit above for the full rationale.
+      if (isCompletedCommandExit(errorText)) {
         return;
       }
 
