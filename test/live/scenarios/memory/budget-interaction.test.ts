@@ -65,20 +65,24 @@ describe.skipIf(!isLive)("MEM-08 Stage-B — recall injection in H, no double-co
       // Store 2 distinct facts
       await driver.sendTurn("Remember: budget-interaction fact Alpha.");
       await driver.sendTurn("Remember: budget-interaction fact Beta.");
+      // Snapshot event count before the recall turn so we can isolate just
+      // the recall turn's events (WR-04 fix: don't conflate cross-turn hits).
+      const beforeRecall = driver.capturedEvents().length;
       // Trigger recall of both facts in one query
       await driver.sendTurn("What are the budget-interaction facts?");
       await flushDaemonLogs(driver);
 
-      // Filter for the real event key (verified from events-agent.ts)
-      // Subscription to "memory:injected" added to ConversationDriver._subscribeToEventBus in Task 1
-      const events = driver.capturedEvents();
-      const recallEvents = events.filter(e => e.name === "memory:injected");
+      // Filter for "memory:injected" events emitted ONLY during the recall turn.
+      // Subscription to "memory:injected" added to ConversationDriver._subscribeToEventBus in Task 1.
+      const recallEvents = driver.capturedEvents()
+        .slice(beforeRecall)
+        .filter(e => e.name === "memory:injected");
 
       // MEM-08 HARD ASSERT: events must fire (not a guard that silently passes when 0)
       // If this fails, the subscription was not wired in conversation.ts Task 1
       expect(recallEvents.length).toBeGreaterThan(0);
 
-      // Double-injection guard at hitCount level
+      // Double-injection guard at hitCount level — scoped to the recall turn only.
       // (payload has no memoryIds — per-ID check requires product change)
       const totalHits = recallEvents.reduce(
         (sum, e) => sum + (((e.payload as Record<string, unknown>)["hitCount"] as number | undefined) ?? 0),
