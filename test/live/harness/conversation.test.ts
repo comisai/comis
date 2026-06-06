@@ -6,6 +6,7 @@
  *   - getDataDir() — constructor sets up a temp dir matching /comis-live-loop/
  *   - getSessionIndexEvents() — returns [] when file absent, parses valid JSONL
  *   - capturedLogLines() — returns a string
+ *   - capturedEvents() — returns [] initially; captures events after subscription
  *
  * sendTurn() is tested only in integration (live scenarios with a real daemon),
  * because it requires an open WebSocket to a running daemon.
@@ -20,6 +21,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TypedEventBus } from "@comis/core";
 import { ConversationDriver, type ConversationDriverOptions } from "./conversation.js";
 
 // ---------------------------------------------------------------------------
@@ -45,6 +47,36 @@ class StubDriver extends ConversationDriver {
 
   override capturedLogLines(): string {
     return "";
+  }
+}
+
+/**
+ * StubDriverWithBus — StubDriver that accepts a mock TypedEventBus handle so
+ * unit tests can exercise capturedEvents() without booting a real daemon.
+ *
+ * Calls injectEventBus(bus) after construction to wire the subscription loop
+ * that capturedEvents() relies on, emulating what init() does with a real daemon.
+ */
+class StubDriverWithBus extends ConversationDriver {
+  constructor() {
+    super({ agentId: "stub-bus", provider: "anthropic" });
+  }
+
+  override async init(): Promise<void> {
+    // no-op: no daemon boot in unit tests
+  }
+
+  override async close(): Promise<void> {
+    // no-op
+  }
+
+  override capturedLogLines(): string {
+    return "";
+  }
+
+  /** Expose the internal subscription wiring so tests can inject a mock bus. */
+  injectEventBus(bus: TypedEventBus): void {
+    (this as unknown as { _subscribeToEventBus: (b: TypedEventBus) => void })._subscribeToEventBus(bus);
   }
 }
 
@@ -105,5 +137,76 @@ describe("ConversationDriver — unit (Stage-A, no daemon required)", () => {
   it("capturedLogLines() returns a string", () => {
     const driver = new StubDriver();
     expect(typeof driver.capturedLogLines()).toBe("string");
+  });
+
+  // -------------------------------------------------------------------------
+  // capturedEvents() tests
+  // -------------------------------------------------------------------------
+
+  it("capturedEvents() returns an empty array before any events are emitted", () => {
+    const driver = new StubDriver();
+    expect(driver.capturedEvents()).toEqual([]);
+  });
+
+  it("capturedEvents() returns an array (type check)", () => {
+    const driver = new StubDriver();
+    const events = driver.capturedEvents();
+    expect(Array.isArray(events)).toBe(true);
+  });
+
+  it("capturedEvents() captures context:dag_compacted events emitted on the injected eventBus", () => {
+    // Arrange: create a real TypedEventBus and inject it into a StubDriverWithBus
+    const driver = new StubDriverWithBus();
+    const bus = new TypedEventBus();
+    driver.injectEventBus(bus);
+
+    // Assert: no events before emit
+    expect(driver.capturedEvents()).toHaveLength(0);
+
+    // Act: emit a context:dag_compacted event on the bus
+    bus.emit("context:dag_compacted", {
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      sessionKey: { channelId: "echo", channelType: "echo", userId: "u1", conversationId: "conv-1" },
+      leafSummariesCreated: 3,
+      condensedSummariesCreated: 0,
+      maxDepthReached: 1,
+      totalSummariesCreated: 3,
+      durationMs: 42,
+      timestamp: Date.now(),
+    });
+
+    // Assert: capturedEvents() returns the emitted event
+    const events = driver.capturedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.name).toBe("context:dag_compacted");
+    const payload = events[0]?.payload as { leafSummariesCreated: number };
+    expect(payload.leafSummariesCreated).toBe(3);
+  });
+
+  it("capturedEvents() returns a copy (mutations do not affect internal state)", () => {
+    const driver = new StubDriverWithBus();
+    const bus = new TypedEventBus();
+    driver.injectEventBus(bus);
+
+    bus.emit("context:dag_compacted", {
+      conversationId: "conv-2",
+      agentId: "agent-2",
+      sessionKey: { channelId: "echo", channelType: "echo", userId: "u2", conversationId: "conv-2" },
+      leafSummariesCreated: 1,
+      condensedSummariesCreated: 0,
+      maxDepthReached: 1,
+      totalSummariesCreated: 1,
+      durationMs: 10,
+      timestamp: Date.now(),
+    });
+
+    const copy1 = driver.capturedEvents();
+    copy1.push({ name: "injected", payload: {} }); // mutate the copy
+    const copy2 = driver.capturedEvents();
+
+    // The mutation must NOT have leaked into internal state
+    expect(copy2).toHaveLength(1);
+    expect(copy2[0]?.name).toBe("context:dag_compacted");
   });
 });
