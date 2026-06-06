@@ -226,15 +226,22 @@ describe("ORCH-01 Stage-B — DAG coordinator via graph.execute RPC (dummy keys,
 
     const envelope = executeResp as Record<string, unknown>;
 
-    // If the graph was rejected at the RPC layer (agentToAgent disabled, or nodes
-    // malformed), skip the event assertions gracefully with a diagnostic.
+    // If the graph was rejected at the RPC layer, gate the skip narrowly.
     if (envelope.error) {
       const errMsg = String((envelope.error as Record<string, unknown>).message ?? "");
-      // "method not found" would mean graph.execute is not registered — a test bug.
+      // "method not found" would mean graph.execute is not registered — that is a test bug.
       expect(errMsg).not.toMatch(/method not found/i);
-      // Any other error (policy, node-validation) skips the event assertions.
-      // This is a known acceptable outcome when the coordinator rejects before starting.
-      return;
+      // Only silently skip for known policy-rejection strings (agentToAgent disabled,
+      // node-schema validation, or explicit policy guard). Unknown errors must FAIL so
+      // the test does not silently skip under unexpected conditions (WR-03 fix).
+      if (/node.?validation|policy|disabled/i.test(errMsg)) {
+        // Known acceptable rejection before coordinator starts — skip event assertions.
+        return;
+      }
+      // Unknown error: fail explicitly so the test cannot silently swallow unexpected issues.
+      throw new Error(
+        `graph.execute failed unexpectedly (not a known policy rejection): ${errMsg}`,
+      );
     }
 
     // Graph accepted — wait for the coordinator to emit graph:node_updated events.
