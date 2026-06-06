@@ -5,7 +5,7 @@
  * Always runs — no COMIS_LIVE required, no daemon needed.
  * Tests that buildOrchConfig writes the correct YAML structure
  * for multi-agent orchestration configs (agents, routing, security.agentToAgent,
- * subagentContext.maxSpawnDepth).
+ * security.agentToAgent.subagentContext.maxSpawnDepth).
  */
 
 import { describe, it, expect } from "vitest";
@@ -89,9 +89,13 @@ describe("buildOrchConfig", () => {
     rmSync(p, { force: true });
   });
 
-  // ── subagentContext.maxSpawnDepth (separate block, NOT under agentToAgent) ─
+  // ── security.agentToAgent.subagentContext.maxSpawnDepth (nested, NOT top-level) ─
+  //
+  // IMPORTANT: subagentContext is a NESTED sub-block inside security.agentToAgent,
+  // NOT a separate top-level YAML key. The config schema uses z.strictObject and
+  // rejects unknown top-level keys (Config validation failed: Unrecognized key).
 
-  it("YAML contains subagentContext.maxSpawnDepth when provided", () => {
+  it("YAML contains security.agentToAgent.subagentContext.maxSpawnDepth when maxSpawnDepth provided", () => {
     const p = buildOrchConfig({
       agents: [{ id: "default" }],
       defaultAgentId: "default",
@@ -99,27 +103,35 @@ describe("buildOrchConfig", () => {
       label: "t7-depth",
     });
     const content = readFileSync(p, "utf-8");
-    // CRITICAL: subagentContext is a SEPARATE top-level block from security.agentToAgent
+    // maxSpawnDepth must appear inside security.agentToAgent.subagentContext
+    expect(content).toContain("agentToAgent:");
     expect(content).toContain("subagentContext:");
     expect(content).toContain("maxSpawnDepth: 1");
+    // Must NOT appear as a separate top-level block (would be rejected by schema)
+    const topLevelSubagentIdx = content.indexOf("\nsubagentContext:");
+    expect(topLevelSubagentIdx).toBe(-1); // NOT a top-level key
     rmSync(p, { force: true });
   });
 
-  it("subagentContext is a separate top-level block from security", () => {
+  it("subagentContext.maxSpawnDepth is nested inside security.agentToAgent (not top-level)", () => {
     const p = buildOrchConfig({
       agents: [{ id: "default" }],
       defaultAgentId: "default",
       maxGlobalSubAgents: 3,
       maxSpawnDepth: 2,
-      label: "t7b-separate",
+      label: "t7b-nested",
     });
     const content = readFileSync(p, "utf-8");
-    // Both blocks must exist
+    // Both blocks must exist (agentToAgent contains subagentContext)
     expect(content).toContain("agentToAgent:");
     expect(content).toContain("subagentContext:");
-    // subagentContext must appear at top-level (column 0)
-    const subagentIdx = content.indexOf("\nsubagentContext:");
-    expect(subagentIdx).toBeGreaterThan(-1);
+    expect(content).toContain("maxSpawnDepth: 2");
+    // Verify subagentContext is indented (nested inside agentToAgent), not top-level
+    const topLevelIdx = content.indexOf("\nsubagentContext:");
+    expect(topLevelIdx).toBe(-1); // NOT a top-level key — must be indented inside agentToAgent
+    // Verify it's indented inside agentToAgent
+    const indentedIdx = content.indexOf("    subagentContext:");
+    expect(indentedIdx).toBeGreaterThan(-1);
     rmSync(p, { force: true });
   });
 

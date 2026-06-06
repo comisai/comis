@@ -7,9 +7,11 @@
  *   1. agents:                   — map of agent id → {model, provider}
  *   2. routing:                  — defaultAgentId + bindings array
  *   3. security.agentToAgent:    — enabled flag + graphMaxGlobalSubAgents + graphMaxConcurrency
- *   4. subagentContext:          — SEPARATE top-level block for maxSpawnDepth (the depth-exceeded
- *                                  hop-cap key). NOT inside agentToAgent — those control
- *                                  ping-pong reply loops, not spawn depth.
+ *   4. security.agentToAgent.subagentContext: — nested sub-block for maxSpawnDepth (the depth-exceeded
+ *                                  hop-cap key). Lives inside security.agentToAgent (NOT a separate
+ *                                  top-level block — the schema rejects unknown top-level keys).
+ *                                  maxPingPongTurns (also inside agentToAgent) controls ping-pong
+ *                                  reply loops; maxSpawnDepth controls spawn depth — different limits.
  *
  * The gateway port is NOT patched here — ConversationDriver._buildPortedConfigPath()
  * handles that separately so each driver gets its own unique port.
@@ -78,13 +80,15 @@ export interface OrchConfigOpts {
    */
   graphMaxConcurrency?: number;
   /**
-   * subagentContext.maxSpawnDepth — depth-exceeded hop-cap key.
+   * security.agentToAgent.subagentContext.maxSpawnDepth — depth-exceeded hop-cap key.
    * Controls how deep the sub-agent spawn tree can go before triggering
    * a depth_exceeded rejection in sub-agent-runner.ts.
    *
-   * CRITICAL: this patches subagentContext.maxSpawnDepth — a SEPARATE
-   * top-level YAML block, NOT inside security.agentToAgent. maxPingPongTurns
-   * (inside agentToAgent) controls cross-session reply loops, not spawn depth.
+   * IMPORTANT: this patches security.agentToAgent.subagentContext.maxSpawnDepth — a
+   * NESTED sub-block inside security.agentToAgent, NOT a separate top-level YAML block.
+   * The config schema uses strictObject and rejects unknown top-level keys.
+   * maxPingPongTurns (also inside agentToAgent) controls cross-session reply loops,
+   * not spawn depth — these are different limits.
    *
    * Omit to leave at the config default (3).
    */
@@ -154,9 +158,16 @@ export function buildOrchConfig(opts: OrchConfigOpts): string {
   }
 
   // ── security.agentToAgent: block ──────────────────────────────────────────
-  // Emitted when any cap is provided; enables the agentToAgent feature.
+  // Emitted when any agentToAgent option is provided; enables the feature.
+  //
+  // IMPORTANT: maxSpawnDepth patches security.agentToAgent.subagentContext.maxSpawnDepth
+  // (a nested sub-block inside agentToAgent), NOT a top-level "subagentContext:" block.
+  // The top-level config schema uses z.strictObject and rejects unknown top-level keys.
+  // Security schema: SecurityConfigSchema.agentToAgent.subagentContext.maxSpawnDepth.
   const hasAgentToAgentCaps =
-    opts.maxGlobalSubAgents !== undefined || opts.graphMaxConcurrency !== undefined;
+    opts.maxGlobalSubAgents !== undefined ||
+    opts.graphMaxConcurrency !== undefined ||
+    opts.maxSpawnDepth !== undefined;
 
   if (hasAgentToAgentCaps) {
     let agentToAgentBlock = `  agentToAgent:\n    enabled: true\n`;
@@ -166,12 +177,17 @@ export function buildOrchConfig(opts: OrchConfigOpts): string {
     if (opts.graphMaxConcurrency !== undefined) {
       agentToAgentBlock += `    graphMaxConcurrency: ${opts.graphMaxConcurrency}\n`;
     }
+    if (opts.maxSpawnDepth !== undefined) {
+      // Correct location: security.agentToAgent.subagentContext.maxSpawnDepth
+      // (NOT a top-level subagentContext: block — the schema rejects unknown top-level keys)
+      agentToAgentBlock += `    subagentContext:\n      maxSpawnDepth: ${opts.maxSpawnDepth}\n`;
+    }
 
     if (/^security:/m.test(content)) {
       // Replace the agentToAgent sub-block inside security:
       if (/agentToAgent:/.test(content)) {
         content = content.replace(
-          /( *agentToAgent:[\s\S]*?)(?=\n[^\s#\n]|\n*$)/m,
+          /( *agentToAgent:[\s\S]*?)(?=\n[^\s#\n])/m,
           agentToAgentBlock.trimEnd(),
         );
       } else {
@@ -181,24 +197,6 @@ export function buildOrchConfig(opts: OrchConfigOpts): string {
     } else {
       // No security: block — append with sub-block
       content = content.trimEnd() + `\nsecurity:\n${agentToAgentBlock}`;
-    }
-  }
-
-  // ── subagentContext: block ────────────────────────────────────────────────
-  // CRITICAL: subagentContext is a SEPARATE top-level block from security.
-  // maxSpawnDepth controls spawn depth (depth_exceeded in sub-agent-runner.ts).
-  // Do NOT place this inside security.agentToAgent.
-  if (opts.maxSpawnDepth !== undefined) {
-    const subagentContextBlock = `subagentContext:\n  maxSpawnDepth: ${opts.maxSpawnDepth}\n`;
-
-    if (/^subagentContext:/m.test(content)) {
-      // Replace existing subagentContext: block
-      content = content.replace(
-        /^subagentContext:[\s\S]*?(?=\n[^\s#\n]|\n*$)/m,
-        subagentContextBlock.trimEnd(),
-      );
-    } else {
-      content = content.trimEnd() + "\n" + subagentContextBlock;
     }
   }
 
