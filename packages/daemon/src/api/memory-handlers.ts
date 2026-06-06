@@ -468,35 +468,24 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
       const sort = params.sort ?? "newest";
-      const memoryType = params.memory_type;
-      const trustLevel = params.trust_level;
       const tags = params.tags;
-
-      let entries = deps.memoryApi.inspect({
+      // Shared filters for the page read + the full-count (P4: total = FULL count(), not page length).
+      const filters = {
         tenantId,
         agentId,
-        limit,
-        offset,
-        memoryType: memoryType as "working" | "episodic" | "semantic" | "procedural" | undefined,
-        trustLevel: trustLevel as "system" | "learned" | "external" | undefined,
+        memoryType: params.memory_type as "working" | "episodic" | "semantic" | "procedural" | undefined,
+        trustLevel: params.trust_level as "system" | "learned" | "external" | undefined,
         tags,
-      });
+      };
+
+      let entries = deps.memoryApi.inspect({ ...filters, limit, offset });
 
       // inspect() always sorts DESC (newest first). Reverse for "oldest".
       if (sort === "oldest") {
         entries = entries.slice().reverse();
       }
 
-      // P4: `total` must be the FULL filtered match count (so the UI can page
-      // past the first window), NOT the page length. count() applies the SAME
-      // filters as the inspect() above but ignores limit/offset.
-      const total = deps.memoryApi.count({
-        tenantId,
-        agentId,
-        memoryType: memoryType as "working" | "episodic" | "semantic" | "procedural" | undefined,
-        trustLevel: trustLevel as "system" | "learned" | "external" | undefined,
-        tags,
-      });
+      const total = deps.memoryApi.count(filters);
 
       const result = {
         entries: entries.map((e) => ({
@@ -511,8 +500,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         total,
         offset,
         limit,
-        // More entries exist beyond this window when the page ends before total.
-        hasMore: offset + entries.length < total,
+        hasMore: offset + entries.length < total, // more rows exist past this window
       };
       if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryBrowseContract.response.parse(result);

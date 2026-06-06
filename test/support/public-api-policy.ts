@@ -1519,6 +1519,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // (composed into API_CONTRACTS_ORDERED intra-package — the walker
       // skips self-imports).
       "AGENTS_CONTRACTS",
+      // Context (LCD lossless-store) operator-browse contracts (2 methods:
+      // context.conversations + context.tree) backing the web Context DAG
+      // browser. The 2 per-method contracts have an in-repo consumer via
+      // packages/daemon/src/api/context-handlers.ts (imports + computed property
+      // keys). Web-SPA-only (no CLI consumer). Only the per-domain aggregator
+      // array CONTEXT_CONTRACTS lacks an external consumer (composed into
+      // API_CONTRACTS_ORDERED intra-package — the walker skips self-imports).
+      "CONTEXT_CONTRACTS",
       // Channels + message + platform-action contracts (19 methods spanning
       // 2 handler-factory files that share the ChannelsApiDeps cluster slice):
       //   - channel-handlers.ts  (8 methods — channels.* + delivery.queue.status)

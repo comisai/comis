@@ -164,7 +164,7 @@ describe("createContextHandlers", () => {
       expect(leafNode.childIds).toEqual([]);
     });
 
-    it("bounds the contentPreview length so a huge summary body cannot flood the response", async () => {
+    it("caps the contentPreview length so a huge summary body cannot flood the response", async () => {
       const big = makeSummary({ summaryId: "leaf-big", content: "x".repeat(5000) });
       const lcdStore = {
         getSummaries: vi.fn((): LcdSummary[] => [big]),
