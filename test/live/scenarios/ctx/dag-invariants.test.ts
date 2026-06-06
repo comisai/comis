@@ -36,11 +36,10 @@ import {
 import { createLcdStore, initSchema } from "@comis/memory";
 import type { AppendMessageInput, AppendSummaryInput } from "@comis/core";
 import Database from "better-sqlite3";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { buildCredentialRegistry } from "../../credentials.js";
+import { buildCtxConfig } from "../../harness/ctx-config.js";
 
 // ---------------------------------------------------------------------------
 // COMIS_LIVE gate — Stage-C blocks skip (not fail) when unset
@@ -62,62 +61,6 @@ const ENGINE_MATRIX = [
   { version: "dag"      as const, label: "dag-high-threshold", contextThreshold: 0.75 },
   { version: "pipeline" as const, label: "pipe-low-threshold", contextThreshold: 0.4 },
 ] as const;
-
-// ---------------------------------------------------------------------------
-// Per-combo config builder
-// ---------------------------------------------------------------------------
-
-/**
- * Build a temp YAML config patching contextEngine.version and contextThreshold
- * under agents.default. ConversationDriver's _buildPortedConfigPath() will
- * subsequently patch only the gateway port line inside the gateway: block.
- *
- * Base config: test/config/config.test.yaml
- */
-function buildCtxConfig(opts: {
-  version: "pipeline" | "dag";
-  contextThreshold?: number;
-  label: string;
-}): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const base = join(here, "../../config/config.test.yaml");
-  let content = readFileSync(base, "utf-8");
-
-  // Patch contextEngine.version inside agents.default block.
-  // If a contextEngine block already exists, replace the version line.
-  // Otherwise inject the contextEngine block under agents.default.
-  if (/contextEngine:/.test(content)) {
-    content = content.replace(/version:\s*\S+/, `version: ${opts.version}`);
-  } else {
-    content = content.replace(
-      /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
-      `$1\n    contextEngine:\n      version: ${opts.version}$2`,
-    );
-  }
-
-  // Patch contextThreshold under agents.default (NOT contextWindow — that is
-  // a provider-model-level key and will fail schema validation if placed here).
-  if (opts.contextThreshold !== undefined) {
-    if (/contextThreshold:\s*[\d.]+/.test(content)) {
-      content = content.replace(
-        /contextThreshold:\s*[\d.]+/,
-        `contextThreshold: ${opts.contextThreshold}`,
-      );
-    } else {
-      content = content.replace(
-        /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
-        `$1\n    contextThreshold: ${opts.contextThreshold}$2`,
-      );
-    }
-  }
-
-  const outPath = join(
-    tmpdir(),
-    `ctx-inv-${opts.label.replace(/[^a-zA-Z0-9_-]/g, "_")}-${Date.now()}.yaml`,
-  );
-  writeFileSync(outPath, content, "utf-8");
-  return outPath;
-}
 
 // ---------------------------------------------------------------------------
 // Stage-A — DAG/LCD structural invariants (no daemon, no COMIS_LIVE)
@@ -285,7 +228,7 @@ describe.skipIf(!isLive)("Live — CTX-01/CTX-03 DAG invariants + honest present
     "version=$label",
     async ({ version, label, contextThreshold }) => {
       // T-138-02-03: each driver has a 3-min timeout; finally block guarantees close().
-      const configPath = buildCtxConfig({ version, label, contextThreshold });
+      const configPath = buildCtxConfig({ version, label, contextThreshold, filePrefix: "ctx-inv" });
       const driver = new ConversationDriver({
         agentId: `ctx-inv-${label}`,
         provider: "anthropic",

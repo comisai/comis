@@ -24,11 +24,10 @@ import { describe, it, expect } from "vitest";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
 import { runDbOracle, snapshotRowCounts } from "../../assert/db-oracle.js";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { buildCredentialRegistry } from "../../credentials.js";
+import { buildCtxConfig } from "../../harness/ctx-config.js";
 
 // ---------------------------------------------------------------------------
 // COMIS_LIVE gate — Stage-C blocks skip (not fail) when unset
@@ -45,64 +44,6 @@ const EXPANSION_TOOL_MATRIX = [
   { tool: "ctx_inspect", label: "ctx-inspect" },
   { tool: "ctx_expand",  label: "ctx-expand" },
 ] as const;
-
-// ---------------------------------------------------------------------------
-// Per-combo config builder (copied from dag-invariants.test.ts)
-// ---------------------------------------------------------------------------
-
-/**
- * Build a temp YAML config patching contextEngine.version and contextThreshold
- * under agents.default. ConversationDriver's _buildPortedConfigPath() will
- * subsequently patch only the gateway port line inside the gateway: block.
- *
- * Base config: test/config/config.test.yaml
- */
-function buildCtxConfig(opts: {
-  version?: "pipeline" | "dag";
-  contextThreshold?: number;
-  label: string;
-}): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const base = join(here, "../../config/config.test.yaml");
-  let content = readFileSync(base, "utf-8");
-
-  const version = opts.version ?? "dag";
-
-  // Patch contextEngine.version inside agents.default block.
-  // If a contextEngine block already exists, replace the version line.
-  // Otherwise inject the contextEngine block under agents.default.
-  if (/contextEngine:/.test(content)) {
-    content = content.replace(/version:\s*\S+/, `version: ${version}`);
-  } else {
-    content = content.replace(
-      /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
-      `$1\n    contextEngine:\n      version: ${version}$2`,
-    );
-  }
-
-  // Patch contextThreshold under agents.default (NOT contextWindow — that is
-  // a provider-model-level key and will fail schema validation if placed here).
-  if (opts.contextThreshold !== undefined) {
-    if (/contextThreshold:\s*[\d.]+/.test(content)) {
-      content = content.replace(
-        /contextThreshold:\s*[\d.]+/,
-        `contextThreshold: ${opts.contextThreshold}`,
-      );
-    } else {
-      content = content.replace(
-        /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
-        `$1\n    contextThreshold: ${opts.contextThreshold}$2`,
-      );
-    }
-  }
-
-  const outPath = join(
-    tmpdir(),
-    `ctx-exp-${opts.label.replace(/[^a-zA-Z0-9_-]/g, "_")}-${Date.now()}.yaml`,
-  );
-  writeFileSync(outPath, content, "utf-8");
-  return outPath;
-}
 
 // ---------------------------------------------------------------------------
 // Stage-A — expansion matrix structure (no COMIS_LIVE)
@@ -130,7 +71,7 @@ describe.skipIf(!isLive)("Live — CTX-04 expansion loop (Stage-C)", () => {
     "expansion tool=$label",
     async ({ tool, label }) => {
       // Low contextThreshold to force quick compaction (15 turns at 0.4 threshold).
-      const configPath = buildCtxConfig({ version: "dag", contextThreshold: 0.4, label: `exp-${label}` });
+      const configPath = buildCtxConfig({ version: "dag", contextThreshold: 0.4, label: `exp-${label}`, filePrefix: "ctx-exp" });
       const driver = new ConversationDriver({
         agentId: `ctx-exp-${label}`,
         provider: "anthropic",
