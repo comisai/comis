@@ -86,6 +86,22 @@ export async function runDbOracle(
       }
     }
 
+    // ── Check 3b: lcd_summaries_fts sync (FTS external-content table) ────────
+    // The lcd_summaries_fts virtual table is an external-content FTS5 table
+    // backed by lcd_summaries. Its row count must equal lcd_summaries.
+    // A desynced FTS table means the content-rowid mapping is broken and
+    // ctx_search / ctx_inspect queries will return stale or missing results.
+    // Only runs when both lcd_summaries AND lcd_summaries_fts tables exist.
+    if (tables.includes("lcd_summaries") && tables.includes("lcd_summaries_fts")) {
+      const lcdSumCount = (db.prepare("SELECT COUNT(*) AS c FROM lcd_summaries").get() as { c: number }).c;
+      const lcdFtsCount = (db.prepare("SELECT COUNT(*) AS c FROM lcd_summaries_fts").get() as { c: number }).c;
+      if (lcdSumCount !== lcdFtsCount) {
+        throw new Error(
+          `[db-oracle check 3b] lcd_summaries_fts desynced: lcd_summaries has ${lcdSumCount} rows, fts has ${lcdFtsCount}`,
+        );
+      }
+    }
+
     // ── Check 4: Row-delta diff ───────────────────────────────────────────────
     if (opts?.expectedDeltas && opts.beforeCounts) {
       for (const delta of opts.expectedDeltas) {
