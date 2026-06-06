@@ -179,7 +179,7 @@ describe("PLAT-02 Stage-B — ${VAR} resolution", () => {
 // ---------------------------------------------------------------------------
 
 describe("PLAT-02 Stage-B — isImmutableConfigPath truth-table", () => {
-  it("security / security.storage / gateway.tls / agents / channels / integrations / providers / tooling / executor ⇒ immutable", () => {
+  it("rejects runtime mutation of security/security.storage/gateway.tls/agents/channels/integrations/providers/tooling/executor (immutable)", () => {
     expect(isImmutableConfigPath("security")).toBe(true);
     // security.storage selects the secret-store backend at boot ⇒ immutable ⇒ requires a restart to change.
     expect(isImmutableConfigPath("security", "storage")).toBe(true);
@@ -198,7 +198,7 @@ describe("PLAT-02 Stage-B — isImmutableConfigPath truth-table", () => {
     expect(isImmutableConfigPath("integrations", "mcp.servers")).toBe(false);
   });
 
-  it("a plainly-mutable path (memory.maxEntries) ⇒ not immutable", () => {
+  it("allows a plainly-mutable path (memory.maxEntries is not immutable)", () => {
     expect(isImmutableConfigPath("memory", "maxEntries")).toBe(false);
   });
 

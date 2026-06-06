@@ -480,24 +480,30 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // security.storage (3 cells)
   // ===========================================================================
   {
+    // PLAT-03: selectSecretStore({mode:"encrypted"}) opens secrets.db with a valid SECRETS_MASTER_KEY and
+    // resolves a canary credential via set+getDecrypted (AES round-trip); no-key ⇒ fail-fast. Deterministic Stage-B.
     dimension: "security.storage",
     modeValue: "encrypted",
-    status: "skipped",
-    reference: "covered in Phase 146 (PLAT) — encrypted credential storage live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/plat/secrets-backends.test.ts",
     phase: "146",
   },
   {
+    // PLAT-03: selectSecretStore({mode:"file"}) resolves a canary credential via set+getDecrypted on the
+    // sync-atomic secrets.json (mode 0o600). Deterministic Stage-B.
     dimension: "security.storage",
     modeValue: "file",
-    status: "skipped",
-    reference: "covered in Phase 146 (PLAT) — file-based credential storage live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/plat/secrets-backends.test.ts",
     phase: "146",
   },
   {
+    // PLAT-03: selectSecretStore({mode:"env"}) resolves a canary credential from the read-only name-scoped
+    // env snapshot (and hides un-declared env). Deterministic Stage-B.
     dimension: "security.storage",
     modeValue: "env",
-    status: "skipped",
-    reference: "covered in Phase 146 (PLAT) — env-var credential storage live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/plat/secrets-backends.test.ts",
     phase: "146",
   },
 

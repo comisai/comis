@@ -204,7 +204,7 @@ describe("PLAT-04 Stage-B — heartbeat ok / alert classification", () => {
     expect(checks[0]!.alertsRaised).toBe(0);
   });
 
-  it("an alert-text source ⇒ alertsRaised>0 + onNotification({level:'alert'|'critical'})", async () => {
+  it("emits alertsRaised>0 + onNotification(level alert|critical) when a source returns alert text", async () => {
     const bus = new TypedEventBus();
     const checks: Array<{ alertsRaised: number }> = [];
     const notes: Array<{ level: string }> = [];
