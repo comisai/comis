@@ -110,6 +110,7 @@ The codebase follows five mandatory engineering principles:
 - Run Phase 140 MCP transport/policy/trust scenarios (MCP-01..03): `pnpm test:live mcp` (requires `COMIS_LIVE=1` for real-OAuth Stage-C; Stage-A structural and Stage-B mock-server tests run without it); covers transport-auth.test.ts, policy-ratelimit.test.ts, trust-sandbox.test.ts
 - Run Phase 140 built-in tool invocation and mode scenarios (TOOL-01..02): `pnpm test:live tools` (requires `COMIS_LIVE=1` for real-LLM Stage-C; Stage-A structural and Stage-B config-driven tests run without it); covers builtin-invoke.test.ts, modes.test.ts
 - Run Phase 141 subagent orchestration scenarios (ORCH-01..04): `pnpm test:live orch` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural and Stage-B config-driven tests run without it); covers dag-pipeline.test.ts, background-reentry.test.ts, routing.test.ts, isolation.test.ts
+- Run Phase 142 media scenarios (MEDIA-01..04): `pnpm test:live media` (Stage-A/B run keyless — ffmpeg-absent text-fallback, STT fallback-chain routing, vision capability routing, and autoMode delivery decisions are deterministic and assert against the real product functions; Stage-C real STT/TTS/vision/image-gen round-trips require `COMIS_LIVE=1` plus the matching provider keys, and ffmpeg for voice format conversion); covers voice-roundtrip.test.ts, fallback-chain.test.ts, vision.test.ts, image-gen.test.ts
 - Clean up integration test artifacts: `pnpm test:cleanup`
 
 ## Tests-First Protocol
