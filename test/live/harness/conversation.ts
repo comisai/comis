@@ -293,6 +293,60 @@ export class ConversationDriver {
     }
   }
 
+  /**
+   * Inject an inbound voice-note NormalizedMessage via the echo adapter (MEDIA-01).
+   *
+   * Use base64-encoded audio bytes; mimeType defaults to "audio/ogg". The message
+   * carries a single audio attachment with isVoiceNote:true so the inbound pipeline's
+   * media handler attempts STT transcription before the agent loop.
+   *
+   * Unlike sendTurn (which uses the agent.execute RPC — text only), this goes
+   * through injectMessage so voice/audio attachments are exercised. Real STT then
+   * requires COMIS_LIVE + provider keys (Stage-C); keyless runs assert pipeline
+   * routing / fallback behavior from the structured logs.
+   *
+   * @param audioBase64 - base64-encoded audio bytes (test payloads only).
+   * @param mimeType - audio MIME type (default "audio/ogg").
+   */
+  async sendVoice(audioBase64: string, mimeType = "audio/ogg"): Promise<void> {
+    const url = `data:${mimeType};base64,${audioBase64}`;
+    await this._requireEcho().injectMessage({
+      id: randomUUID(),
+      channelId: "echo-live",
+      channelType: "echo",
+      senderId: "test-user",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [{ type: "audio" as const, url, mimeType, isVoiceNote: true }],
+      metadata: {},
+    });
+  }
+
+  /**
+   * Inject an inbound image NormalizedMessage via the echo adapter (MEDIA-03).
+   *
+   * Use base64-encoded image bytes; mimeType defaults to "image/jpeg". The message
+   * carries a single image attachment so the inbound pipeline's media handler
+   * attempts vision analysis. Real analysis requires COMIS_LIVE + provider keys
+   * (Stage-C); keyless runs assert capability-routing decisions.
+   *
+   * @param imageBase64 - base64-encoded image bytes (test payloads only).
+   * @param mimeType - image MIME type (default "image/jpeg").
+   */
+  async sendImage(imageBase64: string, mimeType = "image/jpeg"): Promise<void> {
+    const url = `data:${mimeType};base64,${imageBase64}`;
+    await this._requireEcho().injectMessage({
+      id: randomUUID(),
+      channelId: "echo-live",
+      channelType: "echo",
+      senderId: "test-user",
+      text: "",
+      timestamp: Date.now(),
+      attachments: [{ type: "image" as const, url, mimeType }],
+      metadata: {},
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // restart() — stop + re-boot daemon on same dataDir
   // ---------------------------------------------------------------------------
@@ -546,6 +600,15 @@ export class ConversationDriver {
     bus.on("session:sub_agent_spawned",      capture("session:sub_agent_spawned") as Parameters<TypedEventBus["on"]>[1]);
     bus.on("session:sub_agent_completed",    capture("session:sub_agent_completed") as Parameters<TypedEventBus["on"]>[1]);
     bus.on("session:sub_agent_spawn_rejected", capture("session:sub_agent_spawn_rejected") as Parameters<TypedEventBus["on"]>[1]);
+    // Media events (Phase 142) — ONLY the media:* keys that exist in the @comis/core
+    // TypedEventBus EventMap. media:file_extracted / media:file_persisted are the ONLY
+    // media:* events (verified via `grep -rn '"media:' packages/core/src/event-bus/`).
+    // There is NO tts_synthesized / voice_sent / transcription_done / image_analyzed /
+    // image_generated event — bus.on() on those would be a TypeScript compile error.
+    // The Wave-2 media scenarios assert on product-function return values + structured
+    // loggers, NOT on media:* events, so no further event capture is required here.
+    bus.on("media:file_extracted",   capture("media:file_extracted") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("media:file_persisted",   capture("media:file_persisted") as Parameters<TypedEventBus["on"]>[1]);
   }
 
   private _requireHandle(): TestDaemonHandle {
