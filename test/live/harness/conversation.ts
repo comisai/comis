@@ -472,21 +472,23 @@ export class ConversationDriver {
    * pre-constructor value.
    */
   async close(): Promise<void> {
-    if (this._handle) {
-      try {
-        await this._handle.cleanup();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!msg.includes("Daemon exit")) throw err;
+    try {
+      if (this._handle) {
+        try {
+          await this._handle.cleanup();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes("Daemon exit")) throw err;
+        }
+        this._handle = undefined;
       }
-      this._handle = undefined;
-    }
-
-    // Restore COMIS_DATA_DIR to its prior state
-    if (this._hadDataDir && this._priorDataDir !== undefined) {
-      process.env["COMIS_DATA_DIR"] = this._priorDataDir;
-    } else {
-      delete process.env["COMIS_DATA_DIR"];
+    } finally {
+      // Restore COMIS_DATA_DIR unconditionally — must run even on cleanup() error.
+      if (this._hadDataDir && this._priorDataDir !== undefined) {
+        process.env["COMIS_DATA_DIR"] = this._priorDataDir;
+      } else {
+        delete process.env["COMIS_DATA_DIR"];
+      }
     }
   }
 
