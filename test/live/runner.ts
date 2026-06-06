@@ -237,6 +237,10 @@ async function runMain(): Promise<void> {
       console.log("Security/failure scenarios (SEC-01..06): failure-injection, prompt-injection, memory-poisoning, secret-residency, gateway-scopes, sandbox-net");
       console.log("  test/live/scenarios/sec/*.test.ts");
       console.log("  Cost tier: $0 Stage-A/B (fault injectors + per-source wrapExternalContent neutralization + validateMemoryWrite classification + the SECRET-RESIDENCY scan [positive control + redaction-chain + report/ledger] + GatewayTokenSchema scope-disjointness + approval-gate pause/resolve + sandbox-exec exec-confinement — all in-process/keyless/deterministic); Stage-C needs COMIS_LIVE + a real provider/network (real-provider failover under a real 429/5xx, the AgentDojo/ASB injection benchmark, the real-LLM redaction-ON residency sweep, live gateway admin-RPC-denial + rate-limit-429); bwrap + net{open,broker-only} is SKIPPED(no-bwrap/linux-only) on macOS");
+    } else if (args.mode === "plat") {
+      console.log("Platform scenarios (PLAT-01..04): config-system, secrets-backends, scheduler, terminal-driver");
+      console.log("  test/live/scenarios/plat/*.test.ts");
+      console.log("  Cost tier: $0 Stage-B (config-system fail-fast/layering/${VAR}/immutable-keys + config-audit record + the 3 security.storage secrets backends resolving a canary credential + the scheduler cron-fire/auto-suspend/concurrency-cap + execution.jsonl + heartbeat ok/alert mechanics via injectable stubs + the terminal-driver auto-answer/escalate-always/loop-guard/cap arithmetic + config-shape — all in-process/keyless/deterministic, no model); Stage-C needs COMIS_LIVE + a real provider (the real-LLM-turn-from-cron, the live config.patch+restart+rollback over the gateway, the real-boot credential auth); driving a real interactive CLI is SKIPPED(no-bwrap/linux-only) on macOS");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -436,6 +440,20 @@ async function runMain(): Promise<void> {
 
     try {
       execSync(secCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "plat") {
+    // Phase 146: PLATFORM — PLAT-01..04
+    const PLAT_TEST_GLOB = "test/live/scenarios/plat/*.test.ts";
+    const platCmd = [
+      "npx vitest run",
+      `"${PLAT_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(platCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
     } catch {
       testsFailed = true;
     }
