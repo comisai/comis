@@ -223,14 +223,14 @@ describe("MemoryApi", () => {
   // ── count (full match count, ignoring limit/offset) ───────────────
   describe("count", () => {
     it("counts ALL matching entries independent of the inspect page limit", () => {
-      // Default tenant has 9 entries (1 of the 10 seeds is tenant-b). A small
+      // 10 entries are seeded (no tenant filter ⇒ all tenants counted). A small
       // page limit must NOT shrink the count — this is the P4 fix: memory.browse
       // needs the FULL total to drive its pagination, not the page length.
       const page = api.inspect({ limit: 3, offset: 0 });
       expect(page.length).toBe(3);
 
       const total = api.count({ limit: 3, offset: 0 });
-      expect(total).toBe(9);
+      expect(total).toBe(10);
     });
 
     it("applies the same trust/type/tenant filters as inspect", () => {

@@ -78,6 +78,16 @@ export interface MemoryApi {
   /** Inspect memory entries with filtering. */
   inspect(filters?: InspectFilters): MemoryEntry[];
 
+  /**
+   * Count ALL entries matching `filters`, IGNORING `limit` / `offset` — the
+   * unpaginated total for a filtered browse. Applies the same trust/type/
+   * tenant/agent/date filters (and the same expiry exclusion) as `inspect`, and
+   * the same in-JS tag-intersection post-filter when `tags` is set. Callers use
+   * it to drive pagination ("showing 1-25 of TOTAL") so the page length is never
+   * mistaken for the total (the memory.browse Next-button bug).
+   */
+  count(filters?: InspectFilters): number;
+
   /** Search memory using hybrid search (delegates to adapter). */
   search(
     query: string,
@@ -161,6 +171,41 @@ export function createMemoryApi(
       }
 
       return entries;
+    },
+
+    // ── count ───────────────────────────────────────────────────
+
+    count(filters?: InspectFilters): number {
+      const { clause, params } = buildFilterClause({
+        memoryType: filters?.memoryType,
+        trustLevel: filters?.trustLevel,
+        tenantId: filters?.tenantId,
+        agentId: filters?.agentId,
+        createdAfter: filters?.createdAfter,
+        createdBefore: filters?.createdBefore,
+      });
+
+      // Same expiry exclusion as inspect.
+      const expiryCondition = "(expires_at IS NULL OR expires_at > ?)";
+      const fullClause = clause ? `${clause} AND ${expiryCondition}` : `WHERE ${expiryCondition}`;
+      const countParams = [...params, systemNowMs()];
+
+      // Tags are JSON-encoded and intersection-matched in JS (inspect does the
+      // same), so a SQL COUNT cannot express them. When tags are set, count the
+      // tag-filtered rows directly (bounded by the same WHERE so it is the
+      // matching set, not the whole table); otherwise COUNT(*) is exact + cheap.
+      if (filters?.tags && filters.tags.length > 0) {
+        const requiredTags = filters.tags;
+        const sql = `SELECT * FROM memories ${fullClause} ORDER BY created_at DESC`;
+        const parsed = memoryRowMapper.parseRows(db.prepare(sql).all(...countParams));
+        const rows = parsed.ok ? parsed.value : [];
+        return rows
+          .map((row) => rowToEntry(row))
+          .filter((entry) => requiredTags.every((tag) => entry.tags.includes(tag)))
+          .length;
+      }
+
+      return countRows(db, "memories", fullClause, countParams);
     },
 
     // ── search ──────────────────────────────────────────────────
