@@ -205,6 +205,10 @@ async function runMain(): Promise<void> {
       console.log("Context engine scenarios (CTX-01..05): dag-invariants, summarization, expansion, pipeline");
       console.log("  test/live/scenarios/ctx/*.test.ts");
       console.log("  Cost tier: ¢–$ (Stage-A free; Stage-C real LLM; cheapest available model)");
+    } else if (args.mode === "memory") {
+      console.log("Memory scenarios (MEM-01..08): recall-golden, embedding-matrix, recall-lanes, trust-safety, consolidation, cost-features, budget-interaction");
+      console.log("  test/live/scenarios/memory/*.test.ts");
+      console.log("  Cost tier: $0 for Stage-B (local embeddings); Stage-C needs COMIS_LIVE + keys");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -292,6 +296,20 @@ async function runMain(): Promise<void> {
 
     try {
       execSync(ctxCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "memory") {
+    // Phase 139: long-term memory scenarios (MEM-01..08)
+    const MEM_TEST_GLOB = "test/live/scenarios/memory/*.test.ts";
+    const memCmd = [
+      "npx vitest run",
+      `"${MEM_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(memCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
     } catch {
       testsFailed = true;
     }
