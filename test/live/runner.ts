@@ -241,6 +241,10 @@ async function runMain(): Promise<void> {
       console.log("Platform scenarios (PLAT-01..04): config-system, secrets-backends, scheduler, terminal-driver");
       console.log("  test/live/scenarios/plat/*.test.ts");
       console.log("  Cost tier: $0 Stage-B (config-system fail-fast/layering/${VAR}/immutable-keys + config-audit record + the 3 security.storage secrets backends resolving a canary credential + the scheduler cron-fire/auto-suspend/concurrency-cap + execution.jsonl + heartbeat ok/alert mechanics via injectable stubs + the terminal-driver auto-answer/escalate-always/loop-guard/cap arithmetic + config-shape — all in-process/keyless/deterministic, no model); Stage-C needs COMIS_LIVE + a real provider (the real-LLM-turn-from-cron, the live config.patch+restart+rollback over the gateway, the real-boot credential auth); driving a real interactive CLI is SKIPPED(no-bwrap/linux-only) on macOS");
+    } else if (args.mode === "journeys") {
+      console.log("E2E journey scenarios (E2E-01..05): user-story library + generic journey-runner");
+      console.log("  test/live/journeys/*.test.ts");
+      console.log("  Cost tier: $0 Stage-A/B (zod UserStory schema + self-registering STORY_LIBRARY + the open/closed zero-harness-change extensibility test + the generic journey-runner interpreting a story on echo+mock + requires→skip gating + coverage auto-wiring + the 8 seed-story shapes US-01..08 — all in-process/keyless/deterministic, no model); Stage-C/D needs COMIS_LIVE + a real provider + the component Stage-C certs (136–146) for the real-LLM multi-turn journey execution (goal-achieved + judged task-success + one stitched traceId + obs.billing, N-run pass-rate × model grid); J7 terminal-driven is SKIPPED(no-bwrap/linux-only) on macOS");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -454,6 +458,20 @@ async function runMain(): Promise<void> {
 
     try {
       execSync(platCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "journeys") {
+    // Phase 147: E2E — user-story library + generic journey-runner (E2E-01..05)
+    const JOURNEYS_TEST_GLOB = "test/live/journeys/*.test.ts";
+    const journeysCmd = [
+      "npx vitest run",
+      `"${JOURNEYS_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(journeysCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
     } catch {
       testsFailed = true;
     }

@@ -51,6 +51,16 @@ describe("parseArgs", () => {
     expect(result).toEqual({ dry: false, mode: "plat", profile: undefined });
   });
 
+  it("parseArgs(['journeys']) → { dry: false, mode: 'journeys', profile: undefined }", () => {
+    const result = parseArgs(["journeys"]);
+    expect(result).toEqual({ dry: false, mode: "journeys", profile: undefined });
+  });
+
+  it("parseArgs(['journeys', '--dry']) → { dry: true, mode: 'journeys', profile: undefined }", () => {
+    const result = parseArgs(["journeys", "--dry"]);
+    expect(result).toEqual({ dry: true, mode: "journeys", profile: undefined });
+  });
+
   // WR-02: --profile flag parsing
   it("returns profile:'lean-cloud' and mode:'all' when given ['--profile','lean-cloud']", () => {
     const result = parseArgs(["--profile", "lean-cloud"]);
