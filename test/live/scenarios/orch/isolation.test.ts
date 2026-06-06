@@ -129,27 +129,58 @@ describe("ORCH-04 Stage-B — per-agent isolation (daemon + 2 agents, no LLM)", 
     expect(events.length).toBeGreaterThan(0);
   });
 
-  it("agent-b session-index namespace does not contain agent-a session rows", () => {
-    // session-index files are namespaced by agentId prefix:
-    // <agentId>-<sessionKey>.jsonl or similar naming convention.
-    // agent-b files must not contain agent-a's sessions (cross-namespace leakage).
+  it("agent-b session-index namespace does not contain agent-a session rows", async () => {
+    // Also send a turn addressed to agent-b so the namespace is populated before asserting.
+    // The daemon routes via defaultAgentId (agent-a), so we send a second turn directly to
+    // agent-a — agent-b's namespace should remain empty, confirming cross-agent isolation.
+    // Both turns fail on dummy keys; we only need them processed by the daemon.
+    try {
+      await driver.sendTurn("hello from agent-b perspective");
+    } catch {
+      // expected: LLM fails on dummy keys
+    }
+
+    // session-index files are written to <dataDir>/logs/session-index.YYYY-MM-DD.jsonl
+    // (confirmed in packages/observability/src/session-index/append.ts line 63).
     const dataDir = driver.getDataDir();
-    const sessionIndexDir = join(dataDir, "session-index");
-    if (!existsSync(sessionIndexDir)) {
-      // No session-index yet — isolation holds trivially (no data to leak)
-      return;
+    const logsDir = join(dataDir, "logs");
+    if (!existsSync(logsDir)) {
+      // logs/ dir absent — the agent-a turn in the prior test must have produced data;
+      // if not, the daemon did not process it at all, which is itself a failure.
+      throw new Error(
+        "isolation check: logs/ dir absent after agent-a turn — daemon did not produce session-index data",
+      );
     }
-    const files = readdirSync(sessionIndexDir);
-    // Files starting with "agent-b" must not reference "agent-a" in their name
-    const agentBFiles = files.filter((f) => f.startsWith("agent-b"));
-    for (const f of agentBFiles) {
-      expect(f).not.toMatch(/agent-a/);
+    const files = readdirSync(logsDir).filter((f) => f.startsWith("session-index."));
+    // Read all session-index entries and verify agentId-level scoping:
+    // agent-a rows must have agentId="agent-a"; there must be NO rows with agentId="agent-b"
+    // since we never sent a turn directly to agent-b (all turns resolve to agent-a via defaultAgentId).
+    let agentARows = 0;
+    let agentBRows = 0;
+    for (const fname of files) {
+      const fpath = join(logsDir, fname);
+      const lines = readFileSync(fpath, "utf-8").split("\n").filter(Boolean);
+      for (const line of lines) {
+        try {
+          const rec = JSON.parse(line) as Record<string, unknown>;
+          const aid = rec["agentId"] as string | undefined;
+          if (aid === "agent-a") agentARows++;
+          if (aid === "agent-b") agentBRows++;
+        } catch {
+          // malformed line — skip
+        }
+      }
     }
-    // Files starting with "agent-a" must not reference "agent-b" in their name
-    const agentAFiles = files.filter((f) => f.startsWith("agent-a"));
-    for (const f of agentAFiles) {
-      expect(f).not.toMatch(/agent-b/);
-    }
+    // At least one agent-a row should exist (the turn was processed)
+    expect(
+      agentARows,
+      "expected at least one session-index row for agent-a after sending a turn",
+    ).toBeGreaterThan(0);
+    // No agent-b rows should exist (cross-namespace isolation holds)
+    expect(
+      agentBRows,
+      `cross-agent namespace leakage: found ${agentBRows} agent-b session-index rows — agent-a's turn must not write to agent-b's namespace`,
+    ).toBe(0);
   });
 
   it("obs.billing.byAgent returns a response for agent-a (admin trust via authToken)", async () => {
@@ -195,16 +226,13 @@ describe("ORCH-04 Stage-B — per-agent isolation (daemon + 2 agents, no LLM)", 
     }
   });
 
-  it("elevatedReply config accepted by daemon — init() with senderTrustMap does not throw", async () => {
-    // Structural: build a config with elevatedReply enabled + senderTrustMap and
-    // verify the daemon accepts it at boot time (init() completes without throwing).
-    // This is a config-acceptance assertion, not a live routing test (Stage-C).
-    // The driver is already booted — we assert init() already succeeded, which means
-    // the base config (without elevatedReply) is accepted. The elevatedReply config
-    // acceptance is validated structurally: buildOrchConfig produces valid YAML and
-    // ConversationDriver's init() does not throw on it.
-    // (The elevatedReply feature is in agent config — not routing config — so we assert
-    // that the daemon is alive and responding, which confirms config was parsed.)
+  it("daemon is alive after all isolation assertions (structural liveness check)", async () => {
+    // Confirm the daemon is still responding after the session-index and billing assertions.
+    // NOTE: elevatedReply trust routing is a Stage-C concern — it requires a real LLM turn
+    // with a trusted sender to produce an observable trustLevel on the reply. This Stage-B
+    // test does NOT assert elevatedReply behavior; the elevatedReply.trustRouting coverage
+    // cell is correctly marked skipped in coverage-matrix.ts until a substantive Stage-C
+    // assertion is implemented.
     expect(driver.getHandle().gatewayUrl).toMatch(/^http:\/\//);
     expect(driver.getHandle().authToken).toBeTruthy();
   });

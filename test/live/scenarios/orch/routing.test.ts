@@ -93,9 +93,10 @@ describe("ORCH-03 Stage-A — routing specificity resolveAgent() (pure function,
 
 describe("ORCH-03 Stage-B — daemon routing via ConversationDriver (no LLM)", () => {
   let driver: ConversationDriver;
+  let orchConfigPath: string;
 
   beforeAll(async () => {
-    const configPath = buildOrchConfig({
+    orchConfigPath = buildOrchConfig({
       agents: [{ id: "default" }, { id: "agent-b" }],
       defaultAgentId: "default",
       bindings: [
@@ -104,7 +105,7 @@ describe("ORCH-03 Stage-B — daemon routing via ConversationDriver (no LLM)", (
       ],
       label: "routing-stage-b",
     });
-    driver = new ConversationDriver({ configPath });
+    driver = new ConversationDriver({ configPath: orchConfigPath });
     await driver.init();
   }, DAEMON_STARTUP_MS + 30_000);
 
@@ -115,6 +116,10 @@ describe("ORCH-03 Stage-B — daemon routing via ConversationDriver (no LLM)", (
       const m = err instanceof Error ? err.message : String(err);
       if (!m.includes("Daemon exit")) throw err;
     }
+    // Clean up the temp config file written by buildOrchConfig (consistent with
+    // isolation.test.ts and background-reentry.test.ts — IN-01 fix).
+    const { rmSync } = await import("node:fs");
+    rmSync(orchConfigPath, { force: true });
   });
 
   afterEach(async () => {
@@ -144,13 +149,16 @@ describe("ORCH-03 Stage-B — daemon routing via ConversationDriver (no LLM)", (
     // confirming the routing config was parsed and the daemon is live.
     try {
       await driver.sendTurn("ping");
-    } catch {
-      // expected: LLM call fails on dummy keys — that is normal Stage-B behavior
+    } catch (err) {
+      // expected: LLM call fails on dummy keys — confirm it is an LLM/RPC error,
+      // not a routing crash or daemon startup failure (IN-02 fix).
+      const msg = err instanceof Error ? err.message : String(err);
+      expect(msg).toMatch(/RPC error|provider|LLM|authentication|401|JSON-RPC/i);
     }
-    // Daemon is still alive; capturedEvents reflects at least one event (session
-    // start or error). The real assertion: init() completed with multi-agent config.
+    // The turn was processed by the daemon (routing accepted + event bus fired).
+    // At least one event must be emitted (session start, route-resolution, or error event).
     const events = driver.capturedEvents();
-    expect(events.length).toBeGreaterThanOrEqual(0);
+    expect(events.length).toBeGreaterThan(0);
     // Double-check daemon is still responding after the failed turn attempt
     expect(driver.getHandle().gatewayUrl).toMatch(/^http:\/\//);
   });
