@@ -141,24 +141,30 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // embedding.provider (3 cells)
   // ===========================================================================
   {
+    // WR-02: no test exercises provider="auto" at all — LOCAL_MATRIX only has
+    // provider="local" entries; no EMBEDDING_MATRIX row ever uses provider="auto"
     dimension: "embedding.provider",
     modeValue: "auto",
-    status: "covered",
-    reference: "test/live/scenarios/memory/embedding-matrix.test.ts",
+    status: "skipped",
+    reference: "covered in Phase 139 (MEM) — auto provider falls back to local; add explicit auto matrix entry",
     phase: "139",
   },
   {
+    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "embedding.provider",
     modeValue: "local",
-    status: "covered",
-    reference: "test/live/scenarios/memory/embedding-matrix.test.ts",
+    status: "skipped",
+    reference: "Stage-B live: test/live/scenarios/memory/embedding-matrix.test.ts — requires COMIS_LIVE=1 + local model",
     phase: "139",
   },
   {
+    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive || !hasOpenAiKey) Stage-C
+    // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + OPENAI_API_KEY
     dimension: "embedding.provider",
     modeValue: "openai",
-    status: "covered",
-    reference: "test/live/scenarios/memory/embedding-matrix.test.ts",
+    status: "skipped",
+    reference: "Stage-C live: test/live/scenarios/memory/embedding-matrix.test.ts — requires COMIS_LIVE=1 + OPENAI_API_KEY",
     phase: "139",
   },
 
@@ -166,10 +172,12 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // local.gpu (5 cells)
   // ===========================================================================
   {
+    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "local.gpu",
     modeValue: "auto",
-    status: "covered",
-    reference: "test/live/scenarios/memory/embedding-matrix.test.ts",
+    status: "skipped",
+    reference: "Stage-B live: test/live/scenarios/memory/embedding-matrix.test.ts — requires COMIS_LIVE=1 + local model",
     phase: "139",
   },
   {
@@ -194,10 +202,12 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "139",
   },
   {
+    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "local.gpu",
     modeValue: "false",
-    status: "covered",
-    reference: "test/live/scenarios/memory/embedding-matrix.test.ts",
+    status: "skipped",
+    reference: "Stage-B live: test/live/scenarios/memory/embedding-matrix.test.ts — requires COMIS_LIVE=1 + local model",
     phase: "139",
   },
 
@@ -205,24 +215,30 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // embeddingDimensions (3 cells)
   // ===========================================================================
   {
+    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "embeddingDimensions",
     modeValue: "768",
-    status: "covered",
-    reference: "test/live/scenarios/memory/embedding-matrix.test.ts",
+    status: "skipped",
+    reference: "Stage-B live: test/live/scenarios/memory/embedding-matrix.test.ts — requires COMIS_LIVE=1 + local model",
     phase: "139",
   },
   {
+    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "embeddingDimensions",
     modeValue: "1536",
-    status: "covered",
-    reference: "test/live/scenarios/memory/embedding-matrix.test.ts",
+    status: "skipped",
+    reference: "Stage-B live: test/live/scenarios/memory/embedding-matrix.test.ts — requires COMIS_LIVE=1 + local model",
     phase: "139",
   },
   {
+    // WR-01: embedding-matrix.test.ts is behind describe.skipIf(!isLive) Stage-B
+    // — never runs in CI/sandbox; only runs with COMIS_LIVE=1 + local model
     dimension: "embeddingDimensions",
     modeValue: "3072",
-    status: "covered",
-    reference: "test/live/scenarios/memory/embedding-matrix.test.ts",
+    status: "skipped",
+    reference: "Stage-B live: test/live/scenarios/memory/embedding-matrix.test.ts — requires COMIS_LIVE=1 + local model",
     phase: "139",
   },
 
@@ -230,10 +246,13 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // memory.costFeatures.enabled (2 cells)
   // ===========================================================================
   {
+    // WR-01: cost-features.test.ts only does a Stage-A YAML structural check for
+    // costFeatures.enabled=true — no live daemon test exercises this path.
+    // The Stage-B daemon test is behind describe.skipIf(!isLive).
     dimension: "memory.costFeatures.enabled",
     modeValue: "true",
-    status: "covered",
-    reference: "test/live/scenarios/memory/cost-features.test.ts",
+    status: "skipped",
+    reference: "Stage-B live: test/live/scenarios/memory/cost-features.test.ts — requires COMIS_LIVE=1",
     phase: "139",
   },
   {
@@ -378,46 +397,58 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "139",
   },
   {
+    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.forget —
+    // buildMemConfig lanes array does not include "forget"; this cell was never exercised.
     dimension: "rag.forget.enabled",
     modeValue: "true",
-    status: "covered",
-    reference: "test/live/scenarios/memory/recall-lanes.test.ts",
-    phase: "139",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — rag.forget live-fire test",
+    phase: "140",
   },
   {
+    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.forget —
+    // buildMemConfig lanes array does not include "forget"; this cell was never exercised.
     dimension: "rag.forget.enabled",
     modeValue: "false",
-    status: "covered",
-    reference: "test/live/scenarios/memory/recall-lanes.test.ts",
-    phase: "139",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — rag.forget live-fire test",
+    phase: "140",
   },
   {
+    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.feedback —
+    // buildMemConfig lanes array does not include "feedback"; this cell was never exercised.
     dimension: "rag.feedback.enabled",
     modeValue: "true",
-    status: "covered",
-    reference: "test/live/scenarios/memory/recall-lanes.test.ts",
-    phase: "139",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — rag.feedback live-fire test",
+    phase: "140",
   },
   {
+    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.feedback —
+    // buildMemConfig lanes array does not include "feedback"; this cell was never exercised.
     dimension: "rag.feedback.enabled",
     modeValue: "false",
-    status: "covered",
-    reference: "test/live/scenarios/memory/recall-lanes.test.ts",
-    phase: "139",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — rag.feedback live-fire test",
+    phase: "140",
   },
   {
+    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.onlineTuning —
+    // buildMemConfig lanes array does not include "onlineTuning"; this cell was never exercised.
     dimension: "rag.onlineTuning.enabled",
     modeValue: "true",
-    status: "covered",
-    reference: "test/live/scenarios/memory/recall-lanes.test.ts",
-    phase: "139",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — rag.onlineTuning live-fire test",
+    phase: "140",
   },
   {
+    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.onlineTuning —
+    // buildMemConfig lanes array does not include "onlineTuning"; this cell was never exercised.
     dimension: "rag.onlineTuning.enabled",
     modeValue: "false",
-    status: "covered",
-    reference: "test/live/scenarios/memory/recall-lanes.test.ts",
-    phase: "139",
+    status: "skipped",
+    reference: "covered in Phase 140 (TOOL+MCP) — rag.onlineTuning live-fire test",
+    phase: "140",
   },
   {
     dimension: "rag.includeTrustLevels",
@@ -427,11 +458,13 @@ export const coverageMatrix: readonly CoverageCell[] = [
     phase: "139",
   },
   {
+    // WR-01: trust-safety.test.ts only sets includeTrustLevels: true (lines 133, 172);
+    // includeTrustLevels=false is never configured in any test in the suite.
     dimension: "rag.includeTrustLevels",
     modeValue: "false",
-    status: "covered",
-    reference: "test/live/scenarios/memory/trust-safety.test.ts",
-    phase: "139",
+    status: "skipped",
+    reference: "not exercised — deferred to Phase 140 (TOOL+MCP) — rag.includeTrustLevels=false live-fire test",
+    phase: "140",
   },
 
   // ===========================================================================
