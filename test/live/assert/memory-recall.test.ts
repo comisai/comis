@@ -26,14 +26,14 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("inline recallAtK proof", () => {
-  it("recallAtK([a,b,c,d,e], [a,b], 3) === 1.0 (both relevant in top-3)", () => {
+  it("returns 1.0 when both relevant ids appear in top-3 of 5 (recallAtK inlined, not from @comis/agent)", () => {
     const result = recallAtK(["a", "b", "c", "d", "e"], ["a", "b"], 3);
     expect(result).toBe(1.0);
   });
 });
 
 describe("inline meanReciprocalRank proof", () => {
-  it("meanReciprocalRank([[x,a,b]], [[a]]) ≈ 0.5 (first relevant at rank 2)", () => {
+  it("returns 0.5 when first-relevant is at rank 2 (meanReciprocalRank inlined, not from @comis/agent)", () => {
     const result = meanReciprocalRank([["x", "a", "b"]], [["a"]]);
     expect(result).toBeCloseTo(0.5);
   });
