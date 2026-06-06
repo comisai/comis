@@ -219,6 +219,37 @@ describe("IcMemoryInspector", () => {
     expect(browseMemory.mock.calls.length).toBe(callsBefore + 1);
   });
 
+  it("renders exactly one pager in browse mode (no duplicate from the inner table) (P5)", async () => {
+    const page = Array.from({ length: 25 }, (_, i) => ({
+      id: `m-${i}`,
+      content: `entry ${i}`,
+      trustLevel: "learned",
+      tags: [],
+      agentId: "default",
+      createdAt: Date.now(),
+    }));
+    const browseMemory = vi.fn().mockResolvedValue({ entries: page, total: 383 });
+    const el = await createElement();
+    el.apiClient = createMockApiClient({ browseMemory } as Partial<ApiClient>);
+    await (el as any).updateComplete;
+
+    priv(el)._handleModeChange("browse");
+    await (el as any).updateComplete;
+    await priv(el)._browse();
+    await (el as any).updateComplete;
+
+    // The view renders its own server-side pager (browse-controls) exactly once.
+    expect(el.shadowRoot?.querySelectorAll(".browse-controls").length).toBe(1);
+
+    // The inner memory table must have its built-in pager suppressed so the two
+    // pagers no longer stack — assert both the forwarded flag AND that the
+    // nested data-table renders no .pagination footer.
+    const memTable = el.shadowRoot?.querySelector("ic-memory-table") as HTMLElement & { hidePagination: boolean };
+    expect(memTable.hidePagination).toBe(true);
+    const innerTable = memTable.shadowRoot?.querySelector("ic-data-table");
+    expect(innerTable?.shadowRoot?.querySelector(".pagination")).toBeNull();
+  });
+
   it("filter checkboxes for memory type are rendered (4 types)", async () => {
     const el = await createElement();
     const filterGroups = el.shadowRoot?.querySelectorAll(".filter-group");

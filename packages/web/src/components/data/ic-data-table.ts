@@ -235,6 +235,15 @@ export class IcDataTable extends LitElement {
   /** Rows per page */
   @property({ type: Number }) pageSize = 25;
 
+  /**
+   * Suppress the built-in pagination footer. Set when a parent owns paging
+   * (e.g. the memory inspector's browse mode renders its own server-side pager),
+   * so the table does not render a SECOND, redundant pager. Default false — every
+   * other consumer keeps the built-in pager. The page clamp + slicing still run;
+   * only the footer controls are hidden.
+   */
+  @property({ type: Boolean }) hidePagination = false;
+
   /** Show row selection checkboxes */
   @property({ type: Boolean }) selectable = false;
 
@@ -572,6 +581,9 @@ export class IcDataTable extends LitElement {
             )}
           </div>
         </div>
+        ${this.hidePagination
+          ? nothing
+          : html`
         <div class="pagination">
           <span class="pagination-info">${start}-${end} of ${this.rows.length}</span>
           <div class="pagination-controls">
@@ -593,6 +605,7 @@ export class IcDataTable extends LitElement {
             </button>
           </div>
         </div>
+          `}
       </div>
     `;
   }
