@@ -92,12 +92,37 @@ describe("sweepSecrets", () => {
     }
   });
 
-  it("Test 6: sweepSecrets does NOT throw on 'apiToken' (not bare apiKey pattern)", () => {
+  it("Test 6: sweepSecrets does NOT throw on 'apiToken' (not apiKey pattern)", () => {
     const dir = join(TEST_TMP_BASE, "apitoken-test-" + Date.now());
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "output.txt"), "apiToken: some-value\napiTokenValue: xyz");
     try {
       expect(() => sweepSecrets(dir)).not.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("Test 7: sweepSecrets does NOT throw on bare 'apiKey' as a variable name (IN-01 fix)", () => {
+    // A TypeScript source file with `const apiKey = process.env[...]` should NOT
+    // trigger the pattern — only key-value assignments like apiKey: "realvalue" do.
+    const dir = join(TEST_TMP_BASE, "apikey-var-test-" + Date.now());
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "source.ts"), 'const apiKey = process.env["COMIS_LIVE_JUDGE_API_KEY"];\nif (!apiKey) return;');
+    try {
+      expect(() => sweepSecrets(dir)).not.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("Test 8: sweepSecrets DOES throw on 'apiKey: \"realvalue\"' (credential assignment shape)", () => {
+    // A YAML config snippet with a real-looking apiKey value must be flagged.
+    const dir = join(TEST_TMP_BASE, "apikey-val-test-" + Date.now());
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "output.yaml"), 'apiKey: "sk-ant-api03-AAAA"');
+    try {
+      expect(() => sweepSecrets(dir)).toThrow("SECRET LEAK");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

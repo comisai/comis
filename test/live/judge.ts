@@ -9,7 +9,7 @@
  *
  * sweepSecrets: replicates bench-memory.sh sweep_dir in TypeScript.
  * Scans all files under dirPath for credential shapes:
- *   sk-[A-Za-z0-9_-]{16,} | Bearer [A-Za-z0-9._-]+ | \bapiKey\b
+ *   sk-[A-Za-z0-9_-]{16,} | Bearer [A-Za-z0-9._-]+ | apiKey<sep><quoted-value>
  * Throws on any match (belt-and-suspenders over in-test omission gates).
  *
  * T-139-01-01: sweep throws with path only — matched content is NEVER included
@@ -18,7 +18,7 @@
  *
  * @module
  */
-import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
+import { readdirSync, readFileSync, lstatSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { computePassRate } from "./stats.js";
 import type { PassRateTier } from "./stats.js";
@@ -46,9 +46,14 @@ export interface JudgeInput {
 
 // ---------------------------------------------------------------------------
 // Secret pattern (mirrors bench-memory.sh sweep_dir line 123)
-// \bapiKey\b — word-boundary so "apiToken" / "apiKeyValue" do NOT match
+// IN-01 fix: \bapiKey\b matched variable names (false positive). Replaced with
+// a value-requiring pattern: apiKey["':= ]+"<value>". This matches YAML/JSON
+// credential assignments (apiKey: "sk-...", "apiKey": "realvalue") but NOT
+// bare identifiers or declarations like `const apiKey = ...`.
+// Mirrors the Phase-134 cost.ts fix for the same hazard.
 // ---------------------------------------------------------------------------
-const SECRET_PATTERN = /sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|\bapiKey\b/;
+const SECRET_PATTERN =
+  /sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|(?:"apiKey"|apiKey)\s*[=:]\s*["'][^"']{4,}/;
 
 // ---------------------------------------------------------------------------
 // judgeAnswer
@@ -98,9 +103,11 @@ export async function judgeAnswer(_input: JudgeInput): Promise<JudgeResult> {
  * Scan all files under dirPath for credential shapes.
  *
  * Credential patterns (mirrors bench-memory.sh sweep_dir):
- *   sk-[A-Za-z0-9_-]{16,}   — Anthropic/OpenAI-style API keys
- *   Bearer [A-Za-z0-9._-]+  — HTTP Bearer tokens
- *   \bapiKey\b               — literal "apiKey" word (NOT "apiToken", "apiKeyValue")
+ *   sk-[A-Za-z0-9_-]{16,}             — Anthropic/OpenAI-style API keys
+ *   Bearer [A-Za-z0-9._-]+            — HTTP Bearer tokens
+ *   apiKey["':= ]+"<value>{4,}"       — YAML/JSON apiKey key-value assignments
+ *                                        (matches apiKey: "realvalue" but NOT
+ *                                        bare `const apiKey = ...` identifiers)
  *
  * T-139-01-01: Throws with the FILE PATH only — matched content is never
  * included in the error message (Information Disclosure mitigation).
@@ -118,11 +125,16 @@ export function sweepSecrets(dirPath: string): void {
 function _sweepDir(dir: string): void {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
-    const st = statSync(full);
+    // WR-05 fix: use lstatSync (does NOT follow symlinks) to avoid infinite
+    // recursion on symlinks-to-parents. Then filter by isFile() before reading
+    // to skip sockets, FIFOs, device nodes, and symlinks — readFileSync on a
+    // socket or FIFO hangs indefinitely, blocking the entire test process.
+    const st = lstatSync(full);
     if (st.isDirectory()) {
       _sweepDir(full);
       continue;
     }
+    if (!st.isFile()) continue; // skip sockets, FIFOs, device nodes, symlinks
     const text = readFileSync(full, "utf-8");
     if (SECRET_PATTERN.test(text)) {
       // T-139-01-01: include path only — never the matched content
