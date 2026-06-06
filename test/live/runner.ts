@@ -221,6 +221,10 @@ async function runMain(): Promise<void> {
       console.log("ORCH scenarios (ORCH-01..04): dag-pipeline, background-reentry, routing, isolation");
       console.log("  test/live/scenarios/orch/*.test.ts");
       console.log("  Cost tier: $0 Stage-B (deterministic/config-driven, no model); Stage-C real LLM + COMIS_LIVE");
+    } else if (args.mode === "media") {
+      console.log("Media scenarios (MEDIA-01..04): voice-roundtrip, fallback-chain, vision, image-gen");
+      console.log("  test/live/scenarios/media/*.test.ts");
+      console.log("  Cost tier: $0 Stage-A/B (ffmpeg-absent text-fallback / STT fallback-chain routing / vision capability-routing / autoMode delivery — all keyless/deterministic); Stage-C needs COMIS_LIVE + STT/TTS/vision/image-gen keys (+ ffmpeg for voice conversion)");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -364,6 +368,20 @@ async function runMain(): Promise<void> {
 
     try {
       execSync(orchCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "media") {
+    // Phase 142: MEDIA — voice round-trip, fallback chain, vision, image-gen (MEDIA-01..04)
+    const MEDIA_TEST_GLOB = "test/live/scenarios/media/*.test.ts";
+    const mediaCmd = [
+      "npx vitest run",
+      `"${MEDIA_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(mediaCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
     } catch {
       testsFailed = true;
     }
