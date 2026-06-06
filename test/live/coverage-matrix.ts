@@ -1104,14 +1104,16 @@ export const coverageMatrix: readonly CoverageCell[] = [
     dimension: "modelFailover",
     modeValue: "true",
     status: "skipped",
-    reference: "covered in Phase 145 (SEC) — model failover enabled live-fire test",
+    reference:
+      "SEC-01: test/live/scenarios/sec/failure-injection.test.ts exercises the failover-ENABLED degradation path (injected 429/timeout/5xx/malformed → classifyError graceful category + safe message) deterministically; the LIVE failover-vs-real-429 rotation + circuit-breaker open/half-open is Stage-C/no-creds (needs a real provider)",
     phase: "145",
   },
   {
     dimension: "modelFailover",
     modeValue: "false",
     status: "skipped",
-    reference: "covered in Phase 145 (SEC) — model failover disabled live-fire test",
+    reference:
+      "SEC-01: test/live/scenarios/sec/failure-injection.test.ts covers the failover-DISABLED degradation path deterministically (a non-retryable fault classifies as client_request); the LIVE no-failover-on-real-429 behavior is Stage-C/no-creds (needs a real provider)",
     phase: "145",
   },
 
