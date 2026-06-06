@@ -431,6 +431,30 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(warnArg).toBeDefined();
   });
 
+  it("rerank fallback (dependency): the WARN carries the underlying reranker err so the outage is diagnosable (§2.7)", async () => {
+    // A memory-pressured host surfaced this: the reranker returns an err Result
+    // (not a timeout) and the fallback WARN logged only errorKind+hint, DROPPING
+    // the underlying cause — so a real reranker outage is undiagnosable from logs.
+    const input = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.6 })];
+    const warn = vi.fn();
+    const logger = { ...noopLogger, warn } as unknown as ComisLogger;
+    const { port } = mockReranker({ rank: async () => err(new Error("reranker boom")) });
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger },
+      baseConfig({
+        rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
+      }),
+    );
+    const got = await recall.recall("q", SESSION_KEY);
+    expect(got.ok).toBe(true); // recall still returns (graceful fusion fallback)
+    const warnArg = warn.mock.calls.find((c) => (c[0] as { errorKind?: string })?.errorKind === "dependency");
+    expect(warnArg).toBeDefined();
+    const loggedErr = (warnArg![0] as { err?: unknown }).err;
+    expect(loggedErr).toBeDefined(); // RED pre-fix: the dependency branch dropped scored.error
+    expect(String((loggedErr as Error)?.message ?? loggedErr)).toContain("reranker boom");
+  });
+
   it("trust tie-break: at EQUAL reranked relevance, system outranks learned/external", async () => {
     const input = [
       makeResult("learned", { trustLevel: "learned", base: 0.5 }),
