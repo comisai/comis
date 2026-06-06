@@ -248,3 +248,113 @@ describe("runDbOracle — row delta: expected +1 but got 0 throws", () => {
     ).rejects.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Check 3c: memory_fts ↔ memories(has_embedding=1) sync
+// ---------------------------------------------------------------------------
+
+/** Shared DDL for memories table used in check 3c tests. */
+const MEMORIES_DDL = `
+  CREATE TABLE memories (
+    id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    trust_level TEXT NOT NULL,
+    memory_type TEXT NOT NULL,
+    source_who TEXT NOT NULL,
+    source_channel TEXT,
+    source_session_key TEXT,
+    tags TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL,
+    occurred_at INTEGER,
+    proof_count INTEGER,
+    source_ids TEXT,
+    consolidated_at INTEGER,
+    confidence REAL,
+    history TEXT,
+    observation_kind TEXT,
+    pattern_type TEXT,
+    lifecycle_demoted_at INTEGER,
+    evicted_at INTEGER,
+    strength REAL,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER,
+    expires_at INTEGER,
+    has_embedding INTEGER NOT NULL DEFAULT 0
+  )
+`;
+
+describe("runDbOracle — check 3c: memory_fts absent → passes (no check run)", () => {
+  it("resolves when memory_fts table does not exist (LCD-only DB)", async () => {
+    // Only memories table, no memory_fts → check 3c guard skips silently
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+      db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("mem-10", "tenant-1", "agent-1", "user-1", "LCD-only", "high", "episodic", "user", "[]", Date.now(), 1);
+    });
+    await expect(runDbOracle(dbPath)).resolves.toBeUndefined();
+  });
+});
+
+describe("runDbOracle — check 3c: memories absent → passes (no check run)", () => {
+  it("resolves when memories table does not exist (FTS-only anomaly DB)", async () => {
+    // No memories table, only memory_fts → check 3c guard skips silently
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(`CREATE VIRTUAL TABLE memory_fts USING fts5(content, content="memories", content_rowid="rowid")`);
+    });
+    await expect(runDbOracle(dbPath)).resolves.toBeUndefined();
+  });
+});
+
+describe("runDbOracle — check 3c: in-sync counts → passes", () => {
+  it("resolves when memories(has_embedding=1) count equals memory_fts count", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+      // Insert 2 rows: 1 with has_embedding=1, 1 with has_embedding=0
+      db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("mem-11", "tenant-1", "agent-1", "user-1", "embedded", "high", "episodic", "user", "[]", Date.now(), 1);
+      db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("mem-12", "tenant-1", "agent-1", "user-1", "not-embedded", "high", "episodic", "user", "[]", Date.now(), 0);
+
+      // memory_fts with 1 row (matches has_embedding=1 count)
+      db.exec(`CREATE VIRTUAL TABLE memory_fts USING fts5(content, content="memories", content_rowid="rowid")`);
+      db.prepare(`INSERT INTO memory_fts(rowid, content) VALUES (?, ?)`).run(1, "embedded");
+    });
+    await expect(runDbOracle(dbPath)).resolves.toBeUndefined();
+  });
+});
+
+describe("runDbOracle — check 3c: desynced counts → throws with check 3c message", () => {
+  it("throws '[db-oracle check 3c] memory_fts desynced' when counts differ", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+      // 2 rows with has_embedding=1 but memory_fts has only 1 row → desynced
+      db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("mem-13", "tenant-1", "agent-1", "user-1", "first", "high", "episodic", "user", "[]", Date.now(), 1);
+      db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("mem-14", "tenant-1", "agent-1", "user-1", "second", "high", "episodic", "user", "[]", Date.now(), 1);
+
+      // memory_fts with only 1 row (desynced — should be 2)
+      db.exec(`CREATE VIRTUAL TABLE memory_fts USING fts5(content, content="memories", content_rowid="rowid")`);
+      db.prepare(`INSERT INTO memory_fts(rowid, content) VALUES (?, ?)`).run(1, "first");
+    });
+    await expect(runDbOracle(dbPath)).rejects.toThrow("[db-oracle check 3c]");
+  });
+});
