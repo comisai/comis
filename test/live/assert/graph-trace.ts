@@ -128,16 +128,21 @@ function nodeUpdatedEvents(events: CapturedEvent[]): NodeUpdatedPayload[] {
  * startOrder array. For each consecutive pair in orderedNodeIds, verifies
  * that pair[0] appears before pair[1] in startOrder.
  *
- * @param events        - Array of captured EventBus events ({name, payload}).
+ * @param events         - Array of captured EventBus events ({name, payload}).
  * @param orderedNodeIds - Expected topological order (e.g. ["A", "B", "C"]).
+ * @param graphId        - Optional graphId to scope events; when provided, only
+ *                         events where payload.graphId === graphId are considered.
+ *                         When omitted, all graph:node_updated events are used.
+ *                         Prevents cross-graph pollution in multi-graph scenarios (WR-05).
  * @throws Error when any node starts before its declared predecessor.
  */
 export function assertDependencyOrder(
   events: CapturedEvent[],
   orderedNodeIds: string[],
+  graphId?: string,
 ): void {
   const runningEvents = nodeUpdatedEvents(events).filter(
-    (p) => p.status === "running",
+    (p) => p.status === "running" && (graphId === undefined || p.graphId === graphId),
   );
 
   const startOrder = runningEvents.map((p) => p.nodeId);
@@ -188,15 +193,22 @@ export function assertDependencyOrder(
  * Adds nodeId when status==="running", removes on completed/failed/skipped.
  * After each event, checks activeSet.size against cap.
  *
- * @param events - Array of captured EventBus events ({name, payload}).
- * @param cap    - Maximum allowed simultaneous running nodes.
+ * @param events  - Array of captured EventBus events ({name, payload}).
+ * @param cap     - Maximum allowed simultaneous running nodes.
+ * @param graphId - Optional graphId to scope events; when provided, only
+ *                  events where payload.graphId === graphId are considered.
+ *                  When omitted, all graph:node_updated events are used.
+ *                  Prevents cross-graph pollution in multi-graph scenarios (WR-05).
  * @throws Error when activeSet.size exceeds cap after any event.
  */
 export function assertConcurrencyCapHolds(
   events: CapturedEvent[],
   cap: number,
+  graphId?: string,
 ): void {
-  const updatedEvents = nodeUpdatedEvents(events);
+  const updatedEvents = nodeUpdatedEvents(events).filter(
+    (p) => graphId === undefined || p.graphId === graphId,
+  );
   const activeSet = new Set<string>();
 
   for (const p of updatedEvents) {
