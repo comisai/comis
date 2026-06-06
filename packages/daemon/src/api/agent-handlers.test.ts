@@ -855,6 +855,80 @@ describe("createAgentHandlers", () => {
       // cooldownInitialMs should NOT be in the persisted patch (it was not in the user's input)
       expect((agentPatch?.modelFailover as Record<string, unknown>)?.cooldownInitialMs).toBeUndefined();
     });
+
+    it("validates without persisting or hot-applying when dryRun is true", async () => {
+      const persistDeps = makePersistDeps();
+      const hotApply = vi.fn();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      // Capture the live in-memory config reference so we can prove the
+      // dry-run did NOT swap it (hot-apply == deps.agents[id] reassignment).
+      const before = deps.agents["default"]!;
+      const beforeModel = before.model;
+      mockPersistToConfig.mockClear();
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: { model: "gpt-4o" },
+        dryRun: true,
+        _trustLevel: "admin",
+      })) as { agentId: string; config: Record<string, unknown>; updated: boolean };
+
+      // Validation outcome still returns the parsed/merged config so the
+      // editor's Validate can surface field-level results.
+      expect(result.agentId).toBe("default");
+      expect((result.config as Record<string, unknown>).model).toBe("gpt-4o");
+
+      // CRITICAL: a dry-run must NOT write config.yaml / config.last-good.yaml.
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+      // CRITICAL: a dry-run must NOT hot-apply (the live in-memory agent map
+      // must remain the pre-call reference with its original model).
+      expect(deps.agents["default"]).toBe(before);
+      expect(deps.agents["default"]!.model).toBe(beforeModel);
+      void hotApply;
+    });
+
+    it("surfaces validation errors on a dry-run without mutating state", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+      const before = deps.agents["default"]!;
+      mockPersistToConfig.mockClear();
+
+      // maxSteps must be a positive integer per PerAgentConfigSchema; a bad
+      // value must fail the same Zod parse on dry-run as on a real save.
+      await expect(
+        handlers["agents.update"]!({
+          agentId: "default",
+          config: { maxSteps: -5 },
+          dryRun: true,
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow();
+
+      // Failed dry-run leaves config.yaml AND the in-memory map untouched.
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+      expect(deps.agents["default"]).toBe(before);
+    });
+
+    it("persists and hot-applies when dryRun is omitted", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+      mockPersistToConfig.mockClear();
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: { model: "gpt-4o" },
+        _trustLevel: "admin",
+      })) as { updated: boolean };
+
+      // Unchanged behavior: a real save persists and swaps the live config.
+      expect(result.updated).toBe(true);
+      expect(mockPersistToConfig).toHaveBeenCalledOnce();
+      expect(deps.agents["default"]!.model).toBe("gpt-4o");
+    });
   });
 
   // -------------------------------------------------------------------------
