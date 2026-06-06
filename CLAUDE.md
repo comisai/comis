@@ -75,7 +75,8 @@ Canonical start/restart — force pm2 to re-read the config and refresh its save
 node packages/cli/dist/cli.js pm2 setup        # regenerate ecosystem.config.js for THIS checkout's cwd
 pm2 delete comis 2>/dev/null                    # drop the cached process def (next start re-reads the config)
 rm -f ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.bak        # purge stale saved exec paths (may point at old checkouts)
-pnpm build && pm2 flush                          # rebuild this checkout + clear logs
+rm -f ~/.pm2/logs/comis-*.log                    # purge stale logs — `pm2 flush` below is BLIND to comis (flush only truncates MANAGED apps, and comis was just deleted)
+pnpm build && pm2 flush                          # rebuild this checkout + clear any remaining logs
 node packages/cli/dist/cli.js pm2 start          # starts from the freshly-written ecosystem.config.js
 pm2 save --force                                 # rewrite dump.pm2 to the current, correct state
 ```
@@ -85,7 +86,7 @@ pm2 jlist | node -e 'const p=JSON.parse(require("fs").readFileSync(0)).find(x=>x
 ```
 It must print `…/<this checkout>/packages/daemon/dist/daemon.js`. If it points elsewhere, the cache wasn't cleared — repeat the block above.
 
-Always `pm2 flush` before start/restart to keep logs clean. Verify startup (use `run_in_background: true`):
+**Clear the stale pm2 log files before every start — `pm2 flush` alone is NOT enough.** `pm2 flush` only truncates logs for *currently-managed* apps, and the canonical block runs it *after* `pm2 delete comis`, so `comis-out.log` / `comis-error.log` are left untouched with prior-session content. This bites hard: a *previous* failed boot's `FATAL: Bootstrap failed` lines survive into a healthy run's error log (the live process appends to the un-truncated file), making a working daemon look broken — observed 2026-06-06, where 6 stale `Missing env var COMIS_GATEWAY_TOKEN` FATALs masked a clean start (gateway listening on 4766, 0 restarts, `Comis daemon started` in the structured log). Always `rm -f ~/.pm2/logs/comis-*.log` (as in the block above) so the logs you read after start belong only to this boot. The authoritative startup record is the structured Pino log at `~/.comis/logs/daemon.*.log` (look for `"Comis daemon started"`), not the pm2 stdout/stderr capture. Verify startup (use `run_in_background: true`):
 ```bash
 sleep 5 && pm2 logs comis --lines 10 --nostream
 ```
