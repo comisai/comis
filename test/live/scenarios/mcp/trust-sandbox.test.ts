@@ -109,8 +109,16 @@ async function connectMcpClient(
 describe("MCP-03 Stage-A — trust-strip / taint-wrap constants (no COMIS_LIVE)", () => {
   it("UNTRUSTED marker regex matches expected taint-marker pattern", () => {
     const markerRe = /<<<UNTRUSTED_[a-f0-9]+>>>/;
-    const emptyStr = "";
-    expect(() => markerRe.test(emptyStr)).not.toThrow();
+    // Should match a valid hex taint marker (lowercase only — product only emits lowercase)
+    expect(markerRe.test("<<<UNTRUSTED_abc123>>>")).toBe(true);
+    // Should match longer hex strings (full 64-char hash prefix)
+    expect(markerRe.test("<<<UNTRUSTED_deadbeef1234>>>")).toBe(true);
+    // Should NOT match uppercase hex (product only emits lowercase)
+    expect(markerRe.test("<<<UNTRUSTED_ABC123>>>")).toBe(false);
+    // Should NOT match the empty string
+    expect(markerRe.test("")).toBe(false);
+    // Should NOT match plain text without the marker delimiters
+    expect(markerRe.test("UNTRUSTED_abc123")).toBe(false);
   });
 
   it("trust-strip test bearer token is a fixture value", () => {
