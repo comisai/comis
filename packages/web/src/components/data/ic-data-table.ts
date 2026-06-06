@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { LitElement, html, css, nothing } from "lit";
+import { LitElement, html, css, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { DataTableColumn } from "../../api/types/index.js";
@@ -272,6 +272,24 @@ export class IcDataTable extends LitElement {
   private _resizing: { key: string; startX: number; startWidth: number } | null = null;
   private _boundPointerMove = this._handlePointerMove.bind(this);
   private _boundPointerUp = this._handlePointerUp.bind(this);
+
+  /**
+   * Keep `_page` within range whenever the row set changes. A common parent
+   * pattern is to filter `rows` while the table is on a later page (e.g. session
+   * filters): without this clamp the stale `_page` slices past the shorter array
+   * and renders an EMPTY page with Next disabled (P3). Clamping to the last
+   * valid page (0 when the filtered set fits on one page) restores a visible
+   * page. Only fires when `rows` actually changed, so a same-size re-render
+   * (sort, selection) does not disturb the current page.
+   */
+  protected override willUpdate(changed: PropertyValues<this>): void {
+    if (changed.has("rows") || changed.has("pageSize")) {
+      const maxPage = this._getTotalPages() - 1;
+      if (this._page > maxPage) {
+        this._page = Math.max(0, maxPage);
+      }
+    }
+  }
 
   private _getRowId(row: unknown): string {
     if (this.columns.length === 0) return "";
