@@ -83,14 +83,14 @@ describe("createContextEngine", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it("b) non-thinking model gets history window + evictor + observation masker (thinking cleaner skipped)", async () => {
+  it("b) non-thinking model gets history window + evictor + observation masker + transcript-repair (thinking cleaner skipped)", async () => {
     const { deps, logger } = createMockDeps({ reasoning: false });
     const engine = createContextEngine(enabledConfig, deps);
 
     // Messages with thinking blocks -- thinking cleaner skipped for non-thinking model
-    // but history window layer, evictor, and observation masker are active (3 layers).
-    // Since these are all assistant messages (no user messages) and below char threshold,
-    // all layers return them unchanged.
+    // but history window, evictor, observation masker, and the final transcript-repair
+    // layer are active. Since these are all assistant messages (no user messages) and
+    // below char threshold, all layers return them unchanged.
     const messages: AgentMessage[] = [
       makeAssistantMsg([makeThinkingBlock("thought"), makeTextBlock("hello")]),
     ];
@@ -100,11 +100,11 @@ describe("createContextEngine", () => {
     // Startup log at INFO, pipeline complete at DEBUG (demoted)
     expect(logger.info).toHaveBeenCalledTimes(1);
     expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ layerCount: 6, historyTurns: 15 }),
+      expect.objectContaining({ layerCount: 7, historyTurns: 15 }),
       "Context engine active",
     );
     expect(logger.debug).toHaveBeenCalledWith(
-      expect.objectContaining({ layerCount: 6, durationMs: expect.any(Number) }),
+      expect.objectContaining({ layerCount: 7, durationMs: expect.any(Number) }),
       "Context engine pipeline complete",
     );
   });
@@ -259,7 +259,7 @@ describe("createContextEngine", () => {
 
     expect(logger.info).toHaveBeenCalledTimes(1);
     expect(logger.info).toHaveBeenCalledWith(
-      { thinkingKeepTurns: 10, historyTurns: 15, evictionMinAge: 15, observationKeepWindow: 25, ephemeralKeepWindow: 10, observationTriggerChars: 120_000, compactionEnabled: false, compactionCooldownTurns: 5, compactionPrefixAnchorTurns: 2, rehydrationEnabled: false, channelType: undefined, layerCount: 7, layerNames: expect.any(Array) },
+      { thinkingKeepTurns: 10, historyTurns: 15, evictionMinAge: 15, observationKeepWindow: 25, ephemeralKeepWindow: 10, observationTriggerChars: 120_000, compactionEnabled: false, compactionCooldownTurns: 5, compactionPrefixAnchorTurns: 2, rehydrationEnabled: false, channelType: undefined, layerCount: 8, layerNames: expect.any(Array) },
       "Context engine active",
     );
   });
@@ -284,9 +284,9 @@ describe("createContextEngine", () => {
     ];
     await engine.transformContext(messages);
 
-    // 6 layers: signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history window + evictor + observation masker (no thinking cleaner for non-reasoning)
+    // 7 layers: signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history window + evictor + observation masker + transcript-repair (no thinking cleaner for non-reasoning)
     expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ layerCount: 6 }),
+      expect.objectContaining({ layerCount: 7 }),
       "Context engine active",
     );
   });
@@ -306,7 +306,7 @@ describe("createContextEngine", () => {
       expect.objectContaining({
         observationKeepWindow: 20,
         observationTriggerChars: 300_000,
-        layerCount: 7,
+        layerCount: 8,
       }),
       "Context engine active",
     );
@@ -316,13 +316,13 @@ describe("createContextEngine", () => {
   // Compaction layer wiring
   // -------------------------------------------------------------------------
 
-  it("i) without getCompactionDeps -- no compaction layer added (6 layers for thinking model)", () => {
+  it("i) without getCompactionDeps -- no compaction layer added (8 layers for thinking model)", () => {
     const { deps, logger } = createMockDeps({ reasoning: true });
     createContextEngine(enabledConfig, deps);
 
-    // 7 layers: thinking-cleaner + signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker
+    // 8 layers: thinking-cleaner + signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + transcript-repair
     expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ layerCount: 7, compactionEnabled: false, rehydrationEnabled: false }),
+      expect.objectContaining({ layerCount: 8, compactionEnabled: false, rehydrationEnabled: false }),
       "Context engine active",
     );
   });
@@ -351,9 +351,9 @@ describe("createContextEngine", () => {
 
     createContextEngine(enabledConfig, deps);
 
-    // 8 layers: thinking-cleaner + signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + llm-compaction
+    // 9 layers: thinking-cleaner + signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + llm-compaction + transcript-repair
     expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ layerCount: 8, compactionEnabled: true }),
+      expect.objectContaining({ layerCount: 9, compactionEnabled: true }),
       "Context engine active",
     );
   });
@@ -393,7 +393,7 @@ describe("createContextEngine", () => {
       expect.objectContaining({
         compactionEnabled: true,
         compactionCooldownTurns: 8,
-        layerCount: 7, // signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + llm-compaction (no thinking for non-reasoning)
+        layerCount: 8, // signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + llm-compaction + transcript-repair (no thinking for non-reasoning)
       }),
       "Context engine active",
     );
@@ -469,10 +469,10 @@ describe("createContextEngine", () => {
 
     createContextEngine(enabledConfig, deps);
 
-    // 9 layers: thinking-cleaner + signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + llm-compaction + rehydration
+    // 10 layers: thinking-cleaner + signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + llm-compaction + rehydration + transcript-repair
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
-        layerCount: 9,
+        layerCount: 10,
         compactionEnabled: true,
         rehydrationEnabled: true,
       }),
@@ -505,10 +505,10 @@ describe("createContextEngine", () => {
 
     createContextEngine(enabledConfig, deps);
 
-    // 7 layers: signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + llm-compaction (no thinking, no rehydration)
+    // 8 layers: signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + llm-compaction + transcript-repair (no thinking, no rehydration)
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
-        layerCount: 7,
+        layerCount: 8,
         compactionEnabled: true,
         rehydrationEnabled: false,
       }),
@@ -541,8 +541,8 @@ describe("createContextEngine", () => {
       expect.objectContaining({
         rehydrationEnabled: true,
         compactionEnabled: false,
-        // 7 layers: signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + rehydration (no thinking, no compaction)
-        layerCount: 7,
+        // 8 layers: signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + rehydration + transcript-repair (no thinking, no compaction)
+        layerCount: 8,
       }),
       "Context engine active",
     );
@@ -577,7 +577,7 @@ describe("createContextEngine", () => {
     expect(m.cacheMissTokens).toBe(0);
     expect(m.budgetUtilization).toBeGreaterThanOrEqual(0);
     expect(m.layers).toBeInstanceOf(Array);
-    expect(m.layers.length).toBe(7); // thinking-cleaner + signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker
+    expect(m.layers.length).toBe(8); // thinking-cleaner + signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + transcript-repair
     // New observability fields
     expect(m.tokensEvicted).toBe(0); // no evictions in basic test
     expect(m.evictionCategories).toEqual({});
@@ -598,7 +598,7 @@ describe("createContextEngine", () => {
     await engine.transformContext(messages);
 
     const layers = engine.lastMetrics!.layers;
-    expect(layers.length).toBe(7);
+    expect(layers.length).toBe(8);
     expect(layers[0]!.name).toBe("thinking-block-cleaner");
     expect(layers[1]!.name).toBe("signature-replay-scrubber");
     expect(layers[2]!.name).toBe("signature-surrogate-guard");
@@ -606,6 +606,7 @@ describe("createContextEngine", () => {
     expect(layers[4]!.name).toBe("history-window");
     expect(layers[5]!.name).toBe("dead-content-evictor");
     expect(layers[6]!.name).toBe("observation-masker");
+    expect(layers[7]!.name).toBe("transcript-repair");
 
     for (const layer of layers) {
       expect(layer.durationMs).toBeGreaterThanOrEqual(0);
@@ -998,7 +999,7 @@ describe("createContextEngine", () => {
     expect(payload.rereadCount).toBe(0);
     expect(payload.rereadTools).toEqual([]);
     // Standard fields present
-    expect(payload.layerCount).toBe(6); // signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker (non-reasoning)
+    expect(payload.layerCount).toBe(7); // signature-replay-scrubber + surrogate-guard + reasoning-tag-stripper + history-window + evictor + observation-masker + transcript-repair (non-reasoning)
     // cacheHitTokens removed from observability event (always 0 pre-LLM)
     expect(payload).not.toHaveProperty("cacheHitTokens");
     expect(typeof payload.durationMs).toBe("number");
@@ -1833,6 +1834,34 @@ describe("transcript-repair: pipeline drops a persisted orphan tool_result", () 
 
     // Both user messages pass through unchanged.
     expect(result.filter((m) => roleOf(m) === "user")).toHaveLength(2);
+  });
+
+  it("does NOT drop a paired result whose call block uses the 'tool_use' alias (raw provider shape)", async () => {
+    // REGRESSION GUARD: the PIPELINE receives raw, un-normalized messages whose
+    // call block may be `tool_use` (Anthropic Messages shape), `tool_call`, or
+    // `toolUse` — not just the canonical `toolCall`. If transcript repair only
+    // matched `toolCall`, it would treat the call as ABSENT and drop the
+    // legitimately-paired result as an orphan (a far worse bug than the one
+    // being fixed). The other pipeline layers already accept these aliases.
+    const { deps } = createMockDeps({ reasoning: false });
+    const engine = createContextEngine(enabledConfig, deps);
+
+    const messages: AgentMessage[] = [
+      userMsg("read the file"),
+      // tool_use alias (NOT toolCall) with id — must still be recognized.
+      { role: "assistant", content: [{ type: "tool_use", id: "tu_1", name: "read", input: {} }] } as unknown as AgentMessage,
+      toolResultMsg("tu_1", "file contents"),
+      makeAssistantMsg([makeTextBlock("done")]),
+    ];
+
+    const result = await engine.transformContext(messages);
+
+    // The paired result must survive (its call uses the tool_use alias).
+    const survives = result.some(
+      (m) => roleOf(m) === "toolResult" && resultId(m) === "tu_1",
+    );
+    expect(survives).toBe(true);
+    expect(result.filter((m) => roleOf(m) === "toolResult")).toHaveLength(1);
   });
 
   it("is a no-op for an already-valid transcript (no synthesis, no drops, ordering preserved)", async () => {

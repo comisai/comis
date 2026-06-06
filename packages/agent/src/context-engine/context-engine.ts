@@ -40,6 +40,7 @@ import { createRehydrationLayer } from "./rehydration.js";
 import { createObjectiveReinforcementLayer } from "./objective-reinforcement.js";
 import { createDeadContentEvictorLayer } from "./dead-content-evictor.js";
 import { createLcdContextEngine } from "./lcd-assembler.js";
+import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
 import { detectRereads } from "./reread-detector.js";
 import type { Message } from "@earendil-works/pi-ai";
 import { estimateContextCharsWithDualRatio, estimateWithAnchor } from "../safety/token-estimator.js";
@@ -393,10 +394,48 @@ export function createContextEngine(
   }
 
   // Objective reinforcement -- re-injects objective after compaction.
-  // Must be the final layer so it runs after compaction and rehydration.
+  // Must run after compaction and rehydration (transcript repair runs after it).
   if (deps.objective) {
     layers.push(createObjectiveReinforcementLayer(deps.objective));
   }
+
+  // Transcript repair (A2) -- the ABSOLUTE FINAL pipeline layer, mirroring the
+  // DAG/LCD path where `sanitizeToolUseResultPairing` runs last (lcd-assembler).
+  // The pipeline previously had NO final pairing repair: its layers only AVOID
+  // CREATING orphans during windowing/eviction; none DROPS a PRE-EXISTING orphan
+  // toolResult whose toolCall was never persisted (an interrupted/SIGKILLed
+  // turn). Codex's Responses API hard-rejects such a function_call_output with no
+  // function_call (invalid_request_error "No tool call found …") -> error-classifier
+  // maps it to client_request -> "formatting issue, may need to reset" -> the
+  // conversation is stuck forever (the orphan re-sent every turn). Running the
+  // repair last guarantees a provider-valid pairing on ANY input and unsticks the
+  // live conversation at send (no transcript/data file is touched). Must run AFTER
+  // every other layer (rehydration, objective reinforcement) on the fully-assembled
+  // array. DAG path untouched (it already runs this last) -- PIPELINE-path only.
+  // Reuses the shared pure transform (not duplicated); injects `now` via the
+  // sanctioned clock pattern (deps.clock ?? systemNowMs, same as the LCD assembler).
+  layers.push({
+    name: "transcript-repair",
+    async apply(messages: AgentMessage[]): Promise<AgentMessage[]> {
+      const now = deps.clock ? deps.clock.now() : systemNowMs();
+      const repaired = sanitizeToolUseResultPairing(messages, now);
+      // sanitizeToolUseResultPairing rebuilds into a fresh array even on a
+      // well-formed transcript (its Pass C re-emits every message). Preserve the
+      // pipeline's pass-through reference-equality contract (the "never no-op the
+      // whole context" / zero-overhead stance, asserted by context-engine.test.ts
+      // b/c2/l) by returning the ORIGINAL reference when the repair changed
+      // nothing -- same length AND every element reference-identical in order.
+      if (repaired === messages) return messages;
+      if (repaired.length === messages.length) {
+        let identical = true;
+        for (let i = 0; i < repaired.length; i++) {
+          if (repaired[i] !== messages[i]) { identical = false; break; }
+        }
+        if (identical) return messages;
+      }
+      return repaired;
+    },
+  });
 
   // If no layers are active, return a pass-through
   if (layers.length === 0) {
