@@ -105,6 +105,7 @@ The codebase follows five mandatory engineering principles:
 - Run the connectivity sweep (all provider probes, one per integration): `pnpm test:live sweep` (requires `COMIS_LIVE=1`); filter with `COMIS_LIVE_PROBES=llm-anthropic,llm-openai pnpm test:live sweep`
 - Run Phase 136 core-loop scenarios (LOOP-01..04): `pnpm test:live loop` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural tests run without it); covers multi-turn.test.ts, tool-call.test.ts, restart.test.ts, streaming.test.ts
 - Run Phase 137 LLM-cache scenarios (CACHE-01..03): `pnpm test:live cache` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural tests run without it); covers anthropic-cache.test.ts, gemini-cache.test.ts, cache-matrix.test.ts
+- Run Phase 138 context engine scenarios (CTX-01..05): `pnpm test:live ctx` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural tests run without it); covers dag-invariants.test.ts, summarization.test.ts, expansion.test.ts, pipeline.test.ts
 - Clean up integration test artifacts: `pnpm test:cleanup`
 
 ## Tests-First Protocol
