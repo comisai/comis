@@ -286,6 +286,13 @@ export class IcTopbar extends LitElement {
     this.dispatchEvent(new CustomEvent("logout"));
   }
 
+  /** Bell click → take the operator to the Security view's pending-approvals queue. */
+  private _openNotifications(): void {
+    this.dispatchEvent(
+      new CustomEvent<string>("navigate", { detail: "security", bubbles: true, composed: true }),
+    );
+  }
+
   private _getAvatarText(): string {
     if (this.tokenId && this.tokenId.length >= 2) {
       return this.tokenId.slice(0, 2).toUpperCase();
@@ -328,6 +335,7 @@ export class IcTopbar extends LitElement {
             </div>
             <button
               class="bell-btn"
+              @click=${this._openNotifications}
               aria-label="Notifications${this.notificationCount > 0 ? `, ${this.notificationCount} pending` : ""}"
             >
               \u{1F514}
