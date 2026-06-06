@@ -429,10 +429,11 @@ export class ConversationDriver {
    *
    * Events are recorded by subscribing to specific context:* keys on
    * handle.daemon.container.eventBus (a TypedEventBus — no wildcard .on("*")).
-   * The subscribed events cover the CTX-01/CTX-03 observable set:
+   * The subscribed events cover the CTX-01/CTX-03 observable set plus MEM-08:
    *   context:dag_compacted, context:dag_expanded, context:dag_degraded,
    *   context:evicted, context:masked, context:mode_switched,
-   *   compaction:started, compaction:flush, context:compacted
+   *   compaction:started, compaction:flush, context:compacted,
+   *   memory:injected (MEM-08 recall injection count)
    *
    * Returns a COPY of the internal array — mutations do not affect captured state.
    *
@@ -514,6 +515,7 @@ export class ConversationDriver {
    *   - context:compacted     (pipeline-mode compaction)
    *   - compaction:started    (compaction trigger point)
    *   - compaction:flush      (pre-compaction flush)
+   *   - memory:injected       (MEM-08 recall injection count)
    */
   protected _subscribeToEventBus(bus: TypedEventBus): void {
     const capture = (name: string) => (payload: unknown) => {
@@ -529,6 +531,7 @@ export class ConversationDriver {
     bus.on("context:compacted",      capture("context:compacted") as Parameters<TypedEventBus["on"]>[1]);
     bus.on("compaction:started",     capture("compaction:started") as Parameters<TypedEventBus["on"]>[1]);
     bus.on("compaction:flush",       capture("compaction:flush") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("memory:injected",        capture("memory:injected") as Parameters<TypedEventBus["on"]>[1]);
   }
 
   private _requireHandle(): TestDaemonHandle {
