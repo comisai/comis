@@ -106,6 +106,7 @@ The codebase follows five mandatory engineering principles:
 - Run Phase 136 core-loop scenarios (LOOP-01..04): `pnpm test:live loop` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural tests run without it); covers multi-turn.test.ts, tool-call.test.ts, restart.test.ts, streaming.test.ts
 - Run Phase 137 LLM-cache scenarios (CACHE-01..03): `pnpm test:live cache` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural tests run without it); covers anthropic-cache.test.ts, gemini-cache.test.ts, cache-matrix.test.ts
 - Run Phase 138 context engine scenarios (CTX-01..05): `pnpm test:live ctx` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural tests run without it); covers dag-invariants.test.ts, summarization.test.ts, expansion.test.ts, pipeline.test.ts
+- Run Phase 139 long-term memory scenarios (MEM-01..08): `pnpm test:live memory` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural and Stage-B local-embedding tests run without it); covers recall-golden.test.ts, embedding-matrix.test.ts, recall-lanes.test.ts, trust-safety.test.ts, consolidation.test.ts, cost-features.test.ts, budget-interaction.test.ts
 - Clean up integration test artifacts: `pnpm test:cleanup`
 
 ## Tests-First Protocol
