@@ -33,6 +33,8 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | buildDialecticRecall | optional | memory.ask returns the abstain sentinel (the per-agent recall factory is not wired) — the createMemoryRecall builder over the daemon store set | packages/daemon/src/api/types.ts:184 |
 | dialecticMaxRecall | optional | memory.ask falls back to the schema-default grounding ceiling (10) when the per-agent `dialectic.maxRecall` resolver is not wired (a per-agent `(agentId) => number`; the handler clamps `limit` to `[1, ceiling]`) | packages/daemon/src/api/types.ts:192 |
 | onSuspiciousContent | optional | memory.ask still sanitizes + wraps recalled grounding content but emits no suspicious-pattern telemetry when the hook is not threaded (detection is silent; neutralization still runs) | packages/daemon/src/api/types.ts:199 |
+| lcdStore | optional | context.tree returns an empty tree (`context-handlers.ts` fail-closes `{ conversationId, nodes:[], messageCount:0 }`) when the LCD ContextStorePort is not threaded; the Context DAG browser shows no DAG until setup-memory wires it | packages/daemon/src/api/types.ts:198 |
+| contextBrowse | optional | context.conversations returns an empty page (`context-handlers.ts` fail-closes `{ conversations:[], total:0 }`) when the ContextBrowsePort is not threaded; the Context DAG browser lists no conversations until setup-memory wires it | packages/daemon/src/api/types.ts:203 |
 
 ## Removed Fields
 
@@ -42,7 +44,7 @@ Every surviving optional field still corresponds to a live feature-gate (embeddi
 
 ## Summary
 
-- **Final count:** 20 (7 required + 13 optional) — after the Phase-126 removal of the 6 context-DAG quartet fields
+- **Final count:** 22 (7 required + 15 optional) — after the Phase-126 removal of the 6 context-DAG quartet fields and the addition of `lcdStore` + `contextBrowse` for the context.* operator-browse RPCs
 - **Removed (Phase 126 Plan 03):** 6 (the context-DAG quartet, deleted with `context-handlers.ts`)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
