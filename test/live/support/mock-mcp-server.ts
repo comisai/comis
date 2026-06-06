@@ -83,29 +83,33 @@ export interface MockMcpServer {
   reset(): void;
 }
 
-/** Options for createMockMcpServer. */
-export interface MockMcpServerOptions {
-  /**
-   * HTTP transport variant.
-   * - "http": standard JSON response (Content-Type: application/json)
-   * - "sse": SSE response (Content-Type: text/event-stream) wrapping JSON-RPC
-   * Defaults to "http".
-   */
-  transport?: "http" | "sse";
-  /**
-   * Authentication mode.
-   * - "none": all requests accepted regardless of Authorization header
-   * - "bearer": requests missing a valid "Authorization: Bearer <token>" header
-   *             receive a 401 JSON response
-   * Defaults to "none".
-   */
-  auth?: "none" | "bearer";
-  /**
-   * Expected bearer token when auth==="bearer". Required when auth="bearer".
-   * Hardcoded test-fixture values only — never real secrets (T-140-01-01).
-   */
-  bearerToken?: string;
-}
+/**
+ * Options for createMockMcpServer — discriminated union so auth="bearer"
+ * requires bearerToken at compile time (WR-02: silent accept-any was unsafe).
+ */
+export type MockMcpServerOptions =
+  | {
+      /**
+       * HTTP transport variant.
+       * - "http": standard JSON response (Content-Type: application/json)
+       * - "sse": SSE response (Content-Type: text/event-stream) wrapping JSON-RPC
+       * Defaults to "http".
+       */
+      transport?: "http" | "sse";
+      /**
+       * Authentication mode. Defaults to "none".
+       */
+      auth?: "none";
+    }
+  | {
+      transport?: "http" | "sse";
+      auth: "bearer";
+      /**
+       * Expected bearer token. Hardcoded test-fixture values only — never real
+       * secrets (T-140-01-01). Required when auth="bearer" (compile-time enforced).
+       */
+      bearerToken: string;
+    };
 
 // ---------------------------------------------------------------------------
 // MCP JSON-RPC types (minimal — covers initialize / tools/list / tools/call)
@@ -263,7 +267,8 @@ function dispatchMcpRequest(
 export function createMockMcpServer(opts: MockMcpServerOptions = {}): MockMcpServer {
   const transport = opts.transport ?? "http";
   const auth = opts.auth ?? "none";
-  const bearerToken = opts.bearerToken;
+  // Discriminated union: bearerToken is only present when auth==="bearer".
+  const bearerToken = opts.auth === "bearer" ? opts.bearerToken : undefined;
 
   // Mutable state — all per-server-instance (not module-level) so parallel
   // test files using separate instances do not cross-contaminate (#T-INSTANCE-ISOLATION).
@@ -398,6 +403,7 @@ export function createMockMcpServer(opts: MockMcpServerOptions = {}): MockMcpSer
 
     setRateLimit(ceiling: number) {
       rateLimitCeiling.value = ceiling;
+      rateLimitHitCount.value = 0;  // reset hit counter to make the ceiling meaningful from this point
     },
 
     setInjectTrustLevel(inject: boolean) {

@@ -101,12 +101,11 @@ describe("MCP-01 Stage-B — transport×auth mock-server connect+call", () => {
   it.each(httpSseMatrix)(
     "transport=$transport auth=$auth: connect + tools/call round-trip",
     async ({ transport, auth }) => {
+      const srv: MockMcpServer =
+        auth === "bearer"
+          ? createMockMcpServer({ transport, auth, bearerToken: TEST_BEARER_TOKEN })
+          : createMockMcpServer({ transport, auth });
       const bearerToken = auth === "bearer" ? TEST_BEARER_TOKEN : undefined;
-      const srv: MockMcpServer = createMockMcpServer({
-        transport,
-        auth,
-        bearerToken,
-      });
       const { baseUrl } = await srv.start();
       let close: (() => Promise<void>) | undefined;
       try {
