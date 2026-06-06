@@ -150,10 +150,14 @@ describe("ORCH-03 Stage-B — daemon routing via ConversationDriver (no LLM)", (
     try {
       await driver.sendTurn("ping");
     } catch (err) {
-      // expected: LLM call fails on dummy keys — confirm it is an LLM/RPC error,
-      // not a routing crash or daemon startup failure (IN-02 fix).
+      // expected: LLM call fails on dummy keys — confirm it is an LLM/provider/reply
+      // error, not a routing crash or daemon-down failure (IN-02 fix).
+      // sendTurn throws either:
+      //   "agent.execute RPC error ..."  (JSON-RPC error envelope)
+      //   "agent.execute returned no reply string ..." (result exists but no reply — LLM error path)
+      // Either form confirms the daemon processed the turn (routing accepted it).
       const msg = err instanceof Error ? err.message : String(err);
-      expect(msg).toMatch(/RPC error|provider|LLM|authentication|401|JSON-RPC/i);
+      expect(msg).toMatch(/RPC error|provider|LLM|authentication|401|JSON-RPC|no reply string|finishReason/i);
     }
     // The turn was processed by the daemon (routing accepted + event bus fired).
     // At least one event must be emitted (session start, route-resolution, or error event).
