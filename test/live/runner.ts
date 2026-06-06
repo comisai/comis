@@ -201,6 +201,10 @@ async function runMain(): Promise<void> {
       console.log("Cache scenarios (CACHE-01..03): Anthropic write/hit/invalidate, Gemini CachedContent, retention×adaptive×strategy matrix");
       console.log("  test/live/scenarios/cache/*.test.ts");
       console.log("  Cost tier: ¢ (real LLM; cheapest available model per provider)");
+    } else if (args.mode === "ctx") {
+      console.log("Context engine scenarios (CTX-01..05): dag-invariants, summarization, expansion, pipeline");
+      console.log("  test/live/scenarios/ctx/*.test.ts");
+      console.log("  Cost tier: ¢–$ (Stage-A free; Stage-C real LLM; cheapest available model)");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -274,6 +278,20 @@ async function runMain(): Promise<void> {
 
     try {
       execSync(cacheCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "ctx") {
+    // Phase 138: context engine scenarios (CTX-01..05)
+    const CTX_TEST_GLOB = "test/live/scenarios/ctx/*.test.ts";
+    const ctxCmd = [
+      "npx vitest run",
+      `"${CTX_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(ctxCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
     } catch {
       testsFailed = true;
     }
