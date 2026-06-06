@@ -35,6 +35,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteDeliveryQueue, initSchema } from "@comis/memory";
 import { StreamingConfigSchema } from "@comis/core";
+import type { TypedEventBus } from "@comis/core";
 import { runDbOracle } from "../../assert/db-oracle.js";
 import {
   buildStreamingConfig,
@@ -114,7 +115,7 @@ describe("CHAN-03 Stage-B — crash-mid-delivery resume (persistence oracle, fil
     // Boot: enqueue one pending + one in_flight row.
     let db = new Database(dbPath);
     initSchema(db, 768);
-    let q = createSqliteDeliveryQueue(db, bus as never);
+    let q = createSqliteDeliveryQueue(db, bus as Pick<TypedEventBus, "emit">);
     const enq = await q.enqueue(makeEntry({ text: "pending-1" }));
     expect(enq.ok).toBe(true);
     const enqIf = await q.enqueueInFlight(makeEntry({ text: "inflight-1" }));
@@ -127,7 +128,7 @@ describe("CHAN-03 Stage-B — crash-mid-delivery resume (persistence oracle, fil
 
     // Reopen the SAME file (fresh process).
     db = new Database(dbPath);
-    q = createSqliteDeliveryQueue(db, bus as never);
+    q = createSqliteDeliveryQueue(db, bus as Pick<TypedEventBus, "emit">);
 
     const recovered = await q.recoverInFlight();
     expect(recovered.ok).toBe(true);
@@ -166,7 +167,7 @@ describe("CHAN-03 Stage-B — ordered delivery + delivery-timing config-shape", 
     const dbPath = freshDbPath();
     const db = new Database(dbPath);
     initSchema(db, 768);
-    const q = createSqliteDeliveryQueue(db, makeBus() as never);
+    const q = createSqliteDeliveryQueue(db, makeBus() as Pick<TypedEventBus, "emit">);
 
     const base = Date.now();
     await q.enqueue(makeEntry({ text: "first", createdAt: base, scheduledAt: base }));
