@@ -171,6 +171,40 @@ describe("IcAgentEditor", () => {
     expect(summaryTexts).toContain("Log Levels (Runtime)");
   });
 
+  it("clears the stale error after a failed load is retried successfully (P6)", async () => {
+    // agents.get rejects (e.g. a timeout) while `failing` is set, then a Retry
+    // succeeds. The old error text must NOT linger once the reload populates
+    // the form. A flag (not a call-count) drives it so the element's auto-load
+    // on mount does not race the assertions.
+    let failing = true;
+    const rpcClient = createAgentEditorMockRpcClient({
+      call: vi.fn(async (method: string) => {
+        if (method === "agents.get") {
+          if (failing) throw new Error("RPC request timed out after 30000ms");
+          return mockRpcAgentResponse;
+        }
+        return {};
+      }),
+    } as Partial<RpcClient>);
+
+    const el = await createElement<IcAgentEditor>("ic-agent-editor", { agentId: "default", rpcClient });
+
+    // Failed load → error state is set and the error bar renders.
+    await priv(el)._loadAgent();
+    await (el as any).updateComplete;
+    expect(priv(el)._loadState).toBe("error");
+    expect(priv(el)._error).toContain("timed out");
+    expect(el.shadowRoot?.querySelector(".error-bar")).toBeTruthy();
+
+    // Retry succeeds → state loaded AND the stale error text is cleared.
+    failing = false;
+    await priv(el)._loadAgent();
+    await (el as any).updateComplete;
+    expect(priv(el)._loadState).toBe("loaded");
+    expect(priv(el)._error).toBe("");
+    expect(el.shadowRoot?.querySelector(".error-bar")).toBeNull();
+  });
+
   it("form fields update _form state", async () => {
     const el = await createElement<IcAgentEditor>("ic-agent-editor", {
       agentId: "new",
