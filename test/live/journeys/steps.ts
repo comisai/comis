@@ -28,7 +28,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { expectEvent } from "../assert/observe.js";
+import { expectEvent, type ObservedEvent } from "../assert/observe.js";
 import { judgeAnswer } from "../judge.js";
 import type { CredentialRegistry } from "../credentials.js";
 import type { JourneyStep } from "./types.js";
@@ -183,8 +183,20 @@ export async function interpretStep(step: JourneyStep, ctx: StepContext): Promis
     }
 
     case "expect_event": {
+      // capturedEvents() carries payload:unknown; expectEvent wants
+      // ObservedEvent ({ name, payload?: Record<string,unknown> }). Coerce the
+      // object-shaped payloads (event-bus payloads are metadata objects per
+      // T-138-02-01); non-object payloads map to undefined (expectEvent then
+      // matches by name only when no payloadSubset is given).
+      const observed: ObservedEvent[] = ctx.driver.capturedEvents().map((e) => ({
+        name: e.name,
+        payload:
+          typeof e.payload === "object" && e.payload !== null
+            ? (e.payload as Record<string, unknown>)
+            : undefined,
+      }));
       try {
-        await expectEvent(step.name, step.payload, ctx.driver.capturedEvents());
+        await expectEvent(step.name, step.payload, observed);
         record(ctx, { verb: "expect_event", status: "ok" });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
