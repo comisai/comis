@@ -192,20 +192,12 @@ describe.skipIf(!isLive)("Live — CTX-05 both modes × threshold profiles (Stag
             events.some((e) => e.name === "context:compacted") ||
             events.some((e) => e.name === "context:evicted");
 
-          // If events not captured, scan log lines for the Pino message strings as a secondary check.
-          // NOTE: the real Pino message is "Auto-compaction started" (NOT the event-name "compaction:started").
-          const logLines = driver.capturedLogLines();
-          const logCompactionFired =
-            pipelineCompactionFired ||
-            logLines.includes("Auto-compaction started") ||
-            logLines.includes("context:masked") ||
-            logLines.includes("context:compacted") ||
-            logLines.includes("context:evicted");
-
           // Only assert for low threshold — high threshold + short session may not fire compaction.
+          // Rely solely on the event-bus check (capturedEvents) — raw log-line substring search
+          // on JSON-serialised Pino entries produces false positives (WR-03).
           if (contextThreshold <= 0.5) {
             expect(
-              logCompactionFired,
+              pipelineCompactionFired,
               "pipeline compaction or masking event must fire for low threshold",
             ).toBe(true);
           }
@@ -219,9 +211,11 @@ describe.skipIf(!isLive)("Live — CTX-05 both modes × threshold profiles (Stag
             });
           }
         } else {
-          // DAG mode: assertO1MetricsNonZero (context:dag_compacted or context:evicted)
-          if (events.length > 0) {
-            assertO1MetricsNonZero(events);
+          // DAG mode: assertO1MetricsNonZero must pass for low-threshold profiles
+          // where compaction is expected. For high threshold, only run integrity checks.
+          // Guard by threshold — NOT by events.length (empty events must FAIL, not skip — WR-02).
+          if (contextThreshold <= 0.5) {
+            assertO1MetricsNonZero(events); // throws with diagnostic if events empty
           }
           // lcd_summaries may grow (dag mode with low threshold) — integrity check only.
           if (existsSync(dbPath)) {
