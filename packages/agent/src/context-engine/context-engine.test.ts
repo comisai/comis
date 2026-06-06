@@ -1748,6 +1748,115 @@ describe("STRESS: Compaction and rehydration under context pressure", () => {
 // Token anchor estimation
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Transcript repair (A2) wired into the PIPELINE path.
+//
+// Production bug (codex/Responses API): a persisted transcript whose
+// `toolResult` carries a `toolCallId` with NO matching `toolCall` (the
+// assistant tool-call message was never persisted — an interrupted/SIGKILLed
+// turn) makes the provider HARD-REJECT every turn with
+//   invalid_request_error "No tool call found for function call output with call_id …"
+// → error-classifier maps it to `client_request` → the user-facing
+// "formatting issue, this conversation may need to be reset" → stuck forever.
+//
+// The DAG/LCD path already drops such an orphan as its FINAL assembly step
+// (transcript-repair.ts, sanitizeToolUseResultPairing). The PIPELINE path had
+// NO final pairing repair — its layers only AVOID CREATING orphans during
+// windowing/eviction; none DROPS a pre-existing orphan. These tests pin the
+// fix: the pipeline must run the SAME repair as its final step.
+// ---------------------------------------------------------------------------
+
+describe("transcript-repair: pipeline drops a persisted orphan tool_result", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Canonical pi-ai shapes. A `toolCall` BLOCK keys its id off `.id` (not
+  // `toolCallId` — see lcd-assembler.test.ts / transcript-repair.test.ts); a
+  // top-level `toolResult` message keys off `toolCallId`. Using the wrong key
+  // on the call block would make the repair treat a paired call as absent.
+  function callBlock(id: string, name = "bash") {
+    return { type: "toolCall", id, name, arguments: {} };
+  }
+  function toolResultMsg(toolCallId: string, text: string): AgentMessage {
+    return {
+      role: "toolResult",
+      toolCallId,
+      toolName: "bash",
+      content: [{ type: "text", text }],
+    } as unknown as AgentMessage;
+  }
+  function userMsg(text: string): AgentMessage {
+    return { role: "user", content: [{ type: "text", text }] } as unknown as AgentMessage;
+  }
+  const roleOf = (m: AgentMessage) => (m as unknown as { role?: string }).role;
+  const resultId = (m: AgentMessage) => (m as unknown as { toolCallId?: string }).toolCallId;
+
+  it("drops an orphan toolResult (call never persisted) while a paired pair survives untouched", async () => {
+    const { deps } = createMockDeps({ reasoning: false });
+    // Small array → under the 15-turn history window + eviction-min-age, so no
+    // other layer touches it. Isolates the new final repair step.
+    const engine = createContextEngine(enabledConfig, deps);
+
+    // Reproduces the stuck conversation: a well-formed pair (call_paired) PLUS a
+    // lone toolResult (call_orphan) whose toolCall block was never persisted.
+    const messages: AgentMessage[] = [
+      userMsg("do the thing"),
+      makeAssistantMsg([callBlock("call_paired")]),
+      toolResultMsg("call_paired", "paired output"),
+      // ORPHAN: no preceding assistant toolCall block with id "call_orphan".
+      toolResultMsg("call_orphan", "orphan output that 400s codex"),
+      userMsg("continue"),
+    ];
+
+    const result = await engine.transformContext(messages);
+
+    // PRIMARY ASSERTION: the orphan toolResult must NOT survive (pre-fix it does
+    // → provider 400). Post-fix the final repair drops it.
+    const orphanSurvives = result.some(
+      (m) => roleOf(m) === "toolResult" && resultId(m) === "call_orphan",
+    );
+    expect(orphanSurvives).toBe(false);
+
+    // The legitimately-paired toolResult must survive, immediately after its call.
+    const pairedIdx = result.findIndex(
+      (m) => roleOf(m) === "toolResult" && resultId(m) === "call_paired",
+    );
+    expect(pairedIdx).toBeGreaterThan(-1);
+    const beforePaired = result[pairedIdx - 1] as { role?: string; content?: unknown[] };
+    expect(beforePaired.role).toBe("assistant");
+    const hasCall = (beforePaired.content ?? []).some(
+      (b) => (b as { type?: string; id?: string }).type === "toolCall"
+        && (b as { id?: string }).id === "call_paired",
+    );
+    expect(hasCall).toBe(true);
+
+    // Both user messages pass through unchanged.
+    expect(result.filter((m) => roleOf(m) === "user")).toHaveLength(2);
+  });
+
+  it("is a no-op for an already-valid transcript (no synthesis, no drops, ordering preserved)", async () => {
+    const { deps } = createMockDeps({ reasoning: false });
+    const engine = createContextEngine(enabledConfig, deps);
+
+    const messages: AgentMessage[] = [
+      userMsg("hi"),
+      makeAssistantMsg([callBlock("call_a")]),
+      toolResultMsg("call_a", "a-out"),
+      makeAssistantMsg([makeTextBlock("all done")]),
+    ];
+
+    const result = await engine.transformContext(messages);
+
+    // Exactly one toolResult, for call_a, in the same place — nothing synthesized.
+    const toolResults = result.filter((m) => roleOf(m) === "toolResult");
+    expect(toolResults).toHaveLength(1);
+    expect(resultId(toolResults[0]!)).toBe("call_a");
+    // Role sequence unchanged: user, assistant, toolResult, assistant.
+    expect(result.map(roleOf)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+  });
+});
+
 describe("token anchor estimation", () => {
   beforeEach(() => {
     mockGenerateSummary.mockReset();
@@ -1913,6 +2022,9 @@ describe("token anchor estimation", () => {
   // ---------------------------------------------------------------------------
   // signature-replay-scrubber layer wiring (prevents Anthropic 400 on continuation)
   // ---------------------------------------------------------------------------
+
+  // ATTENTION: see the top-level "transcript-repair: pipeline drops a persisted
+  // orphan tool_result" describe at end of file for the orphan-drop regression.
 
   describe("signature-replay-scrubber layer wiring (prevents Anthropic 400 on continuation)", () => {
     it("built pipeline contains 'signature-replay-scrubber' layer", () => {
