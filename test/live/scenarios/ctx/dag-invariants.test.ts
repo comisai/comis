@@ -21,7 +21,7 @@
  * @module
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
 import { runDbOracle, snapshotRowCounts } from "../../assert/db-oracle.js";
