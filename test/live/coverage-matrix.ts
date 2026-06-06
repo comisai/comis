@@ -17,7 +17,7 @@
  * test/architecture/live-coverage-matrix.test.ts). Use "covered in Phase N (NAME)"
  * format for deferred cells.
  *
- * // Total cells: 135
+ * // Total cells: 139
  *
  * @module
  */
@@ -123,7 +123,7 @@ export const COVERAGE_DIMENSIONS = [
 export type DimensionName = (typeof COVERAGE_DIMENSIONS)[number];
 
 /**
- * The 129-cell coverage matrix. All cells are initially status="skipped" with
+ * The 139-cell coverage matrix. All cells are initially status="skipped" with
  * phase-reference reasons. Subsequent phases settle cells to "covered" as they
  * build and run the corresponding live tests.
  */
@@ -1243,50 +1243,50 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "routing.bindingSpecificity",
     modeValue: "peer>channel>guild>type",
-    status: "skipped",
-    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/routing.test.ts (peer>channel>guild>type precedence)",
+    status: "covered",
+    reference: "test/live/scenarios/orch/routing.test.ts",
     phase: "141",
   },
   {
     dimension: "routing.defaultAgentId",
     modeValue: "fallback",
-    status: "skipped",
-    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/routing.test.ts (defaultAgentId fallback routing)",
+    status: "covered",
+    reference: "test/live/scenarios/orch/routing.test.ts",
     phase: "141",
   },
   {
     dimension: "agent.isolation",
     modeValue: "session-memory-scoping",
     status: "skipped",
-    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/isolation.test.ts (session-memory scoping per agent)",
+    reference: "covered in Phase 141 (ORCH) — test/live/scenarios/orch/isolation.test.ts asserts session-index agentId scoping; promote to covered after sandbox session-index write is confirmed",
     phase: "141",
   },
   {
     dimension: "agentToAgent.maxGlobalSubAgents",
     modeValue: "capped",
-    status: "skipped",
-    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/dag-pipeline.test.ts (maxGlobalSubAgents cap enforcement)",
+    status: "covered",
+    reference: "test/live/scenarios/orch/dag-pipeline.test.ts",
     phase: "141",
   },
   {
     dimension: "agentToAgent.graphMaxConcurrency",
     modeValue: "bounded",
-    status: "skipped",
-    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/dag-pipeline.test.ts (graphMaxConcurrency bounded execution)",
+    status: "covered",
+    reference: "test/live/scenarios/orch/dag-pipeline.test.ts",
     phase: "141",
   },
   {
     dimension: "elevatedReply.trustRouting",
     modeValue: "enabled",
     status: "skipped",
-    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/isolation.test.ts (elevatedReply trust routing enabled)",
+    reference: "covered in Phase 141 (ORCH) Stage-C — requires real LLM turn with trusted sender to assert trustLevel on reply; Stage-B only confirms daemon liveness",
     phase: "141",
   },
   {
     dimension: "subagent.reentry",
     modeValue: "hop-cap+at-most-once",
-    status: "skipped",
-    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/background-reentry.test.ts (hop-cap + at-most-once reentry)",
+    status: "covered",
+    reference: "test/live/scenarios/orch/background-reentry.test.ts",
     phase: "141",
   },
 ] as const;
