@@ -107,6 +107,8 @@ The codebase follows five mandatory engineering principles:
 - Run Phase 137 LLM-cache scenarios (CACHE-01..03): `pnpm test:live cache` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural tests run without it); covers anthropic-cache.test.ts, gemini-cache.test.ts, cache-matrix.test.ts
 - Run Phase 138 context engine scenarios (CTX-01..05): `pnpm test:live ctx` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural tests run without it); covers dag-invariants.test.ts, summarization.test.ts, expansion.test.ts, pipeline.test.ts
 - Run Phase 139 long-term memory scenarios (MEM-01..08): `pnpm test:live memory` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural and Stage-B local-embedding tests run without it); covers recall-golden.test.ts, embedding-matrix.test.ts, recall-lanes.test.ts, trust-safety.test.ts, consolidation.test.ts, cost-features.test.ts, budget-interaction.test.ts
+- Run Phase 140 MCP transport/policy/trust scenarios (MCP-01..03): `pnpm test:live mcp` (requires `COMIS_LIVE=1` for real-OAuth Stage-C; Stage-A structural and Stage-B mock-server tests run without it); covers transport-auth.test.ts, policy-ratelimit.test.ts, trust-sandbox.test.ts
+- Run Phase 140 built-in tool invocation and mode scenarios (TOOL-01..02): `pnpm test:live tools` (requires `COMIS_LIVE=1` for real-LLM Stage-C; Stage-A structural and Stage-B config-driven tests run without it); covers builtin-invoke.test.ts, modes.test.ts
 - Clean up integration test artifacts: `pnpm test:cleanup`
 
 ## Tests-First Protocol

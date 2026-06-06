@@ -105,6 +105,7 @@ export const COVERAGE_DIMENSIONS = [
   "email.authType",
   // Tools
   "deferredTools.mode",
+  "tooling.installDetours.mode",
   // Workspace
   "workspace.profile",
   // Bootstrap
@@ -505,15 +506,15 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "mcp.transport",
     modeValue: "sse",
-    status: "skipped",
-    reference: "covered in Phase 140 (TOOL+MCP) — MCP SSE transport live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/mcp/transport-auth.test.ts",
     phase: "140",
   },
   {
     dimension: "mcp.transport",
     modeValue: "http",
-    status: "skipped",
-    reference: "covered in Phase 140 (TOOL+MCP) — MCP HTTP transport live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/mcp/transport-auth.test.ts",
     phase: "140",
   },
 
@@ -523,22 +524,22 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "mcp.auth",
     modeValue: "none",
-    status: "skipped",
-    reference: "covered in Phase 140 (TOOL+MCP) — MCP no-auth live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/mcp/transport-auth.test.ts",
     phase: "140",
   },
   {
     dimension: "mcp.auth",
     modeValue: "bearer",
-    status: "skipped",
-    reference: "covered in Phase 140 (TOOL+MCP) — MCP bearer-token auth live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/mcp/transport-auth.test.ts",
     phase: "140",
   },
   {
     dimension: "mcp.auth",
     modeValue: "oauth",
     status: "skipped",
-    reference: "covered in Phase 140 (TOOL+MCP) — MCP OAuth auth live-fire test",
+    reference: "Stage-C live (requires COMIS_LIVE=1 + real OAuth MCP provider): exercises OAuth flow via transport-auth.test.ts — deferred to operator run",
     phase: "140",
   },
 
@@ -1133,22 +1134,57 @@ export const coverageMatrix: readonly CoverageCell[] = [
   {
     dimension: "deferredTools.mode",
     modeValue: "always",
-    status: "skipped",
-    reference: "covered in Phase 140 (TOOL+MCP) — deferred tools always mode live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/tools/modes.test.ts",
     phase: "140",
   },
   {
     dimension: "deferredTools.mode",
     modeValue: "auto",
     status: "skipped",
-    reference: "covered in Phase 140 (TOOL+MCP) — deferred tools auto mode live-fire test",
+    reference: "Stage-C deferred: auto mode requires a real model selecting tool demotion (it.skip in modes.test.ts); set COMIS_LIVE=1",
     phase: "140",
   },
   {
     dimension: "deferredTools.mode",
     modeValue: "never",
-    status: "skipped",
-    reference: "covered in Phase 140 (TOOL+MCP) — deferred tools never mode live-fire test",
+    status: "covered",
+    reference: "test/live/scenarios/tools/modes.test.ts",
+    phase: "140",
+  },
+
+  // ===========================================================================
+  // tooling.installDetours.mode (3 cells)
+  // ===========================================================================
+  {
+    // Stage-B test in modes.test.ts boots daemon with buildToolConfig({ installDetourMode: "observe" })
+    // and exercises the observe code path via the live event bus.
+    dimension: "tooling.installDetours.mode",
+    modeValue: "observe",
+    status: "covered",
+    reference: "test/live/scenarios/tools/modes.test.ts",
+    phase: "140",
+  },
+  {
+    // test/integration/install-detour-advise-e2e.test.ts is the REAL integration test
+    // exercising the advise mode end-to-end (boots daemon, constructs exec-tool inline,
+    // asserts tool:install_detour_detected with action="hinted" + installDetourHint augmentation).
+    // Deterministic CI gate — not skipif-wrapped.
+    dimension: "tooling.installDetours.mode",
+    modeValue: "advise",
+    status: "covered",
+    reference: "test/integration/install-detour-advise-e2e.test.ts",
+    phase: "140",
+  },
+  {
+    // test/integration/install-detour-soft-stop-e2e.test.ts is the REAL integration test
+    // exercising soft-stop mode (boots daemon with config.test-tooling-soft-stop.yaml,
+    // constructs exec-tool inline, asserts pip install of overlapping package is refused
+    // pre-spawn with action="soft_stopped"). Deterministic CI gate — not skipif-wrapped.
+    dimension: "tooling.installDetours.mode",
+    modeValue: "soft-stop",
+    status: "covered",
+    reference: "test/integration/install-detour-soft-stop-e2e.test.ts",
     phase: "140",
   },
 

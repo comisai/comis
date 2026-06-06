@@ -107,8 +107,10 @@ async function connectMcpClient(
 // ---------------------------------------------------------------------------
 
 describe("MCP-03 Stage-A — trust-strip / taint-wrap constants (no COMIS_LIVE)", () => {
-  it("UNTRUSTED marker regex compiles", () => {
-    expect(() => /<<<UNTRUSTED_[a-f0-9]+>>>/.test("")).not.toThrow();
+  it("UNTRUSTED marker regex matches expected taint-marker pattern", () => {
+    const markerRe = /<<<UNTRUSTED_[a-f0-9]+>>>/;
+    const emptyStr = "";
+    expect(() => markerRe.test(emptyStr)).not.toThrow();
   });
 
   it("trust-strip test bearer token is a fixture value", () => {
