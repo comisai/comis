@@ -37,6 +37,7 @@ import {
 import { createLogCapture } from "../../support/log-verifier.js";
 import { getFreePort } from "../../support/free-port.js";
 import { EchoChannelAdapter } from "@comis/channels";
+import { TypedEventBus } from "@comis/core";
 import type { SessionIndexEvent } from "@comis/observability";
 
 // ---------------------------------------------------------------------------
@@ -106,6 +107,21 @@ export class ConversationDriver {
   private _echo: EchoChannelAdapter | undefined;
   private _logCapture: ReturnType<typeof createLogCapture> | undefined;
 
+  /**
+   * Captured EventBus events from the daemon, accumulated since init() (or last restart()).
+   * Populated by _subscribeToEventBus() which subscribes to the context:* event keys
+   * on the daemon's TypedEventBus (handle.daemon.container.eventBus).
+   *
+   * TypedEventBus has no wildcard .on("*") — we subscribe to each context:* key
+   * individually. This covers the events needed for CTX-01/CTX-03 and later phases
+   * (e.g. 141 ORCH graph:state_changed can add subscriptions here as needed).
+   *
+   * T-138-02-01: event payloads contain only metadata (IDs, counts, durations) per
+   * events-messaging.ts — never message content. capturedEvents() is safe to call
+   * from live test assertions (log-oracle FND-10 covers the log stream separately).
+   */
+  private _capturedEvents: Array<{ name: string; payload: unknown }> = [];
+
   // For COMIS_DATA_DIR env restore
   private _priorDataDir: string | undefined;
   private _hadDataDir: boolean;
@@ -167,6 +183,12 @@ export class ConversationDriver {
       configPath: resolvedConfigPath,
       gatewayPort: this._gatewayPort,
     });
+
+    // Subscribe to context:* events on the daemon's TypedEventBus so that
+    // capturedEvents() can return them for CTX-01/CTX-03 scenario assertions.
+    // TypedEventBus has no wildcard .on("*") — subscribe to each key individually.
+    this._capturedEvents = [];
+    this._subscribeToEventBus(this._handle.daemon.container.eventBus);
 
     // Register EchoChannelAdapter on both maps so the daemon can receive
     // and deliver messages via the echo channel (delivery-side cross-check)
@@ -314,6 +336,12 @@ export class ConversationDriver {
       ...opts,
     });
 
+    // Reset event capture and re-subscribe on the new daemon instance.
+    // The prior daemon's eventBus is gone after cleanup(); re-subscribing
+    // ensures capturedEvents() reflects only this daemon session's events.
+    this._capturedEvents = [];
+    this._subscribeToEventBus(this._handle.daemon.container.eventBus);
+
     // Re-register echo adapter on the new daemon instance
     this._echo = new EchoChannelAdapter({
       channelId: "echo-live",
@@ -393,6 +421,30 @@ export class ConversationDriver {
   }
 
   // ---------------------------------------------------------------------------
+  // capturedEvents() — return daemon EventBus events captured since init()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Return all EventBus events captured since the last init() or restart() call.
+   *
+   * Events are recorded by subscribing to specific context:* keys on
+   * handle.daemon.container.eventBus (a TypedEventBus — no wildcard .on("*")).
+   * The subscribed events cover the CTX-01/CTX-03 observable set:
+   *   context:dag_compacted, context:dag_expanded, context:dag_degraded,
+   *   context:evicted, context:masked, context:mode_switched,
+   *   compaction:started, compaction:flush, context:compacted
+   *
+   * Returns a COPY of the internal array — mutations do not affect captured state.
+   *
+   * Used by assertP1HonestPresentation and assertP2UncertaintyClauses in
+   * dag-invariants.test.ts Stage-C (CTX-03). Safe: per T-138-02-01, event
+   * payloads carry only identifiers + counts + durations — never message content.
+   */
+  capturedEvents(): Array<{ name: string; payload: unknown }> {
+    return [...this._capturedEvents];
+  }
+
+  // ---------------------------------------------------------------------------
   // Accessors
   // ---------------------------------------------------------------------------
 
@@ -441,6 +493,41 @@ export class ConversationDriver {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Subscribe to specific context:* event keys on the given TypedEventBus.
+   * TypedEventBus wraps Node.js EventEmitter and has NO wildcard .on("*") —
+   * each event key is subscribed individually.
+   *
+   * Extracted as a named method so restart() and tests (via StubDriverWithBus)
+   * can re-wire the subscription on a fresh bus instance.
+   *
+   * Events subscribed:
+   *   - context:dag_compacted (CTX-03 P1/P2 — honest presentation)
+   *   - context:dag_expanded  (DAG expansion tool use)
+   *   - context:dag_degraded  (DAG robustness signal)
+   *   - context:evicted       (O1 — DAG activity metrics)
+   *   - context:masked        (observation masker applied)
+   *   - context:mode_switched (engine mode change)
+   *   - context:compacted     (pipeline-mode compaction)
+   *   - compaction:started    (compaction trigger point)
+   *   - compaction:flush      (pre-compaction flush)
+   */
+  protected _subscribeToEventBus(bus: TypedEventBus): void {
+    const capture = (name: string) => (payload: unknown) => {
+      this._capturedEvents.push({ name, payload });
+    };
+
+    bus.on("context:dag_compacted",  capture("context:dag_compacted") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("context:dag_expanded",   capture("context:dag_expanded") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("context:dag_degraded",   capture("context:dag_degraded") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("context:evicted",        capture("context:evicted") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("context:masked",         capture("context:masked") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("context:mode_switched",  capture("context:mode_switched") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("context:compacted",      capture("context:compacted") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("compaction:started",     capture("compaction:started") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("compaction:flush",       capture("compaction:flush") as Parameters<TypedEventBus["on"]>[1]);
+  }
 
   private _requireHandle(): TestDaemonHandle {
     if (!this._handle) {
