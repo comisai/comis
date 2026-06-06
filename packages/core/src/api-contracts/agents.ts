@@ -188,8 +188,15 @@ export const AgentsGetContract = defineContract({
  * provider-change credential guard + probe (only when `config.provider`
  * changes), then commits to `deps.agents`, then runs best-effort persistence.
  *
- * Request: `{ agentId, config? }`. `config` is the loose Partial<PerAgentConfig>
- * patch.
+ * Request: `{ agentId, config?, dryRun? }`. `config` is the loose
+ * Partial<PerAgentConfig> patch. `dryRun: true` runs the SAME validation
+ * (deep-merge + `PerAgentConfigSchema.parse` + oauthProfiles/credential
+ * checks) but skips BOTH the in-memory hot-apply (`deps.agents[id] = …`) and
+ * the `persistToConfig` write — the web editor's "Validate" button sends it
+ * so validating prod config does not silently mutate config.yaml /
+ * config.last-good.yaml. The response shape is identical (`updated: true`);
+ * a dry-run that parses clean returns ok, a dry-run that fails parsing throws
+ * the same Zod error a real save would.
  *
  * Response: `{ agentId, config, updated: true }`. `config` is the FULL parsed
  * PerAgentConfig (loose-record).
@@ -199,6 +206,7 @@ export const AgentsUpdateContract = defineContract({
   request: z.object({
     agentId: z.string(),
     config: z.record(z.string(), z.unknown()).optional(),
+    dryRun: z.boolean().optional(),
   }),
   response: z.object({
     agentId: z.string(),

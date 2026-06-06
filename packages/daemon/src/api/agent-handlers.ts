@@ -313,6 +313,13 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       const userParams = stripInternalFields(rawParams);
       const params = AgentsUpdateContract.request.parse(userParams);
 
+      // dryRun: run the SAME validation below (deep-merge + Zod parse +
+      // oauthProfiles existence check + credential guard/probe) but skip BOTH
+      // the in-memory hot-apply and the config.yaml persist at the end. The
+      // web editor's "Validate" button sends this so validating prod config
+      // does not silently mutate config.yaml / config.last-good.yaml.
+      const dryRun = params.dryRun === true;
+
       const config = (params.config as Partial<PerAgentConfig>) ?? {};
       // Capture user-provided fields before deep-merge mutates config.
       // persistToConfig does deepMerge(existingYAML, patch) internally,
@@ -443,6 +450,20 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
             }
           }
         }
+      }
+
+      // dryRun stops here: validation above has passed (it would have thrown
+      // otherwise), so report success WITHOUT hot-applying or persisting. The
+      // in-memory agent map is left as the pre-call reference and config.yaml
+      // is untouched.
+      if (dryRun) {
+        deps.persistDeps?.logger.debug(
+          { method: "agents.update", agentId, step: "dry-run-validate" },
+          "agents.update dry-run validated config without persisting or hot-applying",
+        );
+        const result = { agentId, config: parsedConfig, updated: true as const };
+        if (IS_DEV) AgentsUpdateContract.response.parse(result);
+        return result;
       }
 
       deps.agents[agentId] = parsedConfig;
