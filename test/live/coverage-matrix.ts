@@ -38,6 +38,21 @@ export interface CoverageCell {
   readonly phase?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 147 (E2E) — story-coverage auto-wiring VIEW.
+//
+// Journeys contribute to coverage via storyCoverageContributions() — a derived
+// VIEW that walks STORY_LIBRARY (re-exported here from journeys/registry.ts so
+// the runner / architecture gate / soak read it from one place). This satisfies
+// E2E-03's "each story's tags + dimensions contribute to the §7.2 coverage
+// matrix" WITHOUT adding rows to COVERAGE_DIMENSIONS: the §7.2 matrix below
+// enumerates CONFIG mode-values (owned + settled by the depth phases 136–146);
+// journeys are a HORIZONTAL composition layer settled by their test files
+// existing (scenario-cert style, like SEC-02/03 + PLAT-01/02/04). The view
+// auto-grows the instant a story registers — zero churn to the cells below.
+// ---------------------------------------------------------------------------
+export { storyCoverageContributions } from "./journeys/registry.js";
+
 export const COVERAGE_DIMENSIONS = [
   // Context engine
   "contextEngine.version",

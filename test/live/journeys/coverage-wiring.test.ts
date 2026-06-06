@@ -17,7 +17,10 @@ import { describe, it, expect } from "vitest";
 import { getStories, storyCoverageContributions } from "./registry.js";
 import { runJourney } from "./journey-runner.js";
 import { buildCredentialRegistry } from "../credentials.js";
-import { COVERAGE_DIMENSIONS } from "../coverage-matrix.js";
+import {
+  COVERAGE_DIMENSIONS,
+  storyCoverageContributions as matrixStoryCoverage,
+} from "../coverage-matrix.js";
 
 const creds = buildCredentialRegistry();
 
@@ -92,5 +95,12 @@ describe("no-pollution lock — journeys do not add COVERAGE_DIMENSIONS rows", (
     }
     // No journey-/e2e-/US- prefixed dimension.
     expect(dims.some((d) => /^(journey\.|e2e\.|US-)/i.test(d))).toBe(false);
+  });
+
+  it("the story-coverage view is reachable from coverage-matrix.ts (one source of truth) and matches the registry view", () => {
+    // E2E-03: the matrix module re-exports the auto-wiring view so the runner /
+    // architecture gate / soak read it from one place.
+    expect(matrixStoryCoverage().length).toBeGreaterThanOrEqual(8);
+    expect(matrixStoryCoverage().length).toBe(storyCoverageContributions().length);
   });
 });
