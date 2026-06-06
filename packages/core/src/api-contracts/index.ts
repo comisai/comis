@@ -23,11 +23,12 @@
 import type { ZodTypeAny } from "zod";
 import type { ApiContract } from "./types.js";
 
-// 14 domain imports — alphabetical order for deterministic git diffs.
+// 15 domain imports — alphabetical order for deterministic git diffs.
 import { AGENTS_CONTRACTS } from "./agents.js";
 import { AUTH_CONTRACTS } from "./auth.js";
 import { CHANNELS_CONTRACTS } from "./channels.js";
 import { CONFIG_CONTRACTS } from "./config.js";
+import { CONTEXT_CONTRACTS } from "./context.js";
 import { DAEMON_CONTRACTS } from "./daemon.js";
 import { MCP_CONTRACTS } from "./mcp.js";
 import { MCP_OAUTH_CONTRACTS } from "./mcp-oauth.js";
@@ -50,6 +51,7 @@ export const API_CONTRACTS_ORDERED: readonly ApiContract<ZodTypeAny, ZodTypeAny>
   ...AUTH_CONTRACTS,
   ...CHANNELS_CONTRACTS,
   ...CONFIG_CONTRACTS,
+  ...CONTEXT_CONTRACTS,
   ...DAEMON_CONTRACTS,
   ...MCP_CONTRACTS,
   ...MCP_OAUTH_CONTRACTS,
@@ -77,6 +79,7 @@ export * from "./agents.js";
 export * from "./auth.js";
 export * from "./channels.js";
 export * from "./config.js";
+export * from "./context.js";
 export * from "./daemon.js";
 export * from "./mcp.js";
 export * from "./mcp-oauth.js";

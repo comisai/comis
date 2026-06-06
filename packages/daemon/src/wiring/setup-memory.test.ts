@@ -28,6 +28,9 @@ const mockCreateSessionStore = vi.hoisted(() => vi.fn(() => ({ loadByFormattedKe
 // function` (the MEMORY.md "setup-memory mock" gate). The two port methods are
 // stubbed (the append write + the conversation-scoped getMessages read).
 const mockCreateLcdStore = vi.hoisted(() => vi.fn(() => ({ append: vi.fn(), getMessages: vi.fn(() => []) })));
+// ContextBrowsePort stub — the operator-browse read surface (createLcdBrowseStore)
+// setupMemory now also builds on the shared db (backs context.conversations).
+const mockCreateLcdBrowseStore = vi.hoisted(() => vi.fn(() => ({ listConversations: vi.fn(() => ({ conversations: [], total: 0 })) })));
 const mockCreateMemoryApi = vi.hoisted(() => vi.fn(() => ({ search: vi.fn(), store: vi.fn() })));
 const mockCreateEmbeddingProvider = vi.hoisted(() => vi.fn(async () => ({
   ok: true,
@@ -177,6 +180,7 @@ vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
   createSessionStore: mockCreateSessionStore,
   createLcdStore: mockCreateLcdStore,
+  createLcdBrowseStore: mockCreateLcdBrowseStore,
   createMemoryApi: mockCreateMemoryApi,
   createEmbeddingProvider: mockCreateEmbeddingProvider,
   createCachedEmbeddingPort: mockCreateCachedEmbeddingPort,

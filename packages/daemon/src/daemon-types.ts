@@ -404,6 +404,11 @@ export interface BootContext {
    *  engine is opt-in (`contextEngine.version: "dag"`); the default stays pipeline,
    *  so absent/unselected this is dormant. */
   lcdStore: Awaited<ReturnType<typeof setupMemory>>["lcdStore"];
+  /** LCD read-only operator-browse store (ContextBrowsePort) — threaded into the
+   *  context.* RPC dispatch deps to back the Context DAG browser's
+   *  context.conversations. Built in setup-memory on the shared db
+   *  (`createLcdBrowseStore(db)`). */
+  contextBrowse: Awaited<ReturnType<typeof setupMemory>>["contextBrowse"];
   /** Temporal-spread store — threaded into setupAgents (the executor recall
    *  read path → createMemoryRecall) ONLY. NOT the cron/diagnostic paths. Built in setup-memory
    *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator

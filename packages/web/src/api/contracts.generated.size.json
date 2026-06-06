@@ -1,6 +1,6 @@
 {
-  "totalMinified": 111623,
-  "totalGzipped": 10300,
+  "totalMinified": 113365,
+  "totalGzipped": 10533,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -19,7 +19,7 @@
     "agents.list": 311,
     "agents.resume": 390,
     "agents.suspend": 394,
-    "agents.update": 573,
+    "agents.update": 601,
     "audio.transcribe": 336,
     "auth.list": 578,
     "auth.logout": 399,
@@ -54,6 +54,8 @@
     "config.read": 280,
     "config.rollback": 500,
     "config.schema": 466,
+    "context.conversations": 850,
+    "context.tree": 945,
     "cron.add": 1225,
     "cron.list": 367,
     "cron.remove": 377,

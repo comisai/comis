@@ -704,6 +704,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "type": "string"
           },
           "additionalProperties": {}
+        },
+        "dryRun": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2291,6 +2294,177 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
     },
     "scopes": [
       "admin"
+    ]
+  },
+  "context.conversations": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "number"
+        },
+        "offset": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "conversation_id": {
+                "type": "string"
+              },
+              "tenant_id": {
+                "type": "string"
+              },
+              "agent_id": {
+                "type": "string"
+              },
+              "session_key": {
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "message_count": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "conversation_id",
+              "tenant_id",
+              "agent_id",
+              "session_key",
+              "title",
+              "created_at",
+              "updated_at",
+              "message_count"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "total": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "conversations",
+        "total"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "rpc"
+    ]
+  },
+  "context.tree": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "conversationId": {
+          "type": "string"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "summaryId": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "depth": {
+                "type": "number"
+              },
+              "tokenCount": {
+                "type": "number"
+              },
+              "contentPreview": {
+                "type": "string"
+              },
+              "childIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "parentIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "taint": {
+                "type": "boolean"
+              },
+              "createdAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "summaryId",
+              "kind",
+              "depth",
+              "tokenCount",
+              "contentPreview",
+              "childIds",
+              "parentIds",
+              "taint",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "messageCount": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "conversationId",
+        "nodes",
+        "messageCount"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "rpc"
     ]
   },
   "cron.add": {

@@ -19,6 +19,7 @@ import {
   SqliteMemoryAdapter,
   createSessionStore,
   createLcdStore,
+  createLcdBrowseStore,
   createMemoryApi,
   createEmbeddingProvider,
   createCachedEmbeddingPort,
@@ -65,6 +66,9 @@ export interface MemoryResult {
   sessionStore: ReturnType<typeof createSessionStore>;
   /** LCD lossless context store (Phase 127); the live append-on-turn write-path is wired in Phase 128. */
   lcdStore: ReturnType<typeof createLcdStore>;
+  /** LCD read-only operator-browse store (ContextBrowsePort) — backs the
+   *  context.conversations RPC (the Context DAG browser). */
+  contextBrowse: ReturnType<typeof createLcdBrowseStore>;
   /** High-level memory query/store API. */
   memoryApi: MemoryApi;
   /** Background embedding queue for new entries (optional). */
@@ -741,6 +745,8 @@ export async function setupMemory(deps: {
   const sessionStore = createSessionStore(db);
   // LCD lossless store (Phase 127); live append-on-turn wiring lands in Phase 128.
   const lcdStore = createLcdStore(db);
+  // LCD read-only operator-browse store (ContextBrowsePort) — backs context.conversations.
+  const contextBrowse = createLcdBrowseStore(db);
   const memoryApi: MemoryApi = createMemoryApi(db, memoryAdapter, sessionStore, memoryConfig);
   memoryLogger.debug(
     { dbPath: memoryConfig.dbPath, embedding: !!cachedPort },
@@ -772,6 +778,7 @@ export async function setupMemory(deps: {
     db,
     sessionStore,
     lcdStore,
+    contextBrowse,
     memoryApi,
     embeddingQueue,
     backgroundIndexingPromise,
