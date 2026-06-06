@@ -516,6 +516,13 @@ export class ConversationDriver {
    *   - compaction:started    (compaction trigger point)
    *   - compaction:flush      (pre-compaction flush)
    *   - memory:injected       (MEM-08 recall injection count)
+   *   - graph:node_updated    (ORCH-01 — DAG node state change)
+   *   - graph:started         (ORCH-01 — DAG execution started)
+   *   - graph:completed       (ORCH-01 — DAG execution completed)
+   *   - graph:driver_lifecycle (ORCH-01 — DAG driver lifecycle event)
+   *   - session:sub_agent_spawned      (ORCH-02 — sub-agent spawn success)
+   *   - session:sub_agent_completed    (ORCH-02 — sub-agent completion)
+   *   - session:sub_agent_spawn_rejected (ORCH-02 — hop-cap / limit rejection)
    */
   protected _subscribeToEventBus(bus: TypedEventBus): void {
     const capture = (name: string) => (payload: unknown) => {
@@ -532,6 +539,13 @@ export class ConversationDriver {
     bus.on("compaction:started",     capture("compaction:started") as Parameters<TypedEventBus["on"]>[1]);
     bus.on("compaction:flush",       capture("compaction:flush") as Parameters<TypedEventBus["on"]>[1]);
     bus.on("memory:injected",        capture("memory:injected") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("graph:node_updated",             capture("graph:node_updated") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("graph:started",                  capture("graph:started") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("graph:completed",                capture("graph:completed") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("graph:driver_lifecycle",         capture("graph:driver_lifecycle") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("session:sub_agent_spawned",      capture("session:sub_agent_spawned") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("session:sub_agent_completed",    capture("session:sub_agent_completed") as Parameters<TypedEventBus["on"]>[1]);
+    bus.on("session:sub_agent_spawn_rejected", capture("session:sub_agent_spawn_rejected") as Parameters<TypedEventBus["on"]>[1]);
   }
 
   private _requireHandle(): TestDaemonHandle {

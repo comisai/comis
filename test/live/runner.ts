@@ -217,6 +217,10 @@ async function runMain(): Promise<void> {
       console.log("MCP scenarios (MCP-01..03): transport-auth, policy-ratelimit, trust-sandbox");
       console.log("  test/live/scenarios/mcp/*.test.ts");
       console.log("  Cost tier: $0 Stage-A (structural); $0 Stage-B (local mock server, LLM-free); Stage-C needs COMIS_LIVE + provider");
+    } else if (args.mode === "orch") {
+      console.log("ORCH scenarios (ORCH-01..04): dag-pipeline, background-reentry, routing, isolation");
+      console.log("  test/live/scenarios/orch/*.test.ts");
+      console.log("  Cost tier: $0 Stage-B (deterministic/config-driven, no model); Stage-C real LLM + COMIS_LIVE");
     } else {
       console.log(
         "Estimated scenarios for mode: (TBD — populated by each phase as scenarios are added)",
@@ -346,6 +350,20 @@ async function runMain(): Promise<void> {
 
     try {
       execSync(mcpCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
+    } catch {
+      testsFailed = true;
+    }
+  } else if (args.mode === "orch") {
+    // Phase 141: ORCH — subagent DAG + routing + isolation + re-entry (ORCH-01..04)
+    const ORCH_TEST_GLOB = "test/live/scenarios/orch/*.test.ts";
+    const orchCmd = [
+      "npx vitest run",
+      `"${ORCH_TEST_GLOB}"`,
+      `--config ${VITEST_CONFIG}`,
+    ].join(" ");
+
+    try {
+      execSync(orchCmd, { cwd: PROJECT_ROOT, stdio: "inherit" });
     } catch {
       testsFailed = true;
     }

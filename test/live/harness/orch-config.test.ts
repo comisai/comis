@@ -147,7 +147,7 @@ describe("buildOrchConfig", () => {
     rmSync(p, { force: true });
   });
 
-  it("temp file lands in OS tmpdir", () => {
+  it("writes temp file to OS tmpdir", () => {
     const p = buildOrchConfig({ agents: [{ id: "default" }], defaultAgentId: "default", label: "t-tmpdir" });
     expect(p.startsWith(tmpdir())).toBe(true);
     rmSync(p, { force: true });

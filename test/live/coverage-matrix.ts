@@ -110,6 +110,14 @@ export const COVERAGE_DIMENSIONS = [
   "workspace.profile",
   // Bootstrap
   "bootstrap.promptMode",
+  // ORCH (Phase 141)
+  "routing.bindingSpecificity",
+  "routing.defaultAgentId",
+  "agent.isolation",
+  "agentToAgent.maxGlobalSubAgents",
+  "agentToAgent.graphMaxConcurrency",
+  "elevatedReply.trustRouting",
+  "subagent.reentry",
 ] as const;
 
 export type DimensionName = (typeof COVERAGE_DIMENSIONS)[number];
@@ -1227,5 +1235,58 @@ export const coverageMatrix: readonly CoverageCell[] = [
     status: "skipped",
     reference: "not a LOOP dimension — deferred to Phase 146 (PLATFORM) which varies bootstrap promptMode",
     phase: "146",
+  },
+
+  // ===========================================================================
+  // ORCH (7 cells)
+  // ===========================================================================
+  {
+    dimension: "routing.bindingSpecificity",
+    modeValue: "peer>channel>guild>type",
+    status: "skipped",
+    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/routing.test.ts (peer>channel>guild>type precedence)",
+    phase: "141",
+  },
+  {
+    dimension: "routing.defaultAgentId",
+    modeValue: "fallback",
+    status: "skipped",
+    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/routing.test.ts (defaultAgentId fallback routing)",
+    phase: "141",
+  },
+  {
+    dimension: "agent.isolation",
+    modeValue: "session-memory-scoping",
+    status: "skipped",
+    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/isolation.test.ts (session-memory scoping per agent)",
+    phase: "141",
+  },
+  {
+    dimension: "agentToAgent.maxGlobalSubAgents",
+    modeValue: "capped",
+    status: "skipped",
+    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/dag-pipeline.test.ts (maxGlobalSubAgents cap enforcement)",
+    phase: "141",
+  },
+  {
+    dimension: "agentToAgent.graphMaxConcurrency",
+    modeValue: "bounded",
+    status: "skipped",
+    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/dag-pipeline.test.ts (graphMaxConcurrency bounded execution)",
+    phase: "141",
+  },
+  {
+    dimension: "elevatedReply.trustRouting",
+    modeValue: "enabled",
+    status: "skipped",
+    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/isolation.test.ts (elevatedReply trust routing enabled)",
+    phase: "141",
+  },
+  {
+    dimension: "subagent.reentry",
+    modeValue: "hop-cap+at-most-once",
+    status: "skipped",
+    reference: "Phase 141 Wave-3 scenario: test/live/scenarios/orch/background-reentry.test.ts (hop-cap + at-most-once reentry)",
+    phase: "141",
   },
 ] as const;
