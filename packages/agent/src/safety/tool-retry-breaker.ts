@@ -565,7 +565,16 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
           transition: "opened",
           toolName,
           reason: openedToolLevel ? "tool_failure_threshold" : "error_pattern",
-          consecutiveFailures: sigState.consecutiveFailures,
+          // Report the counter that actually crossed the threshold (WR-151-02).
+          // A tool_failure_threshold open is driven by the tool-WIDE total
+          // (`toolState.count`) crossing maxToolFailures across different args —
+          // each individual signature may sit at consecutiveFailures===1. An
+          // error_pattern open is driven by the per-pattern consecutive counter.
+          // Reporting `sigState.consecutiveFailures` here mislabels an N-failure
+          // open as "opened after 1 failure" in Phase 153's breakerTimeline.
+          consecutiveFailures: openedToolLevel
+            ? toolState.count
+            : patternState.consecutiveFailures,
           errorTag,
         };
       }
