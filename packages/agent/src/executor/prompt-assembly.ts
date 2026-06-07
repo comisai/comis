@@ -757,6 +757,22 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     config.contextEngine?.compactPrompt,
   );
 
+  // WR-02: warn when compact-secure is active but senderTrustDisplayConfig is disabled.
+  // The sender-trust section wiring is correct (MODES_FULL_MIN_COMPACT includes it), but
+  // the data it receives is always an empty array when the feature is not configured —
+  // producing a structurally-satisfied but content-empty section. Operators should
+  // configure senderTrustDisplayConfig to get meaningful anti-injection trust display.
+  if (promptMode === "compact-secure" && !deps.senderTrustDisplayConfig?.enabled) {
+    logger.warn(
+      {
+        module: "prompt-assembly",
+        hint: "compact-secure mode active but senderTrustDisplayConfig is disabled — sender-trust section will be empty. Configure senderTrustDisplayConfig.enabled=true for S1 anti-injection trust display.",
+        errorKind: "config" as const,
+      },
+      "S1: sender-trust not injected in compact-secure (feature disabled)",
+    );
+  }
+
   // Consolidated lightContext flag: heartbeat implies light-context regardless
   // of the explicit msg.metadata.lightContext flag. Callers that only set the
   // metadata flag OR only set operationType="heartbeat" produce identical

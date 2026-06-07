@@ -327,7 +327,11 @@ export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
   { id: "reasoning",        includeIn: MODES_ALL,               build: (p, m) => buildReasoningSection(p.reasoningEnabled ?? false, m === "minimal", p.reasoningTagHint ?? false) },
   { id: "sep",              includeIn: MODES_FULL_MIN,          build: (p, m) => buildTaskPlanningSection(p.sepEnabled ?? false, m === "minimal") },
   { id: "runtime-meta",     includeIn: MODES_ALL_PLUS_COMPACT,  build: (p, m) => buildRuntimeMetadataSection(p.runtimeInfo ?? {}, m === "minimal") },
-  // sender-trust: MUST be in compact-secure (S1 — anti-injection trust display required).
+  // sender-trust: wired into compact-secure (S1 intent — anti-injection trust display).
+  // The section is ONLY populated when senderTrustDisplayConfig.enabled=true in prompt-assembly;
+  // the assembler receives senderTrustEntries=[] by default (relocated to dynamic preamble
+  // for cache stability). With entries=[], buildSenderTrustSection returns [] and the section
+  // is omitted. prompt-assembly.ts emits a WARN when compact-secure fires without trust config.
   { id: "sender-trust",     includeIn: MODES_FULL_MIN_COMPACT,  build: (p, m) => buildSenderTrustSection(p.senderTrustEntries ?? [], p.senderTrustDisplayMode ?? "raw", m === "minimal") },
   // compact-secure: project-context excluded (large workspace files, non-security-critical for compact mode).
   { id: "project-context",  includeIn: MODES_ALL,               build: (p, m) => buildProjectContextSection(

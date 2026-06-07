@@ -2424,6 +2424,77 @@ describe("assembleExecutionPrompt", () => {
       expect(call.canarySecret).toBeUndefined();
       expect(call.sessionKey).toBeUndefined();
     });
+
+    // WR-02: compact-secure + senderTrustDisplayConfig disabled → WARN log
+    it("WR-02: compact-secure active with senderTrustDisplayConfig disabled emits WARN log", async () => {
+      // Trigger compact-secure mode: small capabilityClass + compactPrompt.enabled (default true).
+      const smallProfile = {
+        capabilityClass: "small",
+        contextWindow: 32_000,
+        maxOutputTokens: 4_096,
+        securityLevel: "standard",
+      } as any;
+      const params = makeParams({
+        // senderTrustDisplayConfig NOT set (undefined → disabled by default)
+        deps: { workspaceDir: "/workspace" },
+        // Pass a small-class model profile to trigger compact-secure mode
+        modelProfile: smallProfile,
+      });
+      // Also clear snapshot so promptMode resolves fresh (not cached from another test)
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      // Must emit exactly the WR-02 WARN
+      const warnCalls = (params.logger.warn as any).mock.calls;
+      const wr02Warn = warnCalls.find(
+        (c: any[]) => typeof c[1] === "string" && c[1].includes("S1: sender-trust not injected in compact-secure"),
+      );
+      expect(wr02Warn).toBeDefined();
+      // Structured log field assertions
+      expect(wr02Warn![0]).toMatchObject({
+        module: "prompt-assembly",
+        errorKind: "config",
+        hint: expect.stringContaining("senderTrustDisplayConfig"),
+      });
+    });
+
+    it("WR-02: compact-secure with senderTrustDisplayConfig.enabled=true does NOT emit the WR-02 WARN", async () => {
+      const smallProfile = {
+        capabilityClass: "small",
+        contextWindow: 32_000,
+        maxOutputTokens: 4_096,
+        securityLevel: "standard",
+      } as any;
+      const params = makeParams({
+        config: makeConfig({
+          elevatedReply: { senderTrustMap: { "user-1": "trusted" }, defaultTrustLevel: "external" },
+        }),
+        deps: {
+          workspaceDir: "/workspace",
+          // senderTrustDisplayConfig IS enabled → WARN must not fire
+          senderTrustDisplayConfig: { enabled: true, displayMode: "raw" },
+        },
+        modelProfile: smallProfile,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      const warnCalls = (params.logger.warn as any).mock.calls;
+      const wr02Warn = warnCalls.find(
+        (c: any[]) => typeof c[1] === "string" && c[1].includes("S1: sender-trust not injected in compact-secure"),
+      );
+      expect(wr02Warn).toBeUndefined();
+    });
   });
 
   // -----------------------------------------------------------------
