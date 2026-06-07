@@ -3,7 +3,6 @@ import { describe, it, expect } from "vitest";
 import type { ErrorKind } from "@comis/core";
 import {
   buildSessionHealthRollup,
-  DEGRADED_REASONS,
   type SessionHealthRollup,
 } from "./session-health-rollup.js";
 
@@ -45,38 +44,44 @@ describe("buildSessionHealthRollup", () => {
     expect(rollup.breakerTripCount).toBe(1);
   });
 
-  it("degraded is true for the closed degraded set and the error-class reasons, false for stop and end_turn", () => {
-    // Pin the EXACT closed degraded set (design §5 D5). Membership in
-    // DEGRADED_REASONS is the public contract — assert it directly so the set
-    // cannot silently drift.
-    expect([...DEGRADED_REASONS].sort()).toEqual(
-      [
-        "budget_exceeded",
-        "budget_exhausted",
-        "circuit_open",
-        "completed_with_tool_errors",
-        "provider_degraded",
-      ].sort(),
-    );
+  it("degraded is derived from the mapped endReason: false ONLY for 'success', true for every other endReason (CR-01 single source)", () => {
+    // After CR-01: the rollup's 2nd arg is the ALREADY-MAPPED
+    // SessionMetadata.sessionEnd.endReason (the SAME value persisted onto
+    // sessionEnd), not a raw finishReason re-classified against a second closed
+    // set. `degraded := endReason !== "success"`. This couples degraded to the
+    // single source of truth (END_REASON_MAP) so a finish reason that maps to a
+    // non-success endReason can never record degraded:false.
 
-    for (const reason of [
-      "completed_with_tool_errors",
+    // The clean class — endReason "success" is the ONLY non-degraded value.
+    expect(buildSessionHealthRollup({}, "success").degraded).toBe(false);
+
+    // Every OTHER member of the endReason union is degraded. This is the FULL
+    // SessionMetadata.sessionEnd.endReason union — crucially including "error",
+    // which is what `loop_detected` and `session_reset` map to via END_REASON_MAP
+    // (the exact pair CR-01 was about: endReason:"error" MUST imply degraded).
+    for (const endReason of [
+      "error",
+      "timeout",
       "budget_exceeded",
       "budget_exhausted",
       "circuit_open",
       "provider_degraded",
+      "completed_with_tool_errors",
     ]) {
-      expect(buildSessionHealthRollup({}, reason).degraded).toBe(true);
+      expect(buildSessionHealthRollup({}, endReason).degraded).toBe(true);
     }
+  });
 
-    // The END_REASON_MAP "error" class — all of these map to endReason "error".
-    for (const reason of ["error", "max_steps", "context_loop", "context_exhausted"]) {
-      expect(buildSessionHealthRollup({}, reason).degraded).toBe(true);
-    }
-
-    // Clean completion — NOT degraded.
-    expect(buildSessionHealthRollup({}, "stop").degraded).toBe(false);
-    expect(buildSessionHealthRollup({}, "end_turn").degraded).toBe(false);
+  it("CR-01 regression: loop_detected and session_reset are degraded (they map to endReason:'error', never to 'success')", () => {
+    // The exact BLOCKER. `loop_detected` (turn-loop-detector abort) and
+    // `session_reset` both reach the rollup and both map (via END_REASON_MAP's
+    // explicit entries) to endReason:"error". Whether the call site passes the
+    // mapped "error" OR the raw reason string, the safety property holds: only
+    // "success" is clean, so a runaway-loop / session-reset abort can NEVER be
+    // recorded as degraded:false alongside a co-persisted endReason:"error".
+    expect(buildSessionHealthRollup({}, "error").degraded).toBe(true);
+    expect(buildSessionHealthRollup({}, "loop_detected").degraded).toBe(true);
+    expect(buildSessionHealthRollup({}, "session_reset").degraded).toBe(true);
   });
 
   it("a success-only toolExecResults contributes only ok counts and an empty topErrorKinds", () => {
@@ -88,7 +93,7 @@ describe("buildSessionHealthRollup", () => {
 
     const rollup = buildSessionHealthRollup(
       { sessionCostUsd: 0.1, toolExecResults },
-      "stop",
+      "success",
     );
 
     expect(rollup.toolStats.bash).toEqual({ ok: 2, failed: 0 });
@@ -115,7 +120,7 @@ describe("buildSessionHealthRollup", () => {
     push("dependency", 3);
     push("validation", 1);
 
-    const rollup = buildSessionHealthRollup({ toolExecResults }, "stop");
+    const rollup = buildSessionHealthRollup({ toolExecResults }, "success");
 
     const keys = Object.keys(rollup.topErrorKinds);
     expect(keys).toHaveLength(3);
@@ -152,15 +157,15 @@ describe("buildSessionHealthRollup", () => {
       { toolName: "bash", success: false, errorKind: "internal" as ErrorKind },
     ];
 
-    const rollup = buildSessionHealthRollup({ toolExecResults }, "stop");
+    const rollup = buildSessionHealthRollup({ toolExecResults }, "success");
 
     expect(rollup.toolStats.bash).toEqual({ ok: 1, failed: 1 });
     expect(rollup.toolStats.read_file).toEqual({ ok: 0, failed: 1 });
     expect(rollup.topErrorKinds).toEqual({ timeout: 1, internal: 1 });
   });
 
-  it("an empty bridge result with a clean stop yields the zero-state defaults", () => {
-    const rollup = buildSessionHealthRollup({}, "stop");
+  it("an empty bridge result with a clean (success) endReason yields the zero-state defaults", () => {
+    const rollup = buildSessionHealthRollup({}, "success");
     expect(rollup).toEqual({
       degraded: false,
       costUsd: 0,

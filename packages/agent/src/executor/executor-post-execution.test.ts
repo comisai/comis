@@ -16,8 +16,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary } from "./executor-post-execution.js";
-import type { SessionHealthRollup } from "./session-health-rollup.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP } from "./executor-post-execution.js";
+import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Learned-recall write side: the turn-end emit threads classifyIntent(msg.text).
 // Imported here for the deterministic-bucket behavior probe (the emit's intent source).
@@ -223,9 +223,71 @@ describe("buildSessionEndMetadata", () => {
     expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "circuit_open" }).sessionEnd?.endReason).toBe("circuit_open");
   });
 
+  it("WR-02: maps loop_detected and session_reset EXPLICITLY (not via the catch-all fallthrough)", () => {
+    // Both are known, in-union ExecutionResult.finishReason members — they must
+    // have explicit END_REASON_MAP entries, not lean on the `?? "error"`
+    // defensive bucket reserved for unknown provider strings.
+    expect(Object.prototype.hasOwnProperty.call(END_REASON_MAP, "loop_detected")).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(END_REASON_MAP, "session_reset")).toBe(true);
+    expect(END_REASON_MAP.loop_detected).toBe("error");
+    expect(END_REASON_MAP.session_reset).toBe("error");
+    // And they reach sessionEnd.endReason:"error" through the real builder.
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "loop_detected" }).sessionEnd?.endReason).toBe("error");
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "session_reset" }).sessionEnd?.endReason).toBe("error");
+  });
+
+  it("WR-02: END_REASON_MAP never produces the dead 'timeout' endReason literal", () => {
+    // The SessionMetadata.sessionEnd.endReason union still declares "timeout",
+    // but no source finishReason maps to it — assert the writer cannot emit it so
+    // the dead literal is documented as unreachable from THIS path (not silently
+    // re-introduced via a stray mapping).
+    expect(Object.values(END_REASON_MAP)).not.toContain("timeout");
+  });
+
   it("falls back to 'error' for unmapped finishReasons", () => {
     const result = buildSessionEndMetadata({ ...baseArgs, finishReason: "some_unknown_reason" });
     expect(result.sessionEnd?.endReason).toBe("error");
+  });
+
+  it("CR-01/WR-01: degraded is coupled to END_REASON_MAP over the WHOLE finishReason union (no dual-set drift)", () => {
+    // The enforced single-source invariant: for EVERY ExecutionResult.finishReason
+    // (plus the synthetic completed_with_tool_errors / end_turn that reach the
+    // chokepoint), the rollup's degraded MUST equal `mappedEndReason !== "success"`.
+    // This converts the prose "mirrors END_REASON_MAP" comment into a test —
+    // adding a new finish reason to the union without an END_REASON_MAP entry can
+    // no longer silently reopen the CR-01 divergence (it falls to "error" ⇒
+    // degraded, never to a stale degraded:false).
+    const ALL_FINISH_REASONS = [
+      "stop", "end_turn", "error", "max_steps",
+      "budget_exceeded", "budget_exhausted", "circuit_open", "provider_degraded",
+      "context_loop", "context_exhausted", "session_reset", "loop_detected",
+      "completed_with_tool_errors",
+    ];
+    for (const reason of ALL_FINISH_REASONS) {
+      const mappedEndReason = END_REASON_MAP[reason] ?? "error";
+      const expectedDegraded = mappedEndReason !== "success";
+      // The chokepoint maps once, then passes the mapped endReason to the rollup.
+      expect(buildSessionHealthRollup({}, mappedEndReason).degraded).toBe(expectedDegraded);
+    }
+    // Spotlight the two reasons CR-01 was filed for: both map to "error" ⇒ degraded.
+    expect(buildSessionHealthRollup({}, END_REASON_MAP.loop_detected ?? "error").degraded).toBe(true);
+    expect(buildSessionHealthRollup({}, END_REASON_MAP.session_reset ?? "error").degraded).toBe(true);
+  });
+
+  it("CR-01: the chokepoint maps endReason ONCE and feeds the SAME mapped value to the rollup (single source)", () => {
+    // Source-grep the production module: the rollup must be driven by the mapped
+    // endReason (END_REASON_MAP[...] ?? "error"), NOT a second closed reason set.
+    // A regression that reintroduced a standalone degraded predicate over the raw
+    // finishReason would not match this coupling.
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    // A single endReason is derived from END_REASON_MAP and threaded into the rollup.
+    expect(stripped).toMatch(/END_REASON_MAP\[[^\]]+\]\s*\?\?\s*"error"/);
+    expect(stripped).toMatch(/buildSessionHealthRollup\([^)]*endReason[^)]*\)/);
   });
 
   it("propagates durationMs and totalTokens verbatim into sessionEnd", () => {
