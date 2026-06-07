@@ -16,6 +16,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
   formatSessionKey,
   sanitizeLogString,
+  fingerprint,
   systemNowMs,
   systemDateFrom,
   tryGetContext,
@@ -590,6 +591,32 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // The SDK only sets isError on thrown exceptions, so we also inspect the result.
           let toolSuccess = !endEvent.isError;
           let toolErrorKind: ErrorKind | undefined;
+          // D1 failure-classification provenance (P1): assigned AT each
+          // mutation point (never a post-hoc switch — by the WARN site
+          // toolSuccess is just `false` and the source is lost). transportOk
+          // is derived from classifiedFailureBy at the sinks (sdk_iserror ⇒
+          // transport failed ⇒ false; exit-code/detector/mcp-content ⇒ true).
+          let classifiedFailureBy:
+            | "sdk_iserror"
+            | "exit_code"
+            | "failure_detector"
+            | "mcp_classifier"
+            | undefined;
+          let matchedRule: string | undefined;
+          let matchedToken: string | undefined;
+          let httpStatus: number | undefined;
+          // transportOk tracks the SDK/transport signal itself: false ONLY when
+          // the SDK reported isError (the call/transport failed). An exit-code,
+          // detector, or MCP-content failure means the call RETURNED and the
+          // content was a failure → transportOk stays true. This is the
+          // self-evident-misclassification tell: a transportOk:true failure
+          // with classifiedFailureBy:'failure_detector' means "we matched a
+          // structured field, the transport was fine". (OQ A3 — derived from
+          // the flip source, NOT the refined classifiedFailureBy label, so the
+          // A1 MCP-refinement of an SDK-isError failure stays transportOk:false.)
+          const transportOk = !endEvent.isError;
+          // :591 — SDK isError flip (the transport/call itself errored).
+          if (!toolSuccess) classifiedFailureBy = "sdk_iserror";
           if (toolSuccess && endEvent.result != null) {
             const details = (endEvent.result as Record<string, unknown>)?.details;
             if (
@@ -599,6 +626,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ) {
               toolSuccess = false;
               toolErrorKind = "dependency";
+              classifiedFailureBy = "exit_code"; // exec non-zero exit — call returned, content failed
             }
           }
 
@@ -621,6 +649,16 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     (typeof detected === "object" && detected !== null
                       ? detected.errorKind
                       : undefined) ?? toolErrorKind ?? "internal";
+                  classifiedFailureBy = "failure_detector";
+                  if (typeof detected === "object" && detected !== null) {
+                    // matchedRule/matchedToken are verdict provenance (P2).
+                    // matchedToken is free-text untrusted tool output — it is
+                    // sanitized+bounded at BOTH sinks (WARN + emit), never here.
+                    matchedRule = detected.matchedRule;
+                    matchedToken = detected.matchedToken;
+                  }
+                  const status = (endEvent.result as { status?: unknown })?.status;
+                  if (typeof status === "number") httpStatus = status;
                 }
               } catch (detectorError: unknown) {
                 deps.logger.warn(
@@ -648,10 +686,27 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           m.toolRawArgs.delete(endEvent.toolCallId);
 
           let errorText: string | undefined;
+          // resultBytes/resultDigest replace the raw body with a count + a
+          // non-reversible 12-hex digest on the failure path (D1+D4) — the
+          // body itself never crosses into the event/log.
+          let resultBytes: number | undefined;
+          let resultDigest: string | undefined;
           // Extract MCP server name for attribution
           const mcpServer = extractMcpServerName(endEvent.toolName);
           if (!toolSuccess) {
             errorText = extractErrorText(endEvent.result);
+            const serialized =
+              typeof endEvent.result === "string"
+                ? endEvent.result
+                : (() => {
+                    try {
+                      return JSON.stringify(endEvent.result) ?? "";
+                    } catch {
+                      return "";
+                    }
+                  })();
+            resultBytes = serialized.length;
+            resultDigest = fingerprint(serialized);
             // When toolSuccess was already false from the SDK's isError
             // flag (not flipped by an exitCode check), toolErrorKind is
             // still undefined here. Classify it so the downstream
@@ -668,8 +723,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   : (mcpKind === "connection" || mcpKind === "transport")
                     ? "dependency"
                     : classifyToolError(endEvent.toolName, errorText);
+                // A1 precedence: the MCP classifier refines the sdk_iserror
+                // flip when this is an MCP-namespaced tool. The flip source
+                // is primary; the classifier that produced the errorKind wins
+                // the label here.
+                classifiedFailureBy = "mcp_classifier";
               } else {
                 toolErrorKind = classifyToolError(endEvent.toolName, errorText);
+                // Keep the flip source (sdk_iserror) — no MCP refinement.
+                classifiedFailureBy ??= "sdk_iserror";
               }
             }
             // Enrich "Tool X not found" errors with delegation routing hints.
@@ -709,6 +771,19 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 ...(mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
                 errorKind: toolErrorKind ?? ("dependency" as const),
                 hint: "Tool execution failed; check errorText and toolArgs for root cause",
+                // D1 provenance — assigned at the mutation points above.
+                // matchedToken is untrusted tool output → sanitize+bound it
+                // exactly like errorText; the rest are enum-like/digest/number.
+                // transportOk = (classifiedFailureBy !== "sdk_iserror") for the
+                // non-MCP branches; computed from the SDK flip source so the
+                // A1 MCP-refined case stays correct (see the const above).
+                ...(classifiedFailureBy !== undefined && { classifiedFailureBy }),
+                transportOk,
+                ...(httpStatus !== undefined && { httpStatus }),
+                ...(matchedRule !== undefined && { matchedRule }),
+                ...(matchedToken !== undefined && { matchedToken: sanitizeLogString(matchedToken).slice(0, 1500) }),
+                ...(resultBytes !== undefined && { resultBytes }),
+                ...(resultDigest !== undefined && { resultDigest }),
               },
               "Tool execution failed",
             );
@@ -819,6 +894,20 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(errorText && { errorMessage: sanitizeLogString(errorText).slice(0, 1500) }),
             ...(!toolSuccess && mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
             ...(truncMeta && { truncated: truncMeta.truncated, fullChars: truncMeta.fullChars, returnedChars: truncMeta.returnedChars }),
+            // D1 provenance (P1) — assigned at the mutation points above.
+            // matchedToken is untrusted tool output and the payload feeds the
+            // trajectory + cache-trace translators (Plan 06), so it MUST be
+            // sanitized+bounded HERE TOO (identical to the WARN) — a raw token
+            // would leak into the event stream. resultDigest/resultBytes/
+            // httpStatus/classifiedFailureBy/matchedRule are digest/number/
+            // closed-union → emitted as-is.
+            ...(classifiedFailureBy !== undefined && { classifiedFailureBy }),
+            ...(!toolSuccess && { transportOk }),
+            ...(httpStatus !== undefined && { httpStatus }),
+            ...(matchedRule !== undefined && { matchedRule }),
+            ...(matchedToken !== undefined && { matchedToken: sanitizeLogString(matchedToken).slice(0, 1500) }),
+            ...(resultBytes !== undefined && { resultBytes }),
+            ...(resultDigest !== undefined && { resultDigest }),
           });
 
           // Explicit tool:timeout emit when the tool was classified as
