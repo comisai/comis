@@ -381,7 +381,7 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(bounded.truncations.some((t) => t.field === "channel.id")).toBe(true);
   });
 
-  it("digests oversized agentId / traceId / endReason free-text fields (WR-03)", () => {
+  it("applies a digest to oversized agentId / traceId / endReason free-text fields (WR-03)", () => {
     const huge = "h".repeat(1000); // > MAX_INLINE_STRING (256)
     const report = makeReport({
       agentId: huge,
