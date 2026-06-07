@@ -47,7 +47,6 @@ import {
 import type { McpServerEntry } from "@comis/core";
 import {
   runOauthLogin as defaultRunOauthLogin,
-  createTokenStore as defaultCreateTokenStore,
   type OAuthLoginResult,
   type RunOauthLoginDeps,
   type TokenStore,
@@ -74,11 +73,15 @@ export interface McpOauthHandlerDeps extends WorkspaceApiDeps {
    */
   readonly runOauthLogin?: (deps: RunOauthLoginDeps) => Promise<OAuthLoginResult>;
   /**
-   * Disk token-store factory keyed by the tokens dir. Defaults to the real
-   * `~/.comis/mcp-tokens/` store. Used by `oauth_logout` to clear the three
-   * files; threaded into the login orchestrator so the exchange persists there.
+   * The mode-selected MCP OAuth token-store factory (selectMcpTokenStore via the
+   * daemon's pass-through). Returns the SAME instance the manager wiring uses.
+   * MAY return undefined in `env` storage mode (no writable store) — the login
+   * handler guards on that and fails loudly rather than falling back to a
+   * plaintext disk store. Used by `oauth_logout` to clear credentials and
+   * threaded into the login orchestrator so the exchange persists to the
+   * mode-selected backend.
    */
-  readonly createTokenStore?: () => TokenStore;
+  readonly createTokenStore?: () => TokenStore | undefined;
   /**
    * Browser-launch side effect. ALWAYS a daemon-side NO-OP — the daemon never
    * opens a browser; the CLI opens the returned `authUrl`. Injectable so tests
@@ -138,8 +141,26 @@ export function createMcpOauthHandlers(
   // (the CLI opens the returned authUrl). Injectable only so tests can assert it.
   const openUrl = deps.openUrl ?? ((): void => undefined);
   const runOauthLogin = deps.runOauthLogin ?? defaultRunOauthLogin;
-  const makeTokenStore =
-    deps.createTokenStore ?? ((): TokenStore => defaultCreateTokenStore({ logger: deps.logger }));
+
+  // Fail loudly — never fall back to a plaintext disk store. The token store is
+  // the ONE mode-selected instance (selectMcpTokenStore) threaded via the
+  // daemon pass-through `() => boot.mcpTokenStore`. In `env` storage mode that
+  // factory is absent OR returns undefined (no writable MCP OAuth store); both
+  // shapes mean "no place to persist MCP OAuth credentials". Surface an
+  // actionable storage-mode error (this module is `// @allow-throw:` —
+  // rpc-dispatch.ts:306-321 converts it to a JSON-RPC error) instead of silently
+  // downgrading to a plaintext `mcp-tokens/` write that the mode-selected
+  // manager would never read back (the split-brain this fix removes).
+  const resolveTokenStore = (): TokenStore => {
+    const store = deps.createTokenStore?.();
+    if (store === undefined) {
+      throw new Error(
+        'MCP OAuth login requires security.storage "file" or "encrypted" ' +
+          "(current mode has no credential store).",
+      );
+    }
+    return store;
+  };
 
   return {
     [McpOauthLoginContract.method]: async (rawParams) => {
@@ -181,6 +202,14 @@ export function createMcpOauthHandlers(
         );
       }
 
+      // Resolve the mode-selected token store BEFORE driving the login. Fail
+      // loudly here (at the handler boundary, so the dispatcher returns a clear
+      // JSON-RPC error) rather than inside runOauthLogin — the orchestrator
+      // catches its own errors and would mask the storage-mode signal as a
+      // generic status:"failed". In env mode there is no writable store; we must
+      // never fall back to a plaintext mcp-tokens/ write.
+      const tokenStore = resolveTokenStore();
+
       // Run the server-side login. The orchestrator owns the SDK auth() call +
       // the loopback callback + saveTokens; it NEVER throws. The daemon
       // openUrl is a no-op — the CLI opens the returned authUrl.
@@ -206,7 +235,9 @@ export function createMcpOauthHandlers(
         serverName: server_name,
         serverUrl: entry.url,
         oauthConfig: entry.oauth ?? {},
-        createTokenStore: makeTokenStore,
+        // Hand the already-resolved (guaranteed non-undefined) store to the
+        // orchestrator. The guard above already failed loudly if none exists.
+        createTokenStore: () => tokenStore,
         openUrl,
         onAuthorized: async (name) => {
           const persistedServers =
@@ -374,11 +405,13 @@ export function createMcpOauthHandlers(
         throw new Error(`MCP server not found: "${server_name}"`);
       }
 
-      // Clear the three token files (<server>.json / .client.json / .meta.json).
-      // deleteAll is idempotent — clearing an already-absent set still succeeds,
-      // so cleared:true reflects "no credentials remain". A close()
-      // releases the store's disk-watch when the default store was constructed.
-      const tokenStore = makeTokenStore();
+      // Clear the stored MCP OAuth credentials for the server. deleteAll is
+      // idempotent — clearing an already-absent set still succeeds, so
+      // cleared:true reflects "no credentials remain". A close() releases the
+      // store's disk-watch (no-op for the encrypted store). resolveTokenStore
+      // fails loudly in env mode (no writable store) rather than constructing a
+      // plaintext disk store just to delete from it.
+      const tokenStore = resolveTokenStore();
       await tokenStore.deleteAll(server_name);
       await tokenStore.close();
 

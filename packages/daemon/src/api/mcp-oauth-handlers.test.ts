@@ -76,16 +76,42 @@ function makeManager(): McpClientManager {
 }
 
 /**
+ * Minimal in-memory MCP token store double. The daemon injects the ONE
+ * mode-selected store (selectMcpTokenStore) here; the handler now FAILS LOUDLY
+ * when no store is available, so every login/logout test must supply one (no
+ * implicit plaintext-disk fallback). Tests asserting the absence-of-store guard
+ * opt out explicitly via `noTokenStore` or `createTokenStore: () => undefined`.
+ */
+function makeTokenStoreMock(): TokenStore {
+  return {
+    tokens: vi.fn().mockResolvedValue(undefined),
+    saveTokens: vi.fn().mockResolvedValue(undefined),
+    saveClientInformation: vi.fn().mockResolvedValue(undefined),
+    clientInformation: vi.fn().mockResolvedValue(undefined),
+    saveDiscoveryState: vi.fn().mockResolvedValue(undefined),
+    discoveryState: vi.fn().mockResolvedValue(undefined),
+    deleteAll: vi.fn().mockResolvedValue(undefined),
+    startWatch: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+  } as unknown as TokenStore;
+}
+
+/**
  * Build deps with a persisted `auth:"oauth"` server entry for `serverName`.
  * `container.config.integrations.mcp.servers` is the read path the handler uses.
+ *
+ * A default mode-selected token store is injected unless the caller overrides
+ * `createTokenStore` or sets `noTokenStore: true` (the env-mode "no writable
+ * store" case the fail-loud guard must reject).
  */
 function makeDeps(
   serverName: string,
   overrides: Partial<McpOauthHandlerDeps> & {
     entry?: Record<string, unknown> | null;
+    noTokenStore?: boolean;
   } = {},
 ): McpOauthHandlerDeps {
-  const { entry, ...rest } = overrides;
+  const { entry, noTokenStore, ...rest } = overrides;
   const servers =
     entry === null
       ? []
@@ -98,10 +124,16 @@ function makeDeps(
             oauth: { scope: "read" },
           },
         ];
+  // Default store injection: present unless the caller opts out. An explicit
+  // `createTokenStore` in `rest` wins (spread last).
+  const defaultStore: Partial<McpOauthHandlerDeps> = noTokenStore
+    ? {}
+    : { createTokenStore: () => makeTokenStoreMock() };
   return {
     mcpClientManager: makeManager(),
     logger: makeLogger(),
     container: { config: { integrations: { mcp: { servers } } } } as unknown as McpOauthHandlerDeps["container"],
+    ...defaultStore,
     ...rest,
   } as McpOauthHandlerDeps;
 }
@@ -502,7 +534,7 @@ describe("MCP OAuth RPC handlers", () => {
       // disk store and proceeded, the test would observe a non-throwing success
       // (the pre-fix RED behavior) rather than the required loud failure.
       const runOauthLogin = vi.fn().mockResolvedValue({ status: "authorized" });
-      const deps = makeDeps("notion", { runOauthLogin });
+      const deps = makeDeps("notion", { runOauthLogin, noTokenStore: true });
       // createTokenStore intentionally absent (env mode has no writable store).
       expect(deps.createTokenStore).toBeUndefined();
 
