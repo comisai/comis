@@ -327,7 +327,7 @@ export interface PiEventBridgeResult {
   /** Event listener to subscribe to AgentSession events. */
   listener: (event: AgentSessionEvent) => void;
   /** Returns accumulated execution stats (includes last known context usage and duration breakdown). */
-  getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string }>; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; sessionCostUsd?: number; sessionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
+  getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>; breakerTripCount?: number; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; sessionCostUsd?: number; sessionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
   /** Accumulate estimated cost from a timed-out API request. */
   addGhostCost: (estimated: GhostCostEstimate) => void;
   /** ReadonlyMap views of the per-responseId hash store and canonical-snapshot
@@ -854,6 +854,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   seq,
                   timestamp: systemNowMs(),
                 });
+                // Count the trip for the session-health rollup (D5/F1). Only the
+                // opened transition increments — a reset must not (the rollup
+                // wants total trips this execution, not net breaker state).
+                m.breakerTripCount++;
               } else {
                 deps.eventBus.emit("tool:breaker_reset", {
                   toolName: transition.toolName,
@@ -871,6 +875,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             success: toolSuccess,
             durationMs,
             ...(errorText && { errorText }),
+            // Carry the closed-union errorKind (Phase 150 classification, set on
+            // the failure path only) for the rollup's bounded topErrorKinds.
+            ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
           });
 
           // Capture outbound deliveries. The post-execution silent-sentinel
