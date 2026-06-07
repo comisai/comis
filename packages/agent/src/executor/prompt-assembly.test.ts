@@ -4253,4 +4253,210 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
     const splitMaxChars = mockHybridSplit.mock.calls[0][1] as number;
     expect(splitMaxChars).toBe(MAX_CONTEXT_CHARS - PINNED_SECTION_CHARS);
   });
+
+  // -----------------------------------------------------------------
+  // R3 Small/nano count cap (153-03)
+  // -----------------------------------------------------------------
+  describe("R3 small/nano profile count/chars caps", () => {
+    const SMALL_PROFILE = {
+      capabilityClass: "small",
+      contextWindow: 32_000,
+      maxOutputTokens: 4_096,
+      securityLevel: "locked",
+      scaffoldLevel: "max",
+      supportsVision: false,
+      supportsTools: true,
+      supportsPromptCache: false,
+      supportsServerToolSearch: false,
+      supportsStructuredOutput: false,
+      reasoningStyle: "none",
+    } as any;
+
+    const NANO_PROFILE = {
+      capabilityClass: "nano",
+      contextWindow: 16_000,
+      maxOutputTokens: 2_048,
+      securityLevel: "locked",
+      scaffoldLevel: "max",
+      supportsVision: false,
+      supportsTools: true,
+      supportsPromptCache: false,
+      supportsServerToolSearch: false,
+      supportsStructuredOutput: false,
+      reasoningStyle: "none",
+    } as any;
+
+    const FRONTIER_PROFILE = {
+      capabilityClass: "frontier",
+      contextWindow: 200_000,
+      maxOutputTokens: 8_192,
+      securityLevel: "standard",
+      scaffoldLevel: "light",
+      supportsVision: true,
+      supportsTools: true,
+      supportsPromptCache: true,
+      supportsServerToolSearch: true,
+      supportsStructuredOutput: true,
+      reasoningStyle: "none",
+    } as any;
+
+    function makeRankedMemory(id: string, contentLength: number) {
+      return {
+        entry: {
+          id,
+          tenantId: "default",
+          agentId: "default",
+          userId: "user_a",
+          content: "x".repeat(contentLength),
+          trustLevel: "learned",
+          source: { who: "agent" },
+          tags: [],
+          createdAt: Date.now(),
+          pinned: false,
+        },
+        score: 0.8,
+      } as any;
+    }
+
+    it("small profile: count cap of 3 — only 3 items pass to injector.split when 5 recalled", async () => {
+      const fiveMemories = [1, 2, 3, 4, 5].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
+
+      const params = makeParams({
+        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
+        deps: { workspaceDir: "/workspace" },
+        modelProfile: SMALL_PROFILE,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitArg = mockHybridSplit.mock.calls[0][0] as Array<{ entry: { id: string } }>;
+      // Small profile caps at 3 items — only the first 3 should be passed to split
+      expect(splitArg).toHaveLength(3);
+      expect(splitArg.map((r) => r.entry.id)).toEqual(["mem-1", "mem-2", "mem-3"]);
+    });
+
+    it("nano profile: count cap of 3 — only 3 items pass to injector.split when 5 recalled", async () => {
+      const fiveMemories = [1, 2, 3, 4, 5].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
+
+      const params = makeParams({
+        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
+        deps: { workspaceDir: "/workspace" },
+        modelProfile: NANO_PROFILE,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitArg = mockHybridSplit.mock.calls[0][0] as Array<{ entry: { id: string } }>;
+      // Nano profile caps at 3 items
+      expect(splitArg).toHaveLength(3);
+    });
+
+    it("frontier profile: no count cap — all 5 items pass to injector.split", async () => {
+      const fiveMemories = [1, 2, 3, 4, 5].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
+
+      const params = makeParams({
+        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
+        deps: { workspaceDir: "/workspace" },
+        modelProfile: FRONTIER_PROFILE,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitArg = mockHybridSplit.mock.calls[0][0] as Array<{ entry: { id: string } }>;
+      // Frontier: no cap → all 5 pass
+      expect(splitArg).toHaveLength(5);
+    });
+
+    it("no modelProfile: no count cap — all 5 items pass to injector.split", async () => {
+      const fiveMemories = [1, 2, 3, 4, 5].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
+
+      const params = makeParams({
+        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
+        deps: { workspaceDir: "/workspace" },
+        // modelProfile omitted
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitArg = mockHybridSplit.mock.calls[0][0] as Array<{ entry: { id: string } }>;
+      // No profile: no cap → all 5 pass
+      expect(splitArg).toHaveLength(5);
+    });
+
+    it("small profile chars cap of 2000: maxContextChars passed to split is capped at 2000", async () => {
+      const twoMemories = [1, 2].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: twoMemories });
+
+      const params = makeParams({
+        // maxContextChars=8000 but small profile chars cap=2000 overrides it
+        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
+        deps: { workspaceDir: "/workspace" },
+        modelProfile: SMALL_PROFILE,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitMaxChars = mockHybridSplit.mock.calls[0][1] as number;
+      // Small profile caps chars at 2000 (takes min with remainingChars)
+      expect(splitMaxChars).toBeLessThanOrEqual(2000);
+    });
+
+    it("nano profile chars cap of 1000: maxContextChars passed to split is capped at 1000", async () => {
+      const twoMemories = [1, 2].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: twoMemories });
+
+      const params = makeParams({
+        // maxContextChars=8000 but nano profile chars cap=1000 overrides it
+        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
+        deps: { workspaceDir: "/workspace" },
+        modelProfile: NANO_PROFILE,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitMaxChars = mockHybridSplit.mock.calls[0][1] as number;
+      // Nano profile caps chars at 1000
+      expect(splitMaxChars).toBeLessThanOrEqual(1000);
+    });
+  });
 });
