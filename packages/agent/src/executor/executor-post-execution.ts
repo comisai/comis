@@ -92,6 +92,9 @@ import type { ExecutionResult, ExecutionOverrides } from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { ContextEngine } from "../context-engine/index.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
+// WR-02: import the precise type so PostExecutionParams.capabilityClass
+// is CapabilityClass | undefined, not string | undefined.
+import type { CapabilityClass } from "./model-profile.js";
 import { createHash, randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -209,7 +212,7 @@ export interface PostExecutionParams {
   isOnboarding: boolean;
   geminiCacheHit: boolean;
   geminiCachedTokens: number;
-  capabilityClass: string | undefined;
+  capabilityClass: CapabilityClass | undefined;
   /**
    * Provider used for this execution. Sourced from `resolvedModel.provider` in
    * pi-executor when available; falls back to `config.provider` when the

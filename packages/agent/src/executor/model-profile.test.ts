@@ -170,7 +170,6 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
           reasoning: false,
           input: ["text"],
         },
-        undefined,
         "frontier",
       );
       expect(profile.capabilityClass).toBe("frontier");
@@ -185,7 +184,6 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
           reasoning: false,
           input: ["text"],
         },
-        undefined,
         "frontier",
       );
       expect(profile.securityLevel).toBe("standard");
@@ -260,7 +258,6 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
           reasoning: false,
           input: ["text"],
         },
-        undefined,
         "frontier",
       );
       expect(profile.scaffoldLevel).toBe("light");
@@ -275,7 +272,6 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
           reasoning: false,
           input: ["text"],
         },
-        undefined,
         "mid",
       );
       expect(profile.scaffoldLevel).toBe("standard");
@@ -290,7 +286,6 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
           reasoning: false,
           input: ["text"],
         },
-        undefined,
         "small",
       );
       expect(profile.scaffoldLevel).toBe("max");
@@ -305,7 +300,6 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
           reasoning: false,
           input: ["text"],
         },
-        undefined,
         "nano",
       );
       expect(profile.scaffoldLevel).toBe("max");

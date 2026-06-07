@@ -98,7 +98,7 @@ export function applySchemasPruning(params: SchemaPruneParams): ToolDefinition[]
       tokensSaved: pruneResult.estimatedTokensSaved,
       toolCount: pruneResult.tools.length,
     },
-    "Schema descriptions pruned for small model",
+    "Schema descriptions pruned for nano-class model",
   );
   return pruneResult.tools;
 }

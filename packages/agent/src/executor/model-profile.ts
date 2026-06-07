@@ -13,6 +13,11 @@
  * @module
  */
 
+// Provider-family mapping is single-sourced to capabilities.ts which already
+// handles all aliases (amazon-bedrock, google-vertex, azure-openai-responses, etc.)
+// and is the canonical registry used by isAnthropicFamily/isGoogleFamily everywhere.
+import { resolveProviderCapabilities } from "../provider/capabilities.js";
+
 // ---------------------------------------------------------------------------
 // Type exports
 // ---------------------------------------------------------------------------
@@ -61,7 +66,14 @@ const SECURITY_FOR: Readonly<Record<CapabilityClass, SecurityLevel>> = {
 // Fail-closed constant (unknown/unresolved model → most-locked profile)
 // ---------------------------------------------------------------------------
 
-/** Unknown model → most-scaffolded, most-locked (K2: fail-closed) */
+/**
+ * Unknown model → most-scaffolded, most-locked (K2: fail-closed).
+ *
+ * Note: supportsTools is true because the executor still routes calls through
+ * the tool policy gates; supportsTools is a capability declaration, not a
+ * policy gate. If a future phase uses supportsTools as a policy gate, revisit
+ * this default (IN-02).
+ */
 export const FAIL_CLOSED_PROFILE: Readonly<ModelProfile> = {
   contextWindow: 8_192,
   maxOutputTokens: 4_096,
@@ -87,12 +99,16 @@ export const FAIL_CLOSED_PROFILE: Readonly<ModelProfile> = {
  * Pure — no I/O, no side effects, deterministic for equal inputs.
  * Unknown models (resolvedModel = undefined) fail closed → most-locked profile.
  *
- * capabilityClass derivation (config override > provider heuristic > fail-safe):
+ * capabilityClass derivation (config override > provider family > fail-safe):
  *  1. capabilityClassOverride (explicit) → use directly
- *  2. provider = "anthropic" or starts with "anthropic" → "frontier"
- *  3. provider = "openai" → "frontier"
- *  4. provider = "google" → "mid"
+ *  2. providerFamily = "anthropic" (anthropic, amazon-bedrock, bedrock, ...) → "frontier"
+ *  3. providerFamily = "openai" (openai, azure-openai-responses, openai-codex, ...) → "frontier"
+ *  4. providerFamily = "google" (google, google-vertex, gcp-vertex, ...) → "mid"
  *  5. all others (ollama, custom, etc.) → "small"  (fail-safe direction)
+ *
+ * Provider-family resolution is single-sourced to capabilities.ts so all
+ * canonical aliases (amazon-bedrock → anthropic, google-vertex → google,
+ * azure-openai-responses → openai) are handled automatically (CR-01).
  *
  * This ensures a 256K ollama model resolves capabilityClass="small", never "frontier".
  * The contextWindow is NEVER used to derive capabilityClass (K2 invariant).
@@ -105,13 +121,11 @@ export function resolveModelProfile(
         contextWindow?: number;
         maxTokens?: number;
         reasoning?: boolean;
-        input?: string[];
+        // CR-02: widened to readonly string[] | undefined so ("text"|"image")[]
+        // (the SDK's actual type) is assignable without a double-cast at the call site.
+        input?: readonly string[] | string[];
       }
     | undefined,
-  _userModel?: Pick<
-    { contextWindow?: number; maxTokens?: number; input?: string[]; reasoning?: boolean },
-    "contextWindow" | "maxTokens" | "input" | "reasoning"
-  >,
   capabilityClassOverride?: CapabilityClass,
 ): ModelProfile {
   // Fail-closed: unknown/undefined model → most-locked profile
@@ -135,16 +149,16 @@ export function resolveModelProfile(
     // Explicit config override wins unconditionally
     capabilityClass = capabilityClassOverride;
   } else {
-    // Provider-based heuristic (fail-safe direction)
-    const provider = resolvedModel.provider.toLowerCase();
-    if (provider === "anthropic" || provider.startsWith("anthropic")) {
+    // CR-01: use canonical provider-family mapping (single-sourced to capabilities.ts)
+    // so all provider aliases (amazon-bedrock, google-vertex, azure-openai-responses,
+    // bedrock, gcp-vertex, etc.) map to their correct family — not the raw provider string.
+    const family = resolveProviderCapabilities(resolvedModel.provider).providerFamily;
+    if (family === "anthropic" || family === "openai") {
       capabilityClass = "frontier";
-    } else if (provider === "openai") {
-      capabilityClass = "frontier";
-    } else if (provider === "google") {
+    } else if (family === "google") {
       capabilityClass = "mid";
     } else {
-      // All other providers (ollama, custom, etc.) → "small"
+      // All other providers (ollama, cerebras, groq, custom, etc.) → "small"
       // Fail-safe: unknown/local models default to high scaffold + locked security
       capabilityClass = "small";
     }

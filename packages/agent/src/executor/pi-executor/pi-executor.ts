@@ -317,12 +317,11 @@ export function createPiExecutor(
       // Must be after executionOverrides.model override (above) so the profile reflects
       // the actual resolved model. Added to RunSessionLockedContext (per-execution record,
       // NOT PiExecutorDeps which is long-lived across multiple execute() calls).
+      // CR-02: resolvedModel.input is ("text"|"image")[] — assignable to readonly string[]
+      // without a cast now that resolveModelProfile accepts readonly string[] | undefined.
+      // Phase 152 will wire the operator capabilityClass override from providers.entries config.
       const modelProfile = resolveModelProfile(
-        resolvedModel
-          ? { ...resolvedModel, input: (resolvedModel as unknown as Record<string, unknown>).input as string[] | undefined }
-          : undefined,
-        // No userModel or capabilityClass override at this phase — provider heuristic applies.
-        // Phase 152 will wire the operator capabilityClass override from providers.entries config.
+        resolvedModel ?? undefined,
       );
 
       // 5. Execute within session adapter (use ephemeral adapter if provided)

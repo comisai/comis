@@ -238,6 +238,10 @@ export function extractRecentlyUsedToolNames(
 export function resolveToolDescription(tool: ToolDefinition): string {
   const entry = LEAN_TOOL_DESCRIPTIONS[tool.name];
   if (typeof entry === "function") {
+    // WR-01 / TODO(Phase-152): pass capabilityClass when small-model lean
+    // descriptions are introduced. Until then, "large" is the correct safe
+    // default — it produces the same output as the current behavior, and
+    // DeferralContext.capabilityClass is not threaded to this function yet.
     return entry({ modelTier: "large" });
   }
   if (typeof entry === "string") return entry;
