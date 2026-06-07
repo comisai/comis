@@ -51,7 +51,7 @@ describe("extractErrorText -- bounded output (D4)", () => {
     expect(a).toContain(`[+${53_000 - MAX_ERROR_TEXT_CHARS} chars, digest:`);
   });
 
-  it("bounds a large object result (JSON.stringify path) too", () => {
+  it("caps a large object result (JSON.stringify path) too", () => {
     const huge = { error: "x".repeat(60_000) };
     const result = extractErrorText(huge);
     expect(result.length).toBeLessThanOrEqual(MAX_ERROR_TEXT_CHARS + 60);
