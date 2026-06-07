@@ -3,14 +3,14 @@
  * The single source of truth for the website's security story.
  *
  * The audited README deliberately leads with MECHANISMS and never headlines a
- * "layer count" — this module mirrors that. The only locked security numbers
+ * "layer count" - this module mirrors that. The only locked security numbers
  * are the 18 skill-content-scanner rules and the credential-broker / kernel-
  * sandbox mechanisms (CONTEXT "Accuracy contract (LOCKED)"). It does NOT encode
  * a 22/23/24/25 layer tally anywhere, and it carries the corrected cache-
  * architecture wording so compare pages have a ready, accurate replacement for
  * the cache phrasing the accuracy audit retired.
  *
- * Plain `as const` data — no logic, no derived counts.
+ * Plain `as const` data - no logic, no derived counts.
  *
  * @module
  */
@@ -26,7 +26,7 @@ export const SECURITY = {
     {
       name: "Kernel-enforced exec sandbox",
       promise:
-        "Tools run jailed by the operating system itself — on by default, not a setting you have to remember to turn on.",
+        "Tools run jailed by the operating system itself - on by default, not a setting you have to remember to turn on.",
       forEngineers:
         "Bubblewrap on Linux (full namespace unshare: mount, PID, user, cgroup, IPC; private /tmp and /dev); sandbox-exec on macOS with profiles that open `(deny default)`. No network by default, even for interactive terminal sessions the agent drives.",
     },
@@ -42,7 +42,7 @@ export const SECURITY = {
       promise:
         "Every skill is screened for hidden attacks before it can run.",
       forEngineers:
-        "18 rules covering exec injection, exfiltration, and XML breakout, applied at skill load time (content-scanner). This is the canonical 18 — it belongs to the content scanner, not to log redaction.",
+        "18 rules covering exec injection, exfiltration, and XML breakout, applied at skill load time (content-scanner). This is the canonical 18 - it belongs to the content scanner, not to log redaction.",
     },
     {
       name: "MCP malware screening",
@@ -70,7 +70,7 @@ export const SECURITY = {
       promise:
         "Insecure code patterns are blocked before they ever reach the main branch.",
       forEngineers:
-        "Named bans: no path.join, no process.env, no eval/new Function, no swallowed errors — plus architecture-as-tests that block insecure patterns in CI.",
+        "Named bans: no path.join, no process.env, no eval/new Function, no swallowed errors - plus architecture-as-tests that block insecure patterns in CI.",
     },
   ],
 
@@ -83,16 +83,16 @@ export const SECURITY = {
 
   /**
    * The SINGLE mechanism-first framing used wherever a count might otherwise be
-   * headlined. Do NOT add a 22/23/24/25 layer tally — the README never does.
+   * headlined. Do NOT add a 22/23/24/25 layer tally - the README never does.
    */
   layerFraming:
-    "defense in depth — layered runtime defenses, benchmarked, not a single guardrail",
+    "defense in depth - layered runtime defenses, benchmarked, not a single guardrail",
 
   /**
-   * The CORRECT cache wording — the accurate replacement for the cache phrasing
+   * The CORRECT cache wording - the accurate replacement for the cache phrasing
    * the accuracy audit retired. Used by: compare pages, context-management /
    * cost sections.
    */
   cacheArchitecture:
-    "a cache-fence index keeps the cached prefix byte-stable while the context engine edits everything after it, with adaptive TTL escalation, two-phase cache-break detection, and sub-agent spawn staggering — 15+ shipped optimizations",
+    "a cache-fence index keeps the cached prefix byte-stable while the context engine edits everything after it, with adaptive TTL escalation, two-phase cache-break detection, and sub-agent spawn staggering - 15+ shipped optimizations",
 } as const;

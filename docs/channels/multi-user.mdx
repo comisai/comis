@@ -1,6 +1,6 @@
 ---
 title: "Multiple users & teams"
-description: "Run one Comis install for your whole team — private per person, isolated per agent — across Telegram and every other channel."
+description: "Run one Comis install for your whole team - private per person, isolated per agent - across Telegram and every other channel."
 icon: "users"
 ---
 
@@ -8,7 +8,7 @@ import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 One Comis install can serve your whole team. Many people message it, each gets
 their own private conversation, and you decide whether they share one assistant
-or each get their own — fully isolated. This page explains the model and the
+or each get their own - fully isolated. This page explains the model and the
 exact configuration, Telegram first, then every other channel.
 
 <NonTechnicalNote />
@@ -26,26 +26,26 @@ Everything below is how you wire those two cases.
 
 ## Do users see each other's messages?
 
-Short answer: **no** — not their messages. The only thing a *shared* agent
+Short answer: **no** - not their messages. The only thing a *shared* agent
 pools is what it has *learned* over time. Here is each layer:
 
 | Layer | Are two users isolated? | Why |
 |---|---|---|
-| **Telegram transport (DMs)** | ✅ Yes | A private 1:1 chat with the bot is invisible to everyone else — Telegram enforces this. One bot serves unlimited private DMs. |
-| **Telegram transport (groups)** | ❌ No (by design) | Everyone in a group sees the group's messages. That is what a group *is* — use DMs for privacy. |
+| **Telegram transport (DMs)** | ✅ Yes | A private 1:1 chat with the bot is invisible to everyone else - Telegram enforces this. One bot serves unlimited private DMs. |
+| **Telegram transport (groups)** | ❌ No (by design) | Everyone in a group sees the group's messages. That is what a group *is* - use DMs for privacy. |
 | **Comis conversation/session** | ✅ Yes (default) | The default `per-channel-peer` session gives each person their own thread. User A's transcript never enters User B's session. |
 | **Agent long-term memory** | ⚠️ Only if they use **different agents** | An agent's learned facts are scoped to the agent. Two people on the **same** agent draw on the same memory; give them separate agents for full separation. |
 
 <Warning>
 **A shared agent shares its memory.** Conversations stay private, but the facts
-an agent distills over time are stored per-agent — not per-person. If two people
+an agent distills over time are stored per-agent - not per-person. If two people
 talk to the **same** agent, a fact learned from one can surface for the other.
 For real separation between people, give each their **own agent** (Setup B
 below). For a team that *should* pool knowledge, one shared agent is the feature,
 not a leak.
 </Warning>
 
-## Setup A — one shared agent (a team that shares knowledge)
+## Setup A - one shared agent (a team that shares knowledge)
 
 The simplest case. Everyone DMs the same bot and talks to the same agent. Their
 **conversations are already private** (Telegram DMs + per-peer sessions); they
@@ -67,15 +67,15 @@ agents:
     model: claude-sonnet-4-6
 ```
 
-Nothing else is needed — `routing.defaultAgentId` is `default`, and the default
+Nothing else is needed - `routing.defaultAgentId` is `default`, and the default
 session scope already keeps each person's chat separate.
 
-## Setup B — one agent per person or team (full isolation)
+## Setup B - one agent per person or team (full isolation)
 
 When people must stay private from each other, give each their own agent and use
 top-level **routing** to send each person (or group) to their agent. Because
 each agent is its own isolation boundary, this separates **memory, secrets, and
-budget** — not just the conversation.
+budget** - not just the conversation.
 
 ```yaml
 # ~/.comis/config.yaml
@@ -103,7 +103,7 @@ routing:
       agentId: bob
 ```
 
-Now Alice and Bob each get an agent with **its own memory** — nothing Alice
+Now Alice and Bob each get an agent with **its own memory** - nothing Alice
 tells the bot can surface in Bob's chats, and vice versa. The same pattern
 routes a whole **group** to a team agent (use `channelId` for a specific
 chat/group, or `guildId` for a Discord server).
@@ -118,7 +118,7 @@ Full details and cross-channel examples in [Multi-agent routing](/agents/routing
 
 Four independent levers cover every multi-user setup. Mix them as needed.
 
-### 1. Access control — who can use the bot at all
+### 1. Access control - who can use the bot at all
 
 `channels.<type>.allowFrom` is an allowlist of **sender IDs**. Empty (the
 default) means anyone can talk to the bot; list IDs to lock it down.
@@ -133,11 +133,11 @@ channels:
 
 <Warning>
 `allowFrom` is **sender-keyed, not chat-keyed**. Putting a group's chat ID here
-does nothing — list each individual user's ID. Leave it empty (or omit it) to
+does nothing - list each individual user's ID. Leave it empty (or omit it) to
 allow everyone.
 </Warning>
 
-### 2. Conversation isolation — how sessions are split
+### 2. Conversation isolation - how sessions are split
 
 Each agent's `session.dmScope.mode` controls how DM conversations are keyed.
 The default already isolates per person; change it only if you want a single
@@ -156,17 +156,17 @@ agents:
 |---|---|
 | `per-channel-peer` *(default)* | One session per channel + person. Each user's DM is its own thread. |
 | `per-peer` | One session per person, shared across channels (their Telegram and Discord DMs merge). |
-| `main` | **All** DMs share one session — everyone talks into the same thread. Avoid for multi-user. |
+| `main` | **All** DMs share one session - everyone talks into the same thread. Avoid for multi-user. |
 | `per-account-channel-peer` | Adds the bot-account identifier to the key (for multi-bot session isolation). |
 
-### 3. Agent routing — who talks to which agent
+### 3. Agent routing - who talks to which agent
 
 Top-level `routing` maps people, chats, groups, or whole channels to a specific
 agent (Setup B above). This is the lever that gives **memory/secret/budget**
 isolation, because each agent is its own tenant. See
 [Multi-agent routing](/agents/routing).
 
-### 4. Trust-based replies — different treatment per person *(advanced)*
+### 4. Trust-based replies - different treatment per person *(advanced)*
 
 Give known operators a different model or system prompt than strangers, within
 a single agent, via `agents.<id>.elevatedReply`. You assign each sender a trust
@@ -189,7 +189,7 @@ agents:
 ```
 
 <Note>
-Trust labels are free-form strings you define — there is no fixed
+Trust labels are free-form strings you define - there is no fixed
 admin/member/guest list. `elevatedReply` changes the **model and system prompt**
 per trust level; it does not replace `allowFrom` (access) or `routing` (agent
 isolation). Use it on top of them when different people need different
@@ -225,9 +225,9 @@ platform; shared spaces (groups, servers, channels) are shared by design.
 | iMessage | 1:1 chat | group | `channelId` (chat GUID) | phone or email |
 | LINE | 1:1 | group / room | `channelId` (group/room ID) | LINE user ID (`U…`) |
 | IRC | private message | channel (`#name`) | `channelId` (`#channel`) | nick ⚠️ |
-| Email | thread | — (1:many by recipients) | route by `channelType: email` | email address |
+| Email | thread | - (1:many by recipients) | route by `channelType: email` | email address |
 
-`peerId` (the sender) works on every platform. **`guildId` is Discord-only** —
+`peerId` (the sender) works on every platform. **`guildId` is Discord-only** -
 it's the server ID; every other platform routes a shared space with `channelId`.
 
 ```yaml
@@ -253,18 +253,18 @@ See each channel's page under [Channels](/channels) for how to find its IDs.
 
 A few platforms need extra care when several people share one install:
 
-- **IRC — nicks are spoofable.** IRC nicknames aren't authenticated by default,
+- **IRC - nicks are spoofable.** IRC nicknames aren't authenticated by default,
   so `allowFrom` on IRC is **not a security boundary** unless your network
   enforces registration (NickServ) and you trust it. Don't gate a sensitive
   agent on an IRC nick alone.
-- **Email — the From address isn't verified.** `channels.email.allowMode` is
+- **Email - the From address isn't verified.** `channels.email.allowMode` is
   `allowlist` by default (only listed addresses reach the agent; set `open` to
   accept all). But sender addresses can be spoofed and Comis does not check
   SPF/DKIM/DMARC, so treat the email allowlist as convenience, not strong
   authentication, for high-stakes agents.
 - **WhatsApp, Signal, iMessage, Email are personal accounts, not bots.** The
   adapter is bound to one phone number (WhatsApp/Signal), one Apple ID on macOS
-  (iMessage), or one mailbox (Email) — so "one bot per channel" is really "one
+  (iMessage), or one mailbox (Email) - so "one bot per channel" is really "one
   account per channel." Everyone talks to that single number/address; you still
   isolate people with per-person agents via `routing`, they just all see the
   same identity.
@@ -275,12 +275,12 @@ A few platforms need extra care when several people share one install:
 
 ## One identity per channel
 
-Each Comis daemon runs **one** identity per channel type — one Telegram/Discord/
+Each Comis daemon runs **one** identity per channel type - one Telegram/Discord/
 Slack/LINE bot, one WhatsApp or Signal phone number, one iMessage Apple ID, one
 mailbox. That is not a limit on users (one identity serves unlimited private DMs
 and shared spaces); it only means you can't run two *different* identities of the
 same type (two Telegram `@username`s, two phone numbers) in a single daemon. If
-you genuinely need a second identity, run one daemon per identity — see
+you genuinely need a second identity, run one daemon per identity - see
 [Routing to a separate bot identity](/channels/telegram#multi-agent-routing) on
 the Telegram page.
 
@@ -292,7 +292,7 @@ the Telegram page.
     How conversations are keyed and isolated per person, channel, and topic.
   </Card>
   <Card title="Memory" icon="brain" href="/agents/memory">
-    What an agent learns and stores — and why memory is scoped per agent.
+    What an agent learns and stores - and why memory is scoped per agent.
   </Card>
   <Card title="Telegram setup" icon="telegram" href="/channels/telegram">
     Step-by-step bot creation, groups, channels, and troubleshooting.

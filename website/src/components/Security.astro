@@ -12,20 +12,20 @@ const threats = [
   {
     threat: "Unchecked tool access",
     desc: "An agent with shell and file access can read, write, and run anything on your machine.",
-    answer: "Kernel-enforced exec sandbox — on by default.",
+    answer: "Kernel-enforced exec sandbox - on by default.",
     detail: "Tools run jailed by the operating system itself, not by a setting you have to remember to switch on. No network by default; agents can only see their own workspace, not your host system.",
   },
   {
     threat: "Prompt injection",
     desc: "Malicious instructions hidden in web pages or fetched content trick agents into executing attacker commands.",
     answer: "The LLM is treated as the attack surface.",
-    detail: "Input is scanned, output is scanned, canary tokens catch leaks, and external content is wrapped and isolated so the model can never confuse fetched text for an instruction — layered runtime defenses, benchmarked.",
+    detail: "Input is scanned, output is scanned, canary tokens catch leaks, and external content is wrapped and isolated so the model can never confuse fetched text for an instruction - layered runtime defenses, benchmarked.",
   },
   {
     threat: "Malicious skills",
     desc: "Community skills that hide exfiltration, injection, or breakout payloads.",
     answer: "Every skill is screened before it can run.",
-    detail: `${SECURITY.contentScannerRules} content-scanner rules covering exec injection, exfiltration, and XML breakout are applied at skill load time. (This is the canonical ${SECURITY.contentScannerRules} — it belongs to the skill content scanner, not to log redaction.)`,
+    detail: `${SECURITY.contentScannerRules} content-scanner rules covering exec injection, exfiltration, and XML breakout are applied at skill load time. (This is the canonical ${SECURITY.contentScannerRules} - it belongs to the skill content scanner, not to log redaction.)`,
   },
   {
     threat: "Malicious tool servers",
@@ -47,14 +47,14 @@ const threats = [
   },
   {
     threat: "Credential exposure via agentic CLIs",
-    desc: "An agent running shell commands can read any secret in its environment — `cat ~/.claude/.credentials.json`, `env`, `/proc/self/environ`. Handing a key to the agent process means it can steal and exfiltrate it.",
-    answer: "Credential broker — keys never meet agents.",
-    detail: "The real key never enters the sandbox. It stays in the daemon's encrypted store; the CLI runs with a placeholder. The broker injects the real credential at the TLS network boundary — `cat`/`env`/`/proc` inside the sandbox show nothing. Broker fails closed: no secret → 502, request never forwarded.",
+    desc: "An agent running shell commands can read any secret in its environment - `cat ~/.claude/.credentials.json`, `env`, `/proc/self/environ`. Handing a key to the agent process means it can steal and exfiltrate it.",
+    answer: "Credential broker - keys never meet agents.",
+    detail: "The real key never enters the sandbox. It stays in the daemon's encrypted store; the CLI runs with a placeholder. The broker injects the real credential at the TLS network boundary - `cat`/`env`/`/proc` inside the sandbox show nothing. Broker fails closed: no secret → 502, request never forwarded.",
   },
   {
     threat: "Destructive actions with no oversight",
     desc: "Agents that delete, send, or spend without anyone signing off.",
-    answer: "Action classifier — fail closed.",
+    answer: "Action classifier - fail closed.",
     detail: "Destructive actions pause for your sign-off via chat buttons. Unknown action types classify as destructive and fail closed, so a new capability can't slip through unguarded.",
   },
   {

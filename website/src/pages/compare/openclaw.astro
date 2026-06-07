@@ -57,7 +57,7 @@ const securityRows: Row[] = [
   {
     label: "Prompt injection",
     comis:
-      `${SECURITY.layerFraming.charAt(0).toUpperCase() + SECURITY.layerFraming.slice(1)} \u2014 a weighted, multi-pattern content scanner with composite scoring, progressive rate limiting, and trust-partitioned memory, measured in public rather than asserted.`,
+      `${SECURITY.layerFraming.charAt(0).toUpperCase() + SECURITY.layerFraming.slice(1)} - a weighted, multi-pattern content scanner with composite scoring, progressive rate limiting, and trust-partitioned memory, measured in public rather than asserted.`,
     openclaw:
       "Explicitly out of scope per SECURITY.md. Focus on execution boundaries only.",
     verdict: "comis",
@@ -128,7 +128,7 @@ const securityRows: Row[] = [
   {
     label: "Credentialed exec (keys never in sandbox)",
     comis:
-      "Broker-only network mode: credentialed sandbox runs with --unshare-net; the broker unix socket is the only reachable network destination (Linux, kernel-enforced; validated on the production host class). Key never enters the sandbox — injected at the TLS boundary by the in-daemon broker. Fails closed: no secret → 502, never forwarded.",
+      "Broker-only network mode: credentialed sandbox runs with --unshare-net; the broker unix socket is the only reachable network destination (Linux, kernel-enforced; validated on the production host class). Key never enters the sandbox - injected at the TLS boundary by the in-daemon broker. Fails closed: no secret → 502, never forwarded.",
     openclaw:
       "Relies on agent voluntarily honouring HTTPS_PROXY. A jailbroken agent ignores the proxy and calls the API directly. Credentials must be present in the process environment to authenticate.",
     verdict: "comis",
@@ -141,7 +141,7 @@ const extensibilityRows: Row[] = [
     comis:
       "Implement ChannelPort interface and wire in the composition root bootstrap.",
     openclaw:
-      `Implement ChannelPlugin (${COMPETITORS.openclaw.channels} channel adapters). Register via extension package.json \u2014 auto-discovered.`,
+      `Implement ChannelPlugin (${COMPETITORS.openclaw.channels} channel adapters). Register via extension package.json - auto-discovered.`,
     verdict: "openclaw",
   },
   {
@@ -174,7 +174,7 @@ const agentRows: Row[] = [
   {
     label: "DAG pipelines",
     comis:
-      "Full DAG engine: ValidatedGraph (1\u201320 nodes), barrier modes (all/majority/best-effort), template interpolation, concurrency control.",
+      "Full DAG engine: ValidatedGraph (1-20 nodes), barrier modes (all/majority/best-effort), template interpolation, concurrency control.",
     openclaw:
       "No DAG support. Relies on cron jobs and sequential subagent spawning.",
     verdict: "comis",
@@ -207,7 +207,7 @@ const agentRows: Row[] = [
     comis:
       `${FACTS.channels} channels: ${FACTS.channelList.join(", ")} (Email via IMAP/SMTP).`,
     openclaw:
-      `${COMPETITORS.openclaw.channels} channels — the widest list in the field — including Matrix, MS Teams, Google Chat, Feishu, Mattermost, Twitch, Nostr, Zalo, and more.`,
+      `${COMPETITORS.openclaw.channels} channels - the widest list in the field - including Matrix, MS Teams, Google Chat, Feishu, Mattermost, Twitch, Nostr, Zalo, and more.`,
     verdict: "openclaw",
   },
   {
@@ -221,7 +221,7 @@ const agentRows: Row[] = [
   {
     label: "Model providers",
     comis:
-      `${FACTS.models}. Anthropic (incl. Bedrock/Vertex aliases), OpenAI (incl. Azure variants), Google, Mistral, Groq, OpenRouter, and more — all through one catalog with live validation, key rotation, and per-agent model routes.`,
+      `${FACTS.models}. Anthropic (incl. Bedrock/Vertex aliases), OpenAI (incl. Azure variants), Google, Mistral, Groq, OpenRouter, and more - all through one catalog with live validation, key rotation, and per-agent model routes.`,
     openclaw:
       "34+ providers with auth profile fallback chain, dynamic discovery, and per-profile cooldown.",
     verdict: "tie",
@@ -239,7 +239,7 @@ const agentRows: Row[] = [
     comis:
       "Multi-tenant design with per-session routing and trust-partitioned memory.",
     openclaw:
-      "Single-user per gateway \u2014 explicit architectural choice per SECURITY.md.",
+      "Single-user per gateway - explicit architectural choice per SECURITY.md.",
     verdict: "comis",
   },
 ];
@@ -558,7 +558,7 @@ const testRows: Row[] = [
   {
     label: "CI & coverage",
     comis:
-      "GitHub Actions CI (ci.yml) runs `pnpm validate` on every push: clean build, madge + project-reference cycle checks, security lint, docs compile, and `test:coverage` with 14 per-package floors — plus an E2E flow-matrix gate. The same gates run locally via a pre-push hook.",
+      "GitHub Actions CI (ci.yml) runs `pnpm validate` on every push: clean build, madge + project-reference cycle checks, security lint, docs compile, and `test:coverage` with 14 per-package floors - plus an E2E flow-matrix gate. The same gates run locally via a pre-push hook.",
     openclaw:
       "GitHub Actions CI with parallel lane splitting (unit-fast, unit-isolated, extensions, gateway, channels, e2e, live). Performance budget enforcement. Multi-platform (Linux, macOS, Windows).",
     verdict: "tie",
@@ -743,11 +743,11 @@ const sectionMeta = [
                 </div>
                 <div class="flex items-center justify-center gap-1.5 text-sm font-bold">
                   <span class="text-coral">{count(cat.rows, "comis")}</span>
-                  <span class="text-muted/40">&ndash;</span>
+                  <span class="text-muted/40">-</span>
                   <span class="text-teal">
                     {count(cat.rows, "openclaw")}
                   </span>
-                  <span class="text-muted/40">&ndash;</span>
+                  <span class="text-muted/40">-</span>
                   <span class="text-muted/60">{count(cat.rows, "tie")}</span>
                 </div>
               </div>
@@ -912,7 +912,7 @@ const sectionMeta = [
             </h3>
             <ul class="space-y-4 text-muted-light">
               <li>
-                <span class="font-semibold text-white">Security (7&ndash;0&ndash;2):</span>
+                <span class="font-semibold text-white">Security (7-0-2):</span>
                 Prompt injection detection, trust-partitioned memory, output scanning,
                 SSRF DNS pinning, and ESLint-enforced secret hygiene. OpenClaw
                 explicitly scopes prompt injection out of their security model.
@@ -923,7 +923,7 @@ const sectionMeta = [
                 and per-node timeouts. OpenClaw has no DAG support.
               </li>
               <li>
-                <span class="font-semibold text-white">Context management (5&ndash;1&ndash;3):</span>
+                <span class="font-semibold text-white">Context management (5-1-3):</span>
                 Built-in 8-layer pipeline with per-layer circuit breakers, proactive compaction at 85%
                 with 3-level fallback, write-time microcompaction with disk offloading,
                 post-compaction rehydration, and 25% context rot buffer. OpenClaw counters
@@ -933,7 +933,7 @@ const sectionMeta = [
                 vector search on top.
               </li>
               <li>
-                <span class="font-semibold text-white">Cache &amp; cost optimization (7&ndash;2&ndash;1):</span>
+                <span class="font-semibold text-white">Cache &amp; cost optimization (7-2-1):</span>
                 15+ prompt cache optimizations including TTL monotonicity enforcement,
                 adaptive cold-start retention, 3-zone breakpoint placement with model-specific
                 thresholds, observation masker hysteresis to prevent cache thrashing,
@@ -947,7 +947,7 @@ const sectionMeta = [
                 agent vs shared infrastructure with config cascading.
               </li>
               <li>
-                <span class="font-semibold text-white">Agent autonomy (4&ndash;0&ndash;2):</span>
+                <span class="font-semibold text-white">Agent autonomy (4-0-2):</span>
                 Self-evolving personality via workspace files, task extraction from
                 conversations, nuanced group chat intelligence, and self-onboarding
                 - agents bootstrap themselves without human hand-holding.
@@ -973,7 +973,7 @@ const sectionMeta = [
               <li>
                 <span class="font-semibold text-white">Channel coverage:</span>
                 <span class="font-semibold text-white">23+ channels</span> vs Comis's
-                {FACTS.channels} — the widest list in the field. Beyond the shared
+                {FACTS.channels} - the widest list in the field. Beyond the shared
                 set, OpenClaw adds Matrix, MS Teams, Google Chat, Feishu, Mattermost,
                 Twitch, Nostr, and more.
               </li>
@@ -983,7 +983,7 @@ const sectionMeta = [
                 > OpenClaw ships <span class="font-semibold text-white"
                   >native mobile &amp; desktop apps</span
                 >, <span class="font-semibold text-white">voice wake</span>, and a
-                <span class="font-semibold text-white">Canvas</span> surface — a
+                <span class="font-semibold text-white">Canvas</span> surface - a
                 personal-assistant experience Comis doesn't try to match.
               </li>
               <li>
@@ -999,10 +999,10 @@ const sectionMeta = [
               </li>
               <li>
                 <span class="font-semibold text-white"
-                  >Test infrastructure ({count(testRows, "openclaw")}&ndash;{count(
+                  >Test infrastructure ({count(testRows, "openclaw")}-{count(
                     testRows,
                     "comis",
-                  )}&ndash;{count(testRows, "tie")}):</span
+                  )}-{count(testRows, "tie")}):</span
                 >
                 2,242 test files, 15 dedicated live-model tests, 7 Docker E2E suites,
                 and 46 browser tests via Playwright. Comis counters with ChaosEchoAdapter
@@ -1101,8 +1101,8 @@ const sectionMeta = [
             scope absent a boundary bypass.
           </blockquote>
           <p class="text-sm text-muted mt-3">
-            — OpenClaw <code class="text-muted-light">SECURITY.md</code>. Honest
-            engineering, and a different design center from Comis — not a knock on
+            - OpenClaw <code class="text-muted-light">SECURITY.md</code>. Honest
+            engineering, and a different design center from Comis - not a knock on
             either project.
           </p>
         </div>
@@ -1197,10 +1197,10 @@ const sectionMeta = [
           >, <span class="font-semibold text-white">voice wake</span>, and the
           <span class="font-semibold text-white">widest channel list</span> in
           the field, <span class="font-semibold text-teal">OpenClaw is excellent</span>
-          — that's its design center, by its own documentation. If you want an
-          agent platform you can hand to your team, your family, or your company —
+          - that's its design center, by its own documentation. If you want an
+          agent platform you can hand to your team, your family, or your company -
           multi-tenant by design, with the sandbox on by default, keys the agent
-          can never read, and every action reconstructable from the logs alone —
+          can never read, and every action reconstructable from the logs alone -
           <span class="font-semibold text-coral">that's Comis</span>.
         </p>
       </div>

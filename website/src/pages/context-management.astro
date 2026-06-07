@@ -247,7 +247,7 @@ const realExample = {
           Comis ships two context engines and runs the lossless one by default. Which engine an agent uses is an operator-only choice (<code class="text-teal text-xs">contextEngine.version</code>) - switched with a single config reload, no restart, fully reversible, no data loss. The same token-budgeting, eviction, masking, and compaction discipline applies in both.
         </p>
 
-        <!-- DAG default — promoted first -->
+        <!-- DAG default - promoted first -->
         <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 mb-6 max-w-3xl">
           <div class="flex items-center gap-2 mb-3">
             <span class="text-xs font-mono px-2 py-0.5 rounded bg-teal/15 text-teal">Default</span>
@@ -353,7 +353,7 @@ const realExample = {
           <div class="bg-navy-light/80 rounded-lg p-4 font-mono text-xs text-teal overflow-x-auto">
             <pre class="whitespace-pre">breakpoint callback &rarr; fence index &rarr; layer guards &rarr; trim offset translation
          &uarr;                                                    &darr;
-         &larr;&mdash;&mdash;&mdash;&mdash; persisted across execute() calls &mdash;&mdash;&mdash;&mdash;&rarr;</pre>
+         &larr;---- persisted across execute() calls ----&rarr;</pre>
           </div>
           <p class="text-muted text-sm mt-4 leading-relaxed">
             Multiple feedback loops ensure cache stability across turns, achieving a <span class="text-teal font-semibold font-mono">{FACTS.costs.cacheRatio}</span> read/write ratio in production - meaning for every token written to cache, roughly 17 tokens are served from it at 10x lower cost.
@@ -606,7 +606,7 @@ const realExample = {
           </svg>
         </div>
 
-        <!-- Cost comparison (spawn-staggering scenario only — the full-session percentage lives in the production-data section) -->
+        <!-- Cost comparison (spawn-staggering scenario only - the full-session percentage lives in the production-data section) -->
         <div class="grid md:grid-cols-2 gap-6">
           <div class="bg-navy rounded-xl border border-coral/15 p-6">
             <p class="text-coral font-semibold text-sm mb-2">Unstaggered fan-out</p>
@@ -616,7 +616,7 @@ const realExample = {
           <div class="bg-navy rounded-xl border border-teal/15 p-6">
             <p class="text-teal font-semibold text-sm mb-2">With spawn staggering</p>
             <p class="text-3xl font-bold text-white font-mono mb-2">$12.48</p>
-            <p class="text-muted text-sm">4.9M tokens served from cache reads at $0.50/MTok. The first agent writes the shared prefix, siblings read it instead of each writing it again, and the fence prevents invalidation &mdash; <span class="text-teal font-semibold">roughly half the cost of an unstaggered fan-out</span>. (The full cached-vs-uncached session comparison is in the production-data section below.)</p>
+            <p class="text-muted text-sm">4.9M tokens served from cache reads at $0.50/MTok. The first agent writes the shared prefix, siblings read it instead of each writing it again, and the fence prevents invalidation - <span class="text-teal font-semibold">roughly half the cost of an unstaggered fan-out</span>. (The full cached-vs-uncached session comparison is in the production-data section below.)</p>
           </div>
         </div>
       </div>
@@ -837,7 +837,7 @@ const realExample = {
         <div class="mt-8 bg-navy-light/80 border border-coral/15 rounded-xl p-6">
           <p class="text-white font-semibold mb-2">What spawn staggering alone saves</p>
           <p class="text-muted text-sm leading-relaxed">
-            Run the same 8-agent fan-out with every sibling writing the identical prefix and it costs <span class="text-coral font-semibold">$22.51</span> &mdash; 4M prompt tokens at the full input rate. Stagger the spawns so the first agent writes once and the rest read at <span class="text-teal font-mono">$0.50/MTok</span> and it drops to <span class="text-teal font-semibold">$12.48</span>, roughly half. The cache fence on top of that prevented 36K+ tokens of unnecessary re-writes per pipeline turn by protecting the cached prefix from context engine modifications &mdash; the full pipeline lands at <span class="text-teal font-semibold">{FACTS.costs.pipelineCost}</span> ({FACTS.costs.pipelineTokens} tokens).
+            Run the same 8-agent fan-out with every sibling writing the identical prefix and it costs <span class="text-coral font-semibold">$22.51</span> - 4M prompt tokens at the full input rate. Stagger the spawns so the first agent writes once and the rest read at <span class="text-teal font-mono">$0.50/MTok</span> and it drops to <span class="text-teal font-semibold">$12.48</span>, roughly half. The cache fence on top of that prevented 36K+ tokens of unnecessary re-writes per pipeline turn by protecting the cached prefix from context engine modifications - the full pipeline lands at <span class="text-teal font-semibold">{FACTS.costs.pipelineCost}</span> ({FACTS.costs.pipelineTokens} tokens).
           </p>
         </div>
       </div>
@@ -939,7 +939,7 @@ const realExample = {
           Anthropic dashboard: {realExample.date}
         </h2>
         <p class="text-muted text-lg mb-8 max-w-2xl">
-          Actual token usage and costs from a production Comis instance running multi-agent pipelines on Claude Opus 4.6. Not a benchmark - real user traffic. This 76-call session cost <span class="text-teal font-semibold">{FACTS.costs.cachedSession}</span> with caching versus <span class="text-coral font-semibold">{FACTS.costs.uncachedSession}</span> without &mdash; <span class="text-teal font-semibold">{FACTS.costs.savingsPct} cheaper</span>. That is the 81% this page leads with.
+          Actual token usage and costs from a production Comis instance running multi-agent pipelines on Claude Opus 4.6. Not a benchmark - real user traffic. This 76-call session cost <span class="text-teal font-semibold">{FACTS.costs.cachedSession}</span> with caching versus <span class="text-coral font-semibold">{FACTS.costs.uncachedSession}</span> without - <span class="text-teal font-semibold">{FACTS.costs.savingsPct} cheaper</span>. That is the 81% this page leads with.
         </p>
 
         <div class="grid md:grid-cols-2 gap-8">

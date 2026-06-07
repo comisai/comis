@@ -23,7 +23,7 @@ const designRows: Row[] = [
   {
     label: "Design center",
     comis:
-      "Platform — many agents × many operators, one auditable install. Built from the premise that the agents and people sharing an install aren't all fully trusted.",
+      "Platform - many agents × many operators, one auditable install. Built from the premise that the agents and people sharing an install aren't all fully trusted.",
     hermes:
       "Single-tenant personal agent, by design. Host-first: one trusted operator on their own machine. (Their words: “Hermes Agent is a single-tenant personal agent.”)",
     verdict: "comis",
@@ -33,13 +33,13 @@ const designRows: Row[] = [
     comis:
       "Multi-tenant by construction: per-session routing, per-agent isolation, and trust-partitioned memory so an untrusted sender can't reach what the system verified.",
     hermes:
-      "Single user per gateway — an explicit, documented architectural choice. The operating system is the security boundary.",
+      "Single user per gateway - an explicit, documented architectural choice. The operating system is the security boundary.",
     verdict: "comis",
   },
   {
     label: "Typed errors end-to-end",
     comis:
-      "Result<T, E> everywhere — ok(), err(), tryCatch(), fromPromise(). Failure is a value the compiler checks, not a stray exception.",
+      "Result<T, E> everywhere - ok(), err(), tryCatch(), fromPromise(). Failure is a value the compiler checks, not a stray exception.",
     hermes:
       "Traditional throw/catch error handling. Runtime-checked.",
     verdict: "comis",
@@ -50,7 +50,7 @@ const securityRows: Row[] = [
   {
     label: "Exec sandbox",
     comis:
-      "Kernel-enforced and on by default — Bubblewrap on Linux (full namespace unshare), sandbox-exec on macOS. No network by default. Tools run jailed by the OS itself, not by a setting you have to remember to turn on.",
+      "Kernel-enforced and on by default - Bubblewrap on Linux (full namespace unshare), sandbox-exec on macOS. No network by default. Tools run jailed by the OS itself, not by a setting you have to remember to turn on.",
     hermes:
       "Host-first by default. Containers confine the shell tool, not the agent. The agent process itself runs on the host.",
     verdict: "comis",
@@ -66,15 +66,15 @@ const securityRows: Row[] = [
   {
     label: "API keys vs. agent runtime",
     comis:
-      "Credential broker: the key is injected at the network boundary by an in-process MITM that terminates TLS with its own CA, validates a single-use token, and swaps a placeholder at the header layer. The key never enters the sandbox. Fails closed — any gate failure destroys the tunnel before a byte reaches upstream.",
+      "Credential broker: the key is injected at the network boundary by an in-process MITM that terminates TLS with its own CA, validates a single-use token, and swaps a placeholder at the header layer. The key never enters the sandbox. Fails closed - any gate failure destroys the tunnel before a byte reaches upstream.",
     hermes:
-      "Env-scrub blocklist for child processes — named secrets are stripped from the environment handed to spawned tools. The agent process itself still holds the keys to authenticate.",
+      "Env-scrub blocklist for child processes - named secrets are stripped from the environment handed to spawned tools. The agent process itself still holds the keys to authenticate.",
     verdict: "comis",
   },
   {
     label: "Prompt injection",
     comis:
-      "Layered runtime defenses with benchmarked poisoning resistance — a weighted, multi-pattern content scanner, output guarding, and trust-partitioned memory, measured in public rather than asserted.",
+      "Layered runtime defenses with benchmarked poisoning resistance - a weighted, multi-pattern content scanner, output guarding, and trust-partitioned memory, measured in public rather than asserted.",
     hermes:
       "Heuristic wrapping of untrusted content. Hermes is candid that this is not a boundary: in their own words, “The only security boundary against an adversarial LLM is the operating system.”",
     verdict: "comis",
@@ -101,9 +101,9 @@ const agentRows: Row[] = [
   {
     label: "Self-improvement",
     comis:
-      "Self-improvement lives in memory, not code: the memory learns from use via a bounded, auditable tuner (with the trust weight structurally frozen). Skills stay operator-reviewed — the agent does not rewrite its own executable skills.",
+      "Self-improvement lives in memory, not code: the memory learns from use via a bounded, auditable tuner (with the trust weight structurally frozen). Skills stay operator-reviewed - the agent does not rewrite its own executable skills.",
     hermes:
-      "Yes — the agent rewrites its own skills. A built-in learning loop creates skills from experience and improves them during use. This is a genuine, distinctive strength.",
+      "Yes - the agent rewrites its own skills. A built-in learning loop creates skills from experience and improves them during use. This is a genuine, distinctive strength.",
     verdict: "hermes",
   },
   {
@@ -111,7 +111,7 @@ const agentRows: Row[] = [
     comis:
       `${FACTS.channels} first-party channels: ${FACTS.channelList.join(", ")}.`,
     hermes:
-      "20+ platform adapters — a broad, mature channel surface. Channel breadth is a real Hermes strength.",
+      "20+ platform adapters - a broad, mature channel surface. Channel breadth is a real Hermes strength.",
     verdict: "hermes",
   },
   {
@@ -135,7 +135,7 @@ const agentRows: Row[] = [
     comis:
       `${FACTS.models}.`,
     hermes:
-      "Wide model support via Nous Portal, OpenRouter, NovitaAI, NVIDIA NIM, OpenAI, and any OpenAI-compatible endpoint — swap models with one command, no lock-in.",
+      "Wide model support via Nous Portal, OpenRouter, NovitaAI, NVIDIA NIM, OpenAI, and any OpenAI-compatible endpoint - swap models with one command, no lock-in.",
     verdict: "tie",
   },
   {
@@ -143,7 +143,7 @@ const agentRows: Row[] = [
     comis:
       "Daemon-supervised interactive terminal driver: a real PTY fed into a headless emulator, governed like an MCP server (operator allowlist + per-entry sandbox scope), credential-agnostic.",
     hermes:
-      "Serverless terminal backends — run the agent on infrastructure that costs nearly nothing when idle. A neat operational strength.",
+      "Serverless terminal backends - run the agent on infrastructure that costs nearly nothing when idle. A neat operational strength.",
     verdict: "hermes",
   },
 ];
@@ -152,15 +152,15 @@ const contextRows: Row[] = [
   {
     label: "Context at scale",
     comis:
-      "Lossless DAG context engine, on by default — nothing is deleted; old turns compress into a zoomable leaf→condensed summary DAG the agent can drill back into (ctx_search / ctx_inspect / ctx_expand). Compression you can reverse, not destruction you can't.",
+      "Lossless DAG context engine, on by default - nothing is deleted; old turns compress into a zoomable leaf→condensed summary DAG the agent can drill back into (ctx_search / ctx_inspect / ctx_expand). Compression you can reverse, not destruction you can't.",
     hermes:
-      "Auto-compression at roughly 50% of the context window, using a cheaper model to summarize. Effective, but lossy — the compressed detail isn't recoverable in-session.",
+      "Auto-compression at roughly 50% of the context window, using a cheaper model to summarize. Effective, but lossy - the compressed detail isn't recoverable in-session.",
     verdict: "comis",
   },
   {
     label: "Cache & cost optimization",
     comis:
-      "A cache-fence index keeps the cached prefix byte-stable while the context engine edits everything after it, with adaptive TTL escalation, two-phase cache-break detection, and sub-agent spawn staggering — 15+ shipped optimizations. Measured 94% warm cache-hit rate; $5.02 vs $26.42 on a 76-call Opus session.",
+      "A cache-fence index keeps the cached prefix byte-stable while the context engine edits everything after it, with adaptive TTL escalation, two-phase cache-break detection, and sub-agent spawn staggering - 15+ shipped optimizations. Measured 94% warm cache-hit rate; $5.02 vs $26.42 on a 76-call Opus session.",
     hermes:
       "Provider-level prompt caching where the model supports it. No published cache-fence, breakpoint, or systematic invalidation strategy.",
     verdict: "comis",
@@ -168,9 +168,9 @@ const contextRows: Row[] = [
   {
     label: "Local-model security floor",
     comis:
-      "A tier-aware Model Capability Profile (frontier / mid / small / nano): a weaker model gets a stricter, more locked-down platform posture — capability is decoupled from the context window.",
+      "A tier-aware Model Capability Profile (frontier / mid / small / nano): a weaker model gets a stricter, more locked-down platform posture - capability is decoupled from the context window.",
     hermes:
-      "Local models are supported (Ollama, LM Studio, vLLM and similar). The OS is the boundary, whatever the model — there is no model-aware hardening.",
+      "Local models are supported (Ollama, LM Studio, vLLM and similar). The OS is the boundary, whatever the model - there is no model-aware hardening.",
     verdict: "comis",
   },
 ];
@@ -195,9 +195,9 @@ const infraRows: Row[] = [
   {
     label: "License",
     comis:
-      "Apache-2.0 — patent grant included.",
+      "Apache-2.0 - patent grant included.",
     hermes:
-      "MIT — permissive and simple.",
+      "MIT - permissive and simple.",
     verdict: "tie",
   },
 ];
@@ -349,9 +349,9 @@ const sectionMeta = [
                 </div>
                 <div class="flex items-center justify-center gap-1.5 text-sm font-bold">
                   <span class="text-coral">{count(cat.rows, "comis")}</span>
-                  <span class="text-muted/40">&ndash;</span>
+                  <span class="text-muted/40">-</span>
                   <span class="text-teal">{count(cat.rows, "hermes")}</span>
-                  <span class="text-muted/40">&ndash;</span>
+                  <span class="text-muted/40">-</span>
                   <span class="text-muted/60">{count(cat.rows, "tie")}</span>
                 </div>
               </div>
@@ -584,17 +584,17 @@ const sectionMeta = [
             <div class="space-y-3 text-muted-light">
               <p>
                 <span class="text-white font-medium">Design center:</span> A platform
-                for whole teams, isolated by design — many agents, many operators,
+                for whole teams, isolated by design - many agents, many operators,
                 one auditable install.
               </p>
               <p>
                 <span class="text-white font-medium">Security stance:</span> Defense
-                in depth, enforced by the kernel and the compiler — not by prompts.
+                in depth, enforced by the kernel and the compiler - not by prompts.
                 Sandbox on by default; keys never meet the agent.
               </p>
               <p>
                 <span class="text-white font-medium">Self-improvement:</span> In
-                memory, not code — the memory learns from use under a bounded,
+                memory, not code - the memory learns from use under a bounded,
                 auditable tuner; skills stay operator-reviewed.
               </p>
               <p>
@@ -619,7 +619,7 @@ const sectionMeta = [
                   <blockquote class="border-l-2 border-teal/40 pl-4">
                     <p class="italic text-white">&ldquo;{q.text}&rdquo;</p>
                     <cite class="text-xs text-muted not-italic">
-                      — {q.source}
+                      - {q.source}
                     </cite>
                   </blockquote>
                 ))
@@ -630,7 +630,7 @@ const sectionMeta = [
               </p>
               <p>
                 <span class="text-white font-medium">Self-improvement:</span> A built-in
-                learning loop — the agent creates and rewrites its own skills
+                learning loop - the agent creates and rewrites its own skills
                 from experience.
               </p>
             </div>

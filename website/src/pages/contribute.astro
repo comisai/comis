@@ -4,7 +4,7 @@ import Base from "../layouts/Base.astro";
 import Footer from "../components/Footer.astro";
 import { FACTS } from "../data/facts";
 
-const title = "Contribute — built to be contributed to, safely";
+const title = "Contribute - built to be contributed to, safely";
 const description =
   "Comis is built to be contributed to: the rules are executable (pnpm validate runs the same gates as CI), the protocol is written down (AGENTS.md), and every extension point is a real, typed interface. Here's how to land your first change.";
 
@@ -12,7 +12,7 @@ const agentsMdUrl = `${FACTS.links.github}/blob/main/AGENTS.md`;
 const discussionsUrl = `${FACTS.links.github}/discussions`;
 const issuesUrl = `${FACTS.links.github}/issues`;
 // The good-first-issue funnel link is the single-source-of-truth
-// FACTS.links.goodFirstIssue — the GitHub issues view filtered by the
+// FACTS.links.goodFirstIssue - the GitHub issues view filtered by the
 // label:"good+first+issue" query. Surfaced here so the link contract is
 // explicit at the call site.
 const goodFirstIssueUrl = FACTS.links.goodFirstIssue;
@@ -21,12 +21,12 @@ const goodFirstIssueUrl = FACTS.links.goodFirstIssue;
 const pillars = [
   {
     title: "The rules are executable",
-    body: "One command — pnpm validate — runs the exact gates CI does: a clean build, dependency-cycle checks, the security lint, and per-package coverage floors. You find out before you push, not after a reviewer does. No guessing what “good” looks like.",
+    body: "One command - pnpm validate - runs the exact gates CI does: a clean build, dependency-cycle checks, the security lint, and per-package coverage floors. You find out before you push, not after a reviewer does. No guessing what “good” looks like.",
     code: "pnpm validate",
   },
   {
     title: "The protocol is written down",
-    body: "AGENTS.md is the engineering contract — Result<T, E> for errors, tests-first, the security rules, the naming and logging conventions. There's no tribal knowledge to absorb and no maintainer you have to ping to learn “how we do things here.”",
+    body: "AGENTS.md is the engineering contract - Result<T, E> for errors, tests-first, the security rules, the naming and logging conventions. There's no tribal knowledge to absorb and no maintainer you have to ping to learn “how we do things here.”",
     code: null,
   },
   {
@@ -40,15 +40,15 @@ const pillars = [
 const helpAreas = [
   {
     name: "Channel adapters",
-    body: `New messaging platforms beyond the ${FACTS.channels} we ship today — implement ChannelPort and wire it into the composition root.`,
+    body: `New messaging platforms beyond the ${FACTS.channels} we ship today - implement ChannelPort and wire it into the composition root.`,
   },
   {
     name: "Skills & MCP integrations",
-    body: "New built-in tools (a manifest + handler) or integrations with the MCP ecosystem — 50+ servers exist; you choose which to wire in.",
+    body: "New built-in tools (a manifest + handler) or integrations with the MCP ecosystem - 50+ servers exist; you choose which to wire in.",
   },
   {
     name: "Docs",
-    body: "Clear, accurate documentation is a force multiplier — and a great first contribution. If a page is wrong or missing, fixing it counts.",
+    body: "Clear, accurate documentation is a force multiplier - and a great first contribution. If a page is wrong or missing, fixing it counts.",
   },
 ];
 ---
@@ -77,7 +77,7 @@ const helpAreas = [
         <h1
           class="text-4xl md:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.1] text-white"
         >
-          Built to be contributed to &mdash; safely.
+          Built to be contributed to - safely.
         </h1>
         <p
           class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed"
@@ -161,7 +161,7 @@ const helpAreas = [
         </h2>
         <p class="text-muted text-lg mb-8 leading-relaxed">
           Comis is a TypeScript monorepo. Clone it, install the workspace, build,
-          and run the tests &mdash; you're ready to make a change. Node.js {FACTS.nodeEngines} and
+          and run the tests - you're ready to make a change. Node.js {FACTS.nodeEngines} and
           pnpm are the only prerequisites.
         </p>
 
@@ -244,7 +244,7 @@ const helpAreas = [
         </div>
         <p class="mt-8 text-muted leading-relaxed max-w-xl mx-auto">
           A green <code class="text-teal">pnpm validate</code> means your PR passes
-          the same deterministic gates CI will run &mdash; so review is about the idea,
+          the same deterministic gates CI will run - so review is about the idea,
           not the plumbing.
         </p>
       </div>

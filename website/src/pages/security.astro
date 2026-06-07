@@ -63,7 +63,7 @@ const layers = [
     category: "Secrets",
     color: "teal",
     threat: "API key exposure via agentic CLIs",
-    how: "Works for any API-key CLI — Claude Code included. The real key never enters the exec sandbox. It lives in the daemon's AES-256-GCM encrypted store and is resolved per-request by the in-daemon HTTPS MITM broker. The CLI runs with a placeholder; the broker terminates TLS with its own CA, verifies the single-use proxy token, and injects the real credential for allow-listed hosts (`x-api-key`, `Authorization: Bearer`, or query param). On Linux, the credentialed sandbox runs in broker-only network mode (`--unshare-net`) — the broker unix socket is the only reachable destination (kernel-enforced; validated on the Linux production host class). Broker fails closed: bad token → 407, no binding → 403, missing secret → 502, request never forwarded. Every inject/deny/blocked-egress event is audited with `agentId` + `traceId`.",
+    how: "Works for any API-key CLI - Claude Code included. The real key never enters the exec sandbox. It lives in the daemon's AES-256-GCM encrypted store and is resolved per-request by the in-daemon HTTPS MITM broker. The CLI runs with a placeholder; the broker terminates TLS with its own CA, verifies the single-use proxy token, and injects the real credential for allow-listed hosts (`x-api-key`, `Authorization: Bearer`, or query param). On Linux, the credentialed sandbox runs in broker-only network mode (`--unshare-net`) - the broker unix socket is the only reachable destination (kernel-enforced; validated on the Linux production host class). Broker fails closed: bad token → 407, no binding → 403, missing secret → 502, request never forwarded. Every inject/deny/blocked-egress event is audited with `agentId` + `traceId`.",
   },
   {
     name: "Log Sanitizer",
@@ -175,7 +175,7 @@ const layers = [
     category: "Supply Chain",
     color: "pink",
     threat: "Malicious skills loaded at runtime",
-    how: `Every skill is screened before it can run. ${SECURITY.contentScannerRules} rules cover exec injection, exfiltration, and XML breakout, applied at skill-load time. This is the canonical ${SECURITY.contentScannerRules} — it belongs to the content scanner.`,
+    how: `Every skill is screened before it can run. ${SECURITY.contentScannerRules} rules cover exec injection, exfiltration, and XML breakout, applied at skill-load time. This is the canonical ${SECURITY.contentScannerRules} - it belongs to the content scanner.`,
   },
   {
     name: "MCP Malware Screening",
@@ -189,14 +189,14 @@ const layers = [
     category: "Supply Chain",
     color: "pink",
     threat: "Insecure code patterns reaching main",
-    how: "Named bans block insecure patterns in CI before merge: no path.join, no process.env, no eval/new Function, no swallowed errors — backed by architecture-as-tests that fail the build on regression.",
+    how: "Named bans block insecure patterns in CI before merge: no path.join, no process.env, no eval/new Function, no swallowed errors - backed by architecture-as-tests that fail the build on regression.",
   },
   {
     name: "Action Classifier",
     category: "Access Control",
     color: "blue",
     threat: "Unsupervised or unrecognized destructive actions",
-    how: "Destructive actions pause for HMAC-signed operator approval via chat buttons. Unknown action types classify as destructive and fail closed — the default is to stop and ask, never to assume an unrecognized action is safe.",
+    how: "Destructive actions pause for HMAC-signed operator approval via chat buttons. Unknown action types classify as destructive and fail closed - the default is to stop and ask, never to assume an unrecognized action is safe.",
   },
 ];
 
@@ -213,7 +213,7 @@ const categories = [
   { name: "Supply Chain", color: "pink-400", count: 3, desc: "Screen skills and packages, block insecure code before merge" },
 ];
 
-// Static Tailwind class map — Tailwind 4 cannot see class names built by string
+// Static Tailwind class map - Tailwind 4 cannot see class names built by string
 // interpolation at runtime, so every category color is listed here explicitly
 // and looked up by key, ensuring the classes are generated at build time.
 const colorClass: Record<string, string> = {
@@ -366,7 +366,7 @@ const colorClass: Record<string, string> = {
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
             </svg>
             <p class="text-muted text-sm leading-relaxed">
-              <span class="text-white font-semibold">Production runs on Linux.</span> Docker Desktop's lightweight VM kernel can't run the exec sandbox &mdash; {FACTS.dockerSandbox}. Detection is explicit, not silent: you see it in the startup logs and choose how to proceed.
+              <span class="text-white font-semibold">Production runs on Linux.</span> Docker Desktop's lightweight VM kernel can't run the exec sandbox - {FACTS.dockerSandbox}. Detection is explicit, not silent: you see it in the startup logs and choose how to proceed.
             </p>
           </div>
         </div>
