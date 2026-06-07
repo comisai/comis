@@ -182,6 +182,27 @@ export interface BuildMcpServerForClientDeps {
    *  the last N CONFIRMED messages are returned. Wired from the composition
    *  root with MCP_RESOURCE_READ_LIMIT. */
   readonly resourceReadLimit: number;
+  /**
+   * SECURITY (154-03) — the trust-flag-FREE direct invocation of the
+   * `obs.explain` ASSEMBLER (`assembleIncidentReportFromSources`), built at the
+   * composition root over the obsStore + dataDir. The `obs_explain` MCP tool's
+   * dispatch branch calls THIS (not {@link daemonRpcForMcpClient}) so it runs
+   * under DAEMON authority WITHOUT touching the admin-gated `obs.explain` RPC
+   * and WITHOUT injecting `_trustLevel:"admin"`. Its authorization is the
+   * per-client `mcpClient.allowlist` (the compensating control) + the
+   * digest-only/bounded report — NOT admin trust.
+   *
+   * OPTIONAL: an obsStore-less boot (or a wiring gap) leaves it `undefined`;
+   * the dispatch branch then fails CLOSED with a generic `dispatch_error`
+   * sentinel rather than falling through to the admin RPC indirection.
+   *
+   * `params` arrive ALREADY `_trustLevel`-stripped (the dispatcher strips at
+   * Step 4 for every tool); the closure validates the `{sessionKey?,traceId?,
+   * depth?}` shape via the contract `request.parse` before assembling.
+   */
+  readonly obsExplainForMcpClient?: (
+    params: Record<string, unknown>,
+  ) => Promise<unknown>;
 }
 
 /**
@@ -445,8 +466,84 @@ function buildDispatchCallback(args: {
     // STRIP any _trustLevel a hostile caller might have injected in args. The
     // composition-root wiring of daemonRpcForMcpClient already never sets
     // _trustLevel:"admin"; stripping HERE is defense-in-depth so the field
-    // never even reaches the indirection.
+    // never even reaches the indirection. (This strip runs for EVERY tool,
+    // including obs_explain below.)
     const safeParams: Record<string, unknown> = stripTrustLevel(argsRecord);
+
+    // ----- Step 4 (obs_explain, 154-03) -- direct-assembler dispatch ---------
+    // SECURITY: obs_explain reaches the Phase-153 IncidentReport with NO new
+    // privilege. It does NOT route through daemonRpcForMcpClient -> the
+    // admin-gated obs.explain RPC; instead it invokes the trust-flag-FREE
+    // assembler closure DIRECTLY under daemon authority. Its boundary is the
+    // per-client mcpClient.allowlist (enforced above at Steps 1+the registration
+    // filter) + the digest-only/bounded report. `safeParams` is already
+    // _trustLevel-stripped, so no admin trust can be smuggled in.
+    if (toolName === "obs_explain") {
+      if (!deps.obsExplainForMcpClient) {
+        // obsStore-less boot or wiring gap — fail CLOSED, not crash, and do NOT
+        // fall through to the admin-strip RPC indirection.
+        logger.warn(
+          {
+            clientId: client.id,
+            toolName,
+            submodule: "dispatch",
+            errorKind: "internal" as const,
+            hint:
+              "obs_explain reached dispatch but obsExplainForMcpClient is unwired; check daemon.ts setupGateway obsStore wiring",
+          },
+          "MCP obs_explain dispatch skipped -- assembler closure unavailable",
+        );
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `[dispatch_error] obs_explain unavailable; check daemon logs (clientId=${client.id})`,
+            },
+          ],
+        };
+      }
+      let report: unknown;
+      try {
+        report = await deps.obsExplainForMcpClient(safeParams);
+      } catch (err) {
+        logger.warn(
+          {
+            clientId: client.id,
+            toolName,
+            err,
+            submodule: "dispatch",
+            errorKind: "internal" as const,
+            hint:
+              "obs_explain assembler threw; inspect the obs-explain assembler (resolve/read/assemble) and the request shape",
+          },
+          "MCP obs_explain dispatch error",
+        );
+        // Same posture as the generic dispatch_error: never surface raw
+        // err.message (it can carry sessionKeys/file paths); a neither-id
+        // contract .refine failure also collapses here.
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `[dispatch_error] tool invocation failed; check daemon logs (clientId=${client.id} toolName=${toolName})`,
+            },
+          ],
+        };
+      }
+      // Step 5 (same wrap as every other tool): digest-only report flows through
+      // wrapExternalContent so prompt-injection text in it gets the SECURITY
+      // NOTICE + hex markers.
+      const serialized =
+        typeof report === "string" ? report : safeStringify(report);
+      const wrapped = wrapExternalContent(serialized, {
+        source: "mcp_tool",
+        sender: `mcp-tool:${toolName}`,
+      });
+      return { content: [{ type: "text", text: wrapped }] };
+    }
+
     const method = deps.toolNameToRpcMethod(toolName);
 
     let rpcResult: unknown;
