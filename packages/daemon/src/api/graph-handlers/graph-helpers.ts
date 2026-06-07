@@ -99,6 +99,22 @@ export function transformNodes(rawNodes: unknown[]): unknown[] {
 
 // ---------------------------------------------------------------------------
 // O3: capabilityClass routing predicate
+//
+// WR-01 producer status (deferred to Phase 157): the routing PREDICATE and the
+// consumer branch below are wired and unit-tested, but NO producer currently
+// supplies a real capabilityClass on graph RPC params — it is not in the
+// GraphDefine/Execute/Save request contracts and the pipeline tool does not
+// send it (the natural producer hook is the per-agent rpcCall injection in
+// daemon's setup-tools.ts, which today injects _agentId/_callerSessionKey but
+// not a resolved capabilityClass). So in production capabilityClass is always
+// undefined → isWeakCapabilityClass(undefined) === false → the capable
+// direct-emit path. The weak branch is exercised only by unit tests that pass
+// the argument directly. Phase 157 lands BOTH the producer (resolved
+// ModelProfile.capabilityClass threaded to the RPC boundary) and the matching
+// async repair consumer (repairDagWithBoundedRetries); wiring the producer
+// before the repair exists would only route weak agents to a hard fail-closed
+// throw with no recourse. Until then this is a documented, traceable deferral —
+// not silently dead code.
 // ---------------------------------------------------------------------------
 
 /** Capability class values that select the weak-model (template/repair) path. */
@@ -110,7 +126,9 @@ type CapabilityClassParam = "frontier" | "mid" | "small" | "nano" | undefined;
  * Capable models (frontier, mid) and unknown (undefined) route to the existing
  * direct-emit path unchanged.
  *
- * Exported for unit testing.
+ * WR-01: no producer feeds a real value yet (see the block above) — this is
+ * always called with undefined in production until Phase 157. Exported for unit
+ * testing, which passes the argument directly.
  */
 export function isWeakCapabilityClass(
   capabilityClass: CapabilityClassParam,
@@ -179,8 +197,11 @@ export function buildGraphInput(
   //   const result = await repairDagWithBoundedRetries(rawGraph, realRepromptFn, 2);
   //   if (!result.ok) throw new Error(`Graph repair exhausted (Phase 157): ${result.error}`);
   //   return result.value;
-  // The async repairDagWithBoundedRetries call and its daemon→@comis/agent import
-  // are deferred to Phase 157; the routing predicate IS wired here (O3 delivered).
+  // WR-01: this weak branch is unreachable in production today because no
+  // producer supplies capabilityClass (see the O3 predicate block above) — both
+  // the producer AND this async repairDagWithBoundedRetries consumer (plus its
+  // daemon→@comis/agent import) land together in Phase 157. The routing
+  // predicate is wired and tested; the production producer is the deferred piece.
   throw new Error(
     `Graph validation failed (weak model, Phase 157 repair deferred): ${validateResult.error.message}`,
   );

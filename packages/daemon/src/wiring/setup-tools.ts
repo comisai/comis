@@ -315,6 +315,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
   /** Create an agent-scoped rpcCall that injects _agentId, _callerSessionKey, and _deliveryTarget into every call. */
   function createAgentRpcCall(agentId: string): RpcCall {
+    // O3 (WR-01) producer hook — Phase 157: this is the single place to inject a
+    // resolved capabilityClass for graph.* calls so the daemon's weak-model
+    // routing (graph-helpers.ts isWeakCapabilityClass / buildGraphInput) engages.
+    // Deferred until Phase 157 lands the matching weak-model repair consumer; it
+    // would resolve the profile from ctx.resolvedModel via the model catalog +
+    // resolveModelProfile and pass capabilityClass on the graph RPC params.
     return async (method, params) => {
       const ctx = tryGetContext();
       // Build delivery target from context for cron job routing

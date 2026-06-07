@@ -58,6 +58,15 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const userParams = stripInternalFields(rawParams);
       GraphDefineContract.request.parse(userParams);
 
+      // O3 (WR-01) producer deferred to Phase 157: no current producer sets
+      // capabilityClass on graph RPC params — it is absent from the contract
+      // request schema and the pipeline tool does not send it. Until Phase 157
+      // wires the producer (the resolved-ModelProfile capabilityClass threaded
+      // from the agent's rpcCall boundary) AND the matching weak-model repair
+      // consumer (see buildGraphInput / repairDagWithBoundedRetries in
+      // graph-helpers.ts), this is always undefined → the capable direct-emit
+      // path. The read is intentionally retained so the producer wiring is a
+      // single localized change in Phase 157.
       const capabilityClass = userParams.capabilityClass as
         "frontier" | "mid" | "small" | "nano" | undefined;
       const validated = buildGraphInput(userParams, capabilityClass);
@@ -86,6 +95,9 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const userParams = stripInternalFields(rawParams);
       GraphExecuteContract.request.parse(userParams);
 
+      // O3 (WR-01) producer deferred to Phase 157 — see graph.define above.
+      // No producer sets capabilityClass yet, so this is always undefined →
+      // capable direct-emit path. Retained as the single Phase-157 wiring point.
       const capabilityClass = userParams.capabilityClass as
         "frontier" | "mid" | "small" | "nano" | undefined;
       const validated = buildGraphInput(userParams, capabilityClass);
@@ -218,6 +230,8 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const agentId = (rawParams.agentId as string) ?? deps.defaultAgentId;
 
       // Validate structure (typeId/typeConfig pairing, DAG sort, Zod schema)
+      // O3 (WR-01) producer deferred to Phase 157 — see graph.define above.
+      // Always undefined today → capable direct-emit path.
       const capabilityClass = userParams.capabilityClass as
         "frontier" | "mid" | "small" | "nano" | undefined;
       const validated = buildGraphInput(userParams, capabilityClass);
