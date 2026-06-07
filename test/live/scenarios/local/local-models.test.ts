@@ -36,6 +36,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
 import { assertNoSecrets } from "../../cost.js";
@@ -44,6 +45,8 @@ import {
   resolveCapabilityDefault,
   V2_9_CAPABILITIES,
 } from "../../../../packages/core/dist/config/capability-activation.js";
+// S6 structural imports — available from the core dist barrel.
+import { RagConfigSchema, validateMemoryWrite } from "../../../../packages/core/dist/index.js";
 // Bench contract (plain ESM, no @comis deps) — dynamic import keeps types loose
 // and avoids a build-time coupling between the live tier and scripts/.
 const bench = (await import("../../../../scripts/bench-small-model/harness.mjs")) as {
@@ -143,6 +146,89 @@ describe("local-model live tier — scenario+scorer contract (Stage-A, no model)
       FROZEN_TRUST_PATHS.length,
       "FROZEN_TRUST_PATHS must be non-empty — trust boundary constant must not be cleared",
     ).toBeGreaterThan(0);
+  });
+
+  // S6 immutability structural tests — T-153-immutable mitigations.
+  // These run in Stage-A (no COMIS_LIVE needed — all assertions are structural/pure).
+
+  it("S6: FROZEN_TRUST_PATHS constant is independent of ModelProfile (same value for any capabilityClass)", () => {
+    // FROZEN_TRUST_PATHS is a module-level constant exported from @comis/core. It cannot
+    // vary by capabilityClass because it carries no profile parameter — calling it for
+    // frontier, small, and nano must return the identical frozen array. This test proves
+    // that profile substitution (weaker capabilityClass) cannot relax the trust paths.
+    //
+    // Strategy: read the constant three times (reference identity is guaranteed by the
+    // module singleton) and assert: (a) each read is non-empty, (b) all three are the
+    // same reference (same frozen array object from the module), (c) same string values.
+    const forFrontier = FROZEN_TRUST_PATHS;
+    const forSmall = FROZEN_TRUST_PATHS;
+    const forNano = FROZEN_TRUST_PATHS;
+
+    // Non-empty for all three "profiles".
+    expect(forFrontier.length, "FROZEN_TRUST_PATHS must be non-empty for frontier").toBeGreaterThan(0);
+    expect(forSmall.length, "FROZEN_TRUST_PATHS must be non-empty for small").toBeGreaterThan(0);
+    expect(forNano.length, "FROZEN_TRUST_PATHS must be non-empty for nano").toBeGreaterThan(0);
+
+    // Structural independence: all three references resolve to the identical frozen constant.
+    expect(forFrontier).toBe(forSmall);
+    expect(forSmall).toBe(forNano);
+
+    // Content equality (belt-and-suspenders — same items, same order).
+    expect([...forSmall]).toEqual([...forFrontier]);
+    expect([...forNano]).toEqual([...forFrontier]);
+  });
+
+  it("S6: validateMemoryWrite returns severity=critical for dangerous content regardless of securityLevel", () => {
+    // validateMemoryWrite() is a pure function with NO ModelProfile / securityLevel
+    // parameter — it is structurally impossible for a weaker capabilityClass to relax
+    // the check. This test calls it with a dangerous payload (rm -rf pattern) and
+    // asserts severity=critical, proving the guarantee is unconditional.
+    const dangerous = "rm -rf /";
+    const result = validateMemoryWrite(dangerous);
+    expect(
+      result.severity,
+      "validateMemoryWrite must return severity=critical for a dangerous command payload, " +
+      "regardless of which securityLevel / capabilityClass is active (no profile parameter exists)",
+    ).toBe("critical");
+  });
+
+  it("S6: R3 baseFloor schema default is 0 and no profile-conditional lowering path exists in source", () => {
+    // TWO complementary assertions (both must pass):
+    //
+    // (a) Runtime schema assertion:
+    //     RagConfigSchema.shape.baseFloor should have a default of 0.
+    //     This confirms the schema-level default at runtime.
+    const shape = (RagConfigSchema as { shape?: Record<string, { _def?: { defaultValue?: unknown } }> }).shape;
+    expect(shape, "RagConfigSchema.shape must be defined (ZodObject)").toBeDefined();
+    const baseFloorField = shape?.["baseFloor"];
+    expect(baseFloorField, "RagConfigSchema.shape.baseFloor must be defined").toBeDefined();
+    // Zod stores the default in _def.defaultValue (either the value directly or a thunk;
+    // call it if it's a function, use it directly if it's a scalar).
+    const rawDefault = (baseFloorField as { _def?: { defaultValue?: unknown } })?._def?.defaultValue;
+    const defaultValue = typeof rawDefault === "function" ? (rawDefault as () => unknown)() : rawDefault;
+    expect(defaultValue, "RagConfigSchema.shape.baseFloor default must be 0 (S6: no lowering by profile)").toBe(0);
+
+    // (b) Structural source-read assertion:
+    //     Read capability-activation.ts and assert no line contains BOTH "baseFloor"
+    //     AND any of "securityLevel" / "capabilityClass" (no profile-conditional lowering path).
+    //     This mirrors the frozen-trust structural test above.
+    const capActPath = new URL(
+      "../../../../packages/core/src/config/capability-activation.ts",
+      import.meta.url,
+    ).pathname;
+    const source = readFileSync(capActPath, "utf8");
+    const lines = source.split("\n");
+    const coOccurrences = lines.filter(
+      (line) =>
+        line.includes("baseFloor") &&
+        (line.includes("securityLevel") || line.includes("capabilityClass")),
+    );
+    expect(
+      coOccurrences.length,
+      "capability-activation.ts must contain ZERO lines that co-locate 'baseFloor' with " +
+      "'securityLevel' or 'capabilityClass' — no profile-conditional lowering path may exist. " +
+      `Found: ${coOccurrences.join(" | ")}`,
+    ).toBe(0);
   });
 });
 

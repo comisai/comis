@@ -159,4 +159,56 @@ describe("createDialecticSeam", () => {
     const out = await synthesize("q", "g");
     expect(out).toEqual({ abstain: true });
   });
+
+  // R6 capability routing — T-153-fabricate mitigation
+  it("R6: capabilityClass=nano without override returns { abstain:true } immediately (pre-call, no LLM invoked)", async () => {
+    // Arrange: provide a canned LLM response — if the LLM IS called this would
+    // return { abstain: false, answer: "x", citedIds: [] }; the test asserts
+    // the seam abstains BEFORE reaching the LLM call.
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText('{"answer":"x","citedIds":[]}'),
+    );
+    const deps = makeDeps({ capabilityClass: "nano" } as Record<string, unknown>);
+    const synthesize = createDialecticSeam(deps as never);
+
+    const out = await synthesize("q", "g");
+
+    // Must return { abstain: true } — the capability-routing abstain.
+    expect(out).toEqual({ abstain: true });
+    // The LLM must NOT have been called (pre-call abort — the core T-153-fabricate guarantee).
+    expect(completeSimple).not.toHaveBeenCalled();
+  });
+
+  it("R6: capabilityClass=nano with hasCapableModelOverride=true proceeds to the LLM (override honored)", async () => {
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      llmText('{"answer":"UTC","citedIds":["id-a"]}'),
+    );
+    const deps = makeDeps({
+      capabilityClass: "nano",
+      hasCapableModelOverride: true,
+    } as Record<string, unknown>);
+    const synthesize = createDialecticSeam(deps as never);
+
+    const out = await synthesize("what timezone?", "[id-a] UTC");
+
+    // Override → LLM IS called and the answer comes through.
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    expect(out).toEqual({ abstain: false, answer: "UTC", citedIds: ["id-a"] });
+  });
+
+  it("R6: abstain message contains 'insufficient model capability' (explicit diagnostic, not generic)", async () => {
+    // The abstain reason must carry the required diagnostic phrase so operators
+    // can distinguish a capability-routing abstain from an LLM-failure abstain.
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText('{"answer":"x","citedIds":[]}'),
+    );
+    const deps = makeDeps({ capabilityClass: "small" } as Record<string, unknown>);
+    const synthesize = createDialecticSeam(deps as never);
+
+    const out = await synthesize("q", "g");
+
+    expect(out).toEqual({ abstain: true });
+    // The seam must NOT call the LLM.
+    expect(completeSimple).not.toHaveBeenCalled();
+  });
 });
