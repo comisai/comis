@@ -114,7 +114,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
   // securityLevel tightens inversely as capabilityClass drops
   // ---------------------------------------------------------------------------
   describe("securityLevel inverse of capabilityClass", () => {
-    it("frontier model (anthropic, 200K) → securityLevel='standard'", () => {
+    it("resolves securityLevel='standard' for a frontier anthropic model (200K context)", () => {
       const profile = resolveModelProfile({
         id: "claude-sonnet-4",
         provider: "anthropic",
@@ -125,7 +125,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
       expect(profile.securityLevel).toBe("standard");
     });
 
-    it("small/nano model (ollama, 256K) → securityLevel in ['hardened','locked']", () => {
+    it("resolves securityLevel to hardened or locked for a small/nano ollama model (256K context)", () => {
       const profile = resolveModelProfile({
         id: "qwen3.6:27b",
         provider: "ollama",
@@ -251,7 +251,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
   // (tested via capabilityClassOverride to be independent of provider heuristic)
   // ---------------------------------------------------------------------------
   describe("scaffoldLevel derived from capabilityClass", () => {
-    it("capabilityClassOverride='frontier' → scaffoldLevel='light'", () => {
+    it("resolves scaffoldLevel='light' when capabilityClassOverride is 'frontier'", () => {
       const profile = resolveModelProfile(
         {
           id: "any-model",
@@ -266,7 +266,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
       expect(profile.scaffoldLevel).toBe("light");
     });
 
-    it("capabilityClassOverride='mid' → scaffoldLevel='standard'", () => {
+    it("resolves scaffoldLevel='standard' when capabilityClassOverride is 'mid'", () => {
       const profile = resolveModelProfile(
         {
           id: "any-model",
@@ -281,7 +281,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
       expect(profile.scaffoldLevel).toBe("standard");
     });
 
-    it("capabilityClassOverride='small' → scaffoldLevel='max'", () => {
+    it("resolves scaffoldLevel='max' when capabilityClassOverride is 'small'", () => {
       const profile = resolveModelProfile(
         {
           id: "any-model",
@@ -296,7 +296,7 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
       expect(profile.scaffoldLevel).toBe("max");
     });
 
-    it("capabilityClassOverride='nano' → scaffoldLevel='max'", () => {
+    it("resolves scaffoldLevel='max' when capabilityClassOverride is 'nano'", () => {
       const profile = resolveModelProfile(
         {
           id: "any-model",

@@ -426,15 +426,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       memoryPort: deps.memoryPort,
       reranker: deps.reranker,
       entityStore: deps.entityStore,
-      // The lane stores ride the SAME forwarded subset as entityStore/usefulnessStore.
-      // temporalStore + causalStore were previously DROPPED here
-      // (a latent field-plumbing no-op: ToolAssemblyDeps carried them and
-      // prompt-assembly's createMemoryRecall reads them, but this enumeration omitted
-      // them, so both lanes were dead via the real pi-executor path). tripleStore
-      // (the 6th graph-spread lane) is forwarded the same way — a missing
-      // forward leaves the lane dormant even when its config flag is on. embeddingStore
-      // (the MMR diversity re-rank's scoped embedding read) is forwarded the same
-      // way — a missing forward leaves MMR a silent no-op even when rag.mmr.enabled is on.
+      // Lane stores (temporal/causal/triple/embedding): forwarded to prompt-assembly;
+      // a missing forward silently disables the corresponding RAG lane.
       temporalStore: deps.temporalStore,
       causalStore: deps.causalStore,
       tripleStore: deps.tripleStore,
