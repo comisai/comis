@@ -169,6 +169,34 @@ describe("toIncidentSignals — log shape (678-like)", () => {
       expect(f.resultDigest.length).toBeGreaterThan(0);
     }
   });
+
+  it("never inlines the untrusted-content marker in errorPreview (digest-only for external bodies)", () => {
+    // A 200-char HEAD slice of the injection body still begins with the
+    // "SECURITY NOTICE" marker — so the length cap alone is insufficient. The
+    // preview of an EXTERNAL, UNTRUSTED body must collapse to a digest reference
+    // so the injection header never reaches the consumer (T-153-14, depth-
+    // independent). The full body remains addressable via resultDigest.
+    const s = signals678();
+    for (const f of s.failures) {
+      expect(f.errorPreview).not.toContain("SECURITY NOTICE");
+      expect(f.errorPreview).not.toMatch(/UNTRUSTED source/i);
+      // The body is still captured by the digest.
+      expect(f.resultDigest.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("synthesizes a breaker 'opened' timeline event for the log-shape 678 DO-NOT-retry line", () => {
+    // 678 is log-shaped (pre-151): the breaker tripped (a "DO NOT retry" line is
+    // present) but there is no structured tool.breaker_opened event. The
+    // normalizer synthesizes the open from the log evidence so breakerTimeline
+    // is non-empty (the X3 must-have).
+    // log503DoNotRetry() is a generic web_fetch "DO NOT retry" log line — the
+    // same log shape the 678 fixture carries on its breaker-trip lines.
+    const s = toIncidentSignals([log678Success(), log678Failure(), log503DoNotRetry()]);
+    const opened = s.breakerEvents.filter((e) => e.event === "opened");
+    expect(opened.length).toBe(1);
+    expect(opened[0]!.toolName).toBe("web_fetch");
+  });
 });
 
 describe("toIncidentSignals — log shape (503-like)", () => {
@@ -193,6 +221,20 @@ describe("toIncidentSignals — log shape (503-like)", () => {
   it("derives breakerOpenedTool from the DO-NOT-retry line's toolName", () => {
     const s = signals503();
     expect(s.breakerOpenedTool).toBe("web_fetch");
+  });
+
+  it("synthesizes a single breaker 'opened' timeline event from log-shape DO-NOT-retry lines", () => {
+    const s = signals503();
+    const opened = s.breakerEvents.filter((e) => e.event === "opened" && e.toolName === "web_fetch");
+    // Exactly one synthesized open per tool (the log shape has one DO-NOT-retry
+    // line here) — the breaker opens once; repeated lines must not double-count.
+    expect(opened.length).toBe(1);
+  });
+
+  it("does NOT double-count the breaker open across multiple DO-NOT-retry lines for one tool", () => {
+    const s = toIncidentSignals([log503DoNotRetry(), log503DoNotRetry(), log503DoNotRetry()]);
+    const opened = s.breakerEvents.filter((e) => e.event === "opened" && e.toolName === "web_fetch");
+    expect(opened.length).toBe(1);
   });
 
   it("carries httpStatus:503 and errorKind:overloaded on the 503 failures", () => {

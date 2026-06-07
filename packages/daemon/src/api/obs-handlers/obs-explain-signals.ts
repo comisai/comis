@@ -56,6 +56,18 @@ const RAW_BODY_SCAN_BOUND = 2_000;
 const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
 const DO_NOT_RETRY_RE = /DO NOT retry/i;
 
+/**
+ * Markers that identify an EXTERNAL, UNTRUSTED tool body (the `wrapExternalContent`
+ * envelope Comis prepends to web/email/webhook content, which carries a
+ * prompt-injection block). When a failure body is wrapped untrusted content, even
+ * a 200-char HEAD slice begins with this marker — so the length cap alone leaks
+ * the injection header. The preview of such a body is collapsed WHOLESALE to a
+ * digest reference; the full body stays addressable via `resultDigest`
+ * (T-153-14, depth-independent — the consumer never sees the marker or its
+ * directives). Matched on the bounded slice (post-cap), never the raw body.
+ */
+const UNTRUSTED_CONTENT_MARKER_RE = /SECURITY NOTICE|UNTRUSTED source/i;
+
 // ---------------------------------------------------------------------------
 // Internal mutable accumulator (collapsed into IncidentSignals at the end).
 // ---------------------------------------------------------------------------
@@ -67,6 +79,11 @@ interface Acc {
   offloads: IncidentSignals["offloads"];
   breakerOpenedTool?: string;
   hasDoNotRetrySignal: boolean;
+  /** Tools for which a log-shape breaker "opened" event was already synthesized
+   * (dedup — the breaker opens once per tool even across repeated DO-NOT-retry
+   * lines). Structured tool.breaker_opened events are NOT deduped here (they are
+   * explicit telemetry, one push each). */
+  synthesizedBreakerTools: Set<string>;
   /** Per-tool: did any failure body carry a status/200/403 token? */
   misclassTokenByTool: Map<string, string>;
   sessionKey: string;
@@ -122,10 +139,17 @@ function previewAndDigest(errorText: string | undefined): {
   const resultDigest = fingerprint(body);
   // Pre-bound BEFORE sanitize (ReDoS guard on oversized bodies), then redact,
   // then hard-cap at MAX_ERROR_PREVIEW. The full body lives only in the digest.
-  const errorPreview = sanitizeLogString(body.slice(0, RAW_BODY_SCAN_BOUND)).slice(
+  const capped = sanitizeLogString(body.slice(0, RAW_BODY_SCAN_BOUND)).slice(
     0,
     MAX_ERROR_PREVIEW,
   );
+  // Untrusted-content guard (T-153-14): a wrapped EXTERNAL body leads with the
+  // "SECURITY NOTICE" injection marker, so the HEAD slice would inline it.
+  // Collapse the preview to a digest reference — the body is still addressable
+  // via resultDigest. Depth-independent (this runs before any depth bounding).
+  const errorPreview = UNTRUSTED_CONTENT_MARKER_RE.test(capped)
+    ? "[redacted:untrusted-content digest:" + resultDigest + "]"
+    : capped;
   return { errorPreview, resultDigest, resultBytes };
 }
 
@@ -164,6 +188,14 @@ function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
       // The breaker's offending tool is this line's toolName (log-shape proxy
       // for a tool.breaker_opened event, which does not exist pre-151).
       acc.breakerOpenedTool ??= tool;
+      // Synthesize a breaker "opened" timeline entry from the log evidence so a
+      // pre-151 log-only session still has a non-empty breakerTimeline (the X3
+      // 678 must-have). Dedup per tool — the breaker opens once even though the
+      // fixture carries multiple "DO NOT retry" lines.
+      if (!acc.synthesizedBreakerTools.has(tool)) {
+        acc.synthesizedBreakerTools.add(tool);
+        acc.breakerEvents.push({ seq: acc.seq++, event: "opened", toolName: tool });
+      }
     }
     if (errorText) {
       const m = errorText.match(MISCLASS_TOKEN_RE);
@@ -281,6 +313,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     breakerEvents: [],
     offloads: [],
     hasDoNotRetrySignal: false,
+    synthesizedBreakerTools: new Set(),
     misclassTokenByTool: new Map(),
     sessionKey: "",
     seq: 0,
