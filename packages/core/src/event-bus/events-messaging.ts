@@ -175,6 +175,19 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** C4/S4: emitted when the compaction layer routes based on capabilityClass (pipeline or LCD).
+   *  strategy="eviction" means no LLM summarization was used (deterministic fallback).
+   *  securityPinnedCount = number of messages excluded from eviction by S4 pinning. */
+  "context:compaction_routed": {
+    agentId: string;
+    sessionKey: string;
+    capabilityClass: "frontier" | "mid" | "small" | "nano";
+    strategy: "llm" | "eviction" | "strong-summarizer" | "deterministic";
+    layer: "pipeline" | "lcd";
+    securityPinnedCount: number;
+    timestamp: number;
+  };
+
   /** Post-compaction rehydration: critical context re-injected */
   "context:rehydrated": {
     agentId: string;
