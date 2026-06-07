@@ -854,6 +854,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "isSecretRef",
       "SecretRefOrStringSchema",
       "DeliveryOriginSchema",
+      // IncidentReportSchema is the Zod schema for the obs.explain response
+      // (the §6.3 IncidentReport wire shape, Phase 153). The handler + the
+      // contract consume the inferred *type* `IncidentReport` (which has
+      // cross-package consumers), and the contract's `response` field
+      // references the schema VALUE internally within observability.ts — but no
+      // OTHER in-repo module imports the schema value directly. It is part of
+      // the documented external-API surface: an external consumer validating an
+      // IncidentReport off the wire imports this schema. Tracked here per the
+      // baseline orphan-export policy; remove if an in-repo value consumer lands.
+      "IncidentReportSchema",
       "NodeStatusSchema",
       "GraphStatusSchema",
       "GraphNodeSchema",
