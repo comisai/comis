@@ -1,0 +1,15 @@
+{
+  "sessionId": "678314278",
+  "sessionKey": "default:678314278:678314278:peer:678314278",
+  "endReason": "completed_with_tool_errors",
+  "traceId": "f942d38c-e372-43cc-99f1-ead4f0b8582f",
+  "secondTurnTraceId": "058db0fe-651f-4362-908f-babd8208afa3",
+  "durationMs": 247740,
+  "totalTokens": 735800,
+  "sessionCostUsd": 1.320669,
+  "startedAt": "2026-06-07T08:03:40.609Z",
+  "provider": "openai-codex",
+  "model": "gpt-5.5",
+  "toolFailureCount": 14,
+  "note": "endReason is a DERIVED classification: the raw log carries finishReason:\"stop\" (no literal endReason field). The 14 web_fetch tool failures + finishReason stop make this a completed_with_tool_errors session per the v2.14 design (§1.1). durationMs/totalTokens/sessionCostUsd are real non-secret telemetry pulled from the extracted lines (max tokensTotal 735800; final cumulative sessionCostUsd 1.320669; first-turn ts → idle-cleanup span 247740ms)."
+}

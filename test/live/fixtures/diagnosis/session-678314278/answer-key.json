@@ -1,0 +1,21 @@
+{
+  "rootCause": "The web_fetch failureDetector ran a substring scan (/blocked|403|forbidden|connection refused/i) over the entire ~50KB serialized body; the bare substring '403' matched a price/quote field, flipping 8 status-200 successes to failures at pi-event-bridge.ts; the per-tool retry breaker then tripped on those false failures and told the model 'DO NOT retry', cascading into a fragile disk-parse + SVG->sips fallback.",
+  "expectedDegraded": true,
+  "visibleSymptoms": [
+    "web_fetch logged success:true 8x",
+    "14x Tool execution failed",
+    "breaker DO NOT retry",
+    "endReason completed_with_tool_errors",
+    "sessionCostUsd ~1.32"
+  ],
+  "hiddenMechanism": "No log/event/trajectory/RPC field records WHY a status-200 response was classified as failed — transportOk / httpStatus / matchedRule / classifiedFailureBy do not exist anywhere in the surface (the GA1/GA2 gap). The raw log shows finishReason:\"stop\" and errorKind:\"dependency\", never the substring-match that caused the flip.",
+  "surfaceCeiling": [
+    "trajectory JSONL (read file)",
+    "obs_query tool (diagnostics/billing/delivery/channels only)",
+    "24 obs.* RPC methods",
+    "obs_diagnostics SQLite",
+    "daemon.log",
+    "SOURCE FILES (pi-event-bridge.ts, tool-metadata-registry.ts, tool-retry-breaker.ts)"
+  ],
+  "mechanismTokens": ["substring", "403", "status", "breaker"]
+}
