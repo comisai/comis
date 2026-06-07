@@ -177,6 +177,17 @@ describe("markRead/markConsumed via tryGetContext + drain", () => {
 // AsyncLocalStorage traceId set in runWithContext. The fix routes the
 // request-scope traceId into traceId and keeps executionId in runId.
 // ---------------------------------------------------------------------------
+// A clean (non-degraded) rollup default for the builder tests that only
+// exercise the traceId/runId/endReason mapping — the F1 rollup-spread is
+// asserted separately in the "F1 persist" describe below.
+const cleanRollup: SessionHealthRollup = {
+  degraded: false,
+  costUsd: 0,
+  toolStats: {},
+  breakerTripCount: 0,
+  topErrorKinds: {},
+};
+
 describe("buildSessionEndMetadata", () => {
   const baseArgs = {
     finishReason: "stop",
@@ -185,6 +196,7 @@ describe("buildSessionEndMetadata", () => {
     executionId: "exec-Y",
     traceId: "trace-X",
     clock: { now: () => Date.now(), nowDate: () => new Date() },
+    rollup: cleanRollup,
   };
 
   it("routes request-scope traceId into traceId, executionId into runId (distinct values)", () => {
@@ -433,6 +445,7 @@ describe("tool-failure endReason and notice", () => {
       executionId: "exec-1",
       traceId: undefined,
       clock: baseClock,
+      rollup: cleanRollup,
     });
     expect(result.sessionEnd?.endReason).toBe("completed_with_tool_errors");
   });
@@ -445,6 +458,7 @@ describe("tool-failure endReason and notice", () => {
       executionId: "exec-2",
       traceId: undefined,
       clock: baseClock,
+      rollup: cleanRollup,
     });
     expect(result.sessionEnd?.endReason).toBe("success");
   });
