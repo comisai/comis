@@ -26,7 +26,12 @@
  *     field that exceeds `MAX_INLINE_STRING` is replaced with its
  *     {@link fingerprint} (a 12-hex digest), guaranteeing the 678 fixture's
  *     50 KB `web_fetch` body + its prompt-injection block ("SECURITY NOTICE")
- *     never survives — regardless of any upstream leak (threat T-153-10).
+ *     never survives — regardless of any upstream leak (threat T-153-10). The
+ *     sweep covers `summary`, `failures[].errorPreview`, `offloads[].pointer`
+ *     AND (WR-03) the report-level free-text scalars `channel.type`/`channel.id`
+ *     /`agentId`/`traceId`/`endReason` plus oversized `toolStats` KEYS — all of
+ *     which carry untrusted session/peer-derived data and were otherwise bounded
+ *     only by the 32 KB structural floor.
  *   - **honest lossiness** — every cap that fires pushes a `TruncationEntry`
  *     onto the `truncations[]` ledger so the consumer can trust the report is
  *     lossy-but-honest, not silently trimmed (threat T-153-12).
@@ -147,6 +152,30 @@ function capNewestFirst<T extends { seq: number }>(
 }
 
 /**
+ * Collapse a free-text scalar string to a `[digest:…]` fingerprint when it
+ * exceeds `MAX_INLINE_STRING`, pushing an honest `truncations[]` entry under
+ * `field`. Returns the input unchanged (and records nothing) when within the
+ * cap. The STRING→string shape is preserved so the structural backstop never
+ * coerces the field into a `{__bounded__}` sentinel and the schema's `string`
+ * type still holds. Used by the WR-03 report-level free-text sweep
+ * (channel.id/type, agentId, traceId, endReason) — these come from session
+ * metadata (channel.id is channel/peer-derived, attacker-influenced) and were
+ * previously bounded only by `limitPayloadValue`'s 32 KB floor.
+ */
+function digestIfOversized(
+  value: string,
+  field: string,
+  truncations: TruncationEntry[],
+): string {
+  if (value.length <= MAX_INLINE_STRING) return value;
+  truncations.push({
+    field,
+    reason: `oversized (${value.length} chars) — replaced with digest`,
+  });
+  return `[digest:${fingerprint(value)}]`;
+}
+
+/**
  * Apply the X2 report-level bounding pass, then the structural backstop.
  *
  * Order matters (see the algorithm comments inline):
@@ -247,13 +276,45 @@ export function boundIncidentReport(
   // the PRIMARY control for T-153-10. Any string > MAX_INLINE_STRING (a raw
   // body that escaped assembly) is replaced with its fingerprint, so a 50 KB
   // injection body can never be emitted. STRING→string keeps the typed shape.
-  let summary = report.summary;
-  if (summary.length > MAX_INLINE_STRING) {
+  const summary = digestIfOversized(report.summary, "summary", truncations);
+
+  // WR-03: the SAME digest sweep over the remaining report-level free-text
+  // scalars (channel.type/id, agentId, traceId, endReason). These flow from
+  // session metadata into the report with no per-field cap; channel.id is
+  // channel/peer-derived (attacker-influenced). Without this they were bounded
+  // only by limitPayloadValue's 32 KB floor — a 32 KB channel.id would serialize
+  // verbatim into a "summary" report. The digest keeps the `string` shape the
+  // schema requires (lowering the structural cap would emit a {__bounded__}
+  // object instead). endReason is also interpolated into the summary one-liner
+  // at assembly time, but that string is itself swept above.
+  const channel = {
+    type: digestIfOversized(report.channel.type, "channel.type", truncations),
+    id: digestIfOversized(report.channel.id, "channel.id", truncations),
+  };
+  const agentId = digestIfOversized(report.agentId, "agentId", truncations);
+  const traceId = digestIfOversized(report.traceId, "traceId", truncations);
+  const outcome = {
+    ...report.outcome,
+    endReason: digestIfOversized(report.outcome.endReason, "outcome.endReason", truncations),
+  };
+
+  // WR-03: digest oversized toolStats KEYS (tool names). The keys are untrusted
+  // free-text too, and an object key cannot carry a {__bounded__} sentinel, so
+  // the structural backstop cannot bound it — only this report-level sweep can.
+  // A digested key collides-safely (fingerprint is per-string) and stays short.
+  let toolStats = report.toolStats;
+  const oversizedToolKey = Object.keys(toolStats).some((k) => k.length > MAX_INLINE_STRING);
+  if (oversizedToolKey) {
+    const rekeyed: IncidentReport["toolStats"] = {};
+    for (const [tool, stat] of Object.entries(toolStats)) {
+      const key = tool.length > MAX_INLINE_STRING ? `[digest:${fingerprint(tool)}]` : tool;
+      rekeyed[key] = stat;
+    }
     truncations.push({
-      field: "summary",
-      reason: `oversized (${summary.length} chars) — replaced with digest`,
+      field: "toolStats",
+      reason: `oversized tool name(s) replaced with digest key(s)`,
     });
-    summary = `[digest:${fingerprint(summary)}]`;
+    toolStats = rekeyed;
   }
 
   // Per-pointer digest sweep over the ALREADY length-capped offloads (step 2b).
@@ -268,6 +329,11 @@ export function boundIncidentReport(
 
   let bounded: IncidentReport = {
     ...report,
+    channel,
+    agentId,
+    traceId,
+    outcome,
+    toolStats,
     summary,
     failures,
     breakerTimeline,
