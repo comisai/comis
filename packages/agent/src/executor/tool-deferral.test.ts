@@ -2824,3 +2824,74 @@ describe("createAutoDiscoveryStubs", () => {
     expect(tracker.markDiscovered).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite C3: buildDeferredToolsContext — maxEntries truncation (Plan 152-04)
+// ---------------------------------------------------------------------------
+
+describe("buildDeferredToolsContext — C3 maxEntries truncation", () => {
+  function makeEntry(name: string, isMcp = false): DeferredToolEntry {
+    const toolName = isMcp ? `mcp__server--${name}` : name;
+    return {
+      name: toolName,
+      description: `Description for ${toolName}`,
+      original: makeTool(toolName),
+    };
+  }
+
+  it("C3: truncates list to maxEntries and appends [+N more] suffix when entries exceed cap", () => {
+    // 20 entries with maxEntries=5 → output contains "[+15 more" suffix
+    const entries: DeferredToolEntry[] = Array.from({ length: 20 }, (_, i) =>
+      makeEntry(`tool_${i}`),
+    );
+    const result = buildDeferredToolsContext(entries, { maxEntries: 5 });
+    expect(result).toContain("[+15 more");
+    expect(result).toContain("discover_tools");
+  });
+
+  it("C3: does NOT truncate when entries count is exactly at the cap", () => {
+    const entries: DeferredToolEntry[] = Array.from({ length: 5 }, (_, i) =>
+      makeEntry(`tool_${i}`),
+    );
+    const result = buildDeferredToolsContext(entries, { maxEntries: 5 });
+    expect(result).not.toContain("[+");
+    // All 5 tools should be listed
+    for (const e of entries) {
+      expect(result).toContain(e.name);
+    }
+  });
+
+  it("C3: returns all entries unchanged when no options are passed (backward-compatible)", () => {
+    const entries: DeferredToolEntry[] = Array.from({ length: 20 }, (_, i) =>
+      makeEntry(`tool_${i}`),
+    );
+    const withoutOptions = buildDeferredToolsContext(entries);
+    const withEmptyOptions = buildDeferredToolsContext(entries, {});
+    // Neither should truncate
+    expect(withoutOptions).not.toContain("[+");
+    expect(withEmptyOptions).not.toContain("[+");
+  });
+
+  it("C3: truncation suffix mentions discover_tools for navigation", () => {
+    const entries: DeferredToolEntry[] = Array.from({ length: 10 }, (_, i) =>
+      makeEntry(`tool_${i}`),
+    );
+    const result = buildDeferredToolsContext(entries, { maxEntries: 3 });
+    expect(result).toContain("[+7 more");
+    expect(result).toContain("discover_tools");
+  });
+
+  it("C3: MCP tools are grouped before truncation count; suffix is appended after all formatted lines", () => {
+    // Mix of non-MCP (individual) + MCP (grouped) entries
+    const entries: DeferredToolEntry[] = [
+      makeEntry("regular_tool_a"),
+      makeEntry("regular_tool_b"),
+      makeEntry("alpha", true), // mcp__server--alpha
+      makeEntry("beta", true),  // mcp__server--beta
+    ];
+    // Only 2 entries allowed — first 2 lines emitted, rest in suffix
+    const result = buildDeferredToolsContext(entries, { maxEntries: 2 });
+    expect(result).toContain("[+2 more");
+    expect(result).toContain("discover_tools");
+  });
+});
