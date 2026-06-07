@@ -2,10 +2,13 @@
 ---
 import Base from "../../layouts/Base.astro";
 import Footer from "../../components/Footer.astro";
+import { FACTS } from "../../data/facts";
+import { SECURITY } from "../../data/security";
+import { COMPETITORS, COMPARE_CLOSE } from "../../data/competitors";
 
 const title = "Comis vs OpenClaw - Deep Technical Comparison";
 const description =
-  "A verified, 60-dimension comparison of Comis and OpenClaw across architecture, security, extensibility, agent capabilities, context management, cache & cost optimization, and developer experience.";
+  "A verified, dimension-by-dimension comparison of Comis and OpenClaw across architecture, security, extensibility, agent capabilities, context management, cache & cost optimization, and developer experience.";
 
 type Verdict = "comis" | "openclaw" | "tie";
 interface Row {
@@ -19,7 +22,7 @@ const architectureRows: Row[] = [
   {
     label: "Architecture",
     comis:
-      "Hexagonal (ports & adapters). 13-package monorepo with compile-time enforced dependency graph via TypeScript composite references.",
+      `Hexagonal (ports & adapters). ${FACTS.packages}-package monorepo with compile-time enforced dependency graph via TypeScript composite references.`,
     openclaw:
       "Monolith plus 82 extension packages. Plugin-driven with dynamic loader for runtime discovery.",
     verdict: "comis",
@@ -27,7 +30,7 @@ const architectureRows: Row[] = [
   {
     label: "Codebase organization",
     comis:
-      "13 packages, ~478K source lines. Strict separation via package references and pnpm workspaces.",
+      `${FACTS.packages} packages in a large TypeScript monorepo. Strict separation via package references and pnpm workspaces.`,
     openclaw:
       "Single src/ directory (~3K source files) plus 82 extensions. Single tsconfig, pnpm workspace.",
     verdict: "comis",
@@ -138,7 +141,7 @@ const extensibilityRows: Row[] = [
     comis:
       "Implement ChannelPort interface and wire in the composition root bootstrap.",
     openclaw:
-      "Implement ChannelPlugin (21 adapters). Register via extension package.json \u2014 auto-discovered.",
+      `Implement ChannelPlugin (${COMPETITORS.openclaw.channels} channel adapters). Register via extension package.json \u2014 auto-discovered.`,
     verdict: "openclaw",
   },
   {
@@ -202,9 +205,9 @@ const agentRows: Row[] = [
   {
     label: "Channel count",
     comis:
-      "9 channels: Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, LINE, Email (IMAP/SMTP).",
+      `${FACTS.channels} channels: ${FACTS.channelList.join(", ")} (Email via IMAP/SMTP).`,
     openclaw:
-      "21 channels including Matrix, MS Teams, Google Chat, Feishu, Mattermost, Twitch, Nostr, Zalo, and more.",
+      `${COMPETITORS.openclaw.channels} channels — the widest list in the field — including Matrix, MS Teams, Google Chat, Feishu, Mattermost, Twitch, Nostr, Zalo, and more.`,
     verdict: "openclaw",
   },
   {
@@ -218,7 +221,7 @@ const agentRows: Row[] = [
   {
     label: "Model providers",
     comis:
-      "13 wired providers: Anthropic (incl. Bedrock/Vertex aliases), OpenAI (incl. Azure variants), Google (Gemini, Vertex, Antigravity), Mistral, Groq, Ollama, OpenRouter, Together, Cerebras, xAI/Grok, DeepSeek - all via the pi-ai catalog with live validation.",
+      `${FACTS.models}. Anthropic (incl. Bedrock/Vertex aliases), OpenAI (incl. Azure variants), Google, Mistral, Groq, OpenRouter, and more — all through one catalog with live validation, key rotation, and per-agent model routes.`,
     openclaw:
       "34+ providers with auth profile fallback chain, dynamic discovery, and per-profile cooldown.",
     verdict: "tie",
@@ -405,8 +408,10 @@ const infraRows: Row[] = [
 const cacheRows: Row[] = [
   {
     label: "System prompt stability",
+    // Cache wording is built around the single source of truth (SECURITY.cacheArchitecture)
+    // so the optimization list can never drift from the README.
     comis:
-      "Dual-prompt architecture: static system prompt + dynamic preamble in first user message. 15+ content types surgically relocated (RAG, canary tokens, hooks, skills, timestamps). SHA-256 digest detects mid-session invalidation.",
+      `Prompt caching is a target architecture, not an afterthought: ${SECURITY.cacheArchitecture}. Beyond the cache-fence index, 15+ content types (RAG, canary tokens, hooks, skills, timestamps) are surgically relocated so the cached prefix never shifts, and a SHA-256 digest detects mid-session invalidation.`,
     openclaw:
       "Date/time excluded from system prompt. Plugin prepend/append system for prompt contributions. System prompt additions from context engine prepended (preserving prefix). No formal invalidation tracking.",
     verdict: "comis",
@@ -521,7 +526,7 @@ const testRows: Row[] = [
   {
     label: "Test volume",
     comis:
-      "847 unit + 122 integration test files (~969 total). No coverage tooling configured.",
+      "847 unit + 122 integration test files (~969 total). Coverage enforced via Vitest with 14 per-package floor thresholds (e.g. infra 95% lines / 100% functions), gated in CI.",
     openclaw:
       "2,242 test files (1,914 in src/, 270 extensions, 46 UI, 11 harness). Coverage thresholds enforced: 70% lines/functions, 55% branches.",
     verdict: "openclaw",
@@ -553,10 +558,10 @@ const testRows: Row[] = [
   {
     label: "CI & coverage",
     comis:
-      "Local validation only: pnpm build && pnpm test && pnpm lint:security. No GitHub Actions, no coverage reports.",
+      "GitHub Actions CI (ci.yml) runs `pnpm validate` on every push: clean build, madge + project-reference cycle checks, security lint, docs compile, and `test:coverage` with 14 per-package floors — plus an E2E flow-matrix gate. The same gates run locally via a pre-push hook.",
     openclaw:
       "GitHub Actions CI with parallel lane splitting (unit-fast, unit-isolated, extensions, gateway, channels, e2e, live). Performance budget enforcement. Multi-platform (Linux, macOS, Windows).",
-    verdict: "openclaw",
+    verdict: "tie",
   },
 ];
 
@@ -693,8 +698,8 @@ const sectionMeta = [
         <p
           class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed"
         >
-          61 dimensions. Both codebases reviewed. Every claim verified by
-          independent agents against the actual source code.
+          {allRows.length} dimensions. Both codebases reviewed. Every claim
+          verified by independent agents against the actual source code.
         </p>
         <p class="mt-3 text-sm text-muted/70">
           Both projects are open source. This comparison reflects the codebases
@@ -961,14 +966,25 @@ const sectionMeta = [
               <li>
                 <span class="font-semibold text-white">Extensibility DX:</span>
                 The plugin SDK with 219+ exports and dynamic loader makes adding
-                channels and tools lower friction. 40 extension packages demonstrate
-                ecosystem maturity.
+                channels and tools lower friction. <span
+                  class="font-semibold text-white">140+ extensions</span
+                > demonstrate real ecosystem maturity.
               </li>
               <li>
                 <span class="font-semibold text-white">Channel coverage:</span>
-                20 messaging platforms vs 9. Beyond the shared set, OpenClaw adds
-                Matrix, MS Teams, Google Chat, Feishu, Mattermost, Twitch, Nostr,
-                and more.
+                <span class="font-semibold text-white">23+ channels</span> vs Comis's
+                {FACTS.channels} — the widest list in the field. Beyond the shared
+                set, OpenClaw adds Matrix, MS Teams, Google Chat, Feishu, Mattermost,
+                Twitch, Nostr, and more.
+              </li>
+              <li>
+                <span class="font-semibold text-white"
+                  >Native apps, voice &amp; Canvas:</span
+                > OpenClaw ships <span class="font-semibold text-white"
+                  >native mobile &amp; desktop apps</span
+                >, <span class="font-semibold text-white">voice wake</span>, and a
+                <span class="font-semibold text-white">Canvas</span> surface — a
+                personal-assistant experience Comis doesn't try to match.
               </li>
               <li>
                 <span class="font-semibold text-white">Build speed:</span> tsdown
@@ -982,11 +998,16 @@ const sectionMeta = [
                 community 12-layer architecture demonstrate real ecosystem traction.
               </li>
               <li>
-                <span class="font-semibold text-white">Test infrastructure (4&ndash;1&ndash;0):</span>
-                2,242 test files, 13 dedicated live-model tests, 7 Docker E2E suites,
-                46 browser tests via Playwright, and full GitHub Actions CI with parallel
-                lane splitting. Comis counters with ChaosEchoAdapter fault injection
-                and structured log validation.
+                <span class="font-semibold text-white"
+                  >Test infrastructure ({count(testRows, "openclaw")}&ndash;{count(
+                    testRows,
+                    "comis",
+                  )}&ndash;{count(testRows, "tie")}):</span
+                >
+                2,242 test files, 15 dedicated live-model tests, 7 Docker E2E suites,
+                and 46 browser tests via Playwright. Comis counters with ChaosEchoAdapter
+                fault injection, structured log validation, and its own GitHub Actions
+                CI running the full validate gate.
               </li>
             </ul>
           </div>
@@ -1063,6 +1084,28 @@ const sectionMeta = [
             </div>
           </div>
         </div>
+
+        <!-- In their own words (verbatim from OpenClaw's SECURITY.md) -->
+        <div class="mt-12 max-w-3xl mx-auto">
+          <p
+            class="text-xs font-semibold text-teal uppercase tracking-widest mb-4 text-center"
+          >
+            OpenClaw, in their own words
+          </p>
+          <blockquote
+            class="border-l-2 border-teal/40 pl-5 text-lg text-muted-light italic leading-relaxed"
+          >
+            A &ldquo;personal assistant&rdquo; (one trusted operator, potentially
+            many agents), not a &ldquo;shared multi-tenant bus.&rdquo; The exec
+            sandbox is opt-in and off by default, and prompt injection is out of
+            scope absent a boundary bypass.
+          </blockquote>
+          <p class="text-sm text-muted mt-3">
+            — OpenClaw <code class="text-muted-light">SECURITY.md</code>. Honest
+            engineering, and a different design center from Comis — not a knock on
+            either project.
+          </p>
+        </div>
       </div>
     </section>
 
@@ -1072,7 +1115,7 @@ const sectionMeta = [
         <h2
           class="text-3xl md:text-4xl font-bold text-white mb-4 text-center"
         >
-          All 61 dimensions
+          All {allRows.length} dimensions
         </h2>
         <p class="text-muted text-lg mb-12 text-center max-w-xl mx-auto">
           The full picture at a glance.
@@ -1139,14 +1182,38 @@ const sectionMeta = [
       </div>
     </section>
 
+    <!-- Choose honestly -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-6">
+          Choose honestly
+        </h2>
+        <p class="text-muted-light text-lg leading-relaxed">
+          These are different tools with different design centers, and both are
+          excellent at what they set out to do. If you want a <span
+            class="font-semibold text-white">personal assistant</span
+          > with <span class="font-semibold text-white"
+            >native mobile &amp; desktop apps</span
+          >, <span class="font-semibold text-white">voice wake</span>, and the
+          <span class="font-semibold text-white">widest channel list</span> in
+          the field, <span class="font-semibold text-teal">OpenClaw is excellent</span>
+          — that's its design center, by its own documentation. If you want an
+          agent platform you can hand to your team, your family, or your company —
+          multi-tenant by design, with the sandbox on by default, keys the agent
+          can never read, and every action reconstructable from the logs alone —
+          <span class="font-semibold text-coral">that's Comis</span>.
+        </p>
+      </div>
+    </section>
+
     <!-- Methodology note -->
     <section class="px-6 pb-8">
       <div class="max-w-3xl mx-auto text-center">
         <p class="text-sm text-muted">
           This comparison was created by parallel deep-dive analysis of both
-          codebases and verified by 6 independent agents that checked 64 claims
-          (32 per codebase) against the actual source code. All corrections have
-          been applied.
+          codebases and verified by independent agents that checked every claim
+          ({allRows.length * 2} in total, one per project per dimension) against
+          the actual source code. All corrections have been applied.
         </p>
       </div>
     </section>
@@ -1163,12 +1230,18 @@ const sectionMeta = [
 
         <div class="flex flex-wrap gap-4 justify-center">
           <a
-            href="https://docs.comis.ai"
-            rel="noopener noreferrer"
-            target="_blank"
+            href="/#quick-start"
             class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg"
           >
             Get Started
+          </a>
+          <a
+            href="https://docs.comis.ai"
+            rel="noopener noreferrer"
+            target="_blank"
+            class="inline-flex items-center justify-center px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10"
+          >
+            Read the docs
           </a>
           <a
             href="https://github.com/comisai/comis"
