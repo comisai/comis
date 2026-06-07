@@ -19,6 +19,8 @@ import {
   runVerificationCritic,
   createVerificationCritic,
   shouldRunCritic,
+  // L5: resolveMaxOutputTokens must be exported from verification-gate.ts
+  resolveMaxOutputTokens,
 } from "./verification-gate.js";
 
 // Also import isCompletionClaim to use as a negative assertion in D5,
@@ -1203,5 +1205,43 @@ describe("createVerificationCritic", () => {
     const result = await critic("What format should the output be in?", BASE_PLAN);
     expect(result.verdict).toBe("skipped");
     expect(completeSimple).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// L5 — resolveMaxOutputTokens exported and correct (direct export test)
+//
+// The function was previously unexported (only used internally by callCritic).
+// L5 requires it to be exported so pi-executor.ts can apply the same sizing
+// on the MAIN execution path (not just the critic path).
+// ---------------------------------------------------------------------------
+describe("L5 — resolveMaxOutputTokens exported and sizing correct", () => {
+  const BASE_PROFILE = {
+    contextWindow: 32_768,
+    maxOutputTokens: 4_096,
+    capabilityClass: "small" as const,
+    scaffoldLevel: "max" as const,
+    securityLevel: "locked" as const,
+    supportsVision: false,
+    supportsTools: true,
+    supportsPromptCache: false,
+    supportsServerToolSearch: false,
+    supportsStructuredOutput: false,
+  };
+
+  it("L5: native-reasoning profile → resolveMaxOutputTokens returns >= 2048 (VERDICT_RESERVE_TOKENS * 4)", () => {
+    // FAILS before the export is added (resolveMaxOutputTokens is undefined).
+    const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 4096 };
+    expect(resolveMaxOutputTokens(profile)).toBeGreaterThanOrEqual(2048);
+  });
+
+  it("L5: non-reasoning profile → resolveMaxOutputTokens returns 512 (VERDICT_RESERVE_TOKENS)", () => {
+    const profile = { ...BASE_PROFILE, reasoningStyle: "none" as const, maxOutputTokens: 4096 };
+    expect(resolveMaxOutputTokens(profile)).toBe(512);
+  });
+
+  it("L5: native profile with small maxOutputTokens → still returns >= 2048 (max() enforcement)", () => {
+    const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 256 };
+    expect(resolveMaxOutputTokens(profile)).toBeGreaterThanOrEqual(2048);
   });
 });
