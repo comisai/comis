@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { ok, err } from "@comis/shared";
+import { resolveModelProfile } from "../model-profile.js";
 import type { PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
 import { formatSessionKey, runWithContext, tryGetContext } from "@comis/core";
 import type { ExecutionResult } from "../types.js";
@@ -6465,5 +6466,47 @@ describe("buildPromptingSnapshot redaction scaffold", () => {
     expect(result.systemPromptByteLen).toBe(1234);
     // No userPromptPrefixText when not provided
     expect(result.userPromptPrefixText).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// capabilityClassOverride from providerCapabilities (Q3)
+// ---------------------------------------------------------------------------
+// Tests that the resolveModelProfile call in pi-executor correctly threads the
+// operator-supplied capabilityClassOverride from deps.providerCapabilities?.capabilityClass.
+// Validates the wiring contract: when override is present it wins; absent → heuristic.
+
+describe("capabilityClassOverride from providerCapabilities (Q3)", () => {
+  it("providerCapabilities.capabilityClass overrides provider-family heuristic", () => {
+    // resolveModelProfile with an ollama provider (→ "small" by default)
+    // but an explicit override forces "frontier"
+    const profile = resolveModelProfile(
+      { id: "qwen3.6:4b", provider: "ollama", contextWindow: 256_000, maxTokens: 8_192 },
+      "frontier",  // capabilityClassOverride — as supplied by deps.providerCapabilities?.capabilityClass
+    );
+    expect(profile.capabilityClass).toBe("frontier");
+    // frontier → securityLevel="standard", scaffoldLevel="light"
+    expect(profile.securityLevel).toBe("standard");
+    expect(profile.scaffoldLevel).toBe("light");
+  });
+
+  it("undefined providerCapabilities → normal heuristic (ollama → small)", () => {
+    const profile = resolveModelProfile(
+      { id: "qwen3.6:4b", provider: "ollama", contextWindow: 256_000, maxTokens: 8_192 },
+      undefined,  // no override → provider-family heuristic applies
+    );
+    expect(profile.capabilityClass).toBe("small");
+    expect(profile.securityLevel).toBe("locked");
+  });
+
+  it("mid override on an anthropic provider → mid class (not frontier)", () => {
+    // Override wins over the anthropic → frontier heuristic
+    const profile = resolveModelProfile(
+      { id: "claude-3-opus", provider: "anthropic", contextWindow: 200_000, maxTokens: 4_096 },
+      "mid",
+    );
+    expect(profile.capabilityClass).toBe("mid");
+    expect(profile.securityLevel).toBe("hardened");
+    expect(profile.scaffoldLevel).toBe("standard");
   });
 });

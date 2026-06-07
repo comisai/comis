@@ -319,9 +319,15 @@ export function createPiExecutor(
       // NOT PiExecutorDeps which is long-lived across multiple execute() calls).
       // CR-02: resolvedModel.input is ("text"|"image")[] — assignable to readonly string[]
       // without a cast now that resolveModelProfile accepts readonly string[] | undefined.
-      // Phase 152 will wire the operator capabilityClass override from providers.entries config.
+      // Q3: wire operator capabilityClass override from providers.entries.<id>.capabilities.capabilityClass.
+      // deps.providerCapabilities is already populated by setup-agents-runtime.ts from
+      // container.config.providers?.entries?.[resolved.provider]?.capabilities.
+      // When set, this overrides the provider-family heuristic (ollama → "small" etc.)
+      // and lets operators pin a specific capabilityClass in config (e.g., to treat a
+      // large quantized ollama model as "mid" for context budget + security purposes).
       const modelProfile = resolveModelProfile(
         resolvedModel ?? undefined,
+        deps.providerCapabilities?.capabilityClass,
       );
 
       // 5. Execute within session adapter (use ephemeral adapter if provided)
