@@ -481,7 +481,8 @@ function buildDispatchCallback(args: {
     if (toolName === "obs_explain") {
       if (!deps.obsExplainForMcpClient) {
         // obsStore-less boot or wiring gap — fail CLOSED, not crash, and do NOT
-        // fall through to the admin-strip RPC indirection.
+        // fall through to the trust-isolated daemonRpcForMcpClient indirection
+        // (which would hit the admin-gated obs.explain RPC and be rejected).
         logger.warn(
           {
             clientId: client.id,

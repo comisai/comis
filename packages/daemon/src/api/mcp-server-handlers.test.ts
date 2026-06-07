@@ -936,7 +936,7 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
   // The SECURITY-CRITICAL path: obs_explain reaches the Phase-153 IncidentReport
   // over POST /mcp/v1 with NO new privilege. Its dispatch branch invokes the
   // INJECTED obsExplainForMcpClient assembler DIRECTLY (NOT daemonRpcForMcpClient
-  // -> the admin-gated obs.explain RPC, NOT an admin-strip) and feeds the result
+  // -> the admin-gated obs.explain RPC, NOT a trust-isolated indirection) and feeds the result
   // into the SAME Step-5 wrapExternalContent wrap. Authorization is the
   // per-client mcpClient.allowlist + the digest-only/bounded report.
   //
@@ -1001,7 +1001,7 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
       expect(assemblerCalls[0]).not.toHaveProperty("_trustLevel");
       expect(assemblerCalls[0]).toMatchObject({ sessionKey: "k" });
 
-      // (b) obs_explain did NOT route through the admin-strip RPC indirection.
+      // (b) obs_explain did NOT route through the daemonRpcForMcpClient indirection.
       expect(rpc.calls.length).toBe(0);
 
       // (c) the result flowed through wrapExternalContent (SECURITY NOTICE +
@@ -1082,7 +1082,7 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
       expect(r.isError).toBe(true);
       const text = r.content?.[0]?.text ?? "";
       expect(text).toContain("[dispatch_error]");
-      // It did NOT fall back to the admin-strip RPC indirection.
+      // It did NOT fall back to the daemonRpcForMcpClient indirection.
       expect(rpc.calls.length).toBe(0);
     } finally {
       restore();

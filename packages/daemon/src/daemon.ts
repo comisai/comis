@@ -97,6 +97,7 @@ import {
   writeMasterKeyIfAbsent,
   preReadStorageMode,
   systemNowMs,
+  ObsExplainContract,
   type SecretStorePort,
   type CredentialStorageMode,
   type ToolCapabilityPort,
@@ -176,6 +177,10 @@ import { createActivityCircuitBreaker } from "@comis/orchestrator";
 import { createGraphCoordinator, createNodeTypeRegistry } from "./graph/index.js";
 import { createWakeCoalescer, createSystemEventQueue, type WakeReasonKind } from "@comis/scheduler";
 import { createTokenRegistry } from "./api/token-handlers.js";
+// 154-03: the shared obs.explain assembler + production reader, for the
+// trust-flag-FREE obsExplainForMcpClient closure (obs_explain MCP tool runs the
+// assembler directly under daemon authority — no admin RPC, no admin trust).
+import { assembleIncidentReportFromSources, makeRealReader } from "./api/obs-handlers/index.js";
 import type { DaemonInstance, DaemonOverrides, BootContext, PermissionCorrection, SessionStoreBridge } from "./daemon-types.js";
 import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
@@ -2459,6 +2464,7 @@ async function bootGateway(
     assembleToolsForAgent, preprocessMessageText,
     suspendedAgents, gatewaySendRef,
     interactiveCallbackWiring,
+    obsStore, // 154-03: backs the obs_explain assembler closure (diagnostics rollup)
   } = channels;
   const _createGatewayServer = overrides.createGatewayServer ?? createGatewayServer;
 
@@ -2509,6 +2515,26 @@ async function bootGateway(
 
   // 7. Gateway server
   const gwConfig = container.config.gateway;
+
+  // 154-03: the trust-flag-FREE obs.explain assembler closure for the
+  // operator-allowlisted obs_explain MCP tool. SECURITY — this closure runs the
+  // SAME assembler the admin RPC handler delegates to, DIRECTLY under daemon
+  // authority: it does NOT go through the admin-gated obs.explain RPC, does NOT
+  // inject _trustLevel:"admin", and is NOT reached via daemonRpcForMcpClient.
+  // Its only authorization boundary is the per-client mcpClient.allowlist (the
+  // MCP dispatcher's registration filter + live re-check) plus the digest-only/
+  // bounded report. `params` arrive already _trustLevel-stripped (the MCP
+  // dispatcher strips for every tool); the contract request.parse validates the
+  // {sessionKey?,traceId?,depth?} shape (its .refine rejects a neither-id call →
+  // the dispatcher's try/catch turns the throw into a generic dispatch_error
+  // sentinel, no raw leak) before the assembler reads any source.
+  const obsExplainDataDir = container.config.dataDir || ".";
+  const obsExplainReader = makeRealReader(obsExplainDataDir, obsStore);
+  const obsExplainForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
+    const parsed = ObsExplainContract.request.parse(params);
+    return assembleIncidentReportFromSources(obsExplainReader, obsExplainDataDir, parsed);
+  };
+
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({
     container, gwConfig, webhooksConfig: container.config.webhooks, agents, defaultAgentId,
     configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS, gatewayLogger,
@@ -2521,6 +2547,7 @@ async function bootGateway(
     suspendedAgents,
     instanceId, startupStartMs,
     interactiveCallbackWiring,
+    obsExplainForMcpClient,
   });
 
   // 7.0.1. Wire deferred gateway attachment deps (wsConnections / mediaDir /

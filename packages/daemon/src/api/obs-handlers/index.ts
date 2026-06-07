@@ -11,6 +11,17 @@
 
 export type { ObsHandlerDeps } from "./obs-helpers.js";
 
+// The shared obs.explain assembler + its production reader (154-03). Re-exported
+// so the daemon composition root can build the trust-flag-FREE
+// obsExplainForMcpClient closure over the SAME assembler the admin RPC handler
+// delegates to (the obs_explain MCP tool runs it directly under daemon
+// authority — no admin RPC, no admin trust).
+export {
+  assembleIncidentReportFromSources,
+  type AssembleIncidentReportParams,
+} from "./obs-explain.js";
+export { makeRealReader } from "./obs-explain-readers.js";
+
 import type { RpcHandler } from "../types.js";
 import type { ObsHandlerDeps } from "./obs-helpers.js";
 import { bindObsMetricsHandlers } from "./obs-metrics.js";

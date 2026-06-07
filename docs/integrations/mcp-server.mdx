@@ -222,7 +222,7 @@ state read, and operate purely on caller-supplied input.
 | `web_fetch` | Public HTTP GET; no Comis state read |
 | `browser` | Public web browsing; no Comis state read |
 
-### `permission-gated` (20) — exposed only if token's `mcpClient.allowlist` includes the tool
+### `permission-gated` (21) — exposed only if token's `mcpClient.allowlist` includes the tool
 
 Caller-data-dependent. These read Comis state OR consume caller media that
 _may_ resolve to Comis-stored content.
@@ -240,6 +240,7 @@ _may_ resolve to Comis-stored content.
 | `sessions_list` | Enumerates sessions |
 | `sessions_history` | Reads full session transcript |
 | `obs_query` | Observability read |
+| `obs_explain` | Incident report (digest-only) — runs the assembler directly under daemon authority, NOT the admin RPC; allowlist is the grant, no admin trust |
 | `discover_tools` | Reveals registered tool surface (meta) |
 | `image_analyze` | Vision over caller-supplied OR Comis-stored media — _TODO: security-reviewer re-confirm_ |
 | `describe_video` | Same caveat as `image_analyze` |
@@ -270,7 +271,7 @@ delegation outside the MCP server surface.
 | Outbound channel send | `message`, `whatsapp_action`, `discord_action`, `telegram_action`, `slack_action` |
 | Cost-bearing synthesis | `tts_synthesize` |
 
-**Total:** 3 safe + 20 permission-gated + 28 never-export = 51 unique
+**Total:** 3 safe + 21 permission-gated + 28 never-export = 52 unique
 tools, the full platform-tool surface.
 
 ### Security-reviewer gate on the 51-tool classification
