@@ -311,4 +311,95 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
       expect(profile.scaffoldLevel).toBe("max");
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // CR-01: provider alias classification — bedrock/vertex/azure must NOT fall
+  // through to capabilityClass="small". Tests cover the security-load-bearing
+  // path: amazon-bedrock (Anthropic Claude via AWS) and google-vertex
+  // (Gemini via GCP Vertex) must resolve to their true capability class.
+  // ---------------------------------------------------------------------------
+  describe("CR-01: provider alias classification — bedrock/vertex/azure map to correct family", () => {
+    it("amazon-bedrock resolves capabilityClass='frontier' (NOT small)", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-sonnet-4-5",
+        provider: "amazon-bedrock",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.capabilityClass).toBe("frontier");
+    });
+
+    it("amazon-bedrock resolves securityLevel='standard' (NOT locked)", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-sonnet-4-5",
+        provider: "amazon-bedrock",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.securityLevel).toBe("standard");
+    });
+
+    it("google-vertex resolves capabilityClass='mid' (NOT small)", () => {
+      const profile = resolveModelProfile({
+        id: "gemini-2.5-pro",
+        provider: "google-vertex",
+        contextWindow: 1_000_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.capabilityClass).toBe("mid");
+    });
+
+    it("google-vertex resolves securityLevel='hardened' (NOT locked)", () => {
+      const profile = resolveModelProfile({
+        id: "gemini-2.5-pro",
+        provider: "google-vertex",
+        contextWindow: 1_000_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.securityLevel).toBe("hardened");
+    });
+
+    it("azure-openai-responses resolves capabilityClass='frontier' (NOT small)", () => {
+      const profile = resolveModelProfile({
+        id: "gpt-4o",
+        provider: "azure-openai-responses",
+        contextWindow: 128_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.capabilityClass).toBe("frontier");
+    });
+
+    it("bedrock alias resolves capabilityClass='frontier'", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-opus-4",
+        provider: "bedrock",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.capabilityClass).toBe("frontier");
+    });
+
+    it("genuinely-unknown provider (ollama) still resolves capabilityClass='small'", () => {
+      const profile = resolveModelProfile({
+        id: "llama3:8b",
+        provider: "ollama",
+        contextWindow: 8_192,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.capabilityClass).toBe("small");
+    });
+
+    it("undefined model still returns FAIL_CLOSED_PROFILE (nano/locked)", () => {
+      const profile = resolveModelProfile(undefined);
+      expect(profile.capabilityClass).toBe("nano");
+      expect(profile.securityLevel).toBe("locked");
+    });
+  });
 });
