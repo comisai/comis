@@ -21,13 +21,19 @@ import { OUTPUT_RESERVE_TOKENS } from "./constants.js";
 import type { ModelProfile } from "../executor/model-profile.js";
 
 /**
- * Effective context caps by capability class.
- * frontier/mid: unlimited (use raw contextWindow — behavior-neutral).
- * small: 32K default (configurable via contextEngine.budget.effectiveContextCapSmall).
- * nano: 16K default (configurable via contextEngine.budget.effectiveContextCapNano).
+ * Fallback effective context caps by capability class.
+ * Used ONLY when effectiveContextCapSmall / effectiveContextCapNano are not provided
+ * (i.e., call sites that bypass the Zod schema). In schema-parsed configs (the two
+ * production call sites in lcd-assembler.ts and executor-tool-assembly.ts), Zod
+ * always supplies these values via `.default(32_000)` / `.default(16_000)`, so
+ * the small/nano entries here are never reached in production — they serve as
+ * documentation and as a safety net for non-schema callers.
+ * The `?? 32_000` final fallback in resolveEffectiveCap handles unknown classes.
  *
- * These values are validated against Phase 149 comprehension harness data.
- * Operators can tune via contextEngine.budget.* config keys.
+ * frontier/mid: Infinity (use raw contextWindow — behavior-neutral).
+ * small: 32K (matches Zod schema default; validated against Phase 149 comprehension data).
+ * nano: 16K (matches Zod schema default; validated against Phase 149 comprehension data).
+ * Operators can tune small/nano via contextEngine.budget.effectiveContextCapSmall/Nano.
  */
 const DEFAULT_EFFECTIVE_CAP_BY_CLASS: Readonly<Record<string, number>> = {
   frontier: Infinity,
