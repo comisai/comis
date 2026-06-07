@@ -14,11 +14,14 @@
  */
 
 export const FACTS = {
-  // Positioning spine (mirror README header).
-  // Used by: Hero / homepage, every page's meta description voice.
-  spine: "The self-hosted AI agent platform built to be shared",
+  // Positioning spine (mirror README header). Plain-language, non-technical-first.
+  // Used by: Hero (splits on " — " to render the emphasis clause in the gradient),
+  // Footer, AboutName, every page's meta title/description voice. KEEP the " — "
+  // separator so the Hero's two-line treatment works. No trailing period —
+  // consumers (Footer/AboutName) add their own.
+  spine: "Self-hosted AI agents for your whole team — isolated by design",
   subspine:
-    "Multiple agents, multiple people, one auditable install — with security enforced by the kernel and the compiler, not by prompts.",
+    "Self-hosted AI assistants for your whole team, right in the chat apps you already use. Runs on your own computer — every agent isolated, so your data stays yours.",
 
   // Counts.
   // Used by: homepage / Channels / compare pages (channels), Everything-in-the-box (packages).

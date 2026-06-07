@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>The self-hosted AI agent platform built to be shared.</strong>
+  <strong>Self-hosted AI agents for your whole team — isolated by design.</strong>
   <br />
   <sub>Multiple agents, multiple people, one auditable install — with security enforced by the kernel and the compiler, not by prompts.</sub>
 </p>
