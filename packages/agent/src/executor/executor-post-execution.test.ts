@@ -1477,6 +1477,18 @@ describe("R4 critic hook — thin wiring in executor-post-execution.ts", () => {
     expect(stripped).toMatch(/\bgenerateCanaryToken\b/);
   });
 
+  // WR-03: the canary salt must be the FORMATTED session key, not String(sessionKey)
+  // (a plain Zod object → the constant "[object Object]" for every session, which
+  // makes the canary's session-binding dead and the JSDoc claim false).
+  it("canary is salted with formattedKey, never String(sessionKey)", () => {
+    const stripped = strippedSource();
+    const canaryCall = stripped.match(/generateCanaryToken\([^)]*\)/)?.[0] ?? "";
+    expect(canaryCall).toContain("formattedKey");
+    expect(canaryCall).not.toMatch(/String\s*\(\s*sessionKey\s*\)/);
+    // Belt-and-suspenders: the dead stringify must not appear anywhere in source.
+    expect(stripped).not.toMatch(/generateCanaryToken\(\s*String\s*\(\s*sessionKey\s*\)/);
+  });
+
   it("hook position is between tool-failure notice and session metadata write", () => {
     const src = readPostExecSource();
     const toolFailurePos = src.indexOf("[tool failure]");

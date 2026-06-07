@@ -990,7 +990,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   if (shouldRunCritic({ capabilityClass, config, executionPlanRef, provider, logger: deps.logger })) { // R4: critic hook (WR-02: keyless-only gate)
     const { deps: cd, maxRetries: mr } = buildSyntheticCriticDeps({
       capabilityClass, provider, modelId: config.model, agentId: effectiveAgentId,
-      canaryToken: generateCanaryToken(String(sessionKey), executionId),
+      canaryToken: generateCanaryToken(formattedKey, executionId), // WR-03: formatted key, not String(obj)
       minResponseChars: config.verification?.minResponseChars ?? 200, maxRetries: config.honesty?.maxCriticRetries ?? 2,
       clock: deps.clock, logger: deps.logger, eventBus: deps.eventBus,
     });
