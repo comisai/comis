@@ -344,6 +344,12 @@ describe("F2 emit — emitSessionSummary emits session:summary, fire-and-forget"
     // The synchronous eventBus would propagate the throw without a guard.
     expect(() => emitSessionSummary({ eventBus, logger: undefined }, baseArgs)).not.toThrow();
   });
+
+  it("is a silent no-op when no eventBus is wired (legacy / sub-agent path)", () => {
+    // The chokepoint guards with `if (deps.eventBus)`; emitSessionSummary
+    // returns early when the bus is absent — never throwing, nothing emitted.
+    expect(() => emitSessionSummary({ eventBus: undefined, logger: undefined }, baseArgs)).not.toThrow();
+  });
 });
 
 describe("F1/F2 wiring — postExecution computes the rollup once and feeds both sinks", () => {
