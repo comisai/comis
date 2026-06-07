@@ -20,12 +20,11 @@ import {
 /** Partial<Settings> extracted from SettingsManager.applyOverrides() parameter type.
  *  Settings is not re-exported from the SDK's index -- extract from the class method. */
 type SettingsOverrides = Parameters<SettingsManager['applyOverrides']>[0];
-import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { formatSessionKey } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext } from "./tool-deferral.js";
-import type { ModelProfile, CapabilityClass } from "./model-profile.js";
+import type { CapabilityClass } from "./model-profile.js";
 import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
 import { buildCapabilityIndexContext } from "./capability-index-context.js";
 import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
@@ -44,7 +43,6 @@ import { assembleExecutionPrompt } from "./prompt-assembly.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
 import type {
-  ToolAssemblyDeps,
   ToolAssemblyParams,
   ToolAssemblyResult,
 } from "./executor-tool-assembly-types.js";

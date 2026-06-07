@@ -147,6 +147,12 @@ export interface PostExecutionBridgeResult {
    *  Conditionally emitted on the Execution-complete log when > 0 — mirrors
    *  the per-event `costCorrection` breadcrumb gate in pi-event-bridge.ts. */
   totalCostCorrectionDeltaUsd?: number;
+  /** R2 (Phase 153): abort-redirect message set at bridge abort sites
+   *  (max_steps, budget_exceeded, loop_detected, …). When present and the
+   *  turn did not finish with "stop", post-execution replaces the response
+   *  so a weak executive never free-associates after an abort. Mirrors
+   *  bridge-metrics.ts BridgeResult.abortResponse. */
+  abortResponse?: string;
 }
 
 /** Bridge interface used by post-execution. */
