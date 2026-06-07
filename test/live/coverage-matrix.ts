@@ -1327,4 +1327,24 @@ export const coverageMatrix: readonly CoverageCell[] = [
     reference: "test/live/scenarios/orch/background-reentry.test.ts",
     phase: "141",
   },
+
+  // ===========================================================================
+  // local.qwen36 — Phase 150 daemon-routed platform-guarantee tier
+  // ===========================================================================
+  {
+    dimension: "local.qwen36",
+    modeValue: "security",
+    status: "covered",
+    reference:
+      "test/live/scenarios/local/local-models.test.ts",
+    phase: "150",
+  },
+  {
+    dimension: "local.qwen36",
+    modeValue: "daemon",
+    status: "covered",
+    reference:
+      "test/live/scenarios/local/local-models.test.ts",
+    phase: "150",
+  },
 ] as const;
