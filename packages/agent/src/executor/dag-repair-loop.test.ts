@@ -36,7 +36,7 @@ describe("repairDagWithBoundedRetries", () => {
     expect(result.ok).toBe(true);
     expect(repromptFn).not.toHaveBeenCalled();
     if (result.ok) {
-      expect(Array.isArray(result.value.sortedNodeIds)).toBe(true);
+      expect(Array.isArray(result.value.executionOrder)).toBe(true);
     }
   });
 
@@ -52,7 +52,7 @@ describe("repairDagWithBoundedRetries", () => {
     const hintArgs = repromptFn.mock.calls[0][0] as string[];
     expect(hintArgs.some((h) => /cycle|Graph validation error/i.test(h))).toBe(true);
     if (result.ok) {
-      expect(Array.isArray(result.value.sortedNodeIds)).toBe(true);
+      expect(Array.isArray(result.value.executionOrder)).toBe(true);
     }
   });
 
@@ -83,7 +83,7 @@ describe("repairDagWithBoundedRetries", () => {
     const validateResult = validateAndSortGraph(parseResult.value);
     expect(validateResult.ok).toBe(true);
     if (validateResult.ok) {
-      expect(validateResult.value.sortedNodeIds.length).toBeGreaterThan(0);
+      expect(validateResult.value.executionOrder.length).toBeGreaterThan(0);
     }
   });
 });
