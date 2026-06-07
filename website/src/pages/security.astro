@@ -359,6 +359,18 @@ const colorClass: Record<string, string> = {
           </div>
         </div>
 
+        <!-- Docker Desktop auto-disable note -->
+        <div class="bg-navy-light/60 border border-amber-400/20 rounded-xl p-6 mb-10">
+          <div class="flex items-start gap-3">
+            <svg class="w-5 h-5 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+            </svg>
+            <p class="text-muted text-sm leading-relaxed">
+              <span class="text-white font-semibold">Production runs on Linux.</span> Docker Desktop's lightweight VM kernel can't run the exec sandbox &mdash; {FACTS.dockerSandbox}. Detection is explicit, not silent: you see it in the startup logs and choose how to proceed.
+            </p>
+          </div>
+        </div>
+
         <!-- What the sandbox controls -->
         <div class="bg-navy rounded-xl border border-white/5 p-6">
           <p class="text-white font-semibold mb-4">6 layers of exec defense, inside out:</p>
@@ -389,6 +401,34 @@ const colorClass: Record<string, string> = {
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- Credential broker spotlight -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-5xl mx-auto">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-8 h-8 rounded-lg bg-teal/20 flex items-center justify-center">
+            <svg class="w-4 h-4 text-teal" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+          </div>
+          <p class="text-teal font-semibold text-sm uppercase tracking-widest">Credential broker</p>
+        </div>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Your API keys are never where the agent can read them.
+        </h2>
+        <p class="text-muted text-lg mb-6 max-w-2xl">
+          {SECURITY.mechanisms[1].forEngineers}
+        </p>
+        <a
+          href="https://docs.comis.ai/security/credential-broker"
+          rel="noopener noreferrer"
+          target="_blank"
+          class="inline-flex items-center gap-1 text-teal hover:text-teal/80 font-semibold transition-colors"
+        >
+          Credential broker deep dive &rarr;
+        </a>
       </div>
     </section>
 
@@ -516,8 +556,11 @@ const colorClass: Record<string, string> = {
         </p>
 
         <div class="flex flex-wrap gap-4 justify-center">
-          <a href="https://docs.comis.ai" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
-            Get Started
+          <a href="/#quick-start" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
+            Install Comis
+          </a>
+          <a href="https://docs.comis.ai" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
+            Read the docs &rarr;
           </a>
           <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
             <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
