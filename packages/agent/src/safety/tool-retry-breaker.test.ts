@@ -941,4 +941,65 @@ describe("tool retry breaker", () => {
       expect(reason).toMatch(/appears to be unavailable/i);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Bug 2 (session 678314278, second-order): the breaker's RENDERED block
+  // message must not recursively nest. When a prior block message is fed back
+  // as the next errorText, peelEnvelope already collapses it for TAG
+  // extraction — but the human-readable errorClause embedded the RAW lastError
+  // verbatim, so the model saw Russian-doll nesting:
+  //   `failed 7 total times with the same error:
+  //    "…failed 6 total times with the same error: \"…\""`.
+  // The rendered clause must show the INNERMOST real error instead.
+  // -------------------------------------------------------------------------
+  describe("buildBlockReason (Bug 2: re-fed block message must not nest)", () => {
+    it("collapses a prior block message to its innermost error — no nested 'has failed … same error' clause", () => {
+      // A realistic prior block message (the breaker's own output), itself
+      // wrapping a serialized tool-result envelope as its lastError.
+      const innerEnvelope = JSON.stringify({
+        content: [{ type: "text", text: "[unavailable] upstream 503 from provider" }],
+        details: {},
+      });
+      const priorBlockMessage =
+        `Tool "web_fetch" has failed 6 total times with the same error: ` +
+        `"${innerEnvelope.replace(/"/g, '\\"')}". This tool appears to be unavailable. ` +
+        `DO NOT retry this tool. Instead:\n- Use alternative approaches to complete your task`;
+
+      // The next turn feeds that whole prior message back as lastError.
+      const reason = buildBlockReason(
+        "web_fetch",
+        7,
+        priorBlockMessage,
+        [],
+        "unavailable",
+        true,
+      );
+
+      // The OUTER message still announces the failure exactly once.
+      expect((reason.match(/has failed/g) ?? []).length).toBe(1);
+      // It must NOT embed the prior block's prose (no nested failure clause,
+      // no nested "appears to be unavailable").
+      expect(reason).not.toMatch(/same error:.*has failed/s);
+      expect((reason.match(/appears to be unavailable/g) ?? []).length).toBe(1);
+      // The rendered clause shows the INNERMOST real error.
+      expect(reason).toContain("upstream 503 from provider");
+    });
+
+    it("collapses a raw serialized envelope lastError to its inner text", () => {
+      const envelope = JSON.stringify({
+        content: [{ type: "text", text: "[permission_denied] EPERM: operation not permitted" }],
+        details: {},
+      });
+      const reason = buildBlockReason("exec", 3, envelope, [], "permission_denied", false);
+      // Inner real error is shown; the JSON envelope wrapper is not embedded raw.
+      expect(reason).toContain("EPERM: operation not permitted");
+      expect(reason).not.toContain('"content"');
+    });
+
+    it("leaves a plain (non-envelope, non-block) error unchanged in the clause", () => {
+      const reason = buildBlockReason("exec", 3, "connection timeout", [], "connection_timeout", false);
+      expect(reason).toContain("connection timeout");
+      expect(reason).toContain("has failed");
+    });
+  });
 });

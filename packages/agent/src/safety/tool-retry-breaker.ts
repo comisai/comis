@@ -324,8 +324,25 @@ export function buildBlockReason(
   isToolLevel: boolean,
 ): string {
   const failureType = isToolLevel ? "total" : "consecutive";
-  const errorClause = lastError
-    ? ` with the same error: "${lastError.slice(0, 150)}"`
+  // Collapse a re-fed serialized envelope OR the breaker's own prior block
+  // message down to its innermost real error before embedding it. Without
+  // this, feeding a prior block message back as lastError produces a
+  // recursively self-nested clause ("failed N times with the same error:
+  // \"…failed N-1 times with the same error: \\\"…\\\"\""). peelEnvelope
+  // already strips both the JSON-envelope layer and the breaker's own
+  // `same error: "…"` block prose; loop up to 2 layers to match extractErrorTag.
+  // INVARIANT: the returned message contains `has failed` at most once and
+  // never embeds a prior `appears to be unavailable` clause.
+  let peeledError = lastError;
+  if (peeledError !== undefined) {
+    for (let depth = 0; depth < 2; depth++) {
+      const peeled = peelEnvelope(peeledError);
+      if (peeled === peeledError) break;
+      peeledError = peeled;
+    }
+  }
+  const errorClause = peeledError
+    ? ` with the same error: "${peeledError.slice(0, 150)}"`
     : "";
   const header = errorTag && isParameterValidationTag(errorTag)
     ? `Tool "${toolName}" failed parameter validation ${count} times (same args). Fix the arguments before retrying.`

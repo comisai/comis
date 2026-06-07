@@ -33,6 +33,7 @@
   "dependencies": {
     "@comis/core": "workspace:*",
     "@comis/shared": "workspace:*",
+    "@earendil-works/pi-ai": "0.78.0",
     "better-sqlite3": "12.10.0",
     "lru-cache": "11.5.1",
     "node-llama-cpp": "3.18.1",

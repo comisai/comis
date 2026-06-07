@@ -54,11 +54,17 @@ function sandboxDeps(): JourneyRunnerDeps {
 // ---------------------------------------------------------------------------
 
 describe("runJourney Stage-A — requires→skip-with-reason, never fail", () => {
-  it("platform:'linux' on macOS → skipped (reason names linux), NEVER throws", async () => {
-    const story = baseStory({ id: "RT-linux", requires: { platform: "linux" } });
+  it("an unmet platform requirement → skipped (reason names that platform), NEVER throws", async () => {
+    // Require the platform the HOST is NOT, so the requirement is always unmet
+    // wherever the suite runs. Hardcoding "linux" only skipped-for-platform on a
+    // non-Linux host (a macOS dev box); on the Linux CI runner the requirement
+    // was MET and the run fell through to the no-driver skip — failing the
+    // assertion with "no driver bound (shape-only run)".
+    const otherPlatform = process.platform === "linux" ? "macos" : "linux";
+    const story = baseStory({ id: "RT-platform", requires: { platform: otherPlatform } });
     const r = await runJourney(story, sandboxDeps());
     expect(r.status).toBe("skipped");
-    expect(r.reason).toMatch(/linux/i);
+    expect(r.reason).toMatch(new RegExp(otherPlatform, "i"));
   });
 
   it("providers:['anthropic'] with no ANTHROPIC_API_KEY → skipped (no-creds-ish)", async () => {

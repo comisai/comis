@@ -23,21 +23,6 @@ import type { ErrorKind } from "@comis/core";
 import { validateExecCommand } from "../../tools/builtin/exec-security/index.js";
 import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
 
-/**
- * Coerce an arbitrary tool result into a string for failure-signal matching.
- * Pure and total: a string passes through; everything else is JSON-stringified
- * inside a try/catch so a non-serializable (circular) value yields "" rather
- * than throwing — failureDetector bodies MUST NOT throw.
- */
-function resultToText(result: unknown): string {
-  if (typeof result === "string") return result;
-  try {
-    return JSON.stringify(result) ?? "";
-  } catch {
-    return "";
-  }
-}
-
 export function registerAllToolMetadata(): void {
   // =========================================================================
   // Result Size Caps
@@ -704,40 +689,82 @@ export function registerAllToolMetadata(): void {
   // Pure, synchronous predicates consulted in pi-event-bridge.ts BEFORE the
   // tool:executed emit, over the RAW result (the only site that sees it).
   // They flag a logically-failed result the SDK reported as success
-  // (isError:false) — e.g. web_search/web_fetch returning a rate-limit or
-  // "blocked" payload with a 200. MUST NOT throw (resultToText guards
-  // JSON.stringify) and MUST return a canonical ErrorKind member
-  // (resource/timeout/dependency/…). The internal heuristic kinds used
-  // elsewhere in the bridge are NOT valid here — only the closed 10-member
-  // ErrorKind union. When isError is already set the SDK flagged it, so the detector
-  // defers (returns false — no double-flag). exec's non-zero exitCode is
-  // already handled upstream in the bridge, so there is no exec detector here.
-  // Spread-merge attaches these to the EXISTING web_search/web_fetch entries —
+  // (isError:false) — e.g. web_search/web_fetch that returned a real failure
+  // payload alongside a 200.
+  //
+  // They inspect ONLY the tool's STRUCTURED failure fields — NEVER the fetched
+  // body — so legitimate page DATA cannot mis-flag a successful result:
+  //   - web_fetch: classify off `error` (a string set only on real failures) and
+  //     numeric `status` (>= 400). Never read `result.text`/body. This is the fix
+  //     for production session 678314278, where a 200 Yahoo Finance fetch was
+  //     mis-flagged `dependency` because IBM's share price "403.92999267578"
+  //     contains the substring "403" — a body-substring scan over `/403/` matched
+  //     legitimate content, then the tool-retry-breaker told the model to stop
+  //     retrying web_fetch.
+  //   - web_search: classify off the structured failure fields `error` (a stable
+  //     machine code: invalid_provider / invalid_freshness / all_providers_failed),
+  //     `message`, and `failures` (joined). web_search has no numeric `status`. The
+  //     human-readable reason lives in message+failures, NOT the per-result snippets,
+  //     which are never read — so a success snippet containing "rate limit" is safe.
+  //
+  // MUST NOT throw (object-narrowing guards prevent property-access throws; the
+  // regexes only ever run over short structured strings, never untrusted bodies) and
+  // MUST return a canonical ErrorKind member (resource/timeout/dependency/…). The
+  // internal heuristic kinds used elsewhere in the bridge are NOT valid here — only
+  // the closed 10-member ErrorKind union. When isError is already set the SDK flagged
+  // it, so the detector defers (returns false — no double-flag). exec's non-zero
+  // exitCode is already handled upstream in the bridge, so there is no exec detector
+  // here. Spread-merge attaches these to the EXISTING web_search/web_fetch entries —
   // the 51-tool unique count is unchanged.
   // =========================================================================
 
   registerToolMetadata("web_search", {
     failureDetector: (result, isError) => {
       if (isError) return false; // SDK already flagged it — defer.
-      const text = resultToText(result);
+      if (result === null || typeof result !== "object") return false;
+      const r = result as { error?: unknown; message?: unknown; failures?: unknown };
+      // A real web_search failure is signalled by a top-level `error` MACHINE CODE
+      // (invalid_provider / invalid_freshness / all_providers_failed). A SUCCESS payload
+      // carries `results` but NO top-level `error` — so a success whose snippet contains
+      // "rate limit"/"blocked" returns false here (never reads result.results[].snippet).
+      if (typeof r.error !== "string") return false;
+      // Build the classification text from the STRUCTURED failure fields only — the machine
+      // code plus the human-readable `message` and joined `failures` reasons — NEVER the body.
+      const failures = Array.isArray(r.failures)
+        ? r.failures.filter((f): f is string => typeof f === "string").join(" ")
+        : "";
+      const text = `${r.error} ${typeof r.message === "string" ? r.message : ""} ${failures}`;
       if (/rate limit|quota exceeded|too many requests/i.test(text)) {
         return { errorKind: "resource" satisfies ErrorKind };
       }
-      if (/blocked|forbidden|provider error/i.test(text)) {
-        return { errorKind: "dependency" satisfies ErrorKind };
-      }
-      return false;
+      // blocked/forbidden/provider-error set, broadened to the failures-chain reasons.
+      // A genuine top-level error with an unrecognised reason is still a real failure →
+      // default to dependency (never false once `error` is present).
+      return { errorKind: "dependency" satisfies ErrorKind };
     },
   });
 
   registerToolMetadata("web_fetch", {
     failureDetector: (result, isError) => {
       if (isError) return false; // SDK already flagged it — defer.
-      const text = resultToText(result);
-      if (/timed out|timeout/i.test(text)) {
-        return { errorKind: "timeout" satisfies ErrorKind };
+      if (result === null || typeof result !== "object") return false;
+      const r = result as { error?: unknown; status?: unknown };
+      // Classify off the structured failure fields ONLY. A SUCCESS result has a numeric
+      // `status` 200 and NO `error` key — its body lives in `r.text` and may contain "403"
+      // (e.g. the IBM share price 403.92999267578 — production session 678314278), "blocked",
+      // "timeout" etc. as legitimate DATA. We never read `r.text`/body, so those don't flag.
+      if (typeof r.error === "string") {
+        // Timeout text lives in the descriptive error string ("Fetch failed: …timed out…").
+        if (/\btimed out\b|\btimeout\b/i.test(r.error)) {
+          return { errorKind: "timeout" satisfies ErrorKind };
+        }
+        return { errorKind: "dependency" satisfies ErrorKind };
       }
-      if (/blocked|403|forbidden|connection refused/i.test(text)) {
+      if (typeof r.status === "number" && r.status >= 400) {
+        // Gateway-timeout (504) / request-timeout (408) HTTP codes map to timeout.
+        if (r.status === 408 || r.status === 504) {
+          return { errorKind: "timeout" satisfies ErrorKind };
+        }
         return { errorKind: "dependency" satisfies ErrorKind };
       }
       return false;
