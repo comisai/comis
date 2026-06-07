@@ -29,7 +29,7 @@ import type { Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { safePath } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
-import { dirname } from "node:path";
+import { dirname, relative } from "node:path";
 import { estimateMessageChars } from "../safety/token-estimator.js";
 import { createToolResultSizeGuard, type ContentBlock } from "../safety/tool-result-size-guard.js";
 import {
@@ -217,7 +217,7 @@ export function installMicrocompactionGuard(
   sessionDir: string,
   dataDir: string,
   logger: ComisLogger,
-  onOffloaded?: (toolName: string) => void,
+  onOffloaded?: (toolName: string, originalChars: number, toolCallId: string, diskPathRel: string) => void,
 ): void {
   const originalAppend = sm.appendMessage.bind(sm);
   const guard = createToolResultSizeGuard();
@@ -344,7 +344,13 @@ export function installMicrocompactionGuard(
 
       const truncatedMsg = { ...toolResultMsg, content: truncatedContent };
       const reference = createInlineReference(truncatedMsg, totalChars, diskPath);
-      onOffloaded?.(toolResultMsg.toolName);
+      // Pass only a WORKSPACE-RELATIVE pointer (sessionDir-relative) — the
+      // absolute diskPath leaks the host filesystem layout (T-151-05) and is
+      // not a stable drill-down target. This guard holds no event bus and no
+      // clock (T-151-07): it computes the payload and hands it to onOffloaded;
+      // the executor callback (which has both) performs the trajectory emit.
+      const diskPathRel = relative(sessionDir, diskPath); // "tool-results/<toolCallId>.json"
+      onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
 
       // PIPELINE-FIX: Propagate compact reference to in-memory message object.
       // Without this, currentContext.messages in the agent loop still holds the
@@ -386,7 +392,10 @@ export function installMicrocompactionGuard(
         "Tool result offloaded to disk",
       );
 
-      onOffloaded?.(toolResultMsg.toolName);
+      // Same residency-safe pointer at the threshold branch — its own diskPath
+      // is in scope (returned by the saveToDisk above). Workspace-relative only.
+      const diskPathRel = relative(sessionDir, diskPath); // "tool-results/<toolCallId>.json"
+      onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
 
       // PIPELINE-FIX: Propagate compact reference to in-memory message object.
       // Without this, currentContext.messages in the agent loop still holds the
