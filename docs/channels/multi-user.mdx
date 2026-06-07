@@ -210,40 +210,77 @@ capabilities from the *same* agent.
 
 ## Other channels
 
-The model is identical on every channel — only the ID fields differ. `allowFrom`,
-`session.dmScope`, `routing`, and `elevatedReply` all work the same way; routing
-bindings just use the IDs that platform exposes:
+The same four levers work on every channel. Only two things change per platform:
+the **routing-key field** you bind on, and the **sender-ID format** you put in
+`allowFrom`. A private 1:1 (DM / direct chat) is transport-isolated on every
+platform; shared spaces (groups, servers, channels) are shared by design.
 
-| Channel | Private 1:1 | Shared space | Route a group/server with |
-|---|---|---|---|
-| Telegram | DM | group / supergroup | `channelId` (chat ID) |
-| Discord | DM | server + channel | `guildId` (server), `channelId` (channel) |
-| Slack | DM | workspace channel | `channelId` |
-| WhatsApp / Signal / iMessage | 1:1 chat | group | `channelId` |
+| Channel | Private 1:1 | Shared space | Route a shared space with | `allowFrom` sender ID |
+|---|---|---|---|---|
+| Telegram | DM | group / supergroup | `channelId` (chat ID, negative) | numeric user ID |
+| Discord | DM | server → channel | `guildId` (server) and/or `channelId` | numeric user ID |
+| Slack | DM | workspace → channel | `channelId` (`C…`) | user ID (`U…`) |
+| WhatsApp | 1:1 chat | group | `channelId` (group JID `…@g.us`) | E.164 phone (`+1…`) |
+| Signal | 1:1 chat | group | `channelId` (`group:<id>`) | phone or UUID |
+| iMessage | 1:1 chat | group | `channelId` (chat GUID) | phone or email |
+| LINE | 1:1 | group / room | `channelId` (group/room ID) | LINE user ID (`U…`) |
+| IRC | private message | channel (`#name`) | `channelId` (`#channel`) | nick ⚠️ |
+| Email | thread | — (1:many by recipients) | route by `channelType: email` | email address |
+
+`peerId` (the sender) works on every platform. **`guildId` is Discord-only** —
+it's the server ID; every other platform routes a shared space with `channelId`.
 
 ```yaml
-# Example: route a Discord support server to a dedicated agent,
-# and one VIP user (in any channel) to another.
+# Discord: a whole support server -> support agent; one VIP anywhere -> vip agent.
+# WhatsApp: route one group to a team agent (channelId = the group JID).
 routing:
   defaultAgentId: default
   bindings:
     - channelType: discord
-      guildId: "9876543210"     # whole support server -> support agent
+      guildId: "9876543210"            # server ID -> support agent
       agentId: support
     - channelType: discord
-      peerId: "112233445566"    # one VIP, anywhere -> vip agent
+      peerId: "112233445566"           # one user, any channel -> vip agent
       agentId: vip
+    - channelType: whatsapp
+      channelId: "123456789-1234567890@g.us"   # one WhatsApp group -> team agent
+      agentId: team
 ```
 
 See each channel's page under [Channels](/channels) for how to find its IDs.
 
-## One bot per channel
+### Platform caveats for multi-user
 
-Each Comis daemon runs **one** bot per channel type — one Telegram bot, one
-Discord bot, and so on. That is not a limit on users (one bot serves unlimited
-private DMs and groups); it only means you can't run two *different* Telegram
-bot identities (different `@username`s) in a single daemon. If you genuinely
-need separate bot identities, run one daemon per bot — see
+A few platforms need extra care when several people share one install:
+
+- **IRC — nicks are spoofable.** IRC nicknames aren't authenticated by default,
+  so `allowFrom` on IRC is **not a security boundary** unless your network
+  enforces registration (NickServ) and you trust it. Don't gate a sensitive
+  agent on an IRC nick alone.
+- **Email — the From address isn't verified.** `channels.email.allowMode` is
+  `allowlist` by default (only listed addresses reach the agent; set `open` to
+  accept all). But sender addresses can be spoofed and Comis does not check
+  SPF/DKIM/DMARC, so treat the email allowlist as convenience, not strong
+  authentication, for high-stakes agents.
+- **WhatsApp, Signal, iMessage, Email are personal accounts, not bots.** The
+  adapter is bound to one phone number (WhatsApp/Signal), one Apple ID on macOS
+  (iMessage), or one mailbox (Email) — so "one bot per channel" is really "one
+  account per channel." Everyone talks to that single number/address; you still
+  isolate people with per-person agents via `routing`, they just all see the
+  same identity.
+- **Slack & Discord are team-native.** A Slack workspace or Discord server is
+  already a multi-user space; `allowFrom` gates at the bot/workspace level (a
+  user can or cannot reach the bot at all), and you split people across agents
+  with `routing` as usual.
+
+## One identity per channel
+
+Each Comis daemon runs **one** identity per channel type — one Telegram/Discord/
+Slack/LINE bot, one WhatsApp or Signal phone number, one iMessage Apple ID, one
+mailbox. That is not a limit on users (one identity serves unlimited private DMs
+and shared spaces); it only means you can't run two *different* identities of the
+same type (two Telegram `@username`s, two phone numbers) in a single daemon. If
+you genuinely need a second identity, run one daemon per identity — see
 [Routing to a separate bot identity](/channels/telegram#multi-agent-routing) on
 the Telegram page.
 
