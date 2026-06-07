@@ -115,6 +115,53 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.errorKind).toBe("internal");
   });
 
+  // B1 (D3): the two breaker transitions must land in the trajectory as
+  // tool.breaker_opened / tool.breaker_reset with ids/counts/typed-reason only
+  // (no raw error body, §2.7). Phase 153's obs.explain reads these.
+  it("tool_breaker_opened_maps_to_tool.breaker_opened with toolName/consecutiveFailures/errorTag/reason/seq", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:breaker_opened", {
+      toolName: "bash",
+      consecutiveFailures: 5,
+      errorTag: "spawn_enoent",
+      reason: "tool_failure_threshold",
+      seq: 3,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("tool.breaker_opened");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.toolName).toBe("bash");
+    expect(data.consecutiveFailures).toBe(5);
+    expect(data.errorTag).toBe("spawn_enoent");
+    expect(data.reason).toBe("tool_failure_threshold");
+    expect(data.seq).toBe(3);
+  });
+
+  it("tool_breaker_reset_maps_to_tool.breaker_reset with toolName/reason/seq", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:breaker_reset", {
+      toolName: "web_fetch",
+      reason: "success",
+      seq: 7,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("tool.breaker_reset");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.toolName).toBe("web_fetch");
+    expect(data.reason).toBe("success");
+    expect(data.seq).toBe(7);
+  });
+
   it("tool_executed_forwards_D1_provenance_into_tool.result.data", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();

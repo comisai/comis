@@ -125,6 +125,38 @@ export interface AgentEvents {
   };
 
   /**
+   * Circuit breaker opened for a tool (tool-level total OR error-pattern
+   * threshold crossed). D3 — fired by the bridge exactly at the counter
+   * crossing (`recordResult` returns the verdict; the breaker stays
+   * emitter-free). Phase 153's `obs.explain` renders a breakerTimeline from
+   * these; the payload carries the breaker's already-normalized `errorTag`
+   * (extractErrorTag — first-80-char normalized), NEVER raw error text (§2.7).
+   */
+  "tool:breaker_opened": {
+    toolName: string;
+    consecutiveFailures: number;
+    /** Normalized error tag (extractErrorTag) — never raw body. */
+    errorTag: string;
+    /** "tool_failure_threshold" | "error_pattern" */
+    reason: string;
+    /** Count of tools executed so far this execution (monotonic seq for the breakerTimeline). */
+    seq: number;
+    timestamp: number;
+  };
+
+  /**
+   * Circuit breaker reset for a tool (a success that recovered a non-zero
+   * failure counter). D3. Lifecycle `reset()` does NOT emit this (A2).
+   */
+  "tool:breaker_reset": {
+    toolName: string;
+    /** "success" */
+    reason: string;
+    seq: number;
+    timestamp: number;
+  };
+
+  /**
    * Capability layer -- install detour detected by exec/process tool.
    * Emission lives in the skills package; this is the type-only declaration.
    *

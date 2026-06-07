@@ -364,6 +364,91 @@ describe("createPiEventBridge", () => {
       expect(endEmit).toBeDefined();
     });
 
+    // -----------------------------------------------------------------------
+    // B1 (D3): the bridge captures the recordResult transition verdict and
+    // emits tool:breaker_opened / tool:breaker_reset (the breaker stays
+    // emitter-free). The emit fires exactly when recordResult returns a
+    // transition — once per open at the threshold edge.
+    // -----------------------------------------------------------------------
+    it("emits tool:breaker_opened exactly once when recordResult returns an opened transition", () => {
+      const depsWithBreaker = createMockDeps({
+        toolRetryBreaker: {
+          beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+          recordResult: vi.fn().mockReturnValue({
+            transition: "opened",
+            toolName: "bash",
+            reason: "tool_failure_threshold",
+            consecutiveFailures: 5,
+            errorTag: "spawn_enoent",
+          }),
+          getBlockedTools: vi.fn().mockReturnValue([]),
+          reset: vi.fn(),
+        } as any,
+      });
+      const { listener } = createPiEventBridge(depsWithBreaker);
+
+      listener(makeToolExecutionEndEvent("bash", "tc-b1", true) as any);
+
+      const calls = (depsWithBreaker.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const opened = calls.filter((c) => c[0] === "tool:breaker_opened");
+      expect(opened).toHaveLength(1);
+      expect(opened[0][1].toolName).toBe("bash");
+      expect(opened[0][1].consecutiveFailures).toBe(5);
+      expect(opened[0][1].errorTag).toBe("spawn_enoent");
+      expect(opened[0][1].reason).toBe("tool_failure_threshold");
+      expect(typeof opened[0][1].seq).toBe("number");
+      expect(typeof opened[0][1].timestamp).toBe("number");
+      // No reset must be emitted on an opened verdict.
+      expect(calls.find((c) => c[0] === "tool:breaker_reset")).toBeUndefined();
+    });
+
+    it("emits tool:breaker_reset when recordResult returns a reset transition", () => {
+      const depsWithBreaker = createMockDeps({
+        toolRetryBreaker: {
+          beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+          recordResult: vi.fn().mockReturnValue({
+            transition: "reset",
+            toolName: "web_fetch",
+            reason: "success",
+            consecutiveFailures: 0,
+            errorTag: "",
+          }),
+          getBlockedTools: vi.fn().mockReturnValue([]),
+          reset: vi.fn(),
+        } as any,
+      });
+      const { listener } = createPiEventBridge(depsWithBreaker);
+
+      listener(makeToolExecutionEndEvent("web_fetch", "tc-b2", false) as any);
+
+      const calls = (depsWithBreaker.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const reset = calls.filter((c) => c[0] === "tool:breaker_reset");
+      expect(reset).toHaveLength(1);
+      expect(reset[0][1].toolName).toBe("web_fetch");
+      expect(reset[0][1].reason).toBe("success");
+      expect(typeof reset[0][1].seq).toBe("number");
+      // No opened on a reset verdict.
+      expect(calls.find((c) => c[0] === "tool:breaker_opened")).toBeUndefined();
+    });
+
+    it("emits no breaker event when recordResult returns undefined (no transition)", () => {
+      const depsWithBreaker = createMockDeps({
+        toolRetryBreaker: {
+          beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+          recordResult: vi.fn().mockReturnValue(undefined),
+          getBlockedTools: vi.fn().mockReturnValue([]),
+          reset: vi.fn(),
+        } as any,
+      });
+      const { listener } = createPiEventBridge(depsWithBreaker);
+
+      listener(makeToolExecutionEndEvent("bash", "tc-b3", true) as any);
+
+      const calls = (depsWithBreaker.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.find((c) => c[0] === "tool:breaker_opened")).toBeUndefined();
+      expect(calls.find((c) => c[0] === "tool:breaker_reset")).toBeUndefined();
+    });
+
     // errorKind on tool:executed when isError was true from the start.
     it("isError=true with [invalid_value] errorText emits errorKind=validation", () => {
       const { listener } = createPiEventBridge(deps);
