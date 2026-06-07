@@ -21,7 +21,10 @@ providers:
   entries:
     qwen36-local:
       type: ollama
-      baseUrl: "http://localhost:11434"
+      # /v1 suffix: pi-ai registers type=ollama as openai-completions and posts to
+      # `${baseUrl}/chat/completions` — without /v1 Ollama returns 404 (its OpenAI-compat
+      # endpoint is /v1/chat/completions). Revealed by the Stage-D daemon-routed live run.
+      baseUrl: "http://localhost:11434/v1"
       # Keyless provider — ollama is in KEYLESS_PROVIDER_TYPES; no secret entry
       # needed; omitting avoids "Missing env var" FATAL on daemon boot
       models:
@@ -30,6 +33,12 @@ providers:
           contextWindow: 131072  # Capped below 256K for test stability (avoids 256K overfill)
           reasoning: true
           maxTokens: 2048
+
+# defaultModel lets an ad-hoc agent created with only a provider override (e.g. the
+# Stage-D ConversationDriver test agent) resolve a model — qwen3.6 is a custom-provider
+# model not in pi-ai's built-in catalog, so resolveAgentModel needs this fallback.
+models:
+  defaultModel: "qwen36-local:qwen3.6:35b"
 
 agents:
   default:
