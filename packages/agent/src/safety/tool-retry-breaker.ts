@@ -28,6 +28,29 @@ export interface ToolRetryVerdict {
   alternatives?: string[];
 }
 
+/**
+ * Transition verdict returned by `recordResult` when a tool-WIDE failure
+ * counter crosses (or recovers from) its threshold. The breaker stays
+ * emitter-free (design §5 D3 / §9.6 — lowest blast radius): it RETURNS this
+ * verdict and the bridge (the sole holder of the event bus) emits the
+ * `tool:breaker_opened` / `tool:breaker_reset` events.
+ *
+ * Only tool-WIDE transitions surface (tool-level total + error-pattern, both of
+ * which make the tool unavailable to the model); the args-specific
+ * signature-level counter does NOT produce a transition (A1). `reset` fires
+ * only on a success that recovers a non-zero counter — never on the lifecycle
+ * `reset()` full-clear (A2).
+ */
+export interface ToolBreakerTransition {
+  transition: "opened" | "reset";
+  toolName: string;
+  /** "tool_failure_threshold" | "error_pattern" | "success" */
+  reason: string;
+  consecutiveFailures: number;
+  /** extractErrorTag output (normalized, never raw body); "" for reset. */
+  errorTag: string;
+}
+
 /** Configuration for the tool retry breaker. */
 export interface ToolRetryBreakerConfig {
   maxConsecutiveFailures: number;
@@ -52,8 +75,16 @@ export interface ToolRetryBreakerConfig {
 export interface ToolRetryBreaker {
   /** Check whether a tool call should be blocked before execution. */
   beforeToolCall(toolName: string, args: Record<string, unknown>): ToolRetryVerdict;
-  /** Record the result of a tool call (success or failure). */
-  recordResult(toolName: string, args: Record<string, unknown>, success: boolean, errorText?: string): void;
+  /**
+   * Record the result of a tool call (success or failure).
+   *
+   * Returns a {@link ToolBreakerTransition} ONLY at a tool-wide counter
+   * crossing (tool-level total or error-pattern threshold, by EXACT equality)
+   * or on a success that recovers a non-zero failure counter; otherwise
+   * `undefined`. The breaker emits nothing itself — the bridge consumes this
+   * verdict (design §5 D3).
+   */
+  recordResult(toolName: string, args: Record<string, unknown>, success: boolean, errorText?: string): ToolBreakerTransition | undefined;
   /** Return list of tool names that are fully blocked (tool-level). */
   getBlockedTools(): string[];
   /** Clear all state -- unblock all tools, reset all counters. */
@@ -451,12 +482,15 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       return { block: false };
     },
 
-    recordResult(toolName: string, args: Record<string, unknown>, success: boolean, errorText?: string): void {
+    recordResult(toolName: string, args: Record<string, unknown>, success: boolean, errorText?: string): ToolBreakerTransition | undefined {
       const fp = fingerprint(toolName, args);
 
       if (success) {
         // Reset consecutive counter for this specific signature
         const existing = signatureFailures.get(fp);
+        // RESET edge: only an observable transition if this signature was
+        // actually failing (a success after no prior failure is a no-op).
+        const hadConsecutive = (existing?.consecutiveFailures ?? 0) > 0;
         if (existing) {
           existing.consecutiveFailures = 0;
         }
@@ -468,7 +502,9 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
           }
         }
         // Note: tool-level total counter is NOT reset on success
-        return;
+        return hadConsecutive
+          ? { transition: "reset", toolName, reason: "success", consecutiveFailures: 0, errorTag: "" }
+          : undefined;
       }
 
       // Skip counter updates for parameter-validation tags — these are
@@ -477,7 +513,7 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       // PARAMETER_VALIDATION_TAGS above for the full rationale.
       const errorTag = extractErrorTag(errorText ?? "unknown");
       if (PARAMETER_VALIDATION_TAGS.has(errorTag)) {
-        return;
+        return undefined;
       }
 
       // Skip counter updates for completed command exits — a command that ran
@@ -487,7 +523,7 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       // (spawn ENOENT, EPERM) carry no exitCode and still accumulate. See
       // isCompletedCommandExit above for the full rationale.
       if (isCompletedCommandExit(errorText)) {
-        return;
+        return undefined;
       }
 
       // Failure path: update signature state
@@ -502,10 +538,15 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       toolState.lastError = errorText;
       toolFailures.set(toolName, toolState);
 
-      // Check if tool-level threshold exceeded
+      // Check if tool-level threshold exceeded. The block stays `>=` (Set.add is
+      // idempotent), but the OPEN transition fires on the EXACT crossing only —
+      // `===` so the bridge emits `tool:breaker_opened` once per open, never on
+      // every later failure (Pitfall 1 / T-151-03; a `>=` verdict would inflate
+      // Phase 153's breakerTimeline).
       if (toolState.count >= maxToolFailures) {
         blockedTools.add(toolName);
       }
+      const openedToolLevel = toolState.count === maxToolFailures;
 
       // Update error-pattern tracking
       const patternKey = `${toolName}::err::${errorTag}`;
@@ -514,6 +555,21 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       patternState.lastError = errorText;
       patternState.failingFingerprints.add(fp);
       errorPatternFailures.set(patternKey, patternState);
+      const openedPattern = patternState.consecutiveFailures === maxErrorPatterns;
+
+      // Tool-WIDE open transition (A1): tool-level total OR error-pattern. The
+      // args-specific signature-level counter does NOT emit a transition — it is
+      // a narrower, self-healing state checked in beforeToolCall.
+      if (openedToolLevel || openedPattern) {
+        return {
+          transition: "opened",
+          toolName,
+          reason: openedToolLevel ? "tool_failure_threshold" : "error_pattern",
+          consecutiveFailures: sigState.consecutiveFailures,
+          errorTag,
+        };
+      }
+      return undefined;
     },
 
     getBlockedTools(): string[] {
