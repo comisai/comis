@@ -537,7 +537,7 @@ export function registerAllToolMetadata(): void {
 
   // --- Privileged management tools ---
   registerToolMetadata("agents_manage",    { searchHint: "fleet list create delete suspend resume agent configure roster inventory" });
-  registerToolMetadata("obs_query",        { searchHint: "diagnostics monitoring metrics billing traces logs health explain incident root-cause post-mortem session report" });
+  registerToolMetadata("obs_query",        { searchHint: "diagnostics monitoring metrics billing health explain incident post-mortem" });
   registerToolMetadata("sessions_manage",  { searchHint: "delete reset export compact session lifecycle cleanup admin" });
   registerToolMetadata("memory_manage",    { searchHint: "delete flush export browse stats storage cleanup purge" });
   registerToolMetadata("channels_manage",  { searchHint: "enable disable restart channel adapter platform connection" });
@@ -602,7 +602,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("web_fetch",  { mcpExportPolicy: "safe" });
   registerToolMetadata("browser",    { mcpExportPolicy: "safe" });
 
-  // --- permission-gated (20) — caller-data-dependent; allowlist required ---
+  // --- permission-gated (21) — caller-data-dependent; allowlist required ---
   // Workspace file access (4) — operator allowlists by path scope at the daemon.
   registerToolMetadata("read", { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("ls",   { mcpExportPolicy: "permission-gated" });
@@ -618,15 +618,8 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("sessions_history", { mcpExportPolicy: "permission-gated" });
   // Observability read (1) — operator allowlists by query scope.
   registerToolMetadata("obs_query", { mcpExportPolicy: "permission-gated" });
-  // Observability incident report (1, 154-03) — the slim, READ-ONLY obs_explain
-  // MCP tool surfaces the obs.explain IncidentReport (digest-only/bounded). It
-  // runs the assembler DIRECTLY under daemon authority (NOT the admin-gated
-  // obs.explain RPC); the per-client mcpClient.allowlist IS the granted
-  // permission (no admin trust). All four registrations mirror obs_query.
-  registerToolMetadata("obs_explain", { maxResultSizeChars: 100_000 });
-  registerToolMetadata("obs_explain", { isReadOnly: true });
-  registerToolMetadata("obs_explain", { searchHint: "explain incident root-cause post-mortem session report" });
-  registerToolMetadata("obs_explain", { mcpExportPolicy: "permission-gated" });
+  // Observability incident report (1, 154-03) — READ-ONLY obs.explain digest; runs the assembler directly under daemon authority (NOT the admin RPC), allowlist is the grant. Mirrors obs_query (merged into one call to stay under the 800-line cap).
+  registerToolMetadata("obs_explain", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "explain incident root-cause post-mortem session report" });
   // Meta-tool (1) — reveals registered-tools attack surface; per-client allowlist required.
   registerToolMetadata("discover_tools", { mcpExportPolicy: "permission-gated" });
   // Media analysis (4) — see media-tools note above. Default permission-gated

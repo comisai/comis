@@ -988,9 +988,21 @@
             {
               "const": "channels",
               "type": "string"
+            },
+            {
+              "const": "explain",
+              "type": "string"
+            },
+            {
+              "const": "trace",
+              "type": "string"
+            },
+            {
+              "const": "session_report",
+              "type": "string"
             }
           ],
-          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness)"
+          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport)"
         },
         "agent_id": {
           "description": "Agent identifier (for billing.byAgent)",
@@ -1002,6 +1014,10 @@
         },
         "channel_id": {
           "description": "Channel identifier (for channels.get, delivery.recent)",
+          "type": "string"
+        },
+        "depth": {
+          "description": "Report depth for explain/session_report: summary | full",
           "type": "string"
         },
         "limit": {
@@ -1023,6 +1039,10 @@
         "threshold_ms": {
           "description": "Staleness threshold in ms (for channels.stale, default 300000)",
           "type": "integer"
+        },
+        "trace_id": {
+          "description": "Trace ID (for explain, trace, session_report)",
+          "type": "string"
         }
       },
       "required": [

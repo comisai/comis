@@ -40,13 +40,15 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 // ===========================================================================
 
 describe("tool-metadata-registry -- registry count", () => {
-  it("registers exactly 59 unique tools (registry count assertion)", () => {
-    // 59 = 56 prior + the 3 ctx_* in-session expansion tools (ctx_search /
+  it("registers exactly 60 unique tools (registry count assertion)", () => {
+    // 60 = 59 prior + obs_explain (Phase 154-03 — the slim, READ-ONLY
+    // permission-gated MCP tool surfacing the obs.explain IncidentReport).
+    // The 59 prior = 56 + the 3 ctx_* in-session expansion tools (ctx_search /
     // ctx_inspect / ctx_expand) rebuilt in Phase 131 (E1/E2). The 4 OLD ctx_*
     // DAG read tools were deleted in Phase 126; these 3 are the governed TOOL
     // surface over the LCD store.
     const all = getAllToolMetadata();
-    expect(all.size).toBe(59);
+    expect(all.size).toBe(60);
   });
 });
 
