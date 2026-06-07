@@ -18,6 +18,8 @@
 import { ok, err, fromPromise, type Result } from "@comis/shared";
 import { safePath, systemDateFrom, systemSetTimeout, systemClearTimeout, validateMemoryWrite } from "@comis/core";
 import type { MemoryReviewConfig } from "@comis/core";
+import { resolveMemoryOpsStrategy } from "./memory-capability-router.js";
+import type { CapabilityClass } from "../executor/model-profile.js";
 import type { MemoryPort, MemorySearchOptions } from "@comis/core";
 // The SEGREGATED entity-store port — imported as a TYPE ONLY.
 // The concrete adapter lives in the memory package; the agent↛memory build cut
@@ -95,6 +97,19 @@ export interface MemoryReviewDeps {
    */
   clock: ClockPort;
   logger: ReviewLogger;
+  /**
+   * R6: the capability class of the agent's model (from ModelProfile.capabilityClass).
+   * When small/nano without a capable override, extraction is skipped — no LLM call
+   * is made and the watermark advances (T-153-fabricate mitigation).
+   * Optional for backward-compat; defaults to "frontier" behavior when absent.
+   */
+  capabilityClass?: CapabilityClass;
+  /**
+   * R6: operator override — a stronger cheap model is configured for the memory
+   * pipeline. When true, small/nano are treated as capable for extraction.
+   * Optional; defaults to false.
+   */
+  hasCapableModelOverride?: boolean;
 }
 
 /**
@@ -334,6 +349,38 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     eventBus.emit("memory:review_completed", {
       agentId,
       sessionsReviewed: 0,
+      memoriesExtracted: 0,
+      duplicatesSkipped: 0,
+      durationMs: clock.now() - startTime,
+      timestamp: clock.now(),
+    });
+    return ok(undefined);
+  }
+
+  // R6 capability routing: skip the LLM extraction call for small/nano without a
+  // capable-model override (T-153-fabricate mitigation). Advance the watermark first
+  // so this run is not re-processed on the next cron tick (non-stalling abstain).
+  const capabilityClass = deps.capabilityClass ?? "frontier";
+  const hasCapableModelOverride = deps.hasCapableModelOverride ?? false;
+  const memStrategy = resolveMemoryOpsStrategy(capabilityClass, hasCapableModelOverride);
+  if (memStrategy === "abstain") {
+    logger.warn(
+      {
+        agentId,
+        submodule: "memory-review-job",
+        errorKind: "precondition" as const,
+        hint: "extraction skipped: capabilityClass requires a capableModel override",
+      },
+      "memory extraction skipped",
+    );
+    // Advance watermark for reviewed sessions so we don't reprocess on the next run.
+    for (const session of reviewedSessions) {
+      watermark.sessions[session.sessionKey] = session.updatedAt;
+    }
+    await saveWatermark(watermarkPath, watermark);
+    eventBus.emit("memory:review_completed", {
+      agentId,
+      sessionsReviewed: reviewedSessions.length,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
       durationMs: clock.now() - startTime,
