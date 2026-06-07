@@ -31,6 +31,7 @@ import {
   ObsDeliveryRecentContract,
   ObsDeliveryStatsContract,
   ObsDiagnosticsContract,
+  ObsExplainContract,
   ObsGetCacheStatsContract,
   ObsResetContract,
   ObsResetTableContract,
@@ -45,11 +46,11 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 24 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(24);
+  it("OBSERVABILITY_CONTRACTS has exactly 25 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(25);
   });
 
-  it("all 24 contracts are admin-scoped", () => {
+  it("all 25 contracts are admin-scoped", () => {
     for (const c of OBSERVABILITY_CONTRACTS) {
       expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
     }
@@ -75,6 +76,8 @@ describe("observability-domain contracts", () => {
       "obs.delivery.recent",
       "obs.delivery.stats",
       "obs.diagnostics",
+      // Incident-report assembler (Phase 153 centerpiece).
+      "obs.explain",
       "obs.getCacheStats",
       "obs.reset",
       "obs.reset.table",
@@ -830,8 +833,8 @@ describe("ObsTrace contracts", () => {
   });
 
   // Test 13
-  it("OBSERVABILITY_CONTRACTS has exactly 24 entries after adding three new contracts", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(24);
+  it("OBSERVABILITY_CONTRACTS has exactly 25 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(25);
   });
 
   // Test 14
@@ -840,5 +843,62 @@ describe("ObsTrace contracts", () => {
     expect(methods.filter((m) => m === "obs.trace.search")).toHaveLength(1);
     expect(methods.filter((m) => m === "obs.trace.tail")).toHaveLength(1);
     expect(methods.filter((m) => m === "obs.trace.export")).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // obs.explain (Phase 153 centerpiece — IncidentReport assembler)
+  // -------------------------------------------------------------------------
+
+  it("obs.explain: method name", () => {
+    expect(ObsExplainContract.method).toBe("obs.explain");
+  });
+
+  it("obs.explain: admin-scoped", () => {
+    expect(ObsExplainContract.scopes).toEqual(["admin"]);
+  });
+
+  it("obs.explain: request accepts sessionKey alone", () => {
+    expect(() =>
+      ObsExplainContract.request.parse({ sessionKey: "sk-1" }),
+    ).not.toThrow();
+  });
+
+  it("obs.explain: request accepts traceId alone", () => {
+    expect(() =>
+      ObsExplainContract.request.parse({ traceId: "t-1" }),
+    ).not.toThrow();
+  });
+
+  it("obs.explain: request REJECTS neither sessionKey nor traceId", () => {
+    expect(() => ObsExplainContract.request.parse({})).toThrow();
+  });
+
+  it("obs.explain: empty sessionKey is ignored when traceId carries", () => {
+    // min(1) on each optional field drops the empty string; traceId satisfies refine.
+    expect(() =>
+      ObsExplainContract.request.parse({ sessionKey: "", traceId: "t-1" }),
+    ).not.toThrow();
+  });
+
+  it("obs.explain: response parses a minimal §6.3 IncidentReport sample", () => {
+    const sample = {
+      schemaVersion: 1,
+      sessionKey: "sk-1",
+      traceId: "t-1",
+      agentId: "agent-1",
+      channel: { type: "discord", id: "chan-1" },
+      outcome: { endReason: "success", degraded: false, severity: "ok" },
+      cost: { costUsd: 0, totalTokens: 0, cacheReadRatio: 0 },
+      timing: { durationMs: 0, turnCount: 0 },
+      toolStats: {},
+      failures: [],
+      breakerTimeline: [],
+      offloads: [],
+      summary: "no incidents",
+      likelyRootCause: null,
+      suggestedNextSteps: [],
+      truncations: [],
+    };
+    expect(() => ObsExplainContract.response.parse(sample)).not.toThrow();
   });
 });
