@@ -88,7 +88,7 @@ export interface MemoryConsolidationDeps {
    * R6: the capability class of the agent's model (from ModelProfile.capabilityClass).
    * When small/nano without a capable override, consolidation LLM calls are skipped
    * (T-153-fabricate mitigation: prevent fabricated triples from entering trusted storage).
-   * Optional for backward-compat; defaults to "frontier" behavior when absent.
+   * Optional: defaults to "frontier" behavior (capable) when absent.
    */
   capabilityClass?: CapabilityClass;
   /**

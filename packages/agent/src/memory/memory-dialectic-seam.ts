@@ -63,8 +63,7 @@ export interface DialecticSeamDeps {
    * R6: the capability class of the agent's model (from ModelProfile.capabilityClass).
    * When small/nano without a capable override, synthesize() returns { abstain: true }
    * immediately — no LLM call is made (T-153-fabricate mitigation).
-   * Optional for backward-compat with existing callers that don't pass it; defaults
-   * to "frontier" behavior (capable) when absent.
+   * Optional: callers that don't pass it default to "frontier" behavior (capable).
    */
   capabilityClass?: CapabilityClass;
   /**
@@ -112,7 +111,7 @@ export function createDialecticSeam(
 ): (question: string, groundingText: string) => Promise<DialecticParsed> {
   const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId } = deps;
   // R6: pre-resolve the capability routing (once per seam instance, not per call).
-  // Defaults to "frontier" behavior when capabilityClass is absent (backward-compat).
+  // Defaults to "frontier" behavior when capabilityClass is absent (capable path).
   const capabilityClass = deps.capabilityClass ?? "frontier";
   const hasCapableModelOverride = deps.hasCapableModelOverride ?? false;
   const strategy = resolveMemoryOpsStrategy(capabilityClass, hasCapableModelOverride);

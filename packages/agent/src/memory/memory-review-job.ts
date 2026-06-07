@@ -101,7 +101,7 @@ export interface MemoryReviewDeps {
    * R6: the capability class of the agent's model (from ModelProfile.capabilityClass).
    * When small/nano without a capable override, extraction is skipped — no LLM call
    * is made and the watermark advances (T-153-fabricate mitigation).
-   * Optional for backward-compat; defaults to "frontier" behavior when absent.
+   * Optional: defaults to "frontier" behavior (capable) when absent.
    */
   capabilityClass?: CapabilityClass;
   /**
