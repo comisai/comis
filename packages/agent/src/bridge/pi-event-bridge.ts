@@ -802,9 +802,16 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 // D1 provenance — assigned at the mutation points above.
                 // matchedToken is untrusted tool output → sanitize+bound it
                 // exactly like errorText; the rest are enum-like/digest/number.
-                // transportOk = (classifiedFailureBy !== "sdk_iserror") for the
-                // non-MCP branches; computed from the SDK flip source so the
-                // A1 MCP-refined case stays correct (see the const above).
+                // transportOk = !endEvent.isError — it reflects whether the
+                // transport DELIVERED a response, not which classifier labeled
+                // the failure. It is false ONLY when the SDK reported a
+                // transport/spawn failure (endEvent.isError), and STAYS false
+                // even when the A1 MCP classifier later refines that isError
+                // failure (relabeling classifiedFailureBy → "mcp_classifier").
+                // Do NOT rewrite as (classifiedFailureBy !== "sdk_iserror") —
+                // that flips the A1 case to transportOk:true and reopens the
+                // c53ab0f MCP-transport-failure misclassification (see the
+                // const above).
                 ...(classifiedFailureBy !== undefined && { classifiedFailureBy }),
                 transportOk,
                 ...(httpStatus !== undefined && { httpStatus }),
