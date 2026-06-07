@@ -1,0 +1,7 @@
+{
+  "sessionId": "live-provider-timeout",
+  "endReason": "completed_with_tool_errors",
+  "degraded": true,
+  "classifierCategory": "prompt_timeout",
+  "note": "Synthesized via the makeFaultInjector/classifyPromptTimeout product path: a 30000ms deadline breach classifies to category 'prompt_timeout' (retryable=true) — confirmed against @comis/agent classifyPromptTimeout(30000). The stalled web_fetch call (with a retry, both timing out) degraded the turn."
+}

@@ -45,19 +45,54 @@ today's observability surface (RESEARCH.md Pitfall 4).
 
 ## `live-503-breaker` — the still-live class (Phase-156 G1(b) re-prove target)
 
-_(filled by Task 2)_
+- **Failure class:** `503-breaker`. The **most important** live fixture — Phase-156/G1(b)
+  re-proves it (`obs.explain` over a genuine repeated-503 → breaker must yield
+  `likelyRootCause.code:'breaker_opened_repeated_failure'` + the offending `toolName`).
+- **Generation:** an HTTP **503** fault driven through the real product classifier
+  `classifyError` (`@comis/agent`) → confirmed **`category: "overloaded"`, `retryable: true`**.
+  The trajectory carries 5 repeated `web_fetch` 503 failures + the retry-breaker "DO NOT retry"
+  block (the breaker open transition itself is dark — there is no `tool:breaker_opened` event,
+  which is the GA3 gap the answer-key encodes).
+  - _Note on the fault kind:_ `makeFaultInjector({kind:"5xx"})` throws **HTTP 500**, which
+    `classifyError` maps to `unknown`. The design-doc target (§10.2(b)) is a repeated **503**,
+    which maps to `overloaded` — so this fixture uses 503 (the faithful still-live class), not the
+    bare 500 the injector emits. `classifyError(new Error("HTTP 503 …")).category === "overloaded"`
+    is the verified product path (also asserted in `failure-injection.test.ts:113`).
+- **`mechanismTokens`:** `["503","breaker","web_fetch","repeated"]`.
 
 ## `live-exec-modulenotfound`
 
-_(filled by Task 2)_
+- **Failure class:** `exec-modulenotfound`. A RESEARCH.md Pitfall-5 candidate: it may already be
+  1-call diagnosable via `obs.diagnostics` (Plan-03's gating table tests this; if so it TRIMS a
+  downstream phase).
+- **Generation:** hand-authored faithful exec failure — an `exec` tool ran `python3 script.py`
+  importing an uninstalled `pandas`; the runtime raised `ModuleNotFoundError`, surfaced via
+  `exitCode:1` + a `stderr` traceback. A dependency/environment failure (classified by
+  exit_code/stderr), **not** a misclassification — so unlike the historical session, the cause is
+  plainly visible in the stderr, which is itself the finding.
+- **`mechanismTokens`:** `["ModuleNotFoundError","dependency","exec"]`.
 
 ## `live-budget-exhaustion`
 
-_(filled by Task 2)_
+- **Failure class:** `budget-exhaustion`.
+- **Generation:** hand-authored — 4 `token_usage` records with rising cumulative cost
+  (`0.55 → 1.10 → 1.65 → 2.20`) crossing the configured **$2.00** ceiling, ending in a
+  `budget_exhausted` stop. A resource limit, not a tool failure.
+- **Hidden mechanism:** the per-session cost rollup must be summed by hand across `token_usage`
+  records today (the D5 flight-recorder gap).
+- **`mechanismTokens`:** `["budget","exhausted","costUsd"]`.
 
 ## `live-provider-timeout`
 
-_(filled by Task 2)_
+- **Failure class:** `provider-timeout`.
+- **Generation:** a 30000ms deadline breach driven through `classifyPromptTimeout(30000)`
+  (`@comis/agent`) → confirmed **`category: "prompt_timeout"`, `retryable: true`**. The trajectory
+  carries a stalled `web_fetch` call, a retry, and a second timeout.
+  - _Note:_ `classifyError` on the bare timeout fault returns `unknown`; the faithful timeout
+    category comes from `classifyPromptTimeout(30000)` → `prompt_timeout`.
+- **Hidden mechanism:** the timeout classification provenance (`classifiedFailureBy`) is not
+  recorded today (GA1).
+- **`mechanismTokens`:** `["timeout","30000","prompt_timeout"]`.
 
 ## Reproducing the freeze
 
