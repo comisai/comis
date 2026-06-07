@@ -2455,9 +2455,9 @@ describe("assembleExecutionPrompt", () => {
         (c: any[]) => typeof c[1] === "string" && c[1].includes("S1: sender-trust not injected in compact-secure"),
       );
       expect(wr02Warn).toBeDefined();
-      // Structured log field assertions
+      // Structured log field assertions (submodule per CLAUDE.md logging — module is bound via getLogger)
       expect(wr02Warn![0]).toMatchObject({
-        module: "prompt-assembly",
+        submodule: "prompt-assembly",
         errorKind: "config",
         hint: expect.stringContaining("senderTrustDisplayConfig"),
       });
