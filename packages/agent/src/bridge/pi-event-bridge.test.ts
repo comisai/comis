@@ -611,6 +611,76 @@ describe("createPiEventBridge", () => {
       });
     });
 
+    // -----------------------------------------------------------------------
+    // D2 single-chokepoint runtime guard (P2): a registered detector can NEVER
+    // flag a status:200 + no-error result (the codified c53ab0f invariant,
+    // generalized to ALL detectors at the one bridge chokepoint). The guard
+    // refuses the flag (success preserved) + logs an observable WARN — it
+    // never throws (mirrors the existing throwing-detector catch).
+    // -----------------------------------------------------------------------
+    describe("D2 no-false-flag runtime guard", () => {
+      function findEmit(toolName: string) {
+        const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+        return emitCalls.find((c) => c[0] === "tool:executed" && c[1].toolName === toolName);
+      }
+      function findGuardWarn(toolName: string) {
+        const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+        return warnCalls.find((c) => c[0].toolName === toolName && c[1] === "failureDetector no-false-flag guard tripped");
+      }
+
+      it("REFUSES a detector flag on a status:200 / no-error result (success preserved + WARN)", () => {
+        // A drifted detector that wrongly flags a 200 (the c53ab0f regression).
+        registerToolMetadata("test_drift_200", {
+          failureDetector: () => ({ errorKind: "dependency" as ErrorKind, classifiedField: "status" }),
+        });
+        const { listener } = createPiEventBridge(deps);
+        const result = { status: 200, text: "IBM price 403.92, MSFT 503.10" };
+        listener(makeToolExecutionEndEvent("test_drift_200", "tc-g1", false, result) as any);
+
+        const endEmit = findEmit("test_drift_200");
+        expect(endEmit).toBeDefined();
+        // Flag REFUSED — success preserved, no failure classification.
+        expect(endEmit![1].success).toBe(true);
+        expect(endEmit![1].classifiedFailureBy).toBeUndefined();
+        // Observable WARN with errorKind:internal.
+        const guardWarn = findGuardWarn("test_drift_200");
+        expect(guardWarn).toBeDefined();
+        expect(guardWarn![0].errorKind).toBe("internal");
+      });
+
+      it("ACCEPTS a detector flag on a genuine status:500 failure (guard does not over-refuse)", () => {
+        registerToolMetadata("test_real_500", {
+          failureDetector: () => ({ errorKind: "dependency" as ErrorKind, classifiedField: "status", matchedToken: "500" }),
+        });
+        const { listener } = createPiEventBridge(deps);
+        const result = { status: 500, text: "Internal Server Error" };
+        listener(makeToolExecutionEndEvent("test_real_500", "tc-g2", false, result) as any);
+
+        const endEmit = findEmit("test_real_500");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].success).toBe(false);
+        expect(endEmit![1].classifiedFailureBy).toBe("failure_detector");
+        // No guard WARN — the flag was legitimately accepted.
+        expect(findGuardWarn("test_real_500")).toBeUndefined();
+      });
+
+      it("ACCEPTS a detector flag on a status:200 result that ALSO sets a string error (genuine content failure)", () => {
+        registerToolMetadata("test_200_with_error", {
+          failureDetector: () => ({ errorKind: "dependency" as ErrorKind, classifiedField: "error" }),
+        });
+        const { listener } = createPiEventBridge(deps);
+        // status:200 but error is set → a real content failure, NOT a false flag.
+        const result = { status: 200, error: "upstream rejected the request" };
+        listener(makeToolExecutionEndEvent("test_200_with_error", "tc-g3", false, result) as any);
+
+        const endEmit = findEmit("test_200_with_error");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].success).toBe(false);
+        expect(endEmit![1].classifiedFailureBy).toBe("failure_detector");
+        expect(findGuardWarn("test_200_with_error")).toBeUndefined();
+      });
+    });
+
     it("when stepCounter.shouldHalt() returns true, calls onAbort and sets finishReason to max_steps", () => {
       (deps.stepCounter.shouldHalt as ReturnType<typeof vi.fn>).mockReturnValue(true);
       const { listener, getResult } = createPiEventBridge(deps);
