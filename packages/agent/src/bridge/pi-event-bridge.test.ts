@@ -402,6 +402,41 @@ describe("createPiEventBridge", () => {
       expect(calls.find((c) => c[0] === "tool:breaker_reset")).toBeUndefined();
     });
 
+    // Phase 152 (F1): the opened transition increments a per-execution counter
+    // (m.breakerTripCount) that surfaces on getResult().breakerTripCount, and the
+    // classified-failure tool's errorKind is carried on the matching
+    // toolExecResults entry — the two rollup signals Plan 03 reduces over.
+    it("accumulates breakerTripCount on an opened transition and carries the failed tool's errorKind", () => {
+      const depsWithBreaker = createMockDeps({
+        toolRetryBreaker: {
+          beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+          recordResult: vi.fn().mockReturnValue({
+            transition: "opened",
+            toolName: "web_fetch",
+            reason: "tool_failure_threshold",
+            consecutiveFailures: 5,
+            errorTag: "http_500",
+          }),
+          getBlockedTools: vi.fn().mockReturnValue([]),
+          reset: vi.fn(),
+        } as any,
+      });
+      const { listener, getResult } = createPiEventBridge(depsWithBreaker);
+
+      // A failed tool_execution_end with generic error text classifies as
+      // errorKind "dependency" (see the generic-errorText test below).
+      listener(
+        makeToolExecutionEndEvent("web_fetch", "tc-f1", true, { message: "upstream 500" }) as any,
+      );
+
+      const result = getResult();
+      expect(result.breakerTripCount).toBeGreaterThanOrEqual(1);
+      const entry = result.toolExecResults?.find((r) => r.toolName === "web_fetch");
+      expect(entry).toBeDefined();
+      expect(entry!.success).toBe(false);
+      expect(entry!.errorKind).toBe("dependency");
+    });
+
     it("emits tool:breaker_reset when recordResult returns a reset transition", () => {
       const depsWithBreaker = createMockDeps({
         toolRetryBreaker: {
