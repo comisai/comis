@@ -95,6 +95,40 @@ describe("diagnosis-harness loadFixture — reads a frozen fixture directory int
     // The throw cites session-metadata.json (residency rule: path only, no body echo).
     expect(() => loadFixture(dir)).toThrow(/session-metadata\.json/);
   });
+
+  it("loadFixture throws path-only on a JSON-valid answer-key missing mechanismTokens (WR-05)", () => {
+    const dir = seedDir("diag-loadfixture-ak-missing-");
+    writeFileSync(join(dir, "trajectory.jsonl"), '{"type":"tool_call"}\n');
+    writeFileSync(join(dir, "session-metadata.json"), JSON.stringify({ endReason: "completed_with_tool_errors" }));
+    // A JSON-valid answer-key with NO mechanismTokens passes parsing but is a
+    // malformed artifact — it must be caught at load time with the file path,
+    // not detonate downstream in compareToAnswerKey with an opaque TypeError.
+    const { mechanismTokens: _drop, ...noTokens } = MECHANISM_KEY;
+    writeFileSync(join(dir, "answer-key.json"), JSON.stringify(noTokens));
+
+    expect(() => loadFixture(dir)).toThrow(/answer-key\.json/);
+  });
+
+  it("loadFixture throws on an answer-key whose mechanismTokens is an empty array (WR-05)", () => {
+    const dir = seedDir("diag-loadfixture-ak-empty-");
+    writeFileSync(join(dir, "trajectory.jsonl"), '{"type":"tool_call"}\n');
+    writeFileSync(join(dir, "session-metadata.json"), JSON.stringify({ endReason: "completed_with_tool_errors" }));
+    // Empty mechanismTokens would make compareToAnswerKey vacuously reached:true
+    // for every answer — reject the bundle at construction (same root as WR-06).
+    writeFileSync(join(dir, "answer-key.json"), JSON.stringify({ ...MECHANISM_KEY, mechanismTokens: [] }));
+
+    expect(() => loadFixture(dir)).toThrow(/answer-key\.json/);
+  });
+
+  it("loadFixture throws on an answer-key missing the rootCause string (WR-05)", () => {
+    const dir = seedDir("diag-loadfixture-ak-rootcause-");
+    writeFileSync(join(dir, "trajectory.jsonl"), '{"type":"tool_call"}\n');
+    writeFileSync(join(dir, "session-metadata.json"), JSON.stringify({ endReason: "completed_with_tool_errors" }));
+    const { rootCause: _drop, ...noRootCause } = MECHANISM_KEY;
+    writeFileSync(join(dir, "answer-key.json"), JSON.stringify(noRootCause));
+
+    expect(() => loadFixture(dir)).toThrow(/answer-key\.json/);
+  });
 });
 
 describe("diagnosis-harness recordMetrics — counts tokens and DISTINCT tool/RPC calls and source reads", () => {
@@ -152,6 +186,44 @@ describe("diagnosis-harness recordMetrics — counts tokens and DISTINCT tool/RP
     expect(m.distinctToolCalls).toBe(1);
     expect(m.distinctSourceReads).toBe(1);
   });
+
+  it("recordMetrics treats a zero totalTokens as missing and sums prompt+completion instead (WR-01)", () => {
+    // A provider that emits `total_tokens: 0` with populated prompt/completion
+    // (streaming-off Ollama, some OpenAI-compatible proxies) must NOT under-count
+    // M2a to 0 — `?? ` only falls back on null/undefined, so a real 0 was kept.
+    const transcript: AgentTurn[] = [
+      { role: "assistant", usage: { totalTokens: 0, promptTokens: 10, completionTokens: 5 } },
+    ];
+    expect(recordMetrics(transcript).totalTokens).toBe(15);
+  });
+
+  it("recordMetrics keeps a positive totalTokens verbatim and does not double-count components (WR-01)", () => {
+    // The fallback only fires when the total is absent/zero — a usable positive
+    // total wins over the prompt+completion sum (which may be partial).
+    const transcript: AgentTurn[] = [
+      { role: "assistant", usage: { totalTokens: 30, promptTokens: 10, completionTokens: 5 } },
+    ];
+    expect(recordMetrics(transcript).totalTokens).toBe(30);
+  });
+
+  it("recordMetrics excludes a nameless tool call from the distinct-tool count (WR-02)", () => {
+    // A model can emit a tool call with no function.name (malformed/partial —
+    // common with small local models). It must NOT join the distinct-tool set as
+    // "" and inflate M2b, which can flip a TRIM-candidate to a false BUILD.
+    const transcript: AgentTurn[] = [
+      {
+        role: "assistant",
+        toolCalls: [
+          { name: "obs_query", arguments: JSON.stringify({ action: "diagnostics" }) },
+          { name: "", arguments: JSON.stringify({ action: "billing" }) },
+          { name: "read_source", arguments: JSON.stringify({ path: "a.ts" }) },
+        ],
+        usage: { totalTokens: 100 },
+      },
+    ];
+    // obs_query + read_source = 2 distinct tools; the nameless call is dropped.
+    expect(recordMetrics(transcript).distinctToolCalls).toBe(2);
+  });
 });
 
 describe("diagnosis-harness compareToAnswerKey — requires the causal mechanism not the symptom", () => {
@@ -171,6 +243,15 @@ describe("diagnosis-harness compareToAnswerKey — requires the causal mechanism
   it("compareToAnswerKey is case-insensitive across the mechanism tokens", () => {
     const answer = "DETECTPIAPISUCCESSRESPONSE used a SUBSTRING match on a STATUS-200 reply";
     expect(compareToAnswerKey(answer, MECHANISM_KEY).reached).toBe(true);
+  });
+
+  it("compareToAnswerKey throws on an empty mechanismTokens list rather than vacuously passing (WR-06)", () => {
+    // `[].filter(...)` is `[]` so `missing.length === 0` would make `reached`
+    // vacuously true for ANY answer (even ""), defeating the measure-first lever.
+    // A zero-token key is a programmer error in the scorer, not a clean pass.
+    const emptyKey: AnswerKey = { ...MECHANISM_KEY, mechanismTokens: [] };
+    expect(() => compareToAnswerKey("anything at all", emptyKey)).toThrow();
+    expect(() => compareToAnswerKey("", emptyKey)).toThrow();
   });
 });
 
