@@ -96,6 +96,9 @@ import type { DiscoveryTracker } from "./discovery-tracker.js";
 // is CapabilityClass | undefined, not string | undefined.
 import type { CapabilityClass } from "./model-profile.js";
 import { createHash, randomUUID } from "node:crypto";
+// R4: critic hook (no inline logic — all logic in verification-gate.ts)
+import { shouldRunCritic, runVerificationCritic, buildSyntheticCriticDeps } from "./verification-gate.js";
+import { generateCanaryToken } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -349,6 +352,7 @@ const MEMORY_SKIP_OPERATIONS: ReadonlySet<string> = new Set([
   "compaction",
   "taskExtraction",
   "condensation",
+  "verification",
 ]);
 
 /**
@@ -980,6 +984,18 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     const failedToolName = bridgeResult.failedTools?.[0] ?? "unknown tool";
     result.response = (result.response ?? "") +
       `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
+  }
+
+  if (shouldRunCritic({ capabilityClass, config, executionPlanRef })) { // R4: critic hook
+    const { deps: cd, maxRetries: mr } = buildSyntheticCriticDeps({
+      capabilityClass, provider, modelId: config.model, agentId: effectiveAgentId,
+      canaryToken: generateCanaryToken(String(sessionKey), executionId),
+      minResponseChars: config.verification?.minResponseChars ?? 200,
+      maxRetries: config.honesty?.maxCriticRetries ?? 2,
+      clock: deps.clock, logger: deps.logger, eventBus: deps.eventBus,
+    });
+    const cr = await runVerificationCritic({ response: result.response ?? "", plan: executionPlanRef.current, deps: cd, maxRetries: mr });
+    if (cr.verdict !== "verified" && cr.verdict !== "skipped") { result.response = cr.response; }
   }
 
   // Write session metadata companion file with trace correlation.
