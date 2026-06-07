@@ -873,11 +873,13 @@ describe("ObsTrace contracts", () => {
     expect(() => ObsExplainContract.request.parse({})).toThrow();
   });
 
-  it("obs.explain: empty sessionKey is ignored when traceId carries", () => {
-    // min(1) on each optional field drops the empty string; traceId satisfies refine.
+  it("obs.explain: a present empty sessionKey is REJECTED (min(1) fires before optional)", () => {
+    // `.optional()` only skips validation when the key is ABSENT. A present "" still
+    // hits `.min(1)` and throws — so a malformed empty id is rejected, not silently
+    // ignored (the security-correct behavior; X1 Pitfall 5).
     expect(() =>
       ObsExplainContract.request.parse({ sessionKey: "", traceId: "t-1" }),
-    ).not.toThrow();
+    ).toThrow();
   });
 
   it("obs.explain: response parses a minimal §6.3 IncidentReport sample", () => {
