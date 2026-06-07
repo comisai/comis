@@ -177,7 +177,11 @@ export function assembleIncidentReport(
   // --- cost ----------------------------------------------------------------
   const costUsd = readRollupNumber(sessionEnd, metadata, rollupPayload, "costUsd", "sessionCostUsd", 0);
   const totalTokens = readRollupNumber(sessionEnd, metadata, rollupPayload, "totalTokens", "totalTokens", 0);
-  const cacheReadRatio = readRollupNumber(sessionEnd, metadata, rollupPayload, "cacheReadRatio", undefined, 0);
+  // WR-02: read cacheReadRatio from the metadata top level too (the field name
+  // is identical at the top level), matching durationMs/totalTokens — the frozen
+  // 678 fixture is flat (no nested sessionEnd), so a top-level-only value was
+  // silently dropped when topAlias was undefined and mis-reported as 0.
+  const cacheReadRatio = readRollupNumber(sessionEnd, metadata, rollupPayload, "cacheReadRatio", "cacheReadRatio", 0);
 
   // --- timing --------------------------------------------------------------
   // durationMs also lives at the metadata top level in the frozen-678 shape.
