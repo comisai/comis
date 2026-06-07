@@ -58,6 +58,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   "tool.result",
   "tool.timeout",
   "tool.policy_filtered",
+  // D3 breaker transitions (Phase 151).
+  "tool.breaker_opened",
+  "tool.breaker_reset",
 
   // Skill invocation observability.
   "skill.prompt_loaded",

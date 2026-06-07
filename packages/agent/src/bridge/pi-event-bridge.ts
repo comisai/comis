@@ -824,14 +824,45 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             );
           }
 
-          // Record tool result in retry breaker for consecutive failure tracking
+          // Record tool result in retry breaker for consecutive failure
+          // tracking. recordResult returns a transition verdict at the
+          // tool-wide counter-crossing edges (the breaker stays emitter-free,
+          // D3) — capture it and emit the breaker event here, the bridge being
+          // the sole holder of the event bus. Emit the two events as SEPARATE
+          // string-literal calls in an if/else (NOT a ternary) so the
+          // trajectory-event-types-known arch gate's EMIT_REGEX sees both names
+          // and verifies their mappings (Pitfall 7).
           if (deps.toolRetryBreaker) {
-            deps.toolRetryBreaker.recordResult(
+            const transition = deps.toolRetryBreaker.recordResult(
               endEvent.toolName,
               (sanitizedArgs ?? {}) as Record<string, unknown>,
               toolSuccess,
               errorText,
             );
+            if (transition) {
+              // Count of tools executed so far this execution — the monotonic
+              // per-execution seq Phase 153 orders the breakerTimeline on (A3).
+              // Pushed at the m.toolExecResults.push below, so this is the
+              // pre-push count (0 for the first tool).
+              const seq = m.toolExecResults.length;
+              if (transition.transition === "opened") {
+                deps.eventBus.emit("tool:breaker_opened", {
+                  toolName: transition.toolName,
+                  consecutiveFailures: transition.consecutiveFailures,
+                  errorTag: transition.errorTag,
+                  reason: transition.reason,
+                  seq,
+                  timestamp: systemNowMs(),
+                });
+              } else {
+                deps.eventBus.emit("tool:breaker_reset", {
+                  toolName: transition.toolName,
+                  reason: transition.reason,
+                  seq,
+                  timestamp: systemNowMs(),
+                });
+              }
+            }
           }
 
           // Track all tool execution results

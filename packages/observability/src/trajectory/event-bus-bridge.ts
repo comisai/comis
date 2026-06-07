@@ -50,6 +50,9 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "tool:executed": "tool.result",
   "tool:timeout": "tool.timeout",
   "tool:policy_filtered": "tool.policy_filtered",
+  // D3 breaker transitions (Phase 151).
+  "tool:breaker_opened": "tool.breaker_opened",
+  "tool:breaker_reset": "tool.breaker_reset",
 
   // ---- Model lifecycle ----
   // `observability:token_usage` is reused as `model.completed` — the
@@ -300,6 +303,24 @@ function translatePayload(
       return {
         profile: payload.profile,
         filtered: payload.filtered,
+      };
+
+    case "tool:breaker_opened":
+      // ids/counts/typed-reason only — errorTag is the breaker's normalized
+      // tag, never raw error text (§2.7 / T-151-01).
+      return {
+        toolName: payload.toolName,
+        consecutiveFailures: payload.consecutiveFailures,
+        errorTag: payload.errorTag,
+        reason: payload.reason,
+        seq: payload.seq,
+      };
+
+    case "tool:breaker_reset":
+      return {
+        toolName: payload.toolName,
+        reason: payload.reason,
+        seq: payload.seq,
       };
 
     case "observability:token_usage": {
