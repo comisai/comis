@@ -913,8 +913,10 @@ describe("tool-metadata-registry -- failure detectors", () => {
   // `message`/`failures` — the human-readable reason (rate limit / blocked) lives in
   // message+failures, NOT in the stable `error` code. Detectors classify off those structured
   // fields, never the per-result snippets.
-  it("web_search flags a rate-limit failure (structured error/message/failures) as a resource failure", () => {
+  it("web_search flags a rate-limit failure (structured error/message/failures) as a resource failure with provenance", () => {
     const detect = webSearchDetector()!;
+    // Enriched verdict (P2/D2a): the rate-limit branch attributes the verdict to the
+    // `message` field and reports the literal rule it matched — NOT a serialized RegExp.
     expect(
       detect(
         {
@@ -924,7 +926,11 @@ describe("tool-metadata-registry -- failure detectors", () => {
         },
         false,
       ),
-    ).toEqual({ errorKind: "resource" });
+    ).toEqual({
+      errorKind: "resource",
+      classifiedField: "message",
+      matchedRule: "/rate limit|quota exceeded|too many requests/",
+    });
     expect(
       detect(
         {
@@ -934,7 +940,11 @@ describe("tool-metadata-registry -- failure detectors", () => {
         },
         false,
       ),
-    ).toEqual({ errorKind: "resource" });
+    ).toEqual({
+      errorKind: "resource",
+      classifiedField: "message",
+      matchedRule: "/rate limit|quota exceeded|too many requests/",
+    });
     expect(
       detect(
         {
@@ -944,11 +954,18 @@ describe("tool-metadata-registry -- failure detectors", () => {
         },
         false,
       ),
-    ).toEqual({ errorKind: "resource" });
+    ).toEqual({
+      errorKind: "resource",
+      classifiedField: "message",
+      matchedRule: "/rate limit|quota exceeded|too many requests/",
+    });
   });
 
-  it("web_search flags a blocked/forbidden failure (structured fields) as a dependency failure", () => {
+  it("web_search flags a blocked/forbidden failure (structured fields) as a dependency failure attributed to error", () => {
     const detect = webSearchDetector()!;
+    // The catch-all branch (top-level `error` present, no rate-limit token) attributes the
+    // verdict to the structured `error` field. No `matchedRule`/`matchedToken` — it is the
+    // default-once-`error`-is-present path, not a specific token/rule match.
     expect(
       detect(
         {
@@ -958,22 +975,23 @@ describe("tool-metadata-registry -- failure detectors", () => {
         },
         false,
       ),
-    ).toEqual({ errorKind: "dependency" });
+    ).toEqual({ errorKind: "dependency", classifiedField: "error" });
     expect(
       detect(
         { error: "all_providers_failed", message: "All web_search providers failed: brave: Forbidden" },
         false,
       ),
-    ).toEqual({ errorKind: "dependency" });
+    ).toEqual({ errorKind: "dependency", classifiedField: "error" });
     expect(
       detect(
         { error: "all_providers_failed", message: "All web_search providers failed: brave: provider error: upstream down" },
         false,
       ),
-    ).toEqual({ errorKind: "dependency" });
+    ).toEqual({ errorKind: "dependency", classifiedField: "error" });
     // A genuine top-level error with an unrecognised reason is STILL a real failure → dependency.
     expect(detect({ error: "invalid_provider", message: 'Invalid provider "x". Valid options: brave' }, false)).toEqual({
       errorKind: "dependency",
+      classifiedField: "error",
     });
   });
 
@@ -1029,35 +1047,72 @@ describe("tool-metadata-registry -- failure detectors", () => {
 
   // A real web_fetch failure sets `error` (a descriptive string) and/or a numeric `status` >= 400.
   // Timeout text lives in the `error` string; the HTTP code is in `status`.
-  it("web_fetch flags a timeout (error string / 408 / 504 status) as a timeout failure", () => {
+  it("web_fetch flags a timeout error string as a timeout failure attributed to error+rule", () => {
     const detect = webFetchDetector()!;
+    // The error string is checked FIRST (before status). A timeout token in the error
+    // attributes the verdict to the `error` field + the literal timeout rule.
     expect(detect({ url: "https://e.com", error: "Fetch failed: request timed out after 30s" }, false)).toEqual({
       errorKind: "timeout",
+      classifiedField: "error",
+      matchedRule: "/timed out|timeout/",
     });
     expect(detect({ url: "https://e.com", error: "Fetch failed: connection timeout" }, false)).toEqual({
       errorKind: "timeout",
-    });
-    expect(detect({ url: "https://e.com", status: 504, error: "HTTP 504: Gateway Timeout" }, false)).toEqual({
-      errorKind: "timeout",
-    });
-    expect(detect({ url: "https://e.com", status: 408, error: "HTTP 408: Request Timeout" }, false)).toEqual({
-      errorKind: "timeout",
+      classifiedField: "error",
+      matchedRule: "/timed out|timeout/",
     });
   });
 
-  it("web_fetch flags a real HTTP/SSRF failure (status >= 400 or error string) as a dependency failure", () => {
+  it("web_fetch flags a 408/504 status (no error string) as a timeout failure attributed to status+token", () => {
     const detect = webFetchDetector()!;
-    expect(detect({ url: "https://e.com", status: 403, error: "HTTP 403: Forbidden" }, false)).toEqual({
-      errorKind: "dependency",
+    // No `error` key → the status branch drives the verdict; the concrete HTTP code is
+    // the matched token (P2/D2a: "504 returns classifiedField:'status', matchedToken:'504'").
+    expect(detect({ url: "https://e.com", status: 504 }, false)).toEqual({
+      errorKind: "timeout",
+      classifiedField: "status",
+      matchedToken: "504",
     });
+    expect(detect({ url: "https://e.com", status: 408 }, false)).toEqual({
+      errorKind: "timeout",
+      classifiedField: "status",
+      matchedToken: "408",
+    });
+  });
+
+  it("web_fetch flags an error-string dependency failure attributed to error (no rule/token)", () => {
+    const detect = webFetchDetector()!;
+    // Non-timeout error string → dependency, attributed to the `error` field. No matchedRule
+    // (it is the catch-all once `error` is a string and the timeout rule did not match).
     expect(detect({ url: "https://e.com", error: "SSRF blocked: private address" }, false)).toEqual({
       errorKind: "dependency",
+      classifiedField: "error",
     });
     expect(detect({ url: "https://e.com", error: "Fetch failed: connection refused" }, false)).toEqual({
       errorKind: "dependency",
+      classifiedField: "error",
+    });
+  });
+
+  it("web_fetch flags a status-only dependency failure attributed to status+token (503/403/500)", () => {
+    const detect = webFetchDetector()!;
+    // No `error` key → status branch; the HTTP code is the matched token (P2/D2a:
+    // "503 returns classifiedField:'status', matchedToken:'503'").
+    expect(detect({ url: "https://e.com", status: 503 }, false)).toEqual({
+      errorKind: "dependency",
+      classifiedField: "status",
+      matchedToken: "503",
+    });
+    expect(detect({ url: "https://e.com", status: 403 }, false)).toEqual({
+      errorKind: "dependency",
+      classifiedField: "status",
+      matchedToken: "403",
     });
     // A 4xx/5xx status with no descriptive error is still a real failure.
-    expect(detect({ url: "https://e.com", status: 500 }, false)).toEqual({ errorKind: "dependency" });
+    expect(detect({ url: "https://e.com", status: 500 }, false)).toEqual({
+      errorKind: "dependency",
+      classifiedField: "status",
+      matchedToken: "500",
+    });
   });
 
   // REGRESSION (production session 678314278): a SUCCESSFUL HTTP-200 fetch whose body text
