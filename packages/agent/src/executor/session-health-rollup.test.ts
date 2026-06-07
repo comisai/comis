@@ -143,6 +143,22 @@ describe("buildSessionHealthRollup", () => {
     }
   });
 
+  it("interleaved tools accumulate independently across first-seen and reuse paths", () => {
+    // Drives both arms of the `toolStats[name] ??= {...}` group-init: bash is
+    // first-seen, then read_file first-seen, then bash again (reuse).
+    const toolExecResults = [
+      { toolName: "bash", success: true },
+      { toolName: "read_file", success: false, errorKind: "timeout" as ErrorKind },
+      { toolName: "bash", success: false, errorKind: "internal" as ErrorKind },
+    ];
+
+    const rollup = buildSessionHealthRollup({ toolExecResults }, "stop");
+
+    expect(rollup.toolStats.bash).toEqual({ ok: 1, failed: 1 });
+    expect(rollup.toolStats.read_file).toEqual({ ok: 0, failed: 1 });
+    expect(rollup.topErrorKinds).toEqual({ timeout: 1, internal: 1 });
+  });
+
   it("an empty bridge result with a clean stop yields the zero-state defaults", () => {
     const rollup = buildSessionHealthRollup({}, "stop");
     expect(rollup).toEqual({
