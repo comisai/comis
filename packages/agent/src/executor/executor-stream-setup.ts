@@ -170,7 +170,7 @@ export interface StreamSetupResult {
 /** Minimal deps for the microcompaction offload callback. */
 export interface OffloadCallbackDeps {
   eventBus: import("@comis/core").TypedEventBus;
-  /** Wall-clock read — `deps.clock.now()`, never `Date.now()` (Pitfall 6). */
+  /** Injected wall-clock read — the callback timestamps via `clock.now()`, never the global clock (Pitfall 6). */
   clock: import("@comis/core").ClockPort;
   /** Existing cache-break side-effect (cacheBreakDetector.notifyContentModification). */
   onCacheBreak: () => void;
@@ -192,6 +192,13 @@ export function buildOffloadCallback(
 ): (toolName: string, originalChars: number, toolCallId: string, diskPathRel: string) => void {
   return (toolName, originalChars, toolCallId, diskPathRel) => {
     deps.onCacheBreak(); // KEEP — existing cacheBreakDetector.notifyContentModification behavior
+    deps.eventBus.emit("tool:result_offloaded", {
+      toolName,
+      toolCallId,
+      originalChars,
+      diskPathRel,
+      timestamp: deps.clock.now(), // injected clock, not the global one (Pitfall 6)
+    });
   };
 }
 
@@ -235,9 +242,20 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
   // ancestor-symlink escape (file-mode invariant). Falls back to ~/.comis/ when
   // the daemon hasn't explicitly forwarded its dataDir.
   const microcompactionDataDir = deps.dataDir ?? safePath(homedir(), ".comis");
-  installMicrocompactionGuard(sm, sm.getSessionDir(), microcompactionDataDir, deps.logger, (_toolName) => {
-    cacheBreakDetector.notifyContentModification(formattedKey);
-  });
+  installMicrocompactionGuard(
+    sm,
+    sm.getSessionDir(),
+    microcompactionDataDir,
+    deps.logger,
+    // The guard hands offload payloads (with a workspace-relative pointer) here;
+    // this callback owns both observable effects — cache-break detection AND the
+    // tool:result_offloaded trajectory emit (timestamped via the injected clock).
+    buildOffloadCallback({
+      eventBus: deps.eventBus,
+      clock: deps.clock,
+      onCacheBreak: () => cacheBreakDetector.notifyContentModification(formattedKey),
+    }),
+  );
 
   const wrappers: StreamFnWrapper[] = [];
 

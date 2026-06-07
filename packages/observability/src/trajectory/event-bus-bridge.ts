@@ -53,6 +53,8 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // D3 breaker transitions (Phase 151).
   "tool:breaker_opened": "tool.breaker_opened",
   "tool:breaker_reset": "tool.breaker_reset",
+  // D7 result offload (Phase 151).
+  "tool:result_offloaded": "tool.result_offloaded",
 
   // ---- Model lifecycle ----
   // `observability:token_usage` is reused as `model.completed` — the
@@ -321,6 +323,16 @@ function translatePayload(
         toolName: payload.toolName,
         reason: payload.reason,
         seq: payload.seq,
+      };
+
+    case "tool:result_offloaded":
+      // ids/counts + the WORKSPACE-RELATIVE pointer only — never the offloaded
+      // result body and never the absolute host path (§2.7 / T-151-05/06).
+      return {
+        toolName: payload.toolName,
+        toolCallId: payload.toolCallId,
+        originalChars: payload.originalChars,
+        diskPathRel: payload.diskPathRel,
       };
 
     case "observability:token_usage": {

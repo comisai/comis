@@ -488,6 +488,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
     "tool:policy_filtered": { profile: "default", filtered: ["tool-a"] },
     "tool:breaker_opened": { toolName: "x", consecutiveFailures: 5, errorTag: "spawn_enoent", reason: "tool_failure_threshold", seq: 1, timestamp: 0 },
     "tool:breaker_reset": { toolName: "x", reason: "success", seq: 1, timestamp: 0 },
+    "tool:result_offloaded": { toolName: "x", toolCallId: "tc-1", originalChars: 42_000, diskPathRel: "tool-results/tc-1.json", timestamp: 0 },
     "observability:token_usage": {
       tokens: { prompt: 1, completion: 1, total: 2 },
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
@@ -2290,9 +2291,9 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 57 (+2 D3 breaker transitions, Phase 151)", () => {
-    // 55 + tool:breaker_opened + tool:breaker_reset (Phase 151 D3).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(57);
+  it("bridge entry count is exactly 58 (+2 D3 breaker + 1 D7 offload, Phase 151)", () => {
+    // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(58);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

@@ -61,6 +61,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   // D3 breaker transitions (Phase 151).
   "tool.breaker_opened",
   "tool.breaker_reset",
+  // D7 result offload (Phase 151).
+  "tool.result_offloaded",
 
   // Skill invocation observability.
   "skill.prompt_loaded",
