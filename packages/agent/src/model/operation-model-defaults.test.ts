@@ -241,12 +241,15 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
 // ---------------------------------------------------------------------------
 
 describe("OPERATION_TIER_MAP", () => {
-  it("covers all 7 ModelOperationType values", () => {
-    const expectedOps = ["interactive", "cron", "heartbeat", "subagent", "compaction", "taskExtraction", "condensation"];
+  it("covers all 9 ModelOperationType values (including verification + planning)", () => {
+    const expectedOps = [
+      "interactive", "cron", "heartbeat", "subagent", "compaction",
+      "taskExtraction", "condensation", "verification", "planning",
+    ];
     for (const op of expectedOps) {
       expect(OPERATION_TIER_MAP).toHaveProperty(op);
     }
-    expect(Object.keys(OPERATION_TIER_MAP)).toHaveLength(7);
+    expect(Object.keys(OPERATION_TIER_MAP)).toHaveLength(9);
   });
 
   it("interactive is mapped to primary tier", () => {
@@ -275,6 +278,15 @@ describe("OPERATION_TIER_MAP", () => {
 
   it("condensation is mapped to fast tier", () => {
     expect(OPERATION_TIER_MAP.condensation).toBe("fast");
+  });
+
+  // R4/R5: verification + planning (Phase 154)
+  it("verification is mapped to primary tier (R4: self-check on local-only, cheap-model on configured)", () => {
+    expect(OPERATION_TIER_MAP["verification"]).toBe("primary");
+  });
+
+  it("planning is mapped to primary tier (R5: same resolution path)", () => {
+    expect(OPERATION_TIER_MAP["planning"]).toBe("primary");
   });
 });
 
@@ -310,6 +322,11 @@ describe("OPERATION_TIMEOUT_DEFAULTS", () => {
   it("does NOT have an interactive key", () => {
     expect(OPERATION_TIMEOUT_DEFAULTS).not.toHaveProperty("interactive");
   });
+
+  // R4: verification timeout (Phase 154)
+  it("has correct timeout for verification (120000ms — matches LLM_TIMEOUT_MS ceiling)", () => {
+    expect(OPERATION_TIMEOUT_DEFAULTS["verification"]).toBe(120_000);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -335,5 +352,14 @@ describe("OPERATION_CACHE_DEFAULTS", () => {
 
   it("cron cache retention is short", () => {
     expect(OPERATION_CACHE_DEFAULTS.cron).toBe("short");
+  });
+
+  // R4/R5: verification + planning cache defaults (Phase 154)
+  it("verification cache retention is none (critic responses must not be cached)", () => {
+    expect(OPERATION_CACHE_DEFAULTS["verification"]).toBe("none");
+  });
+
+  it("planning cache retention is none (planner responses must not be cached)", () => {
+    expect(OPERATION_CACHE_DEFAULTS["planning"]).toBe("none");
   });
 });

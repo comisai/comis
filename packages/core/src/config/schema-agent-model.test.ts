@@ -388,4 +388,43 @@ describe("OperationModelsSchema", () => {
     const result = OperationModelsSchema.parse(input);
     expect(result).toEqual(input);
   });
+
+  // ---------------------------------------------------------------------------
+  // R4/R5: verification + planning operation types (Phase 154)
+  // ---------------------------------------------------------------------------
+
+  it("accepts verification entry (R4: pre-delivery critic)", () => {
+    const result = OperationModelsSchema.parse({
+      verification: { model: "anthropic:claude-haiku-4-5" },
+    });
+    expect(result.verification?.model).toBe("anthropic:claude-haiku-4-5");
+  });
+
+  it("accepts planning entry (R5: pre-execution planner)", () => {
+    const result = OperationModelsSchema.parse({
+      planning: { model: "anthropic:claude-haiku-4-5", timeout: 90_000 },
+    });
+    expect(result.planning?.model).toBe("anthropic:claude-haiku-4-5");
+    expect(result.planning?.timeout).toBe(90_000);
+  });
+
+  it("parses all 8 entries correctly (including verification + planning)", () => {
+    const input = {
+      cron: { model: "anthropic:claude-haiku-4-5", timeout: 150_000 },
+      heartbeat: { model: "anthropic:claude-haiku-4-5", timeout: 60_000 },
+      subagent: { model: "primary", timeout: 180_000 },
+      compaction: { model: "anthropic:claude-haiku-4-5", timeout: 60_000 },
+      taskExtraction: { model: "anthropic:claude-haiku-4-5", timeout: 30_000 },
+      condensation: { model: "anthropic:claude-haiku-4-5", timeout: 45_000 },
+      verification: { model: "anthropic:claude-haiku-4-5", timeout: 120_000 },
+      planning: { model: "primary" },
+    };
+    const result = OperationModelsSchema.parse(input);
+    expect(result).toEqual(input);
+  });
+
+  it("still rejects unknown keys after adding verification + planning", () => {
+    const result = OperationModelsSchema.safeParse({ unknown_key: {} });
+    expect(result.success).toBe(false);
+  });
 });
