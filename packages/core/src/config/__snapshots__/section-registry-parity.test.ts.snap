@@ -23182,6 +23182,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("pro
               "transcriptToolCallIdModelHints": []
             },
             "properties": {
+              "capabilityClass": {
+                "enum": [
+                  "frontier",
+                  "mid",
+                  "small",
+                  "nano"
+                ],
+                "type": "string"
+              },
               "dropThinkingBlockModelHints": {
                 "default": [],
                 "items": {
@@ -23198,6 +23207,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("pro
                   "google"
                 ],
                 "type": "string"
+              },
+              "supportsPromptCache": {
+                "type": "boolean"
+              },
+              "supportsStructuredOutput": {
+                "type": "boolean"
+              },
+              "supportsVision": {
+                "type": "boolean"
               },
               "transcriptToolCallIdMode": {
                 "default": "default",
@@ -35049,6 +35067,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "transcriptToolCallIdModelHints": []
                 },
                 "properties": {
+                  "capabilityClass": {
+                    "enum": [
+                      "frontier",
+                      "mid",
+                      "small",
+                      "nano"
+                    ],
+                    "type": "string"
+                  },
                   "dropThinkingBlockModelHints": {
                     "default": [],
                     "items": {
@@ -35065,6 +35092,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                       "google"
                     ],
                     "type": "string"
+                  },
+                  "supportsPromptCache": {
+                    "type": "boolean"
+                  },
+                  "supportsStructuredOutput": {
+                    "type": "boolean"
+                  },
+                  "supportsVision": {
+                    "type": "boolean"
                   },
                   "transcriptToolCallIdMode": {
                     "default": "default",
