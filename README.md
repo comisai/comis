@@ -30,9 +30,9 @@
 
 Comis deploys AI agents into the messaging channels people already use — **Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email** — and runs them as a *platform*, not a pet: multiple agents and multiple operators share one install, each with isolated memory, budgets, tool policies, and scoped secrets.
 
-Your agents read and reply in chat (text, voice, images, files), run tools inside a kernel-enforced sandbox, reach 50+ MCP integrations, schedule their own jobs, and spin up multi-agent pipelines from a single sentence — and they get better over time, carrying long-term memory that learns from every conversation and from its own use. Run them on frontier cloud models or entirely on-device with local ones — the security guarantees don't depend on which. You watch every step from a web dashboard, or reconstruct it later from the trace log.
+Your agents read and reply in chat (text, voice, images, files), run tools inside a kernel-enforced sandbox, connect to the MCP ecosystem's 50+ tool servers, schedule their own jobs, and spin up multi-agent pipelines from a single sentence — and they get better over time, carrying long-term memory that learns from every conversation and from its own use. Run them on frontier cloud models or entirely on-device with local ones — the security guarantees don't depend on which. You watch every step from a web dashboard, or reconstruct it later from the trace log.
 
-TypeScript monorepo, 15 packages, hexagonal architecture, Node.js 22+. Apache-2.0. Fully self-hosted — no cloud dependency, no telemetry, no hosted tier.
+TypeScript monorepo, 15 packages, hexagonal architecture, Node.js 22.19+. Apache-2.0. Fully self-hosted — no cloud dependency, no telemetry, no hosted tier.
 
 ---
 
@@ -44,7 +44,7 @@ TypeScript monorepo, 15 packages, hexagonal architecture, Node.js 22+. Apache-2.
 curl -fsSL https://comis.ai/install.sh | bash
 ```
 
-**Or with npm** (Node.js 22+):
+**Or with npm** (Node.js 22.19+):
 
 ```bash
 npm install -g comisai
@@ -63,7 +63,7 @@ docker exec -it comis comis init
 
 Verify with `curl http://localhost:4766/health` → `{"status":"ok"}`, then message your agent on any connected channel.
 
-> **Production runs on Linux.** Docker Desktop on macOS/Windows silently disables the exec sandbox — fine for development, never for production. [Platform support →](https://docs.comis.ai/operations/docker#platform-support)
+> **Production runs on Linux.** Docker Desktop's VM kernel can't run the exec sandbox — Comis detects this at startup (one-shot smoke test) and auto-disables it. Fine for development, never for production. [Platform support →](https://docs.comis.ai/operations/docker#platform-support)
 
 ---
 
@@ -85,7 +85,7 @@ Verify with `curl http://localhost:4766/health` → `{"status":"ok"}`, then mess
 
 ## Why Comis
 
-**🛡️ Security is enforced, not promised.** The LLM is the attack surface; Comis assumes it will be attacked. The exec sandbox is kernel-enforced and **on by default** — [Bubblewrap](https://github.com/containers/bubblewrap) on Linux with full namespace unsharing (mount, PID, user, cgroup, IPC) and a private `/tmp` and `/dev` ([`bwrap-provider`](packages/skills/src/tools/builtin/sandbox/bwrap-provider.ts)); `sandbox-exec` on macOS with profiles that open with `(deny default)` ([`sandbox-exec-provider`](packages/skills/src/tools/builtin/sandbox/sandbox-exec-provider.ts)). Even interactive terminal sessions the agent drives run jailed, with **no network by default** and an optional host-allowlist egress relay ([`terminal-scope-args`](packages/skills/src/tools/builtin/terminal-driver/terminal-scope-args.ts)). Around it: input scanning, output scanning, canary tokens, trust-partitioned memory with write validation, per-agent tool policy, and audit events on every action. The supply line is screened too: skills are content-scanned at load — 17 rules covering exec injection, exfiltration, and XML breakout ([`content-scanner`](packages/skills/src/skills/prompt/content-scanner.ts)) — MCP packages are checked against the OSV malware database before first spawn ([`mcp-client-osv-check`](packages/skills/src/skills/integrations/mcp-client/mcp-client-osv-check.ts)), and destructive actions pause for operator approval via HMAC-signed chat buttons, with unknown action types classifying as destructive, fail-closed ([`action-classifier`](packages/core/src/security/action-classifier.ts)). **22 ESLint-enforced security rules** and architecture-as-tests block insecure patterns before they reach `main`. [Deep dive →](https://comis.ai/security)
+**🛡️ Security is enforced, not promised.** The LLM is the attack surface; Comis assumes it will be attacked. The exec sandbox is kernel-enforced and **on by default** — [Bubblewrap](https://github.com/containers/bubblewrap) on Linux with full namespace unsharing (mount, PID, user, cgroup, IPC) and a private `/tmp` and `/dev` ([`bwrap-provider`](packages/skills/src/tools/builtin/sandbox/bwrap-provider.ts)); `sandbox-exec` on macOS with profiles that open with `(deny default)` ([`sandbox-exec-provider`](packages/skills/src/tools/builtin/sandbox/sandbox-exec-provider.ts)). Even interactive terminal sessions the agent drives run jailed, with **no network by default** and an optional host-allowlist egress relay ([`terminal-scope-args`](packages/skills/src/tools/builtin/terminal-driver/terminal-scope-args.ts)). Around it: input scanning, output scanning, canary tokens, trust-partitioned memory with write validation, per-agent tool policy, and every tool call audited on the event bus. The supply line is screened too: skills are content-scanned at load — 18 rules covering exec injection, exfiltration, and XML breakout ([`content-scanner`](packages/skills/src/skills/prompt/content-scanner.ts)) — MCP packages are checked against the OSV malware database before first spawn ([`mcp-client-osv-check`](packages/skills/src/skills/integrations/mcp-client/mcp-client-osv-check.ts)), and destructive actions pause for operator approval via HMAC-signed chat buttons, with unknown action types classifying as destructive, fail-closed ([`action-classifier`](packages/core/src/security/action-classifier.ts)). ESLint-enforced security bans — no `path.join`, no `process.env`, no `eval`/`new Function`, no swallowed errors — plus architecture-as-tests block insecure patterns before they reach `main`. [Deep dive →](https://comis.ai/security)
 
 **🔑 Your keys never meet your agents.** Secrets live in an AES-256-GCM encrypted store. When an agent drives an API-key CLI (Claude Code included), the sandbox sees only a placeholder — the code that builds the sandbox env never even reads the real key ([`broker-placeholder-builder`](packages/daemon/src/wiring/broker-placeholder-builder.ts)). The CLI's HTTPS is routed through an in-process credential broker ([`mitm-broker`](packages/infra/src/credential-broker/mitm-broker.ts)) that validates a single-use session token, terminates TLS with its own CA, matches host *and* path against the binding allow-list, resolves the secret per request, and swaps the placeholder at the header layer. It **fails closed**: any gate failure (407/403/502) destroys the tunnel before a single byte reaches upstream, and every session, injection, and denial is audited on the event bus — never the secret itself. On Linux the credentialed sandbox runs in `broker-only` network mode: namespace unshared (`--unshare-net`) with the broker socket as the *only* bound network path ([`bwrap-provider`](packages/skills/src/tools/builtin/sandbox/bwrap-provider.ts)) — egress to anywhere else fails in the kernel, not in policy. [Deep dive →](https://docs.comis.ai/security/credential-broker)
 
@@ -111,7 +111,7 @@ And it's measured, not asserted: **~71%** on LongMemEval + LoCoMo (cross-judged 
 
 Switching modes is a config reload — no restart, no data loss, fully reversible. And `contextEngine.version` is **operator-only**: an agent cannot switch its own engine, because the engine governs which context tools the agent is exposed to. [Deep dive →](https://docs.comis.ai/agents/context-management)
 
-**💰 81% cheaper by architecture.** Prompt caching is a target architecture, not an afterthought: dual-prompt design, active cache fences, adaptive TTL escalation, sub-agent spawn staggering. Measured: **$5.02 vs $26.42** for a 76-call Opus session, **94%** cache-hit rate on warm turns, **$2.11** for an 8-agent pipeline (788K tokens). [Deep dive →](https://comis.ai/context-management)
+**💰 81% cheaper by architecture.** Prompt caching is a target architecture, not an afterthought: a **cache-fence index** keeps the cached prefix byte-stable while the context engine edits everything after it, with adaptive TTL escalation, two-phase cache-break detection, and sub-agent spawn staggering — 15+ shipped optimizations. Measured: **$5.02 vs $26.42** for a 76-call Opus session, **94%** cache-hit rate on warm turns, **$2.11** for an 8-agent pipeline (788K tokens). [Deep dive →](https://comis.ai/context-management)
 
 **🔍 A glass box, end to end.** Every function returns `Result<T, E>` — zero stray exceptions. An `AsyncLocalStorage`-bound `traceId` rides through every log line, tool call, and model invocation; a typed event bus announces every state transition. When something breaks at 3am, you reconstruct exactly what happened from the logs alone.
 
@@ -155,8 +155,8 @@ Choose honestly. If you want a personal assistant with native mobile apps, voice
 | 🎙️ **Media & voice**     | Voice notes auto-transcribe (3 STT providers with fallback), voice replies via TTS (incl. keyless Edge), vision + video analysis, image generation, PDF/document extraction, automatic link context |
 | 🧠 **Learning memory**   | SQLite + FTS5 + vectors with on-device reranking; consolidates repeated facts, learns ranking from use, builds per-user profiles — all local |
 | 🧊 **Lossless context**  | Two engines: default DAG mode never deletes a message — compressed history stays expandable mid-conversation (`ctx_search`/`ctx_expand`); ten-layer pipeline mode as the deterministic opt-in |
-| 🔌 **Tools & MCP**       | 50+ MCP servers (GitHub, Gmail, Notion, databases, browser, shell), built-in web/media/scheduling tools, prompt skills — and Comis itself runs as an MCP server |
-| 🌐 **Any model**         | Claude, GPT, Gemini, Groq, Ollama, OpenRouter — tool schemas adapt per model; a tier-aware capability profile scales scaffold and security to the model; fallback chains and auth rotation included |
+| 🔌 **Tools & MCP**       | Connect the MCP ecosystem's 50+ servers (GitHub, Gmail, Notion, databases…) — none bundled, you choose; built-in web/browser/media/scheduling tools and prompt skills; Comis itself runs as an MCP server too |
+| 🌐 **Any model**         | 27 hosted providers via the pi-ai catalog (Anthropic, OpenAI, Google, Groq, OpenRouter, Bedrock, Azure…), local Ollama, and any OpenAI-compatible endpoint — tool schemas adapt per model, a tier-aware capability profile scales scaffold and security to it, fallback chains and key rotation included |
 | 🖥️ **Operations**        | Web dashboard (live ops views, visual pipeline builder, approval queue), JSON-RPC + WebSocket + OpenAI-compatible + ACP APIs, cron + heartbeat monitoring, `comis security audit` (14 checks), trace CLI with forensic bundle export, git-backed config history & rollback |
 
 ---
@@ -177,7 +177,7 @@ Hexagonal (ports + adapters): `core` defines port interfaces, adapters implement
 
 Comis is engineered to be contributed to safely — that's the architecture, not a platitude:
 
-- **The rules are executable.** `pnpm validate` runs the same deterministic gates as CI — clean build, cycle checks, security lint, per-package coverage floors. If it passes locally, CI will agree.
+- **The rules are executable.** `pnpm validate` runs CI's deterministic gates locally — clean build, cycle checks, security lint, per-package coverage floors — so you find out before you push, not after.
 - **The protocol is written down.** [`AGENTS.md`](AGENTS.md) is the engineering contract: `Result<T, E>` discipline, tests-first, security rules, naming. No tribal knowledge required.
 - **Extension points are real interfaces.** A new channel is a `ChannelPort` implementation; a new tool is a manifest plus a handler; a new storage backend is a port adapter. You rarely need to touch core.
 
