@@ -77,6 +77,19 @@ export function bindObsExplainHandlers(
         ? await resolveTraceToSession(dataDir, params.traceId)
         : params.sessionKey!;
 
+      // WR-04: a traceId that resolves to "" (no row in today/yesterday's session
+      // index) is UNRESOLVABLE — distinct from a session that genuinely had zero
+      // tool activity. Without a marker both yield the same empty report keyed on
+      // "", so an admin can't tell a typo'd/expired traceId from a clean session.
+      // We stamp the marker (below, after we know the report is genuinely empty)
+      // rather than throw: the no-throw posture is preserved (the empty report is
+      // safe — no traversal, no leak). An empty RESOLVED session (a real
+      // sessionKey with no telemetry) is NOT flagged. Note the resolution missed
+      // the index; whether the report is actually empty is decided post-assembly
+      // (an injected reader may still surface telemetry for a "" key — then the
+      // session WAS effectively found and must keep its real rootCause).
+      const traceResolutionMissed = params.traceId !== undefined && sessionKey === "";
+
       // Step 4: read the four bounded sources (production reads files; tests
       // inject the fixture reader).
       const records = await reader.readSessionRecords(sessionKey);
@@ -88,7 +101,32 @@ export function bindObsExplainHandlers(
       // stamp the deterministic root cause (X3); bound to the depth budget (X2).
       const signals = toIncidentSignals([...records, ...cache]);
       const report = assembleIncidentReport(signals, metadata, rollup, sessionKey);
-      report.likelyRootCause = rootCause(signals);
+      // The report is genuinely empty only when NO source surfaced any activity.
+      const reportIsEmpty =
+        report.failures.length === 0 &&
+        report.breakerTimeline.length === 0 &&
+        report.offloads.length === 0 &&
+        Object.keys(report.toolStats).length === 0;
+      if (traceResolutionMissed && reportIsEmpty) {
+        // WR-04: an honest not-found verdict + ledger note so the empty report
+        // does not masquerade as a healthy zero-activity session. The bound pass
+        // preserves both (it seeds truncations[] from the report and never
+        // overwrites likelyRootCause).
+        report.likelyRootCause = {
+          code: "session_not_found",
+          detail: `traceId did not resolve to any session in the index (today/yesterday); it may be a typo, expired, or older than the 2-day resolution horizon`,
+          suggestedNextSteps: [
+            "verify the traceId, or query by sessionKey directly",
+            "confirm the session ended within the last two days (the session-index lookup window)",
+          ],
+        };
+        report.truncations.push({
+          field: "traceId",
+          reason: "traceId not found in session index (today/yesterday) — empty report is unresolved, not a clean session",
+        });
+      } else {
+        report.likelyRootCause = rootCause(signals);
+      }
       const bounded = boundIncidentReport(report, params.depth ?? "summary");
 
       // Step 5: dev-mode response validation (catches field type regressions).
