@@ -141,7 +141,7 @@ const extensibilityRows: Row[] = [
     comis:
       "Implement ChannelPort interface and wire in the composition root bootstrap.",
     openclaw:
-      "Implement ChannelPlugin (21 adapters). Register via extension package.json \u2014 auto-discovered.",
+      `Implement ChannelPlugin (${COMPETITORS.openclaw.channels} channel adapters). Register via extension package.json \u2014 auto-discovered.`,
     verdict: "openclaw",
   },
   {
@@ -205,9 +205,9 @@ const agentRows: Row[] = [
   {
     label: "Channel count",
     comis:
-      "9 channels: Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, LINE, Email (IMAP/SMTP).",
+      `${FACTS.channels} channels: ${FACTS.channelList.join(", ")} (Email via IMAP/SMTP).`,
     openclaw:
-      "21 channels including Matrix, MS Teams, Google Chat, Feishu, Mattermost, Twitch, Nostr, Zalo, and more.",
+      `${COMPETITORS.openclaw.channels} channels — the widest list in the field — including Matrix, MS Teams, Google Chat, Feishu, Mattermost, Twitch, Nostr, Zalo, and more.`,
     verdict: "openclaw",
   },
   {
@@ -526,7 +526,7 @@ const testRows: Row[] = [
   {
     label: "Test volume",
     comis:
-      "847 unit + 122 integration test files (~969 total). No coverage tooling configured.",
+      "847 unit + 122 integration test files (~969 total). Coverage enforced via Vitest with 14 per-package floor thresholds (e.g. infra 95% lines / 100% functions), gated in CI.",
     openclaw:
       "2,242 test files (1,914 in src/, 270 extensions, 46 UI, 11 harness). Coverage thresholds enforced: 70% lines/functions, 55% branches.",
     verdict: "openclaw",
@@ -558,10 +558,10 @@ const testRows: Row[] = [
   {
     label: "CI & coverage",
     comis:
-      "Local validation only: pnpm build && pnpm test && pnpm lint:security. No GitHub Actions, no coverage reports.",
+      "GitHub Actions CI (ci.yml) runs `pnpm validate` on every push: clean build, madge + project-reference cycle checks, security lint, docs compile, and `test:coverage` with 14 per-package floors — plus an E2E flow-matrix gate. The same gates run locally via a pre-push hook.",
     openclaw:
       "GitHub Actions CI with parallel lane splitting (unit-fast, unit-isolated, extensions, gateway, channels, e2e, live). Performance budget enforcement. Multi-platform (Linux, macOS, Windows).",
-    verdict: "openclaw",
+    verdict: "tie",
   },
 ];
 
@@ -698,8 +698,8 @@ const sectionMeta = [
         <p
           class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed"
         >
-          61 dimensions. Both codebases reviewed. Every claim verified by
-          independent agents against the actual source code.
+          {allRows.length} dimensions. Both codebases reviewed. Every claim
+          verified by independent agents against the actual source code.
         </p>
         <p class="mt-3 text-sm text-muted/70">
           Both projects are open source. This comparison reflects the codebases
@@ -966,14 +966,25 @@ const sectionMeta = [
               <li>
                 <span class="font-semibold text-white">Extensibility DX:</span>
                 The plugin SDK with 219+ exports and dynamic loader makes adding
-                channels and tools lower friction. 40 extension packages demonstrate
-                ecosystem maturity.
+                channels and tools lower friction. <span
+                  class="font-semibold text-white">140+ extensions</span
+                > demonstrate real ecosystem maturity.
               </li>
               <li>
                 <span class="font-semibold text-white">Channel coverage:</span>
-                20 messaging platforms vs 9. Beyond the shared set, OpenClaw adds
-                Matrix, MS Teams, Google Chat, Feishu, Mattermost, Twitch, Nostr,
-                and more.
+                <span class="font-semibold text-white">23+ channels</span> vs Comis's
+                {FACTS.channels} — the widest list in the field. Beyond the shared
+                set, OpenClaw adds Matrix, MS Teams, Google Chat, Feishu, Mattermost,
+                Twitch, Nostr, and more.
+              </li>
+              <li>
+                <span class="font-semibold text-white"
+                  >Native apps, voice &amp; Canvas:</span
+                > OpenClaw ships <span class="font-semibold text-white"
+                  >native mobile &amp; desktop apps</span
+                >, <span class="font-semibold text-white">voice wake</span>, and a
+                <span class="font-semibold text-white">Canvas</span> surface — a
+                personal-assistant experience Comis doesn't try to match.
               </li>
               <li>
                 <span class="font-semibold text-white">Build speed:</span> tsdown
@@ -987,11 +998,16 @@ const sectionMeta = [
                 community 12-layer architecture demonstrate real ecosystem traction.
               </li>
               <li>
-                <span class="font-semibold text-white">Test infrastructure (4&ndash;1&ndash;0):</span>
-                2,242 test files, 13 dedicated live-model tests, 7 Docker E2E suites,
-                46 browser tests via Playwright, and full GitHub Actions CI with parallel
-                lane splitting. Comis counters with ChaosEchoAdapter fault injection
-                and structured log validation.
+                <span class="font-semibold text-white"
+                  >Test infrastructure ({count(testRows, "openclaw")}&ndash;{count(
+                    testRows,
+                    "comis",
+                  )}&ndash;{count(testRows, "tie")}):</span
+                >
+                2,242 test files, 15 dedicated live-model tests, 7 Docker E2E suites,
+                and 46 browser tests via Playwright. Comis counters with ChaosEchoAdapter
+                fault injection, structured log validation, and its own GitHub Actions
+                CI running the full validate gate.
               </li>
             </ul>
           </div>
@@ -1077,7 +1093,7 @@ const sectionMeta = [
         <h2
           class="text-3xl md:text-4xl font-bold text-white mb-4 text-center"
         >
-          All 61 dimensions
+          All {allRows.length} dimensions
         </h2>
         <p class="text-muted text-lg mb-12 text-center max-w-xl mx-auto">
           The full picture at a glance.
@@ -1149,9 +1165,9 @@ const sectionMeta = [
       <div class="max-w-3xl mx-auto text-center">
         <p class="text-sm text-muted">
           This comparison was created by parallel deep-dive analysis of both
-          codebases and verified by 6 independent agents that checked 64 claims
-          (32 per codebase) against the actual source code. All corrections have
-          been applied.
+          codebases and verified by independent agents that checked every claim
+          ({allRows.length * 2} in total, one per project per dimension) against
+          the actual source code. All corrections have been applied.
         </p>
       </div>
     </section>
