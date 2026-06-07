@@ -3,10 +3,13 @@
 /**
  * Observability query tool: multi-action tool for platform diagnostics and metrics.
  *
- * Supports 4 action categories: diagnostics, billing, delivery, channels.
+ * Supports 7 action categories: diagnostics, billing, delivery, channels,
+ * explain, trace, session_report.
  * Read-only observability tool -- no approval gate needed.
  * All actions enforce admin trust level via createTrustGuard.
- * Delegates to obs.* RPC handlers via rpcCall.
+ * Delegates to obs.* RPC handlers via rpcCall (explain and session_report both
+ * dispatch to obs.explain — the IncidentReport IS the session rollup, so
+ * session_report needs no new contract).
  *
  * @module
  */
@@ -35,8 +38,11 @@ const ObsQueryToolParams = Type.Object({
       Type.Literal("billing"),
       Type.Literal("delivery"),
       Type.Literal("channels"),
+      Type.Literal("explain"),
+      Type.Literal("trace"),
+      Type.Literal("session_report"),
     ],
-    { description: "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness)" },
+    { description: "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport)" },
   ),
   sub_action: Type.Optional(
     Type.String({
@@ -68,6 +74,12 @@ const ObsQueryToolParams = Type.Object({
   threshold_ms: Type.Optional(
     Type.Integer({ description: "Staleness threshold in ms (for channels.stale, default 300000)" }),
   ),
+  trace_id: Type.Optional(
+    Type.String({ description: "Trace ID (for explain, trace, session_report)" }),
+  ),
+  depth: Type.Optional(
+    Type.String({ description: "Report depth for explain/session_report: summary | full" }),
+  ),
 });
 
 type ObsQueryToolParamsType = Static<typeof ObsQueryToolParams>;
@@ -77,18 +89,21 @@ type ObsQueryToolParamsType = Static<typeof ObsQueryToolParams>;
 // ---------------------------------------------------------------------------
 
 /**
- * Create an observability query tool with 4 action categories.
+ * Create an observability query tool with 7 action categories.
  *
  * Actions:
  * - **diagnostics** -- Query platform diagnostic data with optional category/limit filters
  * - **billing** -- Query billing data by provider, agent, session, or total
  * - **delivery** -- Query message delivery traces (recent) or aggregated stats
  * - **channels** -- Query channel activity: all channels, stale channels, or a specific channel
+ * - **explain** -- Assemble an IncidentReport (root-cause post-mortem) for a session via obs.explain
+ * - **trace** -- Search trace rows via obs.trace.search
+ * - **session_report** -- Session rollup; reuses obs.explain (the IncidentReport IS the rollup)
  *
  * @param rpcCall - RPC call function for delegating to the daemon backend
  * @returns AgentTool implementing the observability query interface
  */
-const VALID_ACTIONS = ["diagnostics", "billing", "delivery", "channels"] as const;
+const VALID_ACTIONS = ["diagnostics", "billing", "delivery", "channels", "explain", "trace", "session_report"] as const;
 const VALID_BILLING_SUB_ACTIONS = ["byProvider", "byAgent", "bySession", "total"] as const;
 const VALID_DELIVERY_SUB_ACTIONS = ["recent", "stats"] as const;
 const VALID_CHANNELS_SUB_ACTIONS = ["all", "stale", "get"] as const;
@@ -190,34 +205,78 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
           return jsonResult(result);
         }
 
-        // action === "channels"
-        const rawSubAction = readStringParam(p, "sub_action", false) ?? "all";
-        if (!VALID_CHANNELS_SUB_ACTIONS.includes(rawSubAction as typeof VALID_CHANNELS_SUB_ACTIONS[number])) {
-          throwToolError("invalid_value", `Unknown channels sub_action: "${rawSubAction}".`, {
-            validValues: [...VALID_CHANNELS_SUB_ACTIONS],
-            param: "sub_action",
-            hint: "Use one of the listed values for sub_action.",
-          });
-        }
-        const subAction = rawSubAction as typeof VALID_CHANNELS_SUB_ACTIONS[number];
-        const ctx = tryGetContext();
-        const tl = ctx?.trustLevel ?? "guest";
+        if (action === "channels") {
+          const rawSubAction = readStringParam(p, "sub_action", false) ?? "all";
+          if (!VALID_CHANNELS_SUB_ACTIONS.includes(rawSubAction as typeof VALID_CHANNELS_SUB_ACTIONS[number])) {
+            throwToolError("invalid_value", `Unknown channels sub_action: "${rawSubAction}".`, {
+              validValues: [...VALID_CHANNELS_SUB_ACTIONS],
+              param: "sub_action",
+              hint: "Use one of the listed values for sub_action.",
+            });
+          }
+          const subAction = rawSubAction as typeof VALID_CHANNELS_SUB_ACTIONS[number];
+          const ctx = tryGetContext();
+          const tl = ctx?.trustLevel ?? "guest";
 
-        if (subAction === "all") {
-          const result = await rpcCall("obs.channels.all", { _trustLevel: tl });
+          if (subAction === "all") {
+            const result = await rpcCall("obs.channels.all", { _trustLevel: tl });
+            return jsonResult(result);
+          }
+          if (subAction === "stale") {
+            const thresholdMs = readNumberParam(p, "threshold_ms", false);
+            const result = await rpcCall("obs.channels.stale", {
+              thresholdMs: thresholdMs ?? 300_000,
+              _trustLevel: tl,
+            });
+            return jsonResult(result);
+          }
+          // subAction === "get"
+          const channelId = readStringParam(p, "channel_id");
+          const result = await rpcCall("obs.channels.get", { channelId, _trustLevel: tl });
           return jsonResult(result);
         }
-        if (subAction === "stale") {
-          const thresholdMs = readNumberParam(p, "threshold_ms", false);
-          const result = await rpcCall("obs.channels.stale", {
-            thresholdMs: thresholdMs ?? 300_000,
-            _trustLevel: tl,
+
+        if (action === "explain") {
+          const sessionKey = readStringParam(p, "session_key", false);
+          const traceId = readStringParam(p, "trace_id", false);
+          const depth = readStringParam(p, "depth", false);
+          const ctx = tryGetContext();
+          const result = await rpcCall("obs.explain", {
+            sessionKey,
+            traceId,
+            depth,
+            _trustLevel: ctx?.trustLevel ?? "guest",
           });
           return jsonResult(result);
         }
-        // subAction === "get"
-        const channelId = readStringParam(p, "channel_id");
-        const result = await rpcCall("obs.channels.get", { channelId, _trustLevel: tl });
+
+        if (action === "trace") {
+          const traceId = readStringParam(p, "trace_id", false);
+          const sinceMs = readNumberParam(p, "since_ms", false);
+          const limit = readNumberParam(p, "limit", false);
+          const ctx = tryGetContext();
+          const result = await rpcCall("obs.trace.search", {
+            traceId,
+            sinceMs,
+            limit,
+            _trustLevel: ctx?.trustLevel ?? "guest",
+          });
+          return jsonResult(result);
+        }
+
+        // action === "session_report"
+        // session_report reuses obs.explain -- the IncidentReport IS the session
+        // rollup (cost/toolStats/outcome/timing/degraded). No new contract.
+        const sessionKey = readStringParam(p, "session_key", false);
+        const traceId = readStringParam(p, "trace_id", false);
+        const depth = readStringParam(p, "depth", false) ?? "summary";
+        const ctx = tryGetContext();
+        const result = await rpcCall("obs.explain", {
+          sessionKey,
+          traceId,
+          depth,
+          _trustLevel: ctx?.trustLevel ?? "guest",
+        });
         return jsonResult(result);
       } catch (err) {
         if (err instanceof Error && err.message.startsWith("[")) throw err;

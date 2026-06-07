@@ -537,7 +537,7 @@ export function registerAllToolMetadata(): void {
 
   // --- Privileged management tools ---
   registerToolMetadata("agents_manage",    { searchHint: "fleet list create delete suspend resume agent configure roster inventory" });
-  registerToolMetadata("obs_query",        { searchHint: "diagnostics monitoring metrics billing traces logs health" });
+  registerToolMetadata("obs_query",        { searchHint: "diagnostics monitoring metrics billing traces logs health explain incident root-cause post-mortem session report" });
   registerToolMetadata("sessions_manage",  { searchHint: "delete reset export compact session lifecycle cleanup admin" });
   registerToolMetadata("memory_manage",    { searchHint: "delete flush export browse stats storage cleanup purge" });
   registerToolMetadata("channels_manage",  { searchHint: "enable disable restart channel adapter platform connection" });
