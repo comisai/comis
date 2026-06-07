@@ -281,6 +281,53 @@ describe("installMicrocompactionGuard", () => {
     expect(originalContent[0].text.length).toBeLessThan(5000);
   });
 
+  it("does NOT fire onOffloaded when the disk write fails (no phantom pointer in the trajectory)", () => {
+    // WR-151-04: saveToDisk is best-effort — writeRegularFile returns err (and
+    // writes nothing) when the target escapes the confinement base. Forcing a
+    // confinement rejection (dataDir that does NOT contain sessionDir) means the
+    // file is never created, yet onOffloaded currently fires with a workspace-
+    // relative pointer at a non-existent file. The trajectory's
+    // IncidentReport.offloads[] drill-down would then fail to open it. The
+    // offload event must only be emitted on a SUCCESSFUL write.
+    const sm = createMockSessionManager(tempDir);
+    const onOffloaded = vi.fn();
+    // confinedBaseDir = a sibling dir that does NOT contain the session dir →
+    // writeRegularFile's assertConfinedPath rejects, returning err.
+    const unrelatedBase = mkdtempSync(join(tmpdir(), "microcompaction-otherbase-"));
+    try {
+      installMicrocompactionGuard(sm as any, tempDir, unrelatedBase, logger, onOffloaded);
+
+      const largeResult = createToolResult("bash", 10_000, "call-writefail");
+      sm.appendMessage(largeResult);
+
+      // The disk write was rejected — the offload file must not exist...
+      expect(existsSync(join(tempDir, "tool-results", "call-writefail.json"))).toBe(false);
+      // ...and the trajectory offload event must NOT have been emitted.
+      expect(onOffloaded).not.toHaveBeenCalled();
+    } finally {
+      rmSync(unrelatedBase, { recursive: true, force: true });
+    }
+  });
+
+  it("does NOT fire onOffloaded when the disk write fails on the hard-cap path", () => {
+    // WR-151-04: same invariant on the hard-cap (>100K) branch, which has its
+    // own saveToDisk + onOffloaded call site.
+    const sm = createMockSessionManager(tempDir);
+    const onOffloaded = vi.fn();
+    const unrelatedBase = mkdtempSync(join(tmpdir(), "microcompaction-otherbase-"));
+    try {
+      installMicrocompactionGuard(sm as any, tempDir, unrelatedBase, logger, onOffloaded);
+
+      const hugeResult = createToolResult("bash", 150_000, "call-hardcap-writefail");
+      sm.appendMessage(hugeResult);
+
+      expect(existsSync(join(tempDir, "tool-results", "call-hardcap-writefail.json"))).toBe(false);
+      expect(onOffloaded).not.toHaveBeenCalled();
+    } finally {
+      rmSync(unrelatedBase, { recursive: true, force: true });
+    }
+  });
+
   it("does not fire onOffloaded for under-threshold tool results", () => {
     const sm = createMockSessionManager(tempDir);
     const onOffloaded = vi.fn();
