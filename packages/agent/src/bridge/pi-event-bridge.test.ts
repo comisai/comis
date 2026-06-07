@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ok, err } from "@comis/shared";
-import type { ModelOperationType } from "@comis/core";
+import { registerToolMetadata } from "@comis/core";
+import type { ModelOperationType, ErrorKind } from "@comis/core";
 import { BudgetError } from "../budget/budget-guard.js";
 import { createPiEventBridge } from "./pi-event-bridge.js";
 import type { PiEventBridgeDeps } from "./pi-event-bridge.js";
@@ -478,6 +479,136 @@ describe("createPiEventBridge", () => {
       expect(endEmit).toBeDefined();
       expect(endEmit![1].success).toBe(true);
       expect(endEmit![1].errorKind).toBeUndefined();
+    });
+
+    // -----------------------------------------------------------------------
+    // D1 failure-classification provenance (P1): classifiedFailureBy +
+    // transportOk + httpStatus/matchedRule/matchedToken + resultBytes/Digest
+    // are assigned at the mutation point and recorded on BOTH the WARN log AND
+    // the tool:executed event. matchedToken (free-text untrusted tool output)
+    // is sanitized+bounded identically at BOTH sinks.
+    // -----------------------------------------------------------------------
+    describe("D1 failure-classification provenance", () => {
+      // Helper: find the tool:executed emit + the "Tool execution failed" WARN.
+      function findEmitAndWarn(toolName: string) {
+        const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+        const endEmit = emitCalls.find((c) => c[0] === "tool:executed" && c[1].toolName === toolName);
+        const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+        const warn = warnCalls.find((c) => c[1] === "Tool execution failed" && c[0].toolName === toolName);
+        return { endEmit, warn };
+      }
+
+      it("SDK isError (non-MCP) → classifiedFailureBy:'sdk_iserror', transportOk:false on WARN + event", () => {
+        const { listener } = createPiEventBridge(deps);
+        const result = { message: "Network unreachable: connection refused" };
+        listener(makeToolExecutionEndEvent("flaky_tool", "tc-p1a", true, result) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("flaky_tool");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].classifiedFailureBy).toBe("sdk_iserror");
+        expect(endEmit![1].transportOk).toBe(false);
+        expect(warn).toBeDefined();
+        expect(warn![0].classifiedFailureBy).toBe("sdk_iserror");
+        expect(warn![0].transportOk).toBe(false);
+      });
+
+      it("exec non-zero exitCode → classifiedFailureBy:'exit_code', transportOk:true", () => {
+        const { listener } = createPiEventBridge(deps);
+        const result = { content: [{ type: "text", text: '{"exitCode":1}' }], details: { exitCode: 1, stdout: "", stderr: "boom" } };
+        listener(makeToolExecutionEndEvent("exec", "tc-p1b", false, result) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("exec");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].classifiedFailureBy).toBe("exit_code");
+        expect(endEmit![1].transportOk).toBe(true);
+        expect(warn![0].classifiedFailureBy).toBe("exit_code");
+        expect(warn![0].transportOk).toBe(true);
+      });
+
+      it("detector flips a status:200... no wait — a status:500 web_fetch → 'failure_detector', transportOk:true, httpStatus + matchedRule/Token", () => {
+        // Register a structured-field detector on a unique tool name (self-isolating).
+        registerToolMetadata("test_web_fetch_p1c", {
+          failureDetector: (r) => {
+            const o = r as { status?: number; error?: string };
+            if (typeof o.status === "number" && o.status >= 400) {
+              return { errorKind: "dependency" as ErrorKind, classifiedField: "status", matchedRule: "status>=400", matchedToken: String(o.status) };
+            }
+            return false;
+          },
+        });
+        const { listener } = createPiEventBridge(deps);
+        // status:500 → genuine failure; isError=false (SDK said ok, detector flips).
+        const result = { status: 500, body: "Internal Server Error" };
+        listener(makeToolExecutionEndEvent("test_web_fetch_p1c", "tc-p1c", false, result) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("test_web_fetch_p1c");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].success).toBe(false);
+        expect(endEmit![1].classifiedFailureBy).toBe("failure_detector");
+        expect(endEmit![1].transportOk).toBe(true);
+        expect(endEmit![1].httpStatus).toBe(500);
+        expect(endEmit![1].matchedRule).toBe("status>=400");
+        expect(endEmit![1].matchedToken).toBe("500");
+        expect(warn![0].classifiedFailureBy).toBe("failure_detector");
+        expect(warn![0].httpStatus).toBe(500);
+        expect(warn![0].matchedToken).toBe("500");
+      });
+
+      it("A1 overlap — SDK isError on an MCP-namespaced tool → classifiedFailureBy:'mcp_classifier' (NOT sdk_iserror), transportOk:false", () => {
+        const { listener } = createPiEventBridge(deps);
+        const result = { message: "mcp tool error: request timed out after 30s" };
+        listener(makeToolExecutionEndEvent("mcp__example--search", "tc-p1d", true, result) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("mcp__example--search");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].success).toBe(false);
+        // A1 precedence: the MCP classifier refines the sdk_iserror flip when mcpServer !== undefined.
+        expect(endEmit![1].classifiedFailureBy).toBe("mcp_classifier");
+        expect(endEmit![1].transportOk).toBe(false);
+        expect(warn![0].classifiedFailureBy).toBe("mcp_classifier");
+      });
+
+      it("emits resultBytes + resultDigest (12-hex) on the failure path", () => {
+        const { listener } = createPiEventBridge(deps);
+        const result = { message: "boom" };
+        listener(makeToolExecutionEndEvent("flaky_tool", "tc-p1e", true, result) as any);
+
+        const { endEmit } = findEmitAndWarn("flaky_tool");
+        expect(endEmit).toBeDefined();
+        expect(typeof endEmit![1].resultBytes).toBe("number");
+        expect(endEmit![1].resultBytes).toBeGreaterThan(0);
+        expect(endEmit![1].resultDigest).toMatch(/^[0-9a-f]{12}$/);
+      });
+
+      it("matchedToken is sanitized+bounded to ≤1500 chars at BOTH the WARN and the event (no raw 5000-char token)", () => {
+        const hugeToken = "T".repeat(5000);
+        registerToolMetadata("test_huge_token_p1f", {
+          failureDetector: () => ({ errorKind: "dependency" as ErrorKind, classifiedField: "error", matchedToken: hugeToken }),
+        });
+        const { listener } = createPiEventBridge(deps);
+        const result = { status: 503, body: "err" };
+        listener(makeToolExecutionEndEvent("test_huge_token_p1f", "tc-p1f", false, result) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("test_huge_token_p1f");
+        expect(endEmit).toBeDefined();
+        // Event sink MUST bound — it flows into trajectory/cache-trace translators.
+        expect(typeof endEmit![1].matchedToken).toBe("string");
+        expect((endEmit![1].matchedToken as string).length).toBeLessThanOrEqual(1500);
+        expect(endEmit![1].matchedToken).not.toBe(hugeToken);
+        // WARN sink MUST bound too (identical treatment).
+        expect((warn![0].matchedToken as string).length).toBeLessThanOrEqual(1500);
+      });
+
+      it("success path carries NO classifiedFailureBy / transportOk", () => {
+        const { listener } = createPiEventBridge(deps);
+        listener(makeToolExecutionEndEvent("bash", "tc-p1g", false) as any);
+
+        const { endEmit } = findEmitAndWarn("bash");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].success).toBe(true);
+        expect(endEmit![1].classifiedFailureBy).toBeUndefined();
+        expect(endEmit![1].transportOk).toBeUndefined();
+      });
     });
 
     it("when stepCounter.shouldHalt() returns true, calls onAbort and sets finishReason to max_steps", () => {
