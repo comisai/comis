@@ -575,6 +575,24 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         ranked = scored;
       }
 
+      // 4b. R3 BASE-SCORE FLOOR — drop memories whose pre-boost base score is below the
+      //     operator-set floor. Runs AFTER scoreWithBreakdown() (breakdownById populated)
+      //     so the filter accesses the EXACT breakdown.base — not the boosted r.score.
+      //     Boosts (recency/temporal/proof/trust/usefulness) CANNOT resurrect a memory
+      //     whose raw cosine/RRF base sits below the floor (T-153-poison mitigation).
+      //     DEFAULT-OFF BYTE-IDENTITY: floor absent or === 0 → no filter, ranked unchanged.
+      //     Fallback: a memory not in breakdownById (e.g., the rerank-applied path that
+      //     scored via scoreWithBreakdown inside the rerank block) falls back to r.score
+      //     (the entry's current score, which IS breakdown.base × boosts after scoring) —
+      //     this is a safe conservative fallback (score >= base when all factors ≥ 1, which
+      //     is true for neutral/positive boosts).
+      if (cfg.baseFloor !== undefined && cfg.baseFloor > 0) {
+        ranked = ranked.filter((r) => {
+          const bd = breakdownById.get(r.entry.id);
+          return bd !== undefined ? bd.base >= cfg.baseFloor! : (r.score ?? 0) >= cfg.baseFloor!;
+        });
+      }
+
       // 5. TRUST-FILTER (mirrors the old inline filter). score() does not depend on the
       //    excluded entries, so filtering after scoring yields the same survivors.
       //    Capture the trust-filtered ids BEFORE the filter so the trace can explain the

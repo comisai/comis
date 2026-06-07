@@ -4318,13 +4318,18 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
       } as any;
     }
 
+    // A stub memoryPort that satisfies `deps.memoryPort && config.rag?.enabled` gate.
+    const stubMemoryPort = { search: vi.fn().mockResolvedValue({ ok: true, value: [] }) } as any;
+    // A full rag config (all required fields) used across caps tests.
+    const ragConfig = { enabled: true, maxResults: 10, minScore: 0.1, includeTrustLevels: ["system", "learned"], maxContextChars: 8000 };
+
     it("small profile: count cap of 3 — only 3 items pass to injector.split when 5 recalled", async () => {
       const fiveMemories = [1, 2, 3, 4, 5].map((i) => makeRankedMemory(`mem-${i}`, 100));
       mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
 
       const params = makeParams({
-        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
-        deps: { workspaceDir: "/workspace" },
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
         modelProfile: SMALL_PROFILE,
       });
       const sessionKey = formatSessionKey(params.sessionKey as any);
@@ -4347,8 +4352,8 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
       mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
 
       const params = makeParams({
-        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
-        deps: { workspaceDir: "/workspace" },
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
         modelProfile: NANO_PROFILE,
       });
       const sessionKey = formatSessionKey(params.sessionKey as any);
@@ -4370,8 +4375,8 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
       mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
 
       const params = makeParams({
-        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
-        deps: { workspaceDir: "/workspace" },
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
         modelProfile: FRONTIER_PROFILE,
       });
       const sessionKey = formatSessionKey(params.sessionKey as any);
@@ -4393,8 +4398,8 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
       mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
 
       const params = makeParams({
-        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
-        deps: { workspaceDir: "/workspace" },
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
         // modelProfile omitted
       });
       const sessionKey = formatSessionKey(params.sessionKey as any);
@@ -4417,8 +4422,8 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
 
       const params = makeParams({
         // maxContextChars=8000 but small profile chars cap=2000 overrides it
-        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
-        deps: { workspaceDir: "/workspace" },
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
         modelProfile: SMALL_PROFILE,
       });
       const sessionKey = formatSessionKey(params.sessionKey as any);
@@ -4441,8 +4446,8 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
 
       const params = makeParams({
         // maxContextChars=8000 but nano profile chars cap=1000 overrides it
-        config: makeConfig({ rag: { enabled: true, maxResults: 10, maxContextChars: 8000 } }),
-        deps: { workspaceDir: "/workspace" },
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
         modelProfile: NANO_PROFILE,
       });
       const sessionKey = formatSessionKey(params.sessionKey as any);

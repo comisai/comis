@@ -939,6 +939,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           // A fully-defaulted RagConfig field (same posture as mmr/forget), so it passes DIRECTLY.
           // Default-OFF (`enabled:false`) ⇒ the pinned lane is skipped (byte-identical).
           pinned: config.rag.pinned,
+          // R3: forward the base-score floor gate. A fully-defaulted RagConfig field
+          // (.default(0)), so it passes DIRECTLY. Default=0 → no filter (byte-identical).
+          // T-153-poison: boosts cannot resurrect a low-base memory (floor gates pre-boost).
+          baseFloor: (config.rag as typeof config.rag & { baseFloor?: number }).baseFloor,
           ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },
       );
@@ -965,13 +969,38 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           config.rag.pinned?.enabled === true
             ? ranked.filter((r) => r.entry.pinned === true)
             : [];
-        const fusedSet = ranked.filter((r) => r.entry.pinned !== true);
+        let fusedSet = ranked.filter((r) => r.entry.pinned !== true);
         let pinnedChars = 0;
         if (pinnedSet.length > 0) {
           const pinnedSection = formatMemorySection(pinnedSet, config.rag.maxContextChars);
           pinnedChars = pinnedSection ? pinnedSection.length : 0;
         }
-        const remainingChars = Math.max(0, config.rag.maxContextChars - pinnedChars);
+
+        // R3: small/nano profile count cap (3 items max) and chars cap (2000/1000).
+        // Applied AFTER the base-floor filter in the recall pipeline, at the injection site.
+        // Caps are conservative but generous for small models; frontier/mid are uncapped.
+        // T-153-03b: accepted DoS risk — caps are well above typical useful recall sets.
+        const maxRecallItems =
+          params.modelProfile?.capabilityClass === "small" || params.modelProfile?.capabilityClass === "nano"
+            ? 3
+            : undefined;
+        const maxRecallChars =
+          params.modelProfile?.capabilityClass === "small"
+            ? 2000
+            : params.modelProfile?.capabilityClass === "nano"
+              ? 1000
+              : undefined;
+        if (maxRecallItems !== undefined && fusedSet.length > maxRecallItems) {
+          fusedSet = fusedSet.slice(0, maxRecallItems);
+        }
+
+        const remainingChars = Math.max(
+          0,
+          Math.min(
+            config.rag.maxContextChars - pinnedChars,
+            maxRecallChars !== undefined ? maxRecallChars : Infinity,
+          ),
+        );
         const injection = injector.split(fusedSet, remainingChars);
 
         inlineMemory = injection.inlineMemory;

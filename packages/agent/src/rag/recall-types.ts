@@ -206,6 +206,13 @@ export interface MemoryRecallConfig {
    *  default-OFF → no reweight, no expansion, no range filter (byte-identical). Optional so a
    *  caller predating the field leaves it absent → off. */
   queryUnderstanding?: { intentReweight: boolean; synonyms: boolean; temporalParse: boolean };
+  /** Minimum BASE relevance score (pre-boost) for memory injection (R3 floor).
+   *  Filter runs AFTER scoreWithBreakdown() (breakdownById populated) and BEFORE
+   *  trust-filter. Gates on ScoreBreakdown.base — NOT on r.score (the boosted value).
+   *  Fallback: if a memory has no breakdown entry, gates on r.score (safe degrade).
+   *  Default=0 (absent or 0) → no filtering (byte-identical to the pre-R3 path).
+   *  Optional so a caller predating the field leaves it absent → no floor applied. */
+  baseFloor?: number;
 }
 
 /** The recall orchestrator surface — a single `recall` method. */

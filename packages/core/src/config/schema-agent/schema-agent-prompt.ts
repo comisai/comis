@@ -58,6 +58,17 @@ export const RagConfigSchema = z.strictObject({
     maxContextChars: z.number().int().positive().default(4000),
     /** Minimum RRF score threshold (0-1) to include a memory result */
     minScore: z.number().min(0).max(1).default(0.1),
+    /** Minimum BASE relevance score (pre-boost) for memory injection.
+     *  Boosts cannot resurrect a memory whose base score is below this threshold.
+     *  Gates on ScoreBreakdown.base (the un-boosted cosine/RRF score), applied AFTER
+     *  scoreWithBreakdown() and BEFORE the trust-filter (T-153-poison mitigation).
+     *  Default=0 means no floor — all memories pass, preserving exact prior behavior.
+     *  S6: a weaker ModelProfile cannot lower this below the operator-set value. */
+    baseFloor: z.number().min(0).max(1).default(0).describe(
+      "Minimum BASE relevance score (pre-boost) for memory injection. " +
+      "Boosts cannot resurrect a memory whose base score is below this threshold. " +
+      "Frozen: a weaker ModelProfile cannot lower this below the operator-set value (S6).",
+    ),
     /** Trust levels to include in retrieval (external excluded by default for security) */
     includeTrustLevels: z.array(TrustLevelSchema).default(["system", "learned"]),
     /** Cross-encoder reranking. Opt-out posture: default-ON as a
