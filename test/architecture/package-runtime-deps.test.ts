@@ -92,6 +92,25 @@ function walk(dir: string, acc: string[]): string[] {
   return acc;
 }
 
+/**
+ * Like `walk`, but INCLUDES `*.test.ts` — used for the `test/` tree, where the
+ * test files themselves carry the imports that must resolve at run time (e.g.
+ * `require("better-sqlite3")` in an integration test). Still skips SKIP_DIRS
+ * (notably `__fixtures__`, which holds intentionally-broken sample sources) and
+ * `.d.ts`.
+ */
+function walkTestTree(dir: string, acc: string[]): string[] {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.isDirectory()) {
+      if (SKIP_DIRS.has(e.name)) continue;
+      walkTestTree(join(dir, e.name), acc);
+    } else if (/\.ts$/.test(e.name) && !/\.d\.ts$/.test(e.name)) {
+      acc.push(join(dir, e.name));
+    }
+  }
+  return acc;
+}
+
 function stripComments(code: string): string {
   return code
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -114,7 +133,10 @@ function valueImportSpecs(code: string): Set<string> {
   for (const re of [
     /^\s*import\s*["']([^"']+)["']/gm, // side-effect import "x"
     /\bimport\s*\(\s*["']([^"']+)["']/g, // dynamic import("x")
-    /\brequire\s*\(\s*["']([^"']+)["']/g, // require("x")
+    // require("x") — negative lookbehind excludes METHOD calls like
+    // `secrets.require("KEY")` (a SecretManager API, not a module require),
+    // which would otherwise be a false positive when scanning test/.
+    /(?<![.\w$])require\s*\(\s*["']([^"']+)["']/g,
   ]) {
     while ((m = re.exec(src)) !== null) specs.add(m[1]);
   }
@@ -236,6 +258,54 @@ describe("package-runtime-deps -- each backend package declares its imports", ()
         suggestedFix:
           "Add the package to that workspace package's dependencies (or devDependencies, since a type-only import is build-time only), version-matched to the rest of the workspace, then run pnpm install.",
         designRef: "package-runtime-deps — per-package dependency completeness (build-time)",
+      }),
+    ).toEqual([]);
+  });
+
+  it("no test/ file imports an undeclared third-party package (vs the root manifest)", () => {
+    // The `test/` tree resolves third-party imports from the workspace-ROOT
+    // node_modules (root package.json), not from any packages/* manifest. An
+    // undeclared import here works against the hoisted dev tree but breaks CI's
+    // clean `--frozen-lockfile` integration run with "Cannot find package …" —
+    // exactly how `require("better-sqlite3")` / `import Database from
+    // "better-sqlite3"` (the live-tier db-oracle helper) reddened the
+    // Integration step once the build was fixed. Test code is dev-only, so deps
+    // and devDependencies both count.
+    const root = JSON.parse(
+      readFileSync(join(REPO_ROOT, "package.json"), "utf8"),
+    ) as Record<string, Record<string, string> | undefined>;
+    const declared = new Set([
+      ...Object.keys(root.dependencies ?? {}),
+      ...Object.keys(root.devDependencies ?? {}),
+    ]);
+
+    const violations: DepViolation[] = [];
+    const seen = new Set<string>();
+    for (const file of walkTestTree(join(REPO_ROOT, "test"), [])) {
+      for (const spec of valueImportSpecs(readFileSync(file, "utf8"))) {
+        const name = packageName(spec);
+        if (name.startsWith("node:") || BUILTINS.has(name)) continue;
+        if (name.startsWith("@comis/") || /^[.\/]/.test(name)) continue;
+        if (declared.has(name)) continue;
+        if (seen.has(name)) continue;
+        seen.add(name);
+        violations.push({
+          file: relative(REPO_ROOT, file),
+          line: 0,
+          snippet: `test/ imports "${name}" but the root package.json does not declare it`,
+        });
+      }
+    }
+
+    expect(
+      violations,
+      formatViolations({
+        description:
+          "Every third-party package imported (value / side-effect / require / dynamic) anywhere under test/ must be declared in the ROOT package.json (deps or devDeps). The test tree resolves from the workspace-root node_modules, so an undeclared import resolves only via pnpm hoisting in the dev tree and fails CI's clean `--frozen-lockfile` integration run with ERR_MODULE_NOT_FOUND.",
+        violations,
+        suggestedFix:
+          "Add the package to the root package.json devDependencies, version-matched to the rest of the workspace, then run pnpm install.",
+        designRef: "package-runtime-deps — test-tree dependency completeness",
       }),
     ).toEqual([]);
   });
