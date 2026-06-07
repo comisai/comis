@@ -29,7 +29,7 @@ import * as path from "node:path";
 import { resolve } from "node:path";
 import type { IncidentReport } from "@comis/core";
 import { systemDateFrom, systemNowMs } from "@comis/core";
-import { bindObsExplainHandlers } from "./obs-explain.js";
+import { bindObsExplainHandlers, assembleIncidentReportFromSources } from "./obs-explain.js";
 import type { IncidentSourceReader } from "./obs-explain-readers.js";
 import type { ObsHandlerDeps } from "./obs-helpers.js";
 // 5 levels up: obs-handlers → api → src → daemon → packages → repo-root.
@@ -278,5 +278,77 @@ describe("bindObsExplainHandlers", () => {
     })) as IncidentReport;
     expect(r.likelyRootCause).toBeNull();
     expect(r.truncations.some((t) => t.field === "traceId")).toBe(false);
+  });
+});
+
+// ===========================================================================
+// assembleIncidentReportFromSources — the extracted shared assembler (154-03).
+// ===========================================================================
+//
+// The post-gate assembler body (resolve → read → signals → assemble →
+// rootCause + WR-04 → bound) is extracted so the admin RPC handler (which keeps
+// its admin gate) AND the operator-allowlisted obs_explain MCP tool (which has
+// NO admin gate — its authorization is the per-client allowlist) share ONE
+// frozen pipeline. The extracted fn takes ALREADY-VALIDATED params and contains
+// NO admin check and NO contract.request.parse — it is reachable under daemon
+// authority directly. These tests pin that seam: the fn produces the SAME X3
+// report as the RPC handler for the SAME inputs, WITHOUT any _trustLevel param.
+describe("assembleIncidentReportFromSources", () => {
+  it("X3 (678): produces content_heuristic_misclassification + degraded + breaker timeline WITHOUT any admin/_trustLevel param", async () => {
+    // The seam the obs_explain MCP path uses: call the EXTRACTED assembler
+    // DIRECTLY (no admin gate, no contract parse, no _trustLevel) with the SAME
+    // 678 fixture reader the admin RPC test uses, and prove it yields the SAME
+    // verdict. This is the byte-identical-behavior proof for the extraction.
+    const reader = makeFixtureReader("session-678314278");
+    const report = await assembleIncidentReportFromSources(reader, ".", {
+      sessionKey: SESSION_678,
+    });
+
+    expect(report.likelyRootCause?.code).toBe("content_heuristic_misclassification");
+    expect(report.likelyRootCause?.detail).toMatch(/web_fetch/);
+    expect(report.outcome.degraded).toBe(true);
+    expect(report.breakerTimeline.length).toBeGreaterThan(0);
+    expect(report.cost.costUsd).toBeCloseTo(1.320669, 4);
+  });
+
+  it("parity: the extracted assembler equals the admin RPC handler output for the same 678 inputs", async () => {
+    // Defense against drift: the admin RPC path (Step 1 gate → Step 2 parse →
+    // assembler) and the direct assembler call MUST yield byte-identical reports
+    // for the same fixture + sessionKey. The only difference between the two
+    // paths is the gate/parse the RPC handler adds BEFORE delegating.
+    const reader = makeFixtureReader("session-678314278");
+    const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
+    const viaRpc = (await handlers["obs.explain"]!({
+      sessionKey: SESSION_678,
+      depth: "summary",
+      _trustLevel: "admin",
+    })) as IncidentReport;
+    const viaAssembler = await assembleIncidentReportFromSources(
+      makeFixtureReader("session-678314278"),
+      ".",
+      { sessionKey: SESSION_678, depth: "summary" },
+    );
+    expect(viaAssembler).toEqual(viaRpc);
+  });
+
+  it("WR-04: an unresolvable traceId yields session_not_found via the extracted fn (no admin needed)", async () => {
+    // The WR-04 not-found marker logic lives INSIDE the extracted fn, so the MCP
+    // path inherits the honest not-found verdict. Empty dataDir → resolve "".
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-asm-unresolved-"));
+    const report = await assembleIncidentReportFromSources(
+      makeDeps({ dataDir }).incidentReader ??
+        // No injected reader → exercise the production makeRealReader over the
+        // empty dataDir (mirrors the RPC handler's default-reader path).
+        (await import("./obs-explain-readers.js")).makeRealReader(dataDir),
+      dataDir,
+      { traceId: "no-such-trace-id-deadbeef" },
+    );
+    expect(report.likelyRootCause?.code).toBe("session_not_found");
+    expect(
+      report.truncations.some(
+        (t) => t.field === "traceId" && /not\s*found|unresolv/i.test(t.reason),
+      ),
+    ).toBe(true);
+    expect(report.failures).toEqual([]);
   });
 });
