@@ -1,0 +1,26 @@
+[
+  {
+    "id": "nc-01",
+    "title": "clarifying question — no completion claim",
+    "response": "What format should the output be in?",
+    "expect": { "verdict": "skipped" }
+  },
+  {
+    "id": "nc-02",
+    "title": "progress update without completion claim",
+    "response": "Step 1 is in progress. I am currently working on the configuration.",
+    "expect": { "verdict": "skipped" }
+  },
+  {
+    "id": "nc-03",
+    "title": "short response below minResponseChars",
+    "response": "Working on it.",
+    "expect": { "verdict": "skipped" }
+  },
+  {
+    "id": "nc-04",
+    "title": "tool-call-only turn — no text completion claim",
+    "response": "",
+    "expect": { "verdict": "skipped" }
+  }
+]
