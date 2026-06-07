@@ -743,6 +743,19 @@ export interface AgentEvents {
     timestamp: number;
   };
 
+  /** Per-session health rollup emitted once at agent-end. Emit site: packages/agent/src/executor/executor-post-execution.ts (D5/F2). */
+  "session:summary": {
+    sessionKey: string;
+    agentId: string;
+    traceId: string;
+    degraded: boolean;
+    turnCount: number;
+    costUsd: number;
+    toolStats: Record<string, { ok: number; failed: number }>;
+    breakerTripCount: number;
+    timestamp: number;
+  };
+
   /**
    * RAG memory was injected into the prompt for this turn. Fires only on
    * turns where the hybrid memory injector actually emitted at least one
