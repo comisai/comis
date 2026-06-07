@@ -48,7 +48,11 @@ import {
 import { CostGovernor, assertNoSecrets } from "../../cost.js";
 import { judgeAnswer } from "../../judge.js";
 import { writeLedger, type LiveTestReport } from "../../report.js";
-import { buildGatingTable, renderGatingMarkdown } from "../../support/diagnosis-gating-report.js";
+import {
+  buildGatingTable,
+  renderGatingMarkdown,
+  BUDGET_SKIPPED_MARKER,
+} from "../../support/diagnosis-gating-report.js";
 import { createObsQueryTool, type RpcCall } from "@comis/skills/platform-tools";
 
 const isLive = !!process.env["COMIS_LIVE"];
@@ -76,6 +80,27 @@ const FAILURE_CLASS: Record<FixtureId, DiagnosisFailureClass> = {
   "live-budget-exhaustion": "budget-exhaustion",
   "live-provider-timeout": "provider-timeout",
 };
+
+/**
+ * Build the explicit NEVER-MEASURED verdict row for a fixture the cost budget cut
+ * off (WR-04). Emitting one of these per budget-skipped fixture (instead of a silent
+ * `break`) is what keeps every FIXTURE_IDS class present in the gating table — the
+ * gating report renders these distinctly (never a TRIM-CANDIDATE) and flags the
+ * partial gate. Zeroed metrics + the BUDGET_SKIPPED_MARKER carry the "not measured"
+ * signal; the marker is a label only (passes assertNoSecrets).
+ */
+function budgetSkippedRow(id: FixtureId): DiagnosisVerdictRow {
+  return {
+    fixtureId: id,
+    failureClass: FAILURE_CLASS[id],
+    totalTokens: 0,
+    distinctToolCalls: 0,
+    distinctSourceReads: 0,
+    judgeVerdict: "skip",
+    rootCauseReached: "skip",
+    surfacesUsed: [BUDGET_SKIPPED_MARKER],
+  };
+}
 
 // ===========================================================================
 // Stage-A/B — the always-on, keyless substrate (runs in pnpm validate).
@@ -182,6 +207,40 @@ describe("DIAG-baseline substrate — the verdict row + gating table serialize a
 
     const md = renderGatingMarkdown(buildGatingTable(rows));
     expect(md).toMatch(/TRIM|BUILD|INCONCLUSIVE/);
+    expect(() => assertNoSecrets(md, "gating table")).not.toThrow();
+  });
+
+  it("a budget-truncated run still yields a COMPLETE gating table that flags the partial gate (WR-04)", () => {
+    // Simulate the budget cutting the run off after the first 2 fixtures: the
+    // remaining 3 classes are emitted as budget-skipped rows (the scenario's WR-04
+    // behavior), so the gate shows all 5 classes and loudly flags that 3 were not
+    // measured — never presenting a 40%-complete corpus as the full gate.
+    const measured: DiagnosisVerdictRow[] = FIXTURE_IDS.slice(0, 2).map((id) => ({
+      fixtureId: id,
+      failureClass: FAILURE_CLASS[id],
+      totalTokens: 4200,
+      distinctToolCalls: 2,
+      distinctSourceReads: 1,
+      judgeVerdict: "fail" as const,
+      rootCauseReached: false,
+      surfacesUsed: ["obs_query", "packages/agent/src/example.ts"],
+    }));
+    const skipped = FIXTURE_IDS.slice(2).map((id) => budgetSkippedRow(id));
+    const rows = [...measured, ...skipped];
+
+    // All 5 classes present — the denominator is the full corpus, not rows-measured.
+    const table = buildGatingTable(rows);
+    expect(table).toHaveLength(FIXTURE_IDS.length);
+    expect(table.filter((r) => r.notMeasured)).toHaveLength(3);
+    // A budget-skipped class is never a TRIM-CANDIDATE.
+    expect(table.filter((r) => r.notMeasured).every((r) => !r.existingRpcSuffices)).toBe(true);
+
+    const md = renderGatingMarkdown(table);
+    // The partial-gate warning is loud and quantified.
+    expect(md).toMatch(/PARTIAL GATE/);
+    expect(md).toMatch(/3 class\(es\) were NOT measured/);
+    // Every fixture's failure class still appears as a row.
+    for (const id of FIXTURE_IDS) expect(md).toContain(FAILURE_CLASS[id]);
     expect(() => assertNoSecrets(md, "gating table")).not.toThrow();
   });
 });
@@ -500,9 +559,21 @@ describe.skipIf(!isLive)("DIAG-baseline RUN — fresh scripted agent on today's 
         ? "https://api.openai.com"
         : "https://api.openai.com"; // operator may point at any OpenAI-compatible endpoint
 
-      for (const id of FIXTURE_IDS) {
+      for (let i = 0; i < FIXTURE_IDS.length; i++) {
+        const id = FIXTURE_IDS[i]!;
         gov.declare("dollar", `diag-${id}`);
-        if (gov.check()) break; // SKIPPED(budget-exceeded)
+        if (gov.check()) {
+          // WR-04: the budget cut us off. DO NOT silently `break` and render a
+          // partial corpus as if complete — emit an explicit budget-skipped row for
+          // THIS fixture and every remaining one, so all FIXTURE_IDS classes always
+          // appear in the gating table with a clear "not measured" reason. The
+          // gating report renders these distinctly (never as a TRIM-CANDIDATE) and
+          // flags the partial gate in its summary.
+          for (let j = i; j < FIXTURE_IDS.length; j++) {
+            rows.push(budgetSkippedRow(FIXTURE_IDS[j]!));
+          }
+          break;
+        }
 
         const fx = loadFixture(join(FIXTURES_DIR, id));
         const readSource = makeReadSourceTool(repoRoot);
@@ -574,7 +645,10 @@ describe.skipIf(!isLive)("DIAG-baseline RUN — fresh scripted agent on today's 
       writeFileSync(join(ledgerDir, "gating-table.md"), md, "utf-8"); // the reorder/trim table
       // belt-and-suspenders sweep over rows + the rendered table (T-149-03-01).
       assertNoSecrets(JSON.stringify(rows) + md, "diagnosis baseline run");
-      expect(rows.length).toBeGreaterThan(0);
+      // WR-04: EVERY class must appear in the gate — measured or budget-skipped.
+      // The table must never present a partial corpus as the full gate, so the row
+      // count always equals the full fixture set (budget-skips fill the remainder).
+      expect(rows.length).toBe(FIXTURE_IDS.length);
     },
   );
 });

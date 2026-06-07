@@ -51,11 +51,32 @@ export interface GatingRow {
   /**
    * TRUE when the class was root-caused with 0 source reads AND <=1 distinct obs
    * call today — i.e. an existing RPC already suffices, so a downstream phase may
-   * be TRIMMED. FALSE when the judge skipped (inconclusive — never a trim).
+   * be TRIMMED. FALSE when the judge skipped (inconclusive — never a trim) or the
+   * class was budget-skipped (never measured — never a trim).
    */
   existingRpcSuffices: boolean;
-  /** Human-readable gate signal: TRIM-CANDIDATE | BUILD | INCONCLUSIVE. */
+  /**
+   * TRUE when the class was NEVER MEASURED because the cost budget cut it off
+   * (WR-04). A reader must be able to tell this apart from a measured-but-judge-
+   * skipped class — the gate is incomplete for this class, not inconclusive.
+   */
+  notMeasured: boolean;
+  /** Human-readable gate signal: NOT MEASURED | TRIM-CANDIDATE | BUILD | INCONCLUSIVE. */
   recommendation: string;
+}
+
+/**
+ * Marker placed in a {@link DiagnosisVerdictRow}'s `surfacesUsed` by the Stage-C RUN
+ * when a fixture was NEVER MEASURED because the cost budget cut it off (WR-04). A
+ * budget-skip is categorically different from a judge-skip (measured, no key): the
+ * class produced no data at all, so it must be rendered distinctly and must never be
+ * read as a measured-but-inconclusive result.
+ */
+export const BUDGET_SKIPPED_MARKER = "budget-skipped";
+
+/** True when a row was budget-skipped (never measured) rather than judge-skipped. */
+function isBudgetSkipped(row: DiagnosisVerdictRow): boolean {
+  return row.surfacesUsed.includes(BUDGET_SKIPPED_MARKER);
 }
 
 /**
@@ -67,19 +88,27 @@ export interface GatingRow {
  * surface (no source reads) in a single call.
  *
  * recommendation:
- *   - rootCauseReached === "skip"  → "INCONCLUSIVE (judge skipped — re-run with a key)"
- *   - existingRpcSuffices          → "TRIM-CANDIDATE: <class> is root-caused in <=1 call with 0 source reads today"
- *   - otherwise                    → "BUILD: <class> needs N source reads + M calls today"
+ *   - budget-skipped (never measured) → "NOT MEASURED (budget-skipped — raise COMIS_LIVE_BUDGET_USD)"
+ *   - rootCauseReached === "skip"      → "INCONCLUSIVE (judge skipped — re-run with a key)"
+ *   - existingRpcSuffices              → "TRIM-CANDIDATE: <class> is root-caused in <=1 call with 0 source reads today"
+ *   - otherwise                        → "BUILD: <class> needs N source reads + M calls today"
+ *
+ * A budget-skipped row is NEVER a TRIM-CANDIDATE (an unmeasured class cannot trim a
+ * downstream phase) — WR-04.
  */
 export function buildGatingTable(rows: DiagnosisVerdictRow[]): GatingRow[] {
   return rows.map((row) => {
+    const budgetSkipped = isBudgetSkipped(row);
     const existingRpcSuffices =
+      !budgetSkipped &&
       row.rootCauseReached === true &&
       row.distinctSourceReads === 0 &&
       row.distinctToolCalls <= 1;
 
     let recommendation: string;
-    if (row.rootCauseReached === "skip") {
+    if (budgetSkipped) {
+      recommendation = `NOT MEASURED (${row.failureClass} was budget-skipped — raise COMIS_LIVE_BUDGET_USD for a complete gate)`;
+    } else if (row.rootCauseReached === "skip") {
       recommendation = "INCONCLUSIVE (judge skipped — re-run with a key)";
     } else if (existingRpcSuffices) {
       recommendation = `TRIM-CANDIDATE: ${row.failureClass} is root-caused in <=1 call with 0 source reads today`;
@@ -95,6 +124,7 @@ export function buildGatingTable(rows: DiagnosisVerdictRow[]): GatingRow[] {
       totalTokens: row.totalTokens,
       rootCauseReached: row.rootCauseReached,
       existingRpcSuffices,
+      notMeasured: budgetSkipped,
       recommendation,
     };
   });
@@ -116,6 +146,8 @@ function reachedCell(reached: boolean | "skip"): string {
  */
 export function renderGatingMarkdown(table: GatingRow[]): string {
   const trimCandidates = table.filter((r) => r.existingRpcSuffices).length;
+  const notMeasured = table.filter((r) => r.notMeasured).length;
+  const measured = table.length - notMeasured;
 
   const lines: string[] = [];
   lines.push("# Diagnosis baseline — per-failure-class gating table");
@@ -124,7 +156,8 @@ export function renderGatingMarkdown(table: GatingRow[]): string {
     "The measure-first GATE for phases 150-155. A TRIM-CANDIDATE class is root-caused " +
       "from today's obs surface alone (0 source reads, <=1 call) — its downstream phase " +
       "may be trimmed. A BUILD class shows the source-read + call cost a new surface must " +
-      "drive to zero. INCONCLUSIVE = the judge was skipped (re-run with a key).",
+      "drive to zero. INCONCLUSIVE = the judge was skipped (re-run with a key). NOT MEASURED " +
+      "= the cost budget cut the class off before it ran (raise COMIS_LIVE_BUDGET_USD).",
   );
   lines.push("");
   lines.push(
@@ -144,6 +177,16 @@ export function renderGatingMarkdown(table: GatingRow[]): string {
     `**Summary:** ${trimCandidates} TRIM-CANDIDATE class(es) of ${table.length} — these flag a ` +
       "downstream phase (150-155) an existing RPC may already cover.",
   );
+  if (notMeasured > 0) {
+    // WR-04: a partial corpus must NOT be presented as the full gate. Surface the
+    // not-measured count loudly so the reorder/trim decision is not made on it.
+    lines.push("");
+    lines.push(
+      `**WARNING — PARTIAL GATE:** only ${measured} of ${table.length} class(es) were measured; ` +
+        `${notMeasured} class(es) were NOT measured (budget-skipped). Raise COMIS_LIVE_BUDGET_USD ` +
+        "and re-run for a complete gate before reordering/trimming phases 150-155.",
+    );
+  }
   lines.push("");
 
   const output = lines.join("\n");
