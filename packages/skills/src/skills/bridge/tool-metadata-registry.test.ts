@@ -909,36 +909,113 @@ describe("tool-metadata-registry -- failure detectors", () => {
   // web_search detector
   // -------------------------------------------------------------------------
 
-  it("web_search flags a rate-limit body as a resource failure", () => {
+  // A real web_search failure carries a top-level `error` MACHINE CODE plus a descriptive
+  // `message`/`failures` — the human-readable reason (rate limit / blocked) lives in
+  // message+failures, NOT in the stable `error` code. Detectors classify off those structured
+  // fields, never the per-result snippets.
+  it("web_search flags a rate-limit failure (structured error/message/failures) as a resource failure", () => {
     const detect = webSearchDetector()!;
-    expect(detect({ message: "Rate limit exceeded, retry later" }, false)).toEqual({ errorKind: "resource" });
-    expect(detect({ error: "quota exceeded for this key" }, false)).toEqual({ errorKind: "resource" });
-    expect(detect("Too Many Requests", false)).toEqual({ errorKind: "resource" });
+    expect(
+      detect(
+        {
+          error: "all_providers_failed",
+          message: "All web_search providers failed: brave: Rate limit exceeded, retry later",
+          failures: ["brave: rate limit exceeded"],
+        },
+        false,
+      ),
+    ).toEqual({ errorKind: "resource" });
+    expect(
+      detect(
+        {
+          error: "all_providers_failed",
+          message: "All web_search providers failed: brave: quota exceeded for this key",
+          failures: ["brave: quota exceeded for this key"],
+        },
+        false,
+      ),
+    ).toEqual({ errorKind: "resource" });
+    expect(
+      detect(
+        {
+          error: "all_providers_failed",
+          message: "All web_search providers failed: brave: Too Many Requests",
+          failures: ["brave: too many requests"],
+        },
+        false,
+      ),
+    ).toEqual({ errorKind: "resource" });
   });
 
-  it("web_search flags a blocked/forbidden body as a dependency failure", () => {
+  it("web_search flags a blocked/forbidden failure (structured fields) as a dependency failure", () => {
     const detect = webSearchDetector()!;
-    expect(detect({ status: "blocked by provider" }, false)).toEqual({ errorKind: "dependency" });
-    expect(detect({ message: "Forbidden" }, false)).toEqual({ errorKind: "dependency" });
-    expect(detect({ error: "provider error: upstream down" }, false)).toEqual({ errorKind: "dependency" });
+    expect(
+      detect(
+        {
+          error: "all_providers_failed",
+          message: "All web_search providers failed: brave: blocked by provider",
+          failures: ["brave: blocked by provider"],
+        },
+        false,
+      ),
+    ).toEqual({ errorKind: "dependency" });
+    expect(
+      detect(
+        { error: "all_providers_failed", message: "All web_search providers failed: brave: Forbidden" },
+        false,
+      ),
+    ).toEqual({ errorKind: "dependency" });
+    expect(
+      detect(
+        { error: "all_providers_failed", message: "All web_search providers failed: brave: provider error: upstream down" },
+        false,
+      ),
+    ).toEqual({ errorKind: "dependency" });
+    // A genuine top-level error with an unrecognised reason is STILL a real failure → dependency.
+    expect(detect({ error: "invalid_provider", message: 'Invalid provider "x". Valid options: brave' }, false)).toEqual({
+      errorKind: "dependency",
+    });
+  });
+
+  // REGRESSION (production session 678314278): a SUCCESSFUL web_search (results present, NO
+  // top-level `error`) whose snippets contain "rate limit"/"blocked"/"forbidden" as legitimate
+  // content must NOT be flagged. This FAILS on the body-substring detector.
+  it("web_search does NOT flag a successful results body whose snippet contains rate-limit/blocked/forbidden text", () => {
+    const detect = webSearchDetector()!;
+    expect(
+      detect(
+        {
+          provider: "brave",
+          query: "q",
+          results: [
+            { title: "t", url: "https://e.com", snippet: "explains rate limit and blocked and forbidden behavior" },
+          ],
+          count: 1,
+        },
+        false,
+      ),
+    ).toBe(false);
   });
 
   it("web_search returns false for a normal results body and when isError is already set", () => {
     const detect = webSearchDetector()!;
     expect(detect({ results: [{ title: "x", url: "https://example.com" }] }, false)).toBe(false);
     // SDK already flagged it — the detector defers (returns false, no double-flag).
-    expect(detect({ message: "rate limit exceeded" }, true)).toBe(false);
+    expect(
+      detect(
+        { error: "all_providers_failed", message: "All web_search providers failed: brave: rate limit exceeded" },
+        true,
+      ),
+    ).toBe(false);
   });
 
   it("web_search returns only valid closed-union ErrorKind members (never rate_limited)", () => {
     const detect = webSearchDetector()!;
-    for (const body of [
-      { message: "rate limit exceeded" },
-      { message: "too many requests" },
-      { message: "blocked" },
-      { message: "provider error" },
-    ]) {
-      const out = detect(body, false);
+    for (const reason of ["rate limit exceeded", "too many requests", "blocked", "provider error"]) {
+      const out = detect(
+        { error: "all_providers_failed", message: `All web_search providers failed: brave: ${reason}`, failures: [`brave: ${reason}`] },
+        false,
+      );
       expect(out).not.toBe(false);
       const kind = (out as { errorKind: string }).errorKind;
       expect(ERROR_KINDS.has(kind), `errorKind "${kind}" must be a closed-union member`).toBe(true);
@@ -950,35 +1027,88 @@ describe("tool-metadata-registry -- failure detectors", () => {
   // web_fetch detector
   // -------------------------------------------------------------------------
 
-  it("web_fetch flags a timeout body as a timeout failure", () => {
+  // A real web_fetch failure sets `error` (a descriptive string) and/or a numeric `status` >= 400.
+  // Timeout text lives in the `error` string; the HTTP code is in `status`.
+  it("web_fetch flags a timeout (error string / 408 / 504 status) as a timeout failure", () => {
     const detect = webFetchDetector()!;
-    expect(detect({ error: "request timed out after 30s" }, false)).toEqual({ errorKind: "timeout" });
-    expect(detect("Connection timeout", false)).toEqual({ errorKind: "timeout" });
+    expect(detect({ url: "https://e.com", error: "Fetch failed: request timed out after 30s" }, false)).toEqual({
+      errorKind: "timeout",
+    });
+    expect(detect({ url: "https://e.com", error: "Fetch failed: connection timeout" }, false)).toEqual({
+      errorKind: "timeout",
+    });
+    expect(detect({ url: "https://e.com", status: 504, error: "HTTP 504: Gateway Timeout" }, false)).toEqual({
+      errorKind: "timeout",
+    });
+    expect(detect({ url: "https://e.com", status: 408, error: "HTTP 408: Request Timeout" }, false)).toEqual({
+      errorKind: "timeout",
+    });
   });
 
-  it("web_fetch flags a blocked/403/forbidden body as a dependency failure", () => {
+  it("web_fetch flags a real HTTP/SSRF failure (status >= 400 or error string) as a dependency failure", () => {
     const detect = webFetchDetector()!;
-    expect(detect({ status: 403, body: "Forbidden" }, false)).toEqual({ errorKind: "dependency" });
-    expect(detect({ error: "connection refused" }, false)).toEqual({ errorKind: "dependency" });
-    expect(detect({ message: "request blocked by upstream" }, false)).toEqual({ errorKind: "dependency" });
+    expect(detect({ url: "https://e.com", status: 403, error: "HTTP 403: Forbidden" }, false)).toEqual({
+      errorKind: "dependency",
+    });
+    expect(detect({ url: "https://e.com", error: "SSRF blocked: private address" }, false)).toEqual({
+      errorKind: "dependency",
+    });
+    expect(detect({ url: "https://e.com", error: "Fetch failed: connection refused" }, false)).toEqual({
+      errorKind: "dependency",
+    });
+    // A 4xx/5xx status with no descriptive error is still a real failure.
+    expect(detect({ url: "https://e.com", status: 500 }, false)).toEqual({ errorKind: "dependency" });
+  });
+
+  // REGRESSION (production session 678314278): a SUCCESSFUL HTTP-200 fetch whose body text
+  // contains a price like "403.92..." or the words blocked/forbidden/timeout/connection refused
+  // as legitimate page CONTENT must NOT be flagged. These FAIL on the body-substring detector
+  // (the IBM share price 403.92999267578 contains "403" → mis-flagged dependency).
+  it("web_fetch does NOT flag a successful 200 body whose text contains a price like 403.92", () => {
+    const detect = webFetchDetector()!;
+    expect(
+      detect(
+        {
+          url: "https://finance.yahoo.com/quote/IBM",
+          status: 200,
+          extractor: "readability",
+          title: "IBM Stock Price",
+          length: 51234,
+          text: "MSFT ... IBM 403.92999267578 ... last close",
+        },
+        false,
+      ),
+    ).toBe(false);
+  });
+
+  it("web_fetch does NOT flag successful 200 bodies whose text contains blocked/forbidden/timeout/connection-refused as content", () => {
+    const detect = webFetchDetector()!;
+    for (const text of [
+      "This article explains how requests get blocked by firewalls.",
+      "HTTP 403 Forbidden errors and how to fix them — a tutorial.",
+      "When a request timed out, here is what happens next.",
+      "Troubleshooting a connection refused error in production.",
+    ]) {
+      expect(detect({ url: "https://e.com", status: 200, extractor: "readability", text }, false)).toBe(false);
+    }
   });
 
   it("web_fetch returns false for a normal HTML body and when isError is already set", () => {
     const detect = webFetchDetector()!;
-    expect(detect({ content: "<html><body>Hello world</body></html>" }, false)).toBe(false);
-    expect(detect("plain text content with no failure signal", false)).toBe(false);
-    expect(detect({ error: "request timed out" }, true)).toBe(false);
+    expect(detect({ url: "https://e.com", status: 200, text: "<html><body>Hello world</body></html>" }, false)).toBe(false);
+    expect(detect({ url: "https://e.com", status: 200, text: "plain text content with no failure signal" }, false)).toBe(false);
+    expect(detect({ url: "https://e.com", error: "Fetch failed: request timed out" }, true)).toBe(false);
   });
 
   it("web_fetch returns only valid closed-union ErrorKind members", () => {
     const detect = webFetchDetector()!;
-    for (const body of [
-      { message: "timed out" },
-      { message: "403 forbidden" },
-      { message: "connection refused" },
-      { message: "blocked" },
+    for (const error of [
+      "Fetch failed: timed out",
+      "HTTP 403: forbidden",
+      "Fetch failed: connection refused",
+      "SSRF blocked: private address",
     ]) {
-      const out = detect(body, false);
+      const out = detect({ url: "https://e.com", error }, false);
       expect(out).not.toBe(false);
       const kind = (out as { errorKind: string }).errorKind;
       expect(ERROR_KINDS.has(kind), `errorKind "${kind}" must be a closed-union member`).toBe(true);
