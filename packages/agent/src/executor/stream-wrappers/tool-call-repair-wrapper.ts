@@ -65,6 +65,18 @@ export function createToolCallRepairWrapper(
     return (model, context, options) => {
       const repairedMessages: Message[] = [];
 
+      // WR-04 (idempotency): the wrapper runs on the OUTGOING context on every
+      // stream call. Collect the toolCallIds that already have a toolResult so a
+      // second pass over the same history does NOT inject a duplicate synthetic
+      // validation-failed result for a tool call that was already answered.
+      const existingToolResultIds = new Set<string>();
+      for (const msg of context.messages) {
+        if (msg.role === "toolResult") {
+          const id = (msg as ToolResultMessage).toolCallId;
+          if (id !== undefined) existingToolResultIds.add(id);
+        }
+      }
+
       for (const msg of context.messages) {
         // Only inspect AssistantMessage items — ToolCall content lives here
         if (msg.role !== "assistant") {
@@ -119,27 +131,42 @@ export function createToolCallRepairWrapper(
           );
 
           modified = true;
-          // Synthesize a toolResult error for this tool call
-          const syntheticError: ToolResultMessage = {
-            role: "toolResult",
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            isError: true,
-            content: [
-              {
-                type: "text",
-                text: "Validation failed: tool arguments are not valid JSON and could not be repaired. Please emit valid JSON.",
-              },
-            ],
-            // Synthetic error message — timestamp is a sentinel; the message is transient
-            // and not persisted to the session store. Using the parent message timestamp
-            // ensures causal ordering without requiring a clock port injection.
-            timestamp: assistantMsg.timestamp ?? 0,
-          };
-          syntheticErrors.push(syntheticError);
 
-          // Return the original block unchanged (the synthetic error is added separately)
-          return block;
+          // WR-04 (well-formed assistant block): replace the raw string args with
+          // a safe empty object so the outgoing assistant message carries
+          // arguments as the object the SDK/provider serializer expects (a string
+          // may be rejected or silently mishandled). Replacing it also means a
+          // second pass over this history sees a parsed object (not a string) and
+          // will not re-detect / re-fail this same tool call.
+          const sanitizedBlock: ToolCall = { ...toolCall, arguments: {} };
+
+          // WR-04 (de-dup): only inject a synthetic toolResult if this tool call
+          // does not already have one in the history. Prevents duplicating the
+          // validation-failed message (and growing context) on every turn.
+          if (!existingToolResultIds.has(toolCall.id)) {
+            existingToolResultIds.add(toolCall.id);
+            const syntheticError: ToolResultMessage = {
+              role: "toolResult",
+              toolCallId: toolCall.id,
+              toolName: toolCall.name,
+              isError: true,
+              content: [
+                {
+                  type: "text",
+                  text: "Validation failed: tool arguments are not valid JSON and could not be repaired. Please emit valid JSON.",
+                },
+              ],
+              // Synthetic error message — timestamp is a sentinel; the message is transient
+              // and not persisted to the session store. Using the parent message timestamp
+              // ensures causal ordering without requiring a clock port injection.
+              timestamp: assistantMsg.timestamp ?? 0,
+            };
+            syntheticErrors.push(syntheticError);
+          }
+
+          // Return the sanitized block (string args replaced with {}); any
+          // synthetic error is appended after the assistant message below.
+          return sanitizedBlock;
         });
 
         if (modified) {

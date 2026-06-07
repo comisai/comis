@@ -139,6 +139,78 @@ describe("createToolCallRepairWrapper", () => {
     );
   });
 
+  it("WR-04: irreparable branch replaces the assistant block's string args with an empty object (well-formed)", () => {
+    const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
+    const wrappedFn = wrapper(base);
+
+    const toolCall = makeToolCall("exec", "not json at all <<<" as any);
+    const assistantMsg = makeAssistantMessage([toolCall]);
+    const ctx = makeContext([assistantMsg]);
+
+    wrappedFn({} as any, ctx, {} as any);
+
+    const capturedCtx = (base as any).mock.calls[0][1] as { messages: Message[] };
+    const outAssistant = capturedCtx.messages[0] as typeof assistantMsg;
+    const outBlock = outAssistant.content[0] as typeof toolCall;
+    // The string args MUST be replaced with a parsed object so the provider
+    // serializer never receives a raw string for ToolCall.arguments.
+    expect(typeof outBlock.arguments).toBe("object");
+    expect(outBlock.arguments).toEqual({});
+  });
+
+  it("WR-04 idempotency: a second pass over the wrapper output injects NO duplicate synthetic toolResult", () => {
+    const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
+
+    const toolCall = makeToolCall("exec", "not json at all <<<" as any);
+    const assistantMsg = makeAssistantMessage([toolCall]);
+
+    // First pass: produces assistant(sanitized args) + 1 synthetic toolResult.
+    const firstBase = createMockStreamFn();
+    wrapper(firstBase)({} as any, makeContext([assistantMsg]), {} as any);
+    const firstOut = (firstBase as any).mock.calls[0][1] as { messages: Message[] };
+    const firstSynthCount = firstOut.messages.filter(
+      (m) => m.role === "toolResult",
+    ).length;
+    expect(firstSynthCount).toBe(1);
+
+    // Second pass: feed the FIRST pass output back through a fresh wrapper.
+    const secondBase = createMockStreamFn();
+    wrapper(secondBase)({} as any, makeContext(firstOut.messages), {} as any);
+    const secondOut = (secondBase as any).mock.calls[0][1] as { messages: Message[] };
+
+    // Still exactly ONE synthetic toolResult — no duplication, no context growth.
+    const secondSynthCount = secondOut.messages.filter(
+      (m) => m.role === "toolResult",
+    ).length;
+    expect(secondSynthCount).toBe(1);
+    expect(secondOut.messages.length).toBe(firstOut.messages.length);
+  });
+
+  it("WR-04 de-dup: irreparable args with a pre-existing toolResult for that id inject NO new synthetic result", () => {
+    const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
+    const wrappedFn = wrapper(base);
+
+    const toolCall = makeToolCall("exec", "still not json <<<" as any, "tc-dup");
+    const assistantMsg = makeAssistantMessage([toolCall]);
+    // A toolResult for tc-dup already exists in history.
+    const existingResult: Message = {
+      role: "toolResult",
+      toolCallId: "tc-dup",
+      toolName: "exec",
+      isError: true,
+      content: [{ type: "text", text: "Validation failed: prior attempt" }],
+      timestamp: 0,
+    } as any;
+    const ctx = makeContext([assistantMsg, existingResult]);
+
+    wrappedFn({} as any, ctx, {} as any);
+
+    const capturedCtx = (base as any).mock.calls[0][1] as { messages: Message[] };
+    const toolResults = capturedCtx.messages.filter((m) => m.role === "toolResult");
+    // Only the pre-existing toolResult remains — no second one was injected.
+    expect(toolResults.length).toBe(1);
+  });
+
   it("function name is toolCallRepairWrapper (for wrapper chain logging)", () => {
     const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
     expect(wrapper.name).toBe("toolCallRepairWrapper");
