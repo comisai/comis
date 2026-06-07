@@ -29,6 +29,10 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
 import type { ContextLayer, TokenBudget, CompactionLayerDeps } from "./types.js";
+import type { CapabilityClass } from "../executor/model-profile.js";
+import { resolveCompactionStrategy } from "./compaction-capability-router.js";
+import { isSecurityRelevantMessage } from "./security-context-pinner.js";
+import type { SecurityPinMarkers } from "./security-context-pinner.js";
 import {
   COMPACTION_TRIGGER_PERCENT,
   COMPACTION_MAX_RETRIES,
@@ -55,6 +59,16 @@ export interface CompactionLayerConfig {
   /** Number of user-turn cycles at conversation head to preserve during compaction.
    *  0 = old behavior (tail-only). */
   compactionPrefixAnchorTurns: number;
+  // C4: capability-routed compaction
+  /** The agent's capability class (from ModelProfile). Defaults to "frontier" (unchanged behavior). */
+  capabilityClass?: CapabilityClass;
+  /** Route small/nano to eviction instead of LLM summarization. Defaults to true. */
+  preferEvictionByCapability?: boolean;
+  /** If set, small/nano use this stronger model for summarization instead of eviction. */
+  strongerSummarizerModel?: string;
+  // S4: security context pinning
+  /** Security pin markers for identifying messages that must never be evicted. */
+  securityMarkers?: SecurityPinMarkers;
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +453,76 @@ export function createLlmCompactionLayer(
           return messages;
         }
 
+        // S4: filter security-pinned messages out of the middle zone (move to head).
+        // Must run before the capability gate so pinnedCount is accurate for the event.
+        let evictableMiddle = middleMessages;
+        let securityPinnedCount = 0;
+        if (config.securityMarkers) {
+          const pinned: AgentMessage[] = [];
+          const evictable: AgentMessage[] = [];
+          for (const m of middleMessages) {
+            /* eslint-disable @typescript-eslint/no-explicit-any */
+            if (isSecurityRelevantMessage(m as any, config.securityMarkers!)) {
+              pinned.push(m);
+            } else {
+              evictable.push(m);
+            }
+            /* eslint-enable @typescript-eslint/no-explicit-any */
+          }
+          securityPinnedCount = pinned.length;
+          evictableMiddle = evictable;
+        }
+
+        // C4: resolve the compaction strategy based on capability class.
+        const compactionStrategy = resolveCompactionStrategy(
+          config.capabilityClass ?? "frontier",
+          config.preferEvictionByCapability ?? true,
+          config.strongerSummarizerModel ?? "",
+        );
+
+        if (compactionStrategy === "eviction" || compactionStrategy === "deterministic") {
+          // Small/nano: skip LLM call — use deterministic Level-3 fallback.
+          deps.logger.warn(
+            {
+              module: "llm-compaction",
+              hint: `C4: capabilityClass=${config.capabilityClass ?? "frontier"} prefers eviction over LLM summarization — using deterministic fallback. Configure contextEngine.compaction.strongerSummarizerModel for LLM-quality summaries.`,
+              errorKind: "config" as const,
+              capabilityClass: config.capabilityClass ?? "frontier",
+              strategy: compactionStrategy,
+            },
+            "C4: compaction capability gate — eviction selected",
+          );
+          // Emit context:compaction_routed event
+          if (deps.eventBus && deps.agentId && deps.sessionKey) {
+            deps.eventBus.emit("context:compaction_routed", {
+              agentId: deps.agentId,
+              sessionKey: deps.sessionKey,
+              capabilityClass: config.capabilityClass ?? "frontier",
+              strategy: compactionStrategy,
+              layer: "pipeline",
+              securityPinnedCount,
+              timestamp: Date.now(),
+            });
+          }
+          // Return messages unchanged (eviction: no summarization, no structural change).
+          // Reset cooldown so we re-evaluate next turn (the capability gate may change).
+          turnsSinceLastCompaction = 0;
+          return messages;
+        }
+
+        // Emit compaction_routed for llm/strong-summarizer paths too (for observability)
+        if (deps.eventBus && deps.agentId && deps.sessionKey) {
+          deps.eventBus.emit("context:compaction_routed", {
+            agentId: deps.agentId,
+            sessionKey: deps.sessionKey,
+            capabilityClass: config.capabilityClass ?? "frontier",
+            strategy: compactionStrategy,
+            layer: "pipeline",
+            securityPinnedCount,
+            timestamp: Date.now(),
+          });
+        }
+
         // Trigger log fires only when compaction will actually run, so log
         // volume reflects real compaction work (not infeasibility re-checks).
         deps.logger.warn(
@@ -458,9 +542,10 @@ export function createLlmCompactionLayer(
             : "LLM compaction triggered: context exceeds 85% threshold",
         );
 
-        // Step 7: Summarize ONLY the middle zone (do NOT pass head or tail to generateSummary)
+        // Step 7: Summarize ONLY the middle zone (do NOT pass head or tail to generateSummary).
+        // Use evictableMiddle (security-pinned messages already excluded via S4 filtering above).
         const compactionResult = await compactWithFallback(
-          middleMessages,
+          evictableMiddle,
           model,
           apiKey,
           budget.outputReserveTokens,
@@ -501,7 +586,8 @@ export function createLlmCompactionLayer(
             originalMessages: messages.length,
             keptHeadMessages: headMessages.length,
             keptTailMessages: tailMessages.length,
-            middleSummarized: middleMessages.length,
+            middleSummarized: evictableMiddle.length,
+            securityPinnedCount,
           },
           "LLM compaction complete",
         );

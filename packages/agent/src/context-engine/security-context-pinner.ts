@@ -32,5 +32,42 @@ export function isSecurityRelevantMessage(
   msg: { content?: unknown; role?: string },
   markers: SecurityPinMarkers,
 ): boolean {
-  throw new Error("isSecurityRelevantMessage: not yet implemented (Plan 05)");
+  // Fail-closed: no content → treat as security-relevant
+  if (msg.content === undefined || msg.content === null) return true;
+
+  const text = extractText(msg.content);
+
+  // Fail-closed: empty text → pin
+  if (text.length === 0) return true;
+
+  // Check each marker
+  if (markers.canaryToken.length > 0 && text.includes(markers.canaryToken)) return true;
+  if (markers.contentDelimiter.length > 0 && text.includes(markers.contentDelimiter)) return true;
+  if (
+    markers.safetyReinforcementSnippet &&
+    markers.safetyReinforcementSnippet.length > 0 &&
+    text.includes(markers.safetyReinforcementSnippet)
+  ) return true;
+
+  return false;
+}
+
+/** Extract plain text from various message content shapes (string, array of blocks). */
+function extractText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => {
+        if (typeof block === "string") return block;
+        if (block !== null && typeof block === "object") {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const b = block as any;
+          if (typeof b.text === "string") return b.text;
+          if (typeof b.content === "string") return b.content;
+        }
+        return "";
+      })
+      .join(" ");
+  }
+  return String(content);
 }

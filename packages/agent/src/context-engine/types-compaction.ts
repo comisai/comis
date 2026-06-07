@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { ComisLogger } from "@comis/core";
+import type { ComisLogger, TypedEventBus } from "@comis/core";
 import type { TokenAnchor } from "./types-anchor.js";
 
 // ---------------------------------------------------------------------------
@@ -36,6 +36,12 @@ export interface CompactionLayerDeps {
   /** Optional getter for the API-grounded token anchor.
    *  When provided, compaction threshold check uses anchor + delta instead of pure char estimation. */
   getTokenAnchor?: () => TokenAnchor | null;
+  /** Optional event bus for emitting context:compaction_routed (C4/S4). */
+  eventBus?: TypedEventBus;
+  /** Optional agent id for context:compaction_routed event payload. */
+  agentId?: string;
+  /** Optional session key for context:compaction_routed event payload. */
+  sessionKey?: string;
 }
 
 /**
