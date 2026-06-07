@@ -217,7 +217,21 @@ function extractMessageContent(msg: unknown): string {
   if (!msg || typeof msg !== "object") return "";
   const m = msg as Record<string, unknown>;
   const role = m.role as string ?? "unknown";
-  const content = typeof m.content === "string" ? m.content : "";
+  // Modern message content is frequently an array of blocks
+  // ([{type:"text",text:"..."}, {type:"tool_use",...}]). Concatenate the text
+  // blocks (and skip non-text blocks) instead of collapsing the whole turn to
+  // "[role]: " — otherwise the extraction LLM silently sees a biased subset
+  // (string-only turns), so memories are extracted from an incomplete picture
+  // (WR-04). Mirrors the extractResponseText helper below.
+  let content = "";
+  if (typeof m.content === "string") {
+    content = m.content;
+  } else if (Array.isArray(m.content)) {
+    content = m.content
+      .filter((b) => (b as { type?: string } | null)?.type === "text")
+      .map((b) => (b as { text?: string }).text ?? "")
+      .join(" ");
+  }
   return `[${role}]: ${content}`;
 }
 
