@@ -18,6 +18,13 @@ export interface SecurityPinMarkers {
   contentDelimiter: string;
   /** Safety reinforcement text snippet (first 40 chars; substring match). */
   safetyReinforcementSnippet?: string;
+  /**
+   * Sender-trust section prefix for messages injected by buildSenderTrustSection
+   * (canonical value: "## Authorized Senders"). When set, messages containing
+   * this prefix are pinned — the trust table must survive compaction so the model
+   * always knows which senders are authorized. S4: one of the four pinned categories.
+   */
+  senderTrustPrefix?: string;
 }
 
 /**
@@ -47,6 +54,11 @@ export function isSecurityRelevantMessage(
     markers.safetyReinforcementSnippet &&
     markers.safetyReinforcementSnippet.length > 0 &&
     text.includes(markers.safetyReinforcementSnippet)
+  ) return true;
+  if (
+    markers.senderTrustPrefix &&
+    markers.senderTrustPrefix.length > 0 &&
+    text.includes(markers.senderTrustPrefix)
   ) return true;
 
   return false;
