@@ -7,10 +7,20 @@
  * argument text) and attempts shape-only repair via repairToolCallJSON before
  * the message reaches the tool executor.
  *
- * Also intercepts ToolResultMessage items with isError===true that contain
- * an "irreparable tool-call JSON" error indicator and reformats them with a
- * "Validation failed" prefix so the PARAMETER_VALIDATION_TAGS carve-out in
- * tool-retry-breaker.ts prevents a breaker trip.
+ * When repair fails ("irreparable"), the wrapper injects a synthetic
+ * ToolResultMessage with a "Validation failed: ..." prefix into the outgoing
+ * context so the MODEL sees a well-formed error and self-corrects by re-emitting
+ * valid JSON on its next turn.
+ *
+ * WR-03: this synthetic toolResult does NOT interact with ToolRetryBreaker.
+ * The breaker's counters are driven exclusively by real tool-execution events
+ * in pi-event-bridge.ts (ToolRetryBreaker.recordResult), not by messages a
+ * StreamFn wrapper injects into context.messages. Moreover, unparseable args
+ * fail BEFORE any tool executes, so no tool-execution event is emitted and the
+ * breaker is never involved on this path at all. The "Validation failed" prefix
+ * exists only to give the model a clean, recognizable self-correction nudge — it
+ * is not a PARAMETER_VALIDATION_TAGS breaker carve-out (there is nothing to
+ * carve out, because the breaker never sees this turn).
  *
  * S3 INVARIANT: repair is shape-only. Repaired args flow through the EXISTING
  * downstream exec-security gates (validateExecCommand for exec tools) — those
@@ -18,10 +28,7 @@
  *
  * Placement: BEFORE validationErrorFormatter in the stream wrapper chain
  * (executor-stream-setup.ts wrappers array). When repair succeeds, the
- * corrected message continues normally. When repair fails ("irreparable"),
- * the wrapper converts the offending ToolCall to a synthetic toolResult error
- * with a "Validation failed: ..." prefix so the PARAMETER_VALIDATION_TAGS
- * carve-out prevents a breaker trip.
+ * corrected message continues normally.
  *
  * @module
  */
@@ -41,9 +48,11 @@ import { repairToolCallJSON } from "../tool-call-repair.js";
  * is a string despite being typed as Record<string, any>), this wrapper:
  * - Attempts structural repair via repairToolCallJSON
  * - On success: replaces the string with the parsed object (value-preserving)
- * - On failure: converts the ToolCall into a synthetic ToolResultMessage error
- *   with a "Validation failed" prefix → PARAMETER_VALIDATION_TAGS carve-out →
- *   no breaker trip
+ * - On failure: injects a synthetic ToolResultMessage error with a "Validation
+ *   failed" prefix so the model self-corrects on its next turn. (WR-03: this
+ *   does NOT touch ToolRetryBreaker — the breaker is driven by real
+ *   tool-execution events in pi-event-bridge.ts, and unparseable args never
+ *   reach tool execution, so the breaker is uninvolved on this path.)
  *
  * @param modelProfile - ModelProfile for the current execution (supportsStructuredOutput flag)
  * @param logger - Logger for debug/warn output
@@ -93,10 +102,12 @@ export function createToolCallRepairWrapper(
             return { ...toolCall, arguments: repairResult.value as Record<string, unknown> };
           }
 
-          // Irreparable — produce a synthetic ToolResultMessage error so the
-          // validationErrorFormatter and breaker carve-out see a well-formed error.
-          // "Validation failed" prefix → extractErrorTag → "validation_failed"
-          // → PARAMETER_VALIDATION_TAGS carve-out → no breaker increment.
+          // Irreparable — inject a synthetic ToolResultMessage error so the model
+          // sees a well-formed validation error and self-corrects on its next
+          // turn. WR-03: this message is context for the MODEL only; it does not
+          // reach ToolRetryBreaker (counters come from real tool-execution events
+          // in pi-event-bridge.ts), and unparseable args never trigger a tool
+          // execution, so the breaker is not involved on this path.
           logger.warn(
             {
               submodule: "tool-call-repair-wrapper",
