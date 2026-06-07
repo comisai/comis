@@ -1084,6 +1084,28 @@ const sectionMeta = [
             </div>
           </div>
         </div>
+
+        <!-- In their own words (verbatim from OpenClaw's SECURITY.md) -->
+        <div class="mt-12 max-w-3xl mx-auto">
+          <p
+            class="text-xs font-semibold text-teal uppercase tracking-widest mb-4 text-center"
+          >
+            OpenClaw, in their own words
+          </p>
+          <blockquote
+            class="border-l-2 border-teal/40 pl-5 text-lg text-muted-light italic leading-relaxed"
+          >
+            A &ldquo;personal assistant&rdquo; (one trusted operator, potentially
+            many agents), not a &ldquo;shared multi-tenant bus.&rdquo; The exec
+            sandbox is opt-in and off by default, and prompt injection is out of
+            scope absent a boundary bypass.
+          </blockquote>
+          <p class="text-sm text-muted mt-3">
+            — OpenClaw <code class="text-muted-light">SECURITY.md</code>. Honest
+            engineering, and a different design center from Comis — not a knock on
+            either project.
+          </p>
+        </div>
       </div>
     </section>
 
@@ -1160,6 +1182,30 @@ const sectionMeta = [
       </div>
     </section>
 
+    <!-- Choose honestly -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-6">
+          Choose honestly
+        </h2>
+        <p class="text-muted-light text-lg leading-relaxed">
+          These are different tools with different design centers, and both are
+          excellent at what they set out to do. If you want a <span
+            class="font-semibold text-white">personal assistant</span
+          > with <span class="font-semibold text-white"
+            >native mobile &amp; desktop apps</span
+          >, <span class="font-semibold text-white">voice wake</span>, and the
+          <span class="font-semibold text-white">widest channel list</span> in
+          the field, <span class="font-semibold text-teal">OpenClaw is excellent</span>
+          — that's its design center, by its own documentation. If you want an
+          agent platform you can hand to your team, your family, or your company —
+          multi-tenant by design, with the sandbox on by default, keys the agent
+          can never read, and every action reconstructable from the logs alone —
+          <span class="font-semibold text-coral">that's Comis</span>.
+        </p>
+      </div>
+    </section>
+
     <!-- Methodology note -->
     <section class="px-6 pb-8">
       <div class="max-w-3xl mx-auto text-center">
@@ -1184,12 +1230,18 @@ const sectionMeta = [
 
         <div class="flex flex-wrap gap-4 justify-center">
           <a
-            href="https://docs.comis.ai"
-            rel="noopener noreferrer"
-            target="_blank"
+            href="/#quick-start"
             class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg"
           >
             Get Started
+          </a>
+          <a
+            href="https://docs.comis.ai"
+            rel="noopener noreferrer"
+            target="_blank"
+            class="inline-flex items-center justify-center px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10"
+          >
+            Read the docs
           </a>
           <a
             href="https://github.com/comisai/comis"
