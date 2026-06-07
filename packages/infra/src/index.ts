@@ -8,7 +8,6 @@
 
 // Logging (Pino logger factory with credential redaction, audit level)
 export { createLogger } from "./logging/index.js";
-export { fingerprint } from "./logging/index.js";
 export type { LoggerOptions, ComisLogger } from "./logging/index.js";
 export type { LogFields, ErrorKind } from "@comis/core";
 export { isValidLogLevel, VALID_LOG_LEVELS } from "@comis/core";
