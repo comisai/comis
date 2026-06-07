@@ -364,4 +364,63 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(bounded.breakerTimeline.length).toBeLessThan(3000);
     expect(bounded.offloads.length).toBeLessThan(3000);
   });
+
+  // ------------------------------------------------------------------------
+  // WR-03 — report-level free-text scalar fields (channel.id, agentId, traceId,
+  // endReason) and toolStats KEYS must go through the same > MAX_INLINE_STRING
+  // → digest sweep, not rely solely on the 32 KB structural floor. channel.id
+  // in particular is channel/peer-derived (attacker-influenced).
+  // ------------------------------------------------------------------------
+
+  it("digests an oversized channel.id rather than emitting it verbatim (WR-03)", () => {
+    const huge = "c".repeat(32 * 1024); // a 32 KB channel id (peer-derived)
+    const report = makeReport({ channel: { type: "peer", id: huge } });
+    const bounded = boundIncidentReport(report, "full");
+    expect(bounded.channel.id.length).toBeLessThanOrEqual(256);
+    expect(JSON.stringify(bounded)).not.toContain("c".repeat(300));
+    expect(bounded.truncations.some((t) => t.field === "channel.id")).toBe(true);
+  });
+
+  it("digests oversized agentId / traceId / endReason free-text fields (WR-03)", () => {
+    const huge = "h".repeat(1000); // > MAX_INLINE_STRING (256)
+    const report = makeReport({
+      agentId: huge,
+      traceId: huge,
+      outcome: { endReason: huge, degraded: true, severity: "degraded" },
+    });
+    const bounded = boundIncidentReport(report, "full");
+    expect(bounded.agentId.length).toBeLessThanOrEqual(256);
+    expect(bounded.traceId.length).toBeLessThanOrEqual(256);
+    expect(bounded.outcome.endReason.length).toBeLessThanOrEqual(256);
+    // Each collapse is recorded in the ledger.
+    expect(bounded.truncations.some((t) => t.field === "agentId")).toBe(true);
+    expect(bounded.truncations.some((t) => t.field === "traceId")).toBe(true);
+    expect(bounded.truncations.some((t) => t.field === "outcome.endReason")).toBe(true);
+  });
+
+  it("digests an oversized toolStats KEY (tool name) rather than emitting it raw (WR-03)", () => {
+    const hugeTool = "t".repeat(2000);
+    const report = makeReport({
+      toolStats: { [hugeTool]: { ok: 1, failed: 2, topErrorKind: "dependency" } },
+    });
+    const bounded = boundIncidentReport(report, "full");
+    // No raw tool-name key longer than the cap survives in the serialized form.
+    expect(JSON.stringify(bounded)).not.toContain("t".repeat(300));
+    for (const key of Object.keys(bounded.toolStats)) {
+      expect(key.length).toBeLessThanOrEqual(256 + 12); // digest-replaced key
+    }
+    expect(bounded.truncations.some((t) => /toolStats/.test(t.field))).toBe(true);
+  });
+
+  it("leaves normal-length free-text fields untouched (no spurious WR-03 truncations)", () => {
+    const report = makeReport(); // small channel.id, agentId, traceId, endReason
+    const bounded = boundIncidentReport(report, "summary");
+    expect(bounded.channel.id).toBe("678314278");
+    expect(bounded.agentId).toBe("test-agent");
+    expect(
+      bounded.truncations.some((t) =>
+        ["channel.id", "channel.type", "agentId", "traceId", "outcome.endReason"].includes(t.field),
+      ),
+    ).toBe(false);
+  });
 });
