@@ -3242,8 +3242,8 @@ describe("PiExecutor", () => {
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      // +1 for ttlGuard wrapper (was 5, now 6), +1 for stubFilterInjector (now 7)
-      expect(composedLog![0].wrapperCount).toBe(7);
+      // +1 for ttlGuard, +1 for toolCallRepairWrapper (L3 Phase 155-02), +1 for stubFilterInjector (now 8)
+      expect(composedLog![0].wrapperCount).toBe(8);
     });
 
     it("adds the api-payload trace wrapper when tracing.enabled is true", async () => {
@@ -3274,13 +3274,13 @@ describe("PiExecutor", () => {
       expect(traceLog![0].apiPayloadPath).toContain("/tmp/test-traces/");
       expect(traceLog![0].apiPayloadPath).toContain(".api-payload.jsonl");
 
-      // Should have 8 wrappers applied (7 base + 1 api-payload trace)
+      // Should have 9 wrappers applied (8 base + 1 api-payload trace, L3 Phase 155-02 added toolCallRepairWrapper)
       const debugCalls = (deps.logger.debug as Mock).mock.calls;
       const composedLog = debugCalls.find(
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      expect(composedLog![0].wrapperCount).toBe(8);
+      expect(composedLog![0].wrapperCount).toBe(9);
     });
 
     it("trace wrappers are positioned after requestBodyInjector in chain", async () => {
@@ -3296,11 +3296,10 @@ describe("PiExecutor", () => {
 
       // Verify wrapper names from the summary log.
       // wrapperNames array order matches the wrappers array (outermost first):
-      // ttlGuard, validationErrorFormatter, toolResultSizeBouncer, turnResultBudget, configResolver, requestBodyInjector, cacheTraceWriter, apiPayloadTraceWriter
-      // (renamed providerParamInjector -> configResolver, cacheBreakpointInjector -> requestBodyInjector)
-      // (added validationErrorFormatter as outermost wrapper)
-      // (added turnResultBudget after toolResultSizeBouncer)
-      // (added ttlGuard as outermost wrapper before validationErrorFormatter)
+      // ttlGuard, toolCallRepairWrapper (L3 Phase 155-02), validationErrorFormatter,
+      //   toolResultSizeBouncer, turnResultBudget, configResolver, requestBodyInjector,
+      //   cacheTraceWriter, apiPayloadTraceWriter
+      // (added toolCallRepairWrapper between ttlGuard and validationErrorFormatter)
       const debugCalls = (deps.logger.debug as Mock).mock.calls;
       const composedLog = debugCalls.find(
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
@@ -3313,6 +3312,7 @@ describe("PiExecutor", () => {
       // `diagnostics.cacheTrace.enabled` (not set in this test).
       expect(wrapperNames).toEqual([
         "ttlGuard",
+        "toolCallRepairWrapper",
         "validationErrorFormatter",
         "toolResultSizeBouncer",
         "turnResultBudget",
@@ -3347,8 +3347,8 @@ describe("PiExecutor", () => {
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      // +1 for ttlGuard wrapper (was 5, now 6), +1 for stubFilterInjector (now 7)
-      expect(composedLog![0].wrapperCount).toBe(7);
+      // +1 for ttlGuard, +1 for toolCallRepairWrapper (L3 Phase 155-02), +1 for stubFilterInjector (now 8)
+      expect(composedLog![0].wrapperCount).toBe(8);
     });
 
     it("passes sessionId (formattedKey) to the api-payload trace wrapper", async () => {

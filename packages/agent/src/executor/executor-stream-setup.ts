@@ -47,8 +47,10 @@ import { buildCacheTraceWrapper } from "@comis/observability";
 import type { CacheTrace } from "@comis/observability";
 import type { TruncationSummary } from "./stream-wrappers/tool-result-size-bouncer.js";
 import type { TurnBudgetSummary } from "./stream-wrappers/turn-result-budget-wrapper.js";
+import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
 import type { CapabilityClass, ModelProfile } from "./model-profile.js";
 import { createStubFilterInjector } from "./stream-wrappers/stub-filter-injector.js";
+import { createToolCallRepairWrapper } from "./stream-wrappers/tool-call-repair-wrapper.js";
 import { computeFeatureFlagHash } from "./prompt-assembly.js";
 import { createTtlGuard, getElapsedSinceLastResponse, getLastResponseTs } from "./ttl-guard.js";
 import { isAnthropicFamily, isGoogleFamily } from "../provider/capabilities.js";
@@ -254,8 +256,9 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
   const capturedCacheRetention = getExecutionCacheRetention();
 
   // Wrapper chain order (outermost first):
-  // ttlGuard -> validationErrorFormatter -> toolResultSizeBouncer -> turnResultBudget ->
-  //   configResolver -> requestBodyInjector (Anthropic) -> geminiCacheInjector (Google) -> [traceWriters]
+  // ttlGuard -> [L3] toolCallRepairWrapper -> validationErrorFormatter -> toolResultSizeBouncer ->
+  //   turnResultBudget -> configResolver -> requestBodyInjector (Anthropic) ->
+  //   geminiCacheInjector (Google) -> [traceWriters]
 
   // TTL guard is outermost wrapper
   const onTtlExpiry = () => {
@@ -281,6 +284,12 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
       logger: deps.logger,
       clock: deps.clock,
     }),
+    // L3/S3 (Phase 155-02): shape-only tool-call JSON repair inserted BEFORE
+    // validationErrorFormatter so near-miss args are repaired then re-validated
+    // by the existing downstream gates (validateExecCommand for exec tools).
+    // Irreparable args produce "Validation failed" prefix → PARAMETER_VALIDATION_TAGS
+    // carve-out → no breaker trip. Uses modelProfile for supportsStructuredOutput gate.
+    createToolCallRepairWrapper(modelProfile ?? FAIL_CLOSED_PROFILE, deps.logger),
     validationErrorFormatter,
     bouncerWrapper,
     turnBudgetWrapper,
