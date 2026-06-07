@@ -230,7 +230,7 @@ Plans:
 - [x] 155-03-PLAN.md — L4/S7 vision untrusted-flag + L5 resolveMaxOutputTokens main path (TDD)
 - [ ] 155-04-PLAN.md (04a) — O1/O2 dag-repair-loop + dag-templates in agent package; no daemon import (TDD)
 - [x] 155-04b-PLAN.md — O3 capabilityClass routing wired in graph-helpers.ts + graph-mutate.ts; async reprompt stub deferred to Phase 157 (TDD)
-- [ ] 155-05-PLAN.md — L6 harness annotation + docs per-platform MLX/GGUF recommendation
+- [x] 155-05-PLAN.md — L6 harness annotation + docs per-platform MLX/GGUF recommendation
 
 ---
 
@@ -278,7 +278,7 @@ Plans:
 | 152. CAPACITY + PROMPT-SECURITY (C, S) | 5/5 | Complete   | 2026-06-07 |
 | 153. RELIABILITY SPINE + memory-security (R, S) | 4/4 | Complete    | 2026-06-07 |
 | 154. VERIFICATION + critic isolation (R, S) | 4/4 | Complete    | 2026-06-07 |
-| 155. LOCAL + VISION + ORCH + repair-security (L, O, S) | 5/6 | In Progress|  |
+| 155. LOCAL + VISION + ORCH + repair-security (L, O, S) | 6/6 | Complete   | 2026-06-07 |
 | 156. ESCALATE + egress governance (E, S) *(optional)* | 0/TBD | Not started | - |
 | 157. RE-PROVE + GA (M, D) | 0/TBD | Not started | - |
 

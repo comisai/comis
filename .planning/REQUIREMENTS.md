@@ -65,7 +65,7 @@ Each maps to exactly one roadmap phase (see Traceability). Phases use the projec
 - [x] **L3**: A **tool-call repair** seam normalizes near-miss tool JSON (constrained decoding where `supportsStructuredOutput`; lenient parse+repair otherwise), feeding the existing validation formatter + retry breaker (validation carve-out preserved; S3 governs).
 - [x] **L4**: **Vision** is declared (`input:["text","image"]`) for qwen3.6 27b/35b and **verified** by an integration test (real Ollama image round-trip — wire-proven 2026-06-07); a text-only/MLX profile cleanly skips image attach (no silent drop without a WARN).
 - [x] **L5**: **Reasoning-budget aware**: `reasoningStyle="native"` profiles size `maxOutputTokens` so `reasoning_content` does not starve the visible answer; the critic/planner account for it; a test pins the sizing.
-- [ ] **L6**: **MLX vs GGUF perf** measured by the harness (latency/throughput per scenario); docs recommend the faster local runtime per platform; no Comis-level code distinction required (both opaque Ollama tags).
+- [x] **L6**: **MLX vs GGUF perf** measured by the harness (latency/throughput per scenario); docs recommend the faster local runtime per platform; no Comis-level code distinction required (both opaque Ollama tags).
 - [x] **L7**: The prompt-cache multi-block split is **confirmed bypassed** for non-caching providers (verified: Ollama `providerFamily="default"` → cache-breakpoint orchestration skipped, zero overhead) and Ollama **keep-alive / KV-cache** is exploited for cross-turn prompt reuse; a test pins the no-cache-overhead invariant and that the bypass never drops a security section.
 
 ### Orchestration (O) — NL→DAG fleets for small models *(the one measured comprehension cliff — §7.3)*
@@ -132,7 +132,7 @@ Explicitly excluded (design §4, §11 non-goals). Documented to prevent scope cr
 | L3 | Phase 155 | Complete |
 | L4 | Phase 155 | Complete |
 | L5 | Phase 155 | Complete |
-| L6 | Phase 155 | Pending |
+| L6 | Phase 155 | Complete |
 | L7 | Phase 155 | Complete |
 | O1 | Phase 155 | Complete |
 | O2 | Phase 155 | Complete |
