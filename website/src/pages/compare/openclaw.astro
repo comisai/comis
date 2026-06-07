@@ -73,7 +73,7 @@ const securityRows: Row[] = [
   {
     label: "Secrets management",
     comis:
-      "SecretManager with frozen snapshots. ESLint-banned process.env access. AES-256-GCM-ready encryption (HKDF-SHA256), 18 log-sanitizer patterns plus Pino structured field redaction.",
+      `SecretManager with frozen snapshots. ESLint-banned process.env access. AES-256-GCM-ready encryption (HKDF-SHA256), a ${SECURITY.contentScannerRules}-rule skill content scanner (exec injection, exfiltration, XML breakout) plus Pino structured field redaction.`,
     openclaw:
       "${VAR_NAME} template references with SecretRef type (env/file/exec sources). No secret-specific lint rules.",
     verdict: "comis",
