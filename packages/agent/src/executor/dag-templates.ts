@@ -203,9 +203,19 @@ export function fillDagTemplate(
   // Serialize to JSON, perform the replacement pass, then parse back.
   // Note: SLOT_REPLACE_RE is global — reset lastIndex between uses by
   // always using it only within .replace() which handles index internally.
+  //
+  // CR-03: slot values come straight from a weak model and may contain JSON
+  // metacharacters (double-quote, backslash, newline). Substituting them RAW
+  // into the serialized JSON string would corrupt the structure and make the
+  // JSON.parse below throw an uncaught SyntaxError out of this Result-returning
+  // function. Escape each value via JSON.stringify(value).slice(1, -1) so it is
+  // inserted as a valid JSON string body (the surrounding quotes already exist
+  // in `serialized`), keeping the structure well-formed regardless of content.
   const serialized = JSON.stringify(cloned);
   const replaced = serialized.replace(SLOT_REPLACE_RE, (_, k: string) => {
-    return vars[k] !== undefined ? vars[k] : `\${${k}}`;
+    if (vars[k] === undefined) return `\${${k}}`;
+    // Escape for safe insertion inside an existing JSON string literal.
+    return JSON.stringify(vars[k]).slice(1, -1);
   });
 
   // Detection pass: check for any remaining unresolved slots.
@@ -215,7 +225,19 @@ export function fillDagTemplate(
     return err(`Unresolved template slots remain: ${remaining.join(", ")}`);
   }
 
-  const filled = JSON.parse(replaced) as DagTemplateNode[];
+  // CR-03: defensive parse guard. Escaping above already prevents structural
+  // corruption, but a Result-returning contract must never throw — surface any
+  // residual parse failure as err() rather than letting it propagate.
+  let filled: DagTemplateNode[];
+  try {
+    filled = JSON.parse(replaced) as DagTemplateNode[];
+  } catch (parseErr) {
+    return err(
+      `Filled template did not parse as valid JSON: ${
+        parseErr instanceof Error ? parseErr.message : String(parseErr)
+      }`,
+    );
+  }
   return ok(filled);
 }
 

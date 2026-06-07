@@ -35,6 +35,45 @@ describe("fillDagTemplate", () => {
     }
   });
 
+  it("Case 4 (CR-03 JSON metacharacters): slot value with double-quote and backslash returns ok with value intact, never throws", () => {
+    // Weak models can supply values containing JSON metacharacters. Raw
+    // substitution into the serialized JSON string would corrupt structure and
+    // throw a SyntaxError out of this Result-returning function (CR-03).
+    const topic = 'the "best" plan \\ with a backslash';
+
+    // Must NOT throw — the function returns a Result.
+    const result = fillDagTemplate(CANONICAL_DAG_TEMPLATES["research-fanout"], {
+      TOPIC: topic,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // The value must be placed verbatim into the task strings (no corruption).
+    const synthesize = result.value.find((n) => n.nodeId === "synthesize");
+    expect(synthesize).toBeDefined();
+    expect(synthesize!.task).toContain(topic);
+
+    // No ${VAR} placeholder should remain.
+    expect(JSON.stringify(result.value)).not.toContain("${TOPIC}");
+  });
+
+  it("Case 5 (CR-03 newline + quote): multi-line quoted slot value parses cleanly without throwing", () => {
+    const value = 'line1\n"quoted" line2';
+    const result = fillDagTemplate(CANONICAL_DAG_TEMPLATES.debate, {
+      TOPIC: value,
+      PRO_AGENT: "agent-a",
+      CON_AGENT: "agent-b",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const pro = result.value.find((n) => n.nodeId === "pro-advocate");
+    expect(pro).toBeDefined();
+    expect(pro!.task).toContain(value);
+  });
+
   it("Case 3 (validation): all 4 canonical templates fill with minimal vars and produce valid graphs", () => {
     const minimalVars: Record<string, Record<string, string>> = {
       "research-fanout": { TOPIC: "test-topic" },
