@@ -223,8 +223,13 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   //   spend-cap degrade, carrying ids + a closed reason + durationMs ONLY (never
   //   content). A health/safety signal fed to observability snapshots, NOT a
   //   turn-level trajectory step (same class as provider:degraded above).
+  // context:compaction_routed: capability-routing health signal (Phase 152
+  //   C4/S4) — records which compaction strategy (eviction / strong-summarizer
+  //   / llm) was selected per capabilityClass, ids + counts only. Same
+  //   internal-health class as context:compacted above.
   // -------------------------------------------------------------------
   "context:compacted",
+  "context:compaction_routed",
   "context:pipeline:cache",
   "context:dag_degraded",
 

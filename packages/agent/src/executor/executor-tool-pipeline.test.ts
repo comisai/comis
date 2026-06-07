@@ -169,14 +169,14 @@ describe("applySchemasPruning — nano-class schema pruning gated on capabilityC
     expect((logger.info as unknown as { mock: { calls: unknown[][] } }).mock.calls.length).toBe(0);
   });
 
-  it("emits an INFO log when pruning is invoked for a 'nano' capabilityClass model (behavior-neutral: maps to old modelTier='small')", () => {
+  it("emits an INFO log when pruning is invoked for a 'nano' capabilityClass model", () => {
     const logger = createMockLogger();
     // Build a tool with a long description so pruning has something to remove.
     const tools = [makeTool({ name: "search", description: "lorem ipsum ".repeat(50) })];
     applySchemasPruning({ tools, capabilityClass: "nano", logger });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ toolCount: expect.any(Number) }),
-      "Schema descriptions pruned for small model",
+      "Schema descriptions pruned for nano-class model",
     );
   });
 });
