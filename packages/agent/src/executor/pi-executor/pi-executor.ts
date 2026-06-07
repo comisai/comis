@@ -100,6 +100,8 @@ import {
 } from "../executor-session-state.js";
 import { normalizeModelCompat } from "../../provider/model-compat.js";
 import { normalizeModelId } from "../../provider/model-id-normalize.js";
+import { resolveModelProfile } from "../model-profile.js";
+import type { ModelProfile } from "../model-profile.js";
 import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
 import { validateRoleAttribution } from "../../context-engine/index.js";
@@ -311,6 +313,18 @@ export function createPiExecutor(
         id: resolvedModel.id,
       }) : undefined;
 
+      // Resolve ModelProfile once per execution (K1: resolve-once, thread everywhere).
+      // Must be after executionOverrides.model override (above) so the profile reflects
+      // the actual resolved model. Added to RunSessionLockedContext (per-execution record,
+      // NOT PiExecutorDeps which is long-lived across multiple execute() calls).
+      const modelProfile = resolveModelProfile(
+        resolvedModel
+          ? { ...resolvedModel, input: (resolvedModel as unknown as Record<string, unknown>).input as string[] | undefined }
+          : undefined,
+        // No userModel or capabilityClass override at this phase — provider heuristic applies.
+        // Phase 152 will wire the operator capabilityClass override from providers.entries config.
+      );
+
       // 5. Execute within session adapter (use ephemeral adapter if provided)
       const sessionAdapter = overrides?.ephemeralSessionAdapter ?? deps.sessionAdapter;
       const lockResult = await sessionAdapter.withSession(
@@ -334,6 +348,7 @@ export function createPiExecutor(
           safetyReinforcement,
           resolvedModel,
           modelCompat,
+          modelProfile,
           activeStepCounter,
           sessionAdapter,
           cacheRetentionRef,
@@ -381,6 +396,7 @@ interface RunSessionLockedContext {
   readonly safetyReinforcement: string | undefined;
   readonly resolvedModel: ReturnType<ModelRegistry["find"]> | undefined;
   readonly modelCompat: ReturnType<typeof normalizeModelCompat> | undefined;
+  readonly modelProfile: ModelProfile;
   readonly activeStepCounter: StepCounter;
   readonly sessionAdapter: ComisSessionManager;
   readonly cacheRetentionRef: MutableRef<CacheRetention | undefined>;
@@ -396,7 +412,7 @@ async function runSessionLocked(
     config, deps, result, msg, sessionKey, tools, onDelta, agentId,
     _directives, _prevTimestamp, executionOverrides, executionStartMs,
     effectiveTimeout, sepEnabled, executionPlanRef, safetyReinforcement,
-    resolvedModel, modelCompat, activeStepCounter,
+    resolvedModel, modelCompat, modelProfile, activeStepCounter,
     sessionAdapter,
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
   } = ctx;
@@ -478,14 +494,14 @@ async function runSessionLocked(
   const toolAssembly = await assembleTools({
     config, deps: frozenDeps, sessionKey, msg, tools, executionOverrides,
     isFirstMessageInSession, sm, formattedKeyForGuides, deliveredGuides,
-    resolvedModel, modelCompat, agentId, safetyReinforcement, _directives,
+    resolvedModel, modelCompat, modelProfile, agentId, safetyReinforcement, _directives,
   });
   const {
     mergedCustomTools,
   } = toolAssembly;
   const {
     deferralResult, deferredContext, capabilityIndexResult,
-    modelTier, discoveryTracker, settingsManager,
+    capabilityClass, discoveryTracker, settingsManager,
     resourceLoaderOptions, promptResult, cachedSystemTokensEstimate, cachedFreshTailPreambleTokens,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
@@ -829,7 +845,7 @@ async function runSessionLocked(
 
   const streamSetup = setupStreamWrappers({
     config, deps, sessionKey, formattedKey, sm,
-    resolvedModel, modelTier, executionOverrides,
+    resolvedModel, capabilityClass, executionOverrides,
     deferralResult, systemPromptBlocks, agentId,
     // Forward the cache-trace recorder so the wrapper chain
     // can include the cache-trace `stream:context` emit. When the
@@ -1293,7 +1309,7 @@ async function runSessionLocked(
       agentId,
       sessionKey: formattedKey,
       modelId: resolvedModel?.id,
-      modelTier,
+      capabilityClass,
       activeToolCount: mergedCustomTools.length,
     },
     "Execution started",
@@ -1462,7 +1478,7 @@ async function runSessionLocked(
       contextEngineRef, ceSetup, streamSetup,
       getTruncationSummary, getTurnBudgetSummary,
       executionPlanRef, isOnboarding,
-      geminiCacheHit, geminiCachedTokens, modelTier,
+      geminiCacheHit, geminiCachedTokens, capabilityClass,
       provider: resolvedModel?.provider ?? config.provider,
       providerFamily: resolveProviderCapabilities(resolvedModel?.provider ?? config.provider).providerFamily,
       deferralResult, mergedCustomTools, deliveredGuides,

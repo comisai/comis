@@ -11,7 +11,6 @@
 
 import type { BootstrapContextFile, InboundMetadata, PromptMode, RuntimeInfo } from "./types.js";
 import type { SubagentRoleParams } from "./sections/index.js";
-import type { ModelTier } from "./sections/index.js";
 import {
   buildIdentitySection,
   buildSafetySection,
@@ -232,7 +231,7 @@ export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
   { id: "safety",           includeIn: MODES_ALL,      build: (p, m) => buildSafetySection(m === "minimal") },
   { id: "language",         includeIn: MODES_ALL,      build: (p) => buildLanguageSection(p.userLanguage) },
   // --- Semi-stable body: operational-kept sections (MODES_ALL -- builders self-filter for minimal) ---
-  { id: "tooling",          includeIn: MODES_ALL,      build: (p, m) => buildToolingSection(p.toolNames ?? [], m === "minimal" ? "small" as ModelTier : "large" as ModelTier, p.toolSummaries) },
+  { id: "tooling",          includeIn: MODES_ALL,      build: (p, m) => buildToolingSection(p.toolNames ?? [], m === "minimal" ? "small" : "large", p.toolSummaries) },
   { id: "tool-call-style",  includeIn: MODES_ALL,      build: (p, m) => buildToolCallStyleSection(m === "minimal", p.toolNames ?? []) },
   // --- Operational-stripped sections (MODES_FULL_MIN -- dropped in "operational") ---
   { id: "self-update",      includeIn: MODES_FULL_MIN, build: (p, m) => buildSelfUpdateGatingSection(p.toolNames ?? [], m === "minimal", true) },

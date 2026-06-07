@@ -47,7 +47,7 @@ import { buildCacheTraceWrapper } from "@comis/observability";
 import type { CacheTrace } from "@comis/observability";
 import type { TruncationSummary } from "./stream-wrappers/tool-result-size-bouncer.js";
 import type { TurnBudgetSummary } from "./stream-wrappers/turn-result-budget-wrapper.js";
-import { resolveToolCallingTemperature } from "./tool-deferral.js";
+import type { CapabilityClass } from "./model-profile.js";
 import { createStubFilterInjector } from "./stream-wrappers/stub-filter-injector.js";
 import { computeFeatureFlagHash } from "./prompt-assembly.js";
 import { createTtlGuard, getElapsedSinceLastResponse, getLastResponseTs } from "./ttl-guard.js";
@@ -111,7 +111,7 @@ export interface StreamSetupParams {
   sm: SessionManager;
   resolvedModel?: { id: string; provider: string };
   modelCompat?: { supportsTools?: boolean };
-  modelTier: "small" | "medium" | "large";
+  capabilityClass: CapabilityClass;
   executionOverrides?: ExecutionOverrides;
   deferralResult?: ExcludeDeferralResult;
   systemPromptBlocks?: SystemPromptBlocks;
@@ -180,7 +180,7 @@ export interface StreamSetupResult {
 export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResult {
   const {
     config, deps, formattedKey, sm,
-    modelTier, executionOverrides, deferralResult, systemPromptBlocks, agentId,
+    capabilityClass, executionOverrides, deferralResult, systemPromptBlocks, agentId,
     cacheTrace,
     getAdaptiveRetention, getExecutionCacheRetention, getExecutionMinTokensOverride,
     onBreakpointsPlaced, onGeminiCacheHit,
@@ -280,7 +280,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     createConfigResolver(
       {
         maxTokens: config.maxTokens,
-        temperature: config.temperature ?? resolveToolCallingTemperature(modelTier),
+        temperature: config.temperature ?? (capabilityClass === "nano" ? 0.0 : 0.1),
         // SDK breakpoint on last message must always use "short" (5m).
         // getMessageRetention() now returns "long" after escalation, but the SDK's
         // own last-message breakpoint is the most volatile position.

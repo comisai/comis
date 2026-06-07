@@ -38,8 +38,10 @@ import {
   type ToolCapabilityPort,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
-import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, resolveModelTier, CORE_TOOLS } from "./tool-deferral.js";
+import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult } from "./tool-deferral.js";
+import type { ModelProfile, CapabilityClass } from "./model-profile.js";
+import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
 import { buildCapabilityIndexContext } from "./capability-index-context.js";
 import type { CapabilityIndexRenderResult } from "./capability-index-context.js";
 import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
@@ -206,8 +208,8 @@ export interface ToolAssemblyResult {
   capabilityIndexResult: CapabilityIndexRenderResult;
   /** Session-scoped guide delivery tracking set. */
   deliveredGuides: Set<string>;
-  /** Model tier derived from context window: "small" | "medium" | "large". */
-  modelTier: "small" | "medium" | "large";
+  /** Capability class from ModelProfile (resolved once per execution in pi-executor). */
+  capabilityClass: CapabilityClass;
   /** Discovery tracker for deferred tool discovery state. */
   discoveryTracker: DiscoveryTracker;
   /** Mutable ref for compaction deps to serialize discovered tools. */
@@ -252,6 +254,8 @@ export interface ToolAssemblyParams {
   deliveredGuides: Set<string>;
   resolvedModel?: { id: string; provider: string; contextWindow?: number; reasoning?: boolean };
   modelCompat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
+  /** ModelProfile resolved once per execution in pi-executor. Used to thread capabilityClass to consumers. */
+  modelProfile?: ModelProfile;
   agentId?: string;
   safetyReinforcement?: string;
   _directives?: { thinkingLevel?: string; compact?: unknown };
@@ -278,7 +282,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const {
     config, deps, sessionKey, msg, tools, executionOverrides,
     isFirstMessageInSession, sm, deliveredGuides,
-    resolvedModel, modelCompat, agentId, safetyReinforcement, _directives,
+    resolvedModel, modelCompat, modelProfile: modelProfileParam, agentId, safetyReinforcement, _directives,
   } = params;
 
   // -------------------------------------------------------------------
@@ -569,8 +573,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const recentlyUsedTools = extractRecentlyUsedToolNames(
     sessionMessages as unknown as Array<Record<string, unknown>>,
   );
+  const modelProfile = modelProfileParam ?? FAIL_CLOSED_PROFILE;
+  const capabilityClass = modelProfile.capabilityClass;
+  // contextWindow still passed to applyToolDeferral for BM25 re-rank budget control
   const contextWindow = resolvedModel?.contextWindow ?? 128_000;
-  const modelTier = resolveModelTier(contextWindow);
 
   // Tool lifecycle management
   const lifecycleConfig: ToolLifecycleConfig = config.toolLifecycle ?? DEFAULT_LIFECYCLE_CONFIG;
@@ -662,7 +668,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       ?? config.elevatedReply?.defaultTrustLevel
       ?? "external",
     channelType: msg.channelType,
-    modelTier,
+    capabilityClass,
     recentlyUsedToolNames: recentlyUsedTools,
     toolNames: mergedCustomTools.map(t => t.name),
     contextEngineVersion: config.contextEngine?.version,
@@ -756,7 +762,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   mergedCustomTools = createJitGuideWrapper(mergedCustomTools, deliveredGuides, deps.logger);
 
   // Schema pruning for small models
-  mergedCustomTools = applySchemasPruning({ tools: mergedCustomTools, modelTier, logger: deps.logger });
+  mergedCustomTools = applySchemasPruning({ tools: mergedCustomTools, capabilityClass, logger: deps.logger });
 
   // Schema snapshot management
   const schemaSnapshotKey = formatSessionKey(sessionKey);
@@ -785,7 +791,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deferredContext,
     capabilityIndexResult,
     deliveredGuides,
-    modelTier,
+    capabilityClass,
     discoveryTracker,
     currentDiscoveryTracker,
     lifecycleDemotedNames,

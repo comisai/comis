@@ -209,7 +209,7 @@ export interface PostExecutionParams {
   isOnboarding: boolean;
   geminiCacheHit: boolean;
   geminiCachedTokens: number;
-  modelTier: string | undefined;
+  capabilityClass: string | undefined;
   /**
    * Provider used for this execution. Sourced from `resolvedModel.provider` in
    * pi-executor when available; falls back to `config.provider` when the
@@ -703,7 +703,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     contextEngineRef, ceSetup, streamSetup,
     getTruncationSummary, getTurnBudgetSummary,
     executionPlanRef, isOnboarding,
-    geminiCacheHit, geminiCachedTokens, modelTier,
+    geminiCacheHit, geminiCachedTokens, capabilityClass,
     provider, providerFamily,
     deferralResult, mergedCustomTools, deliveredGuides,
     deps, sessionAdapter,
@@ -871,13 +871,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       totalBilledUsd: (result.cost.total ?? 0) + (result.cost.ghostCostUsd ?? 0),
       geminiCacheHit,
       geminiCachedTokens,
-      modelTier,
+      capabilityClass,
       provider,
       providerFamily,
       deferredCount: deferralResult.deferredCount,
       activeToolCount: mergedCustomTools.length,
       guidesDelivered: deliveredGuides.size,
-      schemaPruned: modelTier === "small",
+      schemaPruned: capabilityClass === "nano",
       failedToolCalls: bridgeResult.failedToolCalls ?? 0,
       toolFailureRate: (result.stepsExecuted ?? 0) > 0
         ? Math.round(((bridgeResult.failedToolCalls ?? 0) / (result.stepsExecuted ?? 0)) * 100)

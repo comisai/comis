@@ -22,7 +22,7 @@ import { getToolMetadata } from "@comis/core";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import { extractMcpServerName } from "@comis/shared";
 import { PRIVILEGED_TOOL_NAMES } from "../bootstrap/sections/tooling-sections.js";
-import type { ModelTier } from "../bootstrap/sections/tooling-sections.js";
+import type { CapabilityClass } from "./model-profile.js";
 import { LEAN_TOOL_DESCRIPTIONS } from "../bootstrap/sections/tool-descriptions.js";
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ export interface DeferralRule {
 export interface DeferralContext {
   trustLevel: string;
   channelType?: string;
-  modelTier: ModelTier;
+  capabilityClass: CapabilityClass;
   recentlyUsedToolNames: Set<string>;
   toolNames: string[];
   contextEngineVersion?: string;
@@ -168,35 +168,6 @@ export const CORE_TOOLS = new Set([
   "memory_search", "memory_store", "memory_get",
   "web_search", "web_fetch",
 ]);
-
-// ---------------------------------------------------------------------------
-// ModelTier resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Classify a model by its context window size into small/medium/large tiers.
- *
- * - small (<= 32K): Aggressive deferral, 0.0 temperature
- * - medium (<= 64K): Standard deferral, 0.1 temperature
- * - large (> 64K): Standard deferral, 0.1 temperature
- */
-export function resolveModelTier(contextWindow: number): ModelTier {
-  if (contextWindow <= 32_000) return "small";
-  if (contextWindow <= 64_000) return "medium";
-  return "large";
-}
-
-// ---------------------------------------------------------------------------
-// Tool calling temperature
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve the optimal tool-calling temperature for a given model tier.
- * Small models benefit from deterministic tool selection (0.0).
- */
-export function resolveToolCallingTemperature(modelTier: ModelTier): number {
-  return modelTier === "small" ? 0.0 : 0.1;
-}
 
 /**
  * Anthropic models that support server-side tool-search via defer_loading.
@@ -402,14 +373,15 @@ export function applyToolDeferral(
   // sub-agent run.
   //
   // Operators who DO want MCP deferral opt in via
-  // `config.deferredTools.alwaysDefer`. The small-model rule below still
-  // catches MCP tools when modelTier is `"small"` (aggressive deferral for
-  // narrow context windows). Providers without mid-turn injection (OpenAI,
+  // `config.deferredTools.alwaysDefer`. The nano-class rule below still
+  // catches MCP tools when capabilityClass is `"nano"` (aggressive deferral for
+  // the most constrained models). Providers without mid-turn injection (OpenAI,
   // xAI, etc.) were already exempt from MCP deferral and remain so -- the
   // flip means the Anthropic/Google branch now matches their behavior.
 
-  // Small model aggressive deferral
-  if (deferralContext.modelTier === "small") {
+  // Aggressive deferral for nano-class models (behavior-neutral: old modelTier="small" at <=32K maps to capabilityClass="nano")
+  // Phase 151: only "nano" triggers aggressive deferral. "small" class (qwen3.6 27B/256K) policy activates in Phase 152.
+  if (deferralContext.capabilityClass === "nano") {
     for (const t of tools) {
       if (!deferredSet.has(t.name) && !CORE_TOOLS.has(t.name) && !deferralContext.recentlyUsedToolNames.has(t.name)) {
         deferredSet.add(t.name);

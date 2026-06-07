@@ -40,7 +40,6 @@ const mocks = vi.hoisted(() => ({
   createDiscoverToolMock: vi.fn(),
   createAutoDiscoveryStubsMock: vi.fn(),
   extractRecentlyUsedToolNamesMock: vi.fn(),
-  resolveModelTierMock: vi.fn(),
   buildCapabilityIndexContextMock: vi.fn(),
   getOrCreateDiscoveryTrackerMock: vi.fn(),
   getOrCreateTrackerMock: vi.fn(),
@@ -79,7 +78,7 @@ vi.mock("./tool-deferral.js", () => ({
   createDiscoverTool: mocks.createDiscoverToolMock,
   createAutoDiscoveryStubs: mocks.createAutoDiscoveryStubsMock,
   extractRecentlyUsedToolNames: mocks.extractRecentlyUsedToolNamesMock,
-  resolveModelTier: mocks.resolveModelTierMock,
+  // resolveModelTier has been deleted in Plan 151-03 (K1 requirement)
   CORE_TOOLS: new Set(["bash", "file_read"]),
 }));
 
@@ -217,7 +216,6 @@ beforeEach(() => {
     inlineMemory: undefined,
   });
   mocks.extractRecentlyUsedToolNamesMock.mockReturnValue(new Set());
-  mocks.resolveModelTierMock.mockReturnValue("large");
   mocks.getOrCreateTrackerMock.mockReturnValue({
     recordTurn: vi.fn(),
     getCurrentTurn: () => 1,
@@ -578,14 +576,88 @@ describe("assembleTools — full tool pipeline (JIT, prune, snapshot, normalize,
     expect(mocks.applyMutationSerializerMock).toHaveBeenCalledTimes(1);
   });
 
-  it("passes the modelTier resolved from contextWindow into applySchemasPruning", async () => {
-    mocks.resolveModelTierMock.mockReturnValueOnce("small");
+  it("passes the capabilityClass from ModelProfile to applySchemasPruning (frontier → not pruned)", async () => {
+    // Frontier models (anthropic) have capabilityClass="frontier"; applySchemasPruning
+    // only prunes for "nano" — so frontier passes through unchanged (behavior-neutral K1).
     await assembleTools(makeParams({
-      resolvedModel: { id: "tiny", provider: "anthropic", contextWindow: 32_000, reasoning: false },
+      resolvedModel: { id: "claude-sonnet-4", provider: "anthropic", contextWindow: 200_000, reasoning: false },
+      // No modelProfile passed → assembleTools falls back to FAIL_CLOSED_PROFILE when
+      // modelProfile is undefined. But when resolvedModel is present, the assembly
+      // path uses the provided modelProfile param. Use explicit modelProfile to pin the assertion.
+      modelProfile: {
+        contextWindow: 200_000,
+        maxOutputTokens: 4096,
+        capabilityClass: "frontier",
+        scaffoldLevel: "light",
+        securityLevel: "standard",
+        supportsVision: false,
+        supportsTools: true,
+        supportsPromptCache: false,
+        supportsServerToolSearch: false,
+        supportsStructuredOutput: false,
+        reasoningStyle: "none",
+      },
     }));
-    expect(mocks.resolveModelTierMock).toHaveBeenCalledWith(32_000);
-    const pruneCallArg = mocks.applySchemasPruningMock.mock.calls[0][0] as { modelTier: string };
-    expect(pruneCallArg.modelTier).toBe("small");
+    const pruneCallArg = mocks.applySchemasPruningMock.mock.calls[0][0] as { capabilityClass: string };
+    expect(pruneCallArg.capabilityClass).toBe("frontier");
+  });
+
+  it("characterization: frontier-class ModelProfile threads capabilityClass='frontier' to deferralCtx (behavior-neutral — same as old modelTier='large')", async () => {
+    // Phase 151 K1 characterization: a frontier model must reach DeferralContext
+    // with capabilityClass="frontier", matching the old modelTier="large" behavior.
+    // The aggressive-deferral gate (capabilityClass==="nano") must NOT fire for frontier.
+    const frontierProfile = {
+      contextWindow: 200_000,
+      maxOutputTokens: 4096,
+      capabilityClass: "frontier" as const,
+      scaffoldLevel: "light" as const,
+      securityLevel: "standard" as const,
+      supportsVision: false,
+      supportsTools: true,
+      supportsPromptCache: false,
+      supportsServerToolSearch: false,
+      supportsStructuredOutput: false,
+      reasoningStyle: "none" as const,
+    };
+    await assembleTools(makeParams({
+      resolvedModel: { id: "claude-sonnet-4", provider: "anthropic", contextWindow: 200_000, reasoning: false },
+      modelProfile: frontierProfile,
+    }));
+    // applyToolDeferral receives DeferralContext with capabilityClass="frontier"
+    const deferralCtxArg = mocks.applyToolDeferralMock.mock.calls[0][1] as Record<string, unknown>;
+    expect(deferralCtxArg).not.toBeUndefined();
+    // The DeferralContext is the 2nd arg to applyToolDeferral (tools, contextWindow, ctx, ...)
+    // Per executor-tool-assembly.ts call signature: applyToolDeferral(mergedCustomTools, contextWindow, deferralCtx, ...)
+    // The context is the 3rd positional arg
+    const deferralCtxPositional = mocks.applyToolDeferralMock.mock.calls[0][2] as Record<string, unknown>;
+    expect(deferralCtxPositional?.capabilityClass).toBe("frontier");
+  });
+
+  it("characterization: nano-class ModelProfile threads capabilityClass='nano' to deferralCtx (behavior-neutral — same as old modelTier='small')", async () => {
+    // Phase 151 K1 characterization: a nano model must reach DeferralContext
+    // with capabilityClass="nano", matching the old modelTier="small" aggressive-deferral behavior.
+    const nanoProfile = {
+      contextWindow: 8_192,
+      maxOutputTokens: 4096,
+      capabilityClass: "nano" as const,
+      scaffoldLevel: "max" as const,
+      securityLevel: "locked" as const,
+      supportsVision: false,
+      supportsTools: true,
+      supportsPromptCache: false,
+      supportsServerToolSearch: false,
+      supportsStructuredOutput: false,
+      reasoningStyle: "none" as const,
+    };
+    await assembleTools(makeParams({
+      resolvedModel: { id: "tiny-model", provider: "custom", contextWindow: 8_192, reasoning: false },
+      modelProfile: nanoProfile,
+    }));
+    const deferralCtxPositional = mocks.applyToolDeferralMock.mock.calls[0][2] as Record<string, unknown>;
+    expect(deferralCtxPositional?.capabilityClass).toBe("nano");
+    // Also verify capabilityClass reaches applySchemasPruning
+    const pruneCallArg = mocks.applySchemasPruningMock.mock.calls[0][0] as { capabilityClass: string };
+    expect(pruneCallArg.capabilityClass).toBe("nano");
   });
 });
 

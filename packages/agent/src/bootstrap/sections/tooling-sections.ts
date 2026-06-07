@@ -10,8 +10,6 @@ import { getProviders } from "@earendil-works/pi-ai";
 // 3. Tooling (include in minimal)
 // ---------------------------------------------------------------------------
 
-/** Model size tier — determines prompt verbosity for tool descriptions. */
-export type ModelTier = "small" | "medium" | "large";
 
 /**
  * Build the residual one-liner pointing the model at the per-turn
@@ -22,7 +20,7 @@ export type ModelTier = "small" | "medium" | "large";
  */
 export function buildToolingSection(
   toolNames: string[],
-  _modelTier: ModelTier,
+  _modelTier: "small" | "medium" | "large",
   _toolSummaries?: Record<string, string>,
 ): string[] {
   if (toolNames.length === 0) return [];
