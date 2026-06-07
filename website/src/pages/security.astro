@@ -14,7 +14,7 @@ const layers = [
     category: "Perimeter",
     color: "coral",
     threat: "Prompt injection & jailbreaks",
-    how: "Semantic scoring engine over 65 patterns spanning 8 categories with weighted scoring (jailbreak, role markers, dangerous commands, secret formats, prompt extraction, credential logging, invisible chars, content scanner). Typoglycemia detection catches scrambled-letter evasion; code-block exclusion avoids false positives. Three risk levels (low/medium/high) with configurable actions: pass, warn, reinforce, or block.",
+    how: "A semantic scoring engine weighs jailbreak phrasing, role markers, dangerous commands, secret formats, prompt-extraction and credential-logging attempts. Typoglycemia detection catches scrambled-letter evasion; code-block exclusion avoids false positives. Three risk levels (low/medium/high) with configurable actions: pass, warn, reinforce, or block.",
   },
   {
     name: "Output Guard",
@@ -63,14 +63,14 @@ const layers = [
     category: "Secrets",
     color: "teal",
     threat: "API key exposure via agentic CLIs",
-    how: "The real key never enters the exec sandbox. It lives in the daemon's AES-256-GCM encrypted store and is resolved per-request by the in-daemon HTTPS MITM broker. The CLI runs with a placeholder; the broker terminates TLS with its own CA, verifies the single-use proxy token, and injects the real credential for allow-listed hosts (`x-api-key`, `Authorization: Bearer`, or query param). On Linux, the credentialed sandbox runs in broker-only network mode (`--unshare-net`) — the broker unix socket is the only reachable destination (kernel-enforced; validated on the Linux production host class). Broker fails closed: bad token → 407, no binding → 403, missing secret → 502, request never forwarded. Every inject/deny/blocked-egress event is audited with `agentId` + `traceId`. Anthropic and Finnhub today.",
+    how: "Works for any API-key CLI — Claude Code included. The real key never enters the exec sandbox. It lives in the daemon's AES-256-GCM encrypted store and is resolved per-request by the in-daemon HTTPS MITM broker. The CLI runs with a placeholder; the broker terminates TLS with its own CA, verifies the single-use proxy token, and injects the real credential for allow-listed hosts (`x-api-key`, `Authorization: Bearer`, or query param). On Linux, the credentialed sandbox runs in broker-only network mode (`--unshare-net`) — the broker unix socket is the only reachable destination (kernel-enforced; validated on the Linux production host class). Broker fails closed: bad token → 407, no binding → 403, missing secret → 502, request never forwarded. Every inject/deny/blocked-egress event is audited with `agentId` + `traceId`.",
   },
   {
     name: "Log Sanitizer",
     category: "Secrets",
     color: "teal",
     threat: "Secrets in logs",
-    how: "Three layers deep: Pino fast-redact for structured fields, regex-based sanitizer with 18 patterns for free-text credential detection, and ReDoS mitigation with 1MB input cap. Defense-in-depth - any single layer failing doesn't expose secrets.",
+    how: "Three layers deep: Pino fast-redact for structured fields, a regex-based sanitizer for free-text credential detection, and ReDoS mitigation with a 1MB input cap. Defense-in-depth - any single layer failing doesn't expose secrets.",
   },
   {
     name: "SSRF Guard",
@@ -170,6 +170,34 @@ const layers = [
     threat: "Indirect injection via tool results",
     how: "Normalizes NFKC Unicode, strips invisible characters, detects instruction-like patterns in tool output, and truncates oversized results at newline boundaries (50K char default). Catches injection attempts that arrive through tool results rather than user input.",
   },
+  {
+    name: "Skill Content Scanner",
+    category: "Supply Chain",
+    color: "pink",
+    threat: "Malicious skills loaded at runtime",
+    how: `Every skill is screened before it can run. ${SECURITY.contentScannerRules} rules cover exec injection, exfiltration, and XML breakout, applied at skill-load time. This is the canonical ${SECURITY.contentScannerRules} — it belongs to the content scanner.`,
+  },
+  {
+    name: "MCP Malware Screening",
+    category: "Supply Chain",
+    color: "pink",
+    threat: "Known-bad third-party tool servers",
+    how: "MCP packages are checked against the OSV malware database before they ever spawn for the first time. A flagged package never starts.",
+  },
+  {
+    name: "ESLint Security Bans",
+    category: "Supply Chain",
+    color: "pink",
+    threat: "Insecure code patterns reaching main",
+    how: "Named bans block insecure patterns in CI before merge: no path.join, no process.env, no eval/new Function, no swallowed errors — backed by architecture-as-tests that fail the build on regression.",
+  },
+  {
+    name: "Action Classifier",
+    category: "Access Control",
+    color: "blue",
+    threat: "Unsupervised or unrecognized destructive actions",
+    how: "Destructive actions pause for HMAC-signed operator approval via chat buttons. Unknown action types classify as destructive and fail closed — the default is to stop and ask, never to assume an unrecognized action is safe.",
+  },
 ];
 
 const categories = [
@@ -177,12 +205,29 @@ const categories = [
   { name: "Secrets", color: "teal", count: 4, desc: "Encrypt, scope, redact, and broker credentials at every layer" },
   { name: "Network", color: "purple-400", count: 1, desc: "Prevent outbound requests to private networks" },
   { name: "Process Isolation", color: "red-400", count: 1, desc: "Kernel-enforced filesystem sandbox for shell commands" },
-  { name: "Access Control", color: "blue-400", count: 2, desc: "Limit what each agent can do and require approval" },
+  { name: "Access Control", color: "blue-400", count: 3, desc: "Limit what each agent can do and require approval" },
   { name: "Memory", color: "green-400", count: 3, desc: "Partition trust levels to prevent memory poisoning" },
   { name: "Detection", color: "yellow-400", count: 1, desc: "Detect when the LLM leaks system instructions" },
   { name: "Transport", color: "indigo-400", count: 3, desc: "Authenticate and verify every connection" },
   { name: "Runtime", color: "orange-400", count: 3, desc: "Prevent runaway costs and sanitize tool output" },
+  { name: "Supply Chain", color: "pink-400", count: 3, desc: "Screen skills and packages, block insecure code before merge" },
 ];
+
+// Static Tailwind class map — Tailwind 4 cannot see class names built by string
+// interpolation at runtime, so every category color is listed here explicitly
+// and looked up by key, ensuring the classes are generated at build time.
+const colorClass: Record<string, string> = {
+  coral: "text-coral",
+  teal: "text-teal",
+  "purple-400": "text-purple-400",
+  "red-400": "text-red-400",
+  "blue-400": "text-blue-400",
+  "green-400": "text-green-400",
+  "yellow-400": "text-yellow-400",
+  "indigo-400": "text-indigo-400",
+  "orange-400": "text-orange-400",
+  "pink-400": "text-pink-400",
+};
 ---
 
 <Base title={title} description={description}>
@@ -362,7 +407,7 @@ const categories = [
           {categories.map((cat) => (
             <div class="bg-navy rounded-xl border border-white/5 p-5">
               <div class="flex items-center gap-2 mb-2">
-                <span class={`text-${cat.color} font-mono font-bold text-2xl`}>{cat.count}</span>
+                <span class={`${colorClass[cat.color]} font-mono font-bold text-2xl`}>{cat.count}</span>
                 <span class="text-white font-semibold text-sm">{cat.name}</span>
               </div>
               <p class="text-muted text-xs leading-relaxed">{cat.desc}</p>
