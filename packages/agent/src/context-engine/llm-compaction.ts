@@ -453,12 +453,14 @@ export function createLlmCompactionLayer(
           return messages;
         }
 
-        // S4: filter security-pinned messages out of the middle zone (move to head).
+        // S4: filter security-pinned messages out of the middle zone.
+        // pinned[] is hoisted to outer scope so the output assembly can re-insert them
+        // (see result assembly below — S4 invariant: pinned messages MUST appear in output).
         // Must run before the capability gate so pinnedCount is accurate for the event.
+        let pinned: AgentMessage[] = [];
         let evictableMiddle = middleMessages;
         let securityPinnedCount = 0;
         if (config.securityMarkers) {
-          const pinned: AgentMessage[] = [];
           const evictable: AgentMessage[] = [];
           for (const m of middleMessages) {
             /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -561,10 +563,14 @@ export function createLlmCompactionLayer(
           discoveredTools,
         } as unknown as AgentMessage;
 
-        // Assemble: head + summary + tail (head stays at original positions for cache prefix)
+        // Assemble: head + pinned + summary + tail
+        // S4: pinned messages from the middle zone are excluded from summarization
+        // but MUST be preserved in the output so they are never evicted from context.
+        // They are placed before the summary (surviving context, not part of the summary).
+        // head stays at original positions for cache prefix stability.
         const headMessages = messages.slice(0, headEndIndex);
         const tailMessages = messages.slice(tailStartIndex);
-        const result = [...headMessages, summaryMessage, ...tailMessages];
+        const result = [...headMessages, ...pinned, summaryMessage, ...tailMessages];
 
         // Step 8: Persist compaction to SessionManager
         try {

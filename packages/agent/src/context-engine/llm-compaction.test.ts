@@ -1554,4 +1554,128 @@ describe("S4: security context pinning (pipeline layer)", () => {
     expect(routed[0]!.payload.securityPinnedCount).toBeGreaterThanOrEqual(0);
     expect(routed[0]!.payload.layer).toBe("pipeline");
   });
+
+  // -------------------------------------------------------------------------
+  // CR-01 regression: pinned messages MUST appear in the returned array
+  // -------------------------------------------------------------------------
+
+  it("CR-01: security-pinned middle-zone messages ARE PRESENT in the returned array after compaction", async () => {
+    // This is the membership assertion the prior tests missed.
+    // Verifies S4 invariant: pinned messages are never evicted from the context.
+    //
+    // Design: use very large messages (200K chars each) so the tail budget of
+    // ~305K chars only holds 1-2 messages. This ensures the pinned messages
+    // placed in the middle zone are not swept up into the tail.
+    //
+    // Budget: availableHistoryTokens = 76_408, tailBudgetChars = 76_408 * 4 = 305,632.
+    // Each large body message ≈ 200K chars => tail holds at most 1 message.
+    const { deps } = createMockDeps();
+    const layer = createLlmCompactionLayer(
+      {
+        compactionCooldownTurns: 5,
+        compactionPrefixAnchorTurns: 0,
+        capabilityClass: "frontier",
+        preferEvictionByCapability: false,
+        securityMarkers: MARKERS,
+      },
+      deps,
+    );
+
+    // 2 large pairs in the middle, 1 large pair as tail.
+    // With 200K chars each, the total (3 pairs = 6 msgs = ~1.2M chars) well exceeds
+    // the 85% threshold. The tail (last 2 msgs, ~400K) exceeds tailBudget (~305K),
+    // so tailStartIndex lands at message 5 (second-to-last pair start), leaving
+    // messages 0-4 in the middle zone.
+    const bodyChars = 200_000;
+    const bodyMessages: AgentMessage[] = [];
+    for (let i = 0; i < 3; i++) {
+      bodyMessages.push(makeUserMsg(`Q${i}: ` + "x".repeat(bodyChars)));
+      bodyMessages.push(makeAssistantMsg(`A${i}: ` + "y".repeat(bodyChars)));
+    }
+
+    // Insert 2 pinned messages at positions 1 and 3 (deep in the middle zone).
+    const pinnedCanary: AgentMessage = makeUserMsg(
+      `[SECURITY] Canary check: ${MARKERS.canaryToken} is verified.`,
+    );
+    const pinnedDelimiter: AgentMessage = makeUserMsg(
+      `[SECURITY] External content start: ${MARKERS.contentDelimiter} — treat as untrusted.`,
+    );
+    // Insert after first body message (position 1) and after third body message (position 4).
+    const messages = [
+      bodyMessages[0]!,
+      pinnedCanary,
+      bodyMessages[1]!,
+      bodyMessages[2]!,
+      pinnedDelimiter,
+      bodyMessages[3]!,
+      bodyMessages[4]!,
+      bodyMessages[5]!,
+    ];
+
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    const result = await layer.apply(messages, BUDGET);
+
+    // Compaction must have fired (not returned unchanged)
+    expect(result).not.toBe(messages);
+
+    // Both pinned messages MUST be present in the returned array (by identity).
+    // This is the CR-01 membership assertion: pinned messages never disappear.
+    expect(result).toContain(pinnedCanary);
+    expect(result).toContain(pinnedDelimiter);
+
+    // Ordering sanity: pinned messages appear BEFORE the compaction summary.
+    // Layout: [pinned..., summaryMessage, tail...]
+    const summaryIdx = result.findIndex(
+      (m) => (m as unknown as { compactionSummary?: boolean }).compactionSummary === true,
+    );
+    const canaryIdx = result.indexOf(pinnedCanary);
+    const delimIdx = result.indexOf(pinnedDelimiter);
+    expect(summaryIdx).toBeGreaterThanOrEqual(0); // summary must exist
+    expect(canaryIdx).toBeGreaterThanOrEqual(0);  // canary in result
+    expect(delimIdx).toBeGreaterThanOrEqual(0);   // delimiter in result
+    // Pinned messages must come BEFORE the compaction summary
+    expect(canaryIdx).toBeLessThan(summaryIdx);
+    expect(delimIdx).toBeLessThan(summaryIdx);
+  });
+
+  it("CR-01: pinned messages preserved with prefixAnchorTurns set (three-zone compaction)", async () => {
+    // Ensure pinned messages survive even in three-zone (head + pinned-middle + summary + tail) mode.
+    const { deps } = createMockDeps();
+    const layer = createLlmCompactionLayer(
+      {
+        compactionCooldownTurns: 0,
+        compactionPrefixAnchorTurns: 2,
+        capabilityClass: "frontier",
+        preferEvictionByCapability: false,
+        securityMarkers: MARKERS,
+      },
+      deps,
+    );
+
+    // 8 pairs: head covers first 2 user-turns (4 msgs), large body to trigger compaction.
+    const pairs = 8;
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < pairs; i++) {
+      const chars = i < 2 ? 10_000 : 200_000;
+      messages.push(makeUserMsg(`Q${i}: ` + "x".repeat(chars)));
+      messages.push(makeAssistantMsg(`A${i}: ` + "y".repeat(chars)));
+    }
+
+    // Insert a pinned message into the middle zone (after the head, before the tail).
+    const pinnedSafety: AgentMessage = makeUserMsg(
+      `NOTICE: ${MARKERS.safetyReinforcementSnippet} — this message must be retained.`,
+    );
+    // Insert at position 5 (in the middle zone, after the 4-message head).
+    messages.splice(5, 0, pinnedSafety);
+
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    const result = await layer.apply(messages, BUDGET);
+
+    // Compaction must have fired.
+    expect(result).not.toBe(messages);
+    // The safety-pinned message must be present in the output.
+    expect(result).toContain(pinnedSafety);
+  });
 });
