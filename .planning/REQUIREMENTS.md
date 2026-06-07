@@ -72,7 +72,7 @@ Each maps to exactly one roadmap phase (see Traceability). Phases use the projec
 
 - [x] **O1**: A model-emitted execution graph passes the existing validation (cycle/dup/missing-dep/topo-sort) AND a **bounded repair loop** feeds the validator's actionable fix-hints back to the model and re-prompts (the validation exists today; the auto-repair loop is new) — a malformed DAG is corrected, not abandoned.
 - [x] **O2**: **Pre-structured DAG templates** (saved `pipeline` graphs with `${VAR}` slots: research-fanout, debate, vote, map-reduce) let a low-`capabilityClass` model **fill slots** instead of emitting full graph JSON.
-- [ ] **O3**: NL→DAG is **measured** across the gradient (the comprehension harness orchestration probe; 35b ✅ / 27b ✗ today); O1/O2 engage by `capabilityClass` — a capable model emits the graph directly (unchanged), a weaker one gets templates/repair. A test proves the weak path yields a valid graph for the canonical "research-3-then-debate" instruction.
+- [x] **O3**: NL→DAG is **measured** across the gradient (the comprehension harness orchestration probe; 35b ✅ / 27b ✗ today); O1/O2 engage by `capabilityClass` — a capable model emits the graph directly (unchanged), a weaker one gets templates/repair. A test proves the weak path yields a valid graph for the canonical "research-3-then-debate" instruction.
 
 ### Escalation (E) — optional; hybrid only
 
@@ -136,7 +136,7 @@ Explicitly excluded (design §4, §11 non-goals). Documented to prevent scope cr
 | L7 | Phase 155 | Complete |
 | O1 | Phase 155 | Complete |
 | O2 | Phase 155 | Complete |
-| O3 | Phase 155 | Pending |
+| O3 | Phase 155 | Complete |
 | S3 | Phase 155 | Complete |
 | S7 | Phase 155 | Complete |
 | E1 | Phase 156 | Pending *(optional/deferrable on M2)* |

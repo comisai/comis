@@ -4,14 +4,14 @@ milestone: v2.14
 milestone_name: — Small-Model Excellence
 status: executing
 stopped_at: Completed 153-02-PLAN.md
-last_updated: "2026-06-07T23:15:45.907Z"
+last_updated: "2026-06-07T23:21:33.568Z"
 last_activity: 2026-06-07
 progress:
   total_phases: 9
   completed_phases: 6
   total_plans: 27
-  completed_plans: 25
-  percent: 93
+  completed_plans: 26
+  percent: 96
 ---
 
 ## Project Reference
@@ -24,7 +24,7 @@ See: `.planning/PROJECT.md` (updated 2026-06-07)
 ## Current Position
 
 Phase: 155 (local-vision-orchestration-tool-call-repair-security) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-06-07
 
@@ -67,6 +67,7 @@ Last activity: 2026-06-07
 | Phase 155 P02 | 25 | 1 tasks | 6 files |
 | Phase 155 P03 | 25 | 1 tasks | 5 files |
 | Phase 155 P04a | 25 | 2 tasks | 4 files |
+| Phase 155 P04b | 5 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -102,6 +103,7 @@ Last activity: 2026-06-07
 - [Phase ?]: K1 resolve-once pattern: resolveModelProfile() called once in pi-executor; modelProfile threaded through RunSessionLockedContext; resolveModelTier + ModelTier + resolveToolCallingTemperature deleted
 - [Phase ?]: R2 abort-redirect: abortResponse routed through BridgeMetricsState field
 - [Phase ?]: R1 GoalAnchor: tail-appended for scaffoldLevel=max via buildGoalAnchorBlock
+- [Phase ?]: O3 capabilityClass routing in daemon graph-helpers
 
 ### Pending Todos
 
@@ -152,7 +154,7 @@ Items deferred at **v2.13** milestone close (2026-06-06):
 
 ## Session Continuity
 
-Last session: 2026-06-07T23:15:45.902Z
+Last session: 2026-06-07T23:21:33.563Z
 Stopped at: Completed 153-02-PLAN.md
 Resume file: None
 Next action: `/gsd-plan-phase 149` — PROVE (wire the standalone harness to the executor + complete the qwen3.6 M2 matrix baseline)
