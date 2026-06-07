@@ -14,7 +14,7 @@
  *   BENCH_MODELS     default "qwen3.6:35b,gemma4:31b"   (comma-separated)
  *   BENCH_SCENARIOS  default all (comma-separated ids to filter)
  *   BENCH_MAX_STEPS  default 8
- *   BENCH_MAX_TOKENS default 1024
+ *   BENCH_MAX_TOKENS default 2048
  *   BENCH_OUT        default scripts/bench-small-model/results
  *
  * @module
@@ -164,6 +164,7 @@ async function main() {
   const maxSteps = Number(env("BENCH_MAX_STEPS", "8"));
   const maxTokens = Number(env("BENCH_MAX_TOKENS", "2048")); // qwen3.6 is a reasoning model; reasoning_content eats output budget
   const outDir = env("BENCH_OUT", join(HERE, "results"));
+  const apiKey = env("BENCH_API_KEY", "");          // Bearer token for OpenAI-compat endpoints (never logged/stored)
   const promptMode = env("BENCH_PROMPT", "fair"); // "fair" (guardrails) | "bare" (no guardrails)
   const systemPrompt = promptMode === "bare" ? BARE_SYSTEM_PROMPT : undefined; // undefined → fair default
   const scenarios = filter.length ? filter.map(scenarioById).filter(Boolean) : SCENARIOS;
@@ -174,7 +175,7 @@ async function main() {
     for (const scenario of scenarios) {
       const t0 = Date.now();
       console.error(`[bench] ▶ ${model} :: ${scenario.id} ...`);
-      const run = await runScenario({ baseUrl, model, scenario, maxSteps, maxTokens, systemPrompt });
+      const run = await runScenario({ baseUrl, model, scenario, maxSteps, maxTokens, systemPrompt, apiKey });
       const res = scenario.score(run);
       const budget = SCENARIO_BUDGETS[scenario.id] ?? DEFAULT_BUDGET;
       res.metrics.efficient = (run.totalTokens <= budget.maxTokens && run.totalLatencyMs <= budget.maxLatencyMs) ? 1 : 0;

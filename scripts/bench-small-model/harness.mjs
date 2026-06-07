@@ -66,7 +66,7 @@ export async function chatCompletion({ baseUrl, model, messages, tools, temperat
  *
  * Never throws: a transport error is recorded on `run.error` and the run ends.
  */
-export async function runScenario({ baseUrl, model, scenario, maxSteps = 8, maxTokens = 1024, timeoutMs = 300_000, systemPrompt: systemPromptOverride }) {
+export async function runScenario({ baseUrl, model, scenario, maxSteps = 8, maxTokens = 1024, timeoutMs = 300_000, systemPrompt: systemPromptOverride, apiKey }) {
   const messages = [];
   const perCall = [];
   let malformedToolCalls = 0;
@@ -85,7 +85,7 @@ export async function runScenario({ baseUrl, model, scenario, maxSteps = 8, maxT
       for (let step = 0; step < maxSteps; step++) {
         steps++;
         const { message, usage, latencyMs } = await chatCompletion({
-          baseUrl, model, messages, tools: scenario.tools, maxTokens, timeoutMs,
+          baseUrl, model, messages, tools: scenario.tools, maxTokens, timeoutMs, apiKey,
         });
         perCall.push({ turn: turnIdx, step, usage, latencyMs });
         run.totalTokens += usage.total_tokens ?? ((usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0));
@@ -202,10 +202,7 @@ export function aggregate(scored) {
       const vals = rows.map((r) => r.metrics?.[key]).filter((v) => typeof v === "number");
       return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
     };
-    const rate = (key) => {
-      const vals = rows.map((r) => r.metrics?.[key]).filter((v) => typeof v === "number");
-      return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-    };
+    const rate = mean; // {0,1} binary events — same arithmetic, different semantic intent
     summaries.push({
       model,
       scenarios: n,

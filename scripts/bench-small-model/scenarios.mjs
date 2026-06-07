@@ -286,11 +286,16 @@ export const SCENARIOS = [
     ],
     score(run) {
       const ft = finalTurnText(run);
-      const recalled = mentionsAny(ft, ["alex"]) && mentionsAny(ft, ["metric"]);
+      const recalledName = mentionsAny(ft, ["alex"]);
+      const recalledUnits = mentionsAny(ft, ["metric"]);
+      const recalled = recalledName && recalledUnits;
       return {
         pass: recalled,
         metrics: { success: recalled ? 1 : 0, historyRetention: recalled ? 1 : 0 },
-        notes: [recalled ? "recalled name+units" : "FAILED to recall name or units"],
+        notes: [
+          recalledName ? "recalled name (Alex)" : "FAILED to recall name",
+          recalledUnits ? "recalled units (metric)" : "FAILED to recall units",
+        ],
       };
     },
   },
