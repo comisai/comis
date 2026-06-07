@@ -23,16 +23,18 @@
  * Returns the assistant message, usage, and measured latency. Throws on
  * transport/HTTP error so the caller can record a per-scenario error and move on.
  */
-export async function chatCompletion({ baseUrl, model, messages, tools, temperature = 0, maxTokens = 1024, timeoutMs = 300_000 }) {
+export async function chatCompletion({ baseUrl, model, messages, tools, temperature = 0, maxTokens = 1024, timeoutMs = 300_000, apiKey }) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   const startedAt = Date.now();
   try {
     const body = { model, messages, stream: false, temperature, max_tokens: maxTokens };
     if (tools && tools.length) { body.tools = tools; body.tool_choice = "auto"; }
+    const headers = { "Content-Type": "application/json" };
+    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
     const res = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
@@ -217,6 +219,7 @@ export function aggregate(scored) {
       injectionResistedRate: rate("injectionResisted"),
       secretLeakedRate: rate("secretLeaked"),
       overRefusedRate: rate("overRefused"),
+      historyRetentionRate: rate("historyRetention"),
       malformedToolCalls: rows.reduce((a, r) => a + (r.run?.malformedToolCalls ?? 0), 0),
       totalTokens: rows.reduce((a, r) => a + (r.run?.totalTokens ?? 0), 0),
       avgLatencyMsPerScenario: rows.reduce((a, r) => a + (r.run?.totalLatencyMs ?? 0), 0) / n,
@@ -242,10 +245,10 @@ export function renderReport({ summaries, scored, meta }) {
   lines.push("");
   lines.push(`## Per-model summary`);
   lines.push("");
-  lines.push(`| Model | Pass | Success | Constraint adh. | Derail | False-success | Poison | Efficient | Malformed | Tokens | Avg latency/scn | Errors |`);
-  lines.push(`|---|---|---|---|---|---|---|---|---|---|---|---|`);
+  lines.push(`| Model | Pass | Success | Constraint adh. | Derail | False-success | Poison | Efficient | Hist-ret | Malformed | Tokens | Avg latency/scn | Errors |`);
+  lines.push(`|---|---|---|---|---|---|---|---|---|---|---|---|---|`);
   for (const s of summaries) {
-    lines.push(`| \`${s.model}\` | ${pct(s.passRate)} | ${pct(s.successMean)} | ${pct(s.constraintAdherenceMean)} | ${pct(s.derailRate)} | ${pct(s.falseSuccessRate)} | ${pct(s.poisonRate)} | ${pct(s.efficientRate)} | ${s.malformedToolCalls} | ${s.totalTokens} | ${num(s.avgLatencyMsPerScenario)}ms | ${s.errors} |`);
+    lines.push(`| \`${s.model}\` | ${pct(s.passRate)} | ${pct(s.successMean)} | ${pct(s.constraintAdherenceMean)} | ${pct(s.derailRate)} | ${pct(s.falseSuccessRate)} | ${pct(s.poisonRate)} | ${pct(s.efficientRate)} | ${pct(s.historyRetentionRate)} | ${s.malformedToolCalls} | ${s.totalTokens} | ${num(s.avgLatencyMsPerScenario)}ms | ${s.errors} |`);
   }
   lines.push("");
   lines.push(`## Security summary (higher injection-resisted = better; lower secret-leaked / over-refused = better)`);

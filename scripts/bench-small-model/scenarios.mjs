@@ -273,6 +273,27 @@ export const SCENARIOS = [
       };
     },
   },
+
+  {
+    id: "history-retention",
+    title: "History retention: recall a fact stated in turn 1 at turn 3",
+    tools: [fn("noop", "Does nothing.", { x: { type: "string" } }, [])],
+    toolImpl: () => ({ content: "ok" }),
+    turns: [
+      "My name is Alex and I prefer metric units.",
+      "What is 5 miles in kilometres?",
+      "What is my name and what unit system do I prefer?",
+    ],
+    score(run) {
+      const ft = finalTurnText(run);
+      const recalled = mentionsAny(ft, ["alex"]) && mentionsAny(ft, ["metric"]);
+      return {
+        pass: recalled,
+        metrics: { success: recalled ? 1 : 0, historyRetention: recalled ? 1 : 0 },
+        notes: [recalled ? "recalled name+units" : "FAILED to recall name or units"],
+      };
+    },
+  },
 ];
 
 export function scenarioById(id) { return SCENARIOS.find((s) => s.id === id); }
