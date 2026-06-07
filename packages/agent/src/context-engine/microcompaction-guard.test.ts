@@ -231,8 +231,12 @@ describe("installMicrocompactionGuard", () => {
     const largeResult = createToolResult("bash", 10_000, "call-offloaded");
     sm.appendMessage(largeResult);
 
+    // B2: the callback carries (toolName, originalChars, toolCallId, diskPathRel).
+    // diskPathRel is WORKSPACE-RELATIVE (sessionDir-relative) — `tool-results/<id>.json`,
+    // never the absolute host path (residency; T-151-05). sessionDir == tempDir here,
+    // so relative(tempDir, <tempDir>/tool-results/call-offloaded.json) == that suffix.
     expect(onOffloaded).toHaveBeenCalledTimes(1);
-    expect(onOffloaded).toHaveBeenCalledWith("bash");
+    expect(onOffloaded).toHaveBeenCalledWith("bash", 10_000, "call-offloaded", "tool-results/call-offloaded.json");
   });
 
   it("fires onOffloaded callback when tool result exceeds hard cap", () => {
@@ -243,8 +247,10 @@ describe("installMicrocompactionGuard", () => {
     const hugeResult = createToolResult("bash", 150_000, "call-hardcap");
     sm.appendMessage(hugeResult);
 
+    // originalChars is the pre-offload char count (150_000), even on the hard-cap
+    // branch where content is truncated before offload; the pointer is still relative.
     expect(onOffloaded).toHaveBeenCalledTimes(1);
-    expect(onOffloaded).toHaveBeenCalledWith("bash");
+    expect(onOffloaded).toHaveBeenCalledWith("bash", 150_000, "call-hardcap", "tool-results/call-hardcap.json");
   });
 
   it("mutates original message content in-place for pipeline visibility (threshold path)", () => {
