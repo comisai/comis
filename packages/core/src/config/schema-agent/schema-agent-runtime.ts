@@ -65,6 +65,7 @@ import {
   ToolLifecycleConfigSchema,
   DeferredToolsConfigSchema,
   SepConfigSchema,
+  GoalAnchorConfigSchema,
 } from "./schema-agent-prompt.js";
 
 export const AgentConfigSchema = z.strictObject({
@@ -350,6 +351,8 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   toolLifecycle: ToolLifecycleConfigSchema.default(() => ToolLifecycleConfigSchema.parse({})),
   /** Silent Execution Planner (SEP): in-memory checklist for multi-step task tracking */
   sep: SepConfigSchema.optional(),
+  /** GoalAnchor: tail-injects objective + uncompleted steps into system prompt (small/nano models only; enabled=false by default) */
+  goalAnchor: GoalAnchorConfigSchema.optional(),
   /** Proactive notification configuration (rate limits, primary channel, dedup) */
   notification: NotificationConfigSchema.optional(),
   /** Channel-aware response-style verbosity hints (KEPT unchanged — distinct

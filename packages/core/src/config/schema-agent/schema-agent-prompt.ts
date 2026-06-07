@@ -410,3 +410,25 @@ export const SepConfigSchema = z.strictObject({
 });
 
 export type SepConfig = z.infer<typeof SepConfigSchema>;
+
+/**
+ * GoalAnchor configuration: tail-injects the current execution objective +
+ * uncompleted steps into the system prompt. Gated on scaffoldLevel==="max"
+ * (small + nano models only) in the prompt assembly layer (Plan 02).
+ *
+ * Default enabled=false ensures frontier/mid receive no injection until
+ * explicitly configured (behavior-neutral for all existing agents).
+ * Output is bounded by maxChars (default 500) to cap tail injection size.
+ */
+export const GoalAnchorConfigSchema = z.strictObject({
+  /** Enable GoalAnchor tail injection. Default: false (opt-in). */
+  enabled: z.boolean().default(false),
+  /**
+   * Maximum characters for the injected GoalAnchor block.
+   * Bounded [100, 2000] to prevent starvation (< 100) or context waste (> 2000).
+   * Default: 500 (~5–10 steps at ~50 chars/step).
+   */
+  maxChars: z.number().int().min(100).max(2000).default(500),
+});
+
+export type GoalAnchorConfig = z.infer<typeof GoalAnchorConfigSchema>;
