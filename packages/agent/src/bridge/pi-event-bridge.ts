@@ -73,7 +73,7 @@ import * as pathModule from "node:path";
 import { appendSessionIndexEntry } from "@comis/observability";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
-import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
+import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage } from "./bridge-safety-controls.js";
 import type { LoopStateReporter } from "./bridge-safety-controls.js";
 import {
   computeThinkingBlockHashes,
@@ -848,6 +848,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             const stepCheck = checkStepLimit(deps.stepCounter, m.aborted);
             if (stepCheck.shouldAbort) {
               m.finishReason = stepCheck.finishReason!;
+              m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
               m.aborted = true;
               emitStepLimitAbort(deps);
             }
@@ -861,6 +862,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             const loopCheck = checkLoopLimit(deps.turnLoopDetector, m.aborted);
             if (loopCheck.shouldAbort) {
               m.finishReason = loopCheck.finishReason!;
+              m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
               m.aborted = true;
               emitLoopAbort(deps);
             }
@@ -1468,6 +1470,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               const budgetCheck = checkBudgetLimit(deps.budgetGuard, m.aborted);
               if (budgetCheck.shouldAbort) {
                 m.finishReason = budgetCheck.finishReason!;
+                m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
                 m.aborted = true;
                 emitBudgetAbort(deps, m.totalTokens);
               }
@@ -1515,6 +1518,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               const contextCheck = checkContextWindow(deps.contextGuard, contextUsage, m.aborted, deps.logger);
               if (contextCheck.shouldAbort) {
                 m.finishReason = contextCheck.finishReason!;
+                m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
                 m.aborted = true;
                 emitContextAbort(deps, contextUsage);
               }
@@ -1956,6 +1960,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             const cbCheck = checkCircuitBreaker(deps.circuitBreaker, m.aborted);
             if (cbCheck.shouldAbort) {
               m.finishReason = cbCheck.finishReason!;
+              m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
               m.aborted = true;
               emitCircuitBreakerAbort(deps);
             }

@@ -25,6 +25,7 @@ import {
 } from "../../budget/turn-budget-tracker.js";
 import { wrapInEnvelope } from "../../envelope/message-envelope.js";
 import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
+import { buildGoalAnchorBlock } from "./goal-anchor.js";
 
 import type { RunPromptParams } from "./prompt-runner-types.js";
 
@@ -67,6 +68,8 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
     resolvedModel,
     config,
     budgetWarningRef,
+    modelProfile,
+    executionPlanRef,
   } = params;
 
   // Wrap message text with envelope
@@ -98,6 +101,24 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
   // BEFORE the user's actual question text.
   if (inlineMemory) {
     messageText = `${inlineMemory}\n${messageText}`;
+  }
+
+  // R1: GoalAnchor tail injection — APPENDED after user message text.
+  // Gated on scaffoldLevel=max (small/nano profiles only; frontier/mid = no injection).
+  // Requires: active ExecutionPlan + goalAnchor not explicitly disabled in config.
+  // T-153-02a: injection is bounded by maxChars (500 default); no untrusted data.
+  if (
+    modelProfile?.scaffoldLevel === "max" &&
+    config.goalAnchor?.enabled !== false &&
+    executionPlanRef.current?.active
+  ) {
+    const goalAnchorBlock = buildGoalAnchorBlock(
+      executionPlanRef.current,
+      (config.goalAnchor as { maxChars?: number } | undefined)?.maxChars,
+    );
+    if (goalAnchorBlock) {
+      messageText = `${messageText}\n\n${goalAnchorBlock}`;
+    }
   }
 
   // Extract vision-direct image content blocks for multimodal prompt

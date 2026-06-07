@@ -747,6 +747,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   if (bridgeResult.finishReason && bridgeResult.finishReason !== "stop") {
     result.finishReason = bridgeResult.finishReason;
   }
+  // R2: Abort redirect — when bridge set an abortResponse (max_steps, budget_exceeded, etc.),
+  // override result.response so the user sees the re-assertion message instead of the
+  // partial LLM text emitted before the abort. Only applied when finishReason is non-stop
+  // (belt-and-braces: abortResponse is only set at abort sites, so finishReason will be non-stop).
+  if (bridgeResult.abortResponse && result.finishReason !== "stop") {
+    result.response = bridgeResult.abortResponse;
+  }
   // Enrich errorContext with the tool that was in-flight when failure occurred
   if (result.errorContext && bridgeResult.lastActiveToolName) {
     result.errorContext.failingTool = bridgeResult.lastActiveToolName;

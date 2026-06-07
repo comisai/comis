@@ -1416,7 +1416,7 @@ async function runSessionLocked(
       systemPrompt,
       mergedCustomTools,
       cmdResult, sepEnabled, executionPlanRef,
-      _directives, _prevTimestamp, resolvedModel,
+      _directives, _prevTimestamp, resolvedModel, modelProfile,
       deps: {
         eventBus: deps.eventBus,
         logger: deps.logger,
