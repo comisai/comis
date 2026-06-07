@@ -501,8 +501,18 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
             errorPatternFailures.delete(key);
           }
         }
-        // Note: tool-level total counter is NOT reset on success
-        return hadConsecutive
+        // Note: tool-level total counter is NOT reset on success, and a success
+        // never clears blockedTools. So a tool that has already crossed
+        // maxToolFailures stays hard-blocked even after this success — emitting
+        // `reset` here would assert the breaker is usable again while
+        // beforeToolCall still returns block:true (WR-151-03). Gate the reset
+        // transition on the tool's actual availability: only report reset when
+        // the success genuinely restores a usable tool (signature-level recovery
+        // on a tool that is NOT tool-level blocked). The local counter cleanup
+        // above still runs unconditionally — only the observable transition is
+        // suppressed.
+        const stillBlocked = blockedTools.has(toolName);
+        return (hadConsecutive && !stillBlocked)
           ? { transition: "reset", toolName, reason: "success", consecutiveFailures: 0, errorTag: "" }
           : undefined;
       }
