@@ -643,22 +643,50 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             if (detector !== undefined) {
               try {
                 const detected = detector(endEvent.result, endEvent.isError);
-                if (detected === true || (typeof detected === "object" && detected !== null)) {
-                  toolSuccess = false;
-                  toolErrorKind =
-                    (typeof detected === "object" && detected !== null
-                      ? detected.errorKind
-                      : undefined) ?? toolErrorKind ?? "internal";
-                  classifiedFailureBy = "failure_detector";
-                  if (typeof detected === "object" && detected !== null) {
-                    // matchedRule/matchedToken are verdict provenance (P2).
-                    // matchedToken is free-text untrusted tool output — it is
-                    // sanitized+bounded at BOTH sinks (WARN + emit), never here.
-                    matchedRule = detected.matchedRule;
-                    matchedToken = detected.matchedToken;
+                if (detected !== false && detected !== undefined) {
+                  // D2 single-chokepoint no-false-flag guard (P2): the codified
+                  // c53ab0f invariant, generalized to ALL detectors here at the
+                  // ONE consumption site (not per-detector, so it also covers
+                  // future detectors). A status:200 + no-string-error result is
+                  // a structural success and must NEVER be flagged a failure.
+                  const r = endEvent.result;
+                  const looksLikeSuccess =
+                    r !== null &&
+                    typeof r === "object" &&
+                    (r as { status?: unknown }).status === 200 &&
+                    typeof (r as { error?: unknown }).error !== "string";
+                  if (looksLikeSuccess) {
+                    // Refuse the flag (preserve success) + observable WARN.
+                    // The guard NEVER aborts the turn — it mirrors the
+                    // catch below, which also preserves the success outcome.
+                    deps.logger.warn(
+                      {
+                        submodule: "bridge.failure-detector",
+                        toolName: endEvent.toolName,
+                        toolCallId: endEvent.toolCallId,
+                        errorKind: "internal" as const,
+                        hint: "failureDetector flagged a status:200/no-error result; refusing the flag (c53ab0f invariant). Fix the detector — it must classify off structured failure fields only.",
+                      },
+                      "failureDetector no-false-flag guard tripped",
+                    );
+                    // Do NOT flip toolSuccess; do NOT set classifiedFailureBy.
+                  } else {
+                    toolSuccess = false;
+                    toolErrorKind =
+                      (typeof detected === "object" && detected !== null
+                        ? detected.errorKind
+                        : undefined) ?? toolErrorKind ?? "internal";
+                    classifiedFailureBy = "failure_detector";
+                    if (typeof detected === "object" && detected !== null) {
+                      // matchedRule/matchedToken are verdict provenance (P2).
+                      // matchedToken is free-text untrusted tool output — it is
+                      // sanitized+bounded at BOTH sinks (WARN + emit), never here.
+                      matchedRule = detected.matchedRule;
+                      matchedToken = detected.matchedToken;
+                    }
+                    const status = (r as { status?: unknown })?.status;
+                    if (typeof status === "number") httpStatus = status;
                   }
-                  const status = (endEvent.result as { status?: unknown })?.status;
-                  if (typeof status === "number") httpStatus = status;
                 }
               } catch (detectorError: unknown) {
                 deps.logger.warn(
