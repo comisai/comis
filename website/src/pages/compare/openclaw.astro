@@ -2,10 +2,13 @@
 ---
 import Base from "../../layouts/Base.astro";
 import Footer from "../../components/Footer.astro";
+import { FACTS } from "../../data/facts";
+import { SECURITY } from "../../data/security";
+import { COMPETITORS, COMPARE_CLOSE } from "../../data/competitors";
 
 const title = "Comis vs OpenClaw - Deep Technical Comparison";
 const description =
-  "A verified, 60-dimension comparison of Comis and OpenClaw across architecture, security, extensibility, agent capabilities, context management, cache & cost optimization, and developer experience.";
+  "A verified, dimension-by-dimension comparison of Comis and OpenClaw across architecture, security, extensibility, agent capabilities, context management, cache & cost optimization, and developer experience.";
 
 type Verdict = "comis" | "openclaw" | "tie";
 interface Row {
@@ -19,7 +22,7 @@ const architectureRows: Row[] = [
   {
     label: "Architecture",
     comis:
-      "Hexagonal (ports & adapters). 13-package monorepo with compile-time enforced dependency graph via TypeScript composite references.",
+      `Hexagonal (ports & adapters). ${FACTS.packages}-package monorepo with compile-time enforced dependency graph via TypeScript composite references.`,
     openclaw:
       "Monolith plus 82 extension packages. Plugin-driven with dynamic loader for runtime discovery.",
     verdict: "comis",
@@ -27,7 +30,7 @@ const architectureRows: Row[] = [
   {
     label: "Codebase organization",
     comis:
-      "13 packages, ~478K source lines. Strict separation via package references and pnpm workspaces.",
+      `${FACTS.packages} packages in a large TypeScript monorepo. Strict separation via package references and pnpm workspaces.`,
     openclaw:
       "Single src/ directory (~3K source files) plus 82 extensions. Single tsconfig, pnpm workspace.",
     verdict: "comis",
@@ -218,7 +221,7 @@ const agentRows: Row[] = [
   {
     label: "Model providers",
     comis:
-      "13 wired providers: Anthropic (incl. Bedrock/Vertex aliases), OpenAI (incl. Azure variants), Google (Gemini, Vertex, Antigravity), Mistral, Groq, Ollama, OpenRouter, Together, Cerebras, xAI/Grok, DeepSeek - all via the pi-ai catalog with live validation.",
+      `${FACTS.models}. Anthropic (incl. Bedrock/Vertex aliases), OpenAI (incl. Azure variants), Google, Mistral, Groq, OpenRouter, and more — all through one catalog with live validation, key rotation, and per-agent model routes.`,
     openclaw:
       "34+ providers with auth profile fallback chain, dynamic discovery, and per-profile cooldown.",
     verdict: "tie",
@@ -405,8 +408,10 @@ const infraRows: Row[] = [
 const cacheRows: Row[] = [
   {
     label: "System prompt stability",
+    // Cache wording is built around the single source of truth (SECURITY.cacheArchitecture)
+    // so the optimization list can never drift from the README.
     comis:
-      "Dual-prompt architecture: static system prompt + dynamic preamble in first user message. 15+ content types surgically relocated (RAG, canary tokens, hooks, skills, timestamps). SHA-256 digest detects mid-session invalidation.",
+      `Prompt caching is a target architecture, not an afterthought: ${SECURITY.cacheArchitecture}. Beyond the cache-fence index, 15+ content types (RAG, canary tokens, hooks, skills, timestamps) are surgically relocated so the cached prefix never shifts, and a SHA-256 digest detects mid-session invalidation.`,
     openclaw:
       "Date/time excluded from system prompt. Plugin prepend/append system for prompt contributions. System prompt additions from context engine prepended (preserving prefix). No formal invalidation tracking.",
     verdict: "comis",
