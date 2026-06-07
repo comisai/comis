@@ -26,7 +26,22 @@ import type {
 } from "@comis/core";
 import { ok } from "@comis/shared";
 import { describe, it, expect } from "vitest";
-import { createMemoryRecall, type MemoryRecallConfig } from "./memory-recall.js";
+import { createMemoryRecall, passesBaseFloor, type MemoryRecallConfig } from "./memory-recall.js";
+import type { ScoreBreakdown } from "./score.js";
+
+/** A full breakdown with a chosen base (the other factors are neutral 1.0). */
+function breakdownWithBase(base: number): ScoreBreakdown {
+  return {
+    base,
+    recency: 1,
+    temporal: 1,
+    proof: 1,
+    trust: 1,
+    usefulness: 1,
+    forget: 1,
+    final: base,
+  } as ScoreBreakdown;
+}
 
 const NOW = 1_700_000_000_000;
 const SESSION_KEY = "telegram:chat_1:user_a" as unknown as SessionKey;
@@ -251,6 +266,34 @@ describe("R3 Memory Relevance Floor — exact-numbers gate (153-03)", () => {
     expect(ids).not.toContain("case-a");   // DROPPED (0.12 < 0.3)
     expect(ids).toContain("case-b");        // SURVIVES (0.40 >= 0.3)
     expect(ids).toContain("case-d");        // SURVIVES (0.30 === 0.3 inclusive)
+  });
+
+  // WR-02: the base-floor decision is FAIL-CLOSED on a missing breakdown.
+  // The prior code fell back to `(r.score ?? 0) >= floor`, which on the
+  // rerank-applied path compares the floor against the cross-encoder
+  // probability (a different, typically HIGHER scale than breakdown.base) —
+  // letting a low-base poisoned memory with an inflated CE score survive the
+  // exact filter meant to drop it. A memory with no recorded base is now a
+  // hard drop (this is a security gate).
+  describe("WR-02: passesBaseFloor is fail-closed on a missing breakdown", () => {
+    it("DROPS a memory with NO breakdown (undefined) — cannot be proven above the floor", () => {
+      // The prior fallback would have KEPT this if its (CE-inflated) r.score
+      // had been >= floor. The hardened gate takes no score fallback at all.
+      expect(passesBaseFloor(undefined, 0.3)).toBe(false);
+    });
+
+    it("KEEPS a memory whose recorded base is >= floor (boundary inclusive)", () => {
+      expect(passesBaseFloor(breakdownWithBase(0.4), 0.3)).toBe(true);
+      expect(passesBaseFloor(breakdownWithBase(0.3), 0.3)).toBe(true);
+    });
+
+    it("DROPS a memory whose recorded base is < floor, regardless of any boosted final", () => {
+      const bd = breakdownWithBase(0.12);
+      // Even if the boosted/CE final were inflated above the floor, the gate
+      // reads breakdown.base only.
+      (bd as { final: number }).final = 0.9;
+      expect(passesBaseFloor(bd, 0.3)).toBe(false);
+    });
   });
 
   // Verify that the filter uses breakdown.base (pre-boost), NOT the boosted r.score.
