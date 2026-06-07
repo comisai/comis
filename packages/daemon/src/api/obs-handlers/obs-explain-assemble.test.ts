@@ -162,6 +162,22 @@ describe("assembleIncidentReport — cost", () => {
     expect(report.cost.costUsd).toBe(0);
     expect(report.cost.totalTokens).toBe(0);
   });
+
+  it("reads cost + totalTokens from the metadata top level (real 678 fixture, no sessionEnd)", () => {
+    const report = assembleIncidentReport(
+      makeSignals(),
+      {
+        sessionKey: SESSION_KEY,
+        endReason: "completed_with_tool_errors",
+        totalTokens: 735_800,
+        sessionCostUsd: 1.320669,
+      },
+      null,
+      SESSION_KEY,
+    );
+    expect(report.cost.costUsd).toBeCloseTo(1.320669, 4);
+    expect(report.cost.totalTokens).toBe(735_800);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -234,6 +250,30 @@ describe("assembleIncidentReport — outcome", () => {
     expect(report.outcome.degraded).toBe(true);
     expect(report.outcome.severity).toBe("degraded");
   });
+
+  it("reads the endReason from the metadata top level when the fixture has no sessionEnd (real 678 shape)", () => {
+    // The FROZEN 678 fixture's session-metadata.json carries the rollup fields
+    // at the TOP LEVEL (endReason / durationMs / totalTokens / sessionCostUsd)
+    // with NO nested sessionEnd — the assembler must read top-level too.
+    const report = assembleIncidentReport(
+      makeSignals(),
+      {
+        sessionKey: SESSION_KEY,
+        sessionId: "678314278",
+        endReason: "completed_with_tool_errors",
+        traceId: "f942d38c-e372-43cc-99f1-ead4f0b8582f",
+        durationMs: 9_000,
+        totalTokens: 735_800,
+        sessionCostUsd: 1.320669,
+        toolFailureCount: 8,
+      },
+      null,
+      SESSION_KEY,
+    );
+    expect(report.outcome.endReason).toBe("completed_with_tool_errors");
+    expect(report.outcome.degraded).toBe(true);
+    expect(report.outcome.severity).toBe("degraded");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -249,6 +289,16 @@ describe("assembleIncidentReport — timing", () => {
       SESSION_KEY,
     );
     expect(report.timing.durationMs).toBe(12_000);
+  });
+
+  it("reads durationMs from the metadata top level when there is no sessionEnd (real 678 shape)", () => {
+    const report = assembleIncidentReport(
+      makeSignals(),
+      { sessionKey: SESSION_KEY, endReason: "completed_with_tool_errors", durationMs: 9_000 },
+      null,
+      SESSION_KEY,
+    );
+    expect(report.timing.durationMs).toBe(9_000);
   });
 
   it("derives turnCount from the signal ok+failed totals when metadata omits a turn count", () => {

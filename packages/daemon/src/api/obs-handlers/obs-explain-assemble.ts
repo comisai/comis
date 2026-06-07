@@ -152,11 +152,19 @@ export function assembleIncidentReport(
   const rollupPayload = rollupPayloadOf(rollup);
 
   // --- outcome -------------------------------------------------------------
+  // The FROZEN 678 fixture's session-metadata.json carries the rollup fields at
+  // the metadata TOP LEVEL with no nested `sessionEnd` (endReason / durationMs /
+  // totalTokens / sessionCostUsd / degraded). Post-152 sessions nest them under
+  // `sessionEnd`. Read `sessionEnd.<field>` first, then the metadata top-level
+  // field of the same name — so BOTH on-disk shapes resolve.
   const endReason =
-    (sessionEnd !== undefined ? asString(sessionEnd.endReason) : undefined) ?? "unknown";
+    (sessionEnd !== undefined ? asString(sessionEnd.endReason) : undefined) ??
+    (metadata !== null ? asString(metadata.endReason) : undefined) ??
+    "unknown";
   const isHardFailure = HARD_FAILURE_END_REASONS.has(endReason);
   const explicitDegraded =
     (sessionEnd !== undefined ? asBoolean(sessionEnd.degraded) : undefined) ??
+    (metadata !== null ? asBoolean(metadata.degraded) : undefined) ??
     asBoolean(rollupPayload.degraded);
   const derivedDegraded = isHardFailure || DEGRADED_END_REASONS.has(endReason);
   const degraded = explicitDegraded ?? derivedDegraded;
@@ -172,7 +180,8 @@ export function assembleIncidentReport(
   const cacheReadRatio = readRollupNumber(sessionEnd, metadata, rollupPayload, "cacheReadRatio", undefined, 0);
 
   // --- timing --------------------------------------------------------------
-  const durationMs = readRollupNumber(sessionEnd, metadata, rollupPayload, "durationMs", undefined, 0);
+  // durationMs also lives at the metadata top level in the frozen-678 shape.
+  const durationMs = readRollupNumber(sessionEnd, metadata, rollupPayload, "durationMs", "durationMs", 0);
   // turnCount: prefer an explicit rollup turn count; else derive from the
   // per-tool invocation totals (a deterministic lower bound, never 0 when any
   // tool ran), else 0.
