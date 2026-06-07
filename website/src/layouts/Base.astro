@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 ---
 import Nav from "../components/Nav.astro";
+import { FACTS } from "../data/facts";
 
 interface Props {
   title?: string;
@@ -10,8 +11,8 @@ interface Props {
 }
 
 const {
-  title = "Comis — Self-Hosted AI Agent Platform for Messaging Apps | Open Source",
-  description = "Self-hosted, open-source AI agent platform. Deploy specialized agents with persistent memory, 50+ tools, and DAG workflows across Telegram, Discord, Slack, and 6 more platforms. 22 security layers. 80% cost reduction.",
+  title = "Comis — the self-hosted AI agent platform built to be shared | Open Source",
+  description = `${FACTS.spine}. Multiple agents and operators on one auditable install across ${FACTS.channelList.slice(0, -1).join(", ")} and ${FACTS.channelList[FACTS.channelList.length - 1]} — security enforced by the kernel and the compiler, not by prompts.`,
   ogTitle,
   ogDescription,
 } = Astro.props;
@@ -65,7 +66,7 @@ const breadcrumbSegments = Astro.url.pathname
       "name": "Comis",
       "url": "https://comis.ai",
       "logo": "https://comis.ai/images/comis-logo.png",
-      "description": "Open-source AI assistant platform for messaging apps with persistent memory, 50+ tools, and security-first architecture.",
+      "description": `${FACTS.spine} — multiple agents and operators on one auditable install, with security enforced by the kernel and the compiler, not by prompts.`,
       "sameAs": [
         "https://github.com/comisai/comis",
         "https://twitter.com/comis_ai",
@@ -78,7 +79,7 @@ const breadcrumbSegments = Astro.url.pathname
         "@type": "WebSite",
         "name": "Comis",
         "url": "https://comis.ai",
-        "description": "The open-source AI assistant you can actually trust."
+        "description": `${FACTS.spine}.`
       })} />
     )}
     {!isHome && breadcrumbSegments.length > 0 && (

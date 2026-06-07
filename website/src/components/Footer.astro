@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 ---
+import { FACTS } from "../data/facts";
 ---
 
 <footer class="px-6 py-16 border-t border-white/5">
@@ -10,12 +11,12 @@
         Join the community.
       </h2>
       <p class="text-muted text-lg mb-8">
-        Comis is built in the open by people who believe AI should work for you - safely, reliably, and on your terms.
+        Comis is built in the open, and built to be contributed to. The rules are executable and the protocol is written down — so your first patch can land with confidence.
       </p>
 
       <div class="flex flex-wrap gap-4 justify-center">
-        <a href="https://docs.comis.ai" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center px-6 py-3 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors">
-          Get Started
+        <a href="/contribute" class="inline-flex items-center justify-center px-6 py-3 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors">
+          Contribute
         </a>
         <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center px-6 py-3 bg-white/10 hover:bg-white/15 text-white font-medium rounded-lg transition-colors border border-white/10">
           GitHub
@@ -27,13 +28,31 @@
           Twitter
         </a>
       </div>
+
+      <!-- Contributor funnel teaser (the footer half of conversion goal #3; the full path is /contribute) -->
+      <div class="mt-10 max-w-2xl mx-auto text-left bg-white/5 border border-white/10 rounded-xl p-6">
+        <p class="text-sm text-muted leading-relaxed">
+          The rules are executable — <code class="text-teal">pnpm validate</code> runs the same gates CI does, so green locally means green in review.
+        </p>
+        <p class="text-sm text-muted leading-relaxed mt-3">
+          The protocol is written down — <code class="text-teal">AGENTS.md</code> is the engineering contract, and the extension points (channel adapters, skills/MCP, docs) are real interfaces, not stubs.
+        </p>
+        <div class="flex flex-wrap gap-x-6 gap-y-2 mt-5 text-sm font-medium">
+          <a href={FACTS.links.goodFirstIssue} rel="noopener noreferrer" target="_blank" class="text-white hover:text-teal transition-colors">
+            Good first issue →
+          </a>
+          <a href="/contribute" class="text-white hover:text-teal transition-colors">
+            Contribute →
+          </a>
+        </div>
+      </div>
     </div>
 
     <!-- Bottom -->
     <div class="flex flex-col md:flex-row items-center justify-between gap-6 pt-8 border-t border-white/5">
       <div class="flex items-center gap-3">
         <img src="/images/comis-logo.png" alt="Comis" class="h-8" />
-        <span class="text-sm text-muted">Friendly by nature. Powerful by design.</span>
+        <span class="text-sm text-muted">{FACTS.spine}.</span>
       </div>
 
       <div class="flex items-center gap-6 text-sm text-muted">
@@ -56,7 +75,7 @@
 
     <!-- Acknowledgments -->
     <p class="text-center text-xs text-muted mt-4 max-w-2xl mx-auto leading-relaxed">
-      Comis exists because the open-source AI agent community proved that self-hosted assistants are not only viable - they're essential. Projects like OpenClaw showed what was possible and built a community around it. We learned from that work and chose to go deeper: agents with their own identity and soul, fleet orchestration with DAG pipelines, a context engine that never loses the thread, and security-first infrastructure built for real-world trust. Different path, shared mission - AI that works for you, on your terms.
+      Comis stands on the work of the open-source agent community — studied closely, credited gladly. <a href="https://github.com/clawdbot/openclaw" rel="noopener noreferrer" target="_blank" class="underline hover:text-muted transition-colors">OpenClaw</a> and <a href="https://github.com/NousResearch/hermes-agent" rel="noopener noreferrer" target="_blank" class="underline hover:text-muted transition-colors">Hermes Agent</a> proved how far a self-hosted assistant can go; Comis took a different design center — a platform built to be shared, with security enforced by the kernel and the compiler — and we credit theirs where they win. Built on <a href="https://github.com/badlogic/pi-mono" rel="noopener noreferrer" target="_blank" class="underline hover:text-muted transition-colors">pi-mono</a>. Different path, shared mission.
     </p>
   </div>
 </footer>
