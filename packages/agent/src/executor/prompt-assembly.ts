@@ -765,7 +765,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   if (promptMode === "compact-secure" && !deps.senderTrustDisplayConfig?.enabled) {
     logger.warn(
       {
-        module: "prompt-assembly",
+        submodule: "prompt-assembly",
         hint: "compact-secure mode active but senderTrustDisplayConfig is disabled — sender-trust section will be empty. Configure senderTrustDisplayConfig.enabled=true for S1 anti-injection trust display.",
         errorKind: "config" as const,
       },

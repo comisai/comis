@@ -457,7 +457,7 @@ export function createLlmCompactionLayer(
         // pinned[] is hoisted to outer scope so the output assembly can re-insert them
         // (see result assembly below — S4 invariant: pinned messages MUST appear in output).
         // Must run before the capability gate so pinnedCount is accurate for the event.
-        let pinned: AgentMessage[] = [];
+        const pinned: AgentMessage[] = [];
         let evictableMiddle = middleMessages;
         let securityPinnedCount = 0;
         if (config.securityMarkers) {
@@ -486,7 +486,7 @@ export function createLlmCompactionLayer(
           // Small/nano: skip LLM call — use deterministic Level-3 fallback.
           deps.logger.warn(
             {
-              module: "llm-compaction",
+              submodule: "llm-compaction",
               hint: `C4: capabilityClass=${config.capabilityClass ?? "frontier"} prefers eviction over LLM summarization — using deterministic fallback. Configure contextEngine.compaction.strongerSummarizerModel for LLM-quality summaries.`,
               errorKind: "config" as const,
               capabilityClass: config.capabilityClass ?? "frontier",
