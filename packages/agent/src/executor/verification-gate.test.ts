@@ -847,29 +847,57 @@ describe("D7 — Reasoning-budget adequacy (L5)", () => {
 
 // ---------------------------------------------------------------------------
 // shouldRunCritic — gate function
+//
+// WR-02: the post-execution hook has NO secretManager at its layer, so it
+// cannot resolve a cloud API key. buildSyntheticCriticDeps must call with
+// apiKey:"" — which for a key-REQUIRING provider (groq/cerebras/openrouter/…,
+// all mapped to capabilityClass "small") would auth-fail → fail-closed
+// not-verified → clobber a CORRECT answer into a false "I was unable to
+// satisfy…". So shouldRunCritic gates the critic to KEYLESS providers in this
+// phase and skips-with-WARN for key-requiring ones (cloud key threading is
+// Phase 155). Every call now passes the resolved `provider`.
 // ---------------------------------------------------------------------------
 describe("shouldRunCritic", () => {
   const baseConfig = {
     verification: { enabled: true, minResponseChars: 200 },
   };
   const activePlan = { current: BASE_PLAN };
+  function makeLogger() {
+    return {
+      info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),
+      child: vi.fn(function () { return this; }),
+    };
+  }
 
-  it("returns true when enabled + small capabilityClass + active plan", () => {
+  it("returns true when enabled + small capabilityClass + active plan + keyless provider", () => {
     expect(
       shouldRunCritic({
         capabilityClass: "small",
         config: baseConfig as never,
         executionPlanRef: activePlan,
+        provider: "ollama",
       }),
     ).toBe(true);
   });
 
-  it("returns true for nano capabilityClass", () => {
+  it("returns true for nano capabilityClass (keyless provider)", () => {
     expect(
       shouldRunCritic({
         capabilityClass: "nano",
         config: baseConfig as never,
         executionPlanRef: activePlan,
+        provider: "ollama",
+      }),
+    ).toBe(true);
+  });
+
+  it("returns true for lm-studio (also keyless)", () => {
+    expect(
+      shouldRunCritic({
+        capabilityClass: "small",
+        config: baseConfig as never,
+        executionPlanRef: activePlan,
+        provider: "lm-studio",
       }),
     ).toBe(true);
   });
@@ -881,6 +909,7 @@ describe("shouldRunCritic", () => {
         capabilityClass: "small",
         config: disabledConfig as never,
         executionPlanRef: activePlan,
+        provider: "ollama",
       }),
     ).toBe(false);
   });
@@ -891,6 +920,7 @@ describe("shouldRunCritic", () => {
         capabilityClass: "frontier",
         config: baseConfig as never,
         executionPlanRef: activePlan,
+        provider: "ollama",
       }),
     ).toBe(false);
   });
@@ -901,6 +931,7 @@ describe("shouldRunCritic", () => {
         capabilityClass: "mid",
         config: baseConfig as never,
         executionPlanRef: activePlan,
+        provider: "ollama",
       }),
     ).toBe(false);
   });
@@ -911,6 +942,7 @@ describe("shouldRunCritic", () => {
         capabilityClass: undefined,
         config: baseConfig as never,
         executionPlanRef: activePlan,
+        provider: "ollama",
       }),
     ).toBe(false);
   });
@@ -921,6 +953,7 @@ describe("shouldRunCritic", () => {
         capabilityClass: "small",
         config: baseConfig as never,
         executionPlanRef: { current: undefined },
+        provider: "ollama",
       }),
     ).toBe(false);
   });
@@ -931,6 +964,7 @@ describe("shouldRunCritic", () => {
         capabilityClass: "small",
         config: baseConfig as never,
         executionPlanRef: { current: { ...BASE_PLAN, active: false } },
+        provider: "ollama",
       }),
     ).toBe(false);
   });
@@ -941,8 +975,63 @@ describe("shouldRunCritic", () => {
         capabilityClass: "small",
         config: {} as never,
         executionPlanRef: activePlan,
+        provider: "ollama",
       }),
     ).toBe(false);
+  });
+
+  // --- WR-02: key-requiring CLOUD providers are skipped (not clobbered) ------
+  it.each(["groq", "cerebras", "openrouter", "deepseek", "mistral", "xai"])(
+    "returns false for key-requiring cloud provider %s (skip, not clobber)",
+    (provider) => {
+      expect(
+        shouldRunCritic({
+          capabilityClass: "small",
+          config: baseConfig as never,
+          executionPlanRef: activePlan,
+          provider,
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("emits a one-time WARN (with a Phase-155 hint) when skipping a key-requiring provider", () => {
+    const logger = makeLogger();
+    shouldRunCritic({
+      capabilityClass: "small",
+      config: baseConfig as never,
+      executionPlanRef: activePlan,
+      provider: "groq",
+      logger: logger as never,
+    });
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const [meta, message] = logger.warn.mock.calls[0]!;
+    expect(String(message) + JSON.stringify(meta)).toMatch(/155|cloud key/i);
+  });
+
+  it("does NOT WARN for a keyless provider (no spurious operator noise)", () => {
+    const logger = makeLogger();
+    shouldRunCritic({
+      capabilityClass: "small",
+      config: baseConfig as never,
+      executionPlanRef: activePlan,
+      provider: "ollama",
+      logger: logger as never,
+    });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("does NOT WARN when gated off for a non-small class even if key-requiring (no critic intended)", () => {
+    const logger = makeLogger();
+    shouldRunCritic({
+      capabilityClass: "frontier",
+      config: baseConfig as never,
+      executionPlanRef: activePlan,
+      provider: "groq",
+      logger: logger as never,
+    });
+    // Frontier never runs the critic — the missing-key WARN would be noise.
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });
 

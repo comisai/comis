@@ -206,66 +206,45 @@ async function callCritic(
 }
 
 // ---------------------------------------------------------------------------
-// buildSyntheticCriticDeps — construct CriticDeps from PostExecutionParams fields
-// Extracted so executor-post-execution.ts stays within its line-count budget.
-// The synthetic ModelProfile derives capacity/security from capabilityClass.
-// Cloud apiKey threading is deferred to Phase 155 (Phase 154 targets keyless Ollama).
-// ---------------------------------------------------------------------------
-export function buildSyntheticCriticDeps(params: {
-  capabilityClass: CapabilityClass | undefined;
-  provider: string;
-  modelId: string;
-  agentId: string;
-  canaryToken: string;
-  minResponseChars: number;
-  maxRetries: number;
-  clock: CriticDeps["clock"];
-  logger: CriticDeps["logger"];
-  eventBus: CriticDeps["eventBus"];
-}): { deps: CriticDeps; maxRetries: number } {
-  const cc = params.capabilityClass ?? "nano";
-  const isSmall = cc === "small" || cc === "nano";
-  return {
-    deps: {
-      provider: params.provider,
-      modelId: params.modelId,
-      apiKey: "",  // keyless for local Ollama; cloud wired in Phase 155
-      clock: params.clock,
-      logger: params.logger,
-      agentId: params.agentId,
-      canaryToken: params.canaryToken,
-      minResponseChars: params.minResponseChars,
-      modelProfile: {
-        capabilityClass: cc,
-        scaffoldLevel: isSmall ? "max" : "light",
-        securityLevel: isSmall ? "locked" : "standard",
-        reasoningStyle: "none",
-        maxOutputTokens: 4_096,
-        contextWindow: 8_192,
-        supportsVision: false,
-        supportsTools: true,
-        supportsPromptCache: false,
-        supportsServerToolSearch: false,
-        supportsStructuredOutput: false,
-      },
-      eventBus: params.eventBus,
-    },
-    maxRetries: params.maxRetries,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // shouldRunCritic — gate check for the post-execution hook
+//
+// WR-02: the hook has NO secretManager at its layer, so buildSyntheticCriticDeps
+// must call with apiKey:"". A key-REQUIRING provider would auth-fail →
+// fail-closed not-verified → CLOBBER a correct answer. Until cloud key threading
+// lands (Phase 155) the critic runs only for keyless/local providers;
+// key-requiring ones are skipped-with-WARN so the opt-in operator knows it is
+// inert. KEYLESS_CRITIC_PROVIDERS mirrors KEYLESS_PROVIDER_TYPES in
+// credential-resolver.ts / model-registry-adapter.ts.
 // ---------------------------------------------------------------------------
+const KEYLESS_CRITIC_PROVIDERS = new Set<string>(["ollama", "lm-studio"]);
+
 export function shouldRunCritic(params: {
   capabilityClass: CapabilityClass | undefined;
   config: PerAgentConfig;
   executionPlanRef: { current: ExecutionPlan | undefined };
+  /** Resolved provider for this execution (WR-02: keyless-only gate). */
+  provider: string;
+  /** Optional logger for the skip-with-WARN diagnostic (WR-02). */
+  logger?: ComisLogger;
 }): boolean {
-  const { capabilityClass, config, executionPlanRef } = params;
+  const { capabilityClass, config, executionPlanRef, provider, logger } = params;
   if (!config.verification?.enabled) return false;
   if (capabilityClass !== "small" && capabilityClass !== "nano") return false;
   if (!executionPlanRef.current?.active) return false;
+  // This class WOULD run the critic — but only keyless providers can (no key seam here).
+  if (!KEYLESS_CRITIC_PROVIDERS.has(provider.toLowerCase())) {
+    logger?.warn(
+      {
+        provider,
+        errorKind: "config" as const,
+        step: "verification" as const,
+        hint: "Verification critic skipped: cloud API-key threading is deferred to Phase 155. " +
+          "Use a keyless provider (ollama/lm-studio) to exercise the critic.",
+      },
+      "Verification critic skipped (cloud key threading not yet wired)",
+    );
+    return false;
+  }
   return true;
 }
 

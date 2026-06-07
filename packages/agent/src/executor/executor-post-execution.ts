@@ -97,7 +97,8 @@ import type { DiscoveryTracker } from "./discovery-tracker.js";
 import type { CapabilityClass } from "./model-profile.js";
 import { createHash, randomUUID } from "node:crypto";
 // R4: critic hook (no inline logic — all logic in verification-gate.ts)
-import { shouldRunCritic, runVerificationCritic, buildSyntheticCriticDeps } from "./verification-gate.js";
+import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
+import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { generateCanaryToken } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -986,12 +987,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
   }
 
-  if (shouldRunCritic({ capabilityClass, config, executionPlanRef })) { // R4: critic hook
+  if (shouldRunCritic({ capabilityClass, config, executionPlanRef, provider, logger: deps.logger })) { // R4: critic hook (WR-02: keyless-only gate)
     const { deps: cd, maxRetries: mr } = buildSyntheticCriticDeps({
       capabilityClass, provider, modelId: config.model, agentId: effectiveAgentId,
       canaryToken: generateCanaryToken(String(sessionKey), executionId),
-      minResponseChars: config.verification?.minResponseChars ?? 200,
-      maxRetries: config.honesty?.maxCriticRetries ?? 2,
+      minResponseChars: config.verification?.minResponseChars ?? 200, maxRetries: config.honesty?.maxCriticRetries ?? 2,
       clock: deps.clock, logger: deps.logger, eventBus: deps.eventBus,
     });
     const cr = await runVerificationCritic({ response: result.response ?? "", plan: executionPlanRef.current, deps: cd, maxRetries: mr });
