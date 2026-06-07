@@ -174,6 +174,18 @@ export function resolveModelProfile(
   const supportsVision = resolvedModel.input?.includes("image") === true;
   const reasoningStyle: ReasoningStyle = resolvedModel.reasoning === true ? "native" : "none";
 
+  // CR-02: derive supportsPromptCache HONESTLY from the provider family so the
+  // L1/L2 flag carries the real capability. The factory/cache-detection swap
+  // reads `config.modelProfile?.supportsPromptCache ?? isAnthropicFamily(...)`;
+  // that `??` only falls through when the flag is `undefined`, so a hardcoded
+  // `false` silently disabled prompt caching for EVERY Anthropic agent. The
+  // anthropic family (anthropic, amazon-bedrock, and aliases — exactly what
+  // isAnthropicFamily covers) is the set that supports prompt caching. Computing
+  // it the same way makes the swap genuinely behavior-neutral and re-enables
+  // Anthropic/Bedrock caching.
+  const supportsPromptCache =
+    resolveProviderCapabilities(resolvedModel.provider).providerFamily === "anthropic";
+
   return {
     contextWindow,
     maxOutputTokens,
@@ -182,7 +194,7 @@ export function resolveModelProfile(
     securityLevel,
     supportsVision,
     supportsTools: true,
-    supportsPromptCache: false,
+    supportsPromptCache,
     supportsServerToolSearch: false,
     supportsStructuredOutput: false,
     reasoningStyle,

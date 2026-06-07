@@ -6777,6 +6777,31 @@ describe("L2 — supportsPromptCache flag controls cache_control placement", () 
     expect(allText).toContain("## Safety");
     expect(allText).toContain("Constitutional Principles");
   });
+
+  /**
+   * CR-02 (positive direction): modelProfile.supportsPromptCache=true AND
+   * Anthropic provider with a large-enough payload → cache_control markers ARE
+   * placed. No prior test covered this direction because resolveModelProfile
+   * hardcoded supportsPromptCache=false, so no code path ever produced a `true`
+   * and Anthropic caching was silently off. After CR-02 the flag is derived
+   * honestly (anthropic family → true) so prompt caching actually engages.
+   *
+   * GREEN: flag=true → needsCacheBreakpoints=true → cache_control injected.
+   */
+  it("CR-02: supportsPromptCache=true → cache_control IS placed for Anthropic (large payload)", async () => {
+    const config = makeModelProfileConfig({ modelProfile: { supportsPromptCache: true } });
+    const safetyLines = buildSafetySection(false);
+    const payload = buildLargePayload(safetyLines.join("\n"));
+
+    const result = await runInjectorOnPayload(
+      config,
+      { id: "claude-sonnet-4-5-20250929", provider: "anthropic" },
+      payload,
+    );
+
+    // Anthropic caching is ON — at least one cache_control marker is present.
+    expect(countCacheControlsDeep(result)).toBeGreaterThan(0);
+  });
 });
 
 describe("L7 — Ollama provider single-block invariant", () => {

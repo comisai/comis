@@ -396,4 +396,86 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
       expect(profile.securityLevel).toBe("locked");
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // CR-02: supportsPromptCache must reflect the REAL provider-family capability.
+  // The factory/cache-detection swap reads
+  //   `config.modelProfile?.supportsPromptCache ?? isAnthropicFamily(provider)`,
+  // whose `??` only falls through on `undefined`. A hardcoded `false` therefore
+  // silently disabled Anthropic prompt caching. supportsPromptCache must be
+  // `true` for the anthropic family (anthropic, amazon-bedrock, aliases) and
+  // `false` for everything else.
+  // ---------------------------------------------------------------------------
+  describe("CR-02: supportsPromptCache reflects provider-family caching capability", () => {
+    it("anthropic model resolves supportsPromptCache=true", () => {
+      const profile = resolveModelProfile({
+        id: "claude-sonnet-4-5",
+        provider: "anthropic",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("amazon-bedrock (Anthropic via AWS) resolves supportsPromptCache=true", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-sonnet-4-5",
+        provider: "amazon-bedrock",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("bedrock alias resolves supportsPromptCache=true", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-opus-4",
+        provider: "bedrock",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("ollama (local) model resolves supportsPromptCache=false", () => {
+      const profile = resolveModelProfile({
+        id: "qwen3.6:35b",
+        provider: "ollama",
+        contextWindow: 262_144,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+
+    it("openai model resolves supportsPromptCache=false (no anthropic-style cache_control)", () => {
+      const profile = resolveModelProfile({
+        id: "gpt-4o",
+        provider: "openai",
+        contextWindow: 128_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+
+    it("google model resolves supportsPromptCache=false (uses Gemini CachedContent, not cache_control)", () => {
+      const profile = resolveModelProfile({
+        id: "gemini-2.5-pro",
+        provider: "google",
+        contextWindow: 1_000_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+
+    it("unknown/undefined model fails closed to supportsPromptCache=false", () => {
+      const profile = resolveModelProfile(undefined);
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+  });
 });
