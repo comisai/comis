@@ -599,15 +599,29 @@ describe("createPiEventBridge", () => {
         expect((warn![0].matchedToken as string).length).toBeLessThanOrEqual(1500);
       });
 
-      it("success path carries NO classifiedFailureBy / transportOk", () => {
+      it("success path carries NO provenance fields (all 7 absent)", () => {
         const { listener } = createPiEventBridge(deps);
         listener(makeToolExecutionEndEvent("bash", "tc-p1g", false) as any);
 
         const { endEmit } = findEmitAndWarn("bash");
         expect(endEmit).toBeDefined();
         expect(endEmit![1].success).toBe(true);
-        expect(endEmit![1].classifiedFailureBy).toBeUndefined();
-        expect(endEmit![1].transportOk).toBeUndefined();
+        // Regression net: every provenance field is assigned ONLY inside a
+        // failure branch, so a clean success emit must carry none of them.
+        // Guards against a future hoist of resultDigest/resultBytes (or any
+        // other field) out of the `if (!toolSuccess)` block leaking a digest
+        // of a successful body into the event/trajectory/cache-trace stream.
+        for (const f of [
+          "classifiedFailureBy",
+          "transportOk",
+          "httpStatus",
+          "matchedRule",
+          "matchedToken",
+          "resultBytes",
+          "resultDigest",
+        ] as const) {
+          expect(endEmit![1][f], `${f} must be absent on success`).toBeUndefined();
+        }
       });
     });
 
