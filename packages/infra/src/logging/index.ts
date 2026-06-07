@@ -11,3 +11,4 @@ export { createLogger } from "./logger.js";
 export type { LoggerOptions, ComisLogger } from "./logger.js";
 export type { LogFields, ErrorKind } from "@comis/core";
 export { isValidLogLevel, VALID_LOG_LEVELS } from "@comis/core";
+export { fingerprint } from "@comis/core";
