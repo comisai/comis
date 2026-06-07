@@ -186,6 +186,45 @@ describe("DIAG-baseline substrate — the verdict row + gating table serialize a
   });
 });
 
+describe("DIAG-baseline substrate — windowTranscript retains the mechanism evidence under budget (WR-03)", () => {
+  it("windowTranscript returns the full transcript untruncated when it fits the budget", () => {
+    // The 4 synthetic fixtures (each <6 KB) must pass through whole.
+    const fx = loadFixture(join(FIXTURES_DIR, "live-503-breaker"));
+    const { text, truncated } = windowTranscript(fx.events);
+    expect(truncated).toBe(false);
+    // Every event survives — the serialized full join is returned verbatim.
+    expect(text).toBe(fx.events.map((e) => JSON.stringify(e)).join("\n"));
+  });
+
+  it("windowTranscript keeps the historical fixture's mechanism evidence rather than head-slicing it away", () => {
+    // The historical 301 KB / 534-event trajectory: the old blind slice(0, 12_000)
+    // dropped the `403`/`status` mechanism evidence (first at ~80 KB / ~41 KB).
+    // The salient window must RETAIN it within the budget.
+    const fx = loadFixture(join(FIXTURES_DIR, "session-678314278"));
+    const { text, truncated } = windowTranscript(fx.events);
+    expect(truncated).toBe(true);
+    const hay = text.toLowerCase();
+    // The mechanism tokens the answer-key requires (substring/403/status/breaker):
+    // the evidence-bearing ones (403, status) lived in the dropped tail before.
+    expect(hay).toContain("403");
+    expect(hay).toContain("status");
+    // The failure narrative is present.
+    expect(hay).toContain("tool execution failed");
+    // And the result honors the budget (with newline headroom).
+    expect(text.length).toBeLessThanOrEqual(100_000);
+  });
+
+  it("windowTranscript honors a smaller explicit budget while still preferring salient events", () => {
+    const fx = loadFixture(join(FIXTURES_DIR, "session-678314278"));
+    const small = windowTranscript(fx.events, 20_000);
+    expect(small.truncated).toBe(true);
+    expect(small.text.length).toBeLessThanOrEqual(20_000);
+    // Even at a tight budget the salient events are preferred, so a status/403
+    // signal is retained where the blind 12 KB head-slice retained none.
+    expect(small.text.toLowerCase()).toMatch(/403|status/);
+  });
+});
+
 // =========================================================================
 // === Stage-C added in Task 3 ===
 //   The actual baseline RUN — gated behind COMIS_LIVE, NEVER in `pnpm validate`,
@@ -237,6 +276,77 @@ function makeFixtureBackedRpc(fixtureEvents: Array<Record<string, unknown>>): Rp
 }
 
 /**
+ * Character budget for the fixture transcript handed to the model (WR-03).
+ *
+ * The historical `session-678314278` trajectory serializes to ~301 KB across 534
+ * events; the prior blind `slice(0, 12_000)` dropped ~96% of it — including the
+ * mechanism evidence (the `403` substring inside a status-200 body at ~80 KB, the
+ * success->failure flips at ~41 KB). That made the baseline FAIL because the agent
+ * never saw the evidence, not because today's obs surface is shallow — conflating
+ * "surface gap" with "input truncation" and corrupting the headline number for the
+ * richest, most load-bearing fixture.
+ *
+ * 100 KB is chosen to comfortably retain the SALIENT window (the failure/status/
+ * breaker/error events — ~86 KB / 98 events for the historical fixture) plus
+ * headroom; the four synthetic fixtures (each <6 KB) pass through whole. The bound
+ * is generous enough that the mechanism evidence survives, while still capping a
+ * pathologically large future fixture. An operator pointing at a smaller-context
+ * model can lower it via the helper's `budgetChars` argument.
+ */
+const TRANSCRIPT_BUDGET_CHARS = 100_000;
+
+/**
+ * Event-salience pattern (WR-03): a serialized event carrying any of these signals
+ * is part of the failure NARRATIVE (what failed / why the breaker tripped / the
+ * status-200 misclassification), so it is kept preferentially when the full
+ * transcript exceeds the budget. Pure structural match over the serialized line —
+ * never echoes a body (the line is JSON we already serialized).
+ */
+const SALIENT_EVENT_PATTERN =
+  /tool execution failed|failuredetector|breaker|do not retry|403|forbidden|blocked|status|errorkind|completed_with_tool_errors|finishreason|success/i;
+
+/**
+ * Window a fixture's events into the model's transcript budget (WR-03).
+ *
+ * Returns the serialized transcript plus a `truncated` flag so the RUN can RECORD
+ * on the verdict row when truncation occurred — a truncated run must not be
+ * silently reported as a clean surface-gap failure.
+ *
+ * Strategy: if the full serialization fits the budget, return it verbatim
+ * (`truncated: false`). Otherwise SELECT the salient (failure/status/breaker/error)
+ * events in chronological order, then BACKFILL surrounding context events (also
+ * chronological) until the budget is hit — so the mechanism evidence is retained
+ * rather than blindly head-sliced away.
+ */
+export function windowTranscript(
+  events: Array<Record<string, unknown>>,
+  budgetChars: number = TRANSCRIPT_BUDGET_CHARS,
+): { text: string; truncated: boolean } {
+  const serialized = events.map((e) => JSON.stringify(e));
+  const full = serialized.join("\n");
+  if (full.length <= budgetChars) return { text: full, truncated: false };
+
+  // Rank: salient events first (they carry the mechanism narrative), then the rest
+  // — but ALWAYS emit in original chronological order so the model reads a coherent
+  // sequence. We pick indices greedily by salience-then-position under the budget.
+  const salient: number[] = [];
+  const filler: number[] = [];
+  serialized.forEach((s, i) => (SALIENT_EVENT_PATTERN.test(s) ? salient : filler).push(i));
+
+  const keep = new Set<number>();
+  let used = 0;
+  for (const idx of [...salient, ...filler]) {
+    const cost = serialized[idx]!.length + 1; // +1 for the join newline
+    if (used + cost > budgetChars) continue;
+    keep.add(idx);
+    used += cost;
+  }
+
+  const text = serialized.filter((_, i) => keep.has(i)).join("\n");
+  return { text, truncated: true };
+}
+
+/**
  * One scripted ReAct diagnosis loop over ONE fixture, adapting the
  * scripts/bench-small-model/harness.mjs:67-116 token-sum + tool-dispatch idiom.
  * Drives a real model (Ollama/OpenAI-compatible /v1/chat/completions) handed the
@@ -254,7 +364,7 @@ async function runDiagnosisLoop(opts: {
   fixtureEvents: Array<Record<string, unknown>>;
   readSourceImpl: (args: { path: string }) => string;
   maxSteps?: number;
-}): Promise<AgentTurn[]> {
+}): Promise<{ transcript: AgentTurn[]; truncated: boolean }> {
   const { baseUrl, apiKey, model, fixtureEvents, readSourceImpl, maxSteps = 8 } = opts;
   const transcript: AgentTurn[] = [];
   const obsRpc = makeFixtureBackedRpc(fixtureEvents);
@@ -291,13 +401,18 @@ async function runDiagnosisLoop(opts: {
     },
   ];
 
+  // WR-03: window the transcript into the model budget RETAINING the mechanism
+  // evidence (salient failure/status/breaker events) rather than a blind 12 KB
+  // head-slice that dropped ~96% of the historical fixture. `truncated` is bubbled
+  // up so the caller can record it on the verdict row.
+  const { text: transcriptText, truncated } = windowTranscript(fixtureEvents);
   const messages: Array<Record<string, unknown>> = [
     { role: "system", content: systemPrompt },
     {
       role: "user",
       content:
         "Session transcript (JSONL):\n" +
-        fixtureEvents.map((e) => JSON.stringify(e)).join("\n").slice(0, 12_000) +
+        transcriptText +
         "\n\nWhat is the root cause of this degraded session?",
     },
   ];
@@ -317,13 +432,20 @@ async function runDiagnosisLoop(opts: {
     const usage = json.usage ?? {};
 
     // Record the assistant turn verbatim (so recordMetrics sees toolCalls + usage).
+    // WR-02: drop nameless tool calls at the producer too — a model emitting a
+    // tool call without function.name (common with small local models) must not
+    // enter the transcript as `name: ""` and inflate distinctToolCalls (M2b).
+    // recordMetrics also skips empty names defensively; this keeps the captured
+    // transcript clean at the source.
     transcript.push({
       role: "assistant",
       content: msg.content ?? "",
-      toolCalls: (msg.tool_calls ?? []).map((tc) => ({
-        name: tc.function?.name ?? "",
-        arguments: tc.function?.arguments,
-      })),
+      toolCalls: (msg.tool_calls ?? [])
+        .filter((tc) => !!tc.function?.name)
+        .map((tc) => ({
+          name: tc.function!.name!,
+          arguments: tc.function?.arguments,
+        })),
       usage: {
         totalTokens: usage.total_tokens,
         promptTokens: usage.prompt_tokens,
@@ -356,7 +478,7 @@ async function runDiagnosisLoop(opts: {
       messages.push({ role: "tool", tool_call_id: tc.id, name: tc.function?.name, content: resultContent });
     }
   }
-  return transcript;
+  return { transcript, truncated };
 }
 
 describe.skipIf(!isLive)("DIAG-baseline RUN — fresh scripted agent on today's surface (gated)", () => {
@@ -385,7 +507,7 @@ describe.skipIf(!isLive)("DIAG-baseline RUN — fresh scripted agent on today's 
         const fx = loadFixture(join(FIXTURES_DIR, id));
         const readSource = makeReadSourceTool(repoRoot);
 
-        const transcript = await runDiagnosisLoop({
+        const { transcript, truncated } = await runDiagnosisLoop({
           baseUrl: agentBaseUrl,
           apiKey: agentApiKey,
           model: agentModel,
@@ -416,7 +538,14 @@ describe.skipIf(!isLive)("DIAG-baseline RUN — fresh scripted agent on today's 
           judgeVerdict: v.verdict,
           // skip != fail: an absent judge key → "skip" (excluded from the denominator).
           rootCauseReached: v.verdict === "skip" ? "skip" : v.verdict === "pass",
-          surfacesUsed: ["obs_query", ...Array.from(readSource.readPaths)],
+          // WR-03: record on the row when the fixture was windowed to fit the model
+          // budget, so a truncated run is never silently read as a clean surface-gap
+          // failure. The marker is a label only (passes assertNoSecrets).
+          surfacesUsed: [
+            "obs_query",
+            ...(truncated ? ["input-truncated:salient-window"] : []),
+            ...Array.from(readSource.readPaths),
+          ],
         });
 
         // pre is the structural lens (logged via the row's tokens/reads); the judge
