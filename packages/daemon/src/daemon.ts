@@ -2465,6 +2465,7 @@ async function bootGateway(
     suspendedAgents, gatewaySendRef,
     interactiveCallbackWiring,
     obsStore, // 154-03: backs the obs_explain assembler closure (diagnostics rollup)
+    dataDir: bootDataDir, // 154-03: absolute fallback data dir (always abs; ~/.comis or $COMIS_DATA_DIR)
   } = channels;
   const _createGatewayServer = overrides.createGatewayServer ?? createGatewayServer;
 
@@ -2528,7 +2529,11 @@ async function bootGateway(
   // {sessionKey?,traceId?,depth?} shape (its .refine rejects a neither-id call →
   // the dispatcher's try/catch turns the throw into a generic dispatch_error
   // sentinel, no raw leak) before the assembler reads any source.
-  const obsExplainDataDir = container.config.dataDir || ".";
+  // Use the ABSOLUTE boot data dir as the fallback (NOT "."). makeRealReader
+  // builds safePath(dataDir, "sessions"|"logs") eagerly, and safePath rejects a
+  // relative base — a "." here crashes boot with PathTraversalError. bootDataDir
+  // is always absolute (~/.comis or $COMIS_DATA_DIR). Mirrors daemon.ts:703.
+  const obsExplainDataDir = container.config.dataDir || bootDataDir;
   const obsExplainReader = makeRealReader(obsExplainDataDir, obsStore);
   const obsExplainForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
     const parsed = ObsExplainContract.request.parse(params);
