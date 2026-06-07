@@ -12,6 +12,14 @@
  *     caps but keeps every per-string cap (digest-only is depth-independent).
  *   - **failures cap** — newest-first, ≤ `SUMMARY_MAX_FAILURES` at summary,
  *     ≤ `FULL_MAX_FAILURES` at full. Dropped tail is recorded in `truncations[]`.
+ *   - **breakerTimeline / offloads caps** — the SAME newest-first length cap as
+ *     `failures` (≤ `SUMMARY_MAX_BREAKER` / `SUMMARY_MAX_OFFLOADS` at summary,
+ *     relaxed at full). A flapping breaker or a heavily-offloading session pushes
+ *     one event per transition with NO upstream dedup in the EVENT shape, so
+ *     these arrays are reachable at scale (up to the reader's MAX_RECORDS). Both
+ *     are ALSO shed in the progressive-shed loop so the byte budget converges.
+ *     Without these caps the ≤6144-byte summary guarantee was provably false
+ *     (a 2000-event flapping breaker yielded a ~150 KB summary report).
  *   - **errorPreview cap** — ≤ `SUMMARY_MAX_ERROR_PREVIEW_CHARS` per failure at
  *     BOTH depths.
  *   - **digest-only** — NO raw tool-output body is ever inlined. Any string
@@ -47,6 +55,20 @@ import { limitPayloadValue } from "@comis/observability";
 
 /** summary depth: keep at most this many failures (newest-first; drop oldest). */
 const SUMMARY_MAX_FAILURES = 20;
+/**
+ * summary depth: keep at most this many breaker-timeline entries (newest-first).
+ * A flapping circuit breaker (open/reset/open/reset…) pushes one event per
+ * transition with NO upstream dedup in the EVENT shape, so this array is
+ * reachable at scale (up to MAX_RECORDS). Capped at the same scale as failures
+ * so a worst-case summary report stays comfortably under SUMMARY_MAX_BYTES.
+ */
+const SUMMARY_MAX_BREAKER = 20;
+/**
+ * summary depth: keep at most this many large-result offloads (newest-first).
+ * A session that offloads many large bodies pushes one entry per offload (the
+ * log shape does NOT dedup), so this array is also reachable at scale.
+ */
+const SUMMARY_MAX_OFFLOADS = 20;
 /** Per-failure `errorPreview` hard cap (both depths — digest-only is depth-independent). */
 const SUMMARY_MAX_ERROR_PREVIEW_CHARS = 200;
 /**
@@ -57,6 +79,14 @@ const SUMMARY_MAX_ERROR_PREVIEW_CHARS = 200;
 const SUMMARY_MAX_BYTES = 6 * 1024;
 /** full depth relaxes the array cap (still digest-only, still per-string-capped). */
 const FULL_MAX_FAILURES = 200;
+/**
+ * full depth relaxes the breaker-timeline cap (lossless-by-design at full, no
+ * byte gate). Still bounded — a pathological multi-thousand-element timeline is
+ * trimmed even at full so the report never becomes truly unbounded.
+ */
+const FULL_MAX_BREAKER = 200;
+/** full depth relaxes the offload cap (analogue of FULL_MAX_FAILURES). */
+const FULL_MAX_OFFLOADS = 200;
 /**
  * Any string field longer than this is collapsed to a `fingerprint` digest by
  * the defensive sweep — guarantees no 50 KB tool body survives regardless of
@@ -93,15 +123,41 @@ export interface TruncationEntry {
 // ---------------------------------------------------------------------------
 
 /**
+ * Cap a `{seq:number}`-keyed array to its `max` NEWEST entries (highest seq
+ * first), pushing an honest `truncations[]` entry naming the dropped tail when
+ * it fires. Used by the CR-01 breaker/offload caps (failures has bespoke
+ * messaging inline). Re-sorts defensively so "newest" is well-defined
+ * regardless of upstream ordering; a no-op (returns the input array) when the
+ * length is already within budget so a clean report records no spurious entry.
+ */
+function capNewestFirst<T extends { seq: number }>(
+  arr: readonly T[],
+  max: number,
+  field: string,
+  truncations: TruncationEntry[],
+): T[] {
+  if (arr.length <= max) return [...arr];
+  const sorted = [...arr].sort((a, b) => b.seq - a.seq);
+  truncations.push({
+    field,
+    reason: `capped at ${max} newest entries (had ${arr.length})`,
+    pointer: "obs.explain depth=full",
+  });
+  return sorted.slice(0, max);
+}
+
+/**
  * Apply the X2 report-level bounding pass, then the structural backstop.
  *
  * Order matters (see the algorithm comments inline):
  *   1. seed `truncations` from any upstream entries (preserve assembly's ledger),
- *   2. cap `failures[]` to the depth-appropriate max (newest-first),
+ *   2. cap `failures[]`, `breakerTimeline[]`, and `offloads[]` to the depth-
+ *      appropriate max (newest-first),
  *   3. cap each `errorPreview` to 200 chars (both depths),
  *   4. defensive digest-only sweep: any string > `MAX_INLINE_STRING` → fingerprint,
  *   5. `limitPayloadValue` structural backstop,
- *   6. progressive shed until ≤ 6144 bytes at summary depth.
+ *   6. progressive shed (summary → failures → breakerTimeline → offloads) until
+ *      ≤ 6144 bytes at summary depth.
  *
  * @returns the bounded report with an honest `truncations[]` ledger.
  */
@@ -127,6 +183,18 @@ export function boundIncidentReport(
       pointer: "obs.explain depth=full",
     });
   }
+
+  // 2b. Cap breakerTimeline[] and offloads[] newest-first — the CR-01 fix. These
+  //     arrays were exempt from the structural cap (REPORT_ARRAY_FIELDS) AND
+  //     never length-capped here, so a flapping breaker / heavily-offloading
+  //     session could blow the ≤6144-byte summary budget (a 2000-event timeline
+  //     yielded a ~150 KB summary report). Cap them the same way failures is:
+  //     newest-first (highest seq), with an honest truncations[] ledger entry
+  //     for the dropped tail. Relaxed at full depth (lossless-by-design there).
+  const maxBreaker = depth === "summary" ? SUMMARY_MAX_BREAKER : FULL_MAX_BREAKER;
+  const breakerTimeline = capNewestFirst(report.breakerTimeline, maxBreaker, "breakerTimeline", truncations);
+  const maxOffloads = depth === "summary" ? SUMMARY_MAX_OFFLOADS : FULL_MAX_OFFLOADS;
+  const cappedOffloads = capNewestFirst(report.offloads, maxOffloads, "offloads", truncations);
 
   // 3+4. Per-failure errorPreview bounding — digest-only FIRST, then the
   //    200-char cap. The order is load-bearing for T-153-10: a grossly
@@ -188,7 +256,8 @@ export function boundIncidentReport(
     summary = `[digest:${fingerprint(summary)}]`;
   }
 
-  const offloads = report.offloads.map((o) => {
+  // Per-pointer digest sweep over the ALREADY length-capped offloads (step 2b).
+  const offloads = cappedOffloads.map((o) => {
     if (o.pointer.length <= MAX_INLINE_STRING) return o;
     truncations.push({
       field: "offloads[].pointer",
@@ -201,6 +270,7 @@ export function boundIncidentReport(
     ...report,
     summary,
     failures,
+    breakerTimeline,
     offloads,
     truncations,
   };
@@ -223,8 +293,12 @@ export function boundIncidentReport(
 
   // 6. Progressive shed to the summary byte budget. Bounded loop — shed the
   //    largest discretionary fields first (summary prose once, then halve
-  //    failures), appending a report-level truncation each time, until ≤
-  //    SUMMARY_MAX_BYTES or no discretionary field is left to shed.
+  //    failures, then halve breakerTimeline, then halve offloads), appending a
+  //    report-level truncation each time, until ≤ SUMMARY_MAX_BYTES or no
+  //    discretionary field is left to shed. The pre-loop step-2b caps already
+  //    bring these arrays to ≤20 at summary, so these branches are a defensive
+  //    convergence backstop (e.g. if the per-cap is ever raised) rather than the
+  //    primary control — but they ensure the loop can ALWAYS make progress.
   if (depth === "summary") {
     let iterations = 0;
     while (
@@ -263,6 +337,43 @@ export function boundIncidentReport(
             {
               field: "failures",
               reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; failures trimmed to ${half}`,
+              pointer: "obs.explain depth=full",
+            },
+          ],
+        };
+        continue;
+      }
+
+      if (bounded.breakerTimeline.length > 1) {
+        // Then halve the breaker timeline (still newest-first — already sorted
+        // by the step-2b cap; slicing the HEAD keeps the highest-seq entries).
+        const half = Math.max(1, Math.floor(bounded.breakerTimeline.length / 2));
+        bounded = {
+          ...bounded,
+          breakerTimeline: bounded.breakerTimeline.slice(0, half),
+          truncations: [
+            ...bounded.truncations,
+            {
+              field: "breakerTimeline",
+              reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; breakerTimeline trimmed to ${half}`,
+              pointer: "obs.explain depth=full",
+            },
+          ],
+        };
+        continue;
+      }
+
+      if (bounded.offloads.length > 1) {
+        // Finally halve the offloads (still newest-first).
+        const half = Math.max(1, Math.floor(bounded.offloads.length / 2));
+        bounded = {
+          ...bounded,
+          offloads: bounded.offloads.slice(0, half),
+          truncations: [
+            ...bounded.truncations,
+            {
+              field: "offloads",
+              reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; offloads trimmed to ${half}`,
               pointer: "obs.explain depth=full",
             },
           ],
