@@ -430,23 +430,67 @@ export function assembleRichSystemPrompt(params: AssemblerParams): string {
 // Block assembler
 // ---------------------------------------------------------------------------
 
-/** Number of leading sections that form the static prefix (identity, persona). */
-const STATIC_PREFIX_SECTION_COUNT = 2;
+/**
+ * Compute mode-aware cache block boundaries from the filtered section descriptor list.
+ *
+ * The static prefix covers identity + persona (when present).
+ * The attribution covers safety + language (both always present when the mode includes them).
+ * All remaining sections go into the semi-stable body.
+ *
+ * In compact-secure mode, `persona` is excluded (MODES_ALL, not MODES_ALL_PLUS_COMPACT),
+ * so the filtered descriptor list starts [identity, safety, language, ...]. Using fixed
+ * counts of 2+2 would mis-classify safety into staticPrefix and tooling into attribution.
+ * This function derives the boundaries from section IDs rather than fixed indices.
+ *
+ * The unconditional subagent section appended by buildAllSections has no descriptor entry;
+ * it always lands in bodySections regardless.
+ *
+ * @internal exported for tests only
+ */
+export function computeBlockBoundaries(
+  filteredDescriptors: ReadonlyArray<{ readonly id: string }>,
+): { staticEnd: number; attributionEnd: number } {
+  // Static prefix: identity and (optionally) persona.
+  const STATIC_IDS = new Set(["identity", "persona"]);
+  // Attribution: safety and language.
+  const ATTRIBUTION_IDS = new Set(["safety", "language"]);
 
-/** Number of attribution sections after static prefix (safety, language). */
-const ATTRIBUTION_SECTION_COUNT = 2;
+  // Walk the descriptor list in order, accumulating static then attribution sections.
+  let staticEnd = 0;
+  for (let i = 0; i < filteredDescriptors.length; i++) {
+    if (STATIC_IDS.has(filteredDescriptors[i]!.id)) {
+      staticEnd = i + 1;
+    } else {
+      break; // Static prefix is always a contiguous run at the start
+    }
+  }
+
+  let attributionEnd = staticEnd;
+  for (let i = staticEnd; i < filteredDescriptors.length; i++) {
+    if (ATTRIBUTION_IDS.has(filteredDescriptors[i]!.id)) {
+      attributionEnd = i + 1;
+    } else {
+      break; // Attribution follows static prefix as a contiguous run
+    }
+  }
+
+  return { staticEnd, attributionEnd };
+}
 
 /**
  * Assemble a multi-block system prompt split into a static prefix, attribution, and semi-stable body.
  *
- * The static prefix (sections 1-1b: identity, persona) never changes per session.
- * The attribution (sections 2-2b: safety, language) changes per-user (language preference).
- * The semi-stable body (sections 3-22 + additionalSections) can change when MCP tools
+ * The static prefix (identity + persona when present) never changes per session.
+ * The attribution (safety + language) changes per-user (language preference).
+ * The semi-stable body (tooling, workspace, messaging, etc.) changes when MCP tools
  * reconnect or tool schemas evolve. Splitting enables independent Anthropic `cache_control`
  * placement so that per-user attribution changes do not invalidate the static identity prefix
  * cache entry.
  *
- * **Identity invariant:** For modes "full" and "minimal":
+ * Boundaries are derived from section IDs (not fixed counts) so compact-secure mode,
+ * which excludes `persona`, still places safety+language in the attribution block.
+ *
+ * **Identity invariant:** For modes "full", "operational", and "compact-secure":
  * `blocks.staticPrefix + SECTION_SEPARATOR + blocks.attribution + SECTION_SEPARATOR + blocks.semiStableBody === assembleRichSystemPrompt(sameParams)`
  *
  * @param params - All optional parameters for section inclusion (same as assembleRichSystemPrompt)
@@ -467,18 +511,15 @@ export function assembleRichSystemPromptBlocks(params: AssemblerParams): SystemP
 
   const allSections = buildAllSections(params, mode);
 
-  // Split at boundaries: identity+persona | safety+language | tooling+workspace+...
-  // Boundaries are index-based on the filtered section list. In `"full"` and
-  // `"operational"` modes the first 2 entries are identity+persona (both are
-  // in MODES_FULL_OP) and the next 2 are safety+language (MODES_ALL). In
-  // `"minimal"` mode persona is dropped, so the prefix shrinks by one and the
-  // byte-identity between full/operational is NOT expected in minimal mode.
-  const staticSections = allSections.slice(0, STATIC_PREFIX_SECTION_COUNT);
-  const attributionSections = allSections.slice(
-    STATIC_PREFIX_SECTION_COUNT,
-    STATIC_PREFIX_SECTION_COUNT + ATTRIBUTION_SECTION_COUNT,
-  );
-  const bodySections = allSections.slice(STATIC_PREFIX_SECTION_COUNT + ATTRIBUTION_SECTION_COUNT);
+  // Derive split boundaries from the filtered descriptor list (mode-aware).
+  // The descriptor list is the same length as allSections (minus the unconditional
+  // subagent section which buildAllSections appends separately after the filter).
+  const filteredDescriptors = SECTIONS.filter((s) => s.includeIn.has(mode));
+  const { staticEnd, attributionEnd } = computeBlockBoundaries(filteredDescriptors);
+
+  const staticSections = allSections.slice(0, staticEnd);
+  const attributionSections = allSections.slice(staticEnd, attributionEnd);
+  const bodySections = allSections.slice(attributionEnd);
 
   const staticPrefix = joinSections(staticSections);
   const attribution = joinSections(attributionSections);

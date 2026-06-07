@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { assembleRichSystemPrompt, assembleRichSystemPromptBlocks, SECTION_SEPARATOR, SECTIONS } from "./system-prompt-assembler.js";
+import { assembleRichSystemPrompt, assembleRichSystemPromptBlocks, computeBlockBoundaries, SECTION_SEPARATOR, SECTIONS } from "./system-prompt-assembler.js";
 import {
   buildDateTimeSection,
   buildRuntimeMetadataSection,
@@ -2526,5 +2526,83 @@ describe("compact-secure promptMode — C2/S1 security invariants", () => {
     expect(compactPrompt).not.toContain("## Heartbeats");
     // Full mode prompt is larger than compact-secure (more sections included)
     expect(fullPrompt.length).toBeGreaterThan(compactPrompt.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-03: mode-aware cache block boundaries in assembleRichSystemPromptBlocks
+// ---------------------------------------------------------------------------
+
+describe("WR-03: computeBlockBoundaries — mode-aware cache block split", () => {
+  // Static IDs: identity, persona. Attribution IDs: safety, language.
+  // In full mode: [identity, persona, safety, language, ...] → staticEnd=2, attributionEnd=4
+  // In compact-secure: [identity, safety, language, ...] (persona excluded) → staticEnd=1, attributionEnd=3
+
+  it("full mode: staticEnd=2 (identity+persona), attributionEnd=4 (safety+language)", () => {
+    const fullDescriptors = SECTIONS.filter((s) => s.includeIn.has("full"));
+    const { staticEnd, attributionEnd } = computeBlockBoundaries(fullDescriptors);
+    // In full mode, first two sections are identity + persona
+    expect(fullDescriptors[0]!.id).toBe("identity");
+    expect(fullDescriptors[1]!.id).toBe("persona");
+    expect(staticEnd).toBe(2);
+    // Safety and language follow
+    expect(fullDescriptors[2]!.id).toBe("safety");
+    expect(fullDescriptors[3]!.id).toBe("language");
+    expect(attributionEnd).toBe(4);
+  });
+
+  it("compact-secure mode: staticEnd=1 (identity only), attributionEnd=3 (safety+language)", () => {
+    // persona is in MODES_ALL, not MODES_ALL_PLUS_COMPACT, so it is excluded.
+    // The filtered list starts [identity, safety, language, tooling, ...].
+    const compactDescriptors = SECTIONS.filter((s) => s.includeIn.has("compact-secure"));
+    const { staticEnd, attributionEnd } = computeBlockBoundaries(compactDescriptors);
+    expect(compactDescriptors[0]!.id).toBe("identity");
+    expect(staticEnd).toBe(1);
+    // safety and language come right after identity in compact-secure
+    expect(compactDescriptors[1]!.id).toBe("safety");
+    expect(compactDescriptors[2]!.id).toBe("language");
+    expect(attributionEnd).toBe(3);
+  });
+
+  it("compact-secure: safety section lands in attribution block (not staticPrefix)", () => {
+    // This is the primary WR-03 regression guard: with the old fixed-count code,
+    // safety was mis-classified into staticPrefix. With mode-aware boundaries,
+    // safety must always be in attribution.
+    const blocks = assembleRichSystemPromptBlocks({
+      promptMode: "compact-secure",
+      toolNames: ["exec", "read"],
+    });
+    // Safety must NOT be in staticPrefix
+    expect(blocks.staticPrefix).not.toContain("## Safety");
+    // Safety MUST be in attribution
+    expect(blocks.attribution).toContain("## Safety");
+    // Language must also be in attribution (not body)
+    expect(blocks.attribution).toContain("## Language");
+    // Tooling must be in semiStableBody (not attribution)
+    expect(blocks.semiStableBody).toContain("When this turn includes a `Capabilities` context");
+    expect(blocks.attribution).not.toContain("When this turn includes a `Capabilities` context");
+  });
+
+  it("compact-secure: identity invariant holds (concatenated blocks == assembleRichSystemPrompt)", () => {
+    // The mode-aware boundary change must preserve the identity invariant.
+    const params = {
+      promptMode: "compact-secure" as const,
+      toolNames: ["exec", "read", "memory_search"],
+    };
+    const blocks = assembleRichSystemPromptBlocks(params);
+    const fullPrompt = assembleRichSystemPrompt(params);
+    const parts = [blocks.staticPrefix, blocks.attribution, blocks.semiStableBody].filter(Boolean);
+    const reassembled = parts.join(SECTION_SEPARATOR);
+    expect(reassembled).toEqual(fullPrompt);
+  });
+
+  it("full mode: safety section lands in attribution block (existing behavior preserved)", () => {
+    const blocks = assembleRichSystemPromptBlocks({
+      promptMode: "full",
+      toolNames: ["exec"],
+    });
+    // With mode-aware boundaries, full mode behavior is byte-identical to old behavior.
+    expect(blocks.staticPrefix).not.toContain("## Safety");
+    expect(blocks.attribution).toContain("## Safety");
   });
 });
