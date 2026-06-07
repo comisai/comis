@@ -849,11 +849,11 @@ describe("ObsTrace contracts", () => {
   // obs.explain (Phase 153 centerpiece — IncidentReport assembler)
   // -------------------------------------------------------------------------
 
-  it("obs.explain: method name", () => {
+  it("obs.explain: declares the method name", () => {
     expect(ObsExplainContract.method).toBe("obs.explain");
   });
 
-  it("obs.explain: admin-scoped", () => {
+  it("obs.explain: requires the admin scope", () => {
     expect(ObsExplainContract.scopes).toEqual(["admin"]);
   });
 
