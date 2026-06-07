@@ -2,9 +2,11 @@
 ---
 import Base from "../layouts/Base.astro";
 import Footer from "../components/Footer.astro";
+import { SECURITY } from "../data/security";
+import { FACTS } from "../data/facts";
 
 const title = "Security - Built from Scratch with Security in Mind";
-const description = "Comis wasn't patched for security after launch. It was designed around the question: what happens when an AI agent has real power and someone tries to abuse it?";
+const description = "Comis wasn't patched for security after launch. It was designed around the question: what happens when an AI agent has real power and someone tries to abuse it? Security is enforced by the kernel and the compiler, not by prompts.";
 
 const layers = [
   {
@@ -212,20 +214,20 @@ const categories = [
         <div class="bg-navy-light/80 border border-coral/20 rounded-2xl p-8 md:p-12">
           <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
             <div>
-              <p class="text-4xl font-bold text-coral font-mono">23</p>
-              <p class="text-muted text-sm mt-2">Categorical layers <span class="text-muted-light">(25 primitives)</span></p>
+              <p class="text-4xl font-bold text-coral font-mono">On</p>
+              <p class="text-muted text-sm mt-2">Kernel sandbox <span class="text-muted-light">by default</span></p>
             </div>
             <div>
-              <p class="text-4xl font-bold text-white font-mono">65</p>
-              <p class="text-muted text-sm mt-2">Injection patterns</p>
-            </div>
-            <div>
-              <p class="text-4xl font-bold text-white font-mono">18</p>
-              <p class="text-muted text-sm mt-2">Log redaction rules</p>
+              <p class="text-4xl font-bold text-white font-mono">{SECURITY.contentScannerRules}</p>
+              <p class="text-muted text-sm mt-2">Skill content-scanner rules</p>
             </div>
             <div>
               <p class="text-4xl font-bold text-white font-mono">0</p>
               <p class="text-muted text-sm mt-2">Secrets in plaintext</p>
+            </div>
+            <div>
+              <p class="text-4xl font-bold text-white font-mono">Fail-closed</p>
+              <p class="text-muted text-sm mt-2">Broker &amp; action classifier</p>
             </div>
           </div>
         </div>
@@ -350,10 +352,10 @@ const categories = [
       <div class="max-w-5xl mx-auto">
         <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">Defense in depth</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
-          9 defense categories. 23 independent layers (25 primitives).
+          Layered runtime defenses, not a single guardrail.
         </h2>
         <p class="text-muted text-lg mb-12 max-w-2xl">
-          Each layer protects against a specific attack vector. No single layer failing compromises the system. The marketing count of 23 maps to 25 distinct implementation primitives in code.
+          {SECURITY.layerFraming.charAt(0).toUpperCase() + SECURITY.layerFraming.slice(1)}. Each layer protects against a specific attack vector; no single failure compromises the system.
         </p>
 
         <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -370,7 +372,7 @@ const categories = [
       </div>
     </section>
 
-    <!-- All 22 layers -->
+    <!-- Layer detail -->
     <section class="px-6 py-16 md:py-24">
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Every layer explained</p>
