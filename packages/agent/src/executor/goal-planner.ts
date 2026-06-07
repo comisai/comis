@@ -10,17 +10,16 @@
  * (Phase 157 or a dedicated fix-forward phase) confirms the GoalAnchor is
  * insufficient.
  *
- * Do NOT use: any external LLM call, backward-compat shim, or @deprecated JSDoc.
+ * Do NOT use: any external LLM call, compatibility shims, or deprecated annotations.
  */
 
 export interface GoalChecklist {
   items: Array<{ id: string; description: string }>;
 }
 
-export interface GoalPlannerDeps {
-  // Reserved for the full R5 implementation — will mirror CriticDeps
-  // (provider, modelId, apiKey, clock, logger, agentId, modelProfile)
-}
+// Reserved for the full R5 implementation — will mirror CriticDeps
+// (provider, modelId, apiKey, clock, logger, agentId, modelProfile)
+export type GoalPlannerDeps = Record<string, never>;
 
 /**
  * createGoalPlanner — factory returning a planner function.

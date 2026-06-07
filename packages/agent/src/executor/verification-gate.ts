@@ -8,8 +8,8 @@
  * L5: native-reasoning profiles size maxOutputTokens to avoid verdict starvation.
  *
  * File-size: ≤350 lines (do not exceed).
- * Forbidden: Date.now(), raw setTimeout/clearTimeout, new Date(),
- *            @deprecated, shim, backward compat wording.
+ * Forbidden: Date.now(), raw setTimeout/clearTimeout, new Date().
+ * Invariant: no compatibility shims, no deprecated annotations.
  *
  * @module
  */

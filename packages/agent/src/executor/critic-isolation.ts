@@ -11,8 +11,8 @@
  * - T-154-safety: buildCriticSystemPrompt always receives buildSafetySection(false)
  *
  * File-size: ≤200 lines (do not exceed; extract helpers if needed)
- * Forbidden: Date.now(), setTimeout (use systemSetTimeout in verification-gate.ts),
- *            @deprecated, shim, backward compat wording.
+ * Forbidden: Date.now(), raw setTimeout (use systemSetTimeout in verification-gate.ts).
+ * Invariant: no compatibility shims, no deprecated annotations.
  *
  * @module
  */

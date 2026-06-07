@@ -119,7 +119,7 @@ describe("D2 — Fail-closed", () => {
     expect(result.verdict).toBe("not-verified");
   });
 
-  it("non-JSON response → not-verified", async () => {
+  it("returns not-verified when critic emits non-JSON response", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
       llmText("This is not JSON"),
     );
@@ -131,7 +131,7 @@ describe("D2 — Fail-closed", () => {
     expect(result.verdict).toBe("not-verified");
   });
 
-  it("partial JSON response → not-verified", async () => {
+  it("returns not-verified when critic emits partial JSON response", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
       llmText('{"verdict":'),
     );
@@ -143,7 +143,7 @@ describe("D2 — Fail-closed", () => {
     expect(result.verdict).toBe("not-verified");
   });
 
-  it("bad enum value → not-verified", async () => {
+  it("returns not-verified when critic emits bad enum value in JSON", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
       llmText(JSON.stringify({ verdict: "APPROVED" })),
     );
@@ -165,7 +165,7 @@ describe("D2 — Fail-closed", () => {
     expect(result.verdict).toBe("not-verified");
   });
 
-  it("whitespace-only response → not-verified", async () => {
+  it("returns not-verified when critic emits whitespace-only response", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
       llmText("   "),
     );
