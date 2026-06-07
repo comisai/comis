@@ -88,14 +88,23 @@ import * as os from "node:os";
  * Resolve the effective PromptMode for a given execution context.
  *
  * Priority (highest to lowest):
- * 1. Cron/heartbeat auto-upgrade: "full" → "operational" (existing behavior)
- * 2. Compact-secure downgrade for small/nano capabilityClass (C2/S1 new)
- * 3. baseMode (operator-explicit or "full" default)
+ * 1. Compact-secure for small/nano capabilityClass (C2/S1) — wins even for
+ *    cron/heartbeat turns (WR-03: security holds independent of model + operation).
+ * 2. Cron/heartbeat auto-upgrade: "full" → "operational" (frontier/mid + no-profile).
+ * 3. baseMode (operator-explicit or "full" default).
  *
  * compact-secure fires ONLY when:
  *   - compactPromptConfig.enabled is true (default)
  *   - profile.capabilityClass is "small" or "nano"
  *   - baseMode is "full" (respect explicit operator overrides)
+ *
+ * WR-03: the compact-secure check is evaluated BEFORE the cron/heartbeat →
+ * operational downgrade. The milestone's premise is "weaker class ⇒ stricter
+ * securityLevel", and compact-secure carries the S1 anti-injection sender-trust
+ * hardening. A cron/heartbeat turn on a small/nano model must NOT silently lose
+ * that hardening — it gets compact-secure, not operational. The operational
+ * downgrade is reserved for frontier/mid (and no-profile) cron/heartbeat turns,
+ * which never enter compact-secure anyway.
  *
  * Frontier/mid: never compact-secure. This is the behavior-neutral guarantee
  * for large-tier models — their prompt stays byte-identical to pre-152 output.
@@ -108,12 +117,10 @@ export function resolvePromptModeForProfile(
   profile: ModelProfile | undefined,
   compactPromptConfig: { enabled?: boolean; targetTokens?: number } | undefined,
 ): PromptMode {
-  // Cron/heartbeat → operational (existing behavior, highest priority)
-  if ((operationType === "cron" || operationType === "heartbeat") && baseMode === "full") {
-    return "operational";
-  }
   // compact-secure: only for small/nano with config flag enabled (default: true).
-  // NEVER for frontier/mid — behavior-neutral guarantee (T-152-05).
+  // NEVER for frontier/mid — behavior-neutral guarantee (T-152-05). Evaluated
+  // FIRST so a cron/heartbeat turn on a weak model keeps the S1 hardening (WR-03)
+  // instead of being downgraded to "operational".
   if (
     (compactPromptConfig?.enabled ?? true) &&
     profile !== undefined &&
@@ -121,6 +128,11 @@ export function resolvePromptModeForProfile(
     baseMode === "full" // only auto-downgrade from full; respect explicit baseMode overrides
   ) {
     return "compact-secure";
+  }
+  // Cron/heartbeat → operational (frontier/mid + no-profile; small/nano already
+  // resolved to compact-secure above).
+  if ((operationType === "cron" || operationType === "heartbeat") && baseMode === "full") {
+    return "operational";
   }
   return baseMode;
 }

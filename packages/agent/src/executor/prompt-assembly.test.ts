@@ -121,7 +121,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt, extractUserLanguage, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 import * as nodeOs from "node:os";
 import { formatSessionKey, type SpawnPacket, type MemorySearchResult } from "@comis/core";
@@ -2149,6 +2149,45 @@ describe("assembleExecutionPrompt", () => {
       // effectiveLightContext short-circuits to the light-context filter before the cron branch
       expect(mockFilterBootstrapFilesForLightContext).toHaveBeenCalledOnce();
       expect(mockFilterBootstrapFilesForCron).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------
+  // WR-03: resolvePromptModeForProfile priority ladder (compact-secure wins
+  // over the cron/heartbeat → operational downgrade for small/nano).
+  // -----------------------------------------------------------------
+  describe("WR-03: resolvePromptModeForProfile cron/heartbeat on small/nano", () => {
+    const smallProfile = { capabilityClass: "small" } as any;
+    const nanoProfile = { capabilityClass: "nano" } as any;
+    const frontierProfile = { capabilityClass: "frontier" } as any;
+    const compactOn = { enabled: true };
+
+    it("small + cron + full → compact-secure (NOT operational) — keeps S1 hardening", () => {
+      expect(resolvePromptModeForProfile("full", "cron", smallProfile, compactOn)).toBe("compact-secure");
+    });
+
+    it("nano + heartbeat + full → compact-secure (NOT operational)", () => {
+      expect(resolvePromptModeForProfile("full", "heartbeat", nanoProfile, compactOn)).toBe("compact-secure");
+    });
+
+    it("small + interactive + full → compact-secure (unchanged)", () => {
+      expect(resolvePromptModeForProfile("full", "interactive", smallProfile, compactOn)).toBe("compact-secure");
+    });
+
+    it("frontier + cron + full → operational (large-tier downgrade preserved)", () => {
+      expect(resolvePromptModeForProfile("full", "cron", frontierProfile, compactOn)).toBe("operational");
+    });
+
+    it("no profile + cron + full → operational (existing behavior preserved)", () => {
+      expect(resolvePromptModeForProfile("full", "cron", undefined, compactOn)).toBe("operational");
+    });
+
+    it("small + cron + full but compactPrompt disabled → operational (opt-out respected)", () => {
+      expect(resolvePromptModeForProfile("full", "cron", smallProfile, { enabled: false })).toBe("operational");
+    });
+
+    it("explicit minimal baseMode wins for small + cron (no auto-upgrade from non-full)", () => {
+      expect(resolvePromptModeForProfile("minimal", "cron", smallProfile, compactOn)).toBe("minimal");
     });
   });
 
