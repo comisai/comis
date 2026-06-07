@@ -94,8 +94,7 @@ export async function handleMemoryCronSentinel(
       return true;
     }
 
-    // Resolve the cheap "cron" model (never the agent's primary) + the API key (by NAME,
-    // never by value; Pino also auto-redacts).
+    // Resolve the cheap "cron" model (never the agent's primary) + API key by NAME (Pino auto-redacts).
     const resolved = resolveOperationModel({
       operationType: "cron",
       agentProvider: agentConfig.provider ?? "anthropic",
@@ -112,17 +111,6 @@ export async function handleMemoryCronSentinel(
       payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
       return true;
     }
-
-    // R6 (CR-01): derive the capability routing for the cron/memory model that
-    // actually makes the merge LLM call. A small/nano cron model (absent an
-    // operator capable override) routes runMemoryConsolidation to "abstain" so a
-    // weak model never fabricates merged observations/triples into trusted storage
-    // (T-153-fabricate).
-    const consolidationCapability = resolveMemoryOpsCapability(
-      { provider: resolved.provider, modelId: resolved.modelId },
-      providerEntry?.capabilities,
-    );
-
     const consolidationResult = await runMemoryConsolidation({
       agentId,
       tenantId: tenantId ?? container.config.tenantId ?? "default",
@@ -135,9 +123,8 @@ export async function handleMemoryCronSentinel(
       apiKey,
       clock,
       logger: logger.child({ agentId, submodule: "memory-consolidation" }),
-      // R6 routing (CR-01): keys on the cron/memory model, not the agent primary.
-      capabilityClass: consolidationCapability.capabilityClass,
-      hasCapableModelOverride: consolidationCapability.hasCapableModelOverride,
+      // R6 (CR-01): small/nano cron model abstains via resolve-memory-ops-capability.ts (never fabricates into trusted storage).
+      ...resolveMemoryOpsCapability(resolved, providerEntry?.capabilities),
     });
 
     if (!consolidationResult.ok) {
@@ -167,8 +154,7 @@ export async function handleMemoryCronSentinel(
       return true;
     }
 
-    // Resolve the cheap "cron" model (never the agent's primary) + the API key (by NAME,
-    // never by value; Pino also auto-redacts).
+    // Resolve the cheap "cron" model (never the agent's primary) + API key by NAME (Pino auto-redacts).
     const resolved = resolveOperationModel({
       operationType: "cron",
       agentProvider: agentConfig.provider ?? "anthropic",
