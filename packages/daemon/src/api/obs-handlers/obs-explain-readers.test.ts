@@ -77,14 +77,26 @@ describe("makeRealReader.readSessionRecords", () => {
     expect(records).toEqual([]);
   });
 
-  it("skips malformed JSONL lines without throwing", async () => {
+  it("skips malformed JSONL lines and blank lines without throwing", async () => {
     const dataDir = tmpDataDir();
     writeSessionsFile(dataDir, `${SESSION_ID}.trajectory.jsonl`, [
       "{ not json",
+      "   ", // blank/whitespace-only line — skipped
       JSON.stringify({ toolName: "web_fetch", msg: "Tool execution failed" }),
     ]);
     const reader = makeRealReader(dataDir);
     const records = await reader.readSessionRecords(SESSION_KEY);
+    expect(records.length).toBe(1);
+  });
+
+  it("uses the whole sessionKey as the sessionId when it has no colon segment", async () => {
+    const dataDir = tmpDataDir();
+    const bareKey = "barekey"; // no ':' → sessionId === the whole key
+    writeSessionsFile(dataDir, `${bareKey}.trajectory.jsonl`, [
+      JSON.stringify({ toolName: "web_fetch", msg: "Tool execution failed" }),
+    ]);
+    const reader = makeRealReader(dataDir);
+    const records = await reader.readSessionRecords(bareKey);
     expect(records.length).toBe(1);
   });
 });
@@ -131,6 +143,19 @@ describe("makeRealReader.readSessionMetadata", () => {
 
   it("returns null when the metadata companion is absent", async () => {
     const dataDir = tmpDataDir();
+    const reader = makeRealReader(dataDir);
+    expect(await reader.readSessionMetadata(SESSION_KEY)).toBeNull();
+  });
+
+  it("returns null when the metadata companion is corrupt JSON (soft-fail)", async () => {
+    const dataDir = tmpDataDir();
+    const sessionsDir = path.join(dataDir, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, `${SESSION_ID}_session-metadata.json`),
+      "{ corrupt json not closed",
+      "utf-8",
+    );
     const reader = makeRealReader(dataDir);
     expect(await reader.readSessionMetadata(SESSION_KEY)).toBeNull();
   });
@@ -185,6 +210,18 @@ describe("makeRealReader.readDiagnosticsRollup (session-scoped)", () => {
     const dataDir = tmpDataDir();
     const reader = makeRealReader(dataDir);
     expect(await reader.readDiagnosticsRollup(SESSION_KEY)).toBeNull();
+  });
+});
+
+describe("makeRealReader default data dir", () => {
+  it("falls back to ~/.comis when an empty dataDir is passed (soft-fail to [])", async () => {
+    // Empty dataDir → defaultDataDir() (~/.comis); a synthetic key has no file
+    // there → [] without throwing. Exercises the default-dir branch.
+    const reader = makeRealReader("");
+    const records = await reader.readSessionRecords(
+      "default:synthetic-no-such-session:x:peer:synthetic-no-such-session",
+    );
+    expect(records).toEqual([]);
   });
 });
 

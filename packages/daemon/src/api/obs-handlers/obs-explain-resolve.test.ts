@@ -104,4 +104,20 @@ describe("resolveTraceToSession", () => {
     const resolved = await resolveTraceToSession(dataDir, TRACE_TURN_1);
     expect(resolved).toBe(CANONICAL_SESSION_KEY);
   });
+
+  it("falls back to the default ~/.comis data dir when an empty dataDir is passed (soft-fail to '')", async () => {
+    // Empty dataDir → defaultDataDir() (~/.comis). No matching index there for a
+    // synthetic trace → "" without throwing. Exercises the default-dir branch.
+    const resolved = await resolveTraceToSession("", "synthetic-trace-that-does-not-exist-anywhere");
+    expect(resolved).toBe("");
+  });
+
+  it("ignores a row whose sessionKey/sessionId are absent and keeps scanning", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({ traceId: TRACE_TURN_1 }), // matches traceId but no key/id
+      JSON.stringify({ traceId: TRACE_TURN_1, sessionKey: CANONICAL_SESSION_KEY }),
+    ]);
+    const resolved = await resolveTraceToSession(dataDir, TRACE_TURN_1);
+    expect(resolved).toBe(CANONICAL_SESSION_KEY);
+  });
 });

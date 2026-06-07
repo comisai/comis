@@ -250,4 +250,121 @@ describe("toIncidentSignals — structured event shape (production)", () => {
     expect(s.offloads[0]!.pointer).not.toContain("/Users/");
     expect(s.offloads[0]!.pointer).toContain("workspace/rel/path");
   });
+
+  it("increments toolStats.ok from a structured tool.result success and ignores unknown event types", () => {
+    const s = toIncidentSignals([
+      event("tool.result", 1, { toolName: "web_fetch", success: true }),
+      event("tool.heartbeat", 2, { toolName: "web_fetch" }), // unknown type → ignored
+    ]);
+    expect(s.toolStats.web_fetch?.ok).toBe(1);
+    expect(s.toolStats.web_fetch?.failed ?? 0).toBe(0);
+    expect(s.failures.length).toBe(0);
+  });
+
+  it("records a breaker_reset event", () => {
+    const s = toIncidentSignals([
+      event("tool.breaker_reset", 9, { toolName: "web_fetch" }),
+    ]);
+    const reset = s.breakerEvents.filter((e) => e.event === "reset");
+    expect(reset.length).toBe(1);
+    expect(reset[0]!.toolName).toBe("web_fetch");
+  });
+
+  it("digests the body when a failing tool.result event omits resultDigest", () => {
+    const s = toIncidentSignals([
+      event("tool.result", 1, {
+        toolName: "web_fetch",
+        success: false,
+        errorText: "boom",
+        // no resultDigest supplied → normalizer fingerprints the body
+      }),
+    ]);
+    expect(s.failures.length).toBe(1);
+    expect(s.failures[0]!.resultDigest.length).toBeGreaterThan(0);
+  });
+
+  it("synthesizes a seq and omits optional fields for a minimal failing tool.result (no seq/httpStatus/matchedToken/errorKind)", () => {
+    // A bare structured failure event missing every optional field — exercises
+    // the fallback branches (seq → synthetic, errorKind → "internal", no
+    // httpStatus/matchedToken/classifiedFailureBy/transportOk).
+    const s = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "tool.result", data: { toolName: "web_fetch", success: false } },
+    ]);
+    expect(s.failures.length).toBe(1);
+    const f = s.failures[0]!;
+    expect(f.errorKind).toBe("internal");
+    expect(f.httpStatus).toBeUndefined();
+    expect(f.matchedToken).toBeUndefined();
+    expect(f.classifiedFailureBy).toBe("");
+    expect(f.transportOk).toBe(false);
+    expect(Number.isFinite(f.seq)).toBe(true);
+  });
+
+  it("synthesizes a seq and omits consecutiveFailures for a minimal tool.breaker_opened event", () => {
+    const s = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "tool.breaker_opened", data: { toolName: "web_fetch" } },
+    ]);
+    const opened = s.breakerEvents.filter((e) => e.event === "opened");
+    expect(opened.length).toBe(1);
+    expect(opened[0]!.consecutiveFailures).toBeUndefined();
+    expect(Number.isFinite(opened[0]!.seq)).toBe(true);
+  });
+
+  it("ignores a structured event whose data lacks a toolName", () => {
+    const s = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "tool.result", seq: 1, data: { success: false } },
+      { traceSchema: "comis-trajectory", type: "tool.breaker_opened", seq: 2, data: {} },
+      { traceSchema: "comis-trajectory", type: "tool.breaker_reset", seq: 3, data: {} },
+      { traceSchema: "comis-trajectory", type: "tool.result_offloaded", seq: 4, data: {} },
+    ]);
+    expect(s.failures.length).toBe(0);
+    expect(s.breakerEvents.length).toBe(0);
+    expect(s.offloads.length).toBe(0);
+  });
+});
+
+describe("toIncidentSignals — offload pointer edge cases", () => {
+  it("collapses an absolute host path that does not pass through .comis to <offloaded>", () => {
+    const s = toIncidentSignals([
+      {
+        level: 20,
+        toolName: "web_fetch",
+        originalChars: 100,
+        diskPath: "/var/tmp/elsewhere/result.json", // absolute, no .comis/ segment
+        msg: "Tool result offloaded to disk",
+      },
+    ]);
+    expect(s.offloads[0]!.pointer).toBe("<offloaded>");
+  });
+
+  it("collapses a missing diskPath to <offloaded>", () => {
+    const s = toIncidentSignals([
+      { level: 20, toolName: "web_fetch", originalChars: 100, msg: "Tool result offloaded to disk" },
+    ]);
+    expect(s.offloads[0]!.pointer).toBe("<offloaded>");
+  });
+});
+
+describe("toIncidentSignals — misc", () => {
+  it("returns an empty-but-valid view for no records", () => {
+    const s = toIncidentSignals([]);
+    expect(s.sessionKey).toBe("");
+    expect(s.failures).toEqual([]);
+    expect(s.hasDoNotRetrySignal).toBe(false);
+    expect(s.hasMisclassificationSignal).toBe(false);
+  });
+
+  it("does not fire the misclassification signal when there are failures but no success", () => {
+    // Failures with a status token but ZERO successes → no misclassification.
+    const s = toIncidentSignals([log678Failure(), log678Failure()]);
+    expect(s.hasMisclassificationSignal).toBe(false);
+    expect(s.misclassifiedTool).toBeUndefined();
+  });
+
+  it("counts a success:true log line without a 'succeeded' msg as an ok increment", () => {
+    const s = toIncidentSignals([
+      { level: 20, toolName: "web_fetch", success: true, msg: "Tool finished" },
+    ]);
+    expect(s.toolStats.web_fetch?.ok).toBe(1);
+  });
 });
