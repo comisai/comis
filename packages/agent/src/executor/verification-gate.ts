@@ -53,7 +53,7 @@ export interface CriticDeps {
 // ---------------------------------------------------------------------------
 const VERDICT_RESERVE_TOKENS = 512;
 
-function resolveMaxOutputTokens(profile: ModelProfile): number {
+export function resolveMaxOutputTokens(profile: ModelProfile): number {
   // On native-reasoning profiles, reasoning_content may consume thousands of tokens
   // before the verdict JSON arrives. Give 4× the verdict reserve to prevent starvation (D7).
   return profile.reasoningStyle === "native"

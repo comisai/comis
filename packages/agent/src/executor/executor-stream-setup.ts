@@ -49,6 +49,7 @@ import type { TruncationSummary } from "./stream-wrappers/tool-result-size-bounc
 import type { TurnBudgetSummary } from "./stream-wrappers/turn-result-budget-wrapper.js";
 import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
 import type { CapabilityClass, ModelProfile } from "./model-profile.js";
+import { resolveMaxOutputTokens } from "./verification-gate.js";
 import { createStubFilterInjector } from "./stream-wrappers/stub-filter-injector.js";
 import { createToolCallRepairWrapper } from "./stream-wrappers/tool-call-repair-wrapper.js";
 import { computeFeatureFlagHash } from "./prompt-assembly.js";
@@ -295,7 +296,14 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     turnBudgetWrapper,
     createConfigResolver(
       {
-        maxTokens: config.maxTokens,
+        // L5: when the operator has not set an explicit maxTokens override, apply
+        // resolveMaxOutputTokens so native-reasoning profiles (reasoningStyle="native")
+        // get a budget large enough that reasoning_content does not starve the visible
+        // answer. Non-reasoning profiles get the VERDICT_RESERVE_TOKENS floor (512).
+        // The operator's explicit config.maxTokens always takes precedence.
+        maxTokens: config.maxTokens ?? (modelProfile
+          ? resolveMaxOutputTokens(modelProfile)
+          : undefined),
         temperature: config.temperature ?? (capabilityClass === "nano" ? 0.0 : 0.1),
         // SDK breakpoint on last message must always use "short" (5m).
         // getMessageRetention() now returns "long" after escalation, but the SDK's
