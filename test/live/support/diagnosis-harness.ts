@@ -163,9 +163,36 @@ export function loadFixture(dir: string): FixtureBundle {
   }
 
   const meta = parseJsonFile(dir, "session-metadata.json") as Record<string, unknown>;
-  const answerKey = parseJsonFile(dir, "answer-key.json") as AnswerKey;
+  const answerKey = assertAnswerKey(parseJsonFile(dir, "answer-key.json"));
 
   return { events, meta, answerKey };
+}
+
+/**
+ * Validate that a parsed `answer-key.json` has the load-bearing AnswerKey shape,
+ * throwing PATH ONLY on violation (WR-05).
+ *
+ * `loadFixture` already catches *parse* failures early on the principle that "a
+ * committed fixture is an artifact and MUST be well-formed". But a JSON-valid
+ * answer-key missing `mechanismTokens` (or with it empty / non-array) used to pass
+ * `loadFixture` cleanly and then detonate downstream in `compareToAnswerKey` as an
+ * opaque `Cannot read properties of undefined (reading 'filter')` with no fixture
+ * path — exactly the failure mode the early-throw philosophy exists to prevent. An
+ * empty `mechanismTokens` is rejected here too (it is the root of the WR-06 vacuous
+ * pass), so it is impossible to construct a zero-token bundle.
+ */
+function assertAnswerKey(parsed: unknown): AnswerKey {
+  const ak = parsed as Partial<AnswerKey>;
+  if (
+    typeof ak.rootCause !== "string" ||
+    !Array.isArray(ak.mechanismTokens) ||
+    ak.mechanismTokens.length === 0 ||
+    !ak.mechanismTokens.every((t) => typeof t === "string")
+  ) {
+    // Path only — never echo the parsed body, which could carry captured content.
+    throw new Error("diagnosis-harness: malformed answer-key.json in fixture file answer-key.json");
+  }
+  return ak as AnswerKey;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,11 +202,14 @@ export function loadFixture(dir: string): FixtureBundle {
 /**
  * Count the three M2 metrics from an agent transcript.
  *
- * - totalTokens: sum of `usage.totalTokens`, falling back to
- *   `promptTokens + completionTokens` (the bench harness idiom,
- *   scripts/bench-small-model/harness.mjs:89).
- * - distinctToolCalls (M2b): size of the set of every `toolCalls[].name`
- *   (calling obs_query twice = 1).
+ * - totalTokens: sum of `usage.totalTokens` when it is a POSITIVE number,
+ *   otherwise the `promptTokens + completionTokens` component sum (the bench
+ *   harness idiom, scripts/bench-small-model/harness.mjs:89). A zero/absent
+ *   total is treated as "no usable total" so a provider that emits
+ *   `total_tokens: 0` with populated components does not under-count (WR-01).
+ * - distinctToolCalls (M2b): size of the set of every NON-EMPTY `toolCalls[].name`
+ *   (calling obs_query twice = 1). A nameless tool call is skipped — it is not a
+ *   distinct tool and must not inflate the count (WR-02).
  * - distinctSourceReads (M2c): size of the set of the `path` argument of every
  *   `read_source` call. A malformed `arguments` JSON is SKIPPED, not thrown — a
  *   benchmark transcript is lightly-trusted captured data and throwing would let a
@@ -193,10 +223,23 @@ export function recordMetrics(transcript: AgentTurn[]): DiagnosisMetrics {
   for (const turn of transcript) {
     const usage = turn.usage;
     if (usage) {
-      totalTokens += usage.totalTokens ?? (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0);
+      // WR-01: `??` only falls back on null/undefined, so a real `total_tokens: 0`
+      // (streaming-off Ollama / some OpenAI-compatible proxies emit this while still
+      // reporting prompt/completion) was kept and under-counted M2a. Treat a
+      // zero/absent total as "no usable total" and prefer the component sum.
+      const total = usage.totalTokens;
+      totalTokens +=
+        typeof total === "number" && total > 0
+          ? total
+          : (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0);
     }
 
     for (const call of turn.toolCalls ?? []) {
+      // WR-02: a nameless tool call (model emitted no function.name — common with
+      // small local models) must NOT join the distinct-tool set as "" and inflate
+      // M2b, which can flip a TRIM-candidate (distinctToolCalls <= 1) into a false
+      // BUILD recommendation. A nameless call is not a distinct tool.
+      if (!call.name) continue;
       toolNames.add(call.name);
       if (call.name === "read_source" && call.arguments !== undefined) {
         try {
@@ -229,11 +272,22 @@ export function recordMetrics(transcript: AgentTurn[]): DiagnosisMetrics {
  *
  * `detail` lists the token names that were missing (token names only — no secret
  * content).
+ *
+ * THROWS on an empty `answerKey.mechanismTokens` (WR-06) — an empty list would make
+ * `reached` vacuously true for every answer, which is a programmer error, not a pass.
  */
 export function compareToAnswerKey(
   answer: string,
   answerKey: AnswerKey,
 ): { reached: boolean; detail: string } {
+  // WR-06: `[].filter(...)` is `[]`, so an empty mechanismTokens list would make
+  // `reached` vacuously true for EVERY answer (even ""), defeating the measure-first
+  // lever. A zero-token key is a programmer error in the scorer (loadFixture's
+  // assertAnswerKey blocks zero-token fixtures, but this reusable contract — imported
+  // by Plans 02/03 — must guard independently), not a clean pass.
+  if (answerKey.mechanismTokens.length === 0) {
+    throw new Error("compareToAnswerKey: answerKey.mechanismTokens is empty — cannot score");
+  }
   const haystack = answer.toLowerCase();
   const missing = answerKey.mechanismTokens.filter((t) => !haystack.includes(t.toLowerCase()));
   const reached = missing.length === 0;
