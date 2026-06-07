@@ -271,17 +271,37 @@ export function resolveToolDescription(tool: ToolDefinition): string {
  * Anthropic regex tool. Naming the tool explicitly gives the model a
  * concrete next step.
  *
+ * C3 (Plan 152-04): optional `maxEntries` cap truncates the formatted list
+ * and appends a "[+N more deferred tools — use discover_tools to list all]"
+ * suffix. Frontier/mid: uncapped (options undefined or {}). Small/nano: caller
+ * passes `{ maxEntries: DEFERRED_TOOLS_MAX_BY_CLASS[capabilityClass] }`.
+ * The signature is backward-compatible: options is optional.
+ *
  * @param entries - Deferred tool entries (remaining after discovery re-inclusion)
+ * @param options - Optional cap options: `maxEntries` limits formatted lines
  * @returns XML block string, or empty string when no entries
  */
-export function buildDeferredToolsContext(entries: DeferredToolEntry[]): string {
+export function buildDeferredToolsContext(
+  entries: DeferredToolEntry[],
+  options?: { maxEntries?: number },
+): string {
   if (entries.length === 0) return "";
+
+  // C3: apply maxEntries cap before formatting
+  const maxEntries = options?.maxEntries;
+  let effectiveEntries = entries;
+  let truncatedCount = 0;
+
+  if (maxEntries !== undefined && entries.length > maxEntries) {
+    effectiveEntries = entries.slice(0, maxEntries);
+    truncatedCount = entries.length - maxEntries;
+  }
 
   // Separate MCP tools (group by server) from non-MCP tools (individual listing)
   const mcpByServer = new Map<string, DeferredToolEntry[]>();
   const nonMcpEntries: DeferredToolEntry[] = [];
 
-  for (const e of entries) {
+  for (const e of effectiveEntries) {
     const server = extractMcpServerName(e.name);
     if (server) {
       const list = mcpByServer.get(server) ?? [];
@@ -304,6 +324,11 @@ export function buildDeferredToolsContext(entries: DeferredToolEntry[]): string 
     const prefix = `mcp__${server}--`;
     const shortNames = tools.map(t => t.name.startsWith(prefix) ? t.name.slice(prefix.length) : t.name);
     lines.push(`[${server}] (${tools.length} tools): ${shortNames.join(", ")}`);
+  }
+
+  // C3: append truncation notice when entries were capped
+  if (truncatedCount > 0) {
+    lines.push(`[+${truncatedCount} more deferred tools — use discover_tools to list all]`);
   }
 
   const instruction =

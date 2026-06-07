@@ -64,6 +64,34 @@ import type { ExecutionOverrides } from "./types.js";
 import type { EmbeddingPort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
+// C3 (Plan 152-04): per-capability-class preamble WARN thresholds + deferred-tools caps
+// ---------------------------------------------------------------------------
+
+/**
+ * C3: Preamble WARN threshold (tokens) per capability class.
+ * Warn when cachedFreshTailPreambleTokens exceeds this fraction of the
+ * effective context window. frontier: Infinity (never warn). small/nano:
+ * tight budget (~10% of effective window is a notable preamble spend).
+ */
+const PREAMBLE_WARN_THRESHOLD_BY_CLASS: Readonly<Record<CapabilityClass, number>> = {
+  frontier: Infinity,
+  mid: 8_000,
+  small: 3_200,   // ~10% of 32K effective window
+  nano: 1_600,    // ~10% of 16K effective window
+} as const;
+
+/**
+ * C3: Max deferred-tools entries emitted in the preamble per capability class.
+ * frontier: unlimited (Infinity). small/nano: cap to avoid bloating preamble.
+ */
+const DEFERRED_TOOLS_MAX_BY_CLASS: Readonly<Record<CapabilityClass, number>> = {
+  frontier: Infinity,
+  mid: 60,
+  small: 20,
+  nano: 10,
+} as const;
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -573,6 +601,22 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   );
   const modelProfile = modelProfileParam ?? FAIL_CLOSED_PROFILE;
   const capabilityClass = modelProfile.capabilityClass;
+
+  // C3: preamble size guard — warn when preamble tokens exceed the profile cap.
+  // This is a soft operator signal: the preamble is already assembled, but the
+  // warn lets operators know they may want to reduce MCP tools or deferred-tools
+  // list size for this capability class.
+  const preambleWarnThreshold = PREAMBLE_WARN_THRESHOLD_BY_CLASS[capabilityClass];
+  if (cachedFreshTailPreambleTokens > preambleWarnThreshold) {
+    deps.logger.warn({
+      hint: `Per-turn preamble (${cachedFreshTailPreambleTokens} tokens) exceeds the ${capabilityClass} profile cap (${preambleWarnThreshold}); consider reducing MCP tools or deferred-tools list`,
+      errorKind: "resource" as const,
+      cachedFreshTailPreambleTokens,
+      preambleWarnThreshold,
+      capabilityClass,
+    }, "C3: preamble size exceeds profile cap");
+  }
+
   // C1 (Phase 152): profile-aware budget — 8K-starvation fix + 256K-overfill cap for small/nano.
   // B-1 deliberate: cachedSystemTokensEstimate and cachedFreshTailPreambleTokens were computed at ÷3.5
   // above (lines 515-528) — this is the intended over-reservation (conservative direction). DO NOT change.
@@ -749,9 +793,16 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // Sonnet/Opus 4.x) lives entirely in `request-body-injector.ts` and is
   // gated there by a model-id capability check. See tool-deferral.ts JSDoc
   // on `buildDeferredToolsContext` for the rationale.
+  //
+  // C3: cap deferred-tools list for small/nano to bound preamble size.
+  // frontier/mid: DEFERRED_TOOLS_MAX_BY_CLASS[class] = Infinity → pass undefined (no cap).
+  const deferredToolsMax = DEFERRED_TOOLS_MAX_BY_CLASS[capabilityClass];
   let deferredContext = "";
   if (deferralResult.deferredEntries.length > 0) {
-    deferredContext = buildDeferredToolsContext(deferralResult.deferredEntries);
+    deferredContext = buildDeferredToolsContext(
+      deferralResult.deferredEntries,
+      deferredToolsMax !== Infinity ? { maxEntries: deferredToolsMax } : undefined,
+    );
   }
 
   // Per-turn capability index.
