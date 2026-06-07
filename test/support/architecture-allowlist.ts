@@ -166,31 +166,6 @@ export interface TestNamingAllowlistEntry {
  */
 export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // ============================================================================
-  // v2.14 "Glass Box" observability — cohesive single-purpose modules that
-  // crossed 800L via additive observability work (provenance D1, tool-lifecycle
-  // events D3/D7/D8, flight-recorder D5, the obs.explain IncidentReport D6).
-  // Each is one cohesive contract/EventMap/translator; a split is deferred to a
-  // post-v2.14 code-quality pass to avoid mid-milestone churn on core surfaces.
-  // ============================================================================
-  {
-    file: "packages/core/src/api-contracts/observability.ts",
-    lines: 976,
-    reason: "The ~25 observability RPC contracts (zod request/response) live in one cohesive api-contracts module; v2.14 added the obs.explain contract + the IncidentReport wire schema (D6) here. Split deferred: extract the IncidentReport schema to a sibling api-contracts file post-v2.14.",
-    removedIn: "deferred",
-  },
-  {
-    file: "packages/core/src/event-bus/events-agent.ts",
-    lines: 809,
-    reason: "The central agent EventMap (one declaration per event). v2.14 added the tool:executed provenance fields (D1), the tool:breaker_opened/reset + tool:result_offloaded events (D3/D7), the model.completed stop-reason fields (D8), and session:summary (D5) — all cohesive EventMap entries. Split deferred: partition the EventMap by domain post-v2.14.",
-    removedIn: "deferred",
-  },
-  {
-    file: "packages/observability/src/trajectory/event-bus-bridge.ts",
-    lines: 848,
-    reason: "The trajectory event-bus translator (TRAJECTORY_BRIDGE_MAPPING + the exhaustive translatePayload switch). v2.14 added provenance forwarding (D1) + the 3 tool-lifecycle translatePayload cases (D3/D7) + session.summary (D5). The switch's TS exhaustiveness keeps it in one file. Split deferred post-v2.14.",
-    removedIn: "deferred",
-  },
-  // ============================================================================
   // Web view + component decomposition (26 files)
   // ============================================================================
   {

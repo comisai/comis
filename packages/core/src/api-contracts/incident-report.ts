@@ -1,0 +1,193 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * The `obs.explain` contract: the §6.3 `IncidentReport` wire schema + shape
+ * types + the `ObsExplainContract` itself (Phase 153 centerpiece). Extracted
+ * from `observability.ts` to keep that module under the file-size cap.
+ *
+ * Barrel-only: external consumers import these from `"@comis/core"`. The
+ * `observability.ts` barrel re-exports them (and the `OBSERVABILITY_CONTRACTS`
+ * array pulls `ObsExplainContract` in from here) so the public surface and the
+ * registered RPC contract set are unchanged.
+ *
+ * Handler: packages/daemon/src/api/obs-handlers/obs-explain.ts
+ *
+ * @module
+ */
+import { z } from "zod";
+import { defineContract } from "./types.js";
+
+/**
+ * The §6.3 `IncidentReport` wire shape (the `obs.explain` response).
+ *
+ * A self-contained, redaction-safe post-mortem for a single agent session:
+ * outcome, cost, timing, per-tool stats, normalized failures (newest-first),
+ * the circuit-breaker timeline, large-result offloads, a one-paragraph
+ * summary, a deterministic `likelyRootCause` (heuristic registry, Plan 05),
+ * report-level next steps, and an honest `truncations[]` ledger (Plan 04
+ * bounding pass records what it dropped).
+ *
+ * Field bounding (≤200-char `errorPreview`, digest-only `resultDigest`, the
+ * 6 KB summary budget) is ENFORCED by the Plan-04 bounding pass — this schema
+ * only declares the shape. `suggestedNextSteps` appears BOTH inside
+ * `likelyRootCause` (matching the heuristic `RootCause` 1:1) and at the report
+ * root (report-level guidance); both are required-or-default.
+ */
+export const IncidentReportSchema = z.object({
+  schemaVersion: z.literal(1),
+  sessionKey: z.string(),
+  traceId: z.string(),
+  agentId: z.string(),
+  channel: z.object({ type: z.string(), id: z.string() }),
+  outcome: z.object({
+    endReason: z.string(),
+    degraded: z.boolean(),
+    severity: z.enum(["ok", "degraded", "failed"]),
+  }),
+  cost: z.object({
+    costUsd: z.number(),
+    totalTokens: z.number(),
+    cacheReadRatio: z.number(),
+  }),
+  timing: z.object({
+    durationMs: z.number(),
+    turnCount: z.number(),
+  }),
+  toolStats: z.record(
+    z.string(),
+    z.object({
+      ok: z.number(),
+      failed: z.number(),
+      topErrorKind: z.string().optional(),
+    }),
+  ),
+  failures: z.array(
+    z.object({
+      seq: z.number(),
+      toolName: z.string(),
+      classifiedFailureBy: z.string(),
+      transportOk: z.boolean(),
+      httpStatus: z.number().optional(),
+      errorKind: z.string(),
+      matchedToken: z.string().optional(),
+      resultDigest: z.string(),
+      resultBytes: z.number(),
+      errorPreview: z.string(),
+    }),
+  ),
+  breakerTimeline: z.array(
+    z.object({
+      seq: z.number(),
+      event: z.enum(["opened", "reset"]),
+      toolName: z.string(),
+      consecutiveFailures: z.number().optional(),
+    }),
+  ),
+  offloads: z.array(
+    z.object({
+      seq: z.number(),
+      toolName: z.string(),
+      originalChars: z.number(),
+      pointer: z.string(),
+    }),
+  ),
+  summary: z.string(),
+  likelyRootCause: z
+    .object({
+      code: z.string(),
+      detail: z.string(),
+      suggestedNextSteps: z.array(z.string()),
+    })
+    .nullable(),
+  suggestedNextSteps: z.array(z.string()),
+  truncations: z.array(
+    z.object({
+      field: z.string(),
+      reason: z.string(),
+      pointer: z.string().optional(),
+    }),
+  ),
+});
+
+/** The §6.3 IncidentReport (the `obs.explain` response). Inferred from the Zod schema. */
+export type IncidentReport = z.infer<typeof IncidentReportSchema>;
+
+/**
+ * A single normalized failure entry the assembler emits (and the bounding
+ * pass trims). Mirrors `IncidentReport.failures[]` so the normalizer output
+ * maps 1:1 onto the wire shape.
+ */
+export interface IncidentFailure {
+  seq: number;
+  toolName: string;
+  classifiedFailureBy: string;
+  transportOk: boolean;
+  httpStatus?: number;
+  errorKind: string;
+  matchedToken?: string;
+  resultDigest: string;
+  resultBytes: number;
+  errorPreview: string;
+}
+
+/**
+ * The normalizer output (`toIncidentSignals`) that Plans 02/03/05 consume.
+ *
+ * One shared contract for the heuristic registry's predicates: raw per-tool
+ * stats + normalized failures/breaker/offload arrays, plus the derived
+ * booleans/strings the deterministic `RootCause` rules key on (breaker-opened
+ * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
+ * misclassification signal + offending tool/token). Derived from the heuristic
+ * predicates in 153-PATTERNS.md ("678 / 503 heuristic derivation").
+ */
+export interface IncidentSignals {
+  sessionKey: string;
+  toolStats: Record<
+    string,
+    { ok: number; failed: number; topErrorKind?: string }
+  >;
+  failures: IncidentFailure[]; // normalized, newest-first
+  breakerEvents: Array<{
+    seq: number;
+    event: "opened" | "reset";
+    toolName: string;
+    consecutiveFailures?: number;
+  }>;
+  offloads: Array<{
+    seq: number;
+    toolName: string;
+    originalChars: number;
+    pointer: string;
+  }>;
+  // derived booleans/strings for the heuristic registry:
+  breakerOpenedTool?: string; // from a tool.breaker_opened event OR a "DO NOT retry" log line's toolName
+  hasDoNotRetrySignal: boolean; // any errorText contains "DO NOT retry"
+  mostFailedTool?: string;
+  repeatedFailureCount: Record<string, number>;
+  hasMisclassificationSignal: boolean; // ≥N success:true co-existing with ≥N "Tool execution failed" + "status"/"403"/"200" substring in an errorText
+  misclassifiedTool?: string;
+  misclassifiedToken?: string; // e.g. "403"|"status"|"200"
+}
+
+/**
+ * Assemble a redaction-safe post-mortem for a single agent session.
+ *
+ * Accepts EITHER `sessionKey` OR `traceId` (the `.refine` rejects neither;
+ * a traceId is canonicalized to its sessionKey so there is one assembler
+ * path). `depth` selects the summary (≤6 KB) vs. full projection. Admin-only;
+ * the handler is non-mutating (read-only post-mortem). The full assembler
+ * pipeline lands in Plan 05 — this contract is the Wave-1 shared shape.
+ */
+export const ObsExplainContract = defineContract({
+  method: "obs.explain",
+  request: z
+    .object({
+      sessionKey: z.string().min(1).optional(),
+      traceId: z.string().min(1).optional(),
+      depth: z.enum(["summary", "full"]).optional(),
+    })
+    .refine((r) => r.sessionKey != null || r.traceId != null, {
+      message: "sessionKey or traceId required",
+    }),
+  response: IncidentReportSchema,
+  scopes: ["admin"] as const,
+});
