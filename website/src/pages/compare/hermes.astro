@@ -33,7 +33,7 @@ const designRows: Row[] = [
     comis:
       "Multi-tenant by construction: per-session routing, per-agent isolation, and trust-partitioned memory so an untrusted sender can't reach what the system verified.",
     hermes:
-      "Single user per gateway - an explicit, documented architectural choice. The operating system is the security boundary.",
+      "Single trust tier per gateway - all authorized callers are equally trusted; no per-caller capability model. The operating system is the security boundary.",
     verdict: "comis",
   },
   {
@@ -50,7 +50,7 @@ const securityRows: Row[] = [
   {
     label: "Exec sandbox",
     comis:
-      "Kernel-enforced and on by default - Bubblewrap on Linux (full namespace unshare), sandbox-exec on macOS. No network by default. Tools run jailed by the OS itself, not by a setting you have to remember to turn on.",
+      "Kernel-enforced and on by default - Bubblewrap on Linux (full namespace unshare), sandbox-exec on macOS. Tools run jailed by the OS itself, not by a setting you have to remember to turn on; credentialed CLI spawns additionally run with no network (broker-only mode).",
     hermes:
       "Host-first by default. Containers confine the shell tool, not the agent. The agent process itself runs on the host.",
     verdict: "comis",
@@ -84,7 +84,7 @@ const securityRows: Row[] = [
     comis:
       "A skill content scanner screens every skill at load time (exec injection, exfiltration, XML breakout), plus ESLint-enforced security bans (no path.join, no process.env, no eval/new Function, no swallowed errors) and architecture-as-tests that block insecure patterns in CI.",
     hermes:
-      "Skills are user-authored and trusted by the single operator; self-improving skills are created and rewritten by the agent. No dedicated pre-execution content scanner is claimed.",
+      "Skills are user-authored and trusted by the single operator; self-improving skills are created and rewritten by the agent. A 'Skills Guard' scans skill content for injection patterns at install, but it is a review aid, not an enforced boundary - operator review is the real control.",
     verdict: "comis",
   },
   {
@@ -119,7 +119,7 @@ const agentRows: Row[] = [
     comis:
       `Natural-language → DAG orchestration: ${FACTS.dagNodeTypes} node types (agent, debate, vote, refine, collaborate, map-reduce, human approval gate) with barrier modes, per-node budgets, and approval gates.`,
     hermes:
-      "delegate_task with a depth limit of ≤2, plus a kanban board for task tracking. Effective for personal task delegation; not a full graph engine.",
+      "delegate_task spawns isolated subagents (flat by default - depth 1; opt-in max_spawn_depth with no hard ceiling), plus a kanban board for task tracking. Effective for personal task delegation; not a full graph engine.",
     verdict: "comis",
   },
   {
@@ -127,7 +127,7 @@ const agentRows: Row[] = [
     comis:
       `Trust-partitioned and benchmarked in public: SQLite + FTS5 + sqlite-vec hybrid recall (reciprocal rank fusion), trust-first contradiction resolution (system > learned > external), and learning from use behind a bounded tuner with the trust weight frozen. Measured ${FACTS.benchmarks.mem0Tie} head-to-head with mem0 (N=${FACTS.benchmarks.mem0TieN}), ${FACTS.benchmarks.controlDelta} over a full-context control, ${FACTS.benchmarks.onDeviceCost}.`,
     hermes:
-      "Agent-curated memory with FTS5 session search and LLM summarization for cross-session recall, plus dialectic user modeling. No trust levels; the learning loop is unbenchmarked.",
+      "Agent-curated memory: LLM-free FTS5 session search, plus LLM summarization and dialectic user modeling for cross-session recall. No trust levels in the memory store (skill sources do carry builtin/trusted/community tiers); the learning loop is unbenchmarked.",
     verdict: "comis",
   },
   {
@@ -139,11 +139,19 @@ const agentRows: Row[] = [
     verdict: "tie",
   },
   {
-    label: "Terminal backends",
+    label: "Interactive terminal control",
     comis:
-      "Daemon-supervised interactive terminal driver: a real PTY fed into a headless emulator, governed like an MCP server (operator allowlist + per-entry sandbox scope), credential-agnostic.",
+      "Daemon-supervised interactive terminal driver: a real PTY fed into a headless emulator, governed like an MCP server (operator allowlist + per-entry sandbox scope), credential-agnostic. Drives interactive shells and AI-CLIs.",
     hermes:
-      "Serverless terminal backends - run the agent on infrastructure that costs nearly nothing when idle. A neat operational strength.",
+      "No interactive terminal/PTY driver - the terminal tool runs one-shot or background commands, not a live interactive session.",
+    verdict: "comis",
+  },
+  {
+    label: "Execution & deployment backends",
+    comis:
+      "Runs as a supervised daemon (directly or via pm2); no serverless or scale-to-zero hosting story.",
+    hermes:
+      "Six execution backends (local, Docker, SSH, Modal, Daytona, Singularity); Modal and Daytona offer serverless persistence that hibernates when idle - a genuine operational strength.",
     verdict: "hermes",
   },
 ];
@@ -168,7 +176,7 @@ const contextRows: Row[] = [
   {
     label: "Local-model security floor",
     comis:
-      "A tier-aware Model Capability Profile (frontier / mid / small / nano): a weaker model gets a stricter, more locked-down platform posture - capability is decoupled from the context window.",
+      "The security floor is a property of the platform, not the model: the kernel sandbox, credential broker, and skill content scanner apply identically whether you run a frontier cloud model or a local one (Ollama, vLLM, etc.) - the guarantees never depend on the model's goodwill.",
     hermes:
       "Local models are supported (Ollama, LM Studio, vLLM and similar). The OS is the boundary, whatever the model - there is no model-aware hardening.",
     verdict: "comis",
@@ -181,7 +189,7 @@ const infraRows: Row[] = [
     comis:
       "Result<T, E> + traceId glass box: every action is reconstructable from structured logs alone (AsyncLocalStorage-propagated traceId, canonical field dictionary, required hint + errorKind on every failure branch), plus a bounded, causal obs.explain incident artifact.",
     hermes:
-      "Pino structured logging and system events. Solid operational logging for a single-operator deployment.",
+      "Python logging with rotating, credential-redacted plaintext logs per component (agent / gateway / gui). Solid operational logging for a single operator; no structured event bus.",
     verdict: "comis",
   },
   {

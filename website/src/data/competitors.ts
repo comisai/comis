@@ -67,8 +67,8 @@ export const COMPETITORS = {
     strengths: [
       "self-improving skill loop (the agent rewrites its own skills)",
       "20+ platform adapters",
-      "serverless terminal backends",
-      "trajectory generation",
+      "serverless execution backends (Modal/Daytona hibernate when idle)",
+      "trajectory export as model-training data (ShareGPT/RL datasets)",
     ],
     // A1-RESOLVED, enum-sourced channel figure - never "~5".
     channels: "20+",
