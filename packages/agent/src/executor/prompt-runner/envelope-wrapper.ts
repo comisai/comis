@@ -105,11 +105,17 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
 
   // R1: GoalAnchor tail injection — APPENDED after user message text.
   // Gated on scaffoldLevel=max (small/nano profiles only; frontier/mid = no injection).
-  // Requires: active ExecutionPlan + goalAnchor not explicitly disabled in config.
+  // Requires: active ExecutionPlan + goalAnchor EXPLICITLY enabled in config.
+  // The schema default is enabled=false (opt-in, behavior-neutral until configured),
+  // but the field is `.optional()` with no top-level `.default()`, so an unconfigured
+  // agent parses to `undefined`. Gate on `=== true` (NOT `!== false`) so an absent
+  // block stays OFF — `undefined?.enabled !== false` is `true` and would inject for
+  // every small/nano agent that never opted in (CR-02). Contrast SEP, whose schema
+  // default is enabled=true, where `!== false` is correct (default-ON).
   // T-153-02a: injection is bounded by maxChars (500 default); no untrusted data.
   if (
     modelProfile?.scaffoldLevel === "max" &&
-    config.goalAnchor?.enabled !== false &&
+    config.goalAnchor?.enabled === true &&
     executionPlanRef.current?.active
   ) {
     const goalAnchorBlock = buildGoalAnchorBlock(

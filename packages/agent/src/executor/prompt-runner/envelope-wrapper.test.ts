@@ -74,6 +74,7 @@ function makeLogger() {
 /** Build a minimal RunPromptParams for wrapEnvelope tests. */
 function makeParams(overrides: {
   scaffoldLevel?: ModelProfile["scaffoldLevel"];
+  /** undefined → leave `config.goalAnchor` ABSENT (the unconfigured operator case). */
   goalAnchorEnabled?: boolean;
   planActive?: boolean;
   planRequest?: string;
@@ -82,12 +83,16 @@ function makeParams(overrides: {
 }): RunPromptParams {
   const {
     scaffoldLevel = "max",
-    goalAnchorEnabled = true,
     planActive = true,
     planRequest = "Test the feature end to end",
     planSteps = [{ index: 1, description: "Run the suite", status: "pending" as const }],
     msgText = "Please do the thing",
   } = overrides;
+  // Distinguish "not passed" (→ default true) from an explicit `undefined`
+  // (→ leave config.goalAnchor ABSENT, the unconfigured operator case).
+  const goalAnchorEnabled = "goalAnchorEnabled" in overrides
+    ? overrides.goalAnchorEnabled
+    : true;
 
   const plan: ExecutionPlan | undefined = planActive !== undefined
     ? {
@@ -120,9 +125,11 @@ function makeParams(overrides: {
     } as RunPromptParams["msg"],
     session: {} as RunPromptParams["session"],
     config: {
-      goalAnchor: goalAnchorEnabled
-        ? { enabled: true }
-        : { enabled: false },
+      // goalAnchorEnabled === undefined → leave the block ABSENT (the operator
+      // never configured goalAnchor — must match the schema's default-OFF).
+      ...(goalAnchorEnabled === undefined
+        ? {}
+        : { goalAnchor: { enabled: goalAnchorEnabled } }),
     } as RunPromptParams["config"],
     sessionKey: "agent:discord:chan" as unknown as RunPromptParams["sessionKey"],
     formattedKey: "agent:discord:chan",
@@ -199,6 +206,26 @@ describe("R1: GoalAnchor tail injection via wrapEnvelope", () => {
       planRequest: "Build the feature",
       msgText: "Do the thing",
     });
+    const result = wrapEnvelope(params);
+    expect(result.messageText).not.toContain("[GoalAnchor:");
+  });
+
+  it("CR-02: goalAnchor UNCONFIGURED (undefined) → no goalAnchor even for small model with active plan", () => {
+    // The schema default is enabled=false (opt-in). When an operator never
+    // configures goalAnchor, config.goalAnchor is undefined and the feature
+    // MUST stay off (behavior-neutral until configured). The prior gate
+    // `config.goalAnchor?.enabled !== false` injected for every small/nano agent
+    // because `undefined?.enabled !== false` is true — this pins the fix.
+    const params = makeParams({
+      scaffoldLevel: "max",
+      goalAnchorEnabled: undefined, // leave the block absent
+      planActive: true,
+      planRequest: "Build the feature",
+      msgText: "Do the thing",
+    });
+    expect(
+      (params.config as { goalAnchor?: unknown }).goalAnchor,
+    ).toBeUndefined();
     const result = wrapEnvelope(params);
     expect(result.messageText).not.toContain("[GoalAnchor:");
   });
