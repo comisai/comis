@@ -58,7 +58,9 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const userParams = stripInternalFields(rawParams);
       GraphDefineContract.request.parse(userParams);
 
-      const validated = buildGraphInput(userParams);
+      const capabilityClass = userParams.capabilityClass as
+        "frontier" | "mid" | "small" | "nano" | undefined;
+      const validated = buildGraphInput(userParams, capabilityClass);
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
       const { warnings, errors } = validateGraphWarnings(validated.graph);
 
@@ -84,7 +86,9 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const userParams = stripInternalFields(rawParams);
       GraphExecuteContract.request.parse(userParams);
 
-      const validated = buildGraphInput(userParams);
+      const capabilityClass = userParams.capabilityClass as
+        "frontier" | "mid" | "small" | "nano" | undefined;
+      const validated = buildGraphInput(userParams, capabilityClass);
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
 
       // Apply user-variable substitution if variables provided
@@ -214,7 +218,9 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const agentId = (rawParams.agentId as string) ?? deps.defaultAgentId;
 
       // Validate structure (typeId/typeConfig pairing, DAG sort, Zod schema)
-      const validated = buildGraphInput(userParams);
+      const capabilityClass = userParams.capabilityClass as
+        "frontier" | "mid" | "small" | "nano" | undefined;
+      const validated = buildGraphInput(userParams, capabilityClass);
       validateTypeConfigs(validated.graph, deps.nodeTypeRegistry);
 
       deps.namedGraphStore.save({
