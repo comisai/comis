@@ -21,6 +21,7 @@ import { parseFormattedSessionKey } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
 import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, runOnlineTuning, type UserRepresentationSourceMemory, type RelationshipSourceMemory, type OnlineTuningFeedEntry } from "@comis/agent";
+import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
 
 /** The minimal `scheduler:job_result` payload shape the sentinel handlers read. */
 interface MemoryCronPayload {
@@ -112,6 +113,16 @@ export async function handleMemoryCronSentinel(
       return true;
     }
 
+    // R6 (CR-01): derive the capability routing for the cron/memory model that
+    // actually makes the merge LLM call. A small/nano cron model (absent an
+    // operator capable override) routes runMemoryConsolidation to "abstain" so a
+    // weak model never fabricates merged observations/triples into trusted storage
+    // (T-153-fabricate).
+    const consolidationCapability = resolveMemoryOpsCapability(
+      { provider: resolved.provider, modelId: resolved.modelId },
+      providerEntry?.capabilities,
+    );
+
     const consolidationResult = await runMemoryConsolidation({
       agentId,
       tenantId: tenantId ?? container.config.tenantId ?? "default",
@@ -124,6 +135,9 @@ export async function handleMemoryCronSentinel(
       apiKey,
       clock,
       logger: logger.child({ agentId, submodule: "memory-consolidation" }),
+      // R6 routing (CR-01): keys on the cron/memory model, not the agent primary.
+      capabilityClass: consolidationCapability.capabilityClass,
+      hasCapableModelOverride: consolidationCapability.hasCapableModelOverride,
     });
 
     if (!consolidationResult.ok) {

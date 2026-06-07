@@ -24,6 +24,7 @@ import { applyToolPolicy } from "@comis/skills";
 import { filterResponse } from "@comis/channels";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 import { handleMemoryCronSentinel } from "./setup-channels-memory-crons.js";
+import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
 
 /**
  * Closure-captured dependencies for the cron delivery listeners.
@@ -194,6 +195,15 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
 
       const workspacePath = deps.workspaceDirs?.get(agentId) ?? "";
 
+      // R6 (CR-01): derive the capability routing for the cron/memory model that
+      // actually makes the extraction LLM call. A small/nano cron model (absent an
+      // operator capable override) routes runMemoryReview to "abstain" so a weak
+      // model never fabricates memories into trusted storage (T-153-fabricate).
+      const reviewCapability = resolveMemoryOpsCapability(
+        { provider: resolved.provider, modelId: resolved.modelId },
+        providerEntry?.capabilities,
+      );
+
       const reviewLogger = logger.child({ agentId, submodule: "memory-review" });
       const reviewResult = await runMemoryReview({
         agentId,
@@ -201,6 +211,9 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         agentName: agentConfig.name ?? agentId,
         config: memReviewConfig,
         memoryPort: deps.memoryAdapter!,
+        // R6 routing (CR-01): keys on the cron/memory model, not the agent primary.
+        capabilityClass: reviewCapability.capabilityClass,
+        hasCapableModelOverride: reviewCapability.hasCapableModelOverride,
         sessionStore: deps.sessionStore as unknown as {
           listDetailed(tenantId?: string): Array<{ sessionKey: string; tenantId: string; userId: string; channelId: string; metadata: Record<string, unknown> | null; createdAt: number; updatedAt: number; messageCount: number }>;
           loadByFormattedKey(sessionKey: string): { messages: unknown[]; metadata: Record<string, unknown>; createdAt: number; updatedAt: number } | undefined;

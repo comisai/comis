@@ -37,8 +37,10 @@ import {
   type DialecticParsed,
   type DialecticSeamDeps,
 } from "@comis/agent";
+import { resolveMemoryOpsCapability } from "./setup-channels/resolve-memory-ops-capability.js";
 import type {
   PerAgentConfig,
+  ProviderCapabilities,
   ClockPort,
   TimerPort,
   MemoryPort,
@@ -106,8 +108,10 @@ export interface DialecticWiringDeps {
   costFeaturesEnabled: boolean;
   /** Resolves the provider apiKey VALUE by NAME (never logged). */
   secretManager: { get: (name: string) => string | undefined };
-  /** Provider entries (for apiKeyName lookup) — `container.config.providers?.entries`. */
-  providers: Record<string, { apiKeyName?: string } | undefined>;
+  /** Provider entries (for apiKeyName lookup + the R6 capabilities override) —
+   *  `container.config.providers?.entries`. `capabilities` supplies the optional
+   *  operator capabilityClass override the dialectic seam's R6 routing reads (CR-01). */
+  providers: Record<string, { apiKeyName?: string; capabilities?: ProviderCapabilities } | undefined>;
   /** The daemon-constructed recall store set (the SAME stores prompt-assembly wires). */
   stores: DialecticStoreSet;
   /** The configured tenant (`container.config.tenantId`) — the (tenant, agent) scope for the
@@ -157,7 +161,7 @@ export interface DialecticBootSlice {
   container: {
     secretManager: { get: (name: string) => string | undefined };
     config: {
-      providers?: { entries?: Record<string, { apiKeyName?: string } | undefined> };
+      providers?: { entries?: Record<string, { apiKeyName?: string; capabilities?: ProviderCapabilities } | undefined> };
       /** The configured tenant — the (tenant, agent) scope for the tuned-alpha read on
        *  the dialectic recall path (the SAME field daemon.ts reads for the handler's tenantId). */
       tenantId: string;
@@ -306,6 +310,15 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
       );
     }
 
+    // R6 (CR-01): derive the capability routing for the cron/memory model that
+    // actually makes the synthesis LLM call. A small/nano cron model (absent an
+    // operator capable override) routes synthesize() to { abstain: true } so a weak
+    // model never fabricates citations into the dialectic answer (T-153-fabricate).
+    const seamCapability = resolveMemoryOpsCapability(
+      { provider: resolved.provider, modelId: resolved.modelId },
+      providerEntry?.capabilities,
+    );
+
     // The ONE query-time synthesis seam (bounded by THIS agentʼs dialectic.maxOutputTokens — the
     // cost axis; falls back to the schema default when the agentʼs dialectic block is absent).
     const seamDeps: DialecticSeamDeps = {
@@ -316,6 +329,9 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
       clock,
       logger,
       agentId,
+      // R6 routing (CR-01): keys on the cron/memory model, not the agent primary.
+      capabilityClass: seamCapability.capabilityClass,
+      hasCapableModelOverride: seamCapability.hasCapableModelOverride,
     };
     const seam = createDialecticSeam(seamDeps);
     seamByAgent.set(agentId, seam);

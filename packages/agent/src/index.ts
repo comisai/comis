@@ -566,6 +566,18 @@ export type { ThinkingTagFilter, ThinkingTagFilterOptions } from "./response-fil
 // Operation model resolver
 export { resolveOperationModel, resolveProviderFamily } from "./model/operation-model-resolver.js";
 export type { OperationModelResolution } from "./model/operation-model-resolver.js";
+
+// ModelProfile resolver — the immutable capability/capacity profile. Exported so
+// the daemon wiring can derive the memory-job capabilityClass (R6) the SAME way
+// pi-executor does per-execution (CR-01: R6 was never reaching production).
+export { resolveModelProfile, FAIL_CLOSED_PROFILE } from "./executor/model-profile.js";
+export type { ModelProfile, CapabilityClass, ScaffoldLevel, SecurityLevel, ReasoningStyle } from "./executor/model-profile.js";
+
+// R6 memory-ops routing — the pure resolver the daemon wiring threads
+// capabilityClass + hasCapableModelOverride into (CR-01). Exported so the wiring
+// can prove the abstain branch is reachable for a small/nano memory model.
+export { resolveMemoryOpsStrategy } from "./memory/memory-capability-router.js";
+export type { MemoryOpsStrategy } from "./memory/memory-capability-router.js";
 export { resolveOperationDefaults, OPERATION_TIER_MAP, OPERATION_TIMEOUT_DEFAULTS, OPERATION_CACHE_DEFAULTS } from "./model/operation-model-defaults.js";
 export { resolveCompactionModel } from "./model/compaction-model-resolver.js";
 

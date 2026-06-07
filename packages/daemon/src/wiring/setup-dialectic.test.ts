@@ -26,6 +26,23 @@ import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+
+// CR-01: keep the WHOLE @comis/agent module real (resolveModelProfile,
+// createMemoryRecall, resolveOperationModel, …) but wrap createDialecticSeam so
+// the test can capture the R6 deps the wiring threads into it. The wrapper
+// delegates to the real factory so behavior is unchanged.
+const capturedSeamDeps: Array<Record<string, unknown>> = [];
+vi.mock("@comis/agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/agent")>();
+  return {
+    ...actual,
+    createDialecticSeam: vi.fn((deps: Record<string, unknown>) => {
+      capturedSeamDeps.push(deps);
+      return actual.createDialecticSeam(deps as Parameters<typeof actual.createDialecticSeam>[0]);
+    }),
+  };
+});
+
 import { buildDialecticWiring } from "./setup-dialectic.js";
 import { PerAgentConfigSchema, type PerAgentConfig } from "@comis/core";
 
@@ -78,7 +95,7 @@ function makeDeps(args: {
   defaultAgentId?: string;
   key?: string | undefined;
   logger?: any;
-  providers?: Record<string, { apiKeyName?: string }>;
+  providers?: Record<string, { apiKeyName?: string; capabilities?: { capabilityClass?: "frontier" | "mid" | "small" | "nano" } }>;
   /** The master cost-feature kill switch (opt-out posture). Defaults to true (on). */
   costFeaturesEnabled?: boolean;
 }) {
@@ -282,5 +299,51 @@ describe("buildDialecticWiring (the dialectic seam + recall builder)", () => {
     const recallB = wiring.buildDialecticRecall!("agent-b");
     expect(typeof recallDefault.recall).toBe("function");
     expect(typeof recallB.recall).toBe("function");
+  });
+
+  // -------------------------------------------------------------------------
+  // CR-01: the dialectic seam is built with the R6 capabilityClass +
+  // hasCapableModelOverride derived from the cron/memory model. Before the fix
+  // neither was passed → createDialecticSeam defaulted to "frontier"/false →
+  // "capable", so a small/nano model still ran the query-time synthesis call.
+  // The seam is built lazily on first dialecticSeam(...) invocation.
+  // -------------------------------------------------------------------------
+  it("CR-01: a SMALL cron/memory model builds the seam with capabilityClass='small' + no override (abstain reachable)", async () => {
+    capturedSeamDeps.length = 0;
+    const deps = makeDeps({
+      // An ollama agent → cron model resolves to ollama → small.
+      agentConfig: makeAgentConfig({
+        model: "ollama:qwen3.6:35b",
+        provider: "ollama",
+        dialectic: { enabled: true, maxOutputTokens: 512, maxRecall: 8 },
+      } as any),
+      key: "k",
+    });
+    const wiring = buildDialecticWiring(deps);
+    // Trigger the lazy per-agent seam build.
+    const result = await wiring.dialecticSeam!("default", "q?", "grounding");
+    expect(capturedSeamDeps).toHaveLength(1);
+    expect(capturedSeamDeps[0].capabilityClass).toBe("small");
+    expect(capturedSeamDeps[0].hasCapableModelOverride).toBe(false);
+    // Behavioral consequence: the seam abstains (R6) — no synthesis is produced.
+    expect(result).toEqual({ abstain: true });
+  });
+
+  it("CR-01: an operator capable override on the cron provider builds the seam with hasCapableModelOverride=true", async () => {
+    capturedSeamDeps.length = 0;
+    const deps = makeDeps({
+      agentConfig: makeAgentConfig({
+        model: "ollama:qwen3.6:35b",
+        provider: "ollama",
+        dialectic: { enabled: true, maxOutputTokens: 512, maxRecall: 8 },
+      } as any),
+      key: "k",
+      providers: { ollama: { capabilities: { capabilityClass: "mid" } } },
+    });
+    const wiring = buildDialecticWiring(deps);
+    await wiring.dialecticSeam!("default", "q?", "grounding");
+    expect(capturedSeamDeps).toHaveLength(1);
+    expect(capturedSeamDeps[0].capabilityClass).toBe("mid");
+    expect(capturedSeamDeps[0].hasCapableModelOverride).toBe(true);
   });
 });

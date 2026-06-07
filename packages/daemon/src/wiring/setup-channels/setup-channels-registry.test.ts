@@ -96,6 +96,16 @@ vi.mock("@comis/agent", () => ({
   resolveOperationModel: (...args: unknown[]) => mockResolveOperationModel(...args),
   resolveProviderFamily: vi.fn((p: string) => p),
   runMemoryReview: (...args: unknown[]) => mockRunMemoryReview(...args),
+  // CR-01: the __MEMORY_REVIEW__ branch now derives R6 capabilityClass via
+  // resolveModelProfile (capability axis only: provider family + override).
+  resolveModelProfile: vi.fn((model: { provider: string }, override?: string) => {
+    let capabilityClass = override;
+    if (capabilityClass === undefined) {
+      const p = model.provider;
+      capabilityClass = p === "anthropic" || p === "openai" ? "frontier" : p === "google" ? "mid" : "small";
+    }
+    return { capabilityClass };
+  }),
 }));
 
 vi.mock("@comis/core", async () => {
