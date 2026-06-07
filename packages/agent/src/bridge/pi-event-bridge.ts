@@ -470,6 +470,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               channelId: deps.channelId ?? "",
               agentId: deps.agentId,
               traceIds: [deps.executionId],
+              source: "runtime" as const, // D9 provenance stamp (production rows)
             },
           );
           // Emit the trace.metadata lifecycle envelope directly via the
@@ -1637,6 +1638,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 inputTokens: usage.input,
                 outputTokens: usage.output,
                 lastError: null, // populated by error paths in a follow-up plan; null here
+                source: "runtime" as const, // D9 provenance stamp (production rows)
               },
             );
 

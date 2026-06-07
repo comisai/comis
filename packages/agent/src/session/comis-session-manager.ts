@@ -341,6 +341,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           exitReason: "destroyed",
           turnCount: 0,
           totalTokens: 0,
+          source: "runtime" as const, // D9 provenance stamp (production rows)
         },
       );
       if (deps.trajectoryRegistry !== undefined) {
