@@ -297,6 +297,14 @@ export interface AgentEvents {
      * consumers can sum without conditional schema checks.
      */
     pendingCacheInvestmentUsd: number;
+    /** SDK per-turn stop signal (e.g. "stop"|"length"|"tool_use"|"refusal").
+     *  Current at the per-turn emit (m.lastStopReason captured at :1231 same case). D8. */
+    stopReason?: string;
+    /** Execution-level finish disposition (e.g. "stop"|"loop_detected"|"budget_exceeded").
+     *  Best-effort at the per-turn emit — m.finishReason settles LATER than turn_end
+     *  (set at :1005/:1018/:1625/:1672/:2113); treat as init-default "stop" until Phase 152
+     *  flight-recorder surfaces effectiveFinishReason. D8. */
+    finishReason?: string;
   };
 
   /** Cache break detected: prompt cache invalidation with attribution.

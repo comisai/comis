@@ -350,6 +350,73 @@ describe("attachTrajectoryToEventBus -- model events", () => {
     expect(data.cacheCreationTokens).toBe(50);
     expect(data.durationMs).toBe(2500);
   });
+
+  // B3 (D8): when the per-turn token_usage event carries stopReason/finishReason,
+  // the existing token_usage->model.completed translator forwards them
+  // presence-conditionally (same pattern Phase 150 used for provenance). No new
+  // mapping key / case is added — the event is already mapped to model.completed.
+  it("model_completed_forwards_stopReason_and_finishReason when the token_usage event carries them", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("observability:token_usage", {
+      timestamp: Date.now(),
+      traceId: "trace-tu",
+      agentId: "agent-1",
+      channelId: "c1",
+      executionId: "exec-001",
+      provider: "anthropic",
+      model: "claude-sonnet-4-20250514",
+      tokens: { prompt: 1000, completion: 250, total: 1250 },
+      cost: { input: 0.003, output: 0.015, cacheRead: 0, cacheWrite: 0, total: 0.018 },
+      latencyMs: 2500,
+      cacheReadTokens: 100,
+      cacheWriteTokens: 50,
+      sessionKey: "t1:u1:c1",
+      savedVsUncached: 0,
+      cacheEligible: true,
+      stopReason: "refusal",
+      finishReason: "stop",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("model.completed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.stopReason).toBe("refusal");
+    expect(data.finishReason).toBe("stop");
+  });
+
+  it("model_completed_omits_stopReason_and_finishReason_keys when the token_usage event lacks them (no undefined keys)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("observability:token_usage", {
+      timestamp: Date.now(),
+      traceId: "trace-tu",
+      agentId: "agent-1",
+      channelId: "c1",
+      executionId: "exec-001",
+      provider: "anthropic",
+      model: "claude-sonnet-4-20250514",
+      tokens: { prompt: 1000, completion: 250, total: 1250 },
+      cost: { input: 0.003, output: 0.015, cacheRead: 0, cacheWrite: 0, total: 0.018 },
+      latencyMs: 2500,
+      cacheReadTokens: 100,
+      cacheWriteTokens: 50,
+      sessionKey: "t1:u1:c1",
+      savedVsUncached: 0,
+      cacheEligible: true,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // Presence-conditional: when absent on the source event, NEITHER key is
+    // present on model.completed (not even as an undefined value).
+    expect("stopReason" in data).toBe(false);
+    expect("finishReason" in data).toBe(false);
+  });
 });
 
 describe("attachTrajectoryToEventBus -- delivery events", () => {

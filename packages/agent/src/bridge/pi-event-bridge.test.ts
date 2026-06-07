@@ -942,6 +942,20 @@ describe("createPiEventBridge", () => {
       }));
     });
 
+    // B3 (D8): the per-turn token_usage event carries the SDK stop signal so
+    // the trajectory's model.completed records refusals/length-stops. stopReason
+    // is sourced from m.lastStopReason (captured in the SAME turn_end case before
+    // the emit), so it is reliable/current. See AGENT_NATIVE_OBSERVABILITY_DESIGN §5 D8.
+    it("a turn ending with stopReason='refusal' emits observability:token_usage carrying stopReason 'refusal'", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      listener(makeTurnEndEvent({ stopReason: "refusal" }) as any);
+
+      expect(deps.eventBus.emit).toHaveBeenCalledWith("observability:token_usage", expect.objectContaining({
+        stopReason: "refusal",
+      }));
+    });
+
     it("when budgetGuard.checkBudget returns err, calls onAbort and sets finishReason to budget_exceeded", () => {
       (deps.budgetGuard.checkBudget as ReturnType<typeof vi.fn>).mockReturnValue(
         err(new BudgetError("per-execution", 5000, 5000, 0)),
