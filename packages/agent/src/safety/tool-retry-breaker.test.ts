@@ -1072,6 +1072,42 @@ describe("tool retry breaker", () => {
       expect(opened?.errorTag).toBe("not_read");
     });
 
+    it("reports the tool-WIDE total as consecutiveFailures on a tool_failure_threshold open (not the per-signature 1)", () => {
+      // WR-151-02: the canonical tool-level trip is N failures across N DISTINCT
+      // args. Each signature's own consecutiveFailures is 1, but the open was
+      // caused by the tool-wide total crossing maxToolFailures. The event field
+      // named `consecutiveFailures` must report the counter that actually crossed
+      // (toolState.count === 5), so Phase 153's breakerTimeline renders "opened
+      // after 5 failures", not a misleading "opened after 1".
+      const breaker = createBreaker(); // maxToolFailures: 5
+      const tool = "exec";
+      for (let i = 0; i < 4; i++) {
+        expect(breaker.recordResult(tool, { a: i }, false, "[permission_denied] EPERM")).toBeUndefined();
+      }
+      const opened = breaker.recordResult(tool, { a: 4 }, false, "[permission_denied] EPERM");
+      expect(opened?.reason).toBe("tool_failure_threshold");
+      expect(opened?.consecutiveFailures).toBe(5);
+    });
+
+    it("reports the error-pattern consecutive count as consecutiveFailures on an error_pattern open", () => {
+      // WR-151-02: an error-pattern open crosses the per-pattern consecutive
+      // counter (patternState.consecutiveFailures === maxConsecutiveErrorPatterns).
+      // The event must report THAT counter, not the calling signature's count.
+      const breaker = createToolRetryBreaker({
+        maxConsecutiveFailures: 3,
+        maxToolFailures: 5,
+        suggestAlternatives: true,
+        maxConsecutiveErrorPatterns: 2,
+      });
+      const tool = "edit";
+      expect(breaker.recordResult(tool, { file: "a.ts" }, false, "File [not_read] error")).toBeUndefined();
+      const opened = breaker.recordResult(tool, { file: "b.ts" }, false, "File [not_read] error");
+      expect(opened?.reason).toBe("error_pattern");
+      // Distinct-args same-error: each signature consecutiveFailures is 1, but the
+      // error-pattern counter that crossed is 2.
+      expect(opened?.consecutiveFailures).toBe(2);
+    });
+
     it("returns transition reset with reason success when a success clears a non-zero failure counter", () => {
       const breaker = createBreaker();
       const tool = "mcp__yfinance--get_recs";
