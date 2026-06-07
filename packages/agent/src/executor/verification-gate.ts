@@ -53,12 +53,31 @@ export interface CriticDeps {
 // ---------------------------------------------------------------------------
 const VERDICT_RESERVE_TOKENS = 512;
 
+/**
+ * CRITIC-ONLY verdict budget — NOT the main answer path (CR-01). 512 tokens
+ * suffices for the small verdict JSON; native-reasoning profiles get 4× so
+ * reasoning_content doesn't starve the verdict (D7).
+ */
 export function resolveMaxOutputTokens(profile: ModelProfile): number {
-  // On native-reasoning profiles, reasoning_content may consume thousands of tokens
-  // before the verdict JSON arrives. Give 4× the verdict reserve to prevent starvation (D7).
   return profile.reasoningStyle === "native"
     ? Math.max(profile.maxOutputTokens, VERDICT_RESERVE_TOKENS * 4)
     : VERDICT_RESERVE_TOKENS;
+}
+
+/** Reasoning-headroom floor for the MAIN answer path (native profiles only). */
+const NATIVE_REASONING_MAIN_PATH_FLOOR = 4_096;
+
+/**
+ * CR-01: MAIN-PATH output budget. Returns the model's REAL maxOutputTokens so
+ * the visible answer is never clamped to the 512-token verdict reserve.
+ * Non-reasoning → full profile budget; native-reasoning → sized UP (never
+ * down) so reasoning_content can't starve the answer. config.maxTokens (when
+ * set by the operator) takes precedence at the call site.
+ */
+export function resolveMainPathMaxOutputTokens(profile: ModelProfile): number {
+  return profile.reasoningStyle === "native"
+    ? Math.max(profile.maxOutputTokens, NATIVE_REASONING_MAIN_PATH_FLOOR)
+    : profile.maxOutputTokens;
 }
 
 // ---------------------------------------------------------------------------

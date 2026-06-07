@@ -21,6 +21,8 @@ import {
   shouldRunCritic,
   // L5: resolveMaxOutputTokens must be exported from verification-gate.ts
   resolveMaxOutputTokens,
+  // CR-01: main-path sizing — must NOT return the 512 verdict reserve.
+  resolveMainPathMaxOutputTokens,
 } from "./verification-gate.js";
 
 // Also import isCompletionClaim to use as a negative assertion in D5,
@@ -1243,5 +1245,55 @@ describe("L5 — resolveMaxOutputTokens exported and sizing correct", () => {
   it("L5: native profile with small maxOutputTokens → still returns >= 2048 (max() enforcement)", () => {
     const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 256 };
     expect(resolveMaxOutputTokens(profile)).toBeGreaterThanOrEqual(2048);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CR-01 — main-path output budget MUST NOT clamp to the 512 verdict reserve
+//
+// Regression guard: the original L5 wiring fed the critic's
+// resolveMaxOutputTokens (which returns VERDICT_RESERVE_TOKENS=512 for
+// non-reasoning profiles) into the MAIN execution path's ConfigResolver,
+// truncating every non-reasoning agent answer at 512 tokens. The main path
+// must use the model's REAL maxOutputTokens instead.
+// ---------------------------------------------------------------------------
+describe("CR-01 — resolveMainPathMaxOutputTokens does not cap the main answer at 512", () => {
+  const BASE_PROFILE = {
+    contextWindow: 32_768,
+    maxOutputTokens: 4_096,
+    capabilityClass: "small" as const,
+    scaffoldLevel: "max" as const,
+    securityLevel: "locked" as const,
+    supportsVision: false,
+    supportsTools: true,
+    supportsPromptCache: false,
+    supportsServerToolSearch: false,
+    supportsStructuredOutput: false,
+  };
+
+  it("CR-01: non-reasoning small model returns its FULL maxOutputTokens, never the 512 verdict floor", () => {
+    const profile = { ...BASE_PROFILE, reasoningStyle: "none" as const, maxOutputTokens: 4096 };
+    const budget = resolveMainPathMaxOutputTokens(profile);
+    // The defect: this used to be VERDICT_RESERVE_TOKENS (512) on the main path.
+    expect(budget).toBe(4096);
+    expect(budget).not.toBe(512);
+  });
+
+  it("CR-01: non-reasoning model with a large maxOutputTokens passes the full budget through", () => {
+    const profile = { ...BASE_PROFILE, reasoningStyle: "none" as const, maxOutputTokens: 8192 };
+    expect(resolveMainPathMaxOutputTokens(profile)).toBe(8192);
+  });
+
+  it("CR-01: native-reasoning profile is sized UP so reasoning_content does not starve the answer", () => {
+    // A small profile budget must be raised, not lowered, for native reasoning.
+    const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 1024 };
+    const budget = resolveMainPathMaxOutputTokens(profile);
+    expect(budget).toBeGreaterThanOrEqual(4096);
+    expect(budget).toBeGreaterThanOrEqual(profile.maxOutputTokens);
+  });
+
+  it("CR-01: native-reasoning profile with a large budget keeps the larger value (never shrinks)", () => {
+    const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 16384 };
+    expect(resolveMainPathMaxOutputTokens(profile)).toBe(16384);
   });
 });

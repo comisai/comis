@@ -49,7 +49,7 @@ import type { TruncationSummary } from "./stream-wrappers/tool-result-size-bounc
 import type { TurnBudgetSummary } from "./stream-wrappers/turn-result-budget-wrapper.js";
 import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
 import type { CapabilityClass, ModelProfile } from "./model-profile.js";
-import { resolveMaxOutputTokens } from "./verification-gate.js";
+import { resolveMainPathMaxOutputTokens } from "./verification-gate.js";
 import { createStubFilterInjector } from "./stream-wrappers/stub-filter-injector.js";
 import { createToolCallRepairWrapper } from "./stream-wrappers/tool-call-repair-wrapper.js";
 import { computeFeatureFlagHash } from "./prompt-assembly.js";
@@ -296,13 +296,16 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     turnBudgetWrapper,
     createConfigResolver(
       {
-        // L5: when the operator has not set an explicit maxTokens override, apply
-        // resolveMaxOutputTokens so native-reasoning profiles (reasoningStyle="native")
-        // get a budget large enough that reasoning_content does not starve the visible
-        // answer. Non-reasoning profiles get the VERDICT_RESERVE_TOKENS floor (512).
-        // The operator's explicit config.maxTokens always takes precedence.
+        // L5/CR-01: when the operator has not set an explicit maxTokens override,
+        // size the MAIN-path budget from the model profile's REAL maxOutputTokens.
+        // resolveMainPathMaxOutputTokens returns the full profile budget for
+        // non-reasoning models (NEVER the 512-token verdict reserve, which would
+        // truncate every visible answer — CR-01) and sizes UP for native-reasoning
+        // profiles so reasoning_content cannot starve the answer. The critic path
+        // keeps its own resolveMaxOutputTokens(verdict reserve) — do not reuse it
+        // here. The operator's explicit config.maxTokens always takes precedence.
         maxTokens: config.maxTokens ?? (modelProfile
-          ? resolveMaxOutputTokens(modelProfile)
+          ? resolveMainPathMaxOutputTokens(modelProfile)
           : undefined),
         temperature: config.temperature ?? (capabilityClass === "nano" ? 0.0 : 0.1),
         // SDK breakpoint on last message must always use "short" (5m).
