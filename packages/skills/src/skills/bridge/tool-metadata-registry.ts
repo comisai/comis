@@ -735,12 +735,20 @@ export function registerAllToolMetadata(): void {
         : "";
       const text = `${r.error} ${typeof r.message === "string" ? r.message : ""} ${failures}`;
       if (/rate limit|quota exceeded|too many requests/i.test(text)) {
-        return { errorKind: "resource" satisfies ErrorKind };
+        // Attribute the verdict to the human-readable `message` field (the rate-limit
+        // reason lives there + in `failures`, never in the stable `error` code) and report
+        // the LITERAL rule that matched — a fixed description, not a serialized RegExp.
+        return {
+          errorKind: "resource" satisfies ErrorKind,
+          classifiedField: "message",
+          matchedRule: "/rate limit|quota exceeded|too many requests/",
+        };
       }
       // blocked/forbidden/provider-error set, broadened to the failures-chain reasons.
       // A genuine top-level error with an unrecognised reason is still a real failure →
-      // default to dependency (never false once `error` is present).
-      return { errorKind: "dependency" satisfies ErrorKind };
+      // default to dependency (never false once `error` is present). Attributed to the
+      // top-level `error` machine code; no matchedRule/matchedToken (this is the catch-all).
+      return { errorKind: "dependency" satisfies ErrorKind, classifiedField: "error" };
     },
   });
 
@@ -755,17 +763,33 @@ export function registerAllToolMetadata(): void {
       // "timeout" etc. as legitimate DATA. We never read `r.text`/body, so those don't flag.
       if (typeof r.error === "string") {
         // Timeout text lives in the descriptive error string ("Fetch failed: …timed out…").
+        // Attribute to the `error` field + the literal timeout rule.
         if (/\btimed out\b|\btimeout\b/i.test(r.error)) {
-          return { errorKind: "timeout" satisfies ErrorKind };
+          return {
+            errorKind: "timeout" satisfies ErrorKind,
+            classifiedField: "error",
+            matchedRule: "/timed out|timeout/",
+          };
         }
-        return { errorKind: "dependency" satisfies ErrorKind };
+        // Catch-all once `error` is set and the timeout rule did not match — attributed to
+        // the `error` field, no matchedRule/matchedToken.
+        return { errorKind: "dependency" satisfies ErrorKind, classifiedField: "error" };
       }
       if (typeof r.status === "number" && r.status >= 400) {
-        // Gateway-timeout (504) / request-timeout (408) HTTP codes map to timeout.
+        // No `error` key → the numeric HTTP `status` drives the verdict; the concrete code
+        // is the matched token. Gateway-timeout (504) / request-timeout (408) map to timeout.
         if (r.status === 408 || r.status === 504) {
-          return { errorKind: "timeout" satisfies ErrorKind };
+          return {
+            errorKind: "timeout" satisfies ErrorKind,
+            classifiedField: "status",
+            matchedToken: String(r.status),
+          };
         }
-        return { errorKind: "dependency" satisfies ErrorKind };
+        return {
+          errorKind: "dependency" satisfies ErrorKind,
+          classifiedField: "status",
+          matchedToken: String(r.status),
+        };
       }
       return false;
     },
