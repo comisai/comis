@@ -6,7 +6,9 @@ import type { ErrorKind } from "@comis/core";
  * `SessionMetadata.sessionEnd` and emitted on `session:summary`.
  *
  * - `degraded`        — the run finished in a non-clean state (tool errors,
- *                       budget/breaker/provider trips, or a hard error).
+ *                       budget/breaker/provider trips, or a hard error). Derived
+ *                       from the mapped `endReason` (≠ "success"), the SAME source
+ *                       of truth as the co-persisted `sessionEnd.endReason`.
  * - `costUsd`         — cumulative USD cost for the session.
  * - `toolStats`       — per-tool {ok, failed} counts; bounded by the distinct
  *                       tool count of one execution (small).
@@ -40,28 +42,21 @@ interface RollupInput {
 }
 
 /**
- * The closed degraded-reason set (design §5 D5). A run whose
- * `effectiveFinishReason` is one of these is degraded. Mirrors the non-success
- * values of `END_REASON_MAP` in executor-post-execution.ts.
+ * The ONLY clean (non-degraded) `endReason`. Single source of truth: a run is
+ * degraded iff its persisted `SessionMetadata.sessionEnd.endReason` is not
+ * `"success"`. The chokepoint maps the finish reason through `END_REASON_MAP`
+ * (executor-post-execution.ts — the one authoritative table) and passes that
+ * SAME mapped value here, so `degraded` and `endReason` can never disagree.
+ *
+ * This replaces the prior dual closed sets (DEGRADED_REASONS +
+ * ERROR_CLASS_REASONS) that were hand-maintained separately from
+ * `END_REASON_MAP` and silently diverged: `loop_detected` and `session_reset`
+ * mapped to `endReason:"error"` via the map's fallthrough yet were in NEITHER
+ * set, recording a runaway-loop / session-reset abort as `degraded:false`
+ * (Phase 152 CR-01). Deriving from the mapped `endReason` removes the second
+ * domain entirely, so a newly added finish reason cannot reopen the divergence.
  */
-export const DEGRADED_REASONS: ReadonlySet<string> = new Set<string>([
-  "completed_with_tool_errors",
-  "budget_exceeded",
-  "budget_exhausted",
-  "circuit_open",
-  "provider_degraded",
-]);
-
-/**
- * The END_REASON_MAP "error" class — reasons that map to endReason "error".
- * A hard error is also degraded.
- */
-const ERROR_CLASS_REASONS: ReadonlySet<string> = new Set<string>([
-  "error",
-  "max_steps",
-  "context_loop",
-  "context_exhausted",
-]);
+const CLEAN_END_REASONS: ReadonlySet<string> = new Set<string>(["success"]);
 
 /** How many distinct ErrorKinds the rollup keeps — hard cap, DoS-bounded. */
 const TOP_ERROR_KINDS_CAP = 3;
@@ -72,10 +67,15 @@ const TOP_ERROR_KINDS_CAP = 3;
  * Same inputs always produce the same output: no reads, no writes, no time
  * source, no event emission. The fire-and-forget persist/emit guards live at the
  * post-execution call site (Plan 04).
+ *
+ * @param bridgeResult - the narrow bridge slice (cost, breaker trips, per-tool results).
+ * @param endReason - the ALREADY-MAPPED `SessionMetadata.sessionEnd.endReason`
+ *   (the SAME value persisted onto sessionEnd, derived once at the chokepoint via
+ *   `END_REASON_MAP`). `degraded := endReason !== "success"` — see CLEAN_END_REASONS.
  */
 export function buildSessionHealthRollup(
   bridgeResult: RollupInput,
-  effectiveFinishReason: string,
+  endReason: string,
 ): SessionHealthRollup {
   // Map-keyed accumulation (no plain-object dynamic-key sink); the typed Record
   // outputs are built once at the end via Object.fromEntries.
@@ -107,9 +107,10 @@ export function buildSessionHealthRollup(
       .slice(0, TOP_ERROR_KINDS_CAP),
   );
 
-  const degraded =
-    DEGRADED_REASONS.has(effectiveFinishReason) ||
-    ERROR_CLASS_REASONS.has(effectiveFinishReason);
+  // Single source of truth: degraded iff the mapped endReason is not "success".
+  // The chokepoint derives endReason once via END_REASON_MAP and passes it here,
+  // so this can never contradict the co-persisted sessionEnd.endReason (CR-01).
+  const degraded = !CLEAN_END_REASONS.has(endReason);
 
   return {
     degraded,

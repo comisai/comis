@@ -545,18 +545,36 @@ export function shouldRunLcdStorePasses(config: {
 
 /**
  * Map an SDK finishReason to the SessionMetadata.sessionEnd.endReason enum.
- * Unknown reasons fall through to "error" — that's a defensive bucket for
- * provider strings we haven't classified yet (rather than dropping the
- * session_end entry entirely). Module-level so the post-execution path
- * doesn't reallocate it on every turn.
+ *
+ * SINGLE SOURCE OF TRUTH for the run's terminal classification: the rollup's
+ * `degraded` flag (session-health-rollup.ts) is derived from the value this map
+ * yields (degraded := mapped endReason !== "success"), so `endReason` and
+ * `degraded` are computed from the SAME table and cannot diverge (Phase 152
+ * CR-01/WR-01). Exported so the chokepoint maps once and the unit tests can
+ * enumerate the finishReason union against it.
+ *
+ * Every KNOWN, in-union `ExecutionResult.finishReason` is listed EXPLICITLY —
+ * including `loop_detected` (turn-loop-detector abort) and `session_reset`,
+ * which reach the rollup verbatim and previously relied on the `?? "error"`
+ * fallthrough (WR-02). The fallthrough is now reserved for its stated purpose:
+ * a defensive bucket for UNKNOWN provider strings we haven't classified yet,
+ * not a silent home for classified in-union reasons. Module-level so the
+ * post-execution path doesn't reallocate it on every turn.
+ *
+ * NOTE: the endReason union also declares "timeout", but no source finishReason
+ * maps to it — it is intentionally unreachable from this writer (asserted by a
+ * unit test) rather than re-introduced via a stray mapping.
  */
-const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["sessionEnd"]>["endReason"]> = {
+export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["sessionEnd"]>["endReason"]> = {
   stop: "success", end_turn: "success", error: "error",
   budget_exceeded: "budget_exceeded", budget_exhausted: "budget_exhausted",
   circuit_open: "circuit_open",
   provider_degraded: "provider_degraded", max_steps: "error",
   context_loop: "error", context_exhausted: "error",
   completed_with_tool_errors: "completed_with_tool_errors",
+  // Known in-union reasons — explicit, not via the catch-all fallthrough (WR-02).
+  loop_detected: "error",
+  session_reset: "error",
 };
 
 /**
@@ -1026,11 +1044,20 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
   }
 
+  // Map the settled finishReason to the terminal endReason ONCE via the single
+  // authoritative table (END_REASON_MAP). This SAME mapped value drives BOTH the
+  // persisted sessionEnd.endReason (F1, in buildSessionEndMetadata, which re-maps
+  // the identical effectiveFinishReason through the identical table) AND the
+  // rollup's `degraded` flag below — so a reason that maps to a non-success
+  // endReason (e.g. loop_detected / session_reset → "error") can never record
+  // degraded:false alongside it (Phase 152 CR-01). No second closed reason set.
+  const endReason = END_REASON_MAP[effectiveFinishReason] ?? "error";
+
   // Compute the per-session health rollup ONCE at the chokepoint (D5/F1/F2).
-  // The settled effectiveFinishReason is the degraded signal (151-A5 deferred);
-  // the same record feeds BOTH sinks below — the sessionEnd metadata (F1) and
-  // the session:summary event (F2) — so persist and emit never diverge.
-  const sessionHealthRollup = buildSessionHealthRollup(bridgeResult, effectiveFinishReason);
+  // degraded is derived from the mapped endReason (≠ "success"); the same record
+  // feeds BOTH sinks below — the sessionEnd metadata (F1) and the session:summary
+  // event (F2) — so persist and emit never diverge.
+  const sessionHealthRollup = buildSessionHealthRollup(bridgeResult, endReason);
 
   // Write session metadata companion file with trace correlation.
   // traceId comes from the AsyncLocalStorage request scope so `_session-metadata.json`
