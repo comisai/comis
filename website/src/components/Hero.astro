@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 ---
+import { FACTS } from "../data/facts";
 ---
 
 <section class="relative overflow-hidden px-6 pt-32 pb-10 md:pt-40 md:pb-14">
@@ -13,13 +14,13 @@
 
     <!-- Headline -->
     <h1 class="text-4xl md:text-6xl lg:text-7xl font-extrabold tracking-tight leading-[1.1]">
-      <span class="text-white">Friendly by nature.</span><br />
-      <span class="bg-gradient-to-r from-coral to-teal bg-clip-text text-transparent">Powerful by design.</span>
+      <span class="text-white">The AI agent platform</span><br />
+      <span class="bg-gradient-to-r from-coral to-teal bg-clip-text text-transparent">built to be shared.</span>
     </h1>
 
     <!-- Subhead -->
     <p class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed">
-      Your personal fleet of AI agents - each with its own personality, memory, and skills. They live in your messaging apps, orchestrate real workflows, and run on infrastructure you can actually trust.
+      Deploy AI agents into the chat apps your team already uses — {FACTS.channelList.slice(0, 4).join(", ")} and more. Many agents, many people, one install you can audit, with security enforced by the kernel and the compiler, not by prompts.
     </p>
 
     <!-- GitHub Stars Badge -->
@@ -37,12 +38,10 @@
     <!-- CTAs -->
     <div class="mt-6 flex flex-col sm:flex-row gap-4 justify-center">
       <a
-        href="https://docs.comis.ai"
-        rel="noopener noreferrer"
-        target="_blank"
+        href="/#quick-start"
         class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg"
       >
-        Get Started
+        Try it in one line
       </a>
       <a
         href="https://github.com/comisai/comis"
