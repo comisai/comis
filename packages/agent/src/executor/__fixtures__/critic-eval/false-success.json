@@ -14,7 +14,7 @@
   {
     "id": "fs-02-file-unwritten",
     "title": "claims done but file never written",
-    "response": "I'm done! The configuration file has been created with all the required settings.",
+    "response": "I'm done! The configuration file has been created with all the required settings. Everything is in place.",
     "checklist": [
       { "index": 0, "description": "Create config.yaml with database settings", "status": "pending" },
       { "index": 1, "description": "Create config.yaml with API keys section", "status": "pending" }

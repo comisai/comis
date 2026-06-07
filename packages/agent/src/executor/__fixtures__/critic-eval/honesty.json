@@ -4,12 +4,12 @@
     "title": "exhaustion after 2 retries — single unmet requirement",
     "turns": [
       {
-        "response": "The game is complete! I have implemented the movement controls and collision detection.",
+        "response": "The game is complete! I have implemented the movement controls and collision detection. The snake moves smoothly.",
         "criticVerdict": "not-verified",
         "unmet": ["REQ-1"]
       },
       {
-        "response": "I've also added collision detection. The game should be fully playable now.",
+        "response": "I've also added collision detection now. The game should be fully playable and all features are in place.",
         "criticVerdict": "not-verified",
         "unmet": ["REQ-1"]
       }
@@ -27,12 +27,12 @@
     "title": "exhaustion after 2 retries — two unmet requirements",
     "turns": [
       {
-        "response": "I've set up the ingestion layer. The pipeline is ready.",
+        "response": "I've set up the ingestion layer and the pipeline is ready. All data will be ingested correctly.",
         "criticVerdict": "not-verified",
         "unmet": ["REQ-1", "REQ-2"]
       },
       {
-        "response": "I've also added the transformation step. Everything is in place now.",
+        "response": "I've also added the transformation step. Everything is in place now and ready to process data.",
         "criticVerdict": "not-verified",
         "unmet": ["REQ-2"]
       }
@@ -50,7 +50,7 @@
     "title": "immediate exhaustion — maxCriticRetries=0",
     "turns": [
       {
-        "response": "All done! I have finished the implementation.",
+        "response": "All done! I have finished the implementation and everything is complete and ready to use.",
         "criticVerdict": "not-verified",
         "unmet": ["REQ-0", "REQ-1", "REQ-2"]
       }

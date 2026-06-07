@@ -480,7 +480,7 @@ describe("D5 — Honest exhaustion", () => {
     // maxRetries=0 forces honest exhaustion on first not-verified
     const result = await runVerificationCritic({
       response:
-        "The game is complete! I have implemented the movement controls and collision detection.",
+        "The game is complete! I have implemented the movement controls and collision detection. The snake moves smoothly.",
       plan: BASE_PLAN,
       deps: makeDeps(),
       maxRetries: 0,
@@ -504,7 +504,7 @@ describe("D5 — Honest exhaustion", () => {
     );
     const result = await runVerificationCritic({
       response:
-        "All done! I have finished the implementation. Everything is complete and ready to use.",
+        "All done! I have finished the implementation. Everything is complete and ready to use for production.",
       plan: BASE_PLAN,
       deps: makeDeps(),
       maxRetries: 0,
@@ -533,8 +533,12 @@ describe("D5 — Honest exhaustion", () => {
         ),
       );
       // Use maxRetries=0 to force exhaustion immediately
-      const response = fixture.turns[0]?.response ??
-        "All done! I have finished the implementation.";
+      // Ensure response is >= minResponseChars (100) to pass the gate
+      const rawResponse = fixture.turns[0]?.response ??
+        "All done! I have finished the implementation and everything is ready.";
+      const response = rawResponse.length >= 100
+        ? rawResponse
+        : rawResponse + " All tasks have been completed satisfactorily.";
       const plan = {
         ...BASE_PLAN,
         steps: [
