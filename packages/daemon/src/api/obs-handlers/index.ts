@@ -19,6 +19,7 @@ import { bindObsExportHandlers } from "./obs-export.js";
 import { bindObsSystemPromptReportHandlers } from "./obs-system-prompt-report.js";
 import { bindConfigAuditHandlers } from "./config-audit.js";
 import { bindObsTraceHandlers } from "./obs-trace.js";
+import { bindObsExplainHandlers } from "./obs-explain.js";
 
 /**
  * Create a record of observability RPC handlers bound to the given deps.
@@ -35,5 +36,6 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
     ...bindObsSystemPromptReportHandlers(deps),
     ...bindConfigAuditHandlers(deps),
     ...bindObsTraceHandlers(deps),
+    ...bindObsExplainHandlers(deps),
   };
 }

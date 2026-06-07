@@ -7333,6 +7333,340 @@
       "admin"
     ]
   },
+  "obs.explain": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "traceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "depth": {
+          "type": "string",
+          "enum": [
+            "summary",
+            "full"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "sessionKey": {
+          "type": "string"
+        },
+        "traceId": {
+          "type": "string"
+        },
+        "agentId": {
+          "type": "string"
+        },
+        "channel": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "outcome": {
+          "type": "object",
+          "properties": {
+            "endReason": {
+              "type": "string"
+            },
+            "degraded": {
+              "type": "boolean"
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "degraded",
+                "failed"
+              ]
+            }
+          },
+          "required": [
+            "endReason",
+            "degraded",
+            "severity"
+          ],
+          "additionalProperties": false
+        },
+        "cost": {
+          "type": "object",
+          "properties": {
+            "costUsd": {
+              "type": "number"
+            },
+            "totalTokens": {
+              "type": "number"
+            },
+            "cacheReadRatio": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "costUsd",
+            "totalTokens",
+            "cacheReadRatio"
+          ],
+          "additionalProperties": false
+        },
+        "timing": {
+          "type": "object",
+          "properties": {
+            "durationMs": {
+              "type": "number"
+            },
+            "turnCount": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "durationMs",
+            "turnCount"
+          ],
+          "additionalProperties": false
+        },
+        "toolStats": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "number"
+              },
+              "failed": {
+                "type": "number"
+              },
+              "topErrorKind": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "failed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "number"
+              },
+              "toolName": {
+                "type": "string"
+              },
+              "classifiedFailureBy": {
+                "type": "string"
+              },
+              "transportOk": {
+                "type": "boolean"
+              },
+              "httpStatus": {
+                "type": "number"
+              },
+              "errorKind": {
+                "type": "string"
+              },
+              "matchedToken": {
+                "type": "string"
+              },
+              "resultDigest": {
+                "type": "string"
+              },
+              "resultBytes": {
+                "type": "number"
+              },
+              "errorPreview": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "seq",
+              "toolName",
+              "classifiedFailureBy",
+              "transportOk",
+              "errorKind",
+              "resultDigest",
+              "resultBytes",
+              "errorPreview"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "breakerTimeline": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "number"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "opened",
+                  "reset"
+                ]
+              },
+              "toolName": {
+                "type": "string"
+              },
+              "consecutiveFailures": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "seq",
+              "event",
+              "toolName"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "offloads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "number"
+              },
+              "toolName": {
+                "type": "string"
+              },
+              "originalChars": {
+                "type": "number"
+              },
+              "pointer": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "seq",
+              "toolName",
+              "originalChars",
+              "pointer"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "summary": {
+          "type": "string"
+        },
+        "likelyRootCause": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "suggestedNextSteps": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "code",
+                "detail",
+                "suggestedNextSteps"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "suggestedNextSteps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "truncations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "pointer": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "field",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "sessionKey",
+        "traceId",
+        "agentId",
+        "channel",
+        "outcome",
+        "cost",
+        "timing",
+        "toolStats",
+        "failures",
+        "breakerTimeline",
+        "offloads",
+        "summary",
+        "likelyRootCause",
+        "suggestedNextSteps",
+        "truncations"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "obs.getCacheStats": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
