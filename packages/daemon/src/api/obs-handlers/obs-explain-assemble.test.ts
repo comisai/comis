@@ -475,4 +475,23 @@ describe("assembleIncidentReport — identity & invariants", () => {
     const withoutRatio = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY);
     expect(withoutRatio.cost.cacheReadRatio).toBe(0);
   });
+
+  it("reads cacheReadRatio from the metadata TOP LEVEL when there is no sessionEnd (flat 678-style shape) — WR-02", () => {
+    // Every other numeric rollup field (durationMs, totalTokens, …) reads from
+    // the metadata top level as a fallback because the FROZEN 678 fixture is
+    // flat (no nested sessionEnd). cacheReadRatio must do the same — pre-fix it
+    // passed `undefined` for topAlias and silently dropped a top-level value,
+    // mis-reporting 0 despite the data being present.
+    const report = assembleIncidentReport(
+      makeSignals(),
+      {
+        sessionKey: SESSION_KEY,
+        endReason: "completed_with_tool_errors",
+        cacheReadRatio: 0.73,
+      },
+      null,
+      SESSION_KEY,
+    );
+    expect(report.cost.cacheReadRatio).toBeCloseTo(0.73, 4);
+  });
 });
