@@ -256,17 +256,32 @@ Three event kinds:
 { "traceSchema": "comis-session-index", "schemaVersion": 1,
   "event": "session_started", "ts": "...", "sessionId": "...",
   "sessionKey": "...", "channelType": "telegram", "chatId": "...",
-  "agentId": "...", "traceIds": ["..."] }
+  "agentId": "...", "traceIds": ["..."], "source": "runtime" }
 
 // turn_completed — one per agent turn
 { "event": "turn_completed", "ts": "...", "sessionId": "...",
   "traceId": "...", "durationMs": 0, "inputTokens": 0, "outputTokens": 0,
-  "lastError": null }
+  "lastError": null, "source": "runtime" }
 
 // session_ended — one per session close
 { "event": "session_ended", "ts": "...", "sessionId": "...",
-  "endReason": "success", "turnCount": 0, "totalTokens": 0 }
+  "endReason": "success", "turnCount": 0, "totalTokens": 0,
+  "source": "runtime" }
 ```
+
+Every row carries two additive optional provenance fields (added on
+`schemaVersion: 1`, so older readers ignore them):
+
+- `source` — `"runtime"` for production rows (shown above), `"test"` for rows
+  written by a VITEST/`NODE_ENV=test` process, `"bench"` for harness-injected rows.
+- `synthetic` — `true` on test/bench/harness rows so they are self-identifying;
+  **absent** on production rows. `comis trace` / `obs.*` exclude `synthetic: true`
+  rows by default (a row counts as synthetic only when `synthetic === true`).
+
+As a safety guard, `appendSessionIndexEntry` **throws** if a test process
+(`VITEST=true` or `NODE_ENV=test`) ever targets the real `~/.comis` — a test run
+can never silently pollute production telemetry. Tests must write to a tmp dir,
+where their rows are stamped `source: "test"`, `synthetic: true`.
 
 Date-rolled files honor the same `observability.logRotation` policy as `daemon.log`.
 
