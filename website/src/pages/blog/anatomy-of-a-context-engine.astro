@@ -4,7 +4,7 @@ import Base from "../../layouts/Base.astro";
 import Footer from "../../components/Footer.astro";
 
 const title = "Anatomy of a Context Engine: 8 Layers That Keep AI Agents Affordable";
-const description = "How Comis processes every conversation through an 8-layer pipeline that strips thinking traces, strips inline reasoning tags, evicts dead content, masks old observations, and compresses entire conversations - keeping costs predictable at any scale.";
+const description = "How Comis's deterministic pipeline mode strips thinking traces and inline reasoning tags, evicts dead content, masks old observations, and compresses entire conversations to keep costs predictable. This pipeline is now the opt-in mode; the lossless DAG (LCD) engine ships as the default.";
 const publishDate = "April 9, 2026";
 ---
 
@@ -48,6 +48,14 @@ const publishDate = "April 9, 2026";
     <!-- Article body -->
     <article class="px-6 pb-24">
       <div class="max-w-3xl mx-auto">
+
+        <!-- Editor's note: pipeline is now the opt-in mode; DAG/LCD is the default -->
+        <div class="bg-teal/5 border border-teal/20 rounded-xl p-6 mt-8 mb-4">
+          <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-3">A note on what changed</p>
+          <p class="text-muted-light text-base leading-relaxed">
+            This post describes Comis's <strong class="text-white">deterministic pipeline mode</strong> - the original context engine, and still a fast, predictable option. Since then it has become the <strong class="text-white">opt-in</strong> mode. The <strong class="text-white">default</strong> is now the lossless DAG engine (LCD): instead of evicting old turns, it compresses them into a <em>zoomable</em> summary the agent can drill back into with <code class="text-teal text-xs">ctx_search</code>, <code class="text-teal text-xs">ctx_inspect</code>, and <code class="text-teal text-xs">ctx_expand</code> - compression you can reverse, not destruction you can't. The pipeline mechanics below are accurate to the pipeline mode and remain in use when an operator selects it.
+          </p>
+        </div>
 
         <!-- The Problem -->
         <div class="prose-section">
