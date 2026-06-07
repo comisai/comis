@@ -275,7 +275,7 @@ export function resolveToolDescription(tool: ToolDefinition): string {
  * and appends a "[+N more deferred tools — use discover_tools to list all]"
  * suffix. Frontier/mid: uncapped (options undefined or {}). Small/nano: caller
  * passes `{ maxEntries: DEFERRED_TOOLS_MAX_BY_CLASS[capabilityClass] }`.
- * The signature is backward-compatible: options is optional.
+ * The options parameter is optional; omitting it leaves the list uncapped.
  *
  * @param entries - Deferred tool entries (remaining after discovery re-inclusion)
  * @param options - Optional cap options: `maxEntries` limits formatted lines

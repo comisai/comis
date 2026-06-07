@@ -30,7 +30,7 @@ export function resolveCompactionStrategy(
   if (capabilityClass === "frontier" || capabilityClass === "mid") {
     return "llm";
   }
-  // Backward-compat opt-out: operator explicitly set preferEvictionByCapability=false
+  // Operator opt-out: preferEvictionByCapability=false routes small/nano to same-model LLM summarization
   if (!preferEvictionByCapability) {
     return "llm";
   }

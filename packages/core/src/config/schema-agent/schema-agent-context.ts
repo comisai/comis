@@ -357,7 +357,7 @@ export const ContextEngineConfigSchema = z.strictObject({
    *  or a configured stronger summarizer over same-model LLM summarization (which degrades). */
   compaction: z.strictObject({
     /** When true (default): small/nano → eviction-first (or strongerSummarizerModel if set).
-     *  When false: backward-compat opt-out, old provider-tier resolution unchanged. */
+     *  When false: operator opt-out — small/nano keep same-model LLM summarization. */
     preferEvictionByCapability: z.boolean().default(true),
     /** Optional "provider:modelId" string for a stronger summarizer for small/nano.
      *  Empty string (default) = pure eviction/deterministic fallback. */

@@ -28,6 +28,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
+import { systemNowMs } from "@comis/core";
 import type { ContextLayer, TokenBudget, CompactionLayerDeps } from "./types.js";
 import type { CapabilityClass } from "../executor/model-profile.js";
 import { resolveCompactionStrategy } from "./compaction-capability-router.js";
@@ -503,7 +504,7 @@ export function createLlmCompactionLayer(
               strategy: compactionStrategy,
               layer: "pipeline",
               securityPinnedCount,
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
             });
           }
           // Return messages unchanged (eviction: no summarization, no structural change).
@@ -521,7 +522,7 @@ export function createLlmCompactionLayer(
             strategy: compactionStrategy,
             layer: "pipeline",
             securityPinnedCount,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
         }
 
