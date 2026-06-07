@@ -47,9 +47,11 @@ export const BREAKER_N = 5;
 /** Hard cap on every `errorPreview` — the long body is never carried whole. */
 const MAX_ERROR_PREVIEW = 200;
 
-/** Pre-bound applied to a raw body BEFORE sanitize, so the credential-regex
- * never scans an oversized body (ReDoS guard). Generous vs. MAX_ERROR_PREVIEW
- * so the sanitizer still sees enough context to redact. */
+/** Perf bound: never scan more than 2 KB to produce a ≤200-char preview
+ * (sanitizeLogString self-bounds ReDoS at its own 1 MB cap). Slicing the body
+ * before sanitize avoids running the credential-regex over a 50 KB body just to
+ * keep 200 chars. Generous vs. MAX_ERROR_PREVIEW so the sanitizer still sees
+ * enough context to redact. */
 const RAW_BODY_SCAN_BOUND = 2_000;
 
 /** Token literals the misclassification heuristic looks for in a failure body. */

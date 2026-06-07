@@ -70,6 +70,10 @@ export const IncidentReportSchema = z.object({
       errorKind: z.string(),
       matchedToken: z.string().optional(),
       resultDigest: z.string(),
+      // The size of the ORIGINAL, pre-bound tool body (a "how big was the thing
+      // we digested" breadcrumb) — NOT the size of the emitted `errorPreview`
+      // (which is ≤200 chars / digested). Do not correlate this against the
+      // visible preview length.
       resultBytes: z.number(),
       errorPreview: z.string(),
     }),
