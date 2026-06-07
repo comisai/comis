@@ -1,0 +1,5 @@
+# Run artifacts + regenerable dumps — never committed.
+results/
+prompts/
+*.env
+!*.env.example
