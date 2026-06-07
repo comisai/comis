@@ -1,5 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 ---
+import { SECURITY } from "../data/security";
+
 const threats = [
   {
     threat: "Remote code execution",
@@ -8,40 +10,52 @@ const threats = [
     detail: "mTLS gateway, bearer token auth, no open ports without explicit configuration.",
   },
   {
+    threat: "Unchecked tool access",
+    desc: "An agent with shell and file access can read, write, and run anything on your machine.",
+    answer: "Kernel-enforced exec sandbox — on by default.",
+    detail: "Tools run jailed by the operating system itself, not by a setting you have to remember to switch on. No network by default; agents can only see their own workspace, not your host system.",
+  },
+  {
     threat: "Prompt injection",
     desc: "Malicious instructions hidden in web pages or fetched content trick agents into executing attacker commands.",
-    answer: "Injection detection.",
-    detail: "65 attack patterns across 8 categories detected and blocked. External content is wrapped and isolated, with the LLM treated as the primary attack surface.",
+    answer: "The LLM is treated as the attack surface.",
+    detail: "Input is scanned, output is scanned, canary tokens catch leaks, and external content is wrapped and isolated so the model can never confuse fetched text for an instruction — layered runtime defenses, benchmarked.",
+  },
+  {
+    threat: "Malicious skills",
+    desc: "Community skills that hide exfiltration, injection, or breakout payloads.",
+    answer: "Every skill is screened before it can run.",
+    detail: `${SECURITY.contentScannerRules} content-scanner rules covering exec injection, exfiltration, and XML breakout are applied at skill load time. (This is the canonical ${SECURITY.contentScannerRules} — it belongs to the skill content scanner, not to log redaction.)`,
+  },
+  {
+    threat: "Malicious tool servers",
+    desc: "A third-party MCP server could ship a known-bad package that runs the moment it starts.",
+    answer: "MCP malware screening.",
+    detail: "MCP packages are checked against the OSV malware database before they ever spawn for the first time.",
   },
   {
     threat: "Memory poisoning",
     desc: "Attackers modify an agent's persistent memory to change its behavior over time.",
     answer: "Trust-partitioned memory.",
-    detail: "Three trust levels - system, learned, external. Low-trust sources can't overwrite high-trust memories.",
+    detail: "What an untrusted sender says can never overwrite what the system has verified. The trust weight is structurally frozen, so learning can never be poisoned into overriding a verified fact.",
   },
   {
     threat: "Credential exposure",
     desc: "API keys and secrets leaked through logs, tool outputs, or unencrypted storage.",
     answer: "Encrypted secrets.",
-    detail: "AES-256 at rest. 18 log redaction rules. Never in tool output, never in chat responses.",
+    detail: "AES-256 at rest. Secrets are kept out of logs, tool output, and chat responses.",
   },
   {
     threat: "Credential exposure via agentic CLIs",
     desc: "An agent running shell commands can read any secret in its environment — `cat ~/.claude/.credentials.json`, `env`, `/proc/self/environ`. Handing a key to the agent process means it can steal and exfiltrate it.",
-    answer: "Credential broker.",
+    answer: "Credential broker — keys never meet agents.",
     detail: "The real key never enters the sandbox. It stays in the daemon's encrypted store; the CLI runs with a placeholder. The broker injects the real credential at the TLS network boundary — `cat`/`env`/`/proc` inside the sandbox show nothing. Broker fails closed: no secret → 502, request never forwarded.",
   },
   {
-    threat: "Unchecked tool access",
-    desc: "Agents with shell and file access operating with no oversight.",
-    answer: "Approval gates + kernel sandbox.",
-    detail: "Destructive actions require your sign-off. Shell commands run inside an OS-level filesystem sandbox - agents can only see their own workspace, not your host system.",
-  },
-  {
-    threat: "Malicious skills",
-    desc: "Community skills that exfiltrate data or override safety guidelines.",
-    answer: "Skill policies + tool whitelisting.",
-    detail: "Each agent has an explicit allowlist. Skills can't escalate privileges or access tools outside their scope.",
+    threat: "Destructive actions with no oversight",
+    desc: "Agents that delete, send, or spend without anyone signing off.",
+    answer: "Action classifier — fail closed.",
+    detail: "Destructive actions pause for your sign-off via chat buttons. Unknown action types classify as destructive and fail closed, so a new capability can't slip through unguarded.",
   },
   {
     threat: "Data exfiltration",
@@ -90,7 +104,7 @@ const threats = [
     </p>
     <div class="text-center mt-6">
       <a href="/security" class="inline-flex items-center gap-2 text-sm font-semibold text-coral hover:text-coral-dark transition-colors">
-        Deep dive: 22 categorical layers (24 distinct primitives) of defense in depth, including OS-level sandboxing
+        Deep dive: {SECURITY.layerFraming}, including kernel-enforced OS-level sandboxing
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
       </a>
     </div>
