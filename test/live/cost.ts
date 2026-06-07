@@ -35,14 +35,18 @@ const TIER_USD: Record<CostTier, number> = {
 
 /**
  * Secret-sweep regex — ports bench-memory.sh `sweep_tier_report` pattern to TypeScript.
- * Matches: sk-* API keys, Bearer tokens, apiKey key-value assignments with non-empty values.
+ * Matches: sk-* API keys (case-insensitive — canary token uses uppercase SK-),
+ * Bearer tokens, apiKey key-value assignments with non-empty values.
  *
  * The apiKey branch matches "apiKey": "..." or apiKey: "..." (key=value form) but NOT
  * bare field names in serialized JSON like `"apiKey":null` or `"apiKey":"<param-name>"`.
  * A minimum value length of 4 chars avoids matching parameter-name placeholders.
+ *
+ * CR-01 fix: added `i` flag so `SK-CANARY-9F3X-DO-NOT-REVEAL` (uppercase) is matched
+ * in addition to the lowercase `sk-` prefix. Canary token format is SK-XXXXXXXX.
  */
 const SECRET_PATTERN =
-  /sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|(?:"apiKey"|apiKey)\s*[=:]\s*["'][^"']{4,}/g;
+  /sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|(?:"apiKey"|apiKey)\s*[=:]\s*["'][^"']{4,}/gi;
 
 /**
  * Scan a string for credential-shaped patterns.
