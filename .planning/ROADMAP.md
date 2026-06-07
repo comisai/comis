@@ -278,7 +278,7 @@ Plans:
 | 152. CAPACITY + PROMPT-SECURITY (C, S) | 5/5 | Complete   | 2026-06-07 |
 | 153. RELIABILITY SPINE + memory-security (R, S) | 4/4 | Complete    | 2026-06-07 |
 | 154. VERIFICATION + critic isolation (R, S) | 4/4 | Complete    | 2026-06-07 |
-| 155. LOCAL + VISION + ORCH + repair-security (L, O, S) | 3/6 | In Progress|  |
+| 155. LOCAL + VISION + ORCH + repair-security (L, O, S) | 4/6 | In Progress|  |
 | 156. ESCALATE + egress governance (E, S) *(optional)* | 0/TBD | Not started | - |
 | 157. RE-PROVE + GA (M, D) | 0/TBD | Not started | - |
 
