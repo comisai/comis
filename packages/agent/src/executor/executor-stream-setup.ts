@@ -164,6 +164,38 @@ export interface StreamSetupResult {
 }
 
 // ---------------------------------------------------------------------------
+// Offload callback (B2 / D7)
+// ---------------------------------------------------------------------------
+
+/** Minimal deps for the microcompaction offload callback. */
+export interface OffloadCallbackDeps {
+  eventBus: import("@comis/core").TypedEventBus;
+  /** Wall-clock read — `deps.clock.now()`, never `Date.now()` (Pitfall 6). */
+  clock: import("@comis/core").ClockPort;
+  /** Existing cache-break side-effect (cacheBreakDetector.notifyContentModification). */
+  onCacheBreak: () => void;
+}
+
+/**
+ * Build the 4-arg callback the microcompaction guard invokes on each offload.
+ *
+ * The guard holds no eventBus/clock (T-151-07) — it computes the payload
+ * (already with a WORKSPACE-RELATIVE pointer, T-151-05) and passes it here.
+ * This callback performs the two observable effects: it preserves the
+ * existing cache-break notification and emits `tool:result_offloaded` so the
+ * offload lands in the trajectory (Phase 153 `IncidentReport.offloads[]`
+ * drill-down). Extracted as a pure factory so the emit shape is unit-testable
+ * without standing up the full `setupStreamWrappers` dependency graph.
+ */
+export function buildOffloadCallback(
+  deps: OffloadCallbackDeps,
+): (toolName: string, originalChars: number, toolCallId: string, diskPathRel: string) => void {
+  return (toolName, originalChars, toolCallId, diskPathRel) => {
+    deps.onCacheBreak(); // KEEP — existing cacheBreakDetector.notifyContentModification behavior
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Setup function
 // ---------------------------------------------------------------------------
 

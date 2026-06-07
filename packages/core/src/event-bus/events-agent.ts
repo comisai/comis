@@ -157,6 +157,24 @@ export interface AgentEvents {
   };
 
   /**
+   * Tool result offloaded to disk (exceeded the inline threshold or the hard
+   * cap). D7 — emitted by the executor's microcompaction offload callback
+   * (the guard stays emitter-free, T-151-07). Phase 153's `obs.explain`
+   * renders `IncidentReport.offloads[]` from these. The payload carries a
+   * count (`originalChars`) and a WORKSPACE-RELATIVE pointer — never the
+   * offloaded result body and never the absolute host path (§2.7 / T-151-05/06).
+   */
+  "tool:result_offloaded": {
+    toolName: string;
+    toolCallId: string;
+    /** Character count of the original (pre-offload) result. */
+    originalChars: number;
+    /** Workspace-relative path (sessionDir-relative): `tool-results/<toolCallId>.json`. Phase 153 drill-down target. */
+    diskPathRel: string;
+    timestamp: number;
+  };
+
+  /**
    * Capability layer -- install detour detected by exec/process tool.
    * Emission lives in the skills package; this is the type-only declaration.
    *

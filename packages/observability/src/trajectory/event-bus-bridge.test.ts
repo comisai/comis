@@ -162,6 +162,30 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.seq).toBe(7);
   });
 
+  it("tool_result_offloaded_maps_to_tool.result_offloaded with toolName/toolCallId/originalChars/diskPathRel", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:result_offloaded", {
+      toolName: "bash",
+      toolCallId: "call-offload-1",
+      originalChars: 42_000,
+      // workspace-relative pointer ONLY — the trajectory record must never
+      // carry the absolute host path (residency; T-151-05).
+      diskPathRel: "tool-results/call-offload-1.json",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("tool.result_offloaded");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.toolName).toBe("bash");
+    expect(data.toolCallId).toBe("call-offload-1");
+    expect(data.originalChars).toBe(42_000);
+    expect(data.diskPathRel).toBe("tool-results/call-offload-1.json");
+  });
+
   it("tool_executed_forwards_D1_provenance_into_tool.result.data", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
