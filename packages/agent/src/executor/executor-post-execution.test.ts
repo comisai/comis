@@ -16,7 +16,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary } from "./executor-post-execution.js";
+import type { SessionHealthRollup } from "./session-health-rollup.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Learned-recall write side: the turn-end emit threads classifyIntent(msg.text).
 // Imported here for the deterministic-bucket behavior probe (the emit's intent source).
@@ -234,6 +235,132 @@ describe("buildSessionEndMetadata", () => {
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
     expect(stripped).toMatch(/buildSessionEndMetadata\([\s\S]*?traceId:\s*tryGetContext\(\)\?\.traceId/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F1/F2: the session-health rollup is computed ONCE and feeds BOTH sinks —
+// the sessionEnd metadata (F1, via buildSessionEndMetadata) and the
+// session:summary event (F2, via emitSessionSummary). The emit is
+// fire-and-forget: a throwing listener must NOT abort the teardown (OQ3).
+// ---------------------------------------------------------------------------
+describe("F1 persist — buildSessionEndMetadata threads the health rollup into sessionEnd", () => {
+  const rollup: SessionHealthRollup = {
+    degraded: true,
+    costUsd: 1.45,
+    toolStats: { web_fetch: { ok: 2, failed: 8 } },
+    breakerTripCount: 1,
+    topErrorKinds: { dependency: 8 },
+  };
+  const baseArgs = {
+    finishReason: "completed_with_tool_errors",
+    durationMs: 1000,
+    totalTokens: 500,
+    executionId: "exec-Z",
+    traceId: "trace-Z",
+    clock: { now: () => 0, nowDate: () => new Date(0) },
+    rollup,
+  };
+
+  it("spreads degraded/costUsd/toolStats/breakerTripCount/topErrorKinds from the rollup onto sessionEnd", () => {
+    const result = buildSessionEndMetadata(baseArgs);
+    expect(result.sessionEnd?.degraded).toBe(true);
+    expect(result.sessionEnd?.costUsd).toBe(1.45);
+    expect(result.sessionEnd?.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
+    expect(result.sessionEnd?.breakerTripCount).toBe(1);
+    expect(result.sessionEnd?.topErrorKinds).toEqual({ dependency: 8 });
+    // The 4 required fields are still present (additive, not replaced).
+    expect(result.sessionEnd?.endReason).toBe("completed_with_tool_errors");
+    expect(result.sessionEnd?.totalTokens).toBe(500);
+  });
+});
+
+describe("F2 emit — emitSessionSummary emits session:summary, fire-and-forget", () => {
+  const rollup: SessionHealthRollup = {
+    degraded: true,
+    costUsd: 1.45,
+    toolStats: { web_fetch: { ok: 2, failed: 8 } },
+    breakerTripCount: 1,
+    topErrorKinds: { dependency: 8 },
+  };
+  const baseArgs = {
+    sessionKey: "tenant_a/user_a/chan",
+    agentId: "agent_a",
+    traceId: "trace-Z",
+    turnCount: 3,
+    rollup,
+    clock: { now: () => 4242, nowDate: () => new Date(4242) },
+  };
+
+  it("emits exactly one session:summary carrying degraded/costUsd/toolStats/breakerTripCount + ids", () => {
+    const emit = vi.fn();
+    const eventBus = { emit, on: vi.fn(), off: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
+
+    emitSessionSummary({ eventBus, logger: undefined }, baseArgs);
+
+    const summaryCalls = emit.mock.calls.filter((c) => c[0] === "session:summary");
+    expect(summaryCalls).toHaveLength(1);
+    const payload = summaryCalls[0]![1] as Record<string, unknown>;
+    expect(payload.degraded).toBe(true);
+    expect(payload.costUsd).toBe(1.45);
+    expect(payload.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
+    expect(payload.breakerTripCount).toBe(1);
+    expect(payload.turnCount).toBe(3);
+    expect(payload.sessionKey).toBe("tenant_a/user_a/chan");
+    expect(payload.agentId).toBe("agent_a");
+    expect(payload.traceId).toBe("trace-Z");
+    expect(payload.timestamp).toBe(4242);
+  });
+
+  it("OMITS topErrorKinds from the emitted event payload (goes to metadata only, OQ1)", () => {
+    const emit = vi.fn();
+    const eventBus = { emit, on: vi.fn(), off: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
+    emitSessionSummary({ eventBus, logger: undefined }, baseArgs);
+    const payload = emit.mock.calls.find((c) => c[0] === "session:summary")![1] as Record<string, unknown>;
+    expect(payload.topErrorKinds).toBeUndefined();
+  });
+
+  it("a THROWING eventBus listener does NOT propagate out of emitSessionSummary (fire-and-forget, OQ3)", () => {
+    const eventBus = {
+      emit: vi.fn().mockImplementation(() => {
+        throw new Error("listener blew up");
+      }),
+      on: vi.fn(),
+      off: vi.fn(),
+    } as unknown as import("@comis/core").TypedEventBus;
+
+    // The synchronous eventBus would propagate the throw without a guard.
+    expect(() => emitSessionSummary({ eventBus, logger: undefined }, baseArgs)).not.toThrow();
+  });
+});
+
+describe("F1/F2 wiring — postExecution computes the rollup once and feeds both sinks", () => {
+  function readPostExec(): string {
+    return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+  }
+  function stripped(): string {
+    return readPostExec()
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+  }
+
+  it("computes the health rollup exactly once at the chokepoint", () => {
+    const callCount = (stripped().match(/buildSessionHealthRollup\(/g) ?? []).length;
+    expect(callCount).toBe(1);
+  });
+
+  it("imports buildSessionHealthRollup from the sibling module", () => {
+    expect(readPostExec()).toMatch(/import\s*\{\s*buildSessionHealthRollup[\s\S]*?\}\s*from\s*"\.\/session-health-rollup\.js"/);
+  });
+
+  it("threads the rollup into the buildSessionEndMetadata call (F1)", () => {
+    expect(stripped()).toMatch(/buildSessionEndMetadata\([\s\S]*?rollup[\s\S]*?\}\)/);
+  });
+
+  it("emits session:summary via emitSessionSummary at the chokepoint (F2)", () => {
+    expect(stripped()).toMatch(/emitSessionSummary\(/);
   });
 });
 
