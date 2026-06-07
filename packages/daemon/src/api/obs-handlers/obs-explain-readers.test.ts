@@ -12,9 +12,11 @@
  *   3. readSessionMetadata   — <sessionId>_session-metadata.json companion (F1
  *                              PRIMARY rollup source).
  *   4. readDiagnosticsRollup — obsStore.queryDiagnostics({category:"session_summary",
- *                              limit:50}) then SESSION-SCOPED filter by row.sessionKey
+ *                              limit:1000}) then SESSION-SCOPED filter by row.sessionKey
  *                              (F2 fallback). The multi-session case is RED-pinned:
- *                              the MATCHING row is returned, NOT the most-recent.
+ *                              the MATCHING row is returned, NOT the most-recent;
+ *                              and a target behind 200 newer rows is still found
+ *                              (WR-01 widened the window from 50 to 1000).
  *
  * @module
  */
@@ -190,10 +192,52 @@ describe("makeRealReader.readDiagnosticsRollup (session-scoped)", () => {
     expect(rollup).not.toBeNull();
     expect(rollup!.sessionKey).toBe(SESSION_KEY);
     expect(rollup!.message).toBe("our session");
-    // Queried a WINDOW (limit:50), not limit:1.
+    // Queried a WINDOW (limit:1000 — WR-01 widened it from 50), not limit:1.
     expect(queryDiagnostics).toHaveBeenCalledWith(
-      expect.objectContaining({ category: "session_summary", limit: 50 }),
+      expect.objectContaining({ category: "session_summary", limit: 1000 }),
     );
+  });
+
+  it("finds the target row even when many newer session_summary rows precede it (WR-01 window)", async () => {
+    // A busy daemon writes many session_summary rows AFTER the target session
+    // ends. queryDiagnostics orders timestamp DESC, so the target sits deep in
+    // the result. The reader queries a WINDOW then filters by sessionKey — the
+    // window must be large enough that a realistically-old target is still
+    // inside it. Pre-fix the window was 50, so a target behind 50+ newer rows
+    // was silently missed (the F2 rollup returned null and the report lost every
+    // field only F2 could supply). This pins a target at depth 200.
+    const dataDir = tmpDataDir();
+    const newerCount = 200;
+    const rows = [
+      ...Array.from({ length: newerCount }, (_, i) => ({
+        category: "session_summary",
+        timestamp: 100_000 - i, // newest-first; all NEWER than the target
+        severity: "info",
+        message: `newer ${i}`,
+        sessionKey: `default:newer-${i}:newer-${i}:peer:newer-${i}`,
+      })),
+      {
+        category: "session_summary",
+        timestamp: 1, // oldest → last in the DESC result
+        severity: "info",
+        message: "our older session",
+        sessionKey: SESSION_KEY,
+      },
+    ];
+    // Honor the query limit the reader passes (the real store applies LIMIT in
+    // SQL), so the test fails if the reader's window is smaller than the target
+    // depth.
+    const queryDiagnostics = vi.fn((params: { limit?: number }) =>
+      rows.slice(0, params.limit ?? rows.length),
+    );
+    const obsStore = { queryDiagnostics } as unknown as Parameters<typeof makeRealReader>[1];
+
+    const reader = makeRealReader(dataDir, obsStore);
+    const rollup = await reader.readDiagnosticsRollup(SESSION_KEY);
+
+    expect(rollup).not.toBeNull();
+    expect(rollup!.sessionKey).toBe(SESSION_KEY);
+    expect(rollup!.message).toBe("our older session");
   });
 
   it("returns null when no row matches the session", async () => {
