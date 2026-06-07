@@ -1501,13 +1501,9 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     reason: "(b) Cluster-split candidate: orchestrator's execution-pipeline deps include retry/followup machinery (retryEngine, followupTrigger, followupConfig), media pipeline (parseOutboundMedia, outboundMediaFetch, voiceResponsePipeline), streaming/policy config, command queue, response-prefix templating. Each is optional because feature paths are independently gated. Future refactor: split into ExecutionRetryDeps + ExecutionMediaDeps + ExecutionStreamingDeps..",
     removedIn: "phase-D",
   },
-  {
-    file: "packages/agent/src/executor/executor-tool-assembly.ts",
-    typeName: "ToolAssemblyDeps",
-    optionalCount: 18,
-    reason: "(b) Cluster-split candidate: ToolAssemblyDeps is a documented `Subset of PiExecutorDeps used by the tool assembly pipeline` (file:69) — inherits the parent bag's cluster structure (media/skill/prompt/delivery). The subset cannot be tightened independently of PiExecutorDeps (the daemon wiring passes the same field references through). Future refactor: hold for the parent's cluster-split, then redrive this subset..",
-    removedIn: "phase-D",
-  },
+  // ToolAssemblyDeps moved to executor-tool-assembly-types.ts (Phase 153 file-size
+  // split) and now carries an in-file `@optional-field-count` audit stamp — entry
+  // removed (shrink-only ratchet allows removals).
   {
     file: "packages/web/src/api/types/agent-types.ts",
     typeName: "AgentDetail",

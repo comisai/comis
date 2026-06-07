@@ -38,6 +38,10 @@ import type { ExecutionPromptResult } from "./prompt-assembly.js";
 import type { ExecutionOverrides } from "./types.js";
 
 /** Subset of PiExecutorDeps used by the tool assembly pipeline. */
+// @optional-field-count: documented Subset of PiExecutorDeps — inherits the parent bag's
+// cluster structure (media/skill/prompt/delivery/memory lanes); cannot be tightened
+// independently of PiExecutorDeps (daemon wiring passes the same field references
+// through). Future refactor: hold for the parent's cluster-split, then redrive this subset.
 export interface ToolAssemblyDeps {
   customTools: ToolDefinition[];
   convertTools?: (tools: AgentTool[]) => ToolDefinition[];
