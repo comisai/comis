@@ -210,4 +210,67 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
       ),
     ).toBe(true);
   });
+
+  it("progressively sheds — shortens a long summary then halves failures — to hit the 6 KB budget", () => {
+    // 20 failures, each at the FULL 200-char preview (so the per-failure caps
+    // leave them untouched) + a long (but < MAX_INLINE_STRING) summary. The sum
+    // still exceeds 6144 bytes, forcing the shed loop: summary-shorten first,
+    // then failures-halve.
+    const report = makeReport({
+      summary: "S".repeat(250), // > 80 (shed) and < 256 (not digested)
+      failures: manyFailures(20, 200),
+    });
+    const bounded = boundIncidentReport(report, "summary");
+    const bytes = Buffer.byteLength(JSON.stringify(bounded), "utf8");
+    expect(bytes).toBeLessThanOrEqual(6 * 1024);
+    // The summary was shortened by the shed loop (ends with the ellipsis).
+    expect(
+      bounded.truncations.some(
+        (t) => t.field === "summary" && /6144 bytes; summary shortened/.test(t.reason),
+      ),
+    ).toBe(true);
+    // And failures were halved at least once by the shed loop.
+    expect(
+      bounded.truncations.some(
+        (t) => t.field === "failures" && /6144 bytes; failures trimmed/.test(t.reason),
+      ),
+    ).toBe(true);
+    expect(bounded.failures.length).toBeLessThan(20);
+  });
+
+  it("records a residual report-overage truncation when non-discretionary fields alone exceed 6 KB", () => {
+    // A large `suggestedNextSteps` array (NOT a field the report-level shed
+    // touches — only summary + failures are shed) keeps the report over 6144
+    // bytes after discretionary shedding. The post-loop honesty check (threat
+    // T-153-12) records ONE residual `report` overage rather than silently
+    // handing back an over-budget report. The loop terminates (no hang).
+    const report = makeReport({
+      summary: "ok", // ≤ 80, nothing to shed here
+      suggestedNextSteps: Array.from({ length: 64 }, () => "s".repeat(250)),
+      failures: [makeFailure({ seq: 1, errorPreview: "HTTP 503" })],
+    });
+    const bounded = boundIncidentReport(report, "summary");
+    expect(
+      bounded.truncations.some(
+        (t) => t.field === "report" && /still exceeded 6144 bytes after shedding/.test(t.reason),
+      ),
+    ).toBe(true);
+    // The loop terminated (it did not hang); the single failure was retained.
+    expect(bounded.failures.length).toBe(1);
+  });
+
+  it("at full depth keeps up to FULL_MAX_FAILURES and does not run the summary byte-shed loop", () => {
+    // 250 failures at full depth: array relaxes to the 200 cap, and there is no
+    // 6 KB byte gate at full — so the report is large but lossless-by-design.
+    const report = makeReport({ failures: manyFailures(250, 100) });
+    const bounded = boundIncidentReport(report, "full");
+    expect(bounded.failures.length).toBe(200); // FULL_MAX_FAILURES
+    expect(
+      bounded.truncations.some((t) => t.field === "failures" && /capped at 200/.test(t.reason)),
+    ).toBe(true);
+    // No summary byte-budget truncation at full depth (the shed loop is summary-only).
+    expect(
+      bounded.truncations.some((t) => /6144 bytes/.test(t.reason)),
+    ).toBe(false);
+  });
 });
