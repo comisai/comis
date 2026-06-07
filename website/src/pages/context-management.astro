@@ -188,7 +188,7 @@ const realExample = {
         <div class="bg-navy-light/80 border border-teal/20 rounded-2xl p-8 md:p-12">
           <div class="grid md:grid-cols-4 gap-8 text-center">
             <div>
-              <p class="text-4xl font-bold text-teal font-mono">17x</p>
+              <p class="text-4xl font-bold text-teal font-mono">{FACTS.costs.cacheRatio}</p>
               <p class="text-muted text-sm mt-2">Cache read/write ratio</p>
             </div>
             <div>
@@ -356,7 +356,7 @@ const realExample = {
          &larr;&mdash;&mdash;&mdash;&mdash; persisted across execute() calls &mdash;&mdash;&mdash;&mdash;&rarr;</pre>
           </div>
           <p class="text-muted text-sm mt-4 leading-relaxed">
-            Multiple feedback loops ensure cache stability across turns, achieving a <span class="text-teal font-semibold font-mono">16.9x</span> read/write ratio in production - meaning for every token written to cache, 17 tokens are served from it at 10x lower cost.
+            Multiple feedback loops ensure cache stability across turns, achieving a <span class="text-teal font-semibold font-mono">{FACTS.costs.cacheRatio}</span> read/write ratio in production - meaning for every token written to cache, roughly 17 tokens are served from it at 10x lower cost.
           </p>
         </div>
 

@@ -64,6 +64,7 @@ export const FACTS = {
     cachedSession: "$5.02",       // 76-call Opus session
     uncachedSession: "$26.42",
     cacheHitRate: "94%",          // warm turns
+    cacheRatio: "16.9x",          // production cache read/write ratio (canonical — rounds to "17 tokens served" in prose)
     pipelineCost: "$2.11",        // 8-agent pipeline, 788K tokens
     pipelineTokens: "788K",
     savingsPct: "81%",            // "81% cheaper"
