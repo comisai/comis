@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.14
 milestone_name: — Small-Model Excellence
 status: executing
-stopped_at: Completed 153-02-PLAN.md
-last_updated: "2026-06-07T22:56:31.151Z"
-last_activity: 2026-06-07
+stopped_at: Completed 155-03-PLAN.md
+last_updated: "2026-06-08T02:05:00.000Z"
+last_activity: 2026-06-08
 progress:
   total_phases: 9
   completed_phases: 6
   total_plans: 27
-  completed_plans: 23
-  percent: 85
+  completed_plans: 24
+  percent: 89
 ---
 
 ## Project Reference
@@ -24,7 +24,7 @@ See: `.planning/PROJECT.md` (updated 2026-06-07)
 ## Current Position
 
 Phase: 155 (local-vision-orchestration-tool-call-repair-security) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-06-07
 
@@ -65,10 +65,13 @@ Last activity: 2026-06-07
 | Phase 154 P02 | 20 | 2 tasks | 4 files |
 | Phase 155 P01 | 25 | 1 tasks | 7 files |
 | Phase 155 P02 | 25 | 1 tasks | 6 files |
+| Phase 155 P03 | 25 | 1 tasks | 5 files |
 
 ## Accumulated Context
 
 ### Decisions
+
+- **Phase 155-03 COMPLETE (2026-06-08) — L4/S7/L5 vision trust-flagging + reasoning-budget sizing.** L4: envelope-wrapper.ts reads `modelProfile.supportsVision` (not `resolvedModel.input` directly) — WARN "Images dropped" fires when flag=false even if `resolvedModel.input` includes "image". S7: `wrapExternalContent(rawHint, {source:"vision", includeWarning:false})` applied to image hint only (not full messageText — avoids double-wrap, per Pitfall 3). L5: `resolveMaxOutputTokens` exported from verification-gate.ts; applied in executor-stream-setup.ts `createConfigResolver` (`maxTokens: config.maxTokens ?? resolveMaxOutputTokens(modelProfile)`) — native-reasoning profiles get >=2048 tokens on main exec path; operator explicit override takes precedence. 6 RED tests → GREEN; 6703 agent tests pass; build clean; lint:security at 5-pre-existing baseline. TDD: RED 9a8c590b → GREEN 286faa73. S7 behavioral oracle: `createOutputGuard().scan()` with canary proves embedded image-borne instruction detected (canary leak → blocked=true).
 
 - **Phase 155-01 COMPLETE (2026-06-08) — L1/L2/L7 ModelProfile flag routing.** 5 provider-name predicates replaced with ModelProfile capability flags at: factory.ts:86 (`supportsPromptCache`), tool-deferral-injection.ts:49 (`supportsServerToolSearch`), executor-tool-assembly.ts:528 (`resolveProviderCapabilities` replaces inline ternary), executor-stream-setup.ts:327 (cache-observation callback + modelProfile threaded into RequestBodyInjectorConfig). `??` fallback preserves existing behavior for callers without modelProfile. supportsPromptCache=false => needsCacheBreakpoints=false => single block, zero cache_control overhead. L7 test pins: Ollama gets zero cache_control AND security sections (buildSafetySection output) remain in single assembled block. TDD: RED 25a71957 (3/4 tests fail pre-fix) → GREEN 6e19a45f (172 factory tests + 6682 agent tests all pass, build clean, lint:security at 5-pre-existing baseline). isAnthropicFamily+isGoogleFamily imports removed from executor-tool-assembly.ts.
 
@@ -148,7 +151,7 @@ Items deferred at **v2.13** milestone close (2026-06-06):
 
 ## Session Continuity
 
-Last session: 2026-06-07T22:56:31.145Z
+Last session: 2026-06-07T23:07:01.743Z
 Stopped at: Completed 153-02-PLAN.md
 Resume file: None
 Next action: `/gsd-plan-phase 149` — PROVE (wire the standalone harness to the executor + complete the qwen3.6 M2 matrix baseline)
