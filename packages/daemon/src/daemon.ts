@@ -154,6 +154,7 @@ import {
   createBackgroundSessionResolver,
   createGeminiCacheManager,
   createSessionTrackerRegistry,
+  seedDefaultDagTemplates,
   validateProviderOverrides,
   wireGeminiCacheCleanup,
   wireMcpDisconnectCleanup,
@@ -2384,6 +2385,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
   }));
   subAgentRunner.setGraphCoordinator(graphCoordinator);
   const namedGraphStore = createNamedGraphStore(db);
+  // O2 (WR-02): seed the four canonical small-model DAG templates into the
+  // named-graph store. Idempotent via INSERT-OR-IGNORE semantics inside the
+  // seeder, so operator-customized templates are preserved across restarts and
+  // re-running on every boot is safe.
+  seedDefaultDagTemplates(namedGraphStore);
 
   // 6.7. Monitoring + per-agent heartbeat + wake coalescer
   const { heartbeatRunner, duplicateDetector } = setupMonitoring({ container, schedulerLogger, logger, adaptersByType });

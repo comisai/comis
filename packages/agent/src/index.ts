@@ -574,6 +574,11 @@ export type { OperationModelResolution } from "./model/operation-model-resolver.
 // (also in @comis/agent) own the resolveMemoryOpsStrategy call internally.
 export { resolveModelProfile } from "./executor/model-profile.js";
 export type { CapabilityClass } from "./executor/model-profile.js";
+// O2 (WR-02): canonical DAG template seeding + filling. seedDefaultDagTemplates
+// is wired into daemon bootstrap (idempotent INSERT-OR-IGNORE) so the four
+// canonical small-model templates exist in the named-graph store at startup.
+export { seedDefaultDagTemplates, fillDagTemplate, CANONICAL_DAG_TEMPLATES } from "./executor/dag-templates.js";
+export type { DagTemplate, DagTemplateNode, NamedGraphStoreLike } from "./executor/dag-templates.js";
 export { resolveOperationDefaults, OPERATION_TIER_MAP, OPERATION_TIMEOUT_DEFAULTS, OPERATION_CACHE_DEFAULTS } from "./model/operation-model-defaults.js";
 export { resolveCompactionModel } from "./model/compaction-model-resolver.js";
 

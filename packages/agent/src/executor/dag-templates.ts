@@ -190,6 +190,15 @@ const SLOT_REPLACE_RE = /\$\{([A-Z_]+)\}/g;
  * remain: VAR1, VAR2") if any slot remains after filling — the caller must
  * treat this as a failure and NOT proceed with the unfilled graph.
  *
+ * WR-02 wiring status: the canonical templates ARE seeded into the named-graph
+ * store at daemon boot (seedDefaultDagTemplates, wired in daemon.ts). The
+ * PRODUCER that selects a template and calls fillDagTemplate with weak-model
+ * slot values is the small-model graph-repair path, which lands in Phase 157
+ * alongside repairDagWithBoundedRetries (see graph-helpers.ts buildGraphInput,
+ * which fail-closes the weak+invalid branch and documents the same deferral).
+ * fillDagTemplate is exported and ready for that caller — it is not silently
+ * dead: seeding is live, and the fill call site is an explicit Phase-157 item.
+ *
  * @param template - The DAG template to fill.
  * @param vars - Map of slot name (e.g. "TOPIC") to replacement value.
  */

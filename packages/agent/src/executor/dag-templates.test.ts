@@ -3,7 +3,9 @@ import { describe, it, expect } from "vitest";
 import {
   CANONICAL_DAG_TEMPLATES,
   fillDagTemplate,
+  seedDefaultDagTemplates,
 } from "./dag-templates.js";
+import type { NamedGraphStoreLike } from "./dag-templates.js";
 import { parseExecutionGraph, validateAndSortGraph } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -98,5 +100,56 @@ describe("fillDagTemplate", () => {
       const validateResult = validateAndSortGraph(parseResult.value);
       expect(validateResult.ok).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-02: seedDefaultDagTemplates — wired into daemon boot (idempotent)
+// ---------------------------------------------------------------------------
+
+describe("seedDefaultDagTemplates", () => {
+  /** Minimal in-memory NamedGraphStore double recording save() calls. */
+  function makeFakeStore(opts: { throwOnDuplicate?: boolean } = {}): {
+    store: NamedGraphStoreLike;
+    saved: Array<{ id: string; label: string }>;
+  } {
+    const saved: Array<{ id: string; label: string }> = [];
+    const seenIds = new Set<string>();
+    const store: NamedGraphStoreLike = {
+      save(entry) {
+        if (opts.throwOnDuplicate && seenIds.has(entry.id)) {
+          // Mimic a UNIQUE-constraint failure on duplicate id (INSERT-OR-IGNORE).
+          throw new Error(`UNIQUE constraint failed: ${entry.id}`);
+        }
+        seenIds.add(entry.id);
+        saved.push({ id: entry.id, label: entry.label });
+        return entry.id;
+      },
+    };
+    return { store, saved };
+  }
+
+  it("seeds all four canonical templates with system-template- ids and isTemplate settings", () => {
+    const { store, saved } = makeFakeStore();
+    seedDefaultDagTemplates(store);
+
+    const expectedKeys = Object.keys(CANONICAL_DAG_TEMPLATES);
+    expect(saved.length).toBe(expectedKeys.length);
+    for (const key of expectedKeys) {
+      expect(saved.some((s) => s.id === `system-template-${key}`)).toBe(true);
+    }
+  });
+
+  it("is idempotent: a duplicate-key throw on re-seed is swallowed (INSERT-OR-IGNORE)", () => {
+    const { store, saved } = makeFakeStore({ throwOnDuplicate: true });
+
+    seedDefaultDagTemplates(store);
+    const afterFirst = saved.length;
+    expect(afterFirst).toBe(Object.keys(CANONICAL_DAG_TEMPLATES).length);
+
+    // Second seed: every save() now throws on duplicate id — must not propagate.
+    expect(() => seedDefaultDagTemplates(store)).not.toThrow();
+    // No new rows recorded (all duplicates were ignored).
+    expect(saved.length).toBe(afterFirst);
   });
 });
