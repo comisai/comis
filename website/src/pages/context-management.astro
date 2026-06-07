@@ -2,6 +2,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import Footer from "../components/Footer.astro";
+import { FACTS } from "../data/facts";
 
 const title = "Context Management - How Comis Cuts LLM Costs by 81%";
 const description = "Deep dive into Comis's 8-stage context engine (10 implementations), cache fence system, TTL monotonicity enforcement, adaptive cold-start retention, sub-agent spawn staggering, progressive tool disclosure, and the 20+ mechanisms that reduce multi-agent pipeline costs.";
@@ -103,7 +104,7 @@ const cacheFenceMechanisms = [
     name: "Adaptive Cold-Start Retention",
     code: "CACHE-23",
     desc: "Parent agents write at 1h TTL from the first call so the system prompt survives pipeline gaps (>5m). Sub-agents inherit mixed 5m/1h TTLs - shared prefix blocks use the first writer's TTL, conversation-specific content uses 5m. Cache refreshes don't upgrade TTL, so the initial write determines the cache lifetime.",
-    impact: "Eliminates re-writes per pipeline gap. 81% cost reduction at steady state.",
+    impact: "Eliminates re-writes per pipeline gap, so the cache survives across waves at steady state.",
   },
   {
     name: "TTL Monotonicity Enforcement",
@@ -591,17 +592,17 @@ const realExample = {
           </svg>
         </div>
 
-        <!-- Cost comparison -->
+        <!-- Cost comparison (spawn-staggering scenario only — the full-session percentage lives in the production-data section) -->
         <div class="grid md:grid-cols-2 gap-6">
           <div class="bg-navy rounded-xl border border-coral/15 p-6">
-            <p class="text-coral font-semibold text-sm mb-2">Without staggering</p>
+            <p class="text-coral font-semibold text-sm mb-2">Unstaggered fan-out</p>
             <p class="text-3xl font-bold text-white font-mono mb-2">$22.51</p>
-            <p class="text-muted text-sm">4M prompt tokens at input rate. No cache sharing. Each agent pays full write cost for identical system prompts.</p>
+            <p class="text-muted text-sm">4M prompt tokens at input rate. No cache sharing. Each agent pays the full write cost for the identical system prompt.</p>
           </div>
           <div class="bg-navy rounded-xl border border-teal/15 p-6">
-            <p class="text-teal font-semibold text-sm mb-2">With Comis cache system</p>
+            <p class="text-teal font-semibold text-sm mb-2">With spawn staggering</p>
             <p class="text-3xl font-bold text-white font-mono mb-2">$12.48</p>
-            <p class="text-muted text-sm">4.9M tokens from cache reads at $0.50/MTok. First agent writes, siblings read. Fence prevents invalidation. <span class="text-teal font-semibold">81% cost reduction.</span></p>
+            <p class="text-muted text-sm">4.9M tokens served from cache reads at $0.50/MTok. The first agent writes the shared prefix, siblings read it instead of each writing it again, and the fence prevents invalidation &mdash; <span class="text-teal font-semibold">roughly half the cost of an unstaggered fan-out</span>. (The full cached-vs-uncached session comparison is in the production-data section below.)</p>
           </div>
         </div>
       </div>
@@ -820,9 +821,9 @@ const realExample = {
         </div>
 
         <div class="mt-8 bg-navy-light/80 border border-coral/15 rounded-xl p-6">
-          <p class="text-white font-semibold mb-2">Without context management</p>
+          <p class="text-white font-semibold mb-2">What spawn staggering alone saves</p>
           <p class="text-muted text-sm leading-relaxed">
-            The same 8-agent pipeline without caching costs <span class="text-coral font-semibold">$22.51</span> - 4M prompt tokens at full input rate. With Comis cache system: <span class="text-teal font-semibold">$12.48</span>. The cache fence alone prevented 36K+ tokens of unnecessary re-writes per pipeline turn by protecting the cached prefix from context engine modifications.
+            Run the same 8-agent fan-out with every sibling writing the identical prefix and it costs <span class="text-coral font-semibold">$22.51</span> &mdash; 4M prompt tokens at the full input rate. Stagger the spawns so the first agent writes once and the rest read at <span class="text-teal font-mono">$0.50/MTok</span> and it drops to <span class="text-teal font-semibold">$12.48</span>, roughly half. The cache fence on top of that prevented 36K+ tokens of unnecessary re-writes per pipeline turn by protecting the cached prefix from context engine modifications &mdash; the full pipeline lands at <span class="text-teal font-semibold">{FACTS.costs.pipelineCost}</span> ({FACTS.costs.pipelineTokens} tokens).
           </p>
         </div>
       </div>
@@ -924,7 +925,7 @@ const realExample = {
           Anthropic dashboard: {realExample.date}
         </h2>
         <p class="text-muted text-lg mb-8 max-w-2xl">
-          Actual token usage and costs from a production Comis instance running multi-agent pipelines on Claude Opus 4.6. Not a benchmark - real user traffic.
+          Actual token usage and costs from a production Comis instance running multi-agent pipelines on Claude Opus 4.6. Not a benchmark - real user traffic. This 76-call session cost <span class="text-teal font-semibold">{FACTS.costs.cachedSession}</span> with caching versus <span class="text-coral font-semibold">{FACTS.costs.uncachedSession}</span> without &mdash; <span class="text-teal font-semibold">{FACTS.costs.savingsPct} cheaper</span>. That is the 81% this page leads with.
         </p>
 
         <div class="grid md:grid-cols-2 gap-8">
