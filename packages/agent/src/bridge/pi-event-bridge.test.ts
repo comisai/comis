@@ -956,6 +956,46 @@ describe("createPiEventBridge", () => {
       }));
     });
 
+    // WR-151-01: m.finishReason is initialized to the literal "stop"
+    // (bridge-metrics.ts) and settles to a real value only when a safety guard
+    // diverges it — which is LATER than this per-turn emit on a normal turn. The
+    // translator (event-bus-bridge.ts) forwards finishReason presence-conditionally,
+    // so the bridge must OMIT it while it is still the un-settled init default;
+    // otherwise every model.completed record carries a stale "stop" that looks
+    // authoritative but is noise. Helper extracts the actual emitted payload
+    // (objectContaining cannot assert key ABSENCE).
+    function lastTokenUsagePayload(): Record<string, unknown> {
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c) => c[0] === "observability:token_usage");
+      expect(calls.length).toBeGreaterThan(0);
+      return calls[calls.length - 1]![1] as Record<string, unknown>;
+    }
+
+    it("omits finishReason on a normal turn where it is still the un-settled init default 'stop'", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      // A normal turn never diverges m.finishReason from its "stop" init default
+      // before this emit, so the key must be ABSENT (not a stale "stop").
+      listener(makeTurnEndEvent({ stopReason: "end_turn" }) as any);
+
+      const payload = lastTokenUsagePayload();
+      expect("finishReason" in payload).toBe(false);
+    });
+
+    it("forwards finishReason once a safety guard has settled it to a real non-default value", () => {
+      // A step-limit halt on a prior tool_execution_end settles
+      // m.finishReason to "max_steps" BEFORE the next turn_end emit, so the
+      // genuinely-settled disposition must be forwarded.
+      (deps.stepCounter.shouldHalt as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      const { listener } = createPiEventBridge(deps);
+
+      listener(makeToolExecutionEndEvent("bash") as any); // → m.finishReason = "max_steps"
+      listener(makeTurnEndEvent({ stopReason: "end_turn" }) as any);
+
+      const payload = lastTokenUsagePayload();
+      expect(payload.finishReason).toBe("max_steps");
+    });
+
     it("when budgetGuard.checkBudget returns err, calls onAbort and sets finishReason to budget_exceeded", () => {
       (deps.budgetGuard.checkBudget as ReturnType<typeof vi.fn>).mockReturnValue(
         err(new BudgetError("per-execution", 5000, 5000, 0)),
