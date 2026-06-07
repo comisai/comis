@@ -1122,6 +1122,54 @@ describe("tool retry breaker", () => {
       expect(reset?.errorTag).toBe("");
     });
 
+    it("does NOT emit reset when the tool is still hard-blocked at tool level (event must reflect availability)", () => {
+      // WR-151-03: a success clears the signature counter but NEVER clears
+      // blockedTools or the tool-level total. If the tool already crossed
+      // maxToolFailures, a success on a still-failing signature must NOT emit
+      // tool:breaker_reset — beforeToolCall would STILL block, so the trajectory
+      // would show "reset" while the breaker is, in fact, open. Reset must
+      // reflect tool-availability, not just the per-signature counter.
+      const breaker = createBreaker(); // maxConsecutiveFailures: 3, maxToolFailures: 5
+      const tool = "exec";
+      const args = { cmd: "broken" };
+
+      // Five failures on the SAME signature crosses BOTH the signature-level (3)
+      // and the tool-level total (5) thresholds → tool hard-blocked.
+      for (let i = 0; i < 5; i++) {
+        breaker.recordResult(tool, args, false, "[permission_denied] EPERM");
+      }
+      expect(breaker.getBlockedTools()).toContain(tool);
+      expect(breaker.beforeToolCall(tool, args).block).toBe(true);
+
+      // Success on that signature: counter is non-zero, but the tool stays
+      // blocked. No reset transition may be reported.
+      const out = breaker.recordResult(tool, args, true);
+      expect(out).toBeUndefined();
+      // Tool is still blocked after the "success" — the reset would have lied.
+      expect(breaker.beforeToolCall(tool, args).block).toBe(true);
+    });
+
+    it("DOES emit reset when the success restores a tool that was never tool-level blocked", () => {
+      // WR-151-03 complement: a signature that crossed only the signature-level
+      // counter (not the tool-wide total) is genuinely recovered by a success —
+      // the tool is usable again, so reset is truthful and must still fire.
+      const breaker = createBreaker(); // maxConsecutiveFailures: 3, maxToolFailures: 5
+      const tool = "mcp__yfinance--get_recs";
+      const args = { symbol: "NVDA" };
+
+      // Three failures crosses the signature-level threshold (3) but NOT the
+      // tool-level total (5) → tool is NOT in blockedTools.
+      for (let i = 0; i < 3; i++) {
+        breaker.recordResult(tool, args, false, "connection timeout");
+      }
+      expect(breaker.getBlockedTools()).not.toContain(tool);
+
+      const reset = breaker.recordResult(tool, args, true);
+      expect(reset?.transition).toBe("reset");
+      expect(reset?.reason).toBe("success");
+      expect(reset?.consecutiveFailures).toBe(0);
+    });
+
     it("returns undefined for a success with NO prior failure", () => {
       const breaker = createBreaker();
       const reset = breaker.recordResult("bash", { cmd: "ls" }, true);
