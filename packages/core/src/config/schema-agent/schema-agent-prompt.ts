@@ -443,3 +443,45 @@ export const GoalAnchorConfigSchema = z.strictObject({
 });
 
 export type GoalAnchorConfig = z.infer<typeof GoalAnchorConfigSchema>;
+
+/**
+ * Pre-delivery verification critic configuration (R4, Phase 154).
+ *
+ * The critic scores a completion-claiming response against the GoalAnchor
+ * checklist and returns verified / not-verified / skipped. Gated on
+ * scaffoldLevel==="max" (small + nano models only) when enabled.
+ *
+ * Default enabled=false ensures the critic does not fire until explicitly
+ * configured by the operator. Behavior-neutral for all existing agents.
+ */
+export const VerificationConfigSchema = z.strictObject({
+  /** Enable pre-delivery verification critic. Default: false (opt-in; meaningful only for scaffoldLevel=max). */
+  enabled: z.boolean().default(false),
+  /**
+   * Minimum response length in characters before the critic is invoked.
+   * Prevents firing on clarifying questions, short acks, and non-claim replies.
+   * Bounded [50, 2000]. Default: 200.
+   */
+  minResponseChars: z.number().int().min(50).max(2000).default(200),
+});
+
+export type VerificationConfig = z.infer<typeof VerificationConfigSchema>;
+
+/**
+ * Honesty guardrail configuration (R4/S2, Phase 154).
+ *
+ * Bounds critic retry redirects and enforces an honest unmet-list when
+ * the redirect budget is exhausted. Prevents the executor from looping
+ * indefinitely while still requiring the agent to deliver a qualified
+ * response when it cannot satisfy all requirements.
+ */
+export const HonestyConfigSchema = z.strictObject({
+  /**
+   * Maximum critic retry redirects before delivering an honest unmet-list.
+   * After this many not-verified verdicts, the executor delivers an honest
+   * unmet-list instead of an unqualified "done". Default: 2.
+   */
+  maxCriticRetries: z.number().int().min(0).max(5).default(2),
+});
+
+export type HonestyConfig = z.infer<typeof HonestyConfigSchema>;

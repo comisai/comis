@@ -79,6 +79,10 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "security:injection_rate_exceeded",
   "sender:trust_resolved",
   "tool:install_detour_detected",
+  // Critic isolation events (Phase 154 S2): security incidents fed to alerting,
+  // not trajectory steps. 100% capture via structured Pino log (AI-SPEC §7).
+  "critic.isolation.canary_leak",
+  "critic.isolation.implied_tool_call",
 
   // -------------------------------------------------------------------
   // Provider-level aggregates — daemon-level rollup, not per-session.

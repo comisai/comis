@@ -137,7 +137,9 @@ export type ModelOperationType =
   | "subagent"
   | "compaction"
   | "taskExtraction"
-  | "condensation";
+  | "condensation"
+  | "verification"    // R4: pre-delivery critic (Phase 154)
+  | "planning";       // R5: pre-execution planner (Phase 154, deferrable on M2)
 
 /**
  * Per-operation model entry: groups model override and timeout for a single
@@ -172,6 +174,8 @@ export const OperationModelsSchema = z.strictObject({
   compaction: OperationModelEntrySchema.optional(),
   taskExtraction: OperationModelEntrySchema.optional(),
   condensation: OperationModelEntrySchema.optional(),
+  verification: OperationModelEntrySchema.optional(),  // R4: pre-delivery critic (Phase 154)
+  planning: OperationModelEntrySchema.optional(),       // R5: pre-execution planner (Phase 154)
 }).default({});
 
 export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
