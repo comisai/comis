@@ -82,6 +82,26 @@ function manyFailures(count: number, previewLen: number): IncidentFailure[] {
   );
 }
 
+/** Build `count` flapping breaker events (newest-first, descending seq). */
+function manyBreakerEvents(count: number): IncidentReport["breakerTimeline"] {
+  return Array.from({ length: count }, (_, i) => ({
+    seq: count - i, // newest-first: seq descends from `count` down to 1
+    event: (i % 2 === 0 ? "opened" : "reset") as "opened" | "reset",
+    toolName: "web_fetch",
+    ...(i % 2 === 0 ? { consecutiveFailures: 5 } : {}),
+  }));
+}
+
+/** Build `count` large-result offloads (newest-first, descending seq). */
+function manyOffloads(count: number): IncidentReport["offloads"] {
+  return Array.from({ length: count }, (_, i) => ({
+    seq: count - i, // newest-first: seq descends from `count` down to 1
+    toolName: "web_fetch",
+    originalChars: 53_095,
+    pointer: `sessions/678.offload.${count - i}.json`,
+  }));
+}
+
 /**
  * Build a stand-in for the 678 injection-block body FROM PARTS — never a
  * hard-coded injection literal as one source string. Joins the "SECURITY
@@ -272,5 +292,76 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     expect(
       bounded.truncations.some((t) => /6144 bytes/.test(t.reason)),
     ).toBe(false);
+  });
+
+  // ------------------------------------------------------------------------
+  // CR-01 — breakerTimeline / offloads must NOT escape the summary byte budget.
+  // A flapping breaker (or a session that offloads thousands of large results)
+  // produces a multi-thousand-element array. Pre-fix these arrays were exempt
+  // from the structural cap AND never shed → a 150 KB+ "summary" report.
+  // ------------------------------------------------------------------------
+
+  it("serializes a 2000-entry breakerTimeline report to ≤ 6144 bytes at summary depth (CR-01)", () => {
+    const report = makeReport({ breakerTimeline: manyBreakerEvents(2000) });
+    const bounded = boundIncidentReport(report, "summary");
+    const bytes = Buffer.byteLength(JSON.stringify(bounded), "utf8");
+    expect(bytes).toBeLessThanOrEqual(6 * 1024);
+    // It was actually capped (not merely "the loop gave up and noted it").
+    expect(bounded.breakerTimeline.length).toBeLessThanOrEqual(20);
+  });
+
+  it("serializes a 2000-entry offloads report to ≤ 6144 bytes at summary depth (CR-01)", () => {
+    const report = makeReport({ offloads: manyOffloads(2000) });
+    const bounded = boundIncidentReport(report, "summary");
+    const bytes = Buffer.byteLength(JSON.stringify(bounded), "utf8");
+    expect(bytes).toBeLessThanOrEqual(6 * 1024);
+    expect(bounded.offloads.length).toBeLessThanOrEqual(20);
+  });
+
+  it("caps breakerTimeline newest-first and records an honest truncations[] ledger entry (CR-01)", () => {
+    const report = makeReport({ breakerTimeline: manyBreakerEvents(2000) });
+    const bounded = boundIncidentReport(report, "summary");
+    // Newest-first: the retained entries are the highest-seq ones.
+    const seqs = bounded.breakerTimeline.map((b) => b.seq);
+    expect(Math.max(...seqs)).toBe(2000);
+    expect(Math.min(...seqs)).toBeGreaterThan(2000 - 21);
+    const entry = bounded.truncations.find((t) => t.field === "breakerTimeline");
+    expect(entry).toBeDefined();
+    expect(entry!.reason).toMatch(/2000/);
+  });
+
+  it("caps offloads newest-first and records an honest truncations[] ledger entry (CR-01)", () => {
+    const report = makeReport({ offloads: manyOffloads(2000) });
+    const bounded = boundIncidentReport(report, "summary");
+    const seqs = bounded.offloads.map((o) => o.seq);
+    expect(Math.max(...seqs)).toBe(2000);
+    expect(Math.min(...seqs)).toBeGreaterThan(2000 - 21);
+    const entry = bounded.truncations.find((t) => t.field === "offloads");
+    expect(entry).toBeDefined();
+    expect(entry!.reason).toMatch(/2000/);
+  });
+
+  it("keeps a worst-case combined report (large breaker + offloads + failures) ≤ 6144 bytes at summary (CR-01)", () => {
+    const report = makeReport({
+      breakerTimeline: manyBreakerEvents(3000),
+      offloads: manyOffloads(3000),
+      failures: manyFailures(40, 200),
+    });
+    const bounded = boundIncidentReport(report, "summary");
+    expect(Buffer.byteLength(JSON.stringify(bounded), "utf8")).toBeLessThanOrEqual(6 * 1024);
+  });
+
+  it("relaxes the breaker/offload array caps at full depth but still trims the worst case (CR-01)", () => {
+    const report = makeReport({
+      breakerTimeline: manyBreakerEvents(3000),
+      offloads: manyOffloads(3000),
+    });
+    const bounded = boundIncidentReport(report, "full");
+    // full keeps MORE than the summary's 20 (the cap relaxes) ...
+    expect(bounded.breakerTimeline.length).toBeGreaterThan(20);
+    expect(bounded.offloads.length).toBeGreaterThan(20);
+    // ... but still does not pass through all 3000 unbounded.
+    expect(bounded.breakerTimeline.length).toBeLessThan(3000);
+    expect(bounded.offloads.length).toBeLessThan(3000);
   });
 });
