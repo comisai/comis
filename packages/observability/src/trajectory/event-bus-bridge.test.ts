@@ -115,6 +115,69 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.errorKind).toBe("internal");
   });
 
+  it("tool_executed_forwards_D1_provenance_into_tool.result.data", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:executed", {
+      toolName: "web_fetch",
+      toolCallId: "tc-prov",
+      durationMs: 1234,
+      success: false,
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      // D1 provenance fields (Plan 03 payload — Phase 153 obs.explain reads these).
+      classifiedFailureBy: "failure_detector",
+      transportOk: true,
+      httpStatus: 200,
+      matchedRule: "status_token",
+      matchedToken: "503",
+      resultBytes: 1234,
+      resultDigest: "abc123def456",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("tool.result");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // All 7 provenance fields must reach the trajectory `data` — without
+    // this forwarding, Phase 153's obs.explain is blind (RESEARCH Pitfall 2).
+    expect(data.classifiedFailureBy).toBe("failure_detector");
+    expect(data.transportOk).toBe(true);
+    expect(data.httpStatus).toBe(200);
+    expect(data.matchedRule).toBe("status_token");
+    expect(data.matchedToken).toBe("503");
+    expect(data.resultBytes).toBe(1234);
+    expect(data.resultDigest).toBe("abc123def456");
+  });
+
+  it("tool_executed_omits_absent_provenance_keys_from_tool.result.data", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    // A success with NO provenance fields — the keys must be ABSENT
+    // (presence-conditional, never `undefined` values).
+    bus.emit("tool:executed", {
+      toolName: "bash",
+      toolCallId: "tc-clean",
+      durationMs: 10,
+      success: true,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect("classifiedFailureBy" in data).toBe(false);
+    expect("transportOk" in data).toBe(false);
+    expect("httpStatus" in data).toBe(false);
+    expect("matchedRule" in data).toBe(false);
+    expect("matchedToken" in data).toBe(false);
+    expect("resultBytes" in data).toBe(false);
+    expect("resultDigest" in data).toBe(false);
+  });
+
   it("tool_timeout_event_maps_to_tool.timeout sharing toolCallId for dedup with tool:executed", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
