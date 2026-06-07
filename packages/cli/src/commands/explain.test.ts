@@ -238,6 +238,51 @@ describe("comis explain default (table) renders key report fields", () => {
   });
 });
 
+describe("comis explain table view tolerates a null likelyRootCause and empty next-steps", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("omits the root-cause line and renders no next-steps when both are absent", async () => {
+    const cleanReport = {
+      ...FAKE_REPORT,
+      summary: "completed; no failures",
+      likelyRootCause: null,
+      suggestedNextSteps: [],
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(cleanReport),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync([
+      "node",
+      "test",
+      "explain",
+      "default:user123:telegram:1717000000",
+    ]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("completed; no failures");
+    expect(output).not.toContain("Root cause");
+    expect(output).not.toContain("→");
+  });
+});
+
 describe("comis explain --depth full threads depth:'full' through to the contract", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;

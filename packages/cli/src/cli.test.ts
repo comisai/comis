@@ -80,6 +80,8 @@ describe("CLI entry point", () => {
       "secrets",
       "signal-setup",
       "trace",
+      // IncidentReport post-mortem surface (obs.explain).
+      "explain",
       "uninstall",
       "auth",
       // Cache stats.
@@ -88,8 +90,8 @@ describe("CLI entry point", () => {
       "mcp",
     ] as const;
 
-    it("registers exactly 23 commands", () => {
-      expect(program.commands).toHaveLength(23);
+    it("registers exactly 24 commands", () => {
+      expect(program.commands).toHaveLength(24);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {
