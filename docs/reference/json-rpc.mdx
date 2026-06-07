@@ -723,6 +723,40 @@ Get aggregate delivery statistics: total messages attempted, successes, failures
 ```
 </CodeGroup>
 
+### `obs.trace.search`
+
+Correlate trace rows from the last two days of session-index records. Look up by `messageId` (an O(1) LRU resolves it to a `traceId` first), by `traceId` directly, by `chatId`, or by a `since` window with an optional `where` filter. Results are capped at `limit` (max 1000, default 200).
+
+Synthetic/test-harness session rows are excluded by default; pass `includeSynthetic: true` to include them.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ messageId?: string, traceId?: string, chatId?: string, since?: string, where?: string, limit?: number, includeSynthetic?: boolean }` -- `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
+| **Returns** | `{ rows: Array<Record<string, unknown>> }` -- matching session-index rows (newest-first within each day file), capped at `limit`. |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "obs.trace.search",
+  "params": { "traceId": "f942d38c-e372-43cc-99f1-ead4f0b8582f" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "rows": [
+      { "traceId": "f942d38c-e372-43cc-99f1-ead4f0b8582f", "sessionId": "678314278", "event": "turn_completed", "durationMs": 247740 }
+    ]
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
 ### `obs.explain`
 
 Assemble a self-contained, redaction-safe post-mortem (an `IncidentReport`) for a single agent session: outcome, cost, timing, per-tool stats, the normalized failures (newest-first), the circuit-breaker timeline, large-result offloads, a one-line summary, and a deterministic `likelyRootCause`. The report is derived from log evidence only -- no LLM is invoked -- so it reproduces the same verdict from the same session forever.
@@ -734,7 +768,7 @@ Accepts EITHER `sessionKey` OR `traceId` (at least one is required). A `traceId`
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ sessionKey?: string, traceId?: string, depth?: "summary" \| "full" }` -- at least one of `sessionKey` / `traceId` required |
+| **Parameters** | `{ sessionKey?: string, traceId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` required. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
 | **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], summary, likelyRootCause, suggestedNextSteps[], truncations[] }` |
 
 <CodeGroup>

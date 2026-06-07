@@ -7474,6 +7474,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "summary",
             "full"
           ]
+        },
+        "includeSynthetic": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -8064,6 +8067,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "integer",
           "exclusiveMinimum": 0,
           "maximum": 1000
+        },
+        "includeSynthetic": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

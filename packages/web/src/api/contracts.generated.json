@@ -7352,6 +7352,9 @@
             "summary",
             "full"
           ]
+        },
+        "includeSynthetic": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -7942,6 +7945,9 @@
           "type": "integer",
           "exclusiveMinimum": 0,
           "maximum": 1000
+        },
+        "includeSynthetic": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

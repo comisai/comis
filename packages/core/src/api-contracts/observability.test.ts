@@ -787,6 +787,21 @@ describe("ObsTrace contracts", () => {
     expect(ObsTraceSearchContract.scopes).toEqual(["admin"]);
   });
 
+  // D9: includeSynthetic admin opt-in (default-exclude synthetic rows).
+  it("ObsTraceSearchContract request parses and retains includeSynthetic:false", () => {
+    // A z.object WITHOUT the field strips the unknown key → the parsed result
+    // would NOT contain includeSynthetic (RED on pre-patch). Once the field is
+    // declared, the boolean survives the parse.
+    const parsed = ObsTraceSearchContract.request.parse({ includeSynthetic: false });
+    expect(parsed).toHaveProperty("includeSynthetic", false);
+  });
+
+  it("ObsTraceSearchContract request rejects a non-boolean includeSynthetic value", () => {
+    expect(
+      ObsTraceSearchContract.request.safeParse({ includeSynthetic: "yes" }).success,
+    ).toBe(false);
+  });
+
   // Test 6
   it("ObsTraceTailContract method equals obs.trace.tail", () => {
     expect(ObsTraceTailContract.method).toBe("obs.trace.tail");
@@ -867,6 +882,20 @@ describe("ObsTrace contracts", () => {
     expect(() =>
       ObsExplainContract.request.parse({ traceId: "t-1" }),
     ).not.toThrow();
+  });
+
+  // D9: includeSynthetic admin opt-in (default-exclude synthetic sessions).
+  it("obs.explain: request parses and retains includeSynthetic:true alongside a traceId", () => {
+    // Pre-patch the field is stripped by the z.object → the parsed result lacks
+    // includeSynthetic (RED). After the opt-in is declared the boolean survives.
+    const parsed = ObsExplainContract.request.parse({ traceId: "t-1", includeSynthetic: true });
+    expect(parsed).toHaveProperty("includeSynthetic", true);
+  });
+
+  it("obs.explain: request rejects a non-boolean includeSynthetic value", () => {
+    expect(
+      ObsExplainContract.request.safeParse({ traceId: "t-1", includeSynthetic: "yes" }).success,
+    ).toBe(false);
   });
 
   it("obs.explain: request REJECTS neither sessionKey nor traceId", () => {

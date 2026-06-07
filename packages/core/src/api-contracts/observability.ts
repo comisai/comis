@@ -731,6 +731,8 @@ export const ObsTraceSearchContract = defineContract({
     since: z.string().optional(),
     where: z.string().optional(),
     limit: z.number().int().positive().max(1000).optional(),
+    // D9: admin opt-in to include synthetic/test sessions (excluded by default).
+    includeSynthetic: z.boolean().optional(),
   }),
   response: z.object({
     rows: ObsRecordArray,

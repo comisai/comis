@@ -188,6 +188,8 @@ export const ObsExplainContract = defineContract({
       sessionKey: z.string().min(1).optional(),
       traceId: z.string().min(1).optional(),
       depth: z.enum(["summary", "full"]).optional(),
+      // D9: admin opt-in to include synthetic/test sessions (excluded by default).
+      includeSynthetic: z.boolean().optional(),
     })
     .refine((r) => r.sessionKey != null || r.traceId != null, {
       message: "sessionKey or traceId required",
