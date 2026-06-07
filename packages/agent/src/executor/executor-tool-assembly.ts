@@ -503,6 +503,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     resolvedModelReasoning: resolvedModel?.reasoning,
     // "interactive" default guards the optional overrides; mirrors pi-executor.ts:1077.
     operationType: executionOverrides?.operationType ?? "interactive",
+    // C2/S1: Forward ModelProfile to prompt-assembly.ts for compact-secure mode selection.
+    // modelProfileParam is the validated ModelProfile resolved at pi-executor.ts:323;
+    // it is undefined when the executor has no profile resolution (rare legacy path).
+    modelProfile: modelProfileParam,
   });
 
   // -------------------------------------------------------------------

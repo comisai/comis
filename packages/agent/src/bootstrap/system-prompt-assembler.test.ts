@@ -2425,3 +2425,106 @@ describe("Snapshot regression: operational prompt trim delta", () => {
     expect(opPrompt.length).toBeLessThan(fullPrompt.length);
   });
 });
+
+// ---------------------------------------------------------------------------
+// compact-secure promptMode — C2/S1 security invariants
+// ---------------------------------------------------------------------------
+// S1 RED gate: these tests assert that the compact-secure prompt NEVER drops
+// the safety core. They are the primary security guard against the S1 trap
+// (buildSafetySection(isMinimal=true) → []).
+//
+// Per AGENTS.md §2.6, RED+GREEN are combined in plan 152-03 because the
+// PromptMode union does not contain "compact-secure" until types.ts is patched
+// in the same plan; the pre-patch code cannot compile the tests.
+
+describe("compact-secure promptMode — C2/S1 security invariants", () => {
+  const senderTrustEntries = [{ senderId: "u1", trustLevel: "trusted", displayId: "u1" }];
+
+  it("minimal mode DROPS safety section (confirms the S1 trap exists)", () => {
+    const prompt = assembleRichSystemPrompt({ promptMode: "minimal" });
+    expect(prompt).not.toContain("## Safety");
+  });
+
+  it("compact-secure ALWAYS contains ## Safety (never uses buildSafetySection(true))", () => {
+    // S1: this is the load-bearing RED test — FAILS until implementation lands
+    const prompt = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      toolNames: ["exec", "read", "memory_search"],
+      senderTrustEntries,
+    });
+    expect(prompt).toContain("## Safety");
+    expect(prompt).toContain("Constitutional Principles");
+  });
+
+  it("compact-secure contains sender-trust content", () => {
+    const prompt = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      senderTrustEntries,
+    });
+    // sender-trust section must appear (anti-injection trust display).
+    // buildSenderTrustSection emits "## Authorized Senders" heading.
+    expect(prompt).toContain("## Authorized Senders");
+  });
+
+  it("compact-secure contains config-secret section heading", () => {
+    // buildConfigSecretIntegritySection only renders when a CONFIRMATION_TOOL_NAMES tool
+    // (gateway, pipeline, etc.) is present. Pass "gateway" to trigger the section.
+    const prompt = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      toolNames: ["gateway", "read"],
+    });
+    // Assert the EXACT section heading from tooling-sections.ts:185 — not just the bare word "config"
+    expect(prompt).toContain("## Config & Secret File Integrity");
+  });
+
+  it("compact-secure token estimate <= 3500 (3K target + 500 buffer)", () => {
+    const prompt = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      toolNames: Array.from({ length: 20 }, (_, i) => `tool_${i}`),
+      senderTrustEntries,
+    });
+    const tokenEstimate = Math.ceil(prompt.length / 3.5);
+    expect(tokenEstimate).toBeLessThanOrEqual(3_500);
+  });
+
+  it("compact-secure with securityLevel=locked contains mandatory sandbox restriction line", () => {
+    // W6: assert the SPECIFIC lockdown phrase, not just locked.length > standard.length
+    // The line is emitted by buildLockdownReinforcement() when securityLevel="locked"
+    const locked = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      securityLevel: "locked",
+    });
+    expect(locked).toContain("- Mandatory: all exec commands run in the sandbox. No exceptions.");
+  });
+
+  it("compact-secure with securityLevel=standard does NOT contain the mandatory sandbox line", () => {
+    const standard = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      securityLevel: "standard",
+    });
+    expect(standard).not.toContain("- Mandatory: all exec commands run in the sandbox. No exceptions.");
+  });
+
+  it("frontier/mid: full mode includes sections excluded from compact-secure", () => {
+    // The assembler always respects the promptMode param it receives.
+    // resolvePromptModeForProfile (in prompt-assembly.ts) is what prevents compact-secure
+    // from firing for frontier/mid. At assembler level, full mode includes more sections.
+    const fullPrompt = assembleRichSystemPrompt({
+      promptMode: "full",
+      toolNames: ["gateway", "read"],
+      heartbeatPrompt: "check alerts",
+      reactionLevel: "minimal",
+    });
+    const compactPrompt = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      toolNames: ["gateway", "read"],
+    });
+    // Full mode must contain sections that compact-secure excludes
+    expect(fullPrompt).toContain("## Safety");
+    // Full mode includes heartbeats, reactions — compact-secure does not
+    expect(fullPrompt).toContain("## Heartbeats");
+    expect(compactPrompt).not.toContain("## Heartbeats");
+    // Full mode prompt is larger than compact-secure (more sections included)
+    expect(fullPrompt.length).toBeGreaterThan(compactPrompt.length);
+  });
+});

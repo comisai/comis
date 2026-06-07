@@ -50,8 +50,16 @@ export interface TruncationResult {
  *    prefix is shared across modes.
  * - `"minimal"`: Only AGENTS.md + TOOLS.md (sub-agents)
  * - `"none"`: Identity-only prompt (lightweight contexts)
+ * - `"compact-secure"`: C2/S1 — compact prompt for small/nano capabilityClass.
+ *    Targets ≤ 3500 tokens while ALWAYS retaining the full safety core
+ *    (buildSafetySection(false) — 14 constitutional lines), sender-trust,
+ *    and config-secret sections. Drops interactive-only sections (heartbeats,
+ *    reactions, media, SEP, compaction recovery, documentation). Lockdown
+ *    tightens with securityLevel (locked → mandatory sandbox restriction line
+ *    appended). NEVER calls buildSafetySection(isMinimal=true) — that is the
+ *    S1 trap that drops all safety content.
  */
-export type PromptMode = "full" | "operational" | "minimal" | "none";
+export type PromptMode = "full" | "operational" | "minimal" | "none" | "compact-secure";
 
 /**
  * Runtime metadata injected into the system prompt header.

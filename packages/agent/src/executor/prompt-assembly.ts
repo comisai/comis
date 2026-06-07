@@ -77,7 +77,53 @@ import { buildRelationshipBlock } from "./relationship-block.js";
 import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context-engine/index.js";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
+import type { ModelProfile } from "./model-profile.js";
 import * as os from "node:os";
+
+// ---------------------------------------------------------------------------
+// C2/S1: Prompt mode resolution for ModelProfile
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the effective PromptMode for a given execution context.
+ *
+ * Priority (highest to lowest):
+ * 1. Cron/heartbeat auto-upgrade: "full" → "operational" (existing behavior)
+ * 2. Compact-secure downgrade for small/nano capabilityClass (C2/S1 new)
+ * 3. baseMode (operator-explicit or "full" default)
+ *
+ * compact-secure fires ONLY when:
+ *   - compactPromptConfig.enabled is true (default)
+ *   - profile.capabilityClass is "small" or "nano"
+ *   - baseMode is "full" (respect explicit operator overrides)
+ *
+ * Frontier/mid: never compact-secure. This is the behavior-neutral guarantee
+ * for large-tier models — their prompt stays byte-identical to pre-152 output.
+ *
+ * @internal exported for tests only
+ */
+export function resolvePromptModeForProfile(
+  baseMode: PromptMode,
+  operationType: ModelOperationType,
+  profile: ModelProfile | undefined,
+  compactPromptConfig: { enabled?: boolean; targetTokens?: number } | undefined,
+): PromptMode {
+  // Cron/heartbeat → operational (existing behavior, highest priority)
+  if ((operationType === "cron" || operationType === "heartbeat") && baseMode === "full") {
+    return "operational";
+  }
+  // compact-secure: only for small/nano with config flag enabled (default: true).
+  // NEVER for frontier/mid — behavior-neutral guarantee (T-152-05).
+  if (
+    (compactPromptConfig?.enabled ?? true) &&
+    profile !== undefined &&
+    (profile.capabilityClass === "small" || profile.capabilityClass === "nano") &&
+    baseMode === "full" // only auto-downgrade from full; respect explicit baseMode overrides
+  ) {
+    return "compact-secure";
+  }
+  return baseMode;
+}
 
 // ---------------------------------------------------------------------------
 // User language extraction
@@ -427,6 +473,13 @@ export interface PromptAssemblyParams {
    *  the promptMode from "full" to "operational" and dispatch operation-specific
    *  bootstrap filters. */
   operationType: ModelOperationType;
+  /** C2/S1: ModelProfile resolved per execution in pi-executor. Drives compact-secure
+   *  promptMode selection for small/nano capabilityClass when
+   *  contextEngine.compactPrompt.enabled is true. Also supplies securityLevel for
+   *  lockdown scaling inside the compact-secure assembler. When absent, no compact-secure
+   *  downgrade is applied (fail-open for the mode selection, fail-closed at the security
+   *  level via the assembler's default "standard" securityLevel). */
+  modelProfile?: ModelProfile;
 }
 
 // ---------------------------------------------------------------------------
@@ -693,15 +746,16 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   }
 
   // 1. Resolve promptMode
-  // Cron and heartbeat auto-upgrade from "full" -> "operational" to trim
-  // interactive-only sections (compaction recovery, silent replies, reactions,
-  // media, SEP, sender trust). An explicit `config.bootstrap?.promptMode` wins
-  // -- operators can still force "minimal"/"none"/"full" if they have reason.
+  // Priority: cron/heartbeat → operational; small/nano + compactPrompt.enabled → compact-secure;
+  // operator override wins over compact-secure (only baseMode="full" gets auto-downgraded).
+  // An explicit `config.bootstrap?.promptMode` wins for all modes including "minimal"/"none".
   const baseMode: PromptMode = (config.bootstrap?.promptMode as PromptMode) ?? "full";
-  const promptMode: PromptMode =
-    (params.operationType === "cron" || params.operationType === "heartbeat") && baseMode === "full"
-      ? "operational"
-      : baseMode;
+  const promptMode: PromptMode = resolvePromptModeForProfile(
+    baseMode,
+    params.operationType,
+    params.modelProfile,
+    config.contextEngine?.compactPrompt,
+  );
 
   // Consolidated lightContext flag: heartbeat implies light-context regardless
   // of the explicit msg.metadata.lightContext flag. Callers that only set the
@@ -1229,6 +1283,9 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     workspaceProfile: config.workspace?.profile,
     sepEnabled: params.sepEnabled,
     dagModeEnabled,
+    // C2/S1: securityLevel from ModelProfile drives lockdown tightening in compact-secure mode.
+    // Only applied when promptMode === "compact-secure"; ignored for full/operational/minimal.
+    securityLevel: params.modelProfile?.securityLevel,
   };
 
   let systemPrompt = assembleRichSystemPrompt(assemblerParams);
