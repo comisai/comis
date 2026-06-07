@@ -223,3 +223,52 @@ describe("appendSessionIndexEntry — JSONL write", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// synthetic?/source? optional fields (D9) — round-trip
+// ---------------------------------------------------------------------------
+
+describe("appendSessionIndexEntry — synthetic/source provenance (D9)", () => {
+  it("round-trips an explicit source:'test' + synthetic:true through the JSONL", async () => {
+    // RED-and-GREEN-in-one-commit (AGENTS.md §2.10): this object literal does NOT
+    // type-check against the pre-patch SessionIndexEventBase (the fields don't
+    // exist yet) — the GREEN patch in types.ts adds the two optional readonly fields.
+    const rec: SessionStartedEvent = {
+      ...makeSessionStarted(),
+      source: "test",
+      synthetic: true,
+    };
+    appendSessionIndexEntry(tmpDir, rec);
+
+    await vi.runAllTimersAsync();
+
+    const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8").trim());
+    expect(parsed.source).toBe("test");
+    expect(parsed.synthetic).toBe(true);
+  });
+
+  it("leaves source/synthetic undefined when absent (additive-optional; absence === runtime default)", async () => {
+    // A production-shaped row carries NEITHER field — readers treat absence as
+    // synthetic !== true (the obs.* default-include case).
+    appendSessionIndexEntry(tmpDir, makeSessionStarted());
+
+    await vi.runAllTimersAsync();
+
+    const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8").trim());
+    expect(parsed.source).toBeUndefined();
+    expect(parsed.synthetic).toBeUndefined();
+  });
+
+  it("accepts the closed source union: 'runtime' | 'test' | 'bench' (type-level)", () => {
+    // Type-level assertion: the closed union holds. A value outside it would
+    // fail tsc (verified at build time, not runtime).
+    const sources: ReadonlyArray<NonNullable<SessionStartedEvent["source"]>> = [
+      "runtime",
+      "test",
+      "bench",
+    ];
+    expect(sources).toHaveLength(3);
+  });
+});
