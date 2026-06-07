@@ -37,11 +37,13 @@
 import { describe, it, expect } from "vitest";
 import type { Message } from "@earendil-works/pi-ai";
 import { computeTokenBudget } from "../../context-engine/token-budget.js";
+import { computeTokenBudgetForProfile } from "../../context-engine/budget-capacity-cap.js";
 import { estimateMessageTokens } from "../../safety/token-estimator.js";
 import {
   CHARS_PER_TOKEN_RATIO,
   OUTPUT_RESERVE_TOKENS,
 } from "../../context-engine/constants.js";
+import type { ModelProfile } from "../../executor/model-profile.js";
 
 /**
  * The S/P production-site formula, verbatim from executor-tool-assembly.ts:518-519
@@ -155,5 +157,21 @@ describe("B-1: token authority — the budget ceiling vs the items it bounds (ch
     // 3.5 reservation keeps H SMALLER = conservative. Do NOT make this move.
     expect(S_at_4).toBeLessThan(S_at_3_5);
     expect(H_at_4).toBeGreaterThan(H_at_3_5);
+  });
+});
+
+describe("computeTokenBudgetForProfile — frontier byte-identical guarantee (C1)", () => {
+  const frontierProfile: ModelProfile = {
+    contextWindow: 200_000, maxOutputTokens: 32_768, capabilityClass: "frontier",
+    scaffoldLevel: "light", securityLevel: "standard", supportsVision: true,
+    supportsTools: true, supportsPromptCache: true, supportsServerToolSearch: false,
+    supportsStructuredOutput: false, reasoningStyle: "none",
+  };
+
+  it("frontier 200K: wrapper H == direct computeTokenBudget H", () => {
+    const S = 10_000, P = 2_000;
+    const direct = computeTokenBudget(200_000, S, -1, P);
+    const wrapped = computeTokenBudgetForProfile(frontierProfile, S, P, -1);
+    expect(wrapped.availableHistoryTokens).toBe(direct.availableHistoryTokens);
   });
 });

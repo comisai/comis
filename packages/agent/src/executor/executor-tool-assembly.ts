@@ -59,6 +59,7 @@ import {
 import { assembleExecutionPrompt } from "./prompt-assembly.js";
 import type { ExecutionPromptResult } from "./prompt-assembly.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
+import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
 import type { ExecutionOverrides } from "./types.js";
 import type { EmbeddingPort } from "@comis/core";
 
@@ -568,8 +569,20 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   );
   const modelProfile = modelProfileParam ?? FAIL_CLOSED_PROFILE;
   const capabilityClass = modelProfile.capabilityClass;
-  // contextWindow still passed to applyToolDeferral for BM25 re-rank budget control
-  const contextWindow = resolvedModel?.contextWindow ?? 128_000;
+  // C1 (Phase 152): profile-aware budget — 8K-starvation fix + 256K-overfill cap for small/nano.
+  // B-1 deliberate: cachedSystemTokensEstimate and cachedFreshTailPreambleTokens were computed at ÷3.5
+  // above (lines 515-528) — this is the intended over-reservation (conservative direction). DO NOT change.
+  const profileBudget = computeTokenBudgetForProfile(
+    modelProfile,
+    cachedSystemTokensEstimate,
+    cachedFreshTailPreambleTokens,
+    -1,
+    config.contextEngine?.budget?.effectiveContextCapSmall,
+    config.contextEngine?.budget?.effectiveContextCapNano,
+  );
+  // contextWindow: use profile-aware effective window (capped for small/nano) for BM25 re-rank budget
+  // control. For frontier/mid this is byte-identical to resolvedModel.contextWindow.
+  const contextWindow = profileBudget.windowTokens;
 
   // Tool lifecycle management
   const lifecycleConfig: ToolLifecycleConfig = config.toolLifecycle ?? DEFAULT_LIFECYCLE_CONFIG;
