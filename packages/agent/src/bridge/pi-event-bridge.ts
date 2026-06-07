@@ -1596,6 +1596,16 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               warmupTurn,
               pendingCacheInvestmentUsd,
               ...costCorrectionField,
+              // B3 (D8): SDK per-turn stop signal. RELIABLE — m.lastStopReason is
+              // captured at :1231 in this same turn_end case, BEFORE this emit.
+              ...(m.lastStopReason !== undefined && { stopReason: m.lastStopReason }),
+              // B3 (D8): execution-level finish disposition. BEST-EFFORT — m.finishReason
+              // settles LATER than turn_end (the safety guards set it at
+              // :1005/:1018/:1625/:1672/:2113), so at this per-turn emit it may still be the
+              // init default "stop" or a prior turn's value. The authoritative settled
+              // finishReason is Phase 152's flight-recorder (effectiveFinishReason); do NOT
+              // over-trust this per-turn value. The reliable D8 field is stopReason above.
+              finishReason: m.finishReason,
             });
 
             // Append turn_completed to the session index. Co-located with

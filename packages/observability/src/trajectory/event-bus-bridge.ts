@@ -348,6 +348,12 @@ function translatePayload(
         cacheReadTokens: payload.cacheReadTokens,
         cacheCreationTokens: payload.cacheWriteTokens,
         durationMs: payload.latencyMs,
+        // B3 (D8): forward the stop/finish dispositions presence-conditionally so
+        // refusals/length-stops appear on model.completed (no undefined keys —
+        // same pattern Phase 150 used for provenance). This is a FIELD-ONLY add
+        // to the already-mapped token_usage case (no new mapping key / case).
+        ...(payload.stopReason !== undefined ? { stopReason: payload.stopReason } : {}),
+        ...(payload.finishReason !== undefined ? { finishReason: payload.finishReason } : {}),
       };
     }
 
