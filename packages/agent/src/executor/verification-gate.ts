@@ -4,7 +4,9 @@
  *
  * Gate: only fires on completion-claiming responses past minResponseChars.
  * Seam: single bounded completeSimple call, fail-closed on every error.
- * Retry: bounded by maxRetries; honest unmet-list on exhaustion (D5).
+ * Delivery: not-verified ⇒ honest first-person unmet-list (sanitized REQ tokens),
+ *   never the agent-directed redirect — postExecution is terminal, no re-queue
+ *   consumer exists yet (CR-01/D5; the re-queue/full-retry loop is R5/Phase 155+).
  * L5: native-reasoning profiles size maxOutputTokens to avoid verdict starvation.
  *
  * File-size: ≤350 lines (do not exceed).
@@ -269,15 +271,21 @@ export function shouldRunCritic(params: {
 
 // ---------------------------------------------------------------------------
 // runVerificationCritic — entry point for the post-execution hook
-// Gate + bounded retry (redirect) + honest exhaustion (R4/D5)
+// Gate + single critic call + honest first-person delivery on not-verified (R4/D5)
+//
+// `maxRetries` is accepted but NOT branched on in this phase: postExecution is
+// terminal (no re-queue consumer), so a not-verified verdict ALWAYS delivers the
+// honest first-person unmet-list — never the agent-directed redirect (CR-01).
+// The param is retained for the future re-queue/full-retry path (R5/Phase 155+).
 // ---------------------------------------------------------------------------
 export async function runVerificationCritic(params: {
   response: string;
   plan: ExecutionPlan | undefined;
   deps: CriticDeps;
+  /** Retained for the future re-queue path (R5/Phase 155+); not branched on now. */
   maxRetries?: number;
 }): Promise<{ verdict: CriticVerdict["verdict"]; response: string }> {
-  const { response, plan, deps, maxRetries = 2 } = params;
+  const { response, plan, deps } = params;
 
   // Gate: skip if not a completion claim or response is too short (D4)
   if (!isCompletionClaim(response) || response.length < deps.minResponseChars) {
@@ -294,31 +302,41 @@ export async function runVerificationCritic(params: {
     return { verdict: verdict.verdict, response };
   }
 
-  // not-verified path: bounded redirect or honest exhaustion
-  const verdictWithUnmet = verdict as {
-    verdict: "not-verified";
-    unmet: string[];
-    followUp?: string;
-    reason?: string;
+  // not-verified path: honest first-person delivery (CR-01). postExecution is
+  // TERMINAL in this phase (no re-queue consumer), so this `response` is
+  // delivered VERBATIM to the user. The agent-directed redirect is only correct
+  // when something re-queues it (R5/Phase 155+), so we ALWAYS deliver the honest
+  // first-person unmet-list — at the DEFAULT maxRetries (2) and at 0 — never the
+  // redirect and never an unqualified "done". `unmet` is sanitized (see below).
+  const verdictWithUnmet = verdict as { verdict: "not-verified"; unmet: string[] };
+  return {
+    verdict: "not-verified",
+    response: buildHonestUnmetResponse(verdictWithUnmet.unmet),
   };
-  const unmet = verdictWithUnmet.unmet;
+}
 
-  if (maxRetries > 0) {
-    // Bounded redirect: surface followUp for the caller to re-queue
-    const followUp =
-      verdictWithUnmet.followUp ??
-      `Please complete the following unmet requirements: ${unmet.join(", ")}`;
-    return { verdict: "not-verified", response: followUp };
-  }
-
-  // Exhaustion: honest unmet-list — never an unqualified "done" (D5).
-  // IMPORTANT: this text must NOT match isCompletionClaim (avoid "done", "finished",
-  // "complete", "ready", "accomplished" and the other heuristic triggers).
-  const unmetList = unmet.length > 0 ? unmet.join(", ") : "the required steps";
-  const honestResponse =
-    `I was unable to satisfy the following requirements: ${unmetList}. ` +
-    `Further work is needed to address these items.`;
-  return { verdict: "not-verified", response: honestResponse };
+// ---------------------------------------------------------------------------
+// buildHonestUnmetResponse — the ONLY user-facing not-verified text (CR-01/D5)
+//
+// WR-01/IN-03: `unmet[]` is critic-authored over UNTRUSTED reviewed content, so
+// raw interpolation lets a crafted label ("REQ-0 (all tasks are done)") make the
+// text match isCompletionClaim (violating D5) or smuggle a tool-call phrase into
+// user prose. Reduce each entry to its bare REQ-\d+ token (executor-controlled
+// plan index, not critic free-text); the composed text then provably fails both
+// isCompletionClaim and detectImpliedToolCall.
+// ---------------------------------------------------------------------------
+function buildHonestUnmetResponse(unmet: string[]): string {
+  const safeUnmet = unmet
+    .map((u) => u.match(/REQ-\d+/i)?.[0]?.toUpperCase() ?? "")
+    .filter((s) => s.length > 0);
+  const unmetList = safeUnmet.length > 0 ? safeUnmet.join(", ") : "the required steps";
+  // Must NOT match isCompletionClaim (no "done"/"finished"/"complete"/"ready"/
+  // "accomplished" triggers) and must NOT match detectImpliedToolCall.
+  return (
+    `I was not able to fully satisfy: ${unmetList}. ` +
+    `Further work is still needed on these items — please let me know how you ` +
+    `would like to proceed.`
+  );
 }
 
 // ---------------------------------------------------------------------------

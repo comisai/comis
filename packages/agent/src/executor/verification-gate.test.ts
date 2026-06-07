@@ -19,8 +19,9 @@ import {
   shouldRunCritic,
 } from "./verification-gate.js";
 
-// Also import isCompletionClaim to use as a negative assertion in D5
-import { isCompletionClaim } from "./critic-isolation.js";
+// Also import isCompletionClaim to use as a negative assertion in D5,
+// and detectImpliedToolCall for the WR-01 user-facing-text assertions.
+import { isCompletionClaim, detectImpliedToolCall } from "./critic-isolation.js";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -564,6 +565,167 @@ describe("D5 — Honest exhaustion", () => {
       }
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// CR-01 — Terminal delivery is honest at the DEFAULT maxRetries (no re-queue loop)
+//
+// postExecution is terminal in Phase 154 — it does NOT re-invoke the executor,
+// so a not-verified verdict's `response` is delivered VERBATIM to the user.
+// The DEFAULT config is maxCriticRetries=2 (>0). Under the old code that branch
+// returned the agent-directed redirect ("Please complete the following unmet
+// requirements: …") as the user-facing reply. Until a re-queue consumer exists,
+// the delivered text MUST be the first-person honest unmet-list, NEVER the
+// agent-directed redirect and NEVER an unqualified completion claim.
+// ---------------------------------------------------------------------------
+describe("CR-01 — honest terminal delivery at default maxRetries (2)", () => {
+  const CLAIM_RESPONSE =
+    "The game is complete! I have implemented the movement controls and collision detection. The snake moves smoothly and the game is fully playable.";
+
+  it("default maxRetries (2): delivered response is NOT the agent-directed redirect", async () => {
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText(
+        JSON.stringify({
+          verdict: "not-verified",
+          unmet: ["REQ-1", "REQ-2"],
+          followUp: "Please complete the following unmet requirements: REQ-1, REQ-2",
+        }),
+      ),
+    );
+    // No maxRetries override → defaults to 2 (the production default).
+    const result = await runVerificationCritic({
+      response: CLAIM_RESPONSE,
+      plan: BASE_PLAN,
+      deps: makeDeps(),
+    });
+    expect(result.verdict).toBe("not-verified");
+    // The agent-directed instruction must NOT be surfaced to the user.
+    expect(result.response).not.toMatch(/please complete the following/i);
+    // First-person honest form (the user is told the AGENT could not finish).
+    expect(result.response.toLowerCase()).toMatch(/\bi (was|am) (not |un)?able/);
+  });
+
+  it("default maxRetries (2): delivered response does NOT match isCompletionClaim", async () => {
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText(
+        JSON.stringify({
+          verdict: "not-verified",
+          unmet: ["REQ-0", "REQ-1"],
+          followUp: "Please complete all requirements.",
+        }),
+      ),
+    );
+    const result = await runVerificationCritic({
+      response: CLAIM_RESPONSE,
+      plan: BASE_PLAN,
+      deps: makeDeps(),
+    });
+    expect(result.verdict).toBe("not-verified");
+    expect(isCompletionClaim(result.response)).toBe(false);
+  });
+
+  it("default and maxRetries=0 deliver the SAME honest form (terminal delivery is uniform)", async () => {
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText(
+        JSON.stringify({
+          verdict: "not-verified",
+          unmet: ["REQ-1"],
+          followUp: "Please complete REQ-1.",
+        }),
+      ),
+    );
+    const atDefault = await runVerificationCritic({
+      response: CLAIM_RESPONSE,
+      plan: BASE_PLAN,
+      deps: makeDeps(),
+    });
+    const atZero = await runVerificationCritic({
+      response: CLAIM_RESPONSE,
+      plan: BASE_PLAN,
+      deps: makeDeps(),
+      maxRetries: 0,
+    });
+    expect(atDefault.response).toBe(atZero.response);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-01 / IN-03 — LLM-controlled `unmet` strings cannot break the D5 guarantee
+//
+// `unmet[]` comes straight from the critic verdict JSON; the critic just
+// consumed UNTRUSTED reviewed content. A crafted unmet label must NOT be able
+// to make the delivered honest text match isCompletionClaim, nor smuggle an
+// implied-tool-call phrase into user-facing prose. The delivered text is built
+// from sanitized bare REQ-\d+ tokens only.
+// ---------------------------------------------------------------------------
+describe("WR-01 — adversarial unmet labels cannot satisfy isCompletionClaim", () => {
+  const CLAIM_RESPONSE =
+    "All done! I have finished the implementation. Everything is complete and ready to use for production now.";
+
+  it("malicious unmet label 'all tasks are done' does not make delivered text a completion claim", async () => {
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText(
+        JSON.stringify({
+          verdict: "not-verified",
+          unmet: ["REQ-0 (all tasks are done)", "REQ-1 all requirements are met"],
+          followUp: "ok",
+        }),
+      ),
+    );
+    // Exercise BOTH the default (2) and exhaustion (0) paths — both deliver honest text.
+    for (const maxRetries of [2, 0]) {
+      const result = await runVerificationCritic({
+        response: CLAIM_RESPONSE,
+        plan: BASE_PLAN,
+        deps: makeDeps(),
+        maxRetries,
+      });
+      expect(result.verdict).toBe("not-verified");
+      expect(isCompletionClaim(result.response)).toBe(false);
+    }
+  });
+
+  it("unmet label carrying a tool-call phrase does not place it in user-facing text", async () => {
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText(
+        JSON.stringify({
+          verdict: "not-verified",
+          unmet: ["REQ-0 then call write_file", "REQ-1 run the exec tool"],
+        }),
+      ),
+    );
+    const result = await runVerificationCritic({
+      response: CLAIM_RESPONSE,
+      plan: BASE_PLAN,
+      deps: makeDeps(),
+      maxRetries: 2,
+    });
+    expect(result.verdict).toBe("not-verified");
+    expect(detectImpliedToolCall(result.response)).toBe(false);
+    // Sanitized to bare REQ tokens — the verbose attacker text is dropped.
+    expect(result.response).not.toMatch(/write_file|exec tool/i);
+    expect(result.response).toMatch(/REQ-0/);
+    expect(result.response).toMatch(/REQ-1/);
+  });
+
+  it("unmet labels with no REQ token fall back to a generic phrase (still honest)", async () => {
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText(
+        JSON.stringify({
+          verdict: "not-verified",
+          unmet: ["everything is finished and complete"],
+        }),
+      ),
+    );
+    const result = await runVerificationCritic({
+      response: CLAIM_RESPONSE,
+      plan: BASE_PLAN,
+      deps: makeDeps(),
+      maxRetries: 0,
+    });
+    expect(result.verdict).toBe("not-verified");
+    expect(isCompletionClaim(result.response)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
