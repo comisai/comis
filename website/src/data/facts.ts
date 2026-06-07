@@ -31,14 +31,16 @@ export const FACTS = {
   nodeEngines: "22.19+",
   dagNodeTypes: 7, // agent, debate, vote, refine, collaborate, map-reduce, human approval gate
 
-  // Models / tools / MCP (the corrected framing — NOT a 6-name list, NOT "50+ tools").
+  // Models / tools / MCP (the corrected framing — not a 6-name list, and the tool
+  // count is never conflated with the MCP-server ecosystem figure).
   // Used by: homepage Features / Any-model section, compare pages.
   models:
     "27 hosted providers via the pi-ai catalog, local Ollama, and any OpenAI-compatible endpoint",
   modelProvidersCount: 27,
   mcp: "the MCP ecosystem's 50+ servers — none bundled, you choose",
 
-  // Docker sandbox (corrected wording — "detects + auto-disables", NOT "silently disables").
+  // Docker sandbox (corrected wording — the daemon detects the constraint and
+  // auto-disables the exec sandbox; it never does so without surfacing it).
   // Used by: QuickStart / security / docker callouts.
   dockerSandbox:
     "Comis detects this at startup (a one-shot smoke test) and auto-disables the exec sandbox",

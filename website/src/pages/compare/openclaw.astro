@@ -57,7 +57,7 @@ const securityRows: Row[] = [
   {
     label: "Prompt injection",
     comis:
-      "65 patterns across 8 categories with weighted scoring (composite 0.0\u20131.0). Progressive rate limiting and reinforcement actions.",
+      `${SECURITY.layerFraming.charAt(0).toUpperCase() + SECURITY.layerFraming.slice(1)} \u2014 a weighted, multi-pattern content scanner with composite scoring, progressive rate limiting, and trust-partitioned memory, measured in public rather than asserted.`,
     openclaw:
       "Explicitly out of scope per SECURITY.md. Focus on execution boundaries only.",
     verdict: "comis",
