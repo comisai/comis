@@ -47,7 +47,7 @@ import { buildCacheTraceWrapper } from "@comis/observability";
 import type { CacheTrace } from "@comis/observability";
 import type { TruncationSummary } from "./stream-wrappers/tool-result-size-bouncer.js";
 import type { TurnBudgetSummary } from "./stream-wrappers/turn-result-budget-wrapper.js";
-import type { CapabilityClass } from "./model-profile.js";
+import type { CapabilityClass, ModelProfile } from "./model-profile.js";
 import { createStubFilterInjector } from "./stream-wrappers/stub-filter-injector.js";
 import { computeFeatureFlagHash } from "./prompt-assembly.js";
 import { createTtlGuard, getElapsedSinceLastResponse, getLastResponseTs } from "./ttl-guard.js";
@@ -112,6 +112,13 @@ export interface StreamSetupParams {
   resolvedModel?: { id: string; provider: string };
   modelCompat?: { supportsTools?: boolean };
   capabilityClass: CapabilityClass;
+  /**
+   * ModelProfile resolved once per execution in pi-executor.ts.
+   * Threaded into RequestBodyInjectorConfig so the factory and
+   * tool-deferral-injection use capability flags (L1/L2 — Phase 155-01)
+   * instead of provider-string predicates.
+   */
+  modelProfile?: ModelProfile;
   executionOverrides?: ExecutionOverrides;
   deferralResult?: ExcludeDeferralResult;
   systemPromptBlocks?: SystemPromptBlocks;
@@ -181,7 +188,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
   const {
     config, deps, formattedKey, sm,
     capabilityClass, executionOverrides, deferralResult, systemPromptBlocks, agentId,
-    cacheTrace,
+    cacheTrace, modelProfile,
     getAdaptiveRetention, getExecutionCacheRetention, getExecutionMinTokensOverride,
     onBreakpointsPlaced, onGeminiCacheHit,
   } = params;
@@ -324,7 +331,9 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
           ? (highestIdx: number) => onBreakpointsPlaced(highestIdx)
           : undefined,
         onPayloadForCacheDetection: (apiParams, model, headers) => {
-          if (isAnthropicFamily(model.provider)) {
+          // L1/L2: read supportsPromptCache flag from ModelProfile when present.
+          // Falls back to isAnthropicFamily for callers that do not yet thread modelProfile.
+          if (modelProfile?.supportsPromptCache ?? isAnthropicFamily(model.provider)) {
             const stateInput = extractAnthropicPromptState(
               apiParams,
               model.id,
@@ -369,6 +378,11 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
         // The getter runs AFTER `onPayloadForCacheDetection` increments
         // the counter for this turn, so the gate sees the correct value.
         getCallCount: () => cacheBreakDetector.getCallCount(formattedKey),
+        // L1/L2 (Phase 155-01): thread ModelProfile flags so factory.ts and
+        // tool-deferral-injection.ts use capability flags instead of
+        // provider-string predicates. Optional so callers without a resolved
+        // modelProfile (tests, secondary injectors) keep the existing fallback.
+        ...(modelProfile !== undefined && { modelProfile }),
       },
       deps.logger,
     ),

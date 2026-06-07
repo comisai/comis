@@ -30,7 +30,7 @@ import { buildCapabilityIndexContext } from "./capability-index-context.js";
 import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import { getOrCreateTracker, DEFAULT_LIFECYCLE_CONFIG } from "./tool-lifecycle.js";
-import { isAnthropicFamily, isGoogleFamily } from "../provider/capabilities.js";
+import { resolveProviderCapabilities } from "../provider/capabilities.js";
 import type { ToolLifecycleConfig } from "./tool-lifecycle.js";
 import { createJitGuideWrapper } from "./jit-guide-injector.js";
 import {
@@ -526,9 +526,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     neverDefer: config.deferredTools?.neverDefer,
     alwaysDefer: config.deferredTools?.alwaysDefer,
     providerFamily: resolvedModel?.provider
-      ? (isAnthropicFamily(resolvedModel.provider) ? "anthropic"
-        : isGoogleFamily(resolvedModel.provider) ? "google"
-        : "other")
+      ? resolveProviderCapabilities(resolvedModel.provider).providerFamily
       : "default",
   };
   const deferralResult = applyToolDeferral(

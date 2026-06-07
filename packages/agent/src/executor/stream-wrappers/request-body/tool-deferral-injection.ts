@@ -46,7 +46,7 @@ export function injectToolDeferral(
   config: RequestBodyInjectorConfig,
   logger: ComisLogger,
 ): void {
-  if (!config.getDeferredToolNames || !supportsToolSearch(modelId)) return;
+  if (!config.getDeferredToolNames || !(config.modelProfile?.supportsServerToolSearch ?? supportsToolSearch(modelId))) return;
 
   const deferredNames = config.getDeferredToolNames();
   // Latch defer_loading activation

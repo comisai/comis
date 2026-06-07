@@ -850,7 +850,7 @@ async function runSessionLocked(
 
   const streamSetup = setupStreamWrappers({
     config, deps, sessionKey, formattedKey, sm,
-    resolvedModel, capabilityClass, executionOverrides,
+    resolvedModel, capabilityClass, modelProfile, executionOverrides,
     deferralResult, systemPromptBlocks, agentId,
     // Forward the cache-trace recorder so the wrapper chain
     // can include the cache-trace `stream:context` emit. When the
