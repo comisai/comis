@@ -130,6 +130,12 @@ export interface SessionMetadata {
     endReason: "success" | "error" | "timeout" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "completed_with_tool_errors";
     durationMs: number;
     totalTokens: number;
+    /** Per-session health rollup (D5/F1) — additive optional on schemaVersion:1. */
+    degraded?: boolean;
+    costUsd?: number;
+    toolStats?: Record<string, { ok: number; failed: number }>;
+    breakerTripCount?: number;
+    topErrorKinds?: Record<string, number>;
   };
 }
 
