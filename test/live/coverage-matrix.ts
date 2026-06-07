@@ -17,7 +17,7 @@
  * test/architecture/live-coverage-matrix.test.ts). Use "covered in Phase N (NAME)"
  * format for deferred cells.
  *
- * // Total cells: 139
+ * // Total cells: 141
  *
  * @module
  */
@@ -59,6 +59,7 @@ export const COVERAGE_DIMENSIONS = [
   // Embedding
   "embedding.provider",
   "local.gpu",
+  "local.qwen36",
   "embeddingDimensions",
   // Memory
   "memory.costFeatures.enabled",
@@ -138,7 +139,7 @@ export const COVERAGE_DIMENSIONS = [
 export type DimensionName = (typeof COVERAGE_DIMENSIONS)[number];
 
 /**
- * The 139-cell coverage matrix. All cells are initially status="skipped" with
+ * The 141-cell coverage matrix. All cells are initially status="skipped" with
  * phase-reference reasons. Subsequent phases settle cells to "covered" as they
  * build and run the corresponding live tests.
  */
