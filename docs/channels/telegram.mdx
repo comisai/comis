@@ -28,6 +28,13 @@ section below; the [Setup](#setup) flow gets the bot online for DMs, then the
 [Groups](#groups) and [Channels](#channels) sections add the chat-type specifics.
 </Note>
 
+<Note>
+**Setting this up for several people or a team?** See
+[Multiple users and teams](/channels/multi-user) for the privacy and isolation
+model — DMs are private per person, but a shared agent shares its learned memory,
+so route each person or group to their own agent for full separation.
+</Note>
+
 <Warning>
 **Group privacy mode is ON by default.** With the default in place, Telegram
 only forwards group messages to your bot when the message @-mentions it, replies
@@ -488,6 +495,12 @@ routing:
 receives the message, then the router picks the agent, then the agent's gate
 runs. Multi-agent setups don't change addressing rules; they just change which
 agent answers.
+
+Routing to separate agents is also how you isolate **memory** between people:
+each agent keeps its own long-term memory, secrets, and budget, so two users on
+different agents never share learned facts. For the full multi-user model — what
+is private by default and what isn't — see
+[Multiple users and teams](/channels/multi-user).
 
 If you need a literally separate bot identity per agent (different
 `@username`, different command menus), run one Comis daemon per bot:
