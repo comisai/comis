@@ -16,11 +16,12 @@
  *      the resolved session.
  *   3. readSessionMetadata   — the `<sessionId>_session-metadata.json` companion
  *      (the F1 PRIMARY rollup source).
- *   4. readDiagnosticsRollup — `obsStore.queryDiagnostics({category, limit:50})`
+ *   4. readDiagnosticsRollup — `obsStore.queryDiagnostics({category, limit:1000})`
  *      then a SESSION-SCOPED filter by `row.sessionKey` (the F2 fallback).
  *      `DiagnosticQueryParams` has NO sessionKey filter, so `{limit:1}` would
  *      return the most-recent row across ALL sessions — the reader queries a
- *      window and filters AFTER.
+ *      window and filters AFTER. The window is a recency horizon (WR-01): see
+ *      `DIAGNOSTICS_QUERY_LIMIT` for why 1000 and the residual bound.
  *
  * Every path segment (sessionId, filename) goes through `safePath` with an
  * absolute base — a `../…` sessionId cannot escape `<dataDir>/sessions`. All
@@ -38,8 +39,24 @@ import type { ObservabilityStore } from "@comis/memory";
  * intent at a report-appropriate scale — a post-mortem never needs more). */
 const MAX_RECORDS = 5_000;
 
-/** Window queried from obs_diagnostics before the session-scoped filter. */
-const DIAGNOSTICS_QUERY_LIMIT = 50;
+/**
+ * Window queried from obs_diagnostics before the session-scoped filter (WR-01).
+ *
+ * `DiagnosticQueryParams` has NO sessionKey predicate, so the reader queries a
+ * window (ordered `timestamp DESC`) and filters by `row.sessionKey` AFTER. The
+ * window is therefore a RECENCY HORIZON: a target session whose `session_summary`
+ * row sits behind more than this many NEWER session-summary rows falls outside
+ * the window and the F2 fallback returns null (the report then loses the
+ * cost/tokens/degraded fields only F2 supplies, when F1 metadata is also absent).
+ *
+ * 50 was too small — on a busy daemon a target ~an hour old could already be
+ * behind 50 newer session ends. Widened to 1000 (well under the reader's
+ * MAX_RECORDS=5000) so the post-mortem reaches realistically-old sessions while
+ * keeping the post-filter cheap. The residual horizon is documented, not hidden:
+ * the true fix is a SQL sessionKey predicate on DiagnosticQueryParams (out of
+ * scope here — it lives in @comis/memory); until then this is the bound.
+ */
+const DIAGNOSTICS_QUERY_LIMIT = 1000;
 
 /**
  * The four bounded source readers `obs.explain` consumes. One DI seam: the
@@ -140,7 +157,8 @@ export function makeRealReader(
       if (obsStore === undefined) return null; // F1 metadata is the primary source.
       // DiagnosticQueryParams has NO sessionKey filter — query a window and
       // filter by row.sessionKey AFTER (a {limit:1} would return the most-recent
-      // row across ALL sessions, not this one).
+      // row across ALL sessions, not this one). The window (DIAGNOSTICS_QUERY_LIMIT)
+      // is a recency horizon — widened to 1000 (WR-01) so older sessions are found.
       const rows = obsStore.queryDiagnostics({
         category: "session_summary",
         limit: DIAGNOSTICS_QUERY_LIMIT,
