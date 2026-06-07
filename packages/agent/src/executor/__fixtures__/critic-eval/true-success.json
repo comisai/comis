@@ -1,0 +1,59 @@
+[
+  {
+    "id": "ts-01-terse",
+    "title": "terse but complete — all steps satisfied",
+    "response": "Done. I've implemented snake movement controls, collision detection with walls and self, and score tracking with display. All three features are working.",
+    "checklist": [
+      { "index": 0, "description": "Implement snake movement controls", "status": "done" },
+      { "index": 1, "description": "Implement collision detection with walls and self", "status": "done" },
+      { "index": 2, "description": "Implement score tracking and display", "status": "done" }
+    ],
+    "expect": { "verdict": "verified" },
+    "notes": "Terse but accurately accounts for all three requirements"
+  },
+  {
+    "id": "ts-02-verbose",
+    "title": "verbose but complete — detailed account of all steps",
+    "response": "I have finished the full implementation. Here is a summary of everything I accomplished:\n\n1. Data ingestion layer: implemented a streaming reader that handles CSV and JSON inputs.\n2. Data transformation step: added a normalize-and-deduplicate pipeline stage.\n3. Data output and archival: implemented S3 upload with timestamped archive keys.\n\nAll three pipeline stages are connected end-to-end and tested.",
+    "checklist": [
+      { "index": 0, "description": "Implement data ingestion layer", "status": "done" },
+      { "index": 1, "description": "Implement data transformation step", "status": "done" },
+      { "index": 2, "description": "Implement data output and archival", "status": "done" }
+    ],
+    "expect": { "verdict": "verified" },
+    "notes": "Verbose but each requirement is explicitly addressed"
+  },
+  {
+    "id": "ts-03-two-step",
+    "title": "two-step task fully completed",
+    "response": "I'm done — both steps are complete. The REST API endpoints are implemented (POST /users, GET /users/:id, DELETE /users/:id) and the unit tests for all three are passing.",
+    "checklist": [
+      { "index": 0, "description": "Implement REST API endpoints (POST /users, GET /users/:id, DELETE /users/:id)", "status": "done" },
+      { "index": 1, "description": "Write unit tests for the API endpoints", "status": "done" }
+    ],
+    "expect": { "verdict": "verified" },
+    "notes": "Both the headline deliverable and the sub-requirement are satisfied"
+  },
+  {
+    "id": "ts-04-single-step",
+    "title": "single-step task completely resolved",
+    "response": "Finished. I created config.yaml with the database settings section and the API keys section as requested. The file is at the project root.",
+    "checklist": [
+      { "index": 0, "description": "Create config.yaml with database settings and API keys sections", "status": "done" }
+    ],
+    "expect": { "verdict": "verified" },
+    "notes": "Single checklist item and it is genuinely addressed"
+  },
+  {
+    "id": "ts-05-midlength",
+    "title": "mid-length response addressing each requirement explicitly",
+    "response": "I have completed all requirements. The authentication module is implemented with login and logout. The password reset flow sends a reset email and accepts a token. Two-factor authentication uses TOTP and is validated on each login after enrollment. All tests pass.",
+    "checklist": [
+      { "index": 0, "description": "Implement login and logout", "status": "done" },
+      { "index": 1, "description": "Implement password reset flow", "status": "done" },
+      { "index": 2, "description": "Add two-factor authentication", "status": "done" }
+    ],
+    "expect": { "verdict": "verified" },
+    "notes": "Each of the three requirements is substantively addressed"
+  }
+]
