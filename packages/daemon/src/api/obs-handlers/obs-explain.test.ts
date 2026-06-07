@@ -236,4 +236,47 @@ describe("bindObsExplainHandlers", () => {
     expect(r.failures).toEqual([]);
     expect(r.likelyRootCause).toBeNull();
   });
+
+  // ------------------------------------------------------------------------
+  // WR-04 — an unresolvable traceId must be DISTINGUISHABLE from a clean,
+  // empty session. Pre-fix both yielded the same empty report keyed on "".
+  // ------------------------------------------------------------------------
+
+  it("WR-04: an unresolvable traceId yields a session_not_found marker, not a silent empty report", async () => {
+    // Empty dataDir → no session-index files → resolveTraceToSession returns "".
+    // The report must SIGNAL the unresolvability rather than masquerade as a
+    // healthy zero-activity session.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-unresolved-"));
+    const handlers = bindObsExplainHandlers(makeDeps({ dataDir }));
+    const r = (await handlers["obs.explain"]!({
+      traceId: "no-such-trace-id-deadbeef",
+      _trustLevel: "admin",
+    })) as IncidentReport;
+    // No throw (no-throw posture preserved), but an explicit not-found signal.
+    expect(r.likelyRootCause).not.toBeNull();
+    expect(r.likelyRootCause?.code).toBe("session_not_found");
+    expect(r.likelyRootCause?.detail).toMatch(/trace/i);
+    // And an honest truncations[] note so a consumer scanning the ledger sees it.
+    expect(
+      r.truncations.some(
+        (t) => t.field === "traceId" && /not\s*found|unresolv/i.test(t.reason),
+      ),
+    ).toBe(true);
+    // The empty session report is still well-formed (no leak, no crash).
+    expect(r.failures).toEqual([]);
+  });
+
+  it("WR-04: an EMPTY but RESOLVED session keeps the no-throw, null-rootCause behavior (only the UNRESOLVED case is marked)", async () => {
+    // A real sessionKey that simply has no telemetry on disk must NOT be tagged
+    // session_not_found — it resolved fine; it is just empty. Only the
+    // unresolved-traceId case gets the marker.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-clean-empty-"));
+    const handlers = bindObsExplainHandlers(makeDeps({ dataDir }));
+    const r = (await handlers["obs.explain"]!({
+      sessionKey: "default:clean:clean:peer:clean",
+      _trustLevel: "admin",
+    })) as IncidentReport;
+    expect(r.likelyRootCause).toBeNull();
+    expect(r.truncations.some((t) => t.field === "traceId")).toBe(false);
+  });
 });
