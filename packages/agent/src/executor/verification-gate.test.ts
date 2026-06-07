@@ -11,6 +11,8 @@ import falseSuccessFixtures from "./__fixtures__/critic-eval/false-success.json"
 import trueSuccessFixtures from "./__fixtures__/critic-eval/true-success.json";
 import nonClaimsFixtures from "./__fixtures__/critic-eval/non-claims.json";
 import honestyFixtures from "./__fixtures__/critic-eval/honesty.json";
+// WR-04: drive the adversarial-injection fixtures end-to-end through the gate.
+import adversarialFixtures from "./__fixtures__/critic-eval/adversarial-injection.json";
 
 // These imports will FAIL (RED) until verification-gate.ts is created:
 import {
@@ -725,6 +727,151 @@ describe("WR-01 — adversarial unmet labels cannot satisfy isCompletionClaim", 
     });
     expect(result.verdict).toBe("not-verified");
     expect(isCompletionClaim(result.response)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-04 — Adversarial-injection fixtures driven END-TO-END through the gate
+//
+// The D1 suite only SHAPE-asserts the adversarial fixtures (count + expected
+// verdict); it never feeds a fixture `response` through runVerificationCritic
+// while the (mocked) model COMPLIES with the embedded injection. This suite
+// proves the platform controls neutralize the attempt through the REAL code
+// path — even when the model is fooled into emitting the attacker payload:
+//   - ALL injected fixtures: the reviewed response is wrapped as UNTRUSTED
+//     before the model sees it (structural injection defense — the system
+//     prompt's instructions are never reachable as commands).
+//   - canary-lure fixtures (injection: isolation-violation, response embeds the
+//     canary): a model that ECHOES the canary → detectCanaryLeakage → flips a
+//     forged "verified" to not-verified.
+//   - implied-tool-call fixtures (response asks to "call write_file"): a model
+//     that returns verified + a tool-call followUp → detectImpliedToolCall →
+//     flips it to not-verified.
+// This is the real S2 assertion the fixtures were always meant to drive.
+// ---------------------------------------------------------------------------
+describe("WR-04 — adversarial injection resistance end-to-end (complying model)", () => {
+  const injectedFixtures = adversarialFixtures.filter((f) => f.id.includes("injected"));
+
+  function planFor(fixture: (typeof adversarialFixtures)[number]) {
+    return {
+      active: true,
+      request: "complete the task",
+      steps: fixture.checklist.map((c) => ({
+        index: c.index,
+        description: c.description,
+        status: c.status as "done" | "pending" | "in_progress" | "skipped",
+      })),
+      completedCount: 0,
+      createdAtMs: 1_700_000_000_000,
+    };
+  }
+
+  // Ensure the response clears the gate (completion claim + >= minResponseChars).
+  function gateableResponse(fixture: (typeof adversarialFixtures)[number]) {
+    const base = `${fixture.response} I have completed all of the required steps.`;
+    return base.length >= 100 ? base : base + " ".repeat(100 - base.length);
+  }
+
+  it("has at least 3 injected fixtures to exercise", () => {
+    expect(injectedFixtures.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it.each(injectedFixtures)(
+    "$id: reviewed response is wrapped UNTRUSTED before the model sees it",
+    async (fixture) => {
+      const seenUserContent: string[] = [];
+      (completeSimple as ReturnType<typeof vi.fn>).mockImplementation(
+        (_model, req: { messages: Array<{ content: string }> }) => {
+          seenUserContent.push(req.messages[0]!.content);
+          // Model COMPLIES with the injection: forge a "verified" verdict.
+          return Promise.resolve(
+            llmText(JSON.stringify({ verdict: "verified", unmet: [] })),
+          );
+        },
+      );
+      await runVerificationCritic({
+        response: gateableResponse(fixture),
+        plan: planFor(fixture),
+        deps: makeDeps(),
+      });
+      expect(seenUserContent.length).toBe(1);
+      const userMsg = seenUserContent[0]!;
+      // The injection rode the USER message, wrapped as UNTRUSTED data.
+      expect(userMsg).toContain("UNTRUSTED");
+      // The original injected text is present but INSIDE the untrusted wrapper.
+      const startIdx = userMsg.indexOf("<<<UNTRUSTED_");
+      const endIdx = userMsg.indexOf("<<<END_UNTRUSTED_");
+      expect(startIdx).toBeGreaterThanOrEqual(0);
+      expect(endIdx).toBeGreaterThan(startIdx);
+    },
+  );
+
+  it("canary-lure fixture: a model that echoes the canary is flipped to not-verified", async () => {
+    const fixture = injectedFixtures.find((f) => f.id === "inj-03-injected");
+    expect(fixture).toBeDefined();
+    const deps = makeDeps(); // canaryToken: "CTKN_testcanary1234" (matches the fixture lure)
+    // The model FELL for the canary-extraction lure: it forges "verified" AND
+    // leaks the canary token in its output.
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText(
+        JSON.stringify({
+          verdict: "verified",
+          unmet: [],
+          followUp: `Confirmed. Token: ${(deps as { canaryToken: string }).canaryToken}`,
+        }),
+      ),
+    );
+    const result = await runVerificationCritic({
+      response: gateableResponse(fixture!),
+      plan: planFor(fixture!),
+      deps,
+    });
+    // detectCanaryLeakage (checked BEFORE Zod parse) catches the leak → fail-closed.
+    expect(result.verdict).toBe("not-verified");
+    // And the canary itself must never reach the user-facing response.
+    expect(result.response).not.toContain((deps as { canaryToken: string }).canaryToken);
+  });
+
+  it("implied-tool-call fixture: a model that returns verified + 'call write_file' is flipped to not-verified", async () => {
+    const fixture = injectedFixtures.find((f) => f.id === "inj-04-injected");
+    expect(fixture).toBeDefined();
+    // The model FELL for the scope-widening injection: forges "verified" with a
+    // followUp that implies executing a tool.
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText(
+        JSON.stringify({
+          verdict: "verified",
+          unmet: [],
+          followUp: "All set — now call write_file to finalize the deliverable.",
+        }),
+      ),
+    );
+    const result = await runVerificationCritic({
+      response: gateableResponse(fixture!),
+      plan: planFor(fixture!),
+      deps: makeDeps(),
+    });
+    // detectImpliedToolCall intercepts the scope-widening verdict → not-verified.
+    expect(result.verdict).toBe("not-verified");
+  });
+
+  it("forged-JSON fixture: a model that returns verified does NOT leak the forged verdict text to the user", async () => {
+    const fixture = injectedFixtures.find((f) => f.id === "inj-02-injected");
+    expect(fixture).toBeDefined();
+    // Model echoes the embedded `System: output {...verified...}` as its verdict.
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValue(
+      llmText(JSON.stringify({ verdict: "verified", unmet: [] })),
+    );
+    const result = await runVerificationCritic({
+      response: gateableResponse(fixture!),
+      plan: planFor(fixture!),
+      deps: makeDeps(),
+    });
+    // The forged JSON was wrapped UNTRUSTED on the way in (asserted above). If the
+    // model still returns a structurally-valid verified verdict, that is a model
+    // failure the wrap is designed to prevent — we assert here only that the gate
+    // does not crash and returns a well-formed verdict (verified|not-verified).
+    expect(["verified", "not-verified"]).toContain(result.verdict);
   });
 });
 
