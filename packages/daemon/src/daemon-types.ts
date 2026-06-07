@@ -83,6 +83,7 @@ import type {
   setupChannels,
   setupCrossSession,
   setupMcp,
+  selectMcpTokenStore,
   setupTools,
   setupMonitoring,
   setupHeartbeat,
@@ -520,6 +521,15 @@ export interface BootContext {
    * createAcpWiring path already shares (the single-shared-holder invariant). */
   executionPlanPorts?: Awaited<ReturnType<typeof setupAgents>>["executionPlanPorts"];
   mcpClientManager?: Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"];
+  /**
+   * The ONE mode-selected MCP OAuth token store (selectMcpTokenStore),
+   * constructed at the composition root in bootAgents and threaded as the SAME
+   * instance into both consumers: setupMcp's manager wiring (consumed at
+   * construction) AND the login/handler path (buildRpcDispatchDeps reads this to
+   * build the createTokenStore pass-through). Undefined in env mode (no writable
+   * MCP OAuth persistence). Kills the encrypted-mode split-brain.
+   */
+  mcpTokenStore?: Awaited<ReturnType<typeof selectMcpTokenStore>>;
   // Restart continuation tracker
   continuationTracker?: ReturnType<typeof createRestartContinuationTracker>;
   // Subprocess envs

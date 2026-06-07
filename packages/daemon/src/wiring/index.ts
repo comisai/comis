@@ -26,6 +26,7 @@ export {
   type InteractiveCallbackWiring,
 } from "./setup-interactive-callback.js";
 export { setupMcp, type McpResult } from "./setup-mcp.js";
+export { selectMcpTokenStore, type SelectMcpTokenStoreInput } from "./select-mcp-token-store.js";
 // Boot-path skill-bundle re-merge orchestrator + the thin discovery-only
 // registry pre-pass it consumes. Wired in daemon.ts BEFORE setupMcp so the
 // merged servers array is in place when the manager connects.

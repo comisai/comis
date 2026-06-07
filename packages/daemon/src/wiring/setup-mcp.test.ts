@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { McpDeps } from "./setup-mcp.js";
-import type { OAuthCredentialStorePort } from "@comis/core";
+import type { TokenStore } from "@comis/skills";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock factories
@@ -31,34 +31,6 @@ const mockCreateMcpClientManager = vi.hoisted(() => vi.fn(() => ({
   callTool: mockCallTool,
 })));
 
-const mockCreatePortBackedMcpTokenStore = vi.hoisted(() => vi.fn(() => ({
-  tokens: vi.fn(),
-  saveTokens: vi.fn(),
-  saveClientInformation: vi.fn(),
-  clientInformation: vi.fn(),
-  saveDiscoveryState: vi.fn(),
-  discoveryState: vi.fn(),
-  deleteAll: vi.fn(),
-  startWatch: vi.fn(),
-  close: vi.fn(),
-})));
-
-const mockCreateMcpTokenStoreEncrypted = vi.hoisted(() => vi.fn(() => ({
-  tokens: vi.fn(),
-  saveTokens: vi.fn(),
-  saveClientInformation: vi.fn(),
-  clientInformation: vi.fn(),
-  saveDiscoveryState: vi.fn(),
-  discoveryState: vi.fn(),
-  deleteAll: vi.fn(),
-  startWatch: vi.fn(),
-  close: vi.fn(),
-})));
-
-vi.mock("./mcp-token-store-encrypted.js", () => ({
-  createMcpTokenStoreEncrypted: mockCreateMcpTokenStoreEncrypted,
-}));
-
 vi.mock("@comis/skills", () => ({
   createMcpClientManager: mockCreateMcpClientManager,
   // resolveDiscovery is used by setup-mcp.ts in the oauthDeps seam.
@@ -66,13 +38,28 @@ vi.mock("@comis/skills", () => ({
   resolveDiscovery: vi.fn(),
 }));
 
-vi.mock("./mcp-token-port-adapter.js", () => ({
-  createPortBackedMcpTokenStore: mockCreatePortBackedMcpTokenStore,
-}));
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Minimal injected MCP token store — the daemon composition root builds this via
+ * selectMcpTokenStore and threads the SAME instance here. setupMcp only forwards
+ * it; identity (not internals) is what these tests assert.
+ */
+function makeTokenStoreMock(): TokenStore {
+  return {
+    tokens: vi.fn(),
+    saveTokens: vi.fn(),
+    saveClientInformation: vi.fn(),
+    clientInformation: vi.fn(),
+    saveDiscoveryState: vi.fn(),
+    discoveryState: vi.fn(),
+    deleteAll: vi.fn(),
+    startWatch: vi.fn(),
+    close: vi.fn(),
+  } as unknown as TokenStore;
+}
 
 function createLogger() {
   return {
@@ -764,36 +751,22 @@ describe("setupMcp", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // oauthDeps injection — McpDeps.oauthCredentialStore + dataDir
-  // Verifies setup-mcp.ts passes oauthDeps to createMcpClientManager when
-  // oauthCredentialStore + dataDir are provided.
+  // oauthDeps injection — McpDeps.mcpTokenStore
+  // setup-mcp.ts no longer mode-selects the token store. The composition root
+  // (daemon.ts) constructs ONE mode-selected store via selectMcpTokenStore and
+  // threads the SAME instance here. setupMcp only forwards it via a pass-through
+  // factory. These tests assert the forwarding + the single-instance identity.
   // ---------------------------------------------------------------------------
 
-  describe("oauthDeps injection", () => {
-    /** Minimal OAuthCredentialStorePort mock for injection tests. */
-    function makePortMock(): OAuthCredentialStorePort {
-      return {
-        async get() { return { ok: true as const, value: undefined }; },
-        async set() { return { ok: true as const, value: undefined }; },
-        async delete() { return { ok: true as const, value: false }; },
-        async list() { return { ok: true as const, value: [] }; },
-        async has() { return { ok: true as const, value: false }; },
-      };
-    }
-
-    it("createMcpClientManager is called with oauthDeps.createTokenStore when oauthCredentialStore and dataDir are provided", async () => {
+  describe("mcpTokenStore injection (single mode-selected instance forwarded)", () => {
+    it("createMcpClientManager is called with oauthDeps.createTokenStore when mcpTokenStore is provided", async () => {
       mockGetAllConnections.mockReturnValue([]);
-      const oauthCredentialStore = makePortMock();
+      const mcpTokenStore = makeTokenStoreMock();
 
-      await callSetupMcp({
-        servers: [],
-        logger,
-        oauthCredentialStore,
-        dataDir: "/fake/data",
-      });
+      await callSetupMcp({ servers: [], logger, mcpTokenStore });
 
       // The factory must have been called with an oauthDeps object containing
-      // a createTokenStore factory when oauthCredentialStore + dataDir are provided.
+      // a createTokenStore factory when mcpTokenStore is provided.
       expect(mockCreateMcpClientManager).toHaveBeenCalledTimes(1);
       const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
       expect(factoryArg).toHaveProperty("oauthDeps");
@@ -801,212 +774,44 @@ describe("setupMcp", () => {
       expect(typeof oauthDeps["createTokenStore"]).toBe("function");
     });
 
-    it("McpDeps accepts oauthCredentialStore and dataDir fields (structural TypeScript check)", () => {
-      // This is a compile-time structural check — TypeScript will error if the
-      // fields do not exist on McpDeps. The runtime assertion is a type-safe
-      // construction.
-      const deps: McpDeps = {
-        servers: [],
-        logger,
-        oauthCredentialStore: makePortMock(),
-        dataDir: "/fake/data",
-      };
-      // Must compile and have the fields accessible
-      expect(deps.oauthCredentialStore).toBeDefined();
-      expect(deps.dataDir).toBe("/fake/data");
+    it("oauthDeps.createTokenStore() returns the EXACT injected instance every call (single-instance identity lock)", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+      const mcpTokenStore = makeTokenStoreMock();
+
+      await callSetupMcp({ servers: [], logger, mcpTokenStore });
+
+      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
+      const oauthDeps = factoryArg["oauthDeps"] as Record<string, unknown>;
+      const createTokenStore = oauthDeps["createTokenStore"] as () => unknown;
+
+      // Identity: every call returns the SAME object — and it is exactly the
+      // instance the composition root injected (no per-call reconstruction).
+      expect(createTokenStore()).toBe(mcpTokenStore);
+      expect(createTokenStore()).toBe(createTokenStore());
     });
 
-    it("createMcpClientManager is called WITHOUT oauthDeps when oauthCredentialStore is absent", async () => {
+    it("McpDeps accepts the mcpTokenStore field (structural TypeScript check)", () => {
+      // Compile-time structural check — TypeScript errors if the field does not
+      // exist on McpDeps. The runtime assertion is a type-safe construction.
+      const mcpTokenStore = makeTokenStoreMock();
+      const deps: McpDeps = { servers: [], logger, mcpTokenStore };
+      expect(deps.mcpTokenStore).toBe(mcpTokenStore);
+    });
+
+    it("createMcpClientManager is called WITHOUT oauthDeps when mcpTokenStore is absent (env mode / no OAuth)", async () => {
       mockGetAllConnections.mockReturnValue([]);
 
       await callSetupMcp({ servers: [], logger });
 
       const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
-      // No oauthDeps injected — the default resolution in createMcpClientManager applies
+      // No oauthDeps injected — the no-OAuth default resolution in
+      // createMcpClientManager applies (env mode threads undefined here).
       expect(factoryArg).not.toHaveProperty("oauthDeps");
     });
 
-    // Wiring-level singleton test:
-    // createPortBackedMcpTokenStore must be called exactly ONCE per setupMcp
-    // invocation, regardless of how many times createTokenStore() is called on
-    // the injected oauthDeps. On HEAD (before the singleton hoist), each
-    // createTokenStore() call rebuilds a new wrapper — this test documents that
-    // broken behavior (RED).
-    //
-    // Contrast with the mcp-client-keepalive.test.ts test at :962 which
-    // asserts "createTokenStore called exactly once per tick" at the
-    // McpClientManagerDeps unit level — that test is independent and
-    // unchanged here.
-    it("createPortBackedMcpTokenStore is called exactly once across multiple createTokenStore calls at wiring level", async () => {
-      mockGetAllConnections.mockReturnValue([]);
-      const oauthCredentialStore = makePortMock();
-
-      await callSetupMcp({
-        servers: [],
-        logger,
-        oauthCredentialStore,
-        dataDir: "/fake/data",
-      });
-
-      // Retrieve the createTokenStore factory injected into createMcpClientManager
-      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
-      const oauthDeps = factoryArg["oauthDeps"] as Record<string, unknown>;
-      const createTokenStore = oauthDeps["createTokenStore"] as () => unknown;
-
-      // Simulate N keepalive ticks calling createTokenStore each time
-      const N = 3;
-      for (let i = 0; i < N; i++) {
-        createTokenStore();
-      }
-
-      // The adapter factory should have been called exactly ONCE at setupMcp
-      // wiring time, not N times per createTokenStore call.
-      // On HEAD (pre-fix), this assertion FAILS because the lambda calls
-      // createPortBackedMcpTokenStore on each invocation (N times = 3).
-      expect(mockCreatePortBackedMcpTokenStore).toHaveBeenCalledTimes(1);
-    });
-
-    it("createMcpClientManager is called WITHOUT oauthDeps when only oauthCredentialStore provided but no dataDir", async () => {
-      mockGetAllConnections.mockReturnValue([]);
-
-      await callSetupMcp({
-        servers: [],
-        logger,
-        oauthCredentialStore: makePortMock(),
-        // dataDir intentionally omitted
-      });
-
-      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
-      expect(factoryArg).not.toHaveProperty("oauthDeps");
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Encrypted-branch mode selection (secretsDb + secretsCrypto → createMcpTokenStoreEncrypted)
-  // ---------------------------------------------------------------------------
-
-  describe("encrypted-branch mode selection", () => {
-    /** Minimal Database mock — only needs to be truthy for the injection path. */
-    function makeDbMock() {
-      return {} as import("better-sqlite3").Database;
-    }
-
-    /** Minimal SecretsCrypto mock. */
-    function makeCryptoMock() {
-      return {
-        encrypt: vi.fn(),
-        decrypt: vi.fn(),
-      } as unknown as import("@comis/core").SecretsCrypto;
-    }
-
-    it("uses createMcpTokenStoreEncrypted when secretsDb and secretsCrypto are provided", async () => {
-      mockGetAllConnections.mockReturnValue([]);
-      const secretsDb = makeDbMock();
-      const secretsCrypto = makeCryptoMock();
-
-      await callSetupMcp({
-        servers: [],
-        logger,
-        secretsDb,
-        secretsCrypto,
-      });
-
-      // Encrypted store factory must be called with the injected db + crypto handles.
-      expect(mockCreateMcpTokenStoreEncrypted).toHaveBeenCalledTimes(1);
-      expect(mockCreateMcpTokenStoreEncrypted).toHaveBeenCalledWith(secretsDb, secretsCrypto);
-      // createMcpClientManager must be called with oauthDeps.createTokenStore in encrypted mode.
-      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
-      expect(factoryArg).toHaveProperty("oauthDeps");
-      const oauthDeps = factoryArg["oauthDeps"] as Record<string, unknown>;
-      expect(typeof oauthDeps["createTokenStore"]).toBe("function");
-    });
-
-    it("does NOT call createPortBackedMcpTokenStore in encrypted mode", async () => {
-      mockGetAllConnections.mockReturnValue([]);
-
-      await callSetupMcp({
-        servers: [],
-        logger,
-        secretsDb: makeDbMock(),
-        secretsCrypto: makeCryptoMock(),
-      });
-
-      // The chokidar/port-backed store must NOT be constructed in encrypted mode.
-      expect(mockCreatePortBackedMcpTokenStore).not.toHaveBeenCalled();
-    });
-
-    it("falls back to portBackedStore (file mode) when secretsDb/secretsCrypto absent", async () => {
-      mockGetAllConnections.mockReturnValue([]);
-      const { OAuthCredentialStorePort: _unused, ...rest } = {} as { OAuthCredentialStorePort: never };
-      void _unused; void rest;
-      const oauthCredentialStore: OAuthCredentialStorePort = {
-        async get() { return { ok: true as const, value: undefined }; },
-        async set() { return { ok: true as const, value: undefined }; },
-        async delete() { return { ok: true as const, value: false }; },
-        async list() { return { ok: true as const, value: [] }; },
-        async has() { return { ok: true as const, value: false }; },
-      };
-
-      await callSetupMcp({
-        servers: [],
-        logger,
-        oauthCredentialStore,
-        dataDir: "/fake/data",
-        // secretsDb and secretsCrypto intentionally absent
-      });
-
-      // File mode: portBackedStore is used, encrypted store is NOT.
-      expect(mockCreatePortBackedMcpTokenStore).toHaveBeenCalledTimes(1);
-      expect(mockCreateMcpTokenStoreEncrypted).not.toHaveBeenCalled();
-    });
-
-    it("McpDeps accepts secretsDb and secretsCrypto fields (structural TypeScript check)", () => {
-      const deps: McpDeps = {
-        servers: [],
-        logger,
-        secretsDb: makeDbMock(),
-        secretsCrypto: makeCryptoMock(),
-      };
-      expect(deps.secretsDb).toBeDefined();
-      expect(deps.secretsCrypto).toBeDefined();
-    });
-
-    // ---------------------------------------------------------------------------
-    // Partial-config guard — one of secretsDb/secretsCrypto without the other
-    // must throw, not silently disable OAuth (wiring defect detection)
-    // ---------------------------------------------------------------------------
-
-    it("throws when only secretsDb provided without secretsCrypto (partial encrypted config)", async () => {
-      await expect(callSetupMcp({
-        servers: [],
-        logger,
-        secretsDb: makeDbMock(),
-        // secretsCrypto intentionally absent
-      })).rejects.toThrow(/secretsDb and secretsCrypto must both be present or both absent/);
-    });
-
-    it("throws when only secretsCrypto provided without secretsDb (partial encrypted config)", async () => {
-      await expect(callSetupMcp({
-        servers: [],
-        logger,
-        secretsCrypto: makeCryptoMock(),
-        // secretsDb intentionally absent
-      })).rejects.toThrow(/secretsDb and secretsCrypto must both be present or both absent/);
-    });
-
-    it("does NOT throw when both secretsDb and secretsCrypto are absent (file/env mode)", async () => {
+    it("does NOT throw when mcpTokenStore is absent (env mode boots cleanly without MCP OAuth)", async () => {
       mockGetAllConnections.mockReturnValue([]);
       await expect(callSetupMcp({ servers: [], logger })).resolves.toBeDefined();
-    });
-
-    it("does NOT throw when both secretsDb and secretsCrypto are provided (encrypted mode)", async () => {
-      mockGetAllConnections.mockReturnValue([]);
-      await expect(callSetupMcp({
-        servers: [],
-        logger,
-        secretsDb: makeDbMock(),
-        secretsCrypto: makeCryptoMock(),
-      })).resolves.toBeDefined();
     });
   });
 

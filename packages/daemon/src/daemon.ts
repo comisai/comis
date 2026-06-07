@@ -97,8 +97,6 @@ import {
   writeMasterKeyIfAbsent,
   preReadStorageMode,
   systemNowMs,
-  selectOAuthCredentialStore,
-  createFileLock,
   type SecretStorePort,
   type CredentialStorageMode,
   type ToolCapabilityPort,
@@ -141,6 +139,7 @@ import {
   setupBackgroundCompletionRunner,
   setupTerminalWake,
   setupMcp,
+  selectMcpTokenStore,
   setupSkillBundles,
   buildSkillRegistriesForBundles,
   setupOutputRetention,
@@ -167,8 +166,6 @@ import {
   createFileStateTracker,
   createImageGenRateLimiter,
   detectSandboxProvider,
-  createTokenStore as defaultCreateMcpTokenStore,
-  type TokenStore as McpTokenStore,
 } from "@comis/skills";
 import { createChannelHealthMonitor } from "@comis/channels";
 // The single process-singleton activity circuit breaker is constructed
@@ -1006,19 +1003,14 @@ function buildRpcDispatchDeps(deps: {
     const idx = g.runtimeTokens.findIndex((t) => t.id === id);
     if (idx >= 0) g.runtimeTokens.splice(idx, 1);
   };
-  // Singleton factory for the per-server MCP OAuth token store. Both
+  // Pass-through to the ONE mode-selected MCP OAuth token store the composition
+  // root built via selectMcpTokenStore (threaded onto the boot context). Both
   // mcp-handlers (Fix 4 — pre-check no-token before manager.connect) and
-  // mcp-oauth-handlers (existing — read/write tokens during login) call
-  // this; the per-store chokidar watcher + cache are per-instance, so a
-  // single shared store is required (TokenStoreDeps JSDoc explicitly:
-  // "implementations SHOULD return a process-wide singleton").
-  let cachedMcpTokenStore: McpTokenStore | undefined;
-  const createTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["createTokenStore"] = () => {
-    if (cachedMcpTokenStore === undefined) {
-      cachedMcpTokenStore = defaultCreateMcpTokenStore({ logger: c.skillsLogger });
-    }
-    return cachedMcpTokenStore;
-  };
+  // mcp-oauth-handlers (read/write tokens during login) consume this factory and
+  // receive the SAME instance setupMcp's manager wiring uses — no split-brain,
+  // no plaintext-disk fallback. Returns undefined in env mode (no writable MCP
+  // OAuth store); consumers guard on undefined.
+  const createTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["createTokenStore"] = () => c.mcpTokenStore;
   // the single in-process recall-counter registry is stood up once in
   // setup-memory (the composition site that holds the event bus) and threaded
   // here on the boot context. The snapshot accessor feeds the
@@ -1875,27 +1867,26 @@ async function bootAgents(
     logger: skillsLogger,
   });
 
-  // In Encrypted mode, MCP tokens route through the mcp_credentials table via
-  // createMcpTokenStoreEncrypted (threaded as secretsDb/secretsCrypto below).
-  // In File mode, oauthCredentialStoreForceMcp provides the portBackedStore seam.
-  // In Env mode, OAuth credential storage is not available — no portBackedStore.
-  const oauthCredentialStoreForceMcp =
-    container.config.security.storage === "file"
-      ? selectOAuthCredentialStore({
-          storage: "file",
-          dataDir: container.config.dataDir && container.config.dataDir.length > 0
-            ? container.config.dataDir
-            : dataDir,
-          fileLock: createFileLock(),
-          encryptedStore: undefined,
-        })
-      : undefined;
+  // Construct the ONE mode-selected MCP OAuth token store at the composition
+  // root. The SAME instance is threaded into BOTH consumers — setupMcp's manager
+  // wiring (below) AND the login/handler path (buildRpcDispatchDeps reads it off
+  // the boot context). This kills the encrypted-mode split-brain where the login
+  // path wrote a plaintext disk store while the manager read the mode-selected
+  // store. selectMcpTokenStore: encrypted → mcp_credentials (AES-256-GCM, no disk
+  // files); file → chokidar mcp-tokens/ store; env → undefined (no MCP OAuth).
+  const mcpTokenStore = selectMcpTokenStore({
+    storage: container.config.security.storage,
+    logger: skillsLogger,
+    dataDir: container.config.dataDir && container.config.dataDir.length > 0
+      ? container.config.dataDir
+      : dataDir,
+    secretsDb,
+    secretsCrypto,
+  });
 
   // Construct daemon-global MCP manager BEFORE setupAgents (ordering constraint
   // -- per-agent ToolCapabilityPort adapters close over mcpClientManager).
-  // In Encrypted mode, secretsDb/secretsCrypto route MCP tokens through
-  // mcp_credentials (AES-256-GCM). In File mode, oauthCredentialStore+dataDir
-  // construct the chokidar portBackedStore seam inside setup-mcp.ts.
+  // setupMcp consumes the injected mcpTokenStore; it no longer mode-selects.
   const { mcpClientManager } = await setupMcp({
     servers: container.config.integrations.mcp.servers,
     logger: skillsLogger,
@@ -1911,14 +1902,9 @@ async function bootAgents(
     globalKeepaliveIntervalMs: container.config.integrations.mcp.keepaliveIntervalMs,
     circuitBreakerThreshold: container.config.integrations.mcp.circuitBreakerThreshold,
     circuitBreakerCooldownMs: container.config.integrations.mcp.circuitBreakerCooldownMs,
-    // Encrypted mode: route MCP tokens through mcp_credentials table (AES-256-GCM).
-    secretsDb,
-    secretsCrypto,
-    // File mode: portBackedStore seam (oauthCredentialStore + dataDir).
-    oauthCredentialStore: oauthCredentialStoreForceMcp,
-    dataDir: container.config.dataDir && container.config.dataDir.length > 0
-      ? container.config.dataDir
-      : dataDir,
+    // The single mode-selected MCP OAuth token store (same instance threaded
+    // into the login/handler path via the boot context). Undefined in env mode.
+    mcpTokenStore,
   });
 
   const {
@@ -1928,8 +1914,9 @@ async function bootAgents(
     // Daemon-level OAuth credential store from setupAgents — same port instance
     // threaded into ApiDispatchDeps so agents.update can validate oauthProfiles
     // patches via has(). setupAgents constructs its own store internally via
-    // selectOAuthCredentialStore; the hoisted store above is a separate
-    // instance used exclusively by setupMcp (the MCP OAuth token seam).
+    // selectOAuthCredentialStore. This is the OAuth *profile* store (provider
+    // tokens), distinct from the MCP OAuth token store (`mcpTokenStore` above,
+    // built via selectMcpTokenStore) — two separate credential families.
     oauthCredentialStore,
     // Per-agent live ToolCapabilityPort adapters; daemon.ts threads
     // getCapabilityPortForAgent into setupTools and mutates this map on
@@ -2109,6 +2096,7 @@ async function bootAgents(
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters, skillWatcherHandles, skillRegistries, lockCleanupTimer,
     singleAgentDeps, providerHealth, oauthCredentialStore, toolCapabilityPorts, mcpClientManager,
+    mcpTokenStore,
     continuationTracker, subprocessEnv, execToolEnv,
     systemEventQueue, cronSchedulers, executionTrackers, browserServices, resetSchedulers,
     getAgentCronScheduler, getAgentBrowserService,

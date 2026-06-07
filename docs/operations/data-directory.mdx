@@ -249,7 +249,7 @@ A directory holding per-MCP-server OAuth token JSON files when `security.storage
 
 **Written by:** `comis mcp login` and the daemon's MCP OAuth refresh path.
 **Safe to delete?** Deleting the directory (or individual files) clears stored MCP OAuth tokens for those servers — you will need to re-run `comis mcp login`. Do not delete while the daemon is running.
-**Not present when:** `security.storage: encrypted` — MCP tokens are stored in the `mcp_credentials` table inside `secrets.db` instead.
+**Not present when:** `security.storage: encrypted` — MCP tokens are stored in the `mcp_credentials` table inside `secrets.db` instead. Also not present in `security.storage: env` mode, where MCP OAuth login is unavailable (there is no writable MCP token store — `comis mcp login` fails with an actionable storage-mode error rather than writing a plaintext file).
 
 ---
 

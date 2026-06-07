@@ -1461,6 +1461,46 @@ describe("MCP RPC Handlers", () => {
       expect(fakeTokenStore.tokens).toHaveBeenCalledWith("higgsfield");
     });
 
+    // Env-mode regression: the mode-selected pass-through `() => boot.mcpTokenStore`
+    // is a DEFINED factory that RETURNS undefined in env storage mode (no writable
+    // MCP OAuth store). The pre-check must treat that as "no token" — short-circuit
+    // to needs_oauth_login (persist + structured throw) — WITHOUT crashing on a
+    // `.tokens()` deref of undefined and WITHOUT any plaintext-disk fallback.
+    it("treats a store-factory that returns undefined (env mode) as no-token: short-circuits to needs_oauth_login without crashing", async () => {
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+        // env-mode pass-through: defined factory, returns undefined.
+        createTokenStore: () => undefined,
+      } as any);
+
+      let thrownError: unknown;
+      try {
+        await handlers["mcp.connect"]({
+          server_name: "higgsfield",
+          transport: "http",
+          url: "https://mcp.higgsfield.ai/mcp",
+          auth: "oauth",
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      // No crash on `undefined.tokens(...)`; the doomed handshake is skipped …
+      expect(manager.connect).not.toHaveBeenCalled();
+      // … and the structured needs_oauth_login is thrown so the agent surfaces
+      // the actionable "run mcp_login" hint.
+      expect((thrownError as { data?: unknown }).data).toMatchObject({
+        needs_oauth_login: true,
+        server_name: "higgsfield",
+      });
+      // The entry was persisted with auth:"oauth" so mcp.oauth_login finds it.
+      expect(mockPersistToConfig).toHaveBeenCalledOnce();
+    });
+
     it("does NOT short-circuit when params.auth==='oauth' AND a token already exists (refresh path proceeds normally)", async () => {
       // Existing tokens → manager.connect SHOULD run (the SDK will use the
       // refresh path; needs_oauth_login only fires if refresh fails).
