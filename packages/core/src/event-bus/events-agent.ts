@@ -69,6 +69,8 @@ export interface AgentEvents {
   };
 
   /** Tool invocation completed (builtin, platform, or skill-based) */
+  // @optional-field-count: tool:executed carries failure-classification provenance (P1/D1);
+  //   the new fields are conditional on the failure branch — see AGENT_NATIVE_OBSERVABILITY_DESIGN §5 D1.
   "tool:executed": {
     toolName: string;
     durationMs: number;
@@ -96,6 +98,20 @@ export interface AgentEvents {
     fullChars?: number;
     /** Character count after truncation. Only present when truncated=true. */
     returnedChars?: number;
+    /** Which of the 4 sources classified this failure (P1/D1). */
+    classifiedFailureBy?: "sdk_iserror" | "exit_code" | "failure_detector" | "mcp_classifier";
+    /** False ONLY when the SDK/transport itself errored; true for content/exit/detector failures. */
+    transportOk?: boolean;
+    /** HTTP status for web tools (result.status). */
+    httpStatus?: number;
+    /** The detector rule that matched (P2/D2). */
+    matchedRule?: string;
+    /** The token that matched, e.g. a status code (P2/D2). */
+    matchedToken?: string;
+    /** Size in bytes of the full serialized result (D4) — never the body. */
+    resultBytes?: number;
+    /** 12-hex digest of the full result payload (D4) — never the body. */
+    resultDigest?: string;
   };
 
   /** Tools filtered out by policy before execution (debugging/audit) */
