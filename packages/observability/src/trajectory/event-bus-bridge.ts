@@ -277,6 +277,16 @@ function translatePayload(
         ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
         ...(payload.errorMessage !== undefined ? { errorMessage: payload.errorMessage } : {}),
         ...(payload.truncated !== undefined ? { truncated: payload.truncated } : {}),
+        // D1 provenance forwarding (Phase 153 obs.explain reads it).
+        // matchedToken is already sanitized+bounded at the emit (pi-event-bridge),
+        // so every field is forwarded verbatim here.
+        ...(payload.classifiedFailureBy !== undefined ? { classifiedFailureBy: payload.classifiedFailureBy } : {}),
+        ...(payload.transportOk !== undefined ? { transportOk: payload.transportOk } : {}),
+        ...(payload.httpStatus !== undefined ? { httpStatus: payload.httpStatus } : {}),
+        ...(payload.matchedRule !== undefined ? { matchedRule: payload.matchedRule } : {}),
+        ...(payload.matchedToken !== undefined ? { matchedToken: payload.matchedToken } : {}),
+        ...(payload.resultBytes !== undefined ? { resultBytes: payload.resultBytes } : {}),
+        ...(payload.resultDigest !== undefined ? { resultDigest: payload.resultDigest } : {}),
       };
 
     case "tool:timeout":
