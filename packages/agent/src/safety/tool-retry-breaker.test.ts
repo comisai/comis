@@ -1002,4 +1002,116 @@ describe("tool retry breaker", () => {
       expect(reason).toContain("has failed");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // B1 (D3): recordResult returns a transition verdict at the counter-crossing
+  // edges so the bridge can emit tool:breaker_opened / tool:breaker_reset
+  // EXACTLY at the threshold edge (once per open), keeping the breaker itself
+  // eventBus-free. The transition uses EXACT equality (=== threshold), not the
+  // idempotent >= the Set.add block uses — a >= verdict would re-fire `opened`
+  // on every subsequent failure and inflate Phase 153's breakerTimeline.
+  // See 151-PATTERNS.md / 151-RESEARCH.md Pattern 1 + Pitfall 1, Assumptions A1/A2.
+  // -------------------------------------------------------------------------
+  describe("recordResult returns a transition verdict (B1)", () => {
+    it("returns transition opened with reason tool_failure_threshold EXACTLY at the tool-level crossing; undefined after", () => {
+      const breaker = createBreaker(); // maxToolFailures: 5
+      const tool = "exec";
+
+      // First four distinct-args failures cross neither edge → undefined.
+      for (let i = 0; i < 4; i++) {
+        const verdict = breaker.recordResult(tool, { a: i }, false, "[permission_denied] EPERM");
+        expect(verdict).toBeUndefined();
+      }
+
+      // The 5th distinct-args failure (toolState.count === maxToolFailures) opens.
+      const opened = breaker.recordResult(tool, { a: 4 }, false, "[permission_denied] EPERM");
+      expect(opened).toBeDefined();
+      expect(opened?.transition).toBe("opened");
+      expect(opened?.reason).toBe("tool_failure_threshold");
+      expect(opened?.toolName).toBe(tool);
+      // errorTag is the already-normalized extractErrorTag output, never raw text.
+      expect(opened?.errorTag).toBe("permission_denied");
+
+      // The 6th (and any later) failure must NOT re-fire opened (=== guard, not >=).
+      const sixth = breaker.recordResult(tool, { a: 5 }, false, "[permission_denied] EPERM");
+      expect(sixth).toBeUndefined();
+    });
+
+    it("emits opened exactly once across repeated failures past the threshold", () => {
+      const breaker = createBreaker(); // maxToolFailures: 5
+      const tool = "exec";
+
+      let openCount = 0;
+      for (let i = 0; i < 8; i++) {
+        const verdict = breaker.recordResult(tool, { a: i }, false, "[network_error] timeout");
+        if (verdict?.transition === "opened") openCount++;
+      }
+      expect(openCount).toBe(1);
+    });
+
+    it("returns transition opened with reason error_pattern EXACTLY at the error-pattern crossing", () => {
+      const breaker = createToolRetryBreaker({
+        maxConsecutiveFailures: 3,
+        maxToolFailures: 5,
+        suggestAlternatives: true,
+        maxConsecutiveErrorPatterns: 2,
+      });
+      const tool = "edit";
+
+      // First same-error / different-args failure: pattern count 1, below the
+      // threshold of 2 → undefined.
+      const first = breaker.recordResult(tool, { file: "a.ts" }, false, "File [not_read] error");
+      expect(first).toBeUndefined();
+
+      // Second same-error / different-args failure crosses the error-pattern
+      // threshold (=== maxErrorPatterns) → opened with reason error_pattern.
+      const opened = breaker.recordResult(tool, { file: "b.ts" }, false, "File [not_read] error");
+      expect(opened?.transition).toBe("opened");
+      expect(opened?.reason).toBe("error_pattern");
+      expect(opened?.toolName).toBe(tool);
+      expect(opened?.errorTag).toBe("not_read");
+    });
+
+    it("returns transition reset with reason success when a success clears a non-zero failure counter", () => {
+      const breaker = createBreaker();
+      const tool = "mcp__yfinance--get_recs";
+      const args = { symbol: "NVDA" };
+
+      expect(breaker.recordResult(tool, args, false, "connection timeout")).toBeUndefined();
+      const reset = breaker.recordResult(tool, args, true);
+      expect(reset?.transition).toBe("reset");
+      expect(reset?.reason).toBe("success");
+      expect(reset?.toolName).toBe(tool);
+      expect(reset?.consecutiveFailures).toBe(0);
+      expect(reset?.errorTag).toBe("");
+    });
+
+    it("returns undefined for a success with NO prior failure", () => {
+      const breaker = createBreaker();
+      const reset = breaker.recordResult("bash", { cmd: "ls" }, true);
+      expect(reset).toBeUndefined();
+    });
+
+    it("returns undefined (no transition) on the lifecycle reset() full-clear (A2)", () => {
+      const breaker = createBreaker();
+      breaker.recordResult("exec", { a: 1 }, false, "error");
+      // reset() is between-execution lifecycle teardown — it returns void and
+      // yields no observable in-session transition.
+      const out = breaker.reset();
+      expect(out).toBeUndefined();
+    });
+
+    it("parameter-validation and completed-command-exit failures yield NO transition", () => {
+      const breaker = createBreaker();
+      const tool = "exec";
+      // [invalid_value] is a PARAMETER_VALIDATION_TAG → no counter change, no transition.
+      for (let i = 0; i < 6; i++) {
+        const v = breaker.recordResult(tool, { command: `bad ${i} $()` }, false, "[invalid_value] substitution");
+        expect(v).toBeUndefined();
+      }
+      // A completed-command non-zero exit (carries details.exitCode) → exempt, no transition.
+      const tsc = JSON.stringify({ content: [{ type: "text", text: "tsc error" }], details: { exitCode: 2 } });
+      expect(breaker.recordResult(tool, { command: "tsc" }, false, tsc)).toBeUndefined();
+    });
+  });
 });
