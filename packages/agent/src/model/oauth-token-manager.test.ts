@@ -1586,6 +1586,36 @@ describe("OAuthTokenManager.getApiKey resolver chain", () => {
     expect(credentialStore.list).not.toHaveBeenCalled();
   });
 
+  // H2: the configured-profile-resolved INFO now goes through withDedup, keyed
+  // on a `dedupKey` field of "${providerId}::${configured}". It fires ONCE per
+  // distinct key across repeated resolves (log-once parity with the prior
+  // loggedConfiguredProviders Set), and the 3 behavior-gating Sets are untouched.
+  it("(a1) logs 'OAuth profile resolved via agent config' ONCE via withDedup, carrying the dedupKey field", async () => {
+    const profile = buildProfile(CONFIGURED_PROFILE, "ACCESS_WORK");
+    vi.mocked(credentialStore.has).mockResolvedValue(_ok(true));
+    vi.mocked(credentialStore.get).mockResolvedValue(_ok(profile));
+
+    const manager = makeManager();
+    const agentContext = { oauthProfiles: { [PROVIDER]: CONFIGURED_PROFILE } };
+
+    // Resolve the SAME (provider, configured) twice on one manager instance.
+    await manager.getApiKey(PROVIDER, agentContext);
+    await manager.getApiKey(PROVIDER, agentContext);
+
+    const resolvedInfos = logger
+      ._calls()
+      .filter((c) => c.level === "info" && c.msg === "OAuth profile resolved via agent config");
+
+    // Log-once parity: fired exactly once across the two resolves.
+    expect(resolvedInfos).toHaveLength(1);
+    // Carries the withDedup composite key + the documented payload fields.
+    const payload = resolvedInfos[0]?.payload as Record<string, unknown>;
+    expect(payload.dedupKey).toBe(`${PROVIDER}::${CONFIGURED_PROFILE}`);
+    expect(payload.provider).toBe(PROVIDER);
+    expect(payload.profileId).toBe(CONFIGURED_PROFILE);
+    expect(payload.submodule).toBe("oauth-resolver");
+  });
+
   // (a2) Configured-and-missing returns OAuthError{code: PROFILE_NOT_FOUND}
   // and emits the documented WARN log.
   it("(a2) configured-and-missing returns OAuthError{code: PROFILE_NOT_FOUND}", async () => {
