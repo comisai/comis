@@ -162,6 +162,63 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.seq).toBe(7);
   });
 
+  // F2 (D5): the per-session health rollup must land in the trajectory as
+  // session.summary carrying counts/flags only — the §6.2 replay shape
+  // (degraded run, 8/10 web_fetch failures). Phase 153's obs.explain reads it.
+  it("session_summary_maps_to_session.summary with degraded/turnCount/costUsd/toolStats/breakerTripCount", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("session:summary", {
+      sessionKey: "t1:u1:c1",
+      agentId: "agent-1",
+      traceId: "trace-1",
+      degraded: true,
+      turnCount: 24,
+      costUsd: 1.45,
+      toolStats: { web_fetch: { ok: 2, failed: 8 } },
+      breakerTripCount: 1,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("session.summary");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.degraded).toBe(true);
+    expect(data.turnCount).toBe(24);
+    expect(data.costUsd).toBe(1.45);
+    expect(data.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
+    expect(data.breakerTripCount).toBe(1);
+  });
+
+  // §2.7: the trajectory record carries counts/flags ONLY — the envelope
+  // correlation ids (agentId/sessionKey/traceId) are handled separately and
+  // must NOT appear in the translated data.
+  it("session_summary_strips_envelope_ids_from_data", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("session:summary", {
+      sessionKey: "t1:u1:c1",
+      agentId: "agent-1",
+      traceId: "trace-1",
+      degraded: false,
+      turnCount: 3,
+      costUsd: 0.02,
+      toolStats: {},
+      breakerTripCount: 0,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+  });
+
   it("tool_result_offloaded_maps_to_tool.result_offloaded with toolName/toolCallId/originalChars/diskPathRel", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
