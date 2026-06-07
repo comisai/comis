@@ -76,6 +76,8 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "prompt:submitted": "prompt.submitted",
   "session:started": "session.started",
   "session:ended": "session.ended",
+  // F2 (D5): per-session health rollup emitted once at agent-end.
+  "session:summary": "session.summary",
   "memory:injected": "memory.injected",
 
   // ---- Delivery lifecycle ----
@@ -429,6 +431,17 @@ function translatePayload(
         totalOutputTokens: payload.totalOutputTokens,
         durationMs: payload.durationMs,
         exitReason: payload.exitReason,
+      };
+
+    case "session:summary":
+      // Counts/flags ONLY — agentId/sessionKey/traceId are envelope
+      // correlation ids handled separately, never in the record data (§2.7).
+      return {
+        degraded: payload.degraded,
+        turnCount: payload.turnCount,
+        costUsd: payload.costUsd,
+        toolStats: payload.toolStats,
+        breakerTripCount: payload.breakerTripCount,
       };
 
     case "memory:injected":

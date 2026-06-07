@@ -30,16 +30,18 @@ import type { ComisLogger } from "@comis/core";
  */
 
 /**
- * Closed enum of trajectory event types (20 total).
+ * Closed enum of trajectory event types (39 total).
  *
  * Order is deliberate (life-cycle: session.* → prompt → model → tool →
  * skill → memory → delivery → lifecycle envelopes → control-plane sentinel).
  * Append-only — insertion order is part of the SemVer contract for v1.
  */
 export const TRAJECTORY_EVENT_TYPES = [
-  // Session lifecycle (one start + one end per agent run).
+  // Session lifecycle (one start + one end per agent run + one health rollup).
   "session.started",
   "session.ended",
+  // F2 (D5): per-session health rollup emitted once at agent-end.
+  "session.summary",
 
   // Context compilation outcome (one per turn; not always present).
   "context.compiled",

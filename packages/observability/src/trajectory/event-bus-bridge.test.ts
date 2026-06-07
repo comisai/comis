@@ -681,6 +681,13 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       durationMs: 1,
       exitReason: "ok",
     },
+    "session:summary": {
+      degraded: true,
+      turnCount: 1,
+      costUsd: 0.01,
+      toolStats: { web_fetch: { ok: 1, failed: 1 } },
+      breakerTripCount: 1,
+    },
     "memory:injected": {
       hitCount: 1,
       charsInjected: 100,
@@ -2415,9 +2422,10 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 58 (+2 D3 breaker + 1 D7 offload, Phase 151)", () => {
-    // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(58);
+  it("bridge entry count is exactly 59 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152)", () => {
+    // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
+    // + session:summary (F2/D5, Phase 152).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(59);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
