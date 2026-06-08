@@ -187,9 +187,15 @@ describe("renderGapGateMarkdown — the gate artifact (markdown table + caveat +
     expect(md).toContain("test-host");
     expect(md).toContain("2026-06-08");
     expect(md).toContain("24");
-    // an INSTRUMENT-160 count summary (exactly 1 here: lcd-ingest-skipped)
-    expect(md).toMatch(/INSTRUMENT-160/);
-    expect(md).toMatch(/1/);
+    // The summary count must be load-bearing: assert the LITERAL phrase so a regression
+    // rendering "2 …" or "0 …" fails (the bare /1/ matched any digit 1 anywhere —
+    // byHandCount, a realCount, the window note — and proved nothing). Of the 3 sample
+    // signals exactly 1 (lcd-ingest-skipped, realCount 4 >= 3) is INSTRUMENT-160;
+    // budget-exceeded is INCONCLUSIVE, session-degradation is ALREADY-STRUCTURED.
+    expect(md).toMatch(/1 INSTRUMENT-160 verdict\(s\) of 3 signal\(s\)/);
+    // And exactly one INSTRUMENT-160 token across the whole render (the table row + the
+    // summary would each carry it, so count occurrences rather than trusting a single match).
+    expect(md.match(/INSTRUMENT-160/g) ?? []).toHaveLength(2);
   });
 
   it("renderGapGateMarkdown output passes the secret sweep (defense-in-depth, T-158-01-01)", () => {
