@@ -188,15 +188,38 @@ export function sessionSummaryEventToRow(
 }
 
 /**
+ * The `context:dag_degraded` reasons that are NOT genuine degrades. Today only
+ * `serialized_wait` qualifies: it is the bounded-wait back-pressure signal (an
+ * ingest/compaction write queued on the per-conversation single-flight
+ * serializer — events-messaging.ts), a normal operating event, not a robustness
+ * fault. Stamping it `warning` would inflate the Phase-161 fleet lens's degrade
+ * count with benign back-pressure (IN-01). Everything else in the closed union
+ * (the `*_divergence` skips, `fail_closed_rollover`, `breaker_open`, `spend_cap`)
+ * is a real degrade. This is an explicit allow-set, NOT an open default: a future
+ * reason added to the union is treated as a degrade (`warning`) until it is
+ * deliberately listed here — fail-safe toward operator visibility.
+ */
+const BENIGN_DAG_DEGRADED_REASONS: ReadonlySet<EventMap["context:dag_degraded"]["reason"]> =
+  new Set(["serialized_wait"]);
+
+/**
  * Map a `context:dag_degraded` event payload (Phase 160 I1 — the LCD-divergence
  * class: WR-01 live/store shrink + the leaf/condense ordinal-window skips) to a
- * flat DiagnosticRow stored under `category:"health_signal"`. A divergence is a
- * degrade signal, so `severity:"warning"` (operator-visible). The `details` JSON
- * carries the closed `signal` label + the closed-union `reason` + the
- * `durationMs` count ONLY — no message/summary text (§2.7; the lossless store).
- * `traceId` is `undefined`: the payload has NO traceId field — `sessionKey`
- * correlates the row to a conversation. The Phase-161 fleet lens reads these
- * rows so the divergence is queryable cross-session instead of log-file-only.
+ * flat DiagnosticRow stored under `category:"health_signal"`. Severity TRACKS the
+ * reason: a genuine degrade is `severity:"warning"` (operator-visible); the
+ * benign `serialized_wait` back-pressure signal is `severity:"info"` so it does
+ * not inflate the fleet lens's degrade count (IN-01). The `details` JSON carries
+ * the closed `signal` label + the closed-union `reason` + the `conversationId`
+ * identifier + the `durationMs` count ONLY — no message/summary text (§2.7; the
+ * lossless store). `conversationId` is carried (WR-04) because the most
+ * security-relevant degrade (`fail_closed_rollover`) fires precisely on a
+ * `conversationId`/`sessionKey` CONFLICT, so the row must keep the divergent
+ * identifier (an identifier, not content — bounded-payload holds) rather than
+ * rely on the internal LCD `conversationId === sessionKey` invariant and drop it.
+ * `traceId` is `undefined`: the payload has NO traceId field — `sessionKey` +
+ * `conversationId` correlate the row to a conversation. The Phase-161 fleet lens
+ * reads these rows so the divergence is queryable/joinable cross-session instead
+ * of log-file-only.
  */
 export function dagDegradedEventToRow(
   payload: EventMap["context:dag_degraded"],
@@ -204,13 +227,14 @@ export function dagDegradedEventToRow(
   return {
     timestamp: payload.timestamp,
     category: "health_signal",
-    severity: "warning",
+    severity: BENIGN_DAG_DEGRADED_REASONS.has(payload.reason) ? "info" : "warning",
     agentId: payload.agentId,
     sessionKey: payload.sessionKey,
     message: "context:dag_degraded",
     details: JSON.stringify({
       signal: "lcd_divergence",
       reason: payload.reason,
+      conversationId: payload.conversationId,
       durationMs: payload.durationMs,
     }),
     traceId: undefined,

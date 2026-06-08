@@ -279,10 +279,16 @@ describe("dagDegradedEventToRow", () => {
     // The payload has NO traceId field — sessionKey correlates instead.
     expect(row.traceId).toBeUndefined();
 
-    // details carries ONLY the closed-label signal + closed-union reason + a
-    // count — no message/summary text. Exactly {signal, reason, durationMs}.
+    // details carries ONLY the closed-label signal + closed-union reason +
+    // identifiers + a count — no message/summary text. Exactly
+    // {signal, reason, conversationId, durationMs} (WR-04 carries conversationId).
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
-    expect(details).toEqual({ signal: "lcd_divergence", reason: "live_store_divergence", durationMs: 5 });
+    expect(details).toEqual({
+      signal: "lcd_divergence",
+      reason: "live_store_divergence",
+      conversationId: "conv-1",
+      durationMs: 5,
+    });
   });
 
   it("carries each divergence reason through verbatim (closed union — safe)", () => {

@@ -2831,16 +2831,23 @@ async function bootShutdown(
   // Records the three log-file-only posture FINDINGS — TLS-off, stranded-secret
   // COUNTS, canary-fallback — as a single config_posture obs_diagnostics row so
   // the fleet lens can query a daemon's posture without grepping daemon.log.
-  // TLS-off is RECOMPUTED from the gateway config (the source of truth, in
-  // scope) — the gateway WARN is NOT intercepted cross-package. The canary
-  // aggregate is a daemon-global proxy: CANARY_SECRET is an env-level secret, so
-  // when it is absent EVERY configured agent falls back to deterministic
-  // derivation (setup-agents-runtime.ts) — count them; 0 when it is set. This
-  // uses only inputs already in scope (KISS — no deep per-agent plumbing).
+  // TLS-off is CONFIG-DERIVED here, not read from the gateway's own TLS decision:
+  // `gateway.{tls,allowInsecureHttp}` is the INPUT the gateway acts on, but the
+  // gateway's resolved `tls ? https : http` branch (hono-server.ts) is internal
+  // and NOT exposed on GatewayServerHandle, and threading it back out is the deep
+  // cross-package plumbing this phase's KISS constraint forbids. This recompute
+  // matches the listener's posture today; it only diverges if the gateway gains a
+  // TLS path that bypasses config (an injected cert / env override) — a future
+  // change should thread the gateway's resolved boolean here (WR-02).
+  // canaryFallbackActive is a daemon-global presence proxy: CANARY_SECRET is
+  // folded into `boot.env`/mergedEnv store-wins (buildMergedEnv), so this env read
+  // already honors an encrypted/file secret-store entry — the same source the
+  // per-agent path resolves (setup-agents-runtime.ts). True ⇒ no secret set ⇒
+  // every agent uses the deterministic fallback. KISS — no deep per-agent plumbing.
   const tlsOff = (boot.container.config.gateway.tls === undefined) && (boot.container.config.gateway.allowInsecureHttp !== true);
   const allowInsecureHttp = boot.container.config.gateway.allowInsecureHttp === true;
-  const canaryFallbackAgents = boot.env.get("CANARY_SECRET") ? 0 : Object.keys(agents ?? {}).length;
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackAgents }, boot.clock);
+  const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.
