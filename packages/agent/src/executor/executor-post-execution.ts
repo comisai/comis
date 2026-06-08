@@ -1069,10 +1069,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // SD3 (Phase 158): resolve capability-gated verification default before the gate check.
   // modelProfile is not in scope at this layer — use a synthetic profile derived from
   // capabilityClass (same approach as buildSyntheticCriticDeps; capabilityClass is threaded
-  // since Phase 155 via PostExecutionParams). scaffoldLevel follows the model-profile invariant:
-  // small/nano → "max"; frontier/mid → "light"; unknown → "light" (fail-closed).
+  // since Phase 155 via PostExecutionParams). Only the isSmallNano distinction
+  // (scaffoldLevel === "max") is load-bearing for resolveScaffoldDefaults' SD3 decision —
+  // the non-max value is deliberately collapsed to "light" (nothing here reads scaffoldLevel
+  // beyond the isSmallNano check; a real mid profile would be "standard"). small/nano → "max";
+  // frontier/mid/unknown → "light" (fail-closed: undefined capabilityClass → frontier).
   // operationModels defaults to {} when not set (no distinct critic → cost-gate returns false).
-  // capabilityClass is `CapabilityClass | undefined`; undefined → treat as frontier (fail-closed).
   const resolvedCapabilityClass = capabilityClass ?? "frontier";
   const syntheticProfileForDefaults = {
     scaffoldLevel: (resolvedCapabilityClass === "small" || resolvedCapabilityClass === "nano") ? "max" as const : "light" as const,
@@ -1083,7 +1085,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     supportsVision: false, supportsTools: true, supportsPromptCache: false,
     supportsServerToolSearch: false, supportsStructuredOutput: false,
   };
-  const { verificationEnabled: effectiveVerification } = resolveScaffoldDefaults(
+  // WR-01: criticModel is the DISTINCT CHEAP verification model the cost-gate gated
+  // on (keyless-guarded). The critic must run on it, NOT the agent primary — running
+  // the primary would invert the cost-gate's "never doubles local-CPU latency" rationale.
+  // Falls back to the agent's (already-keyless, per shouldRunCritic) primary when undefined.
+  const { verificationEnabled: effectiveVerification, criticModel } = resolveScaffoldDefaults(
     syntheticProfileForDefaults,
     config,
     { provider, agentModel: config.model, operationModels: config.operationModels ?? {} },
@@ -1094,7 +1100,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     effectiveEnabled: effectiveVerification, // SD3: pre-resolved via cost-gate
   })) {
     const { deps: cd, maxRetries: mr } = buildSyntheticCriticDeps({
-      capabilityClass, provider, modelId: config.model, agentId: effectiveAgentId,
+      capabilityClass,
+      provider: criticModel?.provider ?? provider, // WR-01: resolved cheap critic, not agent primary
+      modelId: criticModel?.modelId ?? config.model,
+      agentId: effectiveAgentId,
       canaryToken: generateCanaryToken(formattedKey, executionId), // WR-03: formatted key, not String(obj)
       minResponseChars: config.verification?.minResponseChars ?? 200, maxRetries: config.honesty?.maxCriticRetries ?? 2,
       clock: deps.clock, logger: deps.logger, eventBus: deps.eventBus,

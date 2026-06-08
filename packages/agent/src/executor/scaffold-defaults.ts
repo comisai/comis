@@ -82,11 +82,25 @@ export interface ScaffoldDefaults {
    * SD3: effective verification critic enabled flag (cost-gated).
    *
    * Auto-ON only when: small/nano + keyless provider (ollama/lm-studio) +
-   * hasDistinctCheapCritic (operationModels.verification resolves to a model
-   * distinct from and cheaper than the primary via explicit_config).
+   * a distinct cheaper model is configured (operationModels.verification resolves
+   * to a model distinct from the primary via explicit_config).
    * Explicit config.verification.enabled always wins (boolean).
    */
   verificationEnabled: boolean;
+  /**
+   * SD3 / WR-01: the model the verification critic MUST run on when it runs —
+   * the resolved DISTINCT CHEAP verification operation model the cost-gate gated
+   * on (or the operator's configured verification model in the explicit force-on
+   * path), NEVER silently the agent's primary. The cost-gate's whole rationale
+   * ("never silently doubles local-CPU inference latency") is false if the critic
+   * auto-enables on a cheap model's existence but then runs the primary.
+   *
+   * `undefined` when verification is off, OR when no critic-context was supplied,
+   * OR when the resolved verification provider is not keyless. The synthetic
+   * critic deps run keyless (apiKey:""), so a keyed resolved provider is not
+   * exposed here — the caller falls back to the agent's (already-keyless) primary.
+   */
+  criticModel?: { provider: string; modelId: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -150,63 +164,59 @@ export function resolveScaffoldDefaults(
   //
   // config.verification?.enabled is `boolean | undefined` (block is .optional()).
   // Do NOT re-parse through VerificationConfigSchema.
+  //
+  // WR-01: resolve the verification operation model ONCE. It drives BOTH the
+  // cost-gate distinctness decision AND the model the critic actually runs on
+  // (criticModel below) — so the critic can never auto-enable on a cheap model's
+  // existence yet silently run the primary (the bug WR-01 fixed).
+  // Uses the real 5-level priority chain from resolveOperationModel — no mocking.
   // -------------------------------------------------------------------------
+  const verificationResolution = criticContext
+    ? resolveOperationModel({
+        operationType: "verification",
+        agentProvider: criticContext.provider,
+        agentModel: criticContext.agentModel,
+        operationModels: criticContext.operationModels,
+        providerFamily: resolveProviderFamily(criticContext.provider),
+      })
+    : undefined;
+
   const explicitVerification = config.verification?.enabled; // boolean | undefined
   let verificationEnabled: boolean;
   if (explicitVerification !== undefined) {
     // Explicit config always wins — both true (force-on) and false (force-off / security gate)
     verificationEnabled = explicitVerification;
-  } else if (isSmallNano && criticContext) {
+  } else if (isSmallNano && criticContext && verificationResolution) {
     // Cost-gate: auto-enable only when a cheap keyless critic is resolvable.
     // Two conditions must hold:
-    //  1. Provider is keyless (ollama/lm-studio) — no API key threading needed (WR-02)
-    //  2. A distinct cheaper model is explicitly configured for the verification tier
+    //  1. Provider is keyless (ollama/lm-studio) — no API key threading needed
+    //  2. A distinct cheaper model is explicitly configured for the verification tier.
+    //     `source === "explicit_config"` is the only level that can yield a cheap
+    //     distinct model (OPERATION_TIER_MAP["verification"]="primary" makes Level 4
+    //     family_default unreachable, Level 5 returns the agent primary → not distinct);
+    //     `modelId !== agentModel` guards `verification.model: "primary"`.
     verificationEnabled =
       KEYLESS_CRITIC_PROVIDERS.has(criticContext.provider.toLowerCase()) &&
-      hasDistinctCheapCritic(
-        criticContext.provider,
-        criticContext.agentModel,
-        criticContext.operationModels,
-      );
+      verificationResolution.source === "explicit_config" &&
+      verificationResolution.modelId !== criticContext.agentModel;
   } else {
     // frontier/mid → always off (SD5); or no criticContext → no cost-gate check → off
     verificationEnabled = false;
   }
 
-  return { goalAnchorEnabled, baseFloor, verificationEnabled };
-}
+  // WR-01: when the critic runs, it MUST run on the resolved verification model
+  // (the distinct cheap model the cost-gate gated on, or the operator's configured
+  // verification model in the explicit force-on path) — NEVER silently the agent
+  // primary. The synthetic critic deps run keyless (apiKey:""), so expose the
+  // resolved model only when its provider is keyless; otherwise leave it undefined
+  // and let the caller fall back to the agent's (already-keyless) primary rather
+  // than calling a keyed provider with an empty key.
+  const criticModel =
+    verificationEnabled &&
+    verificationResolution &&
+    KEYLESS_CRITIC_PROVIDERS.has(verificationResolution.provider.toLowerCase())
+      ? { provider: verificationResolution.provider, modelId: verificationResolution.modelId }
+      : undefined;
 
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Returns true when the verification operation model resolves to a model
- * distinct from (and therefore cheaper than) the agent's primary model.
- *
- * Uses the real 5-level priority chain from resolveOperationModel — no mocking.
- * The predicate is conservative:
- *   - `source === "explicit_config"` is the only level that can yield a cheap
- *     distinct model for verification (OPERATION_TIER_MAP["verification"]="primary"
- *     makes Level 4 family_default unreachable, and Level 5 always returns the
- *     agent primary → same model → not distinct).
- *   - `modelId !== agentModel` guards against `verification.model: "primary"` (which
- *     resolveOperationModel normalizes to agentModel with source="explicit_config").
- *
- * T-158-01 (Elevation of Privilege): this is called only after the
- * KEYLESS_CRITIC_PROVIDERS check — cloud-keyed providers never reach this helper.
- */
-function hasDistinctCheapCritic(
-  agentProvider: string,
-  agentModel: string,
-  operationModels: OperationModels,
-): boolean {
-  const resolution = resolveOperationModel({
-    operationType: "verification",
-    agentProvider,
-    agentModel,
-    operationModels,
-    providerFamily: resolveProviderFamily(agentProvider),
-  });
-  return resolution.source === "explicit_config" && resolution.modelId !== agentModel;
+  return { goalAnchorEnabled, baseFloor, verificationEnabled, criticModel };
 }
