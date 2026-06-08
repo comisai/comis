@@ -627,6 +627,21 @@ export const HourlyBucketDbRowSchema = z.strictObject({
 });
 
 /**
+ * Schema for the per-session GROUP-BY result of `aggregateSessionsInWindow`
+ * (A1, Phase 159) over `obs_diagnostics` `category='session_summary'`. The
+ * health fields live INSIDE the `details` JSON string (parsed in the query
+ * layer), so this row carries only the grouping key + the latest timestamp +
+ * the raw `details`/`severity`. Distinct from `DiagnosticDbRowSchema` — strict
+ * mode rejects the extra `last_ts` / missing `id`,`category`,… columns.
+ */
+export const SessionSummaryRollupDbRowSchema = z.strictObject({
+  session_key: z.string(),
+  last_ts: z.number(),
+  details: z.string(),
+  severity: z.string(),
+});
+
+/**
  * Schema for delivery-status statistics rows.
  * SSOT for the file-internal `DeliveryStatsDbRow` interface in observability-store.ts.
  */

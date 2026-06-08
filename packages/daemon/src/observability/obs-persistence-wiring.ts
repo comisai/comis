@@ -158,8 +158,11 @@ export function diagnosticEventToRow(event: DiagnosticEvent): DiagnosticRow {
  * to a flat DiagnosticRow stored under `category:"session_summary"`.
  * A degraded run maps to `severity:"warning"` so it surfaces in operator
  * queries; otherwise `"info"`. The `details` JSON carries counts/flags only
- * (degraded/costUsd/toolStats/breakerTripCount/turnCount) — no error bodies,
- * no message text (§2.7). Phase 153's `obs.explain` reads this row.
+ * (degraded/costUsd/toolStats/breakerTripCount/turnCount/topErrorKinds/source)
+ * — no error bodies, no message text (§2.7): `topErrorKinds` keys are ⊂ the
+ * closed `ErrorKind` union (not free text) and `source` is an enum, so the
+ * bounded-payload discipline holds. Phase 153's `obs.explain` and Phase 159's
+ * `aggregateSessionsInWindow` (fleet aggregate) both read this row.
  */
 export function sessionSummaryEventToRow(
   payload: EventMap["session:summary"],
@@ -177,6 +180,8 @@ export function sessionSummaryEventToRow(
       toolStats: payload.toolStats,
       breakerTripCount: payload.breakerTripCount,
       turnCount: payload.turnCount,
+      topErrorKinds: payload.topErrorKinds,
+      source: payload.source,
     }),
     traceId: payload.traceId,
   };

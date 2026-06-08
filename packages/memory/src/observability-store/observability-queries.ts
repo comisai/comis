@@ -17,6 +17,7 @@ import {
   agentAggMapper,
   sessionAggMapper,
   hourlyBucketMapper,
+  sessionSummaryRollupMapper,
   deliveryStatsMapper,
   systemPromptReportMapper,
   deliveryFromRow,
@@ -33,6 +34,7 @@ import {
   type AgentAggregation,
   type SessionAggregation,
   type HourlyBucket,
+  type SessionSummaryRollup,
   type DeliveryStats,
   type SystemPromptReportRow,
 } from "./observability-store-types.js";
@@ -44,6 +46,7 @@ export type ObservabilityQueries = Pick<
   | "aggregateByAgent"
   | "aggregateBySession"
   | "aggregateHourly"
+  | "aggregateSessionsInWindow"
   | "queryDelivery"
   | "deliveryStats"
   | "queryDiagnostics"
@@ -100,6 +103,20 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
   const aggHourlySinceStmt = db.prepare(`
     SELECT (timestamp / 3600000) * 3600000 as hour, SUM(cost_total) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count, COALESCE(SUM(cache_saved), 0) as total_cache_saved
     FROM obs_token_usage WHERE timestamp >= ? GROUP BY (timestamp / 3600000) ORDER BY hour
+  `);
+
+  // A1 (fleet aggregate): one rollup per session_key over session_summary rows,
+  // latest-wins via the MAX(id) correlated subquery (a session with >1 summary
+  // row collapses to its newest member, not an arbitrary one). The health fields
+  // live inside `details` JSON — parsed per row in the bound method below. Rides
+  // the idx_obs_diag_session_cat composite index.
+  const aggSessionsInWindowStmt = db.prepare(`
+    SELECT session_key, MAX(timestamp) as last_ts, details, severity
+    FROM obs_diagnostics
+    WHERE category = 'session_summary'
+      AND timestamp >= ?
+      AND id IN (SELECT MAX(id) FROM obs_diagnostics WHERE category = 'session_summary' GROUP BY session_key)
+    GROUP BY session_key
   `);
 
   const deliveryStatsAllStmt = db.prepare(`
@@ -229,6 +246,36 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     }));
   }
 
+  function aggregateSessionsInWindow(sinceMs: number): SessionSummaryRollup[] {
+    const parsed = sessionSummaryRollupMapper.parseRows(aggSessionsInWindowStmt.all(sinceMs));
+    // Degrade-on-validation-error: observability aggregate -> empty.
+    const rows = parsed.ok ? parsed.value : [];
+    const out: SessionSummaryRollup[] = [];
+    for (const r of rows) {
+      let d: Record<string, unknown>;
+      try {
+        d = JSON.parse(r.details) as Record<string, unknown>;
+      } catch {
+        // A corrupt `details` JSON for one row never aborts the scan (T-159-01).
+        continue;
+      }
+      out.push({
+        sessionKey: r.session_key,
+        lastTs: r.last_ts,
+        degraded: d.degraded === true,
+        costUsd: typeof d.costUsd === "number" ? d.costUsd : 0,
+        toolStats: (d.toolStats as Record<string, { ok: number; failed: number }>) ?? {},
+        breakerTripCount: typeof d.breakerTripCount === "number" ? d.breakerTripCount : 0,
+        turnCount: typeof d.turnCount === "number" ? d.turnCount : 0,
+        topErrorKinds: (d.topErrorKinds as Record<string, number>) ?? {},
+        // Pre-change rows lack `source` -> parse-default "runtime" (additive, not
+        // a backward-compat fallback path; §2.9). The A2 reducer filters on this.
+        source: typeof d.source === "string" ? d.source : "runtime",
+      });
+    }
+    return out;
+  }
+
   function queryDelivery(params?: DeliveryQueryParams): DeliveryRow[] {
     const conditions: string[] = [];
     const values: unknown[] = [];
@@ -349,6 +396,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     aggregateByAgent,
     aggregateBySession,
     aggregateHourly,
+    aggregateSessionsInWindow,
     queryDelivery,
     deliveryStats,
     queryDiagnostics,

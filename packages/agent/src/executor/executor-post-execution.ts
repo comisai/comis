@@ -628,13 +628,16 @@ export function buildSessionEndMetadata(args: {
 /**
  * F2 emit: announce `session:summary` on the eventBus once per execution.
  *
- * The §6.2 minimal payload (ids + counts + typed flags) — deliberately WITHOUT
- * `topErrorKinds` (OQ1: that goes to the sessionEnd metadata + obs diagnostics
- * only, never the event). Fire-and-forget by contract: the eventBus is
- * SYNCHRONOUS, so a throwing in-process listener would otherwise abort the
- * caller's teardown (OQ3). The try/catch here is the sanctioned telemetry guard
- * (mirrors the `:983` `writeSessionMetadata` guard) — a telemetry failure must
- * never break execution.
+ * The payload carries ids + counts + typed flags PLUS `topErrorKinds` and
+ * `source` (Phase 159 A1/A2 — OQ1 reversed): both are threaded into the
+ * persisted `obs_diagnostics` row so the fleet aggregate
+ * (`aggregateSessionsInWindow`) can read them without opening per-session
+ * `_session-metadata.json`. Production emits the constant `source: "runtime"`;
+ * a synthetic/test row is produced by a caller injecting `source: "test"`.
+ * Fire-and-forget by contract: the eventBus is SYNCHRONOUS, so a throwing
+ * in-process listener would otherwise abort the caller's teardown (OQ3). The
+ * try/catch here is the sanctioned telemetry guard (mirrors the `:983`
+ * `writeSessionMetadata` guard) — a telemetry failure must never break execution.
  */
 export function emitSessionSummary(
   deps: { eventBus?: TypedEventBus; logger?: ComisLogger },
@@ -658,6 +661,8 @@ export function emitSessionSummary(
       costUsd: args.rollup.costUsd,
       toolStats: args.rollup.toolStats,
       breakerTripCount: args.rollup.breakerTripCount,
+      topErrorKinds: args.rollup.topErrorKinds,
+      source: "runtime" as const,
       timestamp: args.clock.now(),
     });
   } catch (err) {
@@ -1078,7 +1083,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
 
   // F2: announce session:summary once. Own fire-and-forget guard inside
   // emitSessionSummary — a throwing in-process listener must not abort teardown
-  // (OQ3). The event carries the §6.2 minimal payload (no topErrorKinds — OQ1).
+  // (OQ3). The event carries ids + counts + topErrorKinds + source:"runtime"
+  // (Phase 159 A1/A2) so the row feeds the fleet aggregate.
   emitSessionSummary(
     { eventBus: deps.eventBus, logger: deps.logger },
     {
