@@ -451,6 +451,53 @@ describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
     // No divergence → no WARN.
     expect(logger.warn).not.toHaveBeenCalled();
   });
+
+  it("Test 9b (I1): the WR-01 divergence skip invokes onDivergence('live_store_divergence') so the executor emits context:dag_degraded", () => {
+    // RED on pre-patch: ingestTurnGuarded has no onDivergence callback — the
+    // divergence branch only WARNs (Pino-only), the signal never reaches the bus.
+    // GREEN: a 7th onDivergence(reason) callback (sibling to onFailClosed) fires
+    // on the live/store-divergence skip, carrying the closed-meaning reason tag
+    // (NEVER message content) — the agent-side caller turns it into a
+    // health_signal-bound context:dag_degraded emit.
+    const { store, appended } = makeStoreWithPersistedCount(6);
+    const logger = createMockLogger();
+    const onFailClosed = vi.fn();
+    const onDivergence = vi.fn();
+    const live: AgentMessage[] = [
+      userMsg("u0") as AgentMessage,
+      assistantText("a0") as AgentMessage,
+      userMsg("u1") as AgentMessage,
+      assistantText("a1") as AgentMessage,
+    ];
+
+    ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger, onFailClosed, onDivergence);
+
+    // Still SKIPS the append (the guard is unchanged) and still WARNs.
+    expect(appended).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalled();
+    // The divergence callback fired with the closed reason tag; the fail-closed
+    // callback did NOT (this is the WR-01 shrink path, not the R3 refuse path).
+    expect(onDivergence).toHaveBeenCalledTimes(1);
+    expect(onDivergence).toHaveBeenCalledWith("live_store_divergence");
+    expect(onFailClosed).not.toHaveBeenCalled();
+  });
+
+  it("Test 9c (I1): a non-divergent ingest does NOT invoke onDivergence", () => {
+    // The callback is divergence-only — a normal delta append never fires it.
+    const { store } = makeStoreWithPersistedCount(2);
+    const logger = createMockLogger();
+    const onDivergence = vi.fn();
+    const live: AgentMessage[] = [
+      userMsg("u0") as AgentMessage,
+      assistantText("a0") as AgentMessage,
+      userMsg("u1") as AgentMessage,
+      assistantText("a1") as AgentMessage,
+    ];
+
+    ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger, undefined, onDivergence);
+
+    expect(onDivergence).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

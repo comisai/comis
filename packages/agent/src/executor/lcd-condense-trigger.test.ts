@@ -771,3 +771,105 @@ describe("maybeRunCondensePass — deep tiering and hard-fanout (FIX 5)", () => 
     expect(store.getSummaries(SCOPE).filter((s) => s.kind === "condensed").length).toBe(0);
   });
 });
+
+// ===========================================================================
+// I1 (Phase 160): the inverted-window divergence skip emits context:dag_degraded
+// ===========================================================================
+//
+// The condense divergence branch (`run.endOrdinal < run.startOrdinal`) is a
+// defensive contiguity guard — the run is contiguous by construction so it never
+// inverts on a clean store. To drive it DETERMINISTICALLY we wrap a real seeded
+// store and return getContextItems() with the SUMMARY-ref ordinals inverted (the
+// first selected child maps to a HIGHER ordinal than the last) so the selected
+// run's window inverts. RED on pre-patch: the skip only WARNs; it emits nothing.
+
+/**
+ * Wrap a real ContextStorePort but rewrite getContextItems() so the SUMMARY-ref
+ * ordinals DESCEND in walk order, forcing the selected SummaryRefRun to have
+ * endOrdinal < startOrdinal (the inverted-window divergence). Message-ref
+ * ordinals are left ascending so leaf selection is unaffected; everything else
+ * delegates to the real store so a fanout-sized same-depth run is still selected.
+ */
+function withInvertedSummaryOrdinals(real: ContextStorePort): ContextStorePort {
+  return {
+    ...real,
+    append: (input) => real.append(input),
+    getMessages: (scope) => real.getMessages(scope),
+    getSummaries: (scope) => real.getSummaries(scope),
+    getContextItems: (scope) => {
+      const items = real.getContextItems(scope);
+      const summaryOrdinals = items
+        .filter((it) => it.refKind === "summary")
+        .map((it) => it.ordinal);
+      const maxSummaryOrdinal = Math.max(...summaryOrdinals, 0);
+      const minSummaryOrdinal = Math.min(...summaryOrdinals, 0);
+      // Reflect each summary-ref ordinal within the summary-ref ordinal span so the
+      // contiguous same-depth run is selected in walk order but its first child now
+      // sits at a HIGHER ordinal than its last → endOrdinal < startOrdinal.
+      return items.map((it) =>
+        it.refKind === "summary"
+          ? { ...it, ordinal: maxSummaryOrdinal + minSummaryOrdinal - it.ordinal }
+          : it,
+      );
+    },
+    appendLeafSummary: (input) => real.appendLeafSummary(input),
+    appendCondensedSummary: (input) => real.appendCondensedSummary(input),
+    getSummaryChildren: (scope, id) => real.getSummaryChildren(scope, id),
+    getSummaryMessages: (scope, id) => real.getSummaryMessages(scope, id),
+    searchLcd: (scope, q, o) => real.searchLcd(scope, q, o),
+    runOnConversation: (id, fn) => real.runOnConversation(id, fn),
+  };
+}
+
+describe("maybeRunCondensePass — inverted-window divergence emits context:dag_degraded (I1)", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("emits context:dag_degraded(reason:condense_window_divergence) on the inverted-window skip", async () => {
+    // Seed enough contiguous depth-0 leaves to exceed the soft fanout (4) so a
+    // run is SELECTED, then invert its window via the wrapper to drive the skip.
+    seedHistory(store, 40, 100);
+    seedContiguousLeaves(store, 5, 4);
+    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "leaf").length).toBe(5);
+
+    const diverged = withInvertedSummaryOrdinals(store);
+    const logger = createMockLogger();
+    const { bus, emits } = makeEventBus();
+
+    await maybeRunCondensePass(
+      diverged,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4, windowTokens: 200_000 }),
+      makeSummarizerDeps(shortSummarizer(), logger),
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // The divergence WARN fired (the guard is unchanged) ...
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    expect(warnCalls.some((c) => (c[0] as { errorKind?: string })?.errorKind === "precondition")).toBe(true);
+    // ... AND no condensed summary was persisted (the pass skipped) ...
+    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "condensed").length).toBe(0);
+    // ... AND a content-free context:dag_degraded was emitted with the matching reason.
+    const degraded = emits.filter((e) => e.event === "context:dag_degraded");
+    expect(degraded.length).toBe(1);
+    expect(degraded[0]!.payload.reason).toBe("condense_window_divergence");
+    expect(degraded[0]!.payload.conversationId).toBe(CONVERSATION_ID);
+    expect(degraded[0]!.payload.agentId).toBe(SCOPE.agentId);
+    expect(degraded[0]!.payload.sessionKey).toBe(SCOPE.sessionKey);
+    expect(typeof degraded[0]!.payload.durationMs).toBe("number");
+    expect(typeof degraded[0]!.payload.timestamp).toBe("number");
+    // Content-free: identifiers + reason + timing only.
+    expect(Object.keys(degraded[0]!.payload).sort()).toEqual(
+      ["agentId", "conversationId", "durationMs", "reason", "sessionKey", "timestamp"].sort(),
+    );
+  });
+});
