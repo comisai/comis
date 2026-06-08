@@ -36,6 +36,13 @@ import { defineContract } from "./types.js";
 import { ObsExplainContract } from "./incident-report.js";
 export { ObsExplainContract, IncidentReportSchema } from "./incident-report.js";
 export type { IncidentReport, IncidentFailure, IncidentSignals } from "./incident-report.js";
+// The `obs.fleet.health` wire schema (v2.15 R1, Phase 161 RPC response) lives in
+// the sibling `fleet-health-report.ts`. A BARE schema (NOT a defineContract, NOT
+// in OBSERVABILITY_CONTRACTS) — re-exported so the `@comis/core` public surface
+// carries it for the Phase-161 handler; the dead-export gate is satisfied via a
+// `public-api-policy.ts` entry (the IncidentReportSchema precedent) until then.
+export { FleetHealthReportSchema } from "./fleet-health-report.js";
+export type { FleetHealthReport } from "./fleet-health-report.js";
 // The five obs.billing.* contracts (+ their BillingSnapshot response schema)
 // live in the sibling `observability-billing.ts` (file-size split). Import for
 // the OBSERVABILITY_CONTRACTS array below; re-export so the `@comis/core`

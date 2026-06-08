@@ -864,6 +864,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // IncidentReport off the wire imports this schema. Tracked here per the
       // baseline orphan-export policy; remove if an in-repo value consumer lands.
       "IncidentReportSchema",
+      // FleetHealthReportSchema is the Zod schema for the obs.fleet.health
+      // response (the v2.15 R1 cross-session fleet digest). It is a BARE schema
+      // (NOT a defineContract, NOT in OBSERVABILITY_CONTRACTS), barrel-exported so
+      // the Phase-161 handler can import it — but no in-repo module consumes the
+      // schema VALUE until that handler lands. Same rationale + precedent as
+      // IncidentReportSchema above; tracked here per the orphan-export policy.
+      // Remove when the Phase-161 handler consumes it.
+      "FleetHealthReportSchema",
+      // FleetHealthReport (the inferred TYPE) likewise has no cross-package
+      // consumer until the Phase-161 handler/contract reference it (confirmed by
+      // running public-export-consumers — the gate flags the type export from
+      // observability.ts). The IncidentReport precedent's TYPE is consumed
+      // cross-package so it is NOT listed; this one is not yet. Remove when the
+      // Phase-161 handler imports FleetHealthReport.
+      "FleetHealthReport",
       "NodeStatusSchema",
       "GraphStatusSchema",
       "GraphNodeSchema",
