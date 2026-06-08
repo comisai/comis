@@ -603,12 +603,23 @@ describe.skipIf(!isLive)("DIAG-reprove RUN — fresh agent WITH obs.explain (gat
             "misclassified and the cascade), not just the symptom.",
         });
 
-        // The G1 GATE: the obs.explain run must reach root cause in EXACTLY 1
-        // obs.explain call with ZERO source reads. BOTH halves matter (Pitfall 4)
+        // The G1 GATE: the obs_explain run must reach root cause in EXACTLY 1
+        // obs_explain call with ZERO source reads. BOTH halves matter (Pitfall 4)
         // — a correct verdict reached via source reads or multi-call is NOT the
-        // RE-PROVE. distinctSourceReads is the COUNTED read_source tool's live set.
+        // RE-PROVE.
         const obsExplainCalls = countObsExplainCalls(transcript);
         expect(obsExplainCalls).toBe(1);
+        // WR-01: the GATE and the ledger ROW must be the SAME source of truth. The
+        // row records readSource.readPaths.size (the paths the dispatch ACTUALLY
+        // executed); assert the gate on that SAME executed set so the gate can never
+        // pass while the ledger reports non-zero reads (or vice versa) after a future
+        // dispatch/transcript-capture refactor. recordMetrics(transcript)
+        // .distinctSourceReads (the REQUESTED count parsed from the transcript) is
+        // kept below as a secondary STRUCTURAL cross-check — they agree on the happy
+        // path but answer different questions (requested vs executed).
+        expect(readSource.readPaths.size).toBe(0);
+        // Secondary structural check: the transcript-derived requested-read count
+        // must also be zero (they coincide in the happy path).
         expect(metrics.distinctSourceReads).toBe(0);
 
         rows.push({
