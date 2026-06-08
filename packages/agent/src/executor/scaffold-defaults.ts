@@ -64,11 +64,18 @@ const SMALL_NANO_DEFAULT_BOOTSTRAP_MAX_CHARS = 3_500 as const;
  *  document in D2 that to force 20_000 on a small model, use capabilityClassOverride:"frontier". */
 const BOOTSTRAP_MAX_CHARS_SENTINEL = 20_000 as const;
 
-/** SD7: active-tool ceiling for the `small` capability class.
+/** SD7/F1: active-tool ceiling for the `small` capability class.
  *  Keeps CORE_TOOLS (~15) + recently-used head-room + warm tools active;
  *  defers cold long-tail behind discover_tools (no capability removal).
- *  Range: 30–50 per CONTEXT.md SD7; 40 is the conservative center. */
-const SMALL_DEFAULT_ACTIVE_TOOL_CEILING = 40 as const;
+ *  Retuned F1 from 40→24: 15 CORE_TOOLS + 9 discretionary slots.
+ *  At 24 tools × ~300 chars avg ≈ 7K chars (vs 12K at 40) — ~750–1250 tokens saved. */
+const SMALL_DEFAULT_ACTIVE_TOOL_CEILING = 24 as const;
+
+/** SD9/F2: total bootstrap budget for small/nano. Caps the SUM of all bootstrap file chars.
+ *  Per-file cap (3_500) still applies as an upper bound per file; this cap is the aggregate.
+ *  Rationale: only AGENTS.md (6780) exceeds 3500 so per-file trimming only trims that one
+ *  file — total bootstrap stays ~12.9K. A total cap of 5_000 forces proportional reduction. */
+const SMALL_NANO_DEFAULT_BOOTSTRAP_TOTAL_CHARS = 5_000 as const;
 
 // ---------------------------------------------------------------------------
 // Exported types
@@ -135,14 +142,22 @@ export interface ScaffoldDefaults {
    */
   bootstrapMaxChars: number;
   /**
-   * SD7: effective active-tool ceiling (max tool schemas in the prompt request).
+   * SD7/F1: effective active-tool ceiling (max tool schemas in the prompt request).
    *
-   * small: SMALL_DEFAULT_ACTIVE_TOOL_CEILING (40). nano/frontier/mid: undefined.
+   * small: SMALL_DEFAULT_ACTIVE_TOOL_CEILING (24). nano/frontier/mid: undefined.
    * nano already has its own aggressive deferral path (CORE_TOOLS-only, ~15 active);
    * a ceiling on top would be a no-op.
    * Ceiling is enforced in applyToolDeferral via DeferralContext.activeToolCeiling.
    */
   activeToolCeiling: number | undefined;
+  /**
+   * SD9/F2: effective total bootstrap budget (sum of all file chars after per-file truncation).
+   *
+   * small/nano: SMALL_NANO_DEFAULT_BOOTSTRAP_TOTAL_CHARS (5_000).
+   * frontier/mid: undefined (no total cap — byte-identical to v2.14).
+   * Applied in buildBootstrapContextFiles as an additional constraint after per-file truncation.
+   */
+  bootstrapTotalMaxChars: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -275,9 +290,9 @@ export function resolveScaffoldDefaults(
         : BOOTSTRAP_MAX_CHARS_SENTINEL;                 // frontier/mid: 20_000 (unchanged)
 
   // -------------------------------------------------------------------------
-  // SD7: active-tool ceiling — ONLY for small class.
+  // SD7/F1: active-tool ceiling — ONLY for small class.
   // nano is excluded: it already has aggressive CORE_TOOLS-only deferral at applyToolDeferral:413.
-  // Adding a ceiling of 40 on top of nano's ~15-active output would be a no-op, and confusing.
+  // Adding a ceiling of 24 on top of nano's ~15-active output would be a no-op, and confusing.
   // frontier/mid: no ceiling (behavior-neutral).
   // -------------------------------------------------------------------------
   const activeToolCeiling: number | undefined =
@@ -285,5 +300,14 @@ export function resolveScaffoldDefaults(
       ? SMALL_DEFAULT_ACTIVE_TOOL_CEILING
       : undefined;
 
-  return { goalAnchorEnabled, baseFloor, verificationEnabled, criticModel, bootstrapMaxChars, activeToolCeiling };
+  // -------------------------------------------------------------------------
+  // SD9/F2: total bootstrap budget — small/nano only.
+  // Applied in buildBootstrapContextFiles as a second pass after per-file truncation.
+  // frontier/mid: undefined (no total cap — byte-identical to v2.14).
+  // -------------------------------------------------------------------------
+  const bootstrapTotalMaxChars: number | undefined = isSmallNano
+    ? SMALL_NANO_DEFAULT_BOOTSTRAP_TOTAL_CHARS
+    : undefined;
+
+  return { goalAnchorEnabled, baseFloor, verificationEnabled, criticModel, bootstrapMaxChars, activeToolCeiling, bootstrapTotalMaxChars };
 }

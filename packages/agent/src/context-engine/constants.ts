@@ -162,8 +162,17 @@ export const CHARS_PER_TOKEN_RATIO_STRUCTURED = 3;
 /** Length of truncated SHA-256 digest for system prompt hash comparison. Used by: prompt-assembly hash validation. */
 export const SYSTEM_PROMPT_HASH_LENGTH = 16;
 
-/** Warn if bootstrap content exceeds this percentage of system prompt. Used by: prompt-assembly budget tracking. */
-export const BOOTSTRAP_BUDGET_WARN_PERCENT = 85;
+/**
+ * Warn if bootstrap content exceeds this percentage of estimated total prompt input.
+ *
+ * F4: denominator is `systemPromptChars + toolDefOverheadChars` (system prompt + tool schemas),
+ * not raw system prompt alone. Threshold lowered from 85→40: fires only when bootstrap is
+ * genuinely disproportionate to the full assembled input, eliminating the 100% false-alarm
+ * rate on small-model turns (compact-secure system prompt ~2.8K vs ~12K bootstrap).
+ *
+ * Used by: prompt-assembly budget tracking.
+ */
+export const BOOTSTRAP_BUDGET_WARN_PERCENT = 40;
 
 /**
  * Minimum cacheable token thresholds by model family prefix.

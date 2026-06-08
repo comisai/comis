@@ -804,10 +804,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // SD6 (Phase 159): capability-gated bootstrap.maxChars.
   // resolveScaffoldDefaults handles the === 20_000 sentinel check internally.
   // Fail-closed: absent modelProfile → FAIL_CLOSED_PROFILE (nano) → 3_500 (conservative).
-  const bootstrapMaxChars = resolveScaffoldDefaults(
+  const { bootstrapMaxChars, bootstrapTotalMaxChars } = resolveScaffoldDefaults(
     params.modelProfile ?? FAIL_CLOSED_PROFILE,
     config,
-  ).bootstrapMaxChars;
+  );
   if (promptMode !== "none") {
     // Snapshot raw bootstrap files on first turn to keep system prompt stable.
     // When the agent writes workspace files mid-session (e.g., IDENTITY.md during onboarding),
@@ -818,7 +818,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     const bsSnapKey = formatSessionKey(sessionKey);
     let bootstrapFiles = sessionBootstrapFileSnapshots.get(bsSnapKey);
     if (!bootstrapFiles) {
-      bootstrapFiles = await loadWorkspaceBootstrapFiles(deps.workspaceDir, bootstrapMaxChars);
+      bootstrapFiles = await loadWorkspaceBootstrapFiles(deps.workspaceDir);
       sessionBootstrapFileSnapshots.set(bsSnapKey, bootstrapFiles);
     }
 
@@ -837,7 +837,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       bootstrapFiles = filterBootstrapFilesForGroupChat(bootstrapFiles);
     }
 
-    bootstrapContextFiles = buildBootstrapContextFiles(bootstrapFiles, { maxChars: bootstrapMaxChars });
+    bootstrapContextFiles = buildBootstrapContextFiles(bootstrapFiles, {
+      maxChars: bootstrapMaxChars,
+      totalMaxChars: bootstrapTotalMaxChars,
+    });
     bootstrapFilesForReport = bootstrapFiles;
   }
 
@@ -1506,19 +1509,26 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     wrappedApiSystemPrompt = wrapExternalContent(apiSystemPrompt, { source: "api", includeWarning: true, onSuspiciousContent: deps.onSuspiciousContent });
   }
 
-  // Bootstrap content budget tracking
+  // Bootstrap content budget tracking (F4: denominator = systemPromptChars + toolDefOverheadChars)
   const bootstrapChars = bootstrapContextFiles.reduce((sum, f) => sum + f.content.length, 0);
   const systemPromptChars = systemPrompt.length;
+  const toolDefOverheadChars = mergedCustomTools.reduce((sum, t) => {
+    return sum + (t.name?.length ?? 0) + (t.description?.length ?? 0) +
+      (t.parameters ? JSON.stringify(t.parameters).length : 0);
+  }, 0);
+  const totalEstimatedChars = systemPromptChars + toolDefOverheadChars;
   if (systemPromptChars > 0) {
-    const bootstrapPercent = Math.round((bootstrapChars / systemPromptChars) * 100);
+    const bootstrapPercent = Math.round((bootstrapChars / totalEstimatedChars) * 100);
     if (bootstrapPercent > BOOTSTRAP_BUDGET_WARN_PERCENT) {
       logger.warn(
         {
           bootstrapChars,
           systemPromptChars,
+          toolDefOverheadChars,
+          totalEstimatedChars,
           bootstrapPercent,
           threshold: BOOTSTRAP_BUDGET_WARN_PERCENT,
-          hint: `Bootstrap files consume ${bootstrapPercent}% of system prompt; consider trimming AGENTS.md or reducing maxChars`,
+          hint: `Bootstrap files consume ${bootstrapPercent}% of estimated total prompt (system + tools); consider total bootstrap budget or reducing maxChars`,
           errorKind: "resource" as const,
         },
         "Bootstrap content exceeds budget threshold",
@@ -1721,7 +1731,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       systemPromptChars: systemPrompt.length,
       dynamicPreambleChars: dynamicPreamble.length,
       bootstrapChars,
-      bootstrapPercent: systemPromptChars > 0 ? Math.round((bootstrapChars / systemPromptChars) * 100) : 0,
+      bootstrapPercent: totalEstimatedChars > 0 ? Math.round((bootstrapChars / totalEstimatedChars) * 100) : 0,
       toolCount: mergedCustomTools.length,
       isFirstMessage: deps.isFirstMessageInSession ?? false,
       hasSpawnPacket: !!deps.spawnPacket,

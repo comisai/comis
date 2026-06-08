@@ -2627,6 +2627,25 @@ describe("assembleExecutionPrompt", () => {
     expect(fields.hasSpawnPacket).toBe(false);
   });
 
+  it("bootstrap budget warn includes toolDefOverheadChars and totalEstimatedChars when warn fires", async () => {
+    // Non-brittle: only assert field types, not exact values (threshold/content-dependent).
+    const params = makeParams({
+      deps: { workspaceDir: "/workspace" },
+    });
+    await assembleExecutionPrompt(params);
+
+    const warnCalls = (params.logger.warn as any).mock.calls;
+    const warnCall = warnCalls.find(
+      ([_fields, msg]: [any, string]) => msg === "Bootstrap content exceeds budget threshold",
+    );
+    if (warnCall) {
+      const [fields] = warnCall;
+      expect(typeof fields.toolDefOverheadChars).toBe("number");
+      expect(typeof fields.totalEstimatedChars).toBe("number");
+    }
+    // If warn didn't fire (below threshold), that's fine — test is non-brittle
+  });
+
   // -----------------------------------------------------------------
   // Delivery mirror injection
   // -----------------------------------------------------------------

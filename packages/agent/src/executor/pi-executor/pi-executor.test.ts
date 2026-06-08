@@ -1813,11 +1813,10 @@ describe("PiExecutor", () => {
 
       expect(mockLoadWorkspaceBootstrapFiles).toHaveBeenCalledWith(
         "/tmp/test-workspace",
-        20_000,
       );
       expect(mockBuildBootstrapContextFiles).toHaveBeenCalledWith(
         mockBootstrapFiles,
-        { maxChars: 20_000 },
+        expect.objectContaining({ maxChars: 20_000 }),
       );
       expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
         expect.objectContaining({
