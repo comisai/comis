@@ -5,6 +5,9 @@ import {
   deliveryEventToRow,
   diagnosticEventToRow,
   sessionSummaryEventToRow,
+  dagDegradedEventToRow,
+  healthBudgetExceededEventToRow,
+  mcpReconnectFailedEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
 import type { EventMap } from "@comis/core";
@@ -253,6 +256,110 @@ describe("sessionSummaryEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
+// dagDegradedEventToRow (I1 — LCD-divergence → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("dagDegradedEventToRow", () => {
+  it("maps a context:dag_degraded payload to a health_signal row (severity:warning, traceId undefined)", () => {
+    const row = dagDegradedEventToRow({
+      conversationId: "conv-1",
+      agentId: "a1",
+      sessionKey: "sk-1",
+      reason: "live_store_divergence",
+      durationMs: 5,
+      timestamp: 1000,
+    });
+
+    expect(row.timestamp).toBe(1000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("a1");
+    expect(row.sessionKey).toBe("sk-1");
+    expect(row.message).toBe("context:dag_degraded");
+    // The payload has NO traceId field — sessionKey correlates instead.
+    expect(row.traceId).toBeUndefined();
+
+    // details carries ONLY the closed-label signal + closed-union reason + a
+    // count — no message/summary text. Exactly {signal, reason, durationMs}.
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({ signal: "lcd_divergence", reason: "live_store_divergence", durationMs: 5 });
+  });
+
+  it("carries each divergence reason through verbatim (closed union — safe)", () => {
+    for (const reason of ["leaf_window_divergence", "condense_window_divergence"] as const) {
+      const row = dagDegradedEventToRow({
+        conversationId: "c",
+        agentId: "a",
+        sessionKey: "s",
+        reason,
+        durationMs: 0,
+        timestamp: 1,
+      });
+      const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+      expect(details.reason).toBe(reason);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// healthBudgetExceededEventToRow (I1 — MCP/alert budget → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("healthBudgetExceededEventToRow", () => {
+  it("maps a health:budget_exceeded payload to a health_signal row (counts/labels only)", () => {
+    const row = healthBudgetExceededEventToRow({
+      kind: "dependency",
+      count: 5,
+      windowMs: 60_000,
+      timestamp: 2000,
+    });
+
+    expect(row.timestamp).toBe(2000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("health:budget_exceeded");
+    // The event has no agentId/sessionKey — the row omits them (daemon-global).
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBeUndefined();
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({ signal: "alert_budget", kind: "dependency", count: 5, windowMs: 60_000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mcpReconnectFailedEventToRow (I1 — MCP reconnect churn → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("mcpReconnectFailedEventToRow", () => {
+  it("maps a mcp:server:reconnect_failed payload to a health_signal row and DROPS lastError (bounded payload)", () => {
+    const longBody = "boom ".repeat(120); // ~600 chars — must NOT reach the row.
+    const row = mcpReconnectFailedEventToRow({
+      serverName: "srv",
+      attempts: 3,
+      lastError: longBody,
+      timestamp: 3000,
+    });
+
+    expect(row.timestamp).toBe(3000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("mcp:server:reconnect_failed");
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBeUndefined();
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // label + count ONLY — the error body lives in the trajectory + daemon.log.
+    expect(details).toEqual({ signal: "mcp_reconnect_failed", serverName: "srv", attempts: 3 });
+    // Defensive: the body never leaks into the row at all.
+    expect(row.details ?? "").not.toContain("boom");
+    expect("lastError" in details).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // setupObsPersistence
 // ---------------------------------------------------------------------------
 
@@ -342,6 +449,60 @@ describe("setupObsPersistence", () => {
     expect(eventBus.on).toHaveBeenCalledWith("diagnostic:message_processed", expect.any(Function));
     // F2: the third subscription — per-session health rollup.
     expect(eventBus.on).toHaveBeenCalledWith("session:summary", expect.any(Function));
+    // I1 (Phase 160): the 3 health_signal subscriptions — LCD divergence + MCP health.
+    expect(eventBus.on).toHaveBeenCalledWith("context:dag_degraded", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("health:budget_exceeded", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("mcp:server:reconnect_failed", expect.any(Function));
+
+    // Cleanup
+    clearInterval(result.snapshotTimer);
+    result.drainAll();
+  });
+
+  it("I1: emitting each health-signal event pushes a category:health_signal row through the diagnostic buffer", () => {
+    const eventBus = createMockEventBus();
+    const obsStore = createMockObsStore();
+    const db = createMockDb();
+    const channelActivityTracker = createMockChannelActivityTracker();
+
+    const result = setupObsPersistence({
+      eventBus: eventBus as never,
+      obsStore: obsStore as never,
+      db: db as never,
+      channelActivityTracker: channelActivityTracker as never,
+      startupTimestamp: Date.now(),
+      snapshotIntervalMs: 300_000,
+    });
+
+    // a. LCD divergence (the widened context:dag_degraded).
+    eventBus.emit("context:dag_degraded", {
+      conversationId: "conv-1",
+      agentId: "a1",
+      sessionKey: "sk-1",
+      reason: "live_store_divergence",
+      durationMs: 7,
+      timestamp: 1000,
+    });
+    // b. Alert-budget threshold crossing.
+    eventBus.emit("health:budget_exceeded", { kind: "dependency", count: 5, windowMs: 60_000, timestamp: 1001 });
+    // c. MCP reconnect exhaustion (lastError must be dropped on the way to the row).
+    eventBus.emit("mcp:server:reconnect_failed", { serverName: "srv", attempts: 3, lastError: "x".repeat(500), timestamp: 1002 });
+
+    // Flush the diagnostic buffer.
+    vi.advanceTimersByTime(500);
+
+    // Exactly one health_signal row per event (3 total), each with the right message.
+    const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
+    const healthRows = calls
+      .map((c) => c[0] as { category?: string; message?: string; details?: string })
+      .filter((r) => r.category === "health_signal");
+    expect(healthRows).toHaveLength(3);
+    const messages = healthRows.map((r) => r.message).sort();
+    expect(messages).toEqual(["context:dag_degraded", "health:budget_exceeded", "mcp:server:reconnect_failed"]);
+
+    // The MCP row never carries the error body (bounded payload).
+    const mcpRow = healthRows.find((r) => r.message === "mcp:server:reconnect_failed")!;
+    expect(mcpRow.details ?? "").not.toContain("xxxx");
 
     // Cleanup
     clearInterval(result.snapshotTimer);
