@@ -10,6 +10,7 @@ import { sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import type { ExecutionResult } from "../executor/types.js";
 import type { ExecutionPlan } from "../planner/types.js";
+import { createThinkingTagFilter } from "../response-filter/thinking-tag-filter.js";
 
 // ---------------------------------------------------------------------------
 // Mock @comis/observability so session-index writes don't hit real fs
@@ -208,15 +209,15 @@ describe("createPiEventBridge", () => {
   // -------------------------------------------------------------------------
 
   describe("message_update / streaming", () => {
-    it("text_delta event calls onDelta with delta text", () => {
+    it("text_delta event calls onDelta with delta text and kind='text'", () => {
       const { listener } = createPiEventBridge(deps);
 
       listener(makeTextDeltaEvent("Hello ") as any);
       listener(makeTextDeltaEvent("world") as any);
 
       expect(deps.onDelta).toHaveBeenCalledTimes(2);
-      expect(deps.onDelta).toHaveBeenCalledWith("Hello ");
-      expect(deps.onDelta).toHaveBeenCalledWith("world");
+      expect(deps.onDelta).toHaveBeenCalledWith("Hello ", "text");
+      expect(deps.onDelta).toHaveBeenCalledWith("world", "text");
     });
 
     it("onDelta error does not propagate", () => {
@@ -228,7 +229,7 @@ describe("createPiEventBridge", () => {
 
       // Should not throw
       expect(() => listener(makeTextDeltaEvent("test") as any)).not.toThrow();
-      expect(throwingDelta).toHaveBeenCalledWith("test");
+      expect(throwingDelta).toHaveBeenCalledWith("test", "text");
     });
 
     it("no onDelta callback does not crash", () => {
@@ -244,13 +245,15 @@ describe("createPiEventBridge", () => {
   // -------------------------------------------------------------------------
 
   describe("message_update / thinking", () => {
-    it("thinking_delta event calls onDelta with delta text", () => {
+    it("thinking_delta does NOT call onDelta (confidentiality: chain-of-thought must never reach consumer)", () => {
+      // SA1: thinking_delta events must NOT be forwarded to the onDelta consumer.
+      // The bug: the old code called deps.onDelta(ame.delta) for thinking_delta,
+      // leaking qwen3.6/deepseek-r1 chain-of-thought verbatim to the channel.
       const { listener } = createPiEventBridge(deps);
 
       listener(makeThinkingDeltaEvent("reasoning chunk") as any);
 
-      expect(deps.onDelta).toHaveBeenCalledTimes(1);
-      expect(deps.onDelta).toHaveBeenCalledWith("reasoning chunk");
+      expect(deps.onDelta).not.toHaveBeenCalled();
     });
 
     it("thinking_delta does NOT flip textEmitted (reserved for text_delta)", () => {
@@ -261,15 +264,16 @@ describe("createPiEventBridge", () => {
       expect(getResult().textEmitted).toBe(false);
     });
 
-    it("thinking_delta followed by text_delta: onDelta called twice; textEmitted true", () => {
+    it("thinking_delta followed by text_delta: onDelta called ONCE with kind='text' only", () => {
+      // SA1: only text_delta events reach the consumer; thinking_delta is silently dropped.
+      // The old code called onDelta for both, leaking chain-of-thought before visible text.
       const { listener, getResult } = createPiEventBridge(deps);
 
       listener(makeThinkingDeltaEvent("reasoning") as any);
       listener(makeTextDeltaEvent("visible text") as any);
 
-      expect(deps.onDelta).toHaveBeenCalledTimes(2);
-      expect(deps.onDelta).toHaveBeenNthCalledWith(1, "reasoning");
-      expect(deps.onDelta).toHaveBeenNthCalledWith(2, "visible text");
+      expect(deps.onDelta).toHaveBeenCalledTimes(1);
+      expect(deps.onDelta).toHaveBeenCalledWith("visible text", "text");
       expect(getResult().textEmitted).toBe(true);
     });
 
@@ -278,6 +282,87 @@ describe("createPiEventBridge", () => {
 
       expect(() => listener(makeThinkingDeltaEvent(undefined) as any)).not.toThrow();
       expect(deps.onDelta).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // SA4 keystone — streaming delivery honors SDK typing
+  // -------------------------------------------------------------------------
+
+  describe("SA4 keystone — streaming delivery honors SDK typing", () => {
+    it("qwen3.6 leak replay: thinking_delta never reaches accumulated", () => {
+      // Regression: qwen3.6:35b emitted 'Let me use the yfinance tools...' as
+      // thinking_delta, which was forwarded to onDelta and appeared in the channel.
+      // The bridge must forward kind='thinking' but the consumer must not accumulate it.
+      const { listener } = createPiEventBridge(deps);
+
+      let accumulated = "";
+      // Simulate the execution-execute consumer with kind gate
+      const consumer = vi.fn((delta: string, kind: string) => {
+        if (kind === "text") accumulated += delta;
+      });
+      deps = createMockDeps({ onDelta: consumer });
+      const { listener: listener2 } = createPiEventBridge(deps);
+
+      listener2(makeThinkingDeltaEvent("Let me use the yfinance tools to look up the data") as any);
+      listener2(makeThinkingDeltaEvent(" The user wants big tech financials") as any);
+      listener2(makeTextDeltaEvent("$AAPL: 182.01") as any);
+
+      // Confidentiality: accumulated must NOT contain any reasoning content
+      expect(accumulated).not.toContain("Let me");
+      expect(accumulated).not.toContain("The user wants");
+      expect(accumulated).toBe("$AAPL: 182.01");
+      // Consumer was called 3 times: 2 thinking + 1 text
+      expect(consumer).toHaveBeenCalledTimes(3);
+      // thinking_delta calls: kind='thinking'
+      expect(consumer).toHaveBeenNthCalledWith(1, "Let me use the yfinance tools to look up the data", "thinking");
+      expect(consumer).toHaveBeenNthCalledWith(2, " The user wants big tech financials", "thinking");
+      // text_delta call: kind='text'
+      expect(consumer).toHaveBeenNthCalledWith(3, "$AAPL: 182.01", "text");
+    });
+
+    it("TTL is refreshed on thinking_delta events (typing indicator stays alive during reasoning)", () => {
+      // SA1: thinking_delta must still pass through the bridge as a kind='thinking' call
+      // so the consumer can refresh the typing TTL even though it won't accumulate the text.
+      const refreshTtl = vi.fn();
+      const consumer = vi.fn((delta: string, kind: string) => {
+        // Simulate execution-execute: refresh TTL on both kinds
+        refreshTtl();
+        void delta; void kind;
+      });
+      deps = createMockDeps({ onDelta: consumer });
+      const { listener } = createPiEventBridge(deps);
+
+      listener(makeThinkingDeltaEvent("reasoning step 1") as any);
+      listener(makeThinkingDeltaEvent("reasoning step 2") as any);
+
+      // TTL must have been refreshed for both thinking deltas
+      expect(refreshTtl).toHaveBeenCalledTimes(2);
+      // thinking_delta must be forwarded with kind='thinking' (not silently dropped)
+      expect(consumer).toHaveBeenCalledWith("reasoning step 1", "thinking");
+      expect(consumer).toHaveBeenCalledWith("reasoning step 2", "thinking");
+    });
+
+    it("textEmitted is text-only: thinking_delta does not set textEmitted; text_delta does", () => {
+      const { listener, getResult } = createPiEventBridge(deps);
+
+      listener(makeThinkingDeltaEvent("chain of thought") as any);
+      expect(getResult().textEmitted).toBe(false);
+
+      listener(makeTextDeltaEvent("visible answer") as any);
+      expect(getResult().textEmitted).toBe(true);
+    });
+
+    it("coached-model regression: text_delta containing <think>chain</think><final>answer</final> is properly filtered", () => {
+      // SA4: coached models still have their reasoning stripped.
+      // When enforceFinalTag=true, createThinkingTagFilter extracts only <final> content.
+      const filter = createThinkingTagFilter({ enforceFinalTag: true });
+      const input = "<think>chain</think><final>answer</final>";
+      const result = filter.feed(input);
+      const flushed = filter.flush();
+      const combined = result + (flushed ?? "");
+      expect(combined).toBe("answer");
+      expect(combined).not.toContain("chain");
     });
   });
 
