@@ -398,6 +398,78 @@ describe("resolveModelProfile — K2 boundary invariants", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // SA7: supportsPromptCache enriched with SDK Model.compat.cacheControlFormat
+  // and Model.cost.cacheRead. Covers openai-compat providers like
+  // Fireworks/OpenRouter that support Anthropic-style caching.
+  // Frontier byte-identical: Anthropic/Bedrock MUST still resolve true.
+  // Fail-safe direction: prefer false-negative over false-positive.
+  // ---------------------------------------------------------------------------
+  describe("SA7 supportsPromptCache SDK enrichment", () => {
+    it("SA7 supportsPromptCache=true for anthropic (frontier byte-identical)", () => {
+      const profile = resolveModelProfile({
+        id: "claude-sonnet-4-5",
+        provider: "anthropic",
+        contextWindow: 200_000,
+        maxTokens: 8_192,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("SA7 supportsPromptCache=true for amazon-bedrock (frontier byte-identical)", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-sonnet-4-5-20250929",
+        provider: "amazon-bedrock",
+        contextWindow: 200_000,
+        maxTokens: 8_192,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("SA7 supportsPromptCache=true when Model has compat.cacheControlFormat='anthropic' (openai-compat provider)", () => {
+      const profile = resolveModelProfile({
+        id: "accounts/fireworks/models/llama-v3p1-70b-instruct",
+        provider: "fireworks",
+        contextWindow: 131_072,
+        maxTokens: 16_384,
+        reasoning: false,
+        input: ["text"],
+        compat: { cacheControlFormat: "anthropic" },
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("SA7 supportsPromptCache=true when Model has cost.cacheRead>0 (native caching signal)", () => {
+      const profile = resolveModelProfile({
+        id: "accounts/fireworks/models/llama-v3p1-70b-instruct",
+        provider: "fireworks",
+        contextWindow: 131_072,
+        maxTokens: 16_384,
+        reasoning: false,
+        input: ["text"],
+        cost: { cacheRead: 0.2 },
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("SA7 supportsPromptCache=false for plain non-caching provider (no compat.cacheControlFormat, cost.cacheRead=0)", () => {
+      const profile = resolveModelProfile({
+        id: "gpt-4o",
+        provider: "openai",
+        contextWindow: 128_000,
+        maxTokens: 8_192,
+        reasoning: false,
+        input: ["text", "image"],
+        cost: { cacheRead: 0 },
+      });
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // CR-02: supportsPromptCache must reflect the REAL provider-family capability.
   // The factory/cache-detection swap reads
   //   `config.modelProfile?.supportsPromptCache ?? isAnthropicFamily(provider)`,
