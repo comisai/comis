@@ -78,6 +78,7 @@ import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
 import type { ModelProfile } from "./model-profile.js";
+import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import * as os from "node:os";
 
 // ---------------------------------------------------------------------------
@@ -951,10 +952,16 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           // A fully-defaulted RagConfig field (same posture as mmr/forget), so it passes DIRECTLY.
           // Default-OFF (`enabled:false`) ⇒ the pinned lane is skipped (byte-identical).
           pinned: config.rag.pinned,
-          // R3: forward the base-score floor gate. A fully-defaulted RagConfig field
-          // (.default(0)), so it passes DIRECTLY. Default=0 → no filter (byte-identical).
+          // R3: forward the base-score floor gate.
+          // SD2 (Phase 158): capability-gated baseFloor.
+          // Resolved: explicit config.rag.baseFloor (>0) wins; for small/nano with
+          // baseFloor===0 (schema default/"unset"), applies SMALL_NANO_DEFAULT_BASE_FLOOR=0.15.
+          // frontier/mid with no config: effective floor remains 0 (byte-identical).
+          // Fail-closed when modelProfile absent → 0 floor (frontier-equivalent behavior).
           // T-153-poison: boosts cannot resurrect a low-base memory (floor gates pre-boost).
-          baseFloor: (config.rag as typeof config.rag & { baseFloor?: number }).baseFloor,
+          baseFloor: params.modelProfile !== undefined
+            ? resolveScaffoldDefaults(params.modelProfile, config).baseFloor
+            : (config.rag as typeof config.rag & { baseFloor?: number }).baseFloor,
           ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },
       );

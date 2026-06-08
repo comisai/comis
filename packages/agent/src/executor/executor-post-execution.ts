@@ -100,6 +100,7 @@ import { createHash, randomUUID } from "node:crypto";
 // R4: critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
+import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -1065,7 +1066,33 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
   }
 
-  if (shouldRunCritic({ capabilityClass, config, executionPlanRef, provider, logger: deps.logger })) { // R4: critic hook (WR-02: keyless-only gate)
+  // SD3 (Phase 158): resolve capability-gated verification default before the gate check.
+  // modelProfile is not in scope at this layer — use a synthetic profile derived from
+  // capabilityClass (same approach as buildSyntheticCriticDeps; capabilityClass is threaded
+  // since Phase 155 via PostExecutionParams). scaffoldLevel follows the model-profile invariant:
+  // small/nano → "max"; frontier/mid → "light"; unknown → "light" (fail-closed).
+  // operationModels defaults to {} when not set (no distinct critic → cost-gate returns false).
+  // capabilityClass is `CapabilityClass | undefined`; undefined → treat as frontier (fail-closed).
+  const resolvedCapabilityClass = capabilityClass ?? "frontier";
+  const syntheticProfileForDefaults = {
+    scaffoldLevel: (resolvedCapabilityClass === "small" || resolvedCapabilityClass === "nano") ? "max" as const : "light" as const,
+    reasoningStyle: "none" as const,
+    maxOutputTokens: 4096, contextWindow: 8192,
+    capabilityClass: resolvedCapabilityClass,
+    securityLevel: "standard" as const,
+    supportsVision: false, supportsTools: true, supportsPromptCache: false,
+    supportsServerToolSearch: false, supportsStructuredOutput: false,
+  };
+  const { verificationEnabled: effectiveVerification } = resolveScaffoldDefaults(
+    syntheticProfileForDefaults,
+    config,
+    { provider, agentModel: config.model, operationModels: config.operationModels ?? {} },
+  );
+  if (shouldRunCritic({ // R4: critic hook (WR-02: keyless-only gate)
+    capabilityClass, config, executionPlanRef, provider,
+    logger: deps.logger,
+    effectiveEnabled: effectiveVerification, // SD3: pre-resolved via cost-gate
+  })) {
     const { deps: cd, maxRetries: mr } = buildSyntheticCriticDeps({
       capabilityClass, provider, modelId: config.model, agentId: effectiveAgentId,
       canaryToken: generateCanaryToken(formattedKey, executionId), // WR-03: formatted key, not String(obj)

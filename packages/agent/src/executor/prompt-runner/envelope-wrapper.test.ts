@@ -195,10 +195,29 @@ describe("R1: GoalAnchor tail injection via wrapEnvelope", () => {
     expect(anchorIdx).toBeGreaterThan(msgIdx);
   });
 
-  it("R1: scaffoldLevel=light (frontier) → no goalAnchor in output", () => {
+  it("R1: scaffoldLevel=light (frontier) with explicit enabled=true → goalAnchor INJECTS (SD1: explicit true on frontier wins)", () => {
+    // SD1 (Phase 158): resolveScaffoldDefaults wire — `explicit ?? capabilityDefault`.
+    // explicit=true wins even on frontier. The old gate (`scaffoldLevel=max AND enabled=true`)
+    // blocked frontier injection; the new gate (`resolveScaffoldDefaults().goalAnchorEnabled`)
+    // correctly returns true when explicit=true (Test 4 from scaffold-defaults.test.ts).
+    // For frontier with NO explicit config, goalAnchorEnabled=false (capability default OFF).
     const params = makeParams({
       scaffoldLevel: "light",
-      goalAnchorEnabled: true,
+      goalAnchorEnabled: true,   // explicit true → wins on frontier
+      planActive: true,
+      planRequest: "Build the feature",
+      msgText: "Do the thing",
+    });
+    const result = wrapEnvelope(params);
+    // SD1: explicit true on frontier → GoalAnchor injects.
+    expect(result.messageText).toContain("[GoalAnchor:");
+  });
+
+  it("R1: scaffoldLevel=light (frontier) with NO goalAnchor config → no injection (capability default OFF)", () => {
+    // SD5: frontier with unconfigured goalAnchor → goalAnchorEnabled=false (byte-identical to v2.14).
+    const params = makeParams({
+      scaffoldLevel: "light",
+      goalAnchorEnabled: undefined, // leave block absent
       planActive: true,
       planRequest: "Build the feature",
       msgText: "Do the thing",
@@ -219,15 +238,14 @@ describe("R1: GoalAnchor tail injection via wrapEnvelope", () => {
     expect(result.messageText).not.toContain("[GoalAnchor:");
   });
 
-  it("CR-02: goalAnchor UNCONFIGURED (undefined) → no goalAnchor even for small model with active plan", () => {
-    // The schema default is enabled=false (opt-in). When an operator never
-    // configures goalAnchor, config.goalAnchor is undefined and the feature
-    // MUST stay off (behavior-neutral until configured). The prior gate
-    // `config.goalAnchor?.enabled !== false` injected for every small/nano agent
-    // because `undefined?.enabled !== false` is true — this pins the fix.
+  it("SD1: goalAnchor UNCONFIGURED (undefined) + small model → GoalAnchor INJECTS (capability default ON)", () => {
+    // SD1 (Phase 158): for small/nano, the capability default is ON (goalAnchorEnabled=true).
+    // An operator who never configures goalAnchor gets GoalAnchor automatically for small/nano.
+    // To disable: set goalAnchor.enabled=false explicitly. This is the capability-gated default.
+    // (The old CR-02 behavior — unconfigured=off — is now replaced by the SD1 default-ON design.)
     const params = makeParams({
       scaffoldLevel: "max",
-      goalAnchorEnabled: undefined, // leave the block absent
+      goalAnchorEnabled: undefined, // leave the block absent → resolveScaffoldDefaults uses capability default
       planActive: true,
       planRequest: "Build the feature",
       msgText: "Do the thing",
@@ -235,6 +253,20 @@ describe("R1: GoalAnchor tail injection via wrapEnvelope", () => {
     expect(
       (params.config as { goalAnchor?: unknown }).goalAnchor,
     ).toBeUndefined();
+    const result = wrapEnvelope(params);
+    // SD1: capability default ON for small/nano → GoalAnchor injects even without explicit config.
+    expect(result.messageText).toContain("[GoalAnchor:");
+  });
+
+  it("SD1: goalAnchor UNCONFIGURED + small model + explicit false → no injection (explicit false wins)", () => {
+    // The explicit false always wins (force-off path for operators who want to disable).
+    const params = makeParams({
+      scaffoldLevel: "max",
+      goalAnchorEnabled: false, // explicit false
+      planActive: true,
+      planRequest: "Build the feature",
+      msgText: "Do the thing",
+    });
     const result = wrapEnvelope(params);
     expect(result.messageText).not.toContain("[GoalAnchor:");
   });

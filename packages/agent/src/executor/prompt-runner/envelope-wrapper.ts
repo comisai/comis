@@ -27,6 +27,7 @@ import {
 import { wrapInEnvelope } from "../../envelope/message-envelope.js";
 import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
 import { buildGoalAnchorBlock } from "./goal-anchor.js";
+import { resolveScaffoldDefaults } from "../scaffold-defaults.js";
 
 import type { RunPromptParams } from "./prompt-runner-types.js";
 
@@ -105,18 +106,16 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
   }
 
   // R1: GoalAnchor tail injection — APPENDED after user message text.
-  // Gated on scaffoldLevel=max (small/nano profiles only; frontier/mid = no injection).
-  // Requires: active ExecutionPlan + goalAnchor EXPLICITLY enabled in config.
-  // The schema default is enabled=false (opt-in, behavior-neutral until configured),
-  // but the field is `.optional()` with no top-level `.default()`, so an unconfigured
-  // agent parses to `undefined`. Gate on `=== true` (NOT `!== false`) so an absent
-  // block stays OFF — `undefined?.enabled !== false` is `true` and would inject for
-  // every small/nano agent that never opted in (CR-02). Contrast SEP, whose schema
-  // default is enabled=true, where `!== false` is correct (default-ON).
+  // SD1 (Phase 158): GoalAnchor capability-gated default.
+  // Effective flag = explicit config ?? capability default (small/nano=true, frontier/mid=false).
+  // Precedence: explicit false on small/nano → stays OFF. explicit true on frontier → turns ON.
+  // resolveScaffoldDefaults reads config.goalAnchor?.enabled which is `boolean | undefined`
+  // from PerAgentConfig (the block is .optional()); do NOT re-parse through GoalAnchorConfigSchema.
+  // Fail-closed when modelProfile is absent (no profile → frontier-equivalent → no injection).
   // T-153-02a: injection is bounded by maxChars (500 default); no untrusted data.
   if (
-    modelProfile?.scaffoldLevel === "max" &&
-    config.goalAnchor?.enabled === true &&
+    modelProfile !== undefined &&
+    resolveScaffoldDefaults(modelProfile, config).goalAnchorEnabled &&
     executionPlanRef.current?.active
   ) {
     const goalAnchorBlock = buildGoalAnchorBlock(
