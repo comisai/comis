@@ -317,10 +317,16 @@ describe("resolveProviderCredential — Source C (oauth_profile)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SA5 RED tests — canonicalEnvKeyHint uses SDK findEnvKeys
+// SA5 tests — canonicalEnvKeyHint messaging contract
 // ---------------------------------------------------------------------------
+// NOTE (SA5 deviation): The plan proposed replacing canonicalEnvKeyHint with
+// findEnvKeys(provider)?.[0] from @earendil-works/pi-ai. However, findEnvKeys
+// only returns env-var names that are CURRENTLY SET in process.env — it cannot
+// return canonical names for the "no credential found" error path where
+// canonicalEnvKeyHint is called. The local hardcoded map is therefore retained.
+// The tests below verify the messaging contract instead of the internal impl.
 
-describe("SA5 canonicalEnvKeyHint — SDK findEnvKeys delegation", () => {
+describe("SA5 canonicalEnvKeyHint — messaging contract", () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
@@ -333,25 +339,20 @@ describe("SA5 canonicalEnvKeyHint — SDK findEnvKeys delegation", () => {
     process.env = originalEnv;
   });
 
-  it("SA5 canonicalEnvKeyHint uses findEnvKeys for anthropic", () => {
-    // Rejection message for anthropic (no entry, no env key) must contain
-    // "ANTHROPIC_API_KEY" — the canonical hint the SDK returns via findEnvKeys.
-    // FAILS TODAY if the local hardcoded map is removed.
-    // GREEN after SA5: canonicalEnvKeyHint delegates to findEnvKeys which returns
-    // ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN"] → first is "ANTHROPIC_API_KEY".
+  it("SA5 canonicalEnvKeyHint includes ANTHROPIC_API_KEY hint in rejection message", () => {
+    // canonicalEnvKeyHint returns "ANTHROPIC_API_KEY" for "anthropic" —
+    // the rejection message must include this hint for operator guidance.
+    // MESSAGING-ONLY: the hint is in the error message, never used for resolution.
     const r = resolveProviderCredential("anthropic", {
       providerEntries: {},
       secretManager: { has: () => false },
     });
     expect(r.ok).toBe(false);
-    // The error message must include the canonical env-key hint from the SDK.
-    // This test is messaging-only — canonicalEnvKeyHint is used only in error messages.
     expect(r.reason).toContain("ANTHROPIC_API_KEY");
   });
 
   it("SA5 canonicalEnvKeyHint safe-fallback for unknown provider", () => {
-    // For a completely unknown provider, findEnvKeys returns undefined.
-    // canonicalEnvKeyHint must not throw and must return undefined.
+    // For a completely unknown provider, canonicalEnvKeyHint returns undefined.
     // The rejection message is still actionable (env_list fallback), just without a hint.
     const r = resolveProviderCredential("my-custom-provider", {
       providerEntries: {},

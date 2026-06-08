@@ -27,15 +27,7 @@
  * @module
  */
 import { getEnvApiKey, getProviders, getModels, type KnownProvider } from "@earendil-works/pi-ai";
-import type { ProviderEntry } from "@comis/core";
-
-/**
- * Provider types that don't need an API key. Mirrors agent's
- * KEYLESS_PROVIDER_TYPES at model-registry-adapter.ts:60 — extended here to
- * include lm-studio (the agent-side may also extend in a follow-up; the
- * tool guide already documents lm-studio as keyless).
- */
-const KEYLESS_PROVIDER_TYPES = new Set<string>(["ollama", "lm-studio"]);
+import { KEYLESS_PROVIDER_TYPES, type ProviderEntry } from "@comis/core";
 
 export interface CredentialResolverDeps {
   /** Provider-entry map from comis config (providers.entries). */
@@ -209,10 +201,15 @@ function buildRejectionMessage(
  * error messages. Returns undefined when pi-ai doesn't have a canonical
  * mapping (custom providers must use providers.entries).
  *
- * Note: this duplicates pi-ai's internal envMap (env-api-keys.js) for
- * messaging only — not used for resolution. The actual check uses
- * getEnvApiKey() which always wins. Acceptable to be slightly out-of-sync
- * with pi-ai upgrades: hint quality only, never load-bearing.
+ * SA5 note: `findEnvKeys(provider)` from @earendil-works/pi-ai was evaluated
+ * as the dedup target, but it only returns env-var names that are CURRENTLY SET
+ * in process.env — not canonical names for an unknown-credential error message.
+ * `canonicalEnvKeyHint` is called precisely in the no-credential error path
+ * (Source B failed, env var NOT set), so `findEnvKeys` would always return
+ * undefined here. The local map is retained: it is MESSAGING-ONLY and never
+ * used for resolution; the actual check uses getEnvApiKey() which always wins.
+ * Acceptable to be slightly out-of-sync with pi-ai upgrades: hint quality only,
+ * never load-bearing.
  */
 function canonicalEnvKeyHint(provider: string): string | undefined {
   const knownMap: Record<string, string> = {
