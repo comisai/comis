@@ -1236,16 +1236,36 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // on the deferred compaction, which rides the same queue BEHIND it).
     const ingestStart = deps.clock.now();
     await store.runOnConversation(conversationId, () =>
-      ingestTurnGuarded(store, scope, live, deps.clock.now(), deps.logger, () => {
-        deps.eventBus.emit("context:dag_degraded", {
-          conversationId: scope.conversationId,
-          agentId: scope.agentId,
-          sessionKey: scope.sessionKey,
-          reason: "fail_closed_rollover",
-          durationMs: Math.max(0, deps.clock.now() - ingestStart),
-          timestamp: deps.clock.now(),
-        });
-      }),
+      ingestTurnGuarded(
+        store,
+        scope,
+        live,
+        deps.clock.now(),
+        deps.logger,
+        () => {
+          deps.eventBus.emit("context:dag_degraded", {
+            conversationId: scope.conversationId,
+            agentId: scope.agentId,
+            sessionKey: scope.sessionKey,
+            reason: "fail_closed_rollover",
+            durationMs: Math.max(0, deps.clock.now() - ingestStart),
+            timestamp: deps.clock.now(),
+          });
+        },
+        // Phase 160 I1: the WR-01 live/store-divergence skip emits a content-free
+        // context:dag_degraded so the divergence persists as a health_signal row
+        // (queryable by the fleet lens) instead of being a Pino-only WARN.
+        () => {
+          deps.eventBus.emit("context:dag_degraded", {
+            conversationId: scope.conversationId,
+            agentId: scope.agentId,
+            sessionKey: scope.sessionKey,
+            reason: "live_store_divergence",
+            durationMs: Math.max(0, deps.clock.now() - ingestStart),
+            timestamp: deps.clock.now(),
+          });
+        },
+      ),
     );
 
     // The two NON-FATAL afterTurn passes (T-129-18 / T-130-07 — never reject):
