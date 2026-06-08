@@ -1,0 +1,4 @@
+# Run artifacts — never committed.
+results/
+*.env
+!*.env.example
