@@ -121,7 +121,7 @@ describe("v2.15 Fleet-Health GA-readiness — the milestone surfaces are present
     ).toContain('.command("fleet")');
   });
 
-  it("queries the 3 I-track diagnostic categories (health_signal / model_health / config_posture)", () => {
+  it("reads the 3 I-track diagnostic categories (health_signal / model_health / config_posture)", () => {
     // The fleet lens surfaces the Phase-160 I-track signals via sqlite
     // queryDiagnostics — by construction it never greps daemon.log. The three
     // category literals are the load-bearing read keys.

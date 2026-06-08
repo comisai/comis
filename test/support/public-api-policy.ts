@@ -1986,6 +1986,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "assembleIncidentReportFromSources",
       "makeRealReader",
       "IncidentSourceReader",
+      // Fleet-health assembler (Phase 162-01 RE-PROVE seam) — re-exported from
+      // the TOP-LEVEL daemon barrel so the keyless deterministic fleet RE-PROVE
+      // scenario can call it over a seeded tmp store via the clean @comis/daemon
+      // alias (the live config aliases only the top-level @comis/daemon →
+      // daemon/dist/index.js, with no obs-handlers subpath alias). Exact analog
+      // of assembleIncidentReportFromSources above: the sole external consumer
+      // imports it statically from @comis/daemon under test/**, which the
+      // public-export-consumers AST walker excludes, so this orphan list is the
+      // canonical place to record the planned test consumer. SECURITY: the
+      // surface widens by EXACTLY the assembler — the admin gate stays on the
+      // bindObsFleetHealthHandlers RPC (NOT re-exported), and the assembler
+      // itself excludes synthetic sessions (excludeSynthetic: true) and reads
+      // only sqlite + the session-index JSONL (never daemon.log).
+      // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts (Plan 162-01)
+      "assembleFleetHealthReport",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
