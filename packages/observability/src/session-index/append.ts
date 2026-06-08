@@ -72,6 +72,14 @@ export function appendSessionIndexEntry(
   if (isTest) {
     const realComisDir = safePath(os.homedir(), ".comis");
     if (dataDir === realComisDir || dataDir.startsWith(realComisDir + "/")) {
+      // @allow-throw: deliberate D9 test-hygiene safety guard. This throw fires
+      // ONLY under VITEST/NODE_ENV=test when a test process targets the real
+      // ~/.comis — a fail-loud tripwire for the Phase-149-02 leak class (a test
+      // run silently polluting the operator's production telemetry). It is NOT a
+      // production control-flow path (production never sets VITEST/NODE_ENV=test),
+      // is caught nowhere downstream by design (it must surface the offending
+      // test, not be swallowed), and its presence is statically locked by
+      // test/architecture/no-prod-datadir-in-tests.test.ts.
       throw new Error(
         `appendSessionIndexEntry: a test process (VITEST/NODE_ENV=test) must not write ` +
           `under the real ${realComisDir}. Use a tmp dir (os.tmpdir()) in tests.`,
