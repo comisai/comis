@@ -44,12 +44,12 @@
   "dependencies": {
     "@comis/core": "workspace:*",
     "@comis/shared": "workspace:*",
-    "@earendil-works/pi-agent-core": "0.78.0",
-    "@earendil-works/pi-coding-agent": "0.78.0",
+    "@earendil-works/pi-agent-core": "0.78.1",
+    "@earendil-works/pi-coding-agent": "0.78.1",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "typescript": "5.9.3",
-    "vitest": "4.1.7"
+    "vitest": "4.1.8"
   }
 }
