@@ -38,7 +38,6 @@ import type { Message, AssistantMessage, ToolResultMessage, ToolCall } from "@ea
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import type { StreamFnWrapper } from "./types.js";
 import type { ModelProfile } from "../model-profile.js";
-import { repairToolCallJSON } from "../tool-call-repair.js";
 
 /**
  * Create a stream wrapper that attempts shape-only repair of malformed tool-call
