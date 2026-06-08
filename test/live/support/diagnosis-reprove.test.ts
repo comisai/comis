@@ -139,4 +139,47 @@ describe("DIAG-reprove substrate — field-level IncidentReport asserts over the
       expect(msg).not.toContain("web_fetch");
     }
   });
+
+  // WR-02: the negative case above feeds a 503 report, which trips the FIRST guard
+  // (likelyRootCause.code) and returns BEFORE the other four guards — so detail /
+  // degraded / breakerTimeline / costUsd were never independently proven to throw on
+  // a violation (a typo in any one — a flipped comparison, a wrong field path — would
+  // pass the suite, since the real assembler always emits a self-consistent 678
+  // report where every field moves together). These mutate a PASSING 678 report ONE
+  // field at a time, so each guard is reached and field-defended in isolation. Each
+  // also asserts the throw stays field-name-only (the residency rule).
+  it("assert678Report throws on a 678-code report whose detail lacks web_fetch", async () => {
+    const r = await obsExplainOverFixture("session-678314278");
+    const bad: IncidentReport = {
+      ...r,
+      likelyRootCause: { ...r.likelyRootCause!, detail: "a generic degraded session, no mechanism named" },
+    };
+    expect(() => assert678Report(bad)).toThrow(/likelyRootCause\.detail/);
+  });
+
+  it("assert678Report throws on a 678-code report with outcome.degraded=false", async () => {
+    const r = await obsExplainOverFixture("session-678314278");
+    const bad: IncidentReport = { ...r, outcome: { ...r.outcome, degraded: false } };
+    expect(() => assert678Report(bad)).toThrow(/outcome\.degraded/);
+  });
+
+  it("assert678Report throws on a 678-code report with an empty breakerTimeline", async () => {
+    const r = await obsExplainOverFixture("session-678314278");
+    const bad: IncidentReport = { ...r, breakerTimeline: [] };
+    expect(() => assert678Report(bad)).toThrow(/breakerTimeline/);
+  });
+
+  it("assert678Report throws on a 678-code report with the wrong cost.costUsd", async () => {
+    const r = await obsExplainOverFixture("session-678314278");
+    // 9.99 is ~8.67 off the frozen 1.320669 target — fires under either the old 1e-4
+    // or the WR-03-tightened 5e-5 tolerance.
+    const bad: IncidentReport = { ...r, cost: { ...r.cost, costUsd: 9.99 } };
+    expect(() => assert678Report(bad)).toThrow(/cost\.costUsd/);
+    // Residency: the cost-mismatch throw names the field only, never the value.
+    try {
+      assert678Report(bad);
+    } catch (e) {
+      expect((e as Error).message).not.toContain("9.99");
+    }
+  });
 });
