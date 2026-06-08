@@ -286,7 +286,11 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
         seq: asNumber(rec.seq) ?? acc.seq++,
         toolName: tool,
         originalChars: asNumber(data.originalChars) ?? 0,
-        pointer: relativizeDiskPath(asString(data.diskPath)),
+        // The trajectory translator writes the workspace-relative pointer as
+        // `diskPathRel` (translate-payload.ts) — NOT `diskPath` (that is the raw
+        // Pino LOG-shape field, read in handleLogRecord). Reading `diskPath` here
+        // silently yielded "<offloaded>" for every post-Phase-151 event-shape session.
+        pointer: relativizeDiskPath(asString(data.diskPathRel)),
       });
       return;
     }

@@ -264,7 +264,10 @@ describe("toIncidentSignals — structured event shape (production)", () => {
       event("tool.result_offloaded", 4, {
         toolName: "web_fetch",
         originalChars: 53095,
-        diskPath: "workspace/rel/path/call_x.json",
+        // The real trajectory event carries the pointer as `diskPathRel`
+        // (translate-payload.ts), NOT `diskPath`. Using the real field name here
+        // exercises the actual post-151 event-shape path (was a silent data-loss bug).
+        diskPathRel: "workspace/rel/path/call_x.json",
       }),
     ]);
   }
