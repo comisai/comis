@@ -215,4 +215,70 @@ describe("createToolCallRepairWrapper", () => {
     const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
     expect(wrapper.name).toBe("toolCallRepairWrapper");
   });
+
+  // SA10-c: legit empty-args string '{}' MUST NOT be flagged irreparable
+  it("SA10-c: legit empty-args string '{}' passes through as parsed {} (NOT flagged irreparable)", () => {
+    const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
+    const wrappedFn = wrapper(base);
+
+    const toolCall = makeToolCall("no_args", "{}" as any);
+    const assistantMsg = makeAssistantMessage([toolCall]);
+    const ctx = makeContext([assistantMsg]);
+
+    wrappedFn({} as any, ctx, {} as any);
+
+    const capturedCtx = (base as any).mock.calls[0][1] as { messages: Message[] };
+    // Must be exactly 1 message — no synthetic toolResult injected
+    expect(capturedCtx.messages.length).toBe(1);
+    const outMsg = capturedCtx.messages[0] as typeof assistantMsg;
+    const outBlock = outMsg.content[0] as typeof toolCall;
+    // Parsed result of "{}" is {}
+    expect(outBlock.arguments).toEqual({});
+    // No synthetic error path — warn must NOT have been called
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  // SA10-d: empty string rawArgs MUST NOT be flagged irreparable
+  it("SA10-d: empty string rawArgs passes through as parsed {} (NOT flagged irreparable)", () => {
+    const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
+    const wrappedFn = wrapper(base);
+
+    const toolCall = makeToolCall("no_args", "" as any);
+    const assistantMsg = makeAssistantMessage([toolCall]);
+    const ctx = makeContext([assistantMsg]);
+
+    wrappedFn({} as any, ctx, {} as any);
+
+    const capturedCtx = (base as any).mock.calls[0][1] as { messages: Message[] };
+    // Must be exactly 1 message — no synthetic toolResult injected
+    expect(capturedCtx.messages.length).toBe(1);
+    const outMsg = capturedCtx.messages[0] as typeof assistantMsg;
+    const outBlock = outMsg.content[0] as typeof toolCall;
+    // parseStreamingJson("") returns {}
+    expect(outBlock.arguments).toEqual({});
+    // No synthetic error path — warn must NOT have been called
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  // SA10-e: valid JSON string MUST be parsed to the same object as JSON.parse (byte-identical)
+  it("SA10-e: valid JSON string arg parsed to object byte-identical to JSON.parse", () => {
+    const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
+    const wrappedFn = wrapper(base);
+
+    const toolCall = makeToolCall("exec", '{"command":"ls"}' as any);
+    const assistantMsg = makeAssistantMessage([toolCall]);
+    const ctx = makeContext([assistantMsg]);
+
+    wrappedFn({} as any, ctx, {} as any);
+
+    const capturedCtx = (base as any).mock.calls[0][1] as { messages: Message[] };
+    // Must be exactly 1 message — no synthetic toolResult injected
+    expect(capturedCtx.messages.length).toBe(1);
+    const outMsg = capturedCtx.messages[0] as typeof assistantMsg;
+    const outBlock = outMsg.content[0] as typeof toolCall;
+    // Result must equal JSON.parse('{"command":"ls"}')
+    expect(outBlock.arguments).toEqual({ command: "ls" });
+    // No synthetic error path — warn must NOT have been called
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
 });
