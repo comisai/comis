@@ -1,0 +1,10 @@
+{
+  "signals": [
+    { "signal": "lcd-ingest-skipped", "byHandCount": 7, "location": "daemon.log", "alreadyStructured": false, "errorKind": "precondition" },
+    { "signal": "config-posture", "byHandCount": 3, "location": "daemon.log", "alreadyStructured": false, "errorKind": "config" },
+    { "signal": "model-health-deferred", "byHandCount": 1, "location": "native-stdout", "alreadyStructured": false },
+    { "signal": "mcp-reconnect", "byHandCount": 3, "location": "trajectory.jsonl", "alreadyStructured": false, "errorKind": "mcp" },
+    { "signal": "budget-exceeded", "byHandCount": 0, "location": "trajectory.jsonl", "alreadyStructured": false },
+    { "signal": "session-degradation", "byHandCount": 0, "location": "obs_diagnostics", "alreadyStructured": true }
+  ]
+}

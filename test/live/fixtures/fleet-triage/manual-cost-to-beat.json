@@ -1,0 +1,9 @@
+{
+  "severityHistogram": { "error": 0, "warn": 12, "info": 980, "debug": 52 },
+  "groupByMessage": [
+    { "message": "LCD ingest skipped: live/store divergence", "count": 7 },
+    { "message": "config posture (TLS-off / stranded secret / canary-fallback)", "count": 3 },
+    { "message": "MCP client error / reconnect_failed", "count": 3 }
+  ],
+  "pm2ModelScrape": "Manually scrape pm2 native stdout for the node-llama-cpp embedding tokenizer 'may not work as intended' line (deferred — invisible to Pino; the manual step the lens cannot yet replace)."
+}
