@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 ---
+import { FACTS } from "../data/facts";
 ---
 
 <section class="px-6 py-20 md:py-28">
@@ -9,7 +10,7 @@
       Pay less. Do more.
     </h2>
     <p class="text-muted text-lg mb-14 max-w-2xl">
-      Frontier models aren't cheap. Comis has the most advanced prompt cache management available for Anthropic &mdash; 15+ dedicated optimizations that cut your bill by 80%+.
+      Frontier models aren't cheap. Comis has the most advanced prompt cache management available for Anthropic - 15+ dedicated optimizations that cut your bill {FACTS.costs.savingsPct}.
     </p>
 
     <div class="grid md:grid-cols-3 gap-8">
@@ -20,13 +21,13 @@
           <span class="text-muted text-lg line-through">$26</span>
         </div>
         <p class="text-sm text-muted mt-3">76-call Opus 4.6 session</p>
-        <p class="text-xs text-muted mt-1">$5.02 cached vs $26.42 uncached</p>
+        <p class="text-xs text-muted mt-1">{FACTS.costs.cachedSession} cached vs {FACTS.costs.uncachedSession} uncached</p>
       </div>
 
       <!-- Stat 2: Cache hit rate -->
       <div class="bg-navy-light border border-white/5 rounded-xl p-8 text-center">
         <div class="mb-2">
-          <span class="text-4xl md:text-5xl font-extrabold text-teal">94%</span>
+          <span class="text-4xl md:text-5xl font-extrabold text-teal">{FACTS.costs.cacheHitRate}</span>
         </div>
         <p class="text-sm text-muted mt-3">Cache hit rate</p>
         <p class="text-xs text-muted mt-1">Of input tokens served from cache</p>
@@ -35,10 +36,10 @@
       <!-- Stat 3: Pipeline cost -->
       <div class="bg-navy-light border border-white/5 rounded-xl p-8 text-center">
         <div class="mb-2">
-          <span class="text-4xl md:text-5xl font-extrabold text-white">$2.11</span>
+          <span class="text-4xl md:text-5xl font-extrabold text-white">{FACTS.costs.pipelineCost}</span>
         </div>
         <p class="text-sm text-muted mt-3">8-agent trading pipeline</p>
-        <p class="text-xs text-muted mt-1">788K tokens across a full DAG run</p>
+        <p class="text-xs text-muted mt-1">{FACTS.costs.pipelineTokens} tokens across a full DAG run</p>
       </div>
     </div>
 
@@ -77,14 +78,14 @@
       </div>
 
       <p class="text-sm text-muted mt-4">
-        1-hour cache writes are <span class="text-white font-medium">mathematically impossible to break even</span> on Opus. Comis uses adaptive 5-minute TTL escalation &mdash; the only strategy that consistently saves money at scale.
+        1-hour cache writes are <span class="text-white font-medium">mathematically impossible to break even</span> on Opus. Comis uses adaptive 5-minute TTL escalation - the only strategy that consistently saves money at scale.
       </p>
     </div>
 
     <!-- How it works -->
     <div class="mt-10 bg-navy-light/50 border border-white/5 rounded-xl p-6 max-w-3xl mx-auto">
       <p class="text-sm text-muted leading-relaxed">
-        <span class="text-white font-medium">Under the hood:</span> 15+ dedicated optimizations including cache fence protection that prevents the context engine from breaking the cached prefix, sub-agent spawn staggering for pipeline cost sharing, and two-phase cache break detection that attributes every invalidation to its root cause. Gemini gets native CachedContent API integration with SHA-256 content hashing. Numbers below come from a real production session &mdash; see <a href="/blog/cache-optimization-journey" class="text-teal hover:text-teal-dark underline">the cache forensics blog post</a> for the methodology.
+        <span class="text-white font-medium">Under the hood:</span> 15+ dedicated optimizations including cache fence protection that prevents the context engine from breaking the cached prefix, sub-agent spawn staggering for pipeline cost sharing, and two-phase cache break detection that attributes every invalidation to its root cause. Gemini gets native CachedContent API integration with SHA-256 content hashing. Numbers below come from a real production session - see <a href="/blog/cache-optimization-journey" class="text-teal hover:text-teal-dark underline">the cache forensics blog post</a> for the methodology.
       </p>
       <a href="/blog/cache-optimization-journey" class="inline-flex items-center gap-2 mt-4 text-teal hover:text-teal-dark text-sm font-medium transition-colors">
         Read the full cache forensics story

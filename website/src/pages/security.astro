@@ -2,9 +2,11 @@
 ---
 import Base from "../layouts/Base.astro";
 import Footer from "../components/Footer.astro";
+import { SECURITY } from "../data/security";
+import { FACTS } from "../data/facts";
 
 const title = "Security - Built from Scratch with Security in Mind";
-const description = "Comis wasn't patched for security after launch. It was designed around the question: what happens when an AI agent has real power and someone tries to abuse it?";
+const description = "Comis wasn't patched for security after launch. It was designed around the question: what happens when an AI agent has real power and someone tries to abuse it? Security is enforced by the kernel and the compiler, not by prompts.";
 
 const layers = [
   {
@@ -12,7 +14,7 @@ const layers = [
     category: "Perimeter",
     color: "coral",
     threat: "Prompt injection & jailbreaks",
-    how: "Semantic scoring engine over 65 patterns spanning 8 categories with weighted scoring (jailbreak, role markers, dangerous commands, secret formats, prompt extraction, credential logging, invisible chars, content scanner). Typoglycemia detection catches scrambled-letter evasion; code-block exclusion avoids false positives. Three risk levels (low/medium/high) with configurable actions: pass, warn, reinforce, or block.",
+    how: "A semantic scoring engine weighs jailbreak phrasing, role markers, dangerous commands, secret formats, prompt-extraction and credential-logging attempts. Typoglycemia detection catches scrambled-letter evasion; code-block exclusion avoids false positives. Three risk levels (low/medium/high) with configurable actions: pass, warn, reinforce, or block.",
   },
   {
     name: "Output Guard",
@@ -61,14 +63,14 @@ const layers = [
     category: "Secrets",
     color: "teal",
     threat: "API key exposure via agentic CLIs",
-    how: "The real key never enters the exec sandbox. It lives in the daemon's AES-256-GCM encrypted store and is resolved per-request by the in-daemon HTTPS MITM broker. The CLI runs with a placeholder; the broker terminates TLS with its own CA, verifies the single-use proxy token, and injects the real credential for allow-listed hosts (`x-api-key`, `Authorization: Bearer`, or query param). On Linux, the credentialed sandbox runs in broker-only network mode (`--unshare-net`) — the broker unix socket is the only reachable destination (kernel-enforced; validated on the Linux production host class). Broker fails closed: bad token → 407, no binding → 403, missing secret → 502, request never forwarded. Every inject/deny/blocked-egress event is audited with `agentId` + `traceId`. Anthropic and Finnhub today.",
+    how: "Works for any API-key CLI - Claude Code included. The real key never enters the exec sandbox. It lives in the daemon's AES-256-GCM encrypted store and is resolved per-request by the in-daemon HTTPS MITM broker. The CLI runs with a placeholder; the broker terminates TLS with its own CA, verifies the single-use proxy token, and injects the real credential for allow-listed hosts (`x-api-key`, `Authorization: Bearer`, or query param). On Linux, the credentialed sandbox runs in broker-only network mode (`--unshare-net`) - the broker unix socket is the only reachable destination (kernel-enforced; validated on the Linux production host class). Broker fails closed: bad token → 407, no binding → 403, missing secret → 502, request never forwarded. Every inject/deny/blocked-egress event is audited with `agentId` + `traceId`.",
   },
   {
     name: "Log Sanitizer",
     category: "Secrets",
     color: "teal",
     threat: "Secrets in logs",
-    how: "Three layers deep: Pino fast-redact for structured fields, regex-based sanitizer with 18 patterns for free-text credential detection, and ReDoS mitigation with 1MB input cap. Defense-in-depth - any single layer failing doesn't expose secrets.",
+    how: "Three layers deep: Pino fast-redact for structured fields, a regex-based sanitizer for free-text credential detection, and ReDoS mitigation with a 1MB input cap. Defense-in-depth - any single layer failing doesn't expose secrets.",
   },
   {
     name: "SSRF Guard",
@@ -168,6 +170,34 @@ const layers = [
     threat: "Indirect injection via tool results",
     how: "Normalizes NFKC Unicode, strips invisible characters, detects instruction-like patterns in tool output, and truncates oversized results at newline boundaries (50K char default). Catches injection attempts that arrive through tool results rather than user input.",
   },
+  {
+    name: "Skill Content Scanner",
+    category: "Supply Chain",
+    color: "pink",
+    threat: "Malicious skills loaded at runtime",
+    how: `Every skill is screened before it can run. ${SECURITY.contentScannerRules} rules cover exec injection, exfiltration, and XML breakout, applied at skill-load time. This is the canonical ${SECURITY.contentScannerRules} - it belongs to the content scanner.`,
+  },
+  {
+    name: "MCP Malware Screening",
+    category: "Supply Chain",
+    color: "pink",
+    threat: "Known-bad third-party tool servers",
+    how: "MCP packages are checked against the OSV malware database before they ever spawn for the first time. A flagged package never starts.",
+  },
+  {
+    name: "ESLint Security Bans",
+    category: "Supply Chain",
+    color: "pink",
+    threat: "Insecure code patterns reaching main",
+    how: "Named bans block insecure patterns in CI before merge: no path.join, no process.env, no eval/new Function, no swallowed errors - backed by architecture-as-tests that fail the build on regression.",
+  },
+  {
+    name: "Action Classifier",
+    category: "Access Control",
+    color: "blue",
+    threat: "Unsupervised or unrecognized destructive actions",
+    how: "Destructive actions pause for HMAC-signed operator approval via chat buttons. Unknown action types classify as destructive and fail closed - the default is to stop and ask, never to assume an unrecognized action is safe.",
+  },
 ];
 
 const categories = [
@@ -175,12 +205,29 @@ const categories = [
   { name: "Secrets", color: "teal", count: 4, desc: "Encrypt, scope, redact, and broker credentials at every layer" },
   { name: "Network", color: "purple-400", count: 1, desc: "Prevent outbound requests to private networks" },
   { name: "Process Isolation", color: "red-400", count: 1, desc: "Kernel-enforced filesystem sandbox for shell commands" },
-  { name: "Access Control", color: "blue-400", count: 2, desc: "Limit what each agent can do and require approval" },
+  { name: "Access Control", color: "blue-400", count: 3, desc: "Limit what each agent can do and require approval" },
   { name: "Memory", color: "green-400", count: 3, desc: "Partition trust levels to prevent memory poisoning" },
   { name: "Detection", color: "yellow-400", count: 1, desc: "Detect when the LLM leaks system instructions" },
   { name: "Transport", color: "indigo-400", count: 3, desc: "Authenticate and verify every connection" },
   { name: "Runtime", color: "orange-400", count: 3, desc: "Prevent runaway costs and sanitize tool output" },
+  { name: "Supply Chain", color: "pink-400", count: 3, desc: "Screen skills and packages, block insecure code before merge" },
 ];
+
+// Static Tailwind class map - Tailwind 4 cannot see class names built by string
+// interpolation at runtime, so every category color is listed here explicitly
+// and looked up by key, ensuring the classes are generated at build time.
+const colorClass: Record<string, string> = {
+  coral: "text-coral",
+  teal: "text-teal",
+  "purple-400": "text-purple-400",
+  "red-400": "text-red-400",
+  "blue-400": "text-blue-400",
+  "green-400": "text-green-400",
+  "yellow-400": "text-yellow-400",
+  "indigo-400": "text-indigo-400",
+  "orange-400": "text-orange-400",
+  "pink-400": "text-pink-400",
+};
 ---
 
 <Base title={title} description={description}>
@@ -212,20 +259,20 @@ const categories = [
         <div class="bg-navy-light/80 border border-coral/20 rounded-2xl p-8 md:p-12">
           <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
             <div>
-              <p class="text-4xl font-bold text-coral font-mono">23</p>
-              <p class="text-muted text-sm mt-2">Categorical layers <span class="text-muted-light">(25 primitives)</span></p>
+              <p class="text-4xl font-bold text-coral font-mono">On</p>
+              <p class="text-muted text-sm mt-2">Kernel sandbox <span class="text-muted-light">by default</span></p>
             </div>
             <div>
-              <p class="text-4xl font-bold text-white font-mono">65</p>
-              <p class="text-muted text-sm mt-2">Injection patterns</p>
-            </div>
-            <div>
-              <p class="text-4xl font-bold text-white font-mono">18</p>
-              <p class="text-muted text-sm mt-2">Log redaction rules</p>
+              <p class="text-4xl font-bold text-white font-mono">{SECURITY.contentScannerRules}</p>
+              <p class="text-muted text-sm mt-2">Skill content-scanner rules</p>
             </div>
             <div>
               <p class="text-4xl font-bold text-white font-mono">0</p>
               <p class="text-muted text-sm mt-2">Secrets in plaintext</p>
+            </div>
+            <div>
+              <p class="text-4xl font-bold text-white font-mono">Fail-closed</p>
+              <p class="text-muted text-sm mt-2">Broker &amp; action classifier</p>
             </div>
           </div>
         </div>
@@ -312,6 +359,18 @@ const categories = [
           </div>
         </div>
 
+        <!-- Docker Desktop auto-disable note -->
+        <div class="bg-navy-light/60 border border-amber-400/20 rounded-xl p-6 mb-10">
+          <div class="flex items-start gap-3">
+            <svg class="w-5 h-5 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+            </svg>
+            <p class="text-muted text-sm leading-relaxed">
+              <span class="text-white font-semibold">Production runs on Linux.</span> Docker Desktop's lightweight VM kernel can't run the exec sandbox - {FACTS.dockerSandbox}. Detection is explicit, not silent: you see it in the startup logs and choose how to proceed.
+            </p>
+          </div>
+        </div>
+
         <!-- What the sandbox controls -->
         <div class="bg-navy rounded-xl border border-white/5 p-6">
           <p class="text-white font-semibold mb-4">6 layers of exec defense, inside out:</p>
@@ -345,22 +404,50 @@ const categories = [
       </div>
     </section>
 
+    <!-- Credential broker spotlight -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-5xl mx-auto">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-8 h-8 rounded-lg bg-teal/20 flex items-center justify-center">
+            <svg class="w-4 h-4 text-teal" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+          </div>
+          <p class="text-teal font-semibold text-sm uppercase tracking-widest">Credential broker</p>
+        </div>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Your API keys are never where the agent can read them.
+        </h2>
+        <p class="text-muted text-lg mb-6 max-w-2xl">
+          {SECURITY.mechanisms[1].forEngineers}
+        </p>
+        <a
+          href="https://docs.comis.ai/security/credential-broker"
+          rel="noopener noreferrer"
+          target="_blank"
+          class="inline-flex items-center gap-1 text-teal hover:text-teal/80 font-semibold transition-colors"
+        >
+          Credential broker deep dive &rarr;
+        </a>
+      </div>
+    </section>
+
     <!-- Defense categories overview -->
     <section class="px-6 py-16 md:py-24 bg-navy-light/50">
       <div class="max-w-5xl mx-auto">
         <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">Defense in depth</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
-          9 defense categories. 23 independent layers (25 primitives).
+          Layered runtime defenses, not a single guardrail.
         </h2>
         <p class="text-muted text-lg mb-12 max-w-2xl">
-          Each layer protects against a specific attack vector. No single layer failing compromises the system. The marketing count of 23 maps to 25 distinct implementation primitives in code.
+          {SECURITY.layerFraming.charAt(0).toUpperCase() + SECURITY.layerFraming.slice(1)}. Each layer protects against a specific attack vector; no single failure compromises the system.
         </p>
 
         <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
           {categories.map((cat) => (
             <div class="bg-navy rounded-xl border border-white/5 p-5">
               <div class="flex items-center gap-2 mb-2">
-                <span class={`text-${cat.color} font-mono font-bold text-2xl`}>{cat.count}</span>
+                <span class={`${colorClass[cat.color]} font-mono font-bold text-2xl`}>{cat.count}</span>
                 <span class="text-white font-semibold text-sm">{cat.name}</span>
               </div>
               <p class="text-muted text-xs leading-relaxed">{cat.desc}</p>
@@ -370,7 +457,7 @@ const categories = [
       </div>
     </section>
 
-    <!-- All 22 layers -->
+    <!-- Layer detail -->
     <section class="px-6 py-16 md:py-24">
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Every layer explained</p>
@@ -469,8 +556,11 @@ const categories = [
         </p>
 
         <div class="flex flex-wrap gap-4 justify-center">
-          <a href="https://docs.comis.ai" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
-            Get Started
+          <a href="/#quick-start" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
+            Install Comis
+          </a>
+          <a href="https://docs.comis.ai" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
+            Read the docs &rarr;
           </a>
           <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
             <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>

@@ -1,0 +1,418 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * `IncidentSourceReader` + `makeRealReader` tests — the four bounded source
+ * readers behind one DI seam (the X3 fixture-injection seam).
+ *
+ * Production reads real files; tests inject fixture records. The four readers:
+ *   1. readSessionRecords    — <dataDir>/sessions/<sessionId>.trajectory.jsonl
+ *                              returns ALL parsed lines (log AND event shapes —
+ *                              NO traceSchema envelope filtering, unlike the
+ *                              production bundle reader).
+ *   2. readCacheTraceRecords — <dataDir>/logs/cache-trace.jsonl, session-filtered.
+ *   3. readSessionMetadata   — <sessionId>_session-metadata.json companion (F1
+ *                              PRIMARY rollup source).
+ *   4. readDiagnosticsRollup — obsStore.queryDiagnostics({category:"session_summary",
+ *                              limit:1000}) then SESSION-SCOPED filter by row.sessionKey
+ *                              (F2 fallback). The multi-session case is RED-pinned:
+ *                              the MATCHING row is returned, NOT the most-recent;
+ *                              and a target behind 200 newer rows is still found
+ *                              (WR-01 widened the window from 50 to 1000).
+ *
+ * @module
+ */
+import { describe, it, expect, vi } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { makeRealReader } from "./obs-explain-readers.js";
+import type { IncidentSourceReader } from "./obs-explain-readers.js";
+
+// The 678 fixture's canonical key; sessionId is the trailing colon segment.
+const SESSION_KEY = "default:678314278:678314278:peer:678314278";
+const SESSION_ID = "678314278";
+
+// The REAL production on-disk layout for SESSION_KEY (verified against live
+// ~/.comis): sessions live under <dataDir>/workspace/sessions/<tenant>/<channel>/
+// keyed by the encoded SessionKey filename (sessionKeyToPath), NOT under a flat
+// <dataDir>/sessions/<sessionId>.* path. tenant="default", channel="678314278",
+// file="678314278~peer~678314278.jsonl" (userId[~peer~peerId].jsonl).
+const REAL_TENANT = "default";
+const REAL_CHANNEL = "678314278";
+const REAL_SESSION_FILE = "678314278~peer~678314278.jsonl";
+
+/**
+ * Build the REAL production session directory for SESSION_KEY under a temp
+ * dataDir and return the absolute `.jsonl` sessionFile path. Mirrors what the
+ * pi-agent session manager + trajectory recorder write on disk:
+ *   <dataDir>/workspace/sessions/<tenant>/<channel>/<file>.jsonl   (session JSONL)
+ */
+function makeRealSessionDir(dataDir: string): string {
+  const dir = path.join(dataDir, "workspace", "sessions", REAL_TENANT, REAL_CHANNEL);
+  fs.mkdirSync(dir, { recursive: true });
+  const sessionFile = path.join(dir, REAL_SESSION_FILE);
+  // The session JSONL itself (message log) — empty is fine; the readers target
+  // its trajectory/metadata siblings.
+  fs.writeFileSync(sessionFile, "", "utf-8");
+  return sessionFile;
+}
+
+function tmpDataDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-readers-"));
+}
+
+/**
+ * Write the trajectory JSONL for SESSION_KEY at its REAL co-located path
+ * (`<sessionFile>.trajectory.jsonl`). No pointer file → the reader resolves via
+ * the co-located fallback (exercises the production resolution end-to-end).
+ */
+function writeRealTrajectory(dataDir: string, lines: string[]): void {
+  const sessionFile = makeRealSessionDir(dataDir);
+  fs.writeFileSync(`${sessionFile}.trajectory.jsonl`, lines.join("\n") + "\n", "utf-8");
+}
+
+function writeLogsFile(dataDir: string, name: string, lines: string[]): void {
+  const logsDir = path.join(dataDir, "logs");
+  fs.mkdirSync(logsDir, { recursive: true });
+  fs.writeFileSync(path.join(logsDir, name), lines.join("\n") + "\n", "utf-8");
+}
+
+describe("makeRealReader.readSessionRecords", () => {
+  it("returns BOTH a raw log line and a structured event (no traceSchema filtering)", async () => {
+    const dataDir = tmpDataDir();
+    const logLine = JSON.stringify({
+      level: 40,
+      toolName: "web_fetch",
+      msg: "Tool execution failed",
+    });
+    const eventLine = JSON.stringify({
+      traceSchema: "comis-trajectory",
+      type: "tool.result",
+      seq: 1,
+      data: { toolName: "web_fetch", success: false },
+    });
+    writeRealTrajectory(dataDir, [logLine, eventLine]);
+
+    const reader = makeRealReader(dataDir);
+    const records = await reader.readSessionRecords(SESSION_KEY);
+
+    // BOTH shapes come back — the log line is NOT dropped for lacking traceSchema.
+    expect(records.length).toBe(2);
+    expect(records.some((r) => r.msg === "Tool execution failed")).toBe(true);
+    expect(records.some((r) => r.traceSchema === "comis-trajectory")).toBe(true);
+  });
+
+  it("soft-fails to [] when the session trajectory file is absent", async () => {
+    const dataDir = tmpDataDir(); // no workspace/sessions tree written
+    const reader = makeRealReader(dataDir);
+    const records = await reader.readSessionRecords(SESSION_KEY);
+    expect(records).toEqual([]);
+  });
+
+  it("skips malformed JSONL lines and blank lines without throwing", async () => {
+    const dataDir = tmpDataDir();
+    writeRealTrajectory(dataDir, [
+      "{ not json",
+      "   ", // blank/whitespace-only line — skipped
+      JSON.stringify({ toolName: "web_fetch", msg: "Tool execution failed" }),
+    ]);
+    const reader = makeRealReader(dataDir);
+    const records = await reader.readSessionRecords(SESSION_KEY);
+    expect(records.length).toBe(1);
+  });
+
+  it("soft-fails to [] when the sessionKey is not a parseable formatted key", async () => {
+    // The reader resolves the path via parseFormattedSessionKey + sessionKeyToPath
+    // (the authoritative mapper), which needs ≥3 colon-delimited fields. A bare
+    // token has no tenant/user/channel → unparseable → [] (no throw).
+    const dataDir = tmpDataDir();
+    const reader = makeRealReader(dataDir);
+    expect(await reader.readSessionRecords("barekey")).toEqual([]);
+  });
+});
+
+describe("makeRealReader REAL production layout (workspace/sessions + pointer)", () => {
+  // Regression net for the centerpiece bug: makeRealReader resolved a flat
+  // <dataDir>/sessions/<sessionId>.* path that DOES NOT EXIST in production.
+  // The real layout is <dataDir>/workspace/sessions/<tenant>/<channel>/<file>,
+  // with the trajectory located via the <file>.trajectory-path.json pointer.
+  // These tests build that exact layout and FAIL on the pre-fix code (which
+  // reads nothing → empty report, endReason=unknown, 0 failures/offloads).
+
+  it("readSessionRecords resolves the trajectory via the .trajectory-path.json pointer (failure + offload events surface)", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeRealSessionDir(dataDir);
+
+    // A real degraded turn: a classified tool failure + an offloaded result.
+    const failureEvent = JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "tool.result",
+      seq: 1,
+      sessionId: SESSION_KEY,
+      data: { toolName: "web_fetch", success: false, classifiedFailureBy: "executor" },
+    });
+    const offloadEvent = JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "tool.result_offloaded",
+      seq: 2,
+      sessionId: SESSION_KEY,
+      data: { toolName: "web_fetch", diskPathRel: "tool-results/call_abc.json" },
+    });
+    // The trajectory lives at a runtimeFile that the POINTER names (the
+    // co-located <sessionFile>.trajectory.jsonl path here, matching prod).
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, [failureEvent, offloadEvent].join("\n") + "\n", "utf-8");
+    // The canonical pointer the recorder writes alongside the session JSONL.
+    fs.writeFileSync(
+      `${sessionFile}.trajectory-path.json`,
+      JSON.stringify({
+        traceSchema: "comis-trajectory-pointer",
+        schemaVersion: 1,
+        sessionId: SESSION_KEY,
+        runtimeFile,
+      }),
+      "utf-8",
+    );
+
+    const reader = makeRealReader(dataDir);
+    const records = await reader.readSessionRecords(SESSION_KEY);
+
+    expect(records.length).toBe(2);
+    expect(records.some((r) => (r.data as Record<string, unknown>)?.classifiedFailureBy === "executor")).toBe(true);
+    expect(records.some((r) => r.type === "tool.result_offloaded")).toBe(true);
+  });
+
+  it("readSessionRecords falls back to co-located <sessionFile>.trajectory.jsonl when the pointer is absent", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeRealSessionDir(dataDir);
+    // NO pointer file written — the reader must fall back to the co-located
+    // convention (the bundle reader's documented step 3).
+    fs.writeFileSync(
+      `${sessionFile}.trajectory.jsonl`,
+      JSON.stringify({ traceSchema: "comis-trajectory", schemaVersion: 1, type: "tool.result", seq: 1, data: { toolName: "x" } }) + "\n",
+      "utf-8",
+    );
+
+    const reader = makeRealReader(dataDir);
+    const records = await reader.readSessionRecords(SESSION_KEY);
+    expect(records.length).toBe(1);
+  });
+
+  it("readSessionMetadata reads the <file>_session-metadata.json companion next to the session JSONL (sessionEnd rollup)", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeRealSessionDir(dataDir);
+    // Metadata companion = sessionFile with `.jsonl` → `_session-metadata.json`
+    // (comis-session-manager.ts:392), NOT <dataDir>/sessions/<id>_session-metadata.json.
+    const metadataFile = sessionFile.replace(/\.jsonl$/, "_session-metadata.json");
+    fs.writeFileSync(
+      metadataFile,
+      JSON.stringify({
+        traceId: "trace-1",
+        sessionEnd: {
+          type: "session_end",
+          endReason: "completed_with_tool_errors",
+          degraded: true,
+          costUsd: 1.320669,
+          breakerTripCount: 0,
+        },
+      }),
+      "utf-8",
+    );
+
+    const reader = makeRealReader(dataDir);
+    const meta = await reader.readSessionMetadata(SESSION_KEY);
+    expect(meta).not.toBeNull();
+    expect((meta!.sessionEnd as Record<string, unknown>).endReason).toBe("completed_with_tool_errors");
+    expect((meta!.sessionEnd as Record<string, unknown>).degraded).toBe(true);
+  });
+
+  it("soft-fails to []/null when the workspace session dir is absent (no throw)", async () => {
+    const dataDir = tmpDataDir(); // no workspace/sessions tree written
+    const reader = makeRealReader(dataDir);
+    expect(await reader.readSessionRecords(SESSION_KEY)).toEqual([]);
+    expect(await reader.readSessionMetadata(SESSION_KEY)).toBeNull();
+  });
+});
+
+describe("makeRealReader.readCacheTraceRecords", () => {
+  it("reads the session's cache-trace lines and soft-fails to [] when absent", async () => {
+    const dataDir = tmpDataDir();
+    // Absent file → [].
+    const reader1 = makeRealReader(dataDir);
+    expect(await reader1.readCacheTraceRecords(SESSION_KEY)).toEqual([]);
+
+    // Present file → the session's lines, filtered by sessionKey.
+    writeLogsFile(dataDir, "cache-trace.jsonl", [
+      JSON.stringify({ sessionKey: SESSION_KEY, event: "cache_hit", toolName: "web_fetch" }),
+      JSON.stringify({ sessionKey: "default:other:other:peer:other", event: "cache_hit" }),
+    ]);
+    const reader2 = makeRealReader(dataDir);
+    const rows = await reader2.readCacheTraceRecords(SESSION_KEY);
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.sessionKey).toBe(SESSION_KEY);
+  });
+});
+
+/** Absolute `_session-metadata.json` companion path for the real SESSION_KEY layout. */
+function realMetadataPath(dataDir: string): string {
+  const sessionFile = makeRealSessionDir(dataDir);
+  return sessionFile.replace(/\.jsonl$/, "_session-metadata.json");
+}
+
+describe("makeRealReader.readSessionMetadata", () => {
+  it("reads the <file>_session-metadata.json companion with sessionEnd fields", async () => {
+    const dataDir = tmpDataDir();
+    fs.writeFileSync(
+      realMetadataPath(dataDir),
+      JSON.stringify({
+        sessionId: SESSION_ID,
+        sessionCostUsd: 1.320669,
+        sessionEnd: { type: "session_end", endReason: "completed_with_tool_errors", degraded: true, costUsd: 1.320669 },
+      }),
+      "utf-8",
+    );
+    const reader = makeRealReader(dataDir);
+    const meta = await reader.readSessionMetadata(SESSION_KEY);
+    expect(meta).not.toBeNull();
+    expect(meta!.sessionCostUsd).toBeCloseTo(1.320669, 4);
+    expect((meta!.sessionEnd as Record<string, unknown>).degraded).toBe(true);
+  });
+
+  it("returns null when the metadata companion is absent", async () => {
+    const dataDir = tmpDataDir();
+    const reader = makeRealReader(dataDir);
+    expect(await reader.readSessionMetadata(SESSION_KEY)).toBeNull();
+  });
+
+  it("returns null when the metadata companion is corrupt JSON (soft-fail)", async () => {
+    const dataDir = tmpDataDir();
+    fs.writeFileSync(realMetadataPath(dataDir), "{ corrupt json not closed", "utf-8");
+    const reader = makeRealReader(dataDir);
+    expect(await reader.readSessionMetadata(SESSION_KEY)).toBeNull();
+  });
+});
+
+describe("makeRealReader.readDiagnosticsRollup (session-scoped)", () => {
+  it("returns the row whose sessionKey MATCHES — NOT the most-recent (multi-session RED-pin)", async () => {
+    const dataDir = tmpDataDir();
+    // Two session_summary rows for DIFFERENT sessions. queryDiagnostics returns
+    // them newest-first (the OTHER session's row is most-recent). The reader
+    // must filter by sessionKey and return OUR row, not the newest one.
+    const otherRow = {
+      category: "session_summary",
+      timestamp: 2000,
+      severity: "info",
+      message: "other session",
+      sessionKey: "default:other:other:peer:other",
+    };
+    const ourRow = {
+      category: "session_summary",
+      timestamp: 1000,
+      severity: "info",
+      message: "our session",
+      sessionKey: SESSION_KEY,
+    };
+    const queryDiagnostics = vi.fn().mockReturnValue([otherRow, ourRow]);
+    const obsStore = { queryDiagnostics } as unknown as Parameters<typeof makeRealReader>[1];
+
+    const reader = makeRealReader(dataDir, obsStore);
+    const rollup = await reader.readDiagnosticsRollup(SESSION_KEY);
+
+    expect(rollup).not.toBeNull();
+    expect(rollup!.sessionKey).toBe(SESSION_KEY);
+    expect(rollup!.message).toBe("our session");
+    // Queried a WINDOW (limit:1000 — WR-01 widened it from 50), not limit:1.
+    expect(queryDiagnostics).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "session_summary", limit: 1000 }),
+    );
+  });
+
+  it("finds the target row even when many newer session_summary rows precede it (WR-01 window)", async () => {
+    // A busy daemon writes many session_summary rows AFTER the target session
+    // ends. queryDiagnostics orders timestamp DESC, so the target sits deep in
+    // the result. The reader queries a WINDOW then filters by sessionKey — the
+    // window must be large enough that a realistically-old target is still
+    // inside it. Pre-fix the window was 50, so a target behind 50+ newer rows
+    // was silently missed (the F2 rollup returned null and the report lost every
+    // field only F2 could supply). This pins a target at depth 200.
+    const dataDir = tmpDataDir();
+    const newerCount = 200;
+    const rows = [
+      ...Array.from({ length: newerCount }, (_, i) => ({
+        category: "session_summary",
+        timestamp: 100_000 - i, // newest-first; all NEWER than the target
+        severity: "info",
+        message: `newer ${i}`,
+        sessionKey: `default:newer-${i}:newer-${i}:peer:newer-${i}`,
+      })),
+      {
+        category: "session_summary",
+        timestamp: 1, // oldest → last in the DESC result
+        severity: "info",
+        message: "our older session",
+        sessionKey: SESSION_KEY,
+      },
+    ];
+    // Honor the query limit the reader passes (the real store applies LIMIT in
+    // SQL), so the test fails if the reader's window is smaller than the target
+    // depth.
+    const queryDiagnostics = vi.fn((params: { limit?: number }) =>
+      rows.slice(0, params.limit ?? rows.length),
+    );
+    const obsStore = { queryDiagnostics } as unknown as Parameters<typeof makeRealReader>[1];
+
+    const reader = makeRealReader(dataDir, obsStore);
+    const rollup = await reader.readDiagnosticsRollup(SESSION_KEY);
+
+    expect(rollup).not.toBeNull();
+    expect(rollup!.sessionKey).toBe(SESSION_KEY);
+    expect(rollup!.message).toBe("our older session");
+  });
+
+  it("returns null when no row matches the session", async () => {
+    const dataDir = tmpDataDir();
+    const queryDiagnostics = vi.fn().mockReturnValue([
+      { category: "session_summary", timestamp: 1, severity: "info", message: "x", sessionKey: "default:other:other:peer:other" },
+    ]);
+    const obsStore = { queryDiagnostics } as unknown as Parameters<typeof makeRealReader>[1];
+    const reader = makeRealReader(dataDir, obsStore);
+    expect(await reader.readDiagnosticsRollup(SESSION_KEY)).toBeNull();
+  });
+
+  it("returns null when obsStore is undefined (F1 metadata is the primary source)", async () => {
+    const dataDir = tmpDataDir();
+    const reader = makeRealReader(dataDir);
+    expect(await reader.readDiagnosticsRollup(SESSION_KEY)).toBeNull();
+  });
+});
+
+describe("makeRealReader default data dir", () => {
+  it("falls back to ~/.comis when an empty dataDir is passed (soft-fail to [])", async () => {
+    // Empty dataDir → defaultDataDir() (~/.comis); a synthetic key has no file
+    // there → [] without throwing. Exercises the default-dir branch.
+    const reader = makeRealReader("");
+    const records = await reader.readSessionRecords(
+      "default:synthetic-no-such-session:x:peer:synthetic-no-such-session",
+    );
+    expect(records).toEqual([]);
+  });
+});
+
+describe("makeRealReader path containment", () => {
+  it("a traversal-bearing sessionKey cannot escape <workspaceDir>/sessions (sessionKeyToPath safePath guard)", async () => {
+    const dataDir = tmpDataDir();
+    // Plant a file OUTSIDE the workspace sessions tree that a naive join might reach.
+    const outside = path.join(dataDir, "..", "escape-target.trajectory.jsonl");
+    fs.writeFileSync(outside, JSON.stringify({ secret: "leaked" }) + "\n", "utf-8");
+
+    const reader: IncidentSourceReader = makeRealReader(dataDir);
+    // A traversal-bearing key: sessionKeyToPath runs every field through safePath
+    // (and `..` survives encodeComponent only as a filename fragment, never a
+    // path segment), so the read stays inside <workspaceDir>/sessions and finds
+    // nothing → [] (no leak, no throw).
+    const records = await reader.readSessionRecords("default:..:..:peer:..");
+    expect(records).toEqual([]);
+    fs.rmSync(outside, { force: true });
+  });
+});

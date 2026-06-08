@@ -16,6 +16,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
   formatSessionKey,
   sanitizeLogString,
+  fingerprint,
   systemNowMs,
   systemDateFrom,
   tryGetContext,
@@ -326,7 +327,7 @@ export interface PiEventBridgeResult {
   /** Event listener to subscribe to AgentSession events. */
   listener: (event: AgentSessionEvent) => void;
   /** Returns accumulated execution stats (includes last known context usage and duration breakdown). */
-  getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string }>; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; sessionCostUsd?: number; sessionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
+  getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>; breakerTripCount?: number; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; sessionCostUsd?: number; sessionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
   /** Accumulate estimated cost from a timed-out API request. */
   addGhostCost: (estimated: GhostCostEstimate) => void;
   /** ReadonlyMap views of the per-responseId hash store and canonical-snapshot
@@ -469,6 +470,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               channelId: deps.channelId ?? "",
               agentId: deps.agentId,
               traceIds: [deps.executionId],
+              source: "runtime" as const, // D9 provenance stamp (production rows)
             },
           );
           // Emit the trace.metadata lifecycle envelope directly via the
@@ -590,6 +592,32 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // The SDK only sets isError on thrown exceptions, so we also inspect the result.
           let toolSuccess = !endEvent.isError;
           let toolErrorKind: ErrorKind | undefined;
+          // D1 failure-classification provenance (P1): assigned AT each
+          // mutation point (never a post-hoc switch — by the WARN site
+          // toolSuccess is just `false` and the source is lost). transportOk
+          // is derived from classifiedFailureBy at the sinks (sdk_iserror ⇒
+          // transport failed ⇒ false; exit-code/detector/mcp-content ⇒ true).
+          let classifiedFailureBy:
+            | "sdk_iserror"
+            | "exit_code"
+            | "failure_detector"
+            | "mcp_classifier"
+            | undefined;
+          let matchedRule: string | undefined;
+          let matchedToken: string | undefined;
+          let httpStatus: number | undefined;
+          // transportOk tracks the SDK/transport signal itself: false ONLY when
+          // the SDK reported isError (the call/transport failed). An exit-code,
+          // detector, or MCP-content failure means the call RETURNED and the
+          // content was a failure → transportOk stays true. This is the
+          // self-evident-misclassification tell: a transportOk:true failure
+          // with classifiedFailureBy:'failure_detector' means "we matched a
+          // structured field, the transport was fine". (OQ A3 — derived from
+          // the flip source, NOT the refined classifiedFailureBy label, so the
+          // A1 MCP-refinement of an SDK-isError failure stays transportOk:false.)
+          const transportOk = !endEvent.isError;
+          // :591 — SDK isError flip (the transport/call itself errored).
+          if (!toolSuccess) classifiedFailureBy = "sdk_iserror";
           if (toolSuccess && endEvent.result != null) {
             const details = (endEvent.result as Record<string, unknown>)?.details;
             if (
@@ -599,6 +627,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ) {
               toolSuccess = false;
               toolErrorKind = "dependency";
+              classifiedFailureBy = "exit_code"; // exec non-zero exit — call returned, content failed
             }
           }
 
@@ -615,12 +644,50 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             if (detector !== undefined) {
               try {
                 const detected = detector(endEvent.result, endEvent.isError);
-                if (detected === true || (typeof detected === "object" && detected !== null)) {
-                  toolSuccess = false;
-                  toolErrorKind =
-                    (typeof detected === "object" && detected !== null
-                      ? detected.errorKind
-                      : undefined) ?? toolErrorKind ?? "internal";
+                if (detected !== false && detected !== undefined) {
+                  // D2 single-chokepoint no-false-flag guard (P2): the codified
+                  // c53ab0f invariant, generalized to ALL detectors here at the
+                  // ONE consumption site (not per-detector, so it also covers
+                  // future detectors). A status:200 + no-string-error result is
+                  // a structural success and must NEVER be flagged a failure.
+                  const r = endEvent.result;
+                  const looksLikeSuccess =
+                    r !== null &&
+                    typeof r === "object" &&
+                    (r as { status?: unknown }).status === 200 &&
+                    typeof (r as { error?: unknown }).error !== "string";
+                  if (looksLikeSuccess) {
+                    // Refuse the flag (preserve success) + observable WARN.
+                    // The guard NEVER aborts the turn — it mirrors the
+                    // catch below, which also preserves the success outcome.
+                    deps.logger.warn(
+                      {
+                        submodule: "bridge.failure-detector",
+                        toolName: endEvent.toolName,
+                        toolCallId: endEvent.toolCallId,
+                        errorKind: "internal" as const,
+                        hint: "failureDetector flagged a status:200/no-error result; refusing the flag (c53ab0f invariant). Fix the detector — it must classify off structured failure fields only.",
+                      },
+                      "failureDetector no-false-flag guard tripped",
+                    );
+                    // Do NOT flip toolSuccess; do NOT set classifiedFailureBy.
+                  } else {
+                    toolSuccess = false;
+                    toolErrorKind =
+                      (typeof detected === "object" && detected !== null
+                        ? detected.errorKind
+                        : undefined) ?? toolErrorKind ?? "internal";
+                    classifiedFailureBy = "failure_detector";
+                    if (typeof detected === "object" && detected !== null) {
+                      // matchedRule/matchedToken are verdict provenance (P2).
+                      // matchedToken is free-text untrusted tool output — it is
+                      // sanitized+bounded at BOTH sinks (WARN + emit), never here.
+                      matchedRule = detected.matchedRule;
+                      matchedToken = detected.matchedToken;
+                    }
+                    const status = (r as { status?: unknown })?.status;
+                    if (typeof status === "number") httpStatus = status;
+                  }
                 }
               } catch (detectorError: unknown) {
                 deps.logger.warn(
@@ -648,10 +715,27 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           m.toolRawArgs.delete(endEvent.toolCallId);
 
           let errorText: string | undefined;
+          // resultBytes/resultDigest replace the raw body with a count + a
+          // non-reversible 12-hex digest on the failure path (D1+D4) — the
+          // body itself never crosses into the event/log.
+          let resultBytes: number | undefined;
+          let resultDigest: string | undefined;
           // Extract MCP server name for attribution
           const mcpServer = extractMcpServerName(endEvent.toolName);
           if (!toolSuccess) {
             errorText = extractErrorText(endEvent.result);
+            const serialized =
+              typeof endEvent.result === "string"
+                ? endEvent.result
+                : (() => {
+                    try {
+                      return JSON.stringify(endEvent.result) ?? "";
+                    } catch {
+                      return "";
+                    }
+                  })();
+            resultBytes = serialized.length;
+            resultDigest = fingerprint(serialized);
             // When toolSuccess was already false from the SDK's isError
             // flag (not flipped by an exitCode check), toolErrorKind is
             // still undefined here. Classify it so the downstream
@@ -668,8 +752,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   : (mcpKind === "connection" || mcpKind === "transport")
                     ? "dependency"
                     : classifyToolError(endEvent.toolName, errorText);
+                // A1 precedence: the MCP classifier refines the sdk_iserror
+                // flip when this is an MCP-namespaced tool. The flip source
+                // is primary; the classifier that produced the errorKind wins
+                // the label here.
+                classifiedFailureBy = "mcp_classifier";
               } else {
                 toolErrorKind = classifyToolError(endEvent.toolName, errorText);
+                // Keep the flip source (sdk_iserror) — no MCP refinement.
+                classifiedFailureBy ??= "sdk_iserror";
               }
             }
             // Enrich "Tool X not found" errors with delegation routing hints.
@@ -709,19 +800,74 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 ...(mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
                 errorKind: toolErrorKind ?? ("dependency" as const),
                 hint: "Tool execution failed; check errorText and toolArgs for root cause",
+                // D1 provenance — assigned at the mutation points above.
+                // matchedToken is untrusted tool output → sanitize+bound it
+                // exactly like errorText; the rest are enum-like/digest/number.
+                // transportOk = !endEvent.isError — it reflects whether the
+                // transport DELIVERED a response, not which classifier labeled
+                // the failure. It is false ONLY when the SDK reported a
+                // transport/spawn failure (endEvent.isError), and STAYS false
+                // even when the A1 MCP classifier later refines that isError
+                // failure (relabeling classifiedFailureBy → "mcp_classifier").
+                // Do NOT rewrite as (classifiedFailureBy !== "sdk_iserror") —
+                // that flips the A1 case to transportOk:true and reopens the
+                // c53ab0f MCP-transport-failure misclassification (see the
+                // const above).
+                ...(classifiedFailureBy !== undefined && { classifiedFailureBy }),
+                transportOk,
+                ...(httpStatus !== undefined && { httpStatus }),
+                ...(matchedRule !== undefined && { matchedRule }),
+                ...(matchedToken !== undefined && { matchedToken: sanitizeLogString(matchedToken).slice(0, 1500) }),
+                ...(resultBytes !== undefined && { resultBytes }),
+                ...(resultDigest !== undefined && { resultDigest }),
               },
               "Tool execution failed",
             );
           }
 
-          // Record tool result in retry breaker for consecutive failure tracking
+          // Record tool result in retry breaker for consecutive failure
+          // tracking. recordResult returns a transition verdict at the
+          // tool-wide counter-crossing edges (the breaker stays emitter-free,
+          // D3) — capture it and emit the breaker event here, the bridge being
+          // the sole holder of the event bus. Emit the two events as SEPARATE
+          // string-literal calls in an if/else (NOT a ternary) so the
+          // trajectory-event-types-known arch gate's EMIT_REGEX sees both names
+          // and verifies their mappings (Pitfall 7).
           if (deps.toolRetryBreaker) {
-            deps.toolRetryBreaker.recordResult(
+            const transition = deps.toolRetryBreaker.recordResult(
               endEvent.toolName,
               (sanitizedArgs ?? {}) as Record<string, unknown>,
               toolSuccess,
               errorText,
             );
+            if (transition) {
+              // Count of tools executed so far this execution — the monotonic
+              // per-execution seq Phase 153 orders the breakerTimeline on (A3).
+              // Pushed at the m.toolExecResults.push below, so this is the
+              // pre-push count (0 for the first tool).
+              const seq = m.toolExecResults.length;
+              if (transition.transition === "opened") {
+                deps.eventBus.emit("tool:breaker_opened", {
+                  toolName: transition.toolName,
+                  consecutiveFailures: transition.consecutiveFailures,
+                  errorTag: transition.errorTag,
+                  reason: transition.reason,
+                  seq,
+                  timestamp: systemNowMs(),
+                });
+                // Count the trip for the session-health rollup (D5/F1). Only the
+                // opened transition increments — a reset must not (the rollup
+                // wants total trips this execution, not net breaker state).
+                m.breakerTripCount++;
+              } else {
+                deps.eventBus.emit("tool:breaker_reset", {
+                  toolName: transition.toolName,
+                  reason: transition.reason,
+                  seq,
+                  timestamp: systemNowMs(),
+                });
+              }
+            }
           }
 
           // Track all tool execution results
@@ -730,6 +876,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             success: toolSuccess,
             durationMs,
             ...(errorText && { errorText }),
+            // Carry the closed-union errorKind (Phase 150 classification, set on
+            // the failure path only) for the rollup's bounded topErrorKinds.
+            ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
           });
 
           // Capture outbound deliveries. The post-execution silent-sentinel
@@ -819,6 +968,20 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(errorText && { errorMessage: sanitizeLogString(errorText).slice(0, 1500) }),
             ...(!toolSuccess && mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
             ...(truncMeta && { truncated: truncMeta.truncated, fullChars: truncMeta.fullChars, returnedChars: truncMeta.returnedChars }),
+            // D1 provenance (P1) — assigned at the mutation points above.
+            // matchedToken is untrusted tool output and the payload feeds the
+            // trajectory + cache-trace translators (Plan 06), so it MUST be
+            // sanitized+bounded HERE TOO (identical to the WARN) — a raw token
+            // would leak into the event stream. resultDigest/resultBytes/
+            // httpStatus/classifiedFailureBy/matchedRule are digest/number/
+            // closed-union → emitted as-is.
+            ...(classifiedFailureBy !== undefined && { classifiedFailureBy }),
+            ...(!toolSuccess && { transportOk }),
+            ...(httpStatus !== undefined && { httpStatus }),
+            ...(matchedRule !== undefined && { matchedRule }),
+            ...(matchedToken !== undefined && { matchedToken: sanitizeLogString(matchedToken).slice(0, 1500) }),
+            ...(resultBytes !== undefined && { resultBytes }),
+            ...(resultDigest !== undefined && { resultDigest }),
           });
 
           // Explicit tool:timeout emit when the tool was classified as
@@ -1441,6 +1604,21 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               warmupTurn,
               pendingCacheInvestmentUsd,
               ...costCorrectionField,
+              // B3 (D8): SDK per-turn stop signal. RELIABLE — m.lastStopReason is
+              // captured at :1231 in this same turn_end case, BEFORE this emit.
+              ...(m.lastStopReason !== undefined && { stopReason: m.lastStopReason }),
+              // B3 (D8): execution-level finish disposition. m.finishReason settles
+              // LATER than turn_end (the safety guards set it at
+              // :1005/:1018/:1625/:1672/:2113), so on a normal turn it is still the
+              // init default "stop". Forward it ONLY once it has diverged from that
+              // default, so model.completed does not carry a stale, authoritative-
+              // looking "stop" on every normal turn (WR-151-01) — the translator's
+              // presence-conditional guard then correctly omits it. A genuinely
+              // settled value (a guard-set "max_steps"/"loop_detected"/etc. from this
+              // or a prior turn) IS forwarded. The authoritative settled finishReason
+              // is Phase 152's flight-recorder (effectiveFinishReason); the reliable
+              // D8 field at this per-turn emit is stopReason above.
+              ...(m.finishReason !== "stop" && { finishReason: m.finishReason }),
             });
 
             // Append turn_completed to the session index. Co-located with
@@ -1460,6 +1638,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 inputTokens: usage.input,
                 outputTokens: usage.output,
                 lastError: null, // populated by error paths in a follow-up plan; null here
+                source: "runtime" as const, // D9 provenance stamp (production rows)
               },
             );
 

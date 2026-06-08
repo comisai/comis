@@ -223,3 +223,100 @@ describe("appendSessionIndexEntry — JSONL write", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// synthetic?/source? optional fields (D9) — round-trip
+// ---------------------------------------------------------------------------
+
+describe("appendSessionIndexEntry — synthetic/source provenance (D9)", () => {
+  it("round-trips an explicit source:'test' + synthetic:true through the JSONL", async () => {
+    // RED-and-GREEN-in-one-commit (AGENTS.md §2.10): this object literal does NOT
+    // type-check against the pre-patch SessionIndexEventBase (the fields don't
+    // exist yet) — the GREEN patch in types.ts adds the two optional readonly fields.
+    const rec: SessionStartedEvent = {
+      ...makeSessionStarted(),
+      source: "test",
+      synthetic: true,
+    };
+    appendSessionIndexEntry(tmpDir, rec);
+
+    await vi.runAllTimersAsync();
+
+    const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8").trim());
+    expect(parsed.source).toBe("test");
+    expect(parsed.synthetic).toBe(true);
+  });
+
+  it("leaves source/synthetic undefined when absent on the production (non-test) path", async () => {
+    // A production-shaped row carries NEITHER field — readers treat absence as
+    // synthetic !== true (the obs.* default-include case). To exercise the
+    // production branch from inside vitest (which auto-sets VITEST=true +
+    // NODE_ENV=test), both flags are stubbed to non-test values so the D9
+    // test-process stamp does NOT fire. (Under VITEST the writer always stamps
+    // source:"test" — covered by the D9 write-guard suite below.)
+    vi.stubEnv("VITEST", "");
+    vi.stubEnv("NODE_ENV", "production");
+    appendSessionIndexEntry(tmpDir, makeSessionStarted());
+
+    await vi.runAllTimersAsync();
+
+    const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8").trim());
+    expect(parsed.source).toBeUndefined();
+    expect(parsed.synthetic).toBeUndefined();
+    vi.unstubAllEnvs();
+  });
+
+  it("accepts the closed source union: 'runtime' | 'test' | 'bench' (type-level)", () => {
+    // Type-level assertion: the closed union holds. A value outside it would
+    // fail tsc (verified at build time, not runtime).
+    const sources: ReadonlyArray<NonNullable<SessionStartedEvent["source"]>> = [
+      "runtime",
+      "test",
+      "bench",
+    ];
+    expect(sources).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// VITEST + real-~/.comis throw-guard (D9) — stops the Phase-149-02 leak class
+// ---------------------------------------------------------------------------
+
+describe("appendSessionIndexEntry — D9 test-process write-guard", () => {
+  it("throws when VITEST=true and dataDir is under the real ~/.comis (D9 guard)", () => {
+    vi.stubEnv("VITEST", "true");
+    const realHome = path.join(os.homedir(), ".comis");
+    expect(() => appendSessionIndexEntry(realHome, makeSessionStarted())).toThrow(
+      /must not write under the real.*\.comis/,
+    );
+    vi.unstubAllEnvs();
+  });
+
+  it("throws when VITEST=true and dataDir is a subdir of the real ~/.comis", () => {
+    vi.stubEnv("VITEST", "true");
+    const underHome = path.join(os.homedir(), ".comis", "nested");
+    expect(() => appendSessionIndexEntry(underHome, makeSessionStarted())).toThrow(
+      /must not write under the real.*\.comis/,
+    );
+    vi.unstubAllEnvs();
+  });
+
+  it("does NOT throw when VITEST=true and dataDir is a tmp dir (correct test usage)", () => {
+    vi.stubEnv("VITEST", "true");
+    expect(() => appendSessionIndexEntry(tmpDir, makeSessionStarted())).not.toThrow();
+    vi.unstubAllEnvs();
+  });
+
+  it("stamps source:'test' and synthetic:true on a record written under VITEST in a tmp dir", async () => {
+    vi.stubEnv("VITEST", "true");
+    appendSessionIndexEntry(tmpDir, makeSessionStarted());
+    await vi.runAllTimersAsync();
+    const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8").trim());
+    expect(parsed.source).toBe("test");
+    expect(parsed.synthetic).toBe(true);
+    vi.unstubAllEnvs();
+  });
+});

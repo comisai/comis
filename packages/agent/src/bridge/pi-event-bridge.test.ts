@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ok, err } from "@comis/shared";
-import type { ModelOperationType } from "@comis/core";
+import { registerToolMetadata } from "@comis/core";
+import type { ModelOperationType, ErrorKind } from "@comis/core";
 import { BudgetError } from "../budget/budget-guard.js";
 import { createPiEventBridge } from "./pi-event-bridge.js";
 import type { PiEventBridgeDeps } from "./pi-event-bridge.js";
@@ -363,6 +364,126 @@ describe("createPiEventBridge", () => {
       expect(endEmit).toBeDefined();
     });
 
+    // -----------------------------------------------------------------------
+    // B1 (D3): the bridge captures the recordResult transition verdict and
+    // emits tool:breaker_opened / tool:breaker_reset (the breaker stays
+    // emitter-free). The emit fires exactly when recordResult returns a
+    // transition — once per open at the threshold edge.
+    // -----------------------------------------------------------------------
+    it("emits tool:breaker_opened exactly once when recordResult returns an opened transition", () => {
+      const depsWithBreaker = createMockDeps({
+        toolRetryBreaker: {
+          beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+          recordResult: vi.fn().mockReturnValue({
+            transition: "opened",
+            toolName: "bash",
+            reason: "tool_failure_threshold",
+            consecutiveFailures: 5,
+            errorTag: "spawn_enoent",
+          }),
+          getBlockedTools: vi.fn().mockReturnValue([]),
+          reset: vi.fn(),
+        } as any,
+      });
+      const { listener } = createPiEventBridge(depsWithBreaker);
+
+      listener(makeToolExecutionEndEvent("bash", "tc-b1", true) as any);
+
+      const calls = (depsWithBreaker.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const opened = calls.filter((c) => c[0] === "tool:breaker_opened");
+      expect(opened).toHaveLength(1);
+      expect(opened[0][1].toolName).toBe("bash");
+      expect(opened[0][1].consecutiveFailures).toBe(5);
+      expect(opened[0][1].errorTag).toBe("spawn_enoent");
+      expect(opened[0][1].reason).toBe("tool_failure_threshold");
+      expect(typeof opened[0][1].seq).toBe("number");
+      expect(typeof opened[0][1].timestamp).toBe("number");
+      // No reset must be emitted on an opened verdict.
+      expect(calls.find((c) => c[0] === "tool:breaker_reset")).toBeUndefined();
+    });
+
+    // Phase 152 (F1): the opened transition increments a per-execution counter
+    // (m.breakerTripCount) that surfaces on getResult().breakerTripCount, and the
+    // classified-failure tool's errorKind is carried on the matching
+    // toolExecResults entry — the two rollup signals Plan 03 reduces over.
+    it("accumulates breakerTripCount on an opened transition and carries the failed tool's errorKind", () => {
+      const depsWithBreaker = createMockDeps({
+        toolRetryBreaker: {
+          beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+          recordResult: vi.fn().mockReturnValue({
+            transition: "opened",
+            toolName: "web_fetch",
+            reason: "tool_failure_threshold",
+            consecutiveFailures: 5,
+            errorTag: "http_500",
+          }),
+          getBlockedTools: vi.fn().mockReturnValue([]),
+          reset: vi.fn(),
+        } as any,
+      });
+      const { listener, getResult } = createPiEventBridge(depsWithBreaker);
+
+      // A failed tool_execution_end with generic error text classifies as
+      // errorKind "dependency" (see the generic-errorText test below).
+      listener(
+        makeToolExecutionEndEvent("web_fetch", "tc-f1", true, { message: "upstream 500" }) as any,
+      );
+
+      const result = getResult();
+      expect(result.breakerTripCount).toBeGreaterThanOrEqual(1);
+      const entry = result.toolExecResults?.find((r) => r.toolName === "web_fetch");
+      expect(entry).toBeDefined();
+      expect(entry!.success).toBe(false);
+      expect(entry!.errorKind).toBe("dependency");
+    });
+
+    it("emits tool:breaker_reset when recordResult returns a reset transition", () => {
+      const depsWithBreaker = createMockDeps({
+        toolRetryBreaker: {
+          beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+          recordResult: vi.fn().mockReturnValue({
+            transition: "reset",
+            toolName: "web_fetch",
+            reason: "success",
+            consecutiveFailures: 0,
+            errorTag: "",
+          }),
+          getBlockedTools: vi.fn().mockReturnValue([]),
+          reset: vi.fn(),
+        } as any,
+      });
+      const { listener } = createPiEventBridge(depsWithBreaker);
+
+      listener(makeToolExecutionEndEvent("web_fetch", "tc-b2", false) as any);
+
+      const calls = (depsWithBreaker.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const reset = calls.filter((c) => c[0] === "tool:breaker_reset");
+      expect(reset).toHaveLength(1);
+      expect(reset[0][1].toolName).toBe("web_fetch");
+      expect(reset[0][1].reason).toBe("success");
+      expect(typeof reset[0][1].seq).toBe("number");
+      // No opened on a reset verdict.
+      expect(calls.find((c) => c[0] === "tool:breaker_opened")).toBeUndefined();
+    });
+
+    it("emits no breaker event when recordResult returns undefined (no transition)", () => {
+      const depsWithBreaker = createMockDeps({
+        toolRetryBreaker: {
+          beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+          recordResult: vi.fn().mockReturnValue(undefined),
+          getBlockedTools: vi.fn().mockReturnValue([]),
+          reset: vi.fn(),
+        } as any,
+      });
+      const { listener } = createPiEventBridge(depsWithBreaker);
+
+      listener(makeToolExecutionEndEvent("bash", "tc-b3", true) as any);
+
+      const calls = (depsWithBreaker.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.find((c) => c[0] === "tool:breaker_opened")).toBeUndefined();
+      expect(calls.find((c) => c[0] === "tool:breaker_reset")).toBeUndefined();
+    });
+
     // errorKind on tool:executed when isError was true from the start.
     it("isError=true with [invalid_value] errorText emits errorKind=validation", () => {
       const { listener } = createPiEventBridge(deps);
@@ -478,6 +599,220 @@ describe("createPiEventBridge", () => {
       expect(endEmit).toBeDefined();
       expect(endEmit![1].success).toBe(true);
       expect(endEmit![1].errorKind).toBeUndefined();
+    });
+
+    // -----------------------------------------------------------------------
+    // D1 failure-classification provenance (P1): classifiedFailureBy +
+    // transportOk + httpStatus/matchedRule/matchedToken + resultBytes/Digest
+    // are assigned at the mutation point and recorded on BOTH the WARN log AND
+    // the tool:executed event. matchedToken (free-text untrusted tool output)
+    // is sanitized+bounded identically at BOTH sinks.
+    // -----------------------------------------------------------------------
+    describe("D1 failure-classification provenance", () => {
+      // Helper: find the tool:executed emit + the "Tool execution failed" WARN.
+      function findEmitAndWarn(toolName: string) {
+        const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+        const endEmit = emitCalls.find((c) => c[0] === "tool:executed" && c[1].toolName === toolName);
+        const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+        const warn = warnCalls.find((c) => c[1] === "Tool execution failed" && c[0].toolName === toolName);
+        return { endEmit, warn };
+      }
+
+      it("SDK isError (non-MCP) → classifiedFailureBy:'sdk_iserror', transportOk:false on WARN + event", () => {
+        const { listener } = createPiEventBridge(deps);
+        const result = { message: "Network unreachable: connection refused" };
+        listener(makeToolExecutionEndEvent("flaky_tool", "tc-p1a", true, result) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("flaky_tool");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].classifiedFailureBy).toBe("sdk_iserror");
+        expect(endEmit![1].transportOk).toBe(false);
+        expect(warn).toBeDefined();
+        expect(warn![0].classifiedFailureBy).toBe("sdk_iserror");
+        expect(warn![0].transportOk).toBe(false);
+      });
+
+      it("exec non-zero exitCode → classifiedFailureBy:'exit_code', transportOk:true", () => {
+        const { listener } = createPiEventBridge(deps);
+        const result = { content: [{ type: "text", text: '{"exitCode":1}' }], details: { exitCode: 1, stdout: "", stderr: "boom" } };
+        listener(makeToolExecutionEndEvent("exec", "tc-p1b", false, result) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("exec");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].classifiedFailureBy).toBe("exit_code");
+        expect(endEmit![1].transportOk).toBe(true);
+        expect(warn![0].classifiedFailureBy).toBe("exit_code");
+        expect(warn![0].transportOk).toBe(true);
+      });
+
+      it("detector flips a status:200... no wait — a status:500 web_fetch → 'failure_detector', transportOk:true, httpStatus + matchedRule/Token", () => {
+        // Register a structured-field detector on a unique tool name (self-isolating).
+        registerToolMetadata("test_web_fetch_p1c", {
+          failureDetector: (r) => {
+            const o = r as { status?: number; error?: string };
+            if (typeof o.status === "number" && o.status >= 400) {
+              return { errorKind: "dependency" as ErrorKind, classifiedField: "status", matchedRule: "status>=400", matchedToken: String(o.status) };
+            }
+            return false;
+          },
+        });
+        const { listener } = createPiEventBridge(deps);
+        // status:500 → genuine failure; isError=false (SDK said ok, detector flips).
+        const result = { status: 500, body: "Internal Server Error" };
+        listener(makeToolExecutionEndEvent("test_web_fetch_p1c", "tc-p1c", false, result) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("test_web_fetch_p1c");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].success).toBe(false);
+        expect(endEmit![1].classifiedFailureBy).toBe("failure_detector");
+        expect(endEmit![1].transportOk).toBe(true);
+        expect(endEmit![1].httpStatus).toBe(500);
+        expect(endEmit![1].matchedRule).toBe("status>=400");
+        expect(endEmit![1].matchedToken).toBe("500");
+        expect(warn![0].classifiedFailureBy).toBe("failure_detector");
+        expect(warn![0].httpStatus).toBe(500);
+        expect(warn![0].matchedToken).toBe("500");
+      });
+
+      it("A1 overlap — SDK isError on an MCP-namespaced tool → classifiedFailureBy:'mcp_classifier' (NOT sdk_iserror), transportOk:false", () => {
+        const { listener } = createPiEventBridge(deps);
+        const result = { message: "mcp tool error: request timed out after 30s" };
+        listener(makeToolExecutionEndEvent("mcp__example--search", "tc-p1d", true, result) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("mcp__example--search");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].success).toBe(false);
+        // A1 precedence: the MCP classifier refines the sdk_iserror flip when mcpServer !== undefined.
+        expect(endEmit![1].classifiedFailureBy).toBe("mcp_classifier");
+        expect(endEmit![1].transportOk).toBe(false);
+        expect(warn![0].classifiedFailureBy).toBe("mcp_classifier");
+      });
+
+      it("emits resultBytes + resultDigest (12-hex) on the failure path", () => {
+        const { listener } = createPiEventBridge(deps);
+        const result = { message: "boom" };
+        listener(makeToolExecutionEndEvent("flaky_tool", "tc-p1e", true, result) as any);
+
+        const { endEmit } = findEmitAndWarn("flaky_tool");
+        expect(endEmit).toBeDefined();
+        expect(typeof endEmit![1].resultBytes).toBe("number");
+        expect(endEmit![1].resultBytes).toBeGreaterThan(0);
+        expect(endEmit![1].resultDigest).toMatch(/^[0-9a-f]{12}$/);
+      });
+
+      it("matchedToken is sanitized+bounded to ≤1500 chars at BOTH the WARN and the event (no raw 5000-char token)", () => {
+        const hugeToken = "T".repeat(5000);
+        registerToolMetadata("test_huge_token_p1f", {
+          failureDetector: () => ({ errorKind: "dependency" as ErrorKind, classifiedField: "error", matchedToken: hugeToken }),
+        });
+        const { listener } = createPiEventBridge(deps);
+        const result = { status: 503, body: "err" };
+        listener(makeToolExecutionEndEvent("test_huge_token_p1f", "tc-p1f", false, result) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("test_huge_token_p1f");
+        expect(endEmit).toBeDefined();
+        // Event sink MUST bound — it flows into trajectory/cache-trace translators.
+        expect(typeof endEmit![1].matchedToken).toBe("string");
+        expect((endEmit![1].matchedToken as string).length).toBeLessThanOrEqual(1500);
+        expect(endEmit![1].matchedToken).not.toBe(hugeToken);
+        // WARN sink MUST bound too (identical treatment).
+        expect((warn![0].matchedToken as string).length).toBeLessThanOrEqual(1500);
+      });
+
+      it("success path carries NO provenance fields (all 7 absent)", () => {
+        const { listener } = createPiEventBridge(deps);
+        listener(makeToolExecutionEndEvent("bash", "tc-p1g", false) as any);
+
+        const { endEmit } = findEmitAndWarn("bash");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].success).toBe(true);
+        // Regression net: every provenance field is assigned ONLY inside a
+        // failure branch, so a clean success emit must carry none of them.
+        // Guards against a future hoist of resultDigest/resultBytes (or any
+        // other field) out of the `if (!toolSuccess)` block leaking a digest
+        // of a successful body into the event/trajectory/cache-trace stream.
+        for (const f of [
+          "classifiedFailureBy",
+          "transportOk",
+          "httpStatus",
+          "matchedRule",
+          "matchedToken",
+          "resultBytes",
+          "resultDigest",
+        ] as const) {
+          expect(endEmit![1][f], `${f} must be absent on success`).toBeUndefined();
+        }
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // D2 single-chokepoint runtime guard (P2): a registered detector can NEVER
+    // flag a status:200 + no-error result (the codified c53ab0f invariant,
+    // generalized to ALL detectors at the one bridge chokepoint). The guard
+    // refuses the flag (success preserved) + logs an observable WARN — it
+    // never throws (mirrors the existing throwing-detector catch).
+    // -----------------------------------------------------------------------
+    describe("D2 no-false-flag runtime guard", () => {
+      function findEmit(toolName: string) {
+        const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+        return emitCalls.find((c) => c[0] === "tool:executed" && c[1].toolName === toolName);
+      }
+      function findGuardWarn(toolName: string) {
+        const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+        return warnCalls.find((c) => c[0].toolName === toolName && c[1] === "failureDetector no-false-flag guard tripped");
+      }
+
+      it("REFUSES a detector flag on a status:200 / no-error result (success preserved + WARN)", () => {
+        // A drifted detector that wrongly flags a 200 (the c53ab0f regression).
+        registerToolMetadata("test_drift_200", {
+          failureDetector: () => ({ errorKind: "dependency" as ErrorKind, classifiedField: "status" }),
+        });
+        const { listener } = createPiEventBridge(deps);
+        const result = { status: 200, text: "IBM price 403.92, MSFT 503.10" };
+        listener(makeToolExecutionEndEvent("test_drift_200", "tc-g1", false, result) as any);
+
+        const endEmit = findEmit("test_drift_200");
+        expect(endEmit).toBeDefined();
+        // Flag REFUSED — success preserved, no failure classification.
+        expect(endEmit![1].success).toBe(true);
+        expect(endEmit![1].classifiedFailureBy).toBeUndefined();
+        // Observable WARN with errorKind:internal.
+        const guardWarn = findGuardWarn("test_drift_200");
+        expect(guardWarn).toBeDefined();
+        expect(guardWarn![0].errorKind).toBe("internal");
+      });
+
+      it("ACCEPTS a detector flag on a genuine status:500 failure (guard does not over-refuse)", () => {
+        registerToolMetadata("test_real_500", {
+          failureDetector: () => ({ errorKind: "dependency" as ErrorKind, classifiedField: "status", matchedToken: "500" }),
+        });
+        const { listener } = createPiEventBridge(deps);
+        const result = { status: 500, text: "Internal Server Error" };
+        listener(makeToolExecutionEndEvent("test_real_500", "tc-g2", false, result) as any);
+
+        const endEmit = findEmit("test_real_500");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].success).toBe(false);
+        expect(endEmit![1].classifiedFailureBy).toBe("failure_detector");
+        // No guard WARN — the flag was legitimately accepted.
+        expect(findGuardWarn("test_real_500")).toBeUndefined();
+      });
+
+      it("ACCEPTS a detector flag on a status:200 result that ALSO sets a string error (genuine content failure)", () => {
+        registerToolMetadata("test_200_with_error", {
+          failureDetector: () => ({ errorKind: "dependency" as ErrorKind, classifiedField: "error" }),
+        });
+        const { listener } = createPiEventBridge(deps);
+        // status:200 but error is set → a real content failure, NOT a false flag.
+        const result = { status: 200, error: "upstream rejected the request" };
+        listener(makeToolExecutionEndEvent("test_200_with_error", "tc-g3", false, result) as any);
+
+        const endEmit = findEmit("test_200_with_error");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1].success).toBe(false);
+        expect(endEmit![1].classifiedFailureBy).toBe("failure_detector");
+        expect(findGuardWarn("test_200_with_error")).toBeUndefined();
+      });
     });
 
     it("when stepCounter.shouldHalt() returns true, calls onAbort and sets finishReason to max_steps", () => {
@@ -640,6 +975,60 @@ describe("createPiEventBridge", () => {
         cacheReadTokens: 8000,
         cacheWriteTokens: 3000,
       }));
+    });
+
+    // B3 (D8): the per-turn token_usage event carries the SDK stop signal so
+    // the trajectory's model.completed records refusals/length-stops. stopReason
+    // is sourced from m.lastStopReason (captured in the SAME turn_end case before
+    // the emit), so it is reliable/current. See AGENT_NATIVE_OBSERVABILITY_DESIGN §5 D8.
+    it("a turn ending with stopReason='refusal' emits observability:token_usage carrying stopReason 'refusal'", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      listener(makeTurnEndEvent({ stopReason: "refusal" }) as any);
+
+      expect(deps.eventBus.emit).toHaveBeenCalledWith("observability:token_usage", expect.objectContaining({
+        stopReason: "refusal",
+      }));
+    });
+
+    // WR-151-01: m.finishReason is initialized to the literal "stop"
+    // (bridge-metrics.ts) and settles to a real value only when a safety guard
+    // diverges it — which is LATER than this per-turn emit on a normal turn. The
+    // translator (event-bus-bridge.ts) forwards finishReason presence-conditionally,
+    // so the bridge must OMIT it while it is still the un-settled init default;
+    // otherwise every model.completed record carries a stale "stop" that looks
+    // authoritative but is noise. Helper extracts the actual emitted payload
+    // (objectContaining cannot assert key ABSENCE).
+    function lastTokenUsagePayload(): Record<string, unknown> {
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c) => c[0] === "observability:token_usage");
+      expect(calls.length).toBeGreaterThan(0);
+      return calls[calls.length - 1]![1] as Record<string, unknown>;
+    }
+
+    it("omits finishReason on a normal turn where it is still the un-settled init default 'stop'", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      // A normal turn never diverges m.finishReason from its "stop" init default
+      // before this emit, so the key must be ABSENT (not a stale "stop").
+      listener(makeTurnEndEvent({ stopReason: "end_turn" }) as any);
+
+      const payload = lastTokenUsagePayload();
+      expect("finishReason" in payload).toBe(false);
+    });
+
+    it("forwards finishReason once a safety guard has settled it to a real non-default value", () => {
+      // A step-limit halt on a prior tool_execution_end settles
+      // m.finishReason to "max_steps" BEFORE the next turn_end emit, so the
+      // genuinely-settled disposition must be forwarded.
+      (deps.stepCounter.shouldHalt as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      const { listener } = createPiEventBridge(deps);
+
+      listener(makeToolExecutionEndEvent("bash") as any); // → m.finishReason = "max_steps"
+      listener(makeTurnEndEvent({ stopReason: "end_turn" }) as any);
+
+      const payload = lastTokenUsagePayload();
+      expect(payload.finishReason).toBe("max_steps");
     });
 
     it("when budgetGuard.checkBudget returns err, calls onAbort and sets finishReason to budget_exceeded", () => {

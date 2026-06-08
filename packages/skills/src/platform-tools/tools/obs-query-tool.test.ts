@@ -69,6 +69,48 @@ describe("obs_query tool", () => {
       expect(mockRpcCall).not.toHaveBeenCalled();
     });
 
+    it("throws for guest callers on action=explain (not bypassed)", async () => {
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("guest"), () =>
+          tool.execute("call-g-ex", {
+            action: "explain",
+            session_key: "tenant:user:ch:ts",
+          } as never),
+        ),
+      ).rejects.toThrow(/Insufficient trust level/);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("throws for guest callers on action=trace (not bypassed)", async () => {
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("guest"), () =>
+          tool.execute("call-g-tr", {
+            action: "trace",
+            trace_id: "some-uuid",
+          } as never),
+        ),
+      ).rejects.toThrow(/Insufficient trust level/);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("throws for guest callers on action=session_report (not bypassed)", async () => {
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("guest"), () =>
+          tool.execute("call-g-sr", {
+            action: "session_report",
+            session_key: "tenant:user:ch:ts",
+          } as never),
+        ),
+      ).rejects.toThrow(/Insufficient trust level/);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
     it("throws for non-admin callers (user)", async () => {
       const tool = createObsQueryTool(mockRpcCall);
 
@@ -401,6 +443,85 @@ describe("obs_query tool", () => {
         ),
       ).rejects.toThrow(/channel_id/);
       expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // explain action (A1) — dispatches to obs.explain (frozen contract)
+  // -----------------------------------------------------------------------
+
+  describe("explain action", () => {
+    it("calls rpcCall('obs.explain') with sessionKey, traceId, depth", async () => {
+      mockRpcCall.mockResolvedValue({ sessionKey: "tenant:user:ch:ts" });
+
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-ex1", {
+          action: "explain",
+          session_key: "tenant:user:ch:ts",
+          depth: "full",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.explain", {
+        sessionKey: "tenant:user:ch:ts",
+        traceId: undefined,
+        depth: "full",
+        _trustLevel: "admin",
+      });
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // trace action (A1) — dispatches to obs.trace.search (frozen contract)
+  // -----------------------------------------------------------------------
+
+  describe("trace action", () => {
+    it("calls rpcCall('obs.trace.search') with traceId, sinceMs, limit", async () => {
+      mockRpcCall.mockResolvedValue({ rows: [] });
+
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-tr1", {
+          action: "trace",
+          trace_id: "some-uuid",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.trace.search", {
+        traceId: "some-uuid",
+        sinceMs: undefined,
+        limit: undefined,
+        _trustLevel: "admin",
+      });
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // session_report action (A1) — reuses obs.explain (no new contract)
+  // -----------------------------------------------------------------------
+
+  describe("session_report action", () => {
+    it("calls rpcCall('obs.explain') with depth defaulting to 'summary'", async () => {
+      mockRpcCall.mockResolvedValue({ sessionKey: "tenant:user:ch:ts" });
+
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-sr1", {
+          action: "session_report",
+          session_key: "tenant:user:ch:ts",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.explain", {
+        sessionKey: "tenant:user:ch:ts",
+        traceId: undefined,
+        depth: "summary",
+        _trustLevel: "admin",
+      });
     });
   });
 

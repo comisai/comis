@@ -68,4 +68,28 @@ describe("bridge-metrics shape regression guard", () => {
     const r = buildBridgeResult(m, 1);
     expect(r.totalCostCorrectionDeltaUsd).toBe(0.00042);
   });
+
+  // Phase 152 (F1) — the bridge must accumulate breakerTripCount + per-tool
+  // errorKind so the session-health rollup (Plan 03) is a pure reduce. These
+  // two signals had NO source before this plan: the breaker-open transition was
+  // emitted but counted nowhere, and m.toolExecResults recorded only errorText.
+  it("buildBridgeResult forwards breakerTripCount and per-tool errorKind from metrics state", () => {
+    const m = createBridgeMetrics();
+    // Simulate the bridge's accumulation: one breaker trip + a failed tool that
+    // was classified as a dependency error, then a successful tool.
+    m.breakerTripCount = 1;
+    m.toolExecResults.push({ toolName: "web_fetch", success: false, durationMs: 5, errorKind: "dependency" });
+    m.toolExecResults.push({ toolName: "web_fetch", success: true, durationMs: 3 });
+    const r = buildBridgeResult(m, 0);
+    expect(r.breakerTripCount).toBe(1);
+    expect(r.toolExecResults?.[0].errorKind).toBe("dependency");
+    // A successful tool contributes no errorKind.
+    expect(r.toolExecResults?.[1].errorKind).toBeUndefined();
+  });
+
+  it("buildBridgeResult reports breakerTripCount 0 for a fresh metrics state (init contract)", () => {
+    const m = createBridgeMetrics();
+    const r = buildBridgeResult(m, 0);
+    expect(r.breakerTripCount).toBe(0);
+  });
 });

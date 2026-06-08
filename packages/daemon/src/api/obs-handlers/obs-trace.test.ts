@@ -210,6 +210,101 @@ describe("bindObsTraceHandlers", () => {
     expect(__lruSize()).toBe(1024);
   });
 
+  // -------------------------------------------------------------------------
+  // D9: default-exclude synthetic rows (the 3 scan helpers) + includeSynthetic
+  // -------------------------------------------------------------------------
+
+  /**
+   * Seed a tmp dataDir with today's session-index JSONL containing the given
+   * pre-serialized rows. Returns the dataDir.
+   */
+  function seedIndex(rows: Array<Record<string, unknown>>): string {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-trace-synth-"));
+    const logsDir = path.join(tmpDir, "logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    const today = new Date().toISOString().slice(0, 10);
+    const indexFile = path.join(logsDir, `session-index.${today}.jsonl`);
+    fs.writeFileSync(indexFile, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    return tmpDir;
+  }
+
+  it("search by traceId excludes a synthetic row by default and keeps the runtime row", async () => {
+    const dataDir = seedIndex([
+      { traceId: "shared-trace", sessionId: "synthetic-s", synthetic: true, ts: new Date().toISOString() },
+      { traceId: "shared-trace", sessionId: "runtime-s", ts: new Date().toISOString() },
+    ]);
+    const handlers = bindObsTraceHandlers(makeDeps({ dataDir }));
+    const result = (await handlers["obs.trace.search"]!({
+      _trustLevel: "admin",
+      traceId: "shared-trace",
+    })) as { rows: Array<Record<string, unknown>> };
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.sessionId).toBe("runtime-s");
+  });
+
+  it("search by traceId with includeSynthetic:true returns BOTH the synthetic and runtime rows", async () => {
+    const dataDir = seedIndex([
+      { traceId: "shared-trace", sessionId: "synthetic-s", synthetic: true, ts: new Date().toISOString() },
+      { traceId: "shared-trace", sessionId: "runtime-s", ts: new Date().toISOString() },
+    ]);
+    const handlers = bindObsTraceHandlers(makeDeps({ dataDir }));
+    const result = (await handlers["obs.trace.search"]!({
+      _trustLevel: "admin",
+      traceId: "shared-trace",
+      includeSynthetic: true,
+    })) as { rows: Array<Record<string, unknown>> };
+    expect(result.rows).toHaveLength(2);
+  });
+
+  it("search treats a string 'true' synthetic field as NON-synthetic (strict === true only)", async () => {
+    // Untrusted JSONL: only a real boolean true triggers exclusion — a string
+    // must never be truthy-coerced into an exclusion.
+    const dataDir = seedIndex([
+      { traceId: "strict-trace", sessionId: "string-flag-s", synthetic: "true", ts: new Date().toISOString() },
+    ]);
+    const handlers = bindObsTraceHandlers(makeDeps({ dataDir }));
+    const result = (await handlers["obs.trace.search"]!({
+      _trustLevel: "admin",
+      traceId: "strict-trace",
+    })) as { rows: Array<Record<string, unknown>> };
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.sessionId).toBe("string-flag-s");
+  });
+
+  it("search by since/where excludes a synthetic row by default (the ByFilter helper)", async () => {
+    const dataDir = seedIndex([
+      { traceId: "t-a", sessionId: "synthetic-s", synthetic: true, ts: new Date().toISOString() },
+      { traceId: "t-b", sessionId: "runtime-s", ts: new Date().toISOString() },
+    ]);
+    const handlers = bindObsTraceHandlers(makeDeps({ dataDir }));
+    const result = (await handlers["obs.trace.search"]!({
+      _trustLevel: "admin",
+      since: "1h",
+    })) as { rows: Array<Record<string, unknown>> };
+    expect(result.rows.every((r) => r.sessionId !== "synthetic-s")).toBe(true);
+    expect(result.rows.some((r) => r.sessionId === "runtime-s")).toBe(true);
+  });
+
+  it("tail by chatId excludes a synthetic row by default (the ByChat helper, safe default)", async () => {
+    // obs.trace.tail (ObsTraceTailContract) carries NO includeSynthetic opt-in,
+    // so the ByChat helper always default-excludes synthetic rows here — the
+    // safe posture (test telemetry never surfaces on a live tail).
+    const dataDir = seedIndex([
+      { chatId: "chat-1", sessionId: "synthetic-s", synthetic: true, ts: new Date().toISOString() },
+      { chatId: "chat-1", sessionId: "runtime-s", ts: new Date().toISOString() },
+    ]);
+    const handlers = bindObsTraceHandlers(makeDeps({ dataDir }));
+    const sinceMs = Date.now() - 60_000;
+
+    const excluded = (await handlers["obs.trace.tail"]!({
+      _trustLevel: "admin",
+      chatId: "chat-1",
+      sinceMs,
+    })) as { events: Array<Record<string, unknown>> };
+    expect(excluded.events.every((e) => e.sessionId !== "synthetic-s")).toBe(true);
+    expect(excluded.events.some((e) => e.sessionId === "runtime-s")).toBe(true);
+  });
+
   // Test 9: seedMessageIdLru reads session-index files and populates LRU
   it("seedMessageIdLru_populates_from_jsonl", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-trace-seed-"));

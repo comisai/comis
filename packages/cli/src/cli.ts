@@ -35,6 +35,7 @@ import { registerResetCommand } from "./commands/reset.js";
 import { registerSecretsCommand } from "./commands/secrets.js";
 import { registerSignalSetupCommand } from "./commands/signal-setup.js";
 import { registerTraceCommand } from "./commands/trace.js";
+import { registerExplainCommand } from "./commands/explain.js";
 import { registerUninstallCommand } from "./commands/uninstall.js";
 
 export const program = new Command();
@@ -67,6 +68,7 @@ registerResetCommand(program);
 registerSecretsCommand(program);
 registerSignalSetupCommand(program);
 registerTraceCommand(program);
+registerExplainCommand(program);
 registerUninstallCommand(program);
 
 // Parse and execute

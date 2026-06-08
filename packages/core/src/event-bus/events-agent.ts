@@ -69,6 +69,8 @@ export interface AgentEvents {
   };
 
   /** Tool invocation completed (builtin, platform, or skill-based) */
+  // @optional-field-count: tool:executed carries failure-classification provenance (P1/D1);
+  //   the new fields are conditional on the failure branch — see AGENT_NATIVE_OBSERVABILITY_DESIGN §5 D1.
   "tool:executed": {
     toolName: string;
     durationMs: number;
@@ -96,6 +98,20 @@ export interface AgentEvents {
     fullChars?: number;
     /** Character count after truncation. Only present when truncated=true. */
     returnedChars?: number;
+    /** Which of the 4 sources classified this failure (P1/D1). */
+    classifiedFailureBy?: "sdk_iserror" | "exit_code" | "failure_detector" | "mcp_classifier";
+    /** False ONLY when the SDK/transport itself errored; true for content/exit/detector failures. */
+    transportOk?: boolean;
+    /** HTTP status for web tools (result.status). */
+    httpStatus?: number;
+    /** The detector rule that matched (P2/D2). */
+    matchedRule?: string;
+    /** The token that matched, e.g. a status code (P2/D2). */
+    matchedToken?: string;
+    /** Size in bytes of the full serialized result (D4) — never the body. */
+    resultBytes?: number;
+    /** 12-hex digest of the full result payload (D4) — never the body. */
+    resultDigest?: string;
   };
 
   /** Tools filtered out by policy before execution (debugging/audit) */
@@ -105,6 +121,56 @@ export interface AgentEvents {
     /** Per-entry `toolCallId` is optional — activity renders a policy-block
      *  only when the filtered tool is correlatable to a call. */
     filtered: Array<{ toolName: string; reason: string; toolCallId?: string }>;
+    timestamp: number;
+  };
+
+  /**
+   * Circuit breaker opened for a tool (tool-level total OR error-pattern
+   * threshold crossed). D3 — fired by the bridge exactly at the counter
+   * crossing (`recordResult` returns the verdict; the breaker stays
+   * emitter-free). Phase 153's `obs.explain` renders a breakerTimeline from
+   * these; the payload carries the breaker's already-normalized `errorTag`
+   * (extractErrorTag — first-80-char normalized), NEVER raw error text (§2.7).
+   */
+  "tool:breaker_opened": {
+    toolName: string;
+    consecutiveFailures: number;
+    /** Normalized error tag (extractErrorTag) — never raw body. */
+    errorTag: string;
+    /** "tool_failure_threshold" | "error_pattern" */
+    reason: string;
+    /** Count of tools executed so far this execution (monotonic seq for the breakerTimeline). */
+    seq: number;
+    timestamp: number;
+  };
+
+  /**
+   * Circuit breaker reset for a tool (a success that recovered a non-zero
+   * failure counter). D3. Lifecycle `reset()` does NOT emit this (A2).
+   */
+  "tool:breaker_reset": {
+    toolName: string;
+    /** "success" */
+    reason: string;
+    seq: number;
+    timestamp: number;
+  };
+
+  /**
+   * Tool result offloaded to disk (exceeded the inline threshold or the hard
+   * cap). D7 — emitted by the executor's microcompaction offload callback
+   * (the guard stays emitter-free, T-151-07). Phase 153's `obs.explain`
+   * renders `IncidentReport.offloads[]` from these. The payload carries a
+   * count (`originalChars`) and a WORKSPACE-RELATIVE pointer — never the
+   * offloaded result body and never the absolute host path (§2.7 / T-151-05/06).
+   */
+  "tool:result_offloaded": {
+    toolName: string;
+    toolCallId: string;
+    /** Character count of the original (pre-offload) result. */
+    originalChars: number;
+    /** Workspace-relative path (sessionDir-relative): `tool-results/<toolCallId>.json`. Phase 153 drill-down target. */
+    diskPathRel: string;
     timestamp: number;
   };
 
@@ -231,6 +297,14 @@ export interface AgentEvents {
      * consumers can sum without conditional schema checks.
      */
     pendingCacheInvestmentUsd: number;
+    /** SDK per-turn stop signal (e.g. "stop"|"length"|"tool_use"|"refusal").
+     *  Current at the per-turn emit (m.lastStopReason captured at :1231 same case). D8. */
+    stopReason?: string;
+    /** Execution-level finish disposition (e.g. "stop"|"loop_detected"|"budget_exceeded").
+     *  Best-effort at the per-turn emit — m.finishReason settles LATER than turn_end
+     *  (set at :1005/:1018/:1625/:1672/:2113); treat as init-default "stop" until Phase 152
+     *  flight-recorder surfaces effectiveFinishReason. D8. */
+    finishReason?: string;
   };
 
   /** Cache break detected: prompt cache invalidation with attribution.
@@ -602,120 +676,9 @@ export interface AgentEvents {
   };
 
   // ---------------------------------------------------------------------
-  // Trajectory observability events.
-  //
+  // Trajectory observability events (prompt:* / session:* / memory:injected
+  // / tool:timeout) moved to events-trajectory.ts (`TrajectoryEvents`) for
+  // the file-size cap; they are composed into `EventMap` (events.ts) there.
   // Subscribed via @comis/observability/trajectory/event-bus-bridge.ts.
-  // Each is emitted at a single canonical site and consumed via the
-  // EventBus rather than call-site instrumentation.
   // ---------------------------------------------------------------------
-
-  /**
-   * Prompt assembly completed; the next pi-mono `agent_start` call will
-   * submit this exact `(systemPrompt, messages)` pair to the model.
-   * `systemDigest` and `messagesDigest` are sha256 over the canonical
-   * `stableStringify` of the respective inputs — they line up with the
-   * SystemPromptReport digest and the cache-trace artifact for
-   * cross-correlation.
-   *
-   * Emit site: `packages/agent/src/executor/prompt-runner/prompt-runner.ts`
-   * after `wrapEnvelope()` returns and before `runRetryLoop`.
-   */
-  "prompt:submitted": {
-    agentId: string;
-    sessionKey?: string;
-    traceId: string;
-    promptChars: number;
-    provider: string;
-    modelId: string;
-    messageCount: number;
-    systemDigest: string;
-    messagesDigest: string;
-    timestamp: number;
-  };
-
-  /**
-   * Agent run started — emitted on pi-mono `agent_start` (first turn of
-   * an execution). Distinct from `session:created` which fires on
-   * sessionStore creation; this fires per execute() lifecycle (every
-   * inbound message starts a new agent run).
-   *
-   * Emit site: `packages/agent/src/bridge/pi-event-bridge.ts`
-   */
-  "session:started": {
-    agentId: string;
-    sessionKey?: string;
-    traceId: string;
-    channelType: string;
-    channelId: string;
-    accountId?: string;
-    timestamp: number;
-  };
-
-  /**
-   * Agent run ended — emitted on pi-mono `agent_end`. Carries aggregated
-   * turn / token totals for the run plus an `exitReason` discriminator.
-   *
-   * Emit site: `packages/agent/src/bridge/pi-event-bridge.ts`
-   */
-  "session:ended": {
-    agentId: string;
-    sessionKey?: string;
-    traceId: string;
-    totalTurns: number;
-    totalInputTokens: number;
-    totalOutputTokens: number;
-    durationMs: number;
-    exitReason: string;
-    timestamp: number;
-  };
-
-  /**
-   * RAG memory was injected into the prompt for this turn. Fires only on
-   * turns where the hybrid memory injector actually emitted at least one
-   * section / inline string — no-injection turns produce no event.
-   *
-   * Emit site: `packages/agent/src/executor/prompt-assembly.ts`, after the
-   * hybrid split. `charsInjected`/`hitCount` count RETRIEVED memory only
-   * (inline + retrieved sections); the §7.3 temporal-guidance block is fixed
-   * guidance text and is deliberately NOT tallied here.
-   */
-  "memory:injected": {
-    agentId: string;
-    sessionKey?: string;
-    traceId: string;
-    hitCount: number;
-    charsInjected: number;
-    trustTags: string[];
-    /** Number of pinned entries prepended to the recall result (Step 0 of the
-     *  recall pipeline). Zero when pinning is disabled or no pins exist — the
-     *  default-off byte-identical path. Surfaced here so trajectory consumers
-     *  can distinguish pinned-first from fused-recall injection budgets. */
-    pinnedCount?: number;
-    timestamp: number;
-  };
-
-  /**
-   * Explicit tool-timeout signal. Fires alongside `tool:executed` with
-   * `errorKind: "timeout"` for the SAME physical timeout — both events
-   * share `toolCallId` so the trajectory consumer can dedupe (the
-   * `tool:executed` emit carries the full result; this event makes the
-   * timeout case enumerable for the architecture test).
-   *
-   * Dedup contract: downstream trajectory consumers see both
-   * `tool.result` (from `tool:executed`) AND `tool.timeout` (from this
-   * event) for any physical tool timeout. Both carry `toolCallId`; join
-   * on that key to avoid double-counting.
-   *
-   * Emit site: `packages/agent/src/bridge/pi-event-bridge.ts` in the
-   * `tool_execution_end` branch when `toolErrorKind === "timeout"`.
-   */
-  "tool:timeout": {
-    agentId: string;
-    sessionKey?: string;
-    traceId: string;
-    toolName: string;
-    toolCallId?: string;
-    timeoutMs: number;
-    timestamp: number;
-  };
 }

@@ -4,7 +4,7 @@ import Base from "../../layouts/Base.astro";
 import Footer from "../../components/Footer.astro";
 
 const title = "Why AI Agent Security Is Hard (And What We Built to Solve It)";
-const description = "Most AI frameworks bolt security on after launch. Comis was designed around a different question: what happens when an AI agent has real power and someone tries to abuse it? 22 defense layers later, here's what I learned.";
+const description = "Most AI frameworks bolt security on after launch. Comis was designed around a different question: what happens when an AI agent has real power and someone tries to abuse it? Defense in depth - a kernel-enforced sandbox, a credential broker, content scanning, trust-partitioned memory, and a fail-closed action classifier - here's what I learned.";
 const publishDate = "April 10, 2026";
 ---
 
@@ -62,7 +62,7 @@ const publishDate = "April 10, 2026";
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            That question led me down a rabbit hole that consumed weeks and produced 22 defense layers spanning 9 categories (24 distinct primitives in code). This is the story of how they came to be.
+            That question led me down a rabbit hole that consumed weeks and produced layered, kernel-enforced defenses spanning the whole attack surface - perimeter, secrets, network, and access control. This is the story of how they came to be.
           </p>
         </div>
 
@@ -99,7 +99,7 @@ const publishDate = "April 10, 2026";
 
         <!-- Defense in Depth -->
         <div class="prose-section">
-          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Defense in depth: 22 layers, not 1</h2>
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Defense in depth, not one guardrail</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
             The principle I kept coming back to was <strong class="text-white">defense in depth</strong>. No single security measure is sufficient. Every layer assumes the previous one might fail. Here's how it stacks up:
@@ -149,7 +149,7 @@ const publishDate = "April 10, 2026";
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">My favorite three defenses</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            I could write about all 22 layers, but let me highlight the three I'm most proud of - because they solve problems I haven't seen other frameworks even acknowledge.
+            I could write about every layer, but let me highlight the three I'm most proud of - because they solve problems I haven't seen other frameworks even acknowledge.
           </p>
 
           <!-- Defense 1: External Content Wrapping -->
@@ -268,7 +268,7 @@ const publishDate = "April 10, 2026";
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            But I'd rather start from 22 defense layers and iterate than from a safety prompt and hope. If you're building AI agents that have real tools and real access, I hope this gives you a framework for thinking about the problem.
+            But I'd rather start from layered, kernel-enforced defenses and iterate than from a safety prompt and hope. If you're building AI agents that have real tools and real access, I hope this gives you a framework for thinking about the problem.
           </p>
 
           <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 mt-12 mb-8">
@@ -299,7 +299,7 @@ const publishDate = "April 10, 2026";
           Security engineered in. Not bolted on.
         </h2>
         <p class="text-muted text-lg mb-10">
-          22 defense layers across 9 categories. Kernel-enforced sandbox. Memory trust partitioning. All open source.
+          Defense in depth. Kernel-enforced sandbox. Credential broker. Memory trust partitioning. All open source.
         </p>
         <div class="flex flex-wrap gap-4 justify-center">
           <a href="/security" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">

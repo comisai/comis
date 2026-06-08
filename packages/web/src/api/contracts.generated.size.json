@@ -1,6 +1,6 @@
 {
-  "totalMinified": 113365,
-  "totalGzipped": 10533,
+  "totalMinified": 117048,
+  "totalGzipped": 11184,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -150,13 +150,14 @@
     "obs.delivery.recent": 462,
     "obs.delivery.stats": 414,
     "obs.diagnostics": 596,
+    "obs.explain": 4059,
     "obs.getCacheStats": 358,
     "obs.reset": 571,
     "obs.reset.table": 483,
     "obs.systemPromptReport.latest": 520,
     "obs.systemPromptReport.list": 503,
     "obs.trace.export": 362,
-    "obs.trace.search": 566,
+    "obs.trace.search": 604,
     "obs.trace.tail": 569,
     "providers.create": 585,
     "providers.delete": 402,

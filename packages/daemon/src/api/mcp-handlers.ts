@@ -363,17 +363,18 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         throw structured;
       };
 
-      // Fix 4 — token-aware short-circuit.
-      // When the operator explicitly opts into OAuth (params.auth==="oauth")
-      // AND no token exists in the store yet, attempting manager.connect is
-      // doomed: the SDK's auth() drives a DCR with clientMetadata.redirect_uris=[]
-      // (the loopback redirect URI only exists during mcp.oauth_login), so a
-      // spec-compliant provider returns 400 invalid_redirect_uri, masking the
-      // real "user must run mcp_login" signal. createTokenStore is undefined in
-      // some test harnesses; the pre-check no-ops then and Fix 2 (below)
-      // handles the NeedsOAuthLoginError class instead.
+      // Fix 4 — token-aware short-circuit. When auth==="oauth" AND no token
+      // exists yet, manager.connect is doomed (the SDK's DCR runs with
+      // redirect_uris=[] — the loopback only exists during mcp.oauth_login — so
+      // a spec provider returns 400, masking the real "run mcp_login" signal).
+      // createTokenStore is undefined in some test harnesses (pre-check no-ops;
+      // Fix 2 below handles it). The mode-selected pass-through is defined but
+      // RETURNS undefined in env mode — read it into a local so that case is
+      // treated as "no token" without a deref-of-undefined or a disk fallback.
       if (params.auth === "oauth" && deps.createTokenStore !== undefined) {
-        const existingTokens = await deps.createTokenStore().tokens(params.server_name);
+        const tokenStore = deps.createTokenStore();
+        const existingTokens =
+          tokenStore !== undefined ? await tokenStore.tokens(params.server_name) : undefined;
         if (existingTokens === undefined) {
           await persistOAuthEntryAndThrowNeedsLogin();
         }

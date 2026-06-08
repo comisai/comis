@@ -97,8 +97,7 @@ import {
   writeMasterKeyIfAbsent,
   preReadStorageMode,
   systemNowMs,
-  selectOAuthCredentialStore,
-  createFileLock,
+  ObsExplainContract,
   type SecretStorePort,
   type CredentialStorageMode,
   type ToolCapabilityPort,
@@ -141,6 +140,7 @@ import {
   setupBackgroundCompletionRunner,
   setupTerminalWake,
   setupMcp,
+  selectMcpTokenStore,
   setupSkillBundles,
   buildSkillRegistriesForBundles,
   setupOutputRetention,
@@ -167,8 +167,6 @@ import {
   createFileStateTracker,
   createImageGenRateLimiter,
   detectSandboxProvider,
-  createTokenStore as defaultCreateMcpTokenStore,
-  type TokenStore as McpTokenStore,
 } from "@comis/skills";
 import { createChannelHealthMonitor } from "@comis/channels";
 // The single process-singleton activity circuit breaker is constructed
@@ -179,6 +177,10 @@ import { createActivityCircuitBreaker } from "@comis/orchestrator";
 import { createGraphCoordinator, createNodeTypeRegistry } from "./graph/index.js";
 import { createWakeCoalescer, createSystemEventQueue, type WakeReasonKind } from "@comis/scheduler";
 import { createTokenRegistry } from "./api/token-handlers.js";
+// 154-03: the shared obs.explain assembler + production reader, for the
+// trust-flag-FREE obsExplainForMcpClient closure (obs_explain MCP tool runs the
+// assembler directly under daemon authority — no admin RPC, no admin trust).
+import { assembleIncidentReportFromSources, makeRealReader } from "./api/obs-handlers/index.js";
 import type { DaemonInstance, DaemonOverrides, BootContext, PermissionCorrection, SessionStoreBridge } from "./daemon-types.js";
 import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
@@ -1006,19 +1008,14 @@ function buildRpcDispatchDeps(deps: {
     const idx = g.runtimeTokens.findIndex((t) => t.id === id);
     if (idx >= 0) g.runtimeTokens.splice(idx, 1);
   };
-  // Singleton factory for the per-server MCP OAuth token store. Both
+  // Pass-through to the ONE mode-selected MCP OAuth token store the composition
+  // root built via selectMcpTokenStore (threaded onto the boot context). Both
   // mcp-handlers (Fix 4 — pre-check no-token before manager.connect) and
-  // mcp-oauth-handlers (existing — read/write tokens during login) call
-  // this; the per-store chokidar watcher + cache are per-instance, so a
-  // single shared store is required (TokenStoreDeps JSDoc explicitly:
-  // "implementations SHOULD return a process-wide singleton").
-  let cachedMcpTokenStore: McpTokenStore | undefined;
-  const createTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["createTokenStore"] = () => {
-    if (cachedMcpTokenStore === undefined) {
-      cachedMcpTokenStore = defaultCreateMcpTokenStore({ logger: c.skillsLogger });
-    }
-    return cachedMcpTokenStore;
-  };
+  // mcp-oauth-handlers (read/write tokens during login) consume this factory and
+  // receive the SAME instance setupMcp's manager wiring uses — no split-brain,
+  // no plaintext-disk fallback. Returns undefined in env mode (no writable MCP
+  // OAuth store); consumers guard on undefined.
+  const createTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["createTokenStore"] = () => c.mcpTokenStore;
   // the single in-process recall-counter registry is stood up once in
   // setup-memory (the composition site that holds the event bus) and threaded
   // here on the boot context. The snapshot accessor feeds the
@@ -1875,27 +1872,26 @@ async function bootAgents(
     logger: skillsLogger,
   });
 
-  // In Encrypted mode, MCP tokens route through the mcp_credentials table via
-  // createMcpTokenStoreEncrypted (threaded as secretsDb/secretsCrypto below).
-  // In File mode, oauthCredentialStoreForceMcp provides the portBackedStore seam.
-  // In Env mode, OAuth credential storage is not available — no portBackedStore.
-  const oauthCredentialStoreForceMcp =
-    container.config.security.storage === "file"
-      ? selectOAuthCredentialStore({
-          storage: "file",
-          dataDir: container.config.dataDir && container.config.dataDir.length > 0
-            ? container.config.dataDir
-            : dataDir,
-          fileLock: createFileLock(),
-          encryptedStore: undefined,
-        })
-      : undefined;
+  // Construct the ONE mode-selected MCP OAuth token store at the composition
+  // root. The SAME instance is threaded into BOTH consumers — setupMcp's manager
+  // wiring (below) AND the login/handler path (buildRpcDispatchDeps reads it off
+  // the boot context). This kills the encrypted-mode split-brain where the login
+  // path wrote a plaintext disk store while the manager read the mode-selected
+  // store. selectMcpTokenStore: encrypted → mcp_credentials (AES-256-GCM, no disk
+  // files); file → chokidar mcp-tokens/ store; env → undefined (no MCP OAuth).
+  const mcpTokenStore = selectMcpTokenStore({
+    storage: container.config.security.storage,
+    logger: skillsLogger,
+    dataDir: container.config.dataDir && container.config.dataDir.length > 0
+      ? container.config.dataDir
+      : dataDir,
+    secretsDb,
+    secretsCrypto,
+  });
 
   // Construct daemon-global MCP manager BEFORE setupAgents (ordering constraint
   // -- per-agent ToolCapabilityPort adapters close over mcpClientManager).
-  // In Encrypted mode, secretsDb/secretsCrypto route MCP tokens through
-  // mcp_credentials (AES-256-GCM). In File mode, oauthCredentialStore+dataDir
-  // construct the chokidar portBackedStore seam inside setup-mcp.ts.
+  // setupMcp consumes the injected mcpTokenStore; it no longer mode-selects.
   const { mcpClientManager } = await setupMcp({
     servers: container.config.integrations.mcp.servers,
     logger: skillsLogger,
@@ -1911,14 +1907,9 @@ async function bootAgents(
     globalKeepaliveIntervalMs: container.config.integrations.mcp.keepaliveIntervalMs,
     circuitBreakerThreshold: container.config.integrations.mcp.circuitBreakerThreshold,
     circuitBreakerCooldownMs: container.config.integrations.mcp.circuitBreakerCooldownMs,
-    // Encrypted mode: route MCP tokens through mcp_credentials table (AES-256-GCM).
-    secretsDb,
-    secretsCrypto,
-    // File mode: portBackedStore seam (oauthCredentialStore + dataDir).
-    oauthCredentialStore: oauthCredentialStoreForceMcp,
-    dataDir: container.config.dataDir && container.config.dataDir.length > 0
-      ? container.config.dataDir
-      : dataDir,
+    // The single mode-selected MCP OAuth token store (same instance threaded
+    // into the login/handler path via the boot context). Undefined in env mode.
+    mcpTokenStore,
   });
 
   const {
@@ -1928,8 +1919,9 @@ async function bootAgents(
     // Daemon-level OAuth credential store from setupAgents — same port instance
     // threaded into ApiDispatchDeps so agents.update can validate oauthProfiles
     // patches via has(). setupAgents constructs its own store internally via
-    // selectOAuthCredentialStore; the hoisted store above is a separate
-    // instance used exclusively by setupMcp (the MCP OAuth token seam).
+    // selectOAuthCredentialStore. This is the OAuth *profile* store (provider
+    // tokens), distinct from the MCP OAuth token store (`mcpTokenStore` above,
+    // built via selectMcpTokenStore) — two separate credential families.
     oauthCredentialStore,
     // Per-agent live ToolCapabilityPort adapters; daemon.ts threads
     // getCapabilityPortForAgent into setupTools and mutates this map on
@@ -2109,6 +2101,7 @@ async function bootAgents(
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters, skillWatcherHandles, skillRegistries, lockCleanupTimer,
     singleAgentDeps, providerHealth, oauthCredentialStore, toolCapabilityPorts, mcpClientManager,
+    mcpTokenStore,
     continuationTracker, subprocessEnv, execToolEnv,
     systemEventQueue, cronSchedulers, executionTrackers, browserServices, resetSchedulers,
     getAgentCronScheduler, getAgentBrowserService,
@@ -2471,6 +2464,8 @@ async function bootGateway(
     assembleToolsForAgent, preprocessMessageText,
     suspendedAgents, gatewaySendRef,
     interactiveCallbackWiring,
+    obsStore, // 154-03: backs the obs_explain assembler closure (diagnostics rollup)
+    dataDir: bootDataDir, // 154-03: absolute fallback data dir (always abs; ~/.comis or $COMIS_DATA_DIR)
   } = channels;
   const _createGatewayServer = overrides.createGatewayServer ?? createGatewayServer;
 
@@ -2521,6 +2516,30 @@ async function bootGateway(
 
   // 7. Gateway server
   const gwConfig = container.config.gateway;
+
+  // 154-03: the trust-flag-FREE obs.explain assembler closure for the
+  // operator-allowlisted obs_explain MCP tool. SECURITY — this closure runs the
+  // SAME assembler the admin RPC handler delegates to, DIRECTLY under daemon
+  // authority: it does NOT go through the admin-gated obs.explain RPC, does NOT
+  // inject _trustLevel:"admin", and is NOT reached via daemonRpcForMcpClient.
+  // Its only authorization boundary is the per-client mcpClient.allowlist (the
+  // MCP dispatcher's registration filter + live re-check) plus the digest-only/
+  // bounded report. `params` arrive already _trustLevel-stripped (the MCP
+  // dispatcher strips for every tool); the contract request.parse validates the
+  // {sessionKey?,traceId?,depth?} shape (its .refine rejects a neither-id call →
+  // the dispatcher's try/catch turns the throw into a generic dispatch_error
+  // sentinel, no raw leak) before the assembler reads any source.
+  // Use the ABSOLUTE boot data dir as the fallback (NOT "."). makeRealReader
+  // builds safePath(dataDir, "sessions"|"logs") eagerly, and safePath rejects a
+  // relative base — a "." here crashes boot with PathTraversalError. bootDataDir
+  // is always absolute (~/.comis or $COMIS_DATA_DIR). Mirrors daemon.ts:703.
+  const obsExplainDataDir = container.config.dataDir || bootDataDir;
+  const obsExplainReader = makeRealReader(obsExplainDataDir, obsStore);
+  const obsExplainForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
+    const parsed = ObsExplainContract.request.parse(params);
+    return assembleIncidentReportFromSources(obsExplainReader, obsExplainDataDir, parsed);
+  };
+
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({
     container, gwConfig, webhooksConfig: container.config.webhooks, agents, defaultAgentId,
     configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS, gatewayLogger,
@@ -2533,6 +2552,7 @@ async function bootGateway(
     suspendedAgents,
     instanceId, startupStartMs,
     interactiveCallbackWiring,
+    obsExplainForMcpClient,
   });
 
   // 7.0.1. Wire deferred gateway attachment deps (wsConnections / mediaDir /

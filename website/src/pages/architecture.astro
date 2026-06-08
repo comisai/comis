@@ -2,9 +2,10 @@
 ---
 import Base from "../layouts/Base.astro";
 import Footer from "../components/Footer.astro";
+import { FACTS } from "../data/facts";
 
 const title = "Architecture - Clean Hexagonal Design for AI Agents";
-const description = "13-package TypeScript monorepo with hexagonal architecture. Ports and adapters, Result types, typed event bus, and composition root - built for maintainability and testability.";
+const description = `${FACTS.packages}-package TypeScript monorepo with hexagonal architecture. Ports and adapters, Result types, typed event bus, and composition root - built for maintainability and testability.`;
 
 const ports = [
   {
@@ -117,6 +118,10 @@ const ports = [
   },
 ];
 
+// Adapter total is derived from the documented ports above (sum of adapterCount),
+// so the headline figure can never drift from the table beneath it.
+const totalAdapters = ports.reduce((sum, p) => sum + p.adapterCount, 0);
+
 const packages = [
   { name: "shared", desc: "Result<T,E> type, utilities", deps: "zero", layer: "Foundation" },
   { name: "core", desc: "Ports, domain types, config, security, event bus, hooks", deps: "shared", layer: "Foundation" },
@@ -125,9 +130,11 @@ const packages = [
   { name: "scheduler", desc: "Cron, heartbeat, task extraction", deps: "core", layer: "Service" },
   { name: "skills", desc: "Manifest, MCP, media processing, STT/TTS", deps: "core", layer: "Service" },
   { name: "agent", desc: "Executor, RAG, budget, circuit breaker, sessions", deps: "core, memory, scheduler", layer: "Service" },
+  { name: "observability", desc: "Diagnostics substrate: queued writer, payload bounding, sanitization, path guards", deps: "core, shared", layer: "Service" },
+  { name: "orchestrator", desc: "Inbound orchestration: channel-manager lifecycle, inbound pipeline, execute-and-deliver, routing", deps: "core, agent, channels", layer: "Service" },
   { name: "gateway", desc: "Hono HTTP, JSON-RPC, WebSocket, mTLS", deps: "core", layer: "Adapter" },
-  { name: "channels", desc: "9 platform adapters", deps: "core, agent, infra", layer: "Adapter" },
-  { name: "daemon", desc: "Orchestrator, observability, systemd", deps: "all packages", layer: "Composition" },
+  { name: "channels", desc: `${FACTS.channels} platform adapters`, deps: "core, agent, infra", layer: "Adapter" },
+  { name: "daemon", desc: "Composition root - wires every package, systemd lifecycle", deps: "all packages", layer: "Composition" },
   { name: "cli", desc: "Commander.js, JSON-RPC client", deps: "core, agent", layer: "Adapter" },
   { name: "comis", desc: "Namespace re-exports", deps: "all packages", layer: "Composition" },
   { name: "web", desc: "Lit + Vite + Tailwind SPA", deps: "standalone", layer: "Adapter" },
@@ -213,7 +220,7 @@ const benefits = [
           <span class="text-teal">Not accidental spaghetti.</span>
         </h1>
         <p class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed">
-          13 packages, 19 port interfaces, 30+ adapters, strict dependency layering. Every component is testable in isolation, swappable without touching core, and type-safe from config to transport.
+          {FACTS.packages} packages, ports and adapters, strict dependency layering. Every component is testable in isolation, swappable without touching core, and type-safe from config to transport.
         </p>
       </div>
     </section>
@@ -224,15 +231,15 @@ const benefits = [
         <div class="bg-navy-light/80 border border-teal/20 rounded-2xl p-8 md:p-12">
           <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
             <div>
-              <p class="text-4xl font-bold text-teal font-mono">13</p>
+              <p class="text-4xl font-bold text-teal font-mono">{FACTS.packages}</p>
               <p class="text-muted text-sm mt-2">Packages</p>
             </div>
             <div>
-              <p class="text-4xl font-bold text-white font-mono">19</p>
+              <p class="text-4xl font-bold text-white font-mono">{ports.length}+</p>
               <p class="text-muted text-sm mt-2">Port interfaces</p>
             </div>
             <div>
-              <p class="text-4xl font-bold text-white font-mono">30+</p>
+              <p class="text-4xl font-bold text-white font-mono">{totalAdapters}+</p>
               <p class="text-muted text-sm mt-2">Adapters</p>
             </div>
             <div>
@@ -265,7 +272,7 @@ const benefits = [
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Port interfaces</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-12">
-          19 ports, 30+ adapters.
+          {ports.length}+ ports, {totalAdapters}+ adapters.
         </h2>
 
         <div class="space-y-4">
@@ -294,7 +301,7 @@ const benefits = [
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Package graph</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-12">
-          13 packages in strict layers.
+          {FACTS.packages} packages in strict layers.
         </h2>
 
         <div class="overflow-x-auto">

@@ -51,6 +51,7 @@ import {
   systemSetTimeout,
   systemClearTimeout,
   systemScheduleTimeout,
+  withDedup,
   type OAuthCredentialStorePort,
   type OAuthProfile,
   type FileLockPort,
@@ -522,10 +523,12 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   // successful resolve (refresh OR cached-hit).
   const lastGood = new Map<string, string>();
 
-  // Logger de-dup: fire INFO once per (provider, configured-profile, process)
-  // when the configured profile is first used. Mirrors bootstrappedProviders
-  // pattern.
-  const loggedConfiguredProviders = new Set<string>();
+  // Logger de-dup: fire the configured-profile-resolved INFO once per
+  // (provider, configured-profile, process) when the configured profile is
+  // first used. withDedup (@comis/core — NOT @comis/infra; agent↛infra)
+  // replaces the prior hand-rolled loggedConfiguredProviders Set with the
+  // shared decorator; same process-lifetime semantics (default TTL = unbounded).
+  const dedupLogger = withDedup(logger);
 
   // -------------------------------------------------------------------------
   // chokidar watcher on auth-profiles.json (file adapter only). chokidar's
@@ -1233,19 +1236,17 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         }
 
         // Once-per-(provider, configured-profile, process) INFO log when the
-        // configured profile is first used.
-        const dedupKey = `${providerId}::${configured}`;
-        if (!loggedConfiguredProviders.has(dedupKey)) {
-          loggedConfiguredProviders.add(dedupKey);
-          logger.info(
-            {
-              provider: providerId,
-              profileId: configured,
-              submodule: "oauth-resolver",
-            },
-            "OAuth profile resolved via agent config",
-          );
-        }
+        // configured profile is first used. withDedup collapses repeats by the
+        // dedupKey field (process-lifetime), replacing the prior Set guard.
+        dedupLogger.info(
+          {
+            dedupKey: `${providerId}::${configured}`,
+            provider: providerId,
+            profileId: configured,
+            submodule: "oauth-resolver",
+          },
+          "OAuth profile resolved via agent config",
+        );
         logger.debug(
           {
             provider: providerId,

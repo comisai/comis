@@ -130,6 +130,12 @@ export interface SessionMetadata {
     endReason: "success" | "error" | "timeout" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "completed_with_tool_errors";
     durationMs: number;
     totalTokens: number;
+    /** Per-session health rollup (D5/F1) — additive optional on schemaVersion:1. */
+    degraded?: boolean;
+    costUsd?: number;
+    toolStats?: Record<string, { ok: number; failed: number }>;
+    breakerTripCount?: number;
+    topErrorKinds?: Record<string, number>;
   };
 }
 
@@ -335,6 +341,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           exitReason: "destroyed",
           turnCount: 0,
           totalTokens: 0,
+          source: "runtime" as const, // D9 provenance stamp (production rows)
         },
       );
       if (deps.trajectoryRegistry !== undefined) {

@@ -537,7 +537,7 @@ export function registerAllToolMetadata(): void {
 
   // --- Privileged management tools ---
   registerToolMetadata("agents_manage",    { searchHint: "fleet list create delete suspend resume agent configure roster inventory" });
-  registerToolMetadata("obs_query",        { searchHint: "diagnostics monitoring metrics billing traces logs health" });
+  registerToolMetadata("obs_query",        { searchHint: "diagnostics monitoring metrics billing health explain incident post-mortem" });
   registerToolMetadata("sessions_manage",  { searchHint: "delete reset export compact session lifecycle cleanup admin" });
   registerToolMetadata("memory_manage",    { searchHint: "delete flush export browse stats storage cleanup purge" });
   registerToolMetadata("channels_manage",  { searchHint: "enable disable restart channel adapter platform connection" });
@@ -602,7 +602,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("web_fetch",  { mcpExportPolicy: "safe" });
   registerToolMetadata("browser",    { mcpExportPolicy: "safe" });
 
-  // --- permission-gated (20) — caller-data-dependent; allowlist required ---
+  // --- permission-gated (21) — caller-data-dependent; allowlist required ---
   // Workspace file access (4) — operator allowlists by path scope at the daemon.
   registerToolMetadata("read", { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("ls",   { mcpExportPolicy: "permission-gated" });
@@ -618,6 +618,8 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("sessions_history", { mcpExportPolicy: "permission-gated" });
   // Observability read (1) — operator allowlists by query scope.
   registerToolMetadata("obs_query", { mcpExportPolicy: "permission-gated" });
+  // Observability incident report (1, 154-03) — READ-ONLY obs.explain digest; runs the assembler directly under daemon authority (NOT the admin RPC), allowlist is the grant. Mirrors obs_query (merged into one call to stay under the 800-line cap).
+  registerToolMetadata("obs_explain", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "explain incident root-cause post-mortem session report" });
   // Meta-tool (1) — reveals registered-tools attack surface; per-client allowlist required.
   registerToolMetadata("discover_tools", { mcpExportPolicy: "permission-gated" });
   // Media analysis (4) — see media-tools note above. Default permission-gated
@@ -735,12 +737,20 @@ export function registerAllToolMetadata(): void {
         : "";
       const text = `${r.error} ${typeof r.message === "string" ? r.message : ""} ${failures}`;
       if (/rate limit|quota exceeded|too many requests/i.test(text)) {
-        return { errorKind: "resource" satisfies ErrorKind };
+        // Attribute the verdict to the human-readable `message` field (the rate-limit
+        // reason lives there + in `failures`, never in the stable `error` code) and report
+        // the LITERAL rule that matched — a fixed description, not a serialized RegExp.
+        return {
+          errorKind: "resource" satisfies ErrorKind,
+          classifiedField: "message",
+          matchedRule: "/rate limit|quota exceeded|too many requests/",
+        };
       }
       // blocked/forbidden/provider-error set, broadened to the failures-chain reasons.
       // A genuine top-level error with an unrecognised reason is still a real failure →
-      // default to dependency (never false once `error` is present).
-      return { errorKind: "dependency" satisfies ErrorKind };
+      // default to dependency (never false once `error` is present). Attributed to the
+      // top-level `error` machine code; no matchedRule/matchedToken (this is the catch-all).
+      return { errorKind: "dependency" satisfies ErrorKind, classifiedField: "error" };
     },
   });
 
@@ -755,17 +765,33 @@ export function registerAllToolMetadata(): void {
       // "timeout" etc. as legitimate DATA. We never read `r.text`/body, so those don't flag.
       if (typeof r.error === "string") {
         // Timeout text lives in the descriptive error string ("Fetch failed: …timed out…").
+        // Attribute to the `error` field + the literal timeout rule.
         if (/\btimed out\b|\btimeout\b/i.test(r.error)) {
-          return { errorKind: "timeout" satisfies ErrorKind };
+          return {
+            errorKind: "timeout" satisfies ErrorKind,
+            classifiedField: "error",
+            matchedRule: "/timed out|timeout/",
+          };
         }
-        return { errorKind: "dependency" satisfies ErrorKind };
+        // Catch-all once `error` is set and the timeout rule did not match — attributed to
+        // the `error` field, no matchedRule/matchedToken.
+        return { errorKind: "dependency" satisfies ErrorKind, classifiedField: "error" };
       }
       if (typeof r.status === "number" && r.status >= 400) {
-        // Gateway-timeout (504) / request-timeout (408) HTTP codes map to timeout.
+        // No `error` key → the numeric HTTP `status` drives the verdict; the concrete code
+        // is the matched token. Gateway-timeout (504) / request-timeout (408) map to timeout.
         if (r.status === 408 || r.status === 504) {
-          return { errorKind: "timeout" satisfies ErrorKind };
+          return {
+            errorKind: "timeout" satisfies ErrorKind,
+            classifiedField: "status",
+            matchedToken: String(r.status),
+          };
         }
-        return { errorKind: "dependency" satisfies ErrorKind };
+        return {
+          errorKind: "dependency" satisfies ErrorKind,
+          classifiedField: "status",
+          matchedToken: String(r.status),
+        };
       }
       return false;
     },

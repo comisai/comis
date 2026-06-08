@@ -23,14 +23,20 @@ const currentPath = Astro.url.pathname;
         <div class="absolute top-full left-0 pt-2 hidden group-hover:block">
           <div class="bg-navy-light border border-white/10 rounded-lg py-2 min-w-[180px] shadow-xl">
             <a href="/compare" class:list={["block px-4 py-2 text-sm transition-colors", currentPath === "/compare" ? "text-white bg-white/5" : "text-muted hover:text-white hover:bg-white/5"]}>
-              vs Typical Agents
+              Overview
             </a>
             <a href="/compare/openclaw" class:list={["block px-4 py-2 text-sm transition-colors", currentPath === "/compare/openclaw" ? "text-white bg-white/5" : "text-muted hover:text-white hover:bg-white/5"]}>
               vs OpenClaw
             </a>
+            <a href="/compare/hermes" class:list={["block px-4 py-2 text-sm transition-colors", currentPath === "/compare/hermes" ? "text-white bg-white/5" : "text-muted hover:text-white hover:bg-white/5"]}>
+              vs Hermes
+            </a>
           </div>
         </div>
       </div>
+      <a href="/memory" class:list={["text-sm font-medium transition-colors", currentPath === "/memory" ? "text-white" : "text-muted hover:text-white"]}>
+        Benchmarks
+      </a>
       <a href="/blog" class:list={["text-sm font-medium transition-colors", currentPath.startsWith("/blog") ? "text-white" : "text-muted hover:text-white"]}>
         Blog
       </a>
@@ -40,14 +46,13 @@ const currentPath = Astro.url.pathname;
       <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="text-sm font-medium text-muted hover:text-white transition-colors">
         GitHub
       </a>
-      <a
-        href="https://docs.comis.ai"
-        rel="noopener noreferrer"
-        target="_blank"
-        class="inline-flex items-center justify-center px-4 py-1.5 bg-coral-btn hover:bg-coral-btn-hover text-white text-sm font-semibold rounded-lg transition-colors"
-      >
-        Get Started
+      <a href="/contribute" class:list={["text-sm font-medium transition-colors", currentPath === "/contribute" ? "text-white" : "text-muted hover:text-white"]}>
+        Contribute
       </a>
+      <a
+        href="/#quick-start"
+        class="inline-flex items-center justify-center px-4 py-1.5 bg-coral-btn hover:bg-coral-btn-hover text-white text-sm font-semibold rounded-lg transition-colors"
+      >Try it</a>
     </div>
 
     <!-- Mobile hamburger -->
@@ -73,6 +78,12 @@ const currentPath = Astro.url.pathname;
       <a href="/compare/openclaw" class:list={["text-sm font-medium transition-colors pl-4", currentPath === "/compare/openclaw" ? "text-white" : "text-muted hover:text-white"]}>
         vs OpenClaw
       </a>
+      <a href="/compare/hermes" class:list={["text-sm font-medium transition-colors pl-4", currentPath === "/compare/hermes" ? "text-white" : "text-muted hover:text-white"]}>
+        vs Hermes
+      </a>
+      <a href="/memory" class:list={["text-sm font-medium transition-colors", currentPath === "/memory" ? "text-white" : "text-muted hover:text-white"]}>
+        Benchmarks
+      </a>
       <a href="/blog" class:list={["text-sm font-medium transition-colors", currentPath.startsWith("/blog") ? "text-white" : "text-muted hover:text-white"]}>
         Blog
       </a>
@@ -82,14 +93,13 @@ const currentPath = Astro.url.pathname;
       <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="text-sm font-medium text-muted hover:text-white transition-colors">
         GitHub
       </a>
-      <a
-        href="https://docs.comis.ai"
-        rel="noopener noreferrer"
-        target="_blank"
-        class="inline-flex items-center justify-center px-4 py-2 bg-coral-btn hover:bg-coral-btn-hover text-white text-sm font-semibold rounded-lg transition-colors"
-      >
-        Get Started
+      <a href="/contribute" class:list={["text-sm font-medium transition-colors", currentPath === "/contribute" ? "text-white" : "text-muted hover:text-white"]}>
+        Contribute
       </a>
+      <a
+        href="/#quick-start"
+        class="inline-flex items-center justify-center px-4 py-2 bg-coral-btn hover:bg-coral-btn-hover text-white text-sm font-semibold rounded-lg transition-colors"
+      >Try it</a>
     </div>
   </div>
 </nav>

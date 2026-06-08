@@ -46,6 +46,7 @@ import {
 } from "./drain-helper.js";
 import type { ActiveRunRegistry } from "./active-run-registry.js";
 import type { ComisSessionManager, SessionMetadata } from "../session/comis-session-manager.js";
+import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
 import {
   setBreakpointIndex,
   deleteBreakpointIndex,
@@ -120,6 +121,13 @@ export interface PostExecutionBridgeResult {
   cacheWrite1hTokens?: number;
   /** Session-cumulative total cost across all turns (USD). */
   sessionCostUsd?: number;
+  /** Per-tool execution results carrying the classified errorKind (Plan 01) —
+   *  the rollup's failure source for toolStats + topErrorKinds (D5/F1). */
+  toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>;
+  /** How many times a tool circuit breaker opened this session (Plan 01). */
+  breakerTripCount?: number;
+  /** Turn count for the session:summary event (Plan 02/F2). */
+  turnCount?: number;
   /** Session-cumulative cache savings across all turns (USD). */
   sessionCacheSavedUsd?: number;
   /** Thinking tokens from SDK reasoningTokens field. */
@@ -537,18 +545,36 @@ export function shouldRunLcdStorePasses(config: {
 
 /**
  * Map an SDK finishReason to the SessionMetadata.sessionEnd.endReason enum.
- * Unknown reasons fall through to "error" — that's a defensive bucket for
- * provider strings we haven't classified yet (rather than dropping the
- * session_end entry entirely). Module-level so the post-execution path
- * doesn't reallocate it on every turn.
+ *
+ * SINGLE SOURCE OF TRUTH for the run's terminal classification: the rollup's
+ * `degraded` flag (session-health-rollup.ts) is derived from the value this map
+ * yields (degraded := mapped endReason !== "success"), so `endReason` and
+ * `degraded` are computed from the SAME table and cannot diverge (Phase 152
+ * CR-01/WR-01). Exported so the chokepoint maps once and the unit tests can
+ * enumerate the finishReason union against it.
+ *
+ * Every KNOWN, in-union `ExecutionResult.finishReason` is listed EXPLICITLY —
+ * including `loop_detected` (turn-loop-detector abort) and `session_reset`,
+ * which reach the rollup verbatim and previously relied on the `?? "error"`
+ * fallthrough (WR-02). The fallthrough is now reserved for its stated purpose:
+ * a defensive bucket for UNKNOWN provider strings we haven't classified yet,
+ * not a silent home for classified in-union reasons. Module-level so the
+ * post-execution path doesn't reallocate it on every turn.
+ *
+ * NOTE: the endReason union also declares "timeout", but no source finishReason
+ * maps to it — it is intentionally unreachable from this writer (asserted by a
+ * unit test) rather than re-introduced via a stray mapping.
  */
-const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["sessionEnd"]>["endReason"]> = {
+export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["sessionEnd"]>["endReason"]> = {
   stop: "success", end_turn: "success", error: "error",
   budget_exceeded: "budget_exceeded", budget_exhausted: "budget_exhausted",
   circuit_open: "circuit_open",
   provider_degraded: "provider_degraded", max_steps: "error",
   context_loop: "error", context_exhausted: "error",
   completed_with_tool_errors: "completed_with_tool_errors",
+  // Known in-union reasons — explicit, not via the catch-all fallthrough (WR-02).
+  loop_detected: "error",
+  session_reset: "error",
 };
 
 /**
@@ -577,6 +603,9 @@ export function buildSessionEndMetadata(args: {
   executionId: string;
   traceId: string | undefined;
   clock: ClockPort;
+  /** F1 health rollup (D5) — the 5 fields spread onto sessionEnd. Computed once
+   *  at the chokepoint via buildSessionHealthRollup so this builder stays pure. */
+  rollup: SessionHealthRollup;
 }): SessionMetadata {
   return {
     ...(args.traceId && { traceId: args.traceId }),
@@ -587,8 +616,57 @@ export function buildSessionEndMetadata(args: {
       endReason: END_REASON_MAP[args.finishReason] ?? "error",
       durationMs: args.durationMs,
       totalTokens: args.totalTokens,
+      degraded: args.rollup.degraded,
+      costUsd: args.rollup.costUsd,
+      toolStats: args.rollup.toolStats,
+      breakerTripCount: args.rollup.breakerTripCount,
+      topErrorKinds: args.rollup.topErrorKinds,
     },
   };
+}
+
+/**
+ * F2 emit: announce `session:summary` on the eventBus once per execution.
+ *
+ * The §6.2 minimal payload (ids + counts + typed flags) — deliberately WITHOUT
+ * `topErrorKinds` (OQ1: that goes to the sessionEnd metadata + obs diagnostics
+ * only, never the event). Fire-and-forget by contract: the eventBus is
+ * SYNCHRONOUS, so a throwing in-process listener would otherwise abort the
+ * caller's teardown (OQ3). The try/catch here is the sanctioned telemetry guard
+ * (mirrors the `:983` `writeSessionMetadata` guard) — a telemetry failure must
+ * never break execution.
+ */
+export function emitSessionSummary(
+  deps: { eventBus?: TypedEventBus; logger?: ComisLogger },
+  args: {
+    sessionKey: string;
+    agentId: string;
+    traceId: string;
+    turnCount: number;
+    rollup: SessionHealthRollup;
+    clock: ClockPort;
+  },
+): void {
+  if (!deps.eventBus) return;
+  try {
+    deps.eventBus.emit("session:summary", {
+      sessionKey: args.sessionKey,
+      agentId: args.agentId,
+      traceId: args.traceId,
+      degraded: args.rollup.degraded,
+      turnCount: args.turnCount,
+      costUsd: args.rollup.costUsd,
+      toolStats: args.rollup.toolStats,
+      breakerTripCount: args.rollup.breakerTripCount,
+      timestamp: args.clock.now(),
+    });
+  } catch (err) {
+    // Fire-and-forget: a throwing listener must not abort the teardown (OQ3).
+    deps.logger?.debug(
+      { err, hint: "session:summary listener threw; telemetry dropped, execution unaffected", errorKind: "internal" as const, submodule: "session-summary-emit" },
+      "session:summary emit suppressed a listener throw",
+    );
+  }
 }
 
 /**
@@ -966,6 +1044,21 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
   }
 
+  // Map the settled finishReason to the terminal endReason ONCE via the single
+  // authoritative table (END_REASON_MAP). This SAME mapped value drives BOTH the
+  // persisted sessionEnd.endReason (F1, in buildSessionEndMetadata, which re-maps
+  // the identical effectiveFinishReason through the identical table) AND the
+  // rollup's `degraded` flag below — so a reason that maps to a non-success
+  // endReason (e.g. loop_detected / session_reset → "error") can never record
+  // degraded:false alongside it (Phase 152 CR-01). No second closed reason set.
+  const endReason = END_REASON_MAP[effectiveFinishReason] ?? "error";
+
+  // Compute the per-session health rollup ONCE at the chokepoint (D5/F1/F2).
+  // degraded is derived from the mapped endReason (≠ "success"); the same record
+  // feeds BOTH sinks below — the sessionEnd metadata (F1) and the session:summary
+  // event (F2) — so persist and emit never diverge.
+  const sessionHealthRollup = buildSessionHealthRollup(bridgeResult, endReason);
+
   // Write session metadata companion file with trace correlation.
   // traceId comes from the AsyncLocalStorage request scope so `_session-metadata.json`
   // can be cross-correlated against daemon.log via grep; runId stays as the
@@ -979,8 +1072,24 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       executionId,
       traceId: tryGetContext()?.traceId,
       clock: deps.clock,
+      rollup: sessionHealthRollup,
     }));
   } catch { /* fire-and-forget */ }
+
+  // F2: announce session:summary once. Own fire-and-forget guard inside
+  // emitSessionSummary — a throwing in-process listener must not abort teardown
+  // (OQ3). The event carries the §6.2 minimal payload (no topErrorKinds — OQ1).
+  emitSessionSummary(
+    { eventBus: deps.eventBus, logger: deps.logger },
+    {
+      sessionKey: formattedKey,
+      agentId: effectiveAgentId,
+      traceId: tryGetContext()?.traceId ?? executionId,
+      turnCount: bridgeResult.turnCount ?? 0,
+      rollup: sessionHealthRollup,
+      clock: deps.clock,
+    },
+  );
 
   // Check onboarding completion after execution
   // Fire-and-forget: triggers getWorkspaceStatus which records

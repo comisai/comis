@@ -29,7 +29,7 @@ import type { Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { safePath } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
-import { dirname } from "node:path";
+import { dirname, relative } from "node:path";
 import { estimateMessageChars } from "../safety/token-estimator.js";
 import { createToolResultSizeGuard, type ContentBlock } from "../safety/tool-result-size-guard.js";
 import {
@@ -73,7 +73,11 @@ export function getInlineThreshold(toolName: string): number {
  * Path construction uses `safePath()` to prevent traversal attacks.
  * File extension remains `.json` for stable offloaded-file references.
  *
- * @returns The absolute disk path where the file was written
+ * @returns `{ diskPath, written }` — `diskPath` is the absolute target path;
+ *   `written` is `false` when the parent-dir or file write was rejected
+ *   (e.g. confinement-base escape), so the caller can suppress the
+ *   `tool:result_offloaded` trajectory emit instead of recording a phantom
+ *   pointer at a file that does not exist (WR-151-04).
  */
 function saveToDisk(
   sessionDir: string,
@@ -82,18 +86,14 @@ function saveToDisk(
   _toolName: string,
   _originalChars: number,
   content: ToolResultMessage["content"],
-): string {
+): { diskPath: string; written: boolean } {
   const diskPath = safePath(sessionDir, "tool-results", `${toolCallId}.json`);
   // Parent dir at 0o700 via the fs-safe substrate (file-mode invariant).
   // confinedBaseDir threads dataDir (typically ~/.comis/) so the ancestor-
-  // symlink escape is rejected. Result.err is intentionally discarded:
-  // the writer's existing contract is best-effort offload — a failure
-  // returns the (now-empty) diskPath, and the inline reference's "Full
-  // content saved at:" line will point at a path the read tool will
-  // fail to load. That is no worse than the pre-migration semantics
-  // (where the bare fs.mkdir+write failures threw and were swallowed
-  // by the SDK's appendMessage caller).
-  ensureContainedDir({ dir: dirname(diskPath), mode: 0o700, confinedBaseDir: dataDir });
+  // symlink escape is rejected. When the dir creation is rejected the file
+  // write below also fails; either way `written` ends up false and the caller
+  // suppresses the offload event.
+  const dirResult = ensureContainedDir({ dir: dirname(diskPath), mode: 0o700, confinedBaseDir: dataDir });
 
   // Concatenate all text blocks into a single raw string (same logic as extractPreview)
   let rawText = "";
@@ -103,8 +103,8 @@ function saveToDisk(
     }
   }
 
-  writeRegularFile({ path: diskPath, content: rawText, confinedBaseDir: dataDir });
-  return diskPath;
+  const writeResult = writeRegularFile({ path: diskPath, content: rawText, confinedBaseDir: dataDir });
+  return { diskPath, written: dirResult.ok && writeResult.ok };
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +217,7 @@ export function installMicrocompactionGuard(
   sessionDir: string,
   dataDir: string,
   logger: ComisLogger,
-  onOffloaded?: (toolName: string) => void,
+  onOffloaded?: (toolName: string, originalChars: number, toolCallId: string, diskPathRel: string) => void,
 ): void {
   const originalAppend = sm.appendMessage.bind(sm);
   const guard = createToolResultSizeGuard();
@@ -321,7 +321,7 @@ export function installMicrocompactionGuard(
         ? (result.content as typeof toolResultMsg.content)
         : toolResultMsg.content;
 
-      const diskPath = saveToDisk(
+      const { diskPath, written } = saveToDisk(
         sessionDir,
         dataDir,
         toolResultMsg.toolCallId,
@@ -344,7 +344,32 @@ export function installMicrocompactionGuard(
 
       const truncatedMsg = { ...toolResultMsg, content: truncatedContent };
       const reference = createInlineReference(truncatedMsg, totalChars, diskPath);
-      onOffloaded?.(toolResultMsg.toolName);
+      // Pass only a WORKSPACE-RELATIVE pointer (sessionDir-relative) — the
+      // absolute diskPath leaks the host filesystem layout (T-151-05) and is
+      // not a stable drill-down target. This guard holds no event bus and no
+      // clock (T-151-07): it computes the payload and hands it to onOffloaded;
+      // the executor callback (which has both) performs the trajectory emit.
+      //
+      // Only emit when the disk write actually persisted (WR-151-04): a
+      // best-effort write failure (confinement-base escape, fs error) returns
+      // `written: false` and the file does not exist, so emitting
+      // tool:result_offloaded would record a phantom pointer the Phase 153
+      // IncidentReport.offloads[] drill-down cannot open. Log+suppress instead.
+      if (written) {
+        const diskPathRel = relative(sessionDir, diskPath); // "tool-results/<toolCallId>.json"
+        onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
+      } else {
+        logger.warn(
+          {
+            toolName: toolResultMsg.toolName,
+            toolCallId: toolResultMsg.toolCallId,
+            diskPath,
+            hint: "Disk offload write was rejected (confinement-base escape or fs error); suppressed tool:result_offloaded so the trajectory does not record a pointer at a non-existent file. Check the data-dir confinement and filesystem permissions.",
+            errorKind: "resource" as ErrorKind,
+          },
+          "Tool result offload write failed -- suppressing offload event",
+        );
+      }
 
       // PIPELINE-FIX: Propagate compact reference to in-memory message object.
       // Without this, currentContext.messages in the agent loop still holds the
@@ -359,7 +384,7 @@ export function installMicrocompactionGuard(
 
     // Case 2: Exceeds per-tool threshold -- offload full content
     if (totalChars > threshold) {
-      const diskPath = saveToDisk(
+      const { diskPath, written } = saveToDisk(
         sessionDir,
         dataDir,
         toolResultMsg.toolCallId,
@@ -386,7 +411,25 @@ export function installMicrocompactionGuard(
         "Tool result offloaded to disk",
       );
 
-      onOffloaded?.(toolResultMsg.toolName);
+      // Same residency-safe pointer at the threshold branch — its own diskPath
+      // is in scope (returned by the saveToDisk above). Workspace-relative only.
+      // Suppress the offload event on a failed write (WR-151-04) so the
+      // trajectory never records a pointer at a file that was not persisted.
+      if (written) {
+        const diskPathRel = relative(sessionDir, diskPath); // "tool-results/<toolCallId>.json"
+        onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
+      } else {
+        logger.warn(
+          {
+            toolName: toolResultMsg.toolName,
+            toolCallId: toolResultMsg.toolCallId,
+            diskPath,
+            hint: "Disk offload write was rejected (confinement-base escape or fs error); suppressed tool:result_offloaded so the trajectory does not record a pointer at a non-existent file. Check the data-dir confinement and filesystem permissions.",
+            errorKind: "resource" as ErrorKind,
+          },
+          "Tool result offload write failed -- suppressing offload event",
+        );
+      }
 
       // PIPELINE-FIX: Propagate compact reference to in-memory message object.
       // Without this, currentContext.messages in the agent loop still holds the

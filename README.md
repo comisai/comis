@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="assets/comis-readme-banner.png?v=1.0.42" alt="Comis — self-hosted AI agents you can audit" width="100%" />
+  <img src="assets/comis-readme-banner.png?v=1.0.42" alt="Comis - self-hosted AI agents you can audit" width="100%" />
 </p>
 
 <p align="center">
-  <strong>A self-hosted AI agent platform that deploys into your existing messaging channels.</strong>
+  <strong>Self-hosted AI agents for your whole team, isolated by design.</strong>
   <br />
-  <sub>Kernel-enforced sandboxes · sigstore-signed releases · multi-tenant primitives · 81% prompt-cache savings · across 9 chat channels.</sub>
+  <sub>Multiple agents, multiple people, one auditable install - with security enforced by the kernel and the compiler, not by prompts.</sub>
 </p>
 
 <p align="center">
@@ -17,33 +17,43 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start"><strong>Quick Start</strong></a> &middot;
-  <a href="https://docs.comis.ai">Docs</a> &middot;
-  <a href="#how-comis-is-different">How it's different</a> &middot;
-  <a href="https://comis.ai/#demo">Demo</a> &middot;
-  <a href="https://discord.gg/FsqgJkpp">Discord</a>
+  <a href="#quick-start"><strong>Quick Start</strong></a> ·
+  <a href="https://docs.comis.ai">Docs</a> ·
+  <a href="#how-comis-compares">How it compares</a> ·
+  <a href="https://comis.ai/#demo">Demo</a> ·
+  <a href="#contributing">Contributing</a>
 </p>
+
+---
+
+## What is Comis
+
+Comis deploys AI agents into the messaging channels people already use - **Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email** - and runs them as a *platform*, not a pet: multiple agents and multiple operators share one install, each with isolated memory, budgets, tool policies, and scoped secrets.
+
+Your agents read and reply in chat (text, voice, images, files), run tools inside a kernel-enforced sandbox, connect to the MCP ecosystem's 50+ tool servers, schedule their own jobs, and spin up multi-agent pipelines from a single sentence - and they get better over time, carrying long-term memory that learns from every conversation and from its own use. Run them on frontier cloud models or entirely on-device with local ones - the security guarantees don't depend on which. You watch every step from a web dashboard, or reconstruct it later from the trace log.
+
+TypeScript monorepo, 15 packages, hexagonal architecture, Node.js 22.19+. Apache-2.0. Fully self-hosted - no cloud dependency, no telemetry, no hosted tier.
 
 ---
 
 ## Quick Start
 
-**One-liner** — installs Node.js and everything else (macOS & Linux):
+**One-liner** - installs Node.js and everything else (macOS & Linux):
 
 ```bash
 curl -fsSL https://comis.ai/install.sh | bash
 ```
 
-**Or with npm** (requires Node.js 22+):
+**Or with npm** (Node.js 22.19+):
 
 ```bash
 npm install -g comisai
 comis init
-comis configure              # choose LLM provider, add API keys, connect a channel
+comis configure     # pick an LLM provider, add keys, connect a channel
 comis daemon start
 ```
 
-**Or with Docker** (no Node.js required):
+**Or with Docker:**
 
 ```bash
 docker run -d --name comis -p 4766:4766 \
@@ -51,112 +61,103 @@ docker run -d --name comis -p 4766:4766 \
 docker exec -it comis comis init
 ```
 
-Verify: `curl http://localhost:4766/health` → `{"status":"ok"}`. Message your agent on Telegram, Discord, or any of the other 7 channels — that's it.
+Verify with `curl http://localhost:4766/health` → `{"status":"ok"}`, then message your agent on any connected channel.
 
-> **Production = Linux host only.** Docker Desktop (macOS/Windows) auto-disables the exec sandbox — fine for dev, never for production. See [Platform Support →](https://docs.comis.ai/operations/docker#platform-support).
+> **Production runs on Linux.** Docker Desktop's VM kernel can't run the exec sandbox - Comis detects this at startup (one-shot smoke test) and auto-disables it. Fine for development, never for production. [Platform support →](https://docs.comis.ai/operations/docker#platform-support)
 
 ---
 
-## See it in action
+## See it run
 
 <p align="center">
-  <em>"Have four analysts research NVDA in parallel, then run a bull vs bear debate, and let the head trader make the final call."</em>
+  <em>"Have four analysts research NVDA in parallel, then run a bull-vs-bear debate, and let the head trader make the final call."</em>
   <br />
-  <strong>One sentence. A live 7-node DAG pipeline — with isolated memory, budgets, and audit trail per agent.</strong>
+  <strong>One sentence → a live 7-node DAG pipeline, with isolated memory, budgets, and an audit trail per agent.</strong>
 </p>
 
 <p align="center">
   <a href="https://comis.ai/#demo">
-    <img src="assets/comis-dag-demo-poster.jpg" alt="Click to watch the DAG pipeline demo on comis.ai" width="100%" />
+    <img src="assets/comis-dag-demo-poster.jpg" alt="Watch the DAG pipeline demo on comis.ai" width="100%" />
   </a>
-  <br />
-  <a href="https://comis.ai/#demo">▶ Watch the demo</a>
 </p>
 
 ---
 
 ## Why Comis
 
-**🛡️ Defense in depth — runtime and compile-time.** The LLM is the attack surface. Comis assumes it will be attacked, then makes the abuse expensive: kernel-enforced exec sandboxes (bubblewrap / sandbox-exec), input + output scanning, trust-partitioned memory, per-agent tool restrictions, canary tokens at runtime — paired with **22 ESLint-enforced architectural rules** that block insecure patterns at commit time. Defects don't reach production because they don't reach `main`. [Deep dive →](https://comis.ai/security)
+**🛡️ Security is enforced, not promised.** The LLM is the attack surface; Comis assumes it will be attacked. The exec sandbox is kernel-enforced and **on by default** - [Bubblewrap](https://github.com/containers/bubblewrap) on Linux with full namespace unsharing (mount, PID, user, cgroup, IPC) and a private `/tmp` and `/dev` ([`bwrap-provider`](packages/skills/src/tools/builtin/sandbox/bwrap-provider.ts)); `sandbox-exec` on macOS with profiles that open with `(deny default)` ([`sandbox-exec-provider`](packages/skills/src/tools/builtin/sandbox/sandbox-exec-provider.ts)). Even interactive terminal sessions the agent drives run jailed, with **no network by default** and an optional host-allowlist egress relay ([`terminal-scope-args`](packages/skills/src/tools/builtin/terminal-driver/terminal-scope-args.ts)). Around it: input scanning, output scanning, canary tokens, trust-partitioned memory with write validation, per-agent tool policy, and every tool call audited on the event bus. The supply line is screened too: skills are content-scanned at load - 18 rules covering exec injection, exfiltration, and XML breakout ([`content-scanner`](packages/skills/src/skills/prompt/content-scanner.ts)) - MCP packages are checked against the OSV malware database before first spawn ([`mcp-client-osv-check`](packages/skills/src/skills/integrations/mcp-client/mcp-client-osv-check.ts)), and destructive actions pause for operator approval via HMAC-signed chat buttons, with unknown action types classifying as destructive, fail-closed ([`action-classifier`](packages/core/src/security/action-classifier.ts)). ESLint-enforced security bans - no `path.join`, no `process.env`, no `eval`/`new Function`, no swallowed errors - plus architecture-as-tests block insecure patterns before they reach `main`. [Deep dive →](https://comis.ai/security)
 
-**🔑 Credential broker — keys never enter the sandbox.** Comis drives API-key CLIs (Claude Code included) with the key kept out of the sandbox — injected at the network boundary from the daemon's encrypted store, so it's never a readable file, env var, or `/proc` entry inside the sandbox. On Linux the credentialed sandbox runs with its network namespace isolated (`--unshare-net`), and the broker unix socket is the only bind-mounted network path — so the broker is the only reachable egress, kernel-enforced and **validated on the Linux production host class**. [Deep dive →](https://docs.comis.ai/security/credential-broker)
+**🔑 Your keys never meet your agents.** Secrets live in an AES-256-GCM encrypted store. When an agent drives an API-key CLI (Claude Code included), the sandbox sees only a placeholder - the code that builds the sandbox env never even reads the real key ([`broker-placeholder-builder`](packages/daemon/src/wiring/broker-placeholder-builder.ts)). The CLI's HTTPS is routed through an in-process credential broker ([`mitm-broker`](packages/infra/src/credential-broker/mitm-broker.ts)) that validates a single-use session token, terminates TLS with its own CA, matches host *and* path against the binding allow-list, resolves the secret per request, and swaps the placeholder at the header layer. It **fails closed**: any gate failure (407/403/502) destroys the tunnel before a single byte reaches upstream, and every session, injection, and denial is audited on the event bus - never the secret itself. On Linux the credentialed sandbox runs in `broker-only` network mode: namespace unshared (`--unshare-net`) with the broker socket as the *only* bound network path ([`bwrap-provider`](packages/skills/src/tools/builtin/sandbox/bwrap-provider.ts)) - egress to anywhere else fails in the kernel, not in policy. [Deep dive →](https://docs.comis.ai/security/credential-broker)
 
-**📦 Supply-chain integrity by default.** Every release is **sigstore-attested via GitHub OIDC**. Workspace packages are bundled with `bundledDependencies` and exact-pinned — no runtime `npm install` of plugins, no transitive surprises, no peer-dependency outages. Comis owns its domain types in-tree; its agent runtime builds on the exact-pinned, bundled `@earendil-works/pi-*` SDK rather than a loosely-versioned external dependency. The supply chain *is* part of the threat model.
+**🏠 Any model - without lowering the security floor.** The security guarantees are properties of the *platform*, not the model: the kernel sandbox, the credential broker, the skill content scanner, and the ESLint/architecture bans all apply identically no matter which model you run - a smaller or local model gets exactly the same locked-down platform, never a softer one. Model differences are absorbed at the *scaffolding* layer instead: each model's context window resolves to a tier ([`resolveModelTier`](packages/agent/src/executor/tool-deferral.ts) - small at 32K or less, medium up to 64K, large beyond) that tunes how aggressively unused tools are deferred and pins deterministic (temperature 0) tool selection for small-context models, so a tight window degrades gracefully instead of overflowing. Swap in Qwen or Gemma fully on-device: your data never leaves the box, and the guarantees stay properties of the platform - never of the model's goodwill.
 
-**💰 Cost — prompt caching saves 81%.** Dual-prompt architecture, active cache fences, adaptive TTL escalation, sub-agent spawn staggering. **$5.02 vs $26.42** for a 76-call Opus 4.6 session · **94% cache hit rate** on warm turns · **$2.11** for an 8-agent pipeline (788K tokens). [Deep dive →](https://comis.ai/context-management)
+**👥 Built for more than one of you.** Multiple agents and multiple operators share one daemon without stepping on each other: per-tenant data isolation, per-agent scoped secret access, per-agent budgets and tool policies, per-sender trust levels (guest / user / admin) that can route to different models, and message routing that binds channels, guilds, and peers to the right agent. Multi-tenant primitives are first-class, not bolted on.
 
-**🧊 Context — scales without degradation.** Most assistants silently drop old messages. Comis never deletes a message. A 10-layer context engine evicts stale content, compacts older history into structured summaries while keeping originals retrievable (via `session_search`), then re-hydrates critical references (`AGENTS.md`, recent files, active state) and re-states the original objective after compaction so the agent doesn't drift. A background job extracts user preferences between sessions, so your agent gets better over time without being told to remember. The lossless DAG context engine — full history kept, details recalled on demand (`ctx_search` / `ctx_inspect`) — is now the **default**, and operators switch context modes with a single config reload (no restart, fully reversible, no data loss).
+**🔀 An agent fleet from one sentence.** Natural language becomes a DAG: 7 node types (agent, debate, vote, refine, collaborate, map-reduce, human approval gate), barrier synchronization, automatic retries, token-and-cost budgets, and 3-tier concurrency control - with isolated memory per node and cache-aware spawning. No YAML, no scripting. [Watch the demo →](https://comis.ai/#demo)
 
-**🧠 Memory — recalls the right thing, and stays right over time.** Comis doesn't just store facts and hope keyword or vector search finds them. An on-device cross-encoder reranker re-reads the candidate memories against the actual question and surfaces the ones that truly answer it — not just the ones that look similar; it **turns on automatically when its model is already present locally**, and a fresh install **downloads nothing out of the box** (the model is fetched only when you explicitly enable it). An optional entity lane connects related memories, so asking about a person, project, or place brings back what's tied to them, however it was worded. When facts conflict, Comis resolves contradictions **by trust first, then recency** — a verified (higher-trust) fact wins over a newer low-trust claim, the agent answers with what's *currently* true, timelines stay ordered by when events happened, and the old record is **never deleted**. Repeated facts **consolidate into corroborated observations whose proof accrues across runs** — corroborating sources fold into the existing observation, growing its evidence count — so a fact confirmed again and again out-ranks a one-off mention and the store gets *smarter*, not just bigger. And an **opt-in feedback loop lets recall learn from which memories actually got used**, boosting the ones that prove useful (bounded, so it can never overturn the trust-first order). Every memory keeps its trust level (`system` / `learned` / `external`): a web snippet can never quietly override a verified fact — recall is trust-ranked and hardened against memory-poisoning. It all runs **locally**, on the same on-device model engine Comis already uses — no extra service, no cloud calls, no new dependency. And when recall surprises you, it's inspectable: `comis memory recall-trace` (plus an opt-in JSONL trace) shows exactly *why* each memory was chosen — which lanes matched, the rerank and trust/recency scores, what was filtered out — with the same edge-keeping redaction as the rest of Comis's observability, and no silent fallbacks. Measured, not asserted: on public LongMemEval + LoCoMo, cross-judged by two independent models (gpt-4o + gpt-4.1), Comis answers **~71% correct** (judge spread 2.2) and retrieves the right memory in its top 5 **84.5% of the time** (full-set recall@5) — every number linked to a [committed run manifest](https://github.com/comisai/comis/tree/main/benchmarks/results/2026-05-31-j1-baseline), reproducible with `pnpm bench:memory`. Comis now also ships a **per-user profile** and a **per-channel relationship model**, an opt-in **tool that answers a question from your memory** (grounded in cited recalled records, abstaining when it can't), an opt-in loop that **learns which memories prove useful** and bounded-tunes recall ranking from that signal (trust stays frozen), and **principled ranking decay** of stale memories (older + unused rank lower; a fresh memory is never reordered) — each TDD-green and proven **keyless, at $0**, every number tracing to a [committed manifest](https://github.com/comisai/comis/tree/main/benchmarks/results/2026-06-01-phase113-reprove). The one measured learning signal is a **+0.1 recall-score lift** over 5 episodes (rank position flat on the keyless lane — a mechanical, $0 signal, not a QA-accuracy lift). And the costed competitor head-to-head is now run: on 8 LongMemEval questions, cross-judged by two independent models (gpt-4o + claude, spread 0.0 on every cell), Comis's LLM-free **$0 on-device recall answers 87.5% (7/8) — the same as mem0 (`mem0ai 2.0.4`, re-run by us, 7/8)**, and both clear a full-context-dump control (50.0%) by +37.5 pt; at this best-effort N=8 the two are statistically indistinguishable, so Comis is **competitive with mem0 at $0 on-device** (mem0 pays for LLM fact-extraction at ingest) — every number traced to a [committed manifest](https://github.com/comisai/comis/tree/main/benchmarks/results/2026-06-02-phase114-prove2). [Deep dive →](https://comis.ai/agents/memory) · [Methodology + how to reproduce →](https://docs.comis.ai/agents/memory-benchmarks)
+**🧠 Memory that learns, not just remembers.** Storing facts and finding them again is the baseline - hybrid recall (FTS5 + vectors + entity links), re-read by an on-device cross-encoder reranker, all local. What sets Comis apart is that the store *improves over time*, and every claim below links to the code that does it:
 
-**🏗️ Hexagonal architecture with `Result<T, E>` discipline.** Core defines port interfaces; adapters implement them. Every function returns `Result<T, E>` — zero thrown exceptions, fully testable in isolation. `AsyncLocalStorage`-bound `traceId` flows through every log line, every tool call, every model invocation. When something goes wrong, you can reconstruct exactly what happened.
+- **It learns from conversations.** Between sessions, background jobs distill chats into durable facts with entity and causal links ([`memory-review-job`](packages/agent/src/memory/memory-review-job.ts)), a deepening per-user profile ([`memory-user-representation-job`](packages/agent/src/memory/memory-user-representation-job.ts)), and a per-channel relationship model - nobody has to say "remember this."
+- **It learns from repetition.** A re-confirmed fact *folds* into its existing observation and the proof count grows ([`foldIntoExisting`](packages/memory/src/sqlite-memory-consolidation-store.ts)), so corroborated knowledge out-ranks one-off mentions - and a reasoning job derives new deductive and inductive knowledge from what's already stored ([`memory-reasoning-job`](packages/agent/src/memory/memory-reasoning-job.ts)).
+- **It learns from being used** *(opt-in)*. Every turn records which recalled memories actually helped and which were ignored ([`memory_usefulness`](packages/memory/src/sqlite-memory-usefulness-store.ts)), and a background tuner nudges the recall-ranking weights from that signal in bounded, clamped steps ([`online-tuning-job`](packages/agent/src/memory/online-tuning-job.ts)) - while the trust weight is structurally frozen ([`scoring-overlay`](packages/agent/src/rag/scoring-overlay.ts)), so learning can never be poisoned into overriding a verified fact.
+- **It stays right.** Trust-first conflict resolution: a verified fact beats a newer low-trust claim, the loser is soft-expired - never deleted ([`sqlite-triple-store`](packages/memory/src/sqlite-triple-store.ts)) - and principled decay fades stale, unused memories while never reordering fresh ones ([`score.ts`](packages/agent/src/rag/score.ts)).
 
-**🔀 Orchestration — multi-agent fleets from natural language.** One sentence creates a DAG. 7 node types (agent, debate, vote, refine, collaborate, map-reduce, approval gate), 3-tier concurrency control, barrier synchronization, **isolated memory and budgets per agent**. Multi-tenant primitives are first-class, not bolted on. No YAML, no scripting.
+And it's measured, not asserted: **~71%** on LongMemEval + LoCoMo (cross-judged by two independent models), **84.5%** recall@5, a head-to-head **tie with mem0 (87.5%, N=8) at $0 on-device**, and the learning loop's own lift measured over repeated episodes - every number traces to a [committed run manifest](https://github.com/comisai/comis/tree/main/benchmarks/results), reproducible with `pnpm bench:memory`. [Methodology →](https://docs.comis.ai/agents/memory-benchmarks)
 
----
+**🧊 Two context engines - lossless by default.** Before every model call, an interchangeable context engine reshapes the conversation to fit the window. The operator picks the mode with one config key (`contextEngine.version`):
 
-## How Comis is different
+- **DAG mode** *(default - the Lossless Context DAG)*. Never deletes a message: every turn, tool call, and result is stored verbatim ([`lcd-store`](packages/memory/src/lcd-store.ts)), and the model always sees a verbatim fresh tail on a provider-valid, repaired transcript ([`transcript-repair`](packages/agent/src/context-engine/transcript-repair.ts)). Past 75% utilization, the oldest history compresses into a *zoomable* summary hierarchy - leaf summaries that fold into deeper condensed ones ([`lcd-leaf-summarizer`](packages/agent/src/context-engine/lcd-leaf-summarizer.ts), [`lcd-condense`](packages/agent/src/context-engine/lcd-condense.ts)) - each rendered honestly: marked untrusted, time-ranged, with an "expand for details" footer. The agent drills back into any compressed region mid-conversation with `ctx_search` / `ctx_inspect` / `ctx_expand` ([context tools](packages/skills/src/tools/builtin/context-tools)). Compression you can reverse, not destruction you can't.
+- **Pipeline mode** *(opt-in)*. Ten deterministic layers run in fixed order before each call ([`context-engine`](packages/agent/src/context-engine/context-engine.ts)): strip stale reasoning blocks, mask dead content, evict, re-hydrate critical references, re-state the original objective so the agent doesn't drift after compaction ([`objective-reinforcement`](packages/agent/src/context-engine/objective-reinforcement.ts)), and LLM-compact only past ~85% of the window - lighter, fully deterministic, with a per-layer circuit breaker.
 
-The agent space has split into three camps:
+Switching modes is a config reload - no restart, no data loss, fully reversible. And `contextEngine.version` is **operator-only**: an agent cannot switch its own engine, because the engine governs which context tools the agent is exposed to. [Deep dive →](https://docs.comis.ai/agents/context-management)
 
-- **Frameworks** (LangChain, CrewAI, AutoGen) hand you primitives — you build the runtime, channel adapters, security model, and cost optimizations yourself.
-- **Hosted platforms** (Dify, Letta) ship a runtime but stop at a web UI — your data lives on someone else's cloud.
-- **Self-hosted agent platforms** (OpenClaw, Hermes Agent) ship runtime + channels — but optimize for a single user on their personal device.
+**💰 81% cheaper by architecture.** Prompt caching is a target architecture, not an afterthought: a **cache-fence index** keeps the cached prefix byte-stable while the context engine edits everything after it, with adaptive TTL escalation, two-phase cache-break detection, and sub-agent spawn staggering - 15+ shipped optimizations. Measured: **$5.02 vs $26.42** for a 76-call Opus session, **94%** cache-hit rate on warm turns, **$2.11** for an 8-agent pipeline (788K tokens). [Deep dive →](https://comis.ai/context-management)
 
-**Comis ships the runtime, meets your users where they already are, and is built so multiple agents and multiple operators can share the same install without stepping on each other.**
-
-|                                                          |   Comis   | Agent frameworks | Hosted | OpenClaw | Hermes |
-| -------------------------------------------------------- | :-------: | :--------------: | :----: | :------: | :----: |
-| Self-hosted, Apache-2.0                                  |    ✅    |        ✅        |partial |    ✅    |   ✅   |
-| Native messaging fan-in (9+ channels)                    |    ✅    |        ❌        |partial |    ✅    |   ✅   |
-| OS-level exec sandbox (kernel-enforced)                  |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
-| Credentialed exec — keys never in sandbox (broker-only egress, Linux) |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
-| Compile-time security rules (22 ESLint, arch tests)      |    ✅    |        ❌        |   ❌   | limited  |  n/a   |
-| `Result<T,E>` typed errors end-to-end                    |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
-| `AsyncLocalStorage` `traceId` across every log + call    |    ✅    |        ❌        |   ❌   |    ❌    |partial |
-| Sigstore-attested releases (GitHub OIDC provenance)      |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
-| Owns its core domain types in-tree                       |    ✅    |        ✅        |partial |    ❌    |   ✅   |
-| Multi-tenant primitives (shared install, isolated state) |    ✅    |        ❌        |   ✅   |    ❌    |   ❌   |
-| DAG pipelines from natural language                      |    ✅    |     partial      |partial |    ❌    |partial |
-| Prompt cache as a target architecture                    |    ✅    |        ❌        |   ❌   |    ✅    |partial |
-| Trust-first, on-device reranked recall (opt-in learns-from-use) |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
-
-[Side-by-side: Comis vs OpenClaw →](https://comis.ai/compare/openclaw) · [Comis vs Hermes →](https://comis.ai/compare/hermes)
+**🔍 A glass box, end to end.** Every function returns `Result<T, E>` - zero stray exceptions. An `AsyncLocalStorage`-bound `traceId` rides through every log line, tool call, and model invocation; a typed event bus announces every state transition. When something breaks at 3am, you reconstruct exactly what happened from the logs alone.
 
 ---
 
-## Features
+## How Comis compares
 
-|                                                                                                                |                                                                                                            |                                                                              |
-| -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| 💬 **9 messaging channels**                                                                                    | 🤖 **Multi-agent fleet**                                                                                   | 🧠 **Persistent memory**                                                     |
-| Telegram, Discord, Slack, WhatsApp, Signal, iMessage, IRC, LINE, Email — text, voice, images, files, threads | Isolated memory, budgets, and tool policies per agent. Sub-agent spawning, sync or fire-and-forget         | SQLite + FTS5 + vector with tunable fusion lanes; on-device rerank (auto-on when the model is present, zero download out of the box); entity-linked associative recall; trust-first conflict resolution; observations whose proof accrues across runs; an opt-in recall-utility feedback loop; trust-partitioned (system/learned/external) — all on-device |
-| 🔌 **MCP ecosystem**                                                                                           | 🌐 **Any model, any provider**                                                                             | 🔐 **Encrypted at rest**                                                     |
-| 50+ tool servers — GitHub, Gmail, Notion, databases, browser, shell                                          | Claude, GPT, Gemini, Groq, Ollama, OpenRouter — tool schemas adapt per model                              | API keys + secrets in AES-256-GCM envelope; Pino auto-redacts logs to 3 levels |
-| 🔑 **Credential broker**                                                                                       |                                                                                                            |                                                                              |
-| Drive API-key CLIs — Claude Code included — with the key kept out of the sandbox. Injected at the network boundary from the daemon's encrypted store; audited per request. (Anthropic and Finnhub today.) [Deep dive →](https://docs.comis.ai/security/credential-broker) |                                                                                                            |                                                                              |
+We built Comis after studying its two closest neighbors in depth - [OpenClaw](https://github.com/openclaw/openclaw) and [Hermes Agent](https://github.com/NousResearch/hermes-agent). Both are excellent, and both are candid about their design center: OpenClaw's security model is *"'personal assistant' (one trusted operator, potentially many agents), not 'shared multi-tenant bus'"*, and Hermes describes itself as *"a single-tenant personal agent"* where *"the only security boundary against an adversarial LLM is the operating system."* That's their own documentation - and honest engineering.
 
-[Full feature list →](https://docs.comis.ai)
+Comis starts from the opposite premise: **an install that holds up even when the agents and people sharing it aren't fully trusted.**
+
+|                                | **Comis**                                                                                | **OpenClaw**                                                  | **Hermes Agent**                                                          |
+| ------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Design center                  | Platform - many agents × many operators, one install                                     | Personal assistant - one trusted operator, by design          | Single-tenant personal agent, by design                                   |
+| Exec sandbox                   | Kernel-enforced, **on by default** (Bubblewrap / sandbox-exec)                           | Docker sandbox, opt-in (`off` by default)                     | Host-first by default; containers confine the shell tool, not the agent   |
+| Secrets at rest                | AES-256-GCM encrypted store                                                              | Plaintext JSON + file permissions                             | Plaintext `.env` + file permissions (Bitwarden opt-in)                    |
+| API keys vs. agent runtime     | Credential broker - key injected at the network boundary, never inside the sandbox       | Keys held in the gateway process                              | Env-scrub blocklist for child processes                                   |
+| Prompt injection               | Layered runtime defenses + benchmarked poisoning resistance                              | Out of scope absent a boundary bypass ("usually not a security bug") | Heuristic wrapping; no boundary claimed                            |
+| Memory                         | Trust-partitioned, learns from use (bounded tuner, trust frozen), benchmarked in public  | No trust levels                                               | No trust levels; learning loop unbenchmarked                              |
+| Context at scale               | Lossless DAG engine (default) - nothing deleted, compression reversible in-session       | Compaction/pruning hooks; tool-result compaction              | Auto-compression at 50% of window (cheap-model summary)                   |
+| Local models                   | Tier-aware capability profile - a weaker model gets a *stricter* security posture        | Supported (Ollama, LM Studio, vLLM…); no model-aware hardening | Supported (Ollama, LM Studio, vLLM…); the OS is the boundary, whatever the model |
+| Multi-agent orchestration      | Natural-language DAGs - 7 node types, barriers, budgets, approval gates                  | Agent routing + spawn; hierarchy frameworks declined          | `delegate_task` (depth ≤ 2) + kanban board                                |
+| Typed errors end-to-end        | `Result<T, E>` everywhere - zero stray exceptions                                        | -                                                             | -                                                                          |
+| Supply-chain integrity         | Sigstore-attested releases; exact-pinned + bundled deps                                  | npm provenance; SHA-pinned images                             | Sigstore-signed releases; exact-pinned deps                               |
+| Messaging channels             | 9                                                                                        | **23+**                                                       | **20+**                                                                    |
+| Self-improvement               | In memory, not code - the memory learns from use (bounded, auditable); skills stay operator-reviewed | -                                                  | **Yes - agent rewrites its own skills**                                    |
+| License                        | Apache-2.0                                                                               | MIT                                                           | MIT                                                                        |
+
+<sub>Sourced from each project's own repository and security documentation, June 2026. Full side-by-sides: [Comis vs OpenClaw](https://comis.ai/compare/openclaw) · [Comis vs Hermes](https://comis.ai/compare/hermes)</sub>
+
+Choose honestly. If you want a personal assistant with native mobile apps, voice wake, and the widest channel list, **OpenClaw is excellent**. If you want a self-improving research agent that writes its own skills, **Hermes is excellent**. If you want an agent platform you can hand to your team, your family, or your company - and audit every action it takes - **that's Comis**.
 
 ---
 
-## Channels
+## Everything in the box
 
-<p align="center">
-  <img src="https://cdn.simpleicons.org/telegram/26A5E4" width="24" />&nbsp;&nbsp;
-  <img src="https://cdn.simpleicons.org/discord/5865F2" width="24" />&nbsp;&nbsp;
-  <img src="https://cdn.simpleicons.org/slack/4A154B" width="24" />&nbsp;&nbsp;
-  <img src="https://cdn.simpleicons.org/whatsapp/25D366" width="24" />&nbsp;&nbsp;
-  <img src="https://cdn.simpleicons.org/signal/3A76F0" width="24" />&nbsp;&nbsp;
-  <img src="https://cdn.simpleicons.org/apple/999999" width="24" />&nbsp;&nbsp;
-  <img src="https://cdn.simpleicons.org/line/00C300" width="24" />&nbsp;&nbsp;
-  <img src="assets/irc-icon.svg" width="24" />&nbsp;&nbsp;
-  <img src="https://cdn.simpleicons.org/gmail/EA4335" width="24" />&nbsp;&nbsp;
-</p>
-
-<p align="center">
-  <sub>Telegram · Discord · Slack · WhatsApp · Signal · iMessage · LINE · IRC · Email — text, voice, images, files, reactions, threads.</sub>
-</p>
+|                          |                                                                                                                                          |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 💬 **9 channels**        | Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email - text, voice, images, files, threads, buttons & polls, plus live agent-activity status rendered natively per platform |
+| 🤖 **Agent fleet**       | Per-agent memory, budgets, and tool policy; sub-agents (sync or fire-and-forget); agent-to-agent messaging; steer a running agent mid-task; DAG pipelines with human approval gates |
+| 🎙️ **Media & voice**     | Voice notes auto-transcribe (3 STT providers with fallback), voice replies via TTS (incl. keyless Edge), vision + video analysis, image generation, PDF/document extraction, automatic link context |
+| 🧠 **Learning memory**   | SQLite + FTS5 + vectors with on-device reranking; consolidates repeated facts, learns ranking from use, builds per-user profiles - all local |
+| 🧊 **Lossless context**  | Two engines: default DAG mode never deletes a message - compressed history stays expandable mid-conversation (`ctx_search`/`ctx_expand`); ten-layer pipeline mode as the deterministic opt-in |
+| 🔌 **Tools & MCP**       | Connect the MCP ecosystem's 50+ servers (GitHub, Gmail, Notion, databases…) - none bundled, you choose; built-in web/browser/media/scheduling tools and prompt skills; Comis itself runs as an MCP server too |
+| 🌐 **Any model**         | 27 hosted providers via the pi-ai catalog (Anthropic, OpenAI, Google, Groq, OpenRouter, Bedrock, Azure…), local Ollama, and any OpenAI-compatible endpoint - tool schemas adapt per model, a tier-aware capability profile scales scaffold and security to it, fallback chains and key rotation included |
+| 🖥️ **Operations**        | Web dashboard (live ops views, visual pipeline builder, approval queue), JSON-RPC + WebSocket + OpenAI-compatible + ACP APIs, cron + heartbeat monitoring, `comis security audit` (14 checks), trace CLI with forensic bundle export, git-backed config history & rollback |
 
 ---
 
@@ -166,148 +167,41 @@ The agent space has split into three camps:
   <img src="assets/comis-architecture.png" alt="Comis hexagonal architecture" width="100%" />
 </p>
 
-Comis uses **hexagonal architecture** (ports and adapters). Core defines port interfaces; adapters implement them. Swap Discord for Matrix, SQLite for Postgres, or OpenAI for Ollama without touching core logic. Every function returns `Result<T, E>` — zero thrown exceptions, fully testable in isolation. Architecture-level invariants (file-size, raw-throw-bans, untyped-SQLite-bans, end-to-end matrix coverage) are enforced as tests, not conventions.
+Hexagonal (ports + adapters): `core` defines port interfaces, adapters implement them, and everything is wired in one composition root. Swap Discord for Matrix, SQLite for Postgres, or OpenAI for Ollama without touching core logic. Architectural invariants - dependency direction, file-size caps, raw-throw bans, security rules - are enforced as **tests**, not conventions.
 
-[Deep dive: Architecture →](https://comis.ai/architecture)
-
----
-
-## FAQ
-
-<details>
-<summary><strong>How is Comis different from LangChain / CrewAI / AutoGen?</strong></summary>
-
-<br>
-
-Those are **frameworks** — you build the runtime, channel adapters, security model, and cost optimizations yourself. Comis is a **runtime** that ships those pieces already wired up: 9 messaging adapters, OS-level exec sandbox, prompt-injection defenses, prompt-cache architecture, persistent memory, DAG executor, and observability. Use a framework when you're embedding agent logic into an app; use Comis when you want a deployable agent platform that talks to humans on the apps they already use.
-
-</details>
-
-<details>
-<summary><strong>How is Comis different from OpenClaw or Hermes Agent?</strong></summary>
-
-<br>
-
-OpenClaw and Hermes are both excellent single-user personal agents. Comis is built so multiple agents and multiple operators can share the same install — with isolated memory, budgets, and tool policies per agent, and end-to-end observability (`AsyncLocalStorage` `traceId` flowing through every log line and model call). The other architectural differences — `Result<T,E>` typed errors, 22 compile-time security rules enforced by ESLint + architecture tests, sigstore-attested releases, and owning the core domain types in-tree — are the things that make Comis a stack you can reason about end-to-end rather than a stack you have to trust.
-
-</details>
-
-<details>
-<summary><strong>Can I bring my own model?</strong></summary>
-
-<br>
-
-Yes. Claude, GPT, Gemini, Groq, Ollama, and OpenRouter are supported out of the box. Tool presentation adapts to each model's context window — small models get pruned schemas and a focused tool set.
-
-</details>
-
-<details>
-<summary><strong>Is the exec sandbox actually enforced, or just policy?</strong></summary>
-
-<br>
-
-Kernel-enforced. Linux uses [Bubblewrap](https://github.com/containers/bubblewrap) with full namespace unsharing (mount, PID, user, cgroup, IPC), a private `/tmp` and `/dev`, and `--die-with-parent` cascade kill. macOS uses `sandbox-exec` with default-deny SBPL profiles per invocation. Production runs on Linux only — Docker Desktop on macOS/Windows auto-disables the sandbox and is dev-only.
-
-</details>
-
-<details>
-<summary><strong>How does Comis handle secrets?</strong></summary>
-
-<br>
-
-API keys and channel credentials are wrapped in an AES-256-GCM envelope before they're written to disk. The Pino logger auto-redacts known secret fields (`apiKey`, `token`, `password`, `secret`, `authorization`, `botToken`, `privateKey`, `cookie`, `webhookSecret`) up to 3 levels deep — a safety net, not a substitute for never logging them in the first place. A `SecretStorePort` abstraction lets you swap the at-rest store later without touching call sites.
-
-</details>
-
-<details>
-<summary><strong>How can an agent use my API key without being able to steal it?</strong></summary>
-
-<br>
-
-You can't keep a secret from a process that runs arbitrary commands in the same namespace — so Comis
-never puts it there. The real key lives only in the daemon's encrypted store (AES-256-GCM, the same
-`SecretManager` that feeds MCP). When the agent drives a credentialed CLI, Comis launches it inside the
-exec sandbox with a **placeholder** key and routes its HTTPS traffic through an in-process broker. The
-broker terminates TLS with its own CA, matches the request against an allow-list, swaps the placeholder
-for the real secret (`x-api-key` / `Authorization: Bearer` / query param), and forwards it. The key is
-never a file, never an env var, never on the wire the sandbox can read.
-
-On Linux, the credentialed sandbox runs with its network namespace isolated (`--unshare-net`) — the broker
-unix socket is the only bind-mounted network path, so the broker is the only reachable egress. This
-kernel-enforcement is validated on the Linux production host class (rootless bubblewrap): direct egress
-from inside the namespace fails, while the bound broker socket stays reachable.
-
-The broker **fails closed** (no secret → 502, request never forwarded) and audits every session, injection,
-and blocked-egress attempt on the event bus with a `traceId` you can grep.
-
-Today this covers **API-key / bearer / query-param** auth (Anthropic and Finnhub today, more on the
-catalog roadmap). OAuth / subscription-only CLIs are not yet supported. [Deep dive →](https://docs.comis.ai/security/credential-broker)
-
-Add an `executor.broker` block to `config.yaml` and the broker starts at daemon boot (TCP + a `0600` unix socket).
-
-```yaml
-executor:
-  broker:
-    bindings:
-      - preset: anthropic
-        secretRef: ANTHROPIC_EXECUTOR_KEY
-      - preset: finnhub
-        secretRef: FINNHUB_API_KEY
-```
-
-</details>
-
-<details>
-<summary><strong>Is there a hosted / managed version?</strong></summary>
-
-<br>
-
-No. Comis is Apache-2.0 and fully self-hosted by design. See [docs.comis.ai/installation](https://docs.comis.ai) for VPS, Docker, and bare-metal install paths.
-
-</details>
-
-<details>
-<summary><strong>What's the license? Can I use it commercially?</strong></summary>
-
-<br>
-
-Apache-2.0 across all 15 packages. Commercial use, modification, redistribution, and private deployment are all permitted under the standard Apache-2.0 terms.
-
-</details>
-
----
-
-## Developer Setup
-
-Requires **Node.js >= 22** and **pnpm**.
-
-```bash
-git clone https://github.com/comisai/comis.git
-cd comis
-pnpm install
-pnpm build
-pnpm test              # unit tests
-pnpm lint:security     # security lint
-```
-
-See [`AGENTS.md`](AGENTS.md) for the engineering protocol before contributing code.
+[Architecture deep dive →](https://comis.ai/architecture) · [Developer guide →](https://docs.comis.ai/developer-guide)
 
 ---
 
 ## Contributing
 
-Bug reports, skills, channel adapters, docs, and code are all welcome.
+Comis is engineered to be contributed to safely - that's the architecture, not a platitude:
 
-1. Fork and branch (`feature/my-change` or `fix/my-fix`)
-2. `pnpm build && pnpm test && pnpm lint:security`
-3. Open a PR against `main`
+- **The rules are executable.** `pnpm validate` runs CI's deterministic gates locally - clean build, cycle checks, security lint, per-package coverage floors - so you find out before you push, not after.
+- **The protocol is written down.** [`AGENTS.md`](AGENTS.md) is the engineering contract: `Result<T, E>` discipline, tests-first, security rules, naming. No tribal knowledge required.
+- **Extension points are real interfaces.** A new channel is a `ChannelPort` implementation; a new tool is a manifest plus a handler; a new storage backend is a port adapter. You rarely need to touch core.
 
-**Where to help most:** new skills, channel adapters, and docs. Start with [`good first issue`](https://github.com/comisai/comis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+```bash
+git clone https://github.com/comisai/comis.git
+cd comis
+pnpm install && pnpm build
+pnpm test && pnpm lint:security
+```
 
-[Issues](https://github.com/comisai/comis/issues) · [Pull Requests](https://github.com/comisai/comis/pulls) · [Discussions](https://github.com/comisai/comis/discussions)
+Where help lands hardest: **channel adapters**, **skills and MCP integrations**, and **docs**. Start with [`good first issue`](https://github.com/comisai/comis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), or bring your own itch.
+
+Fork → branch (`feature/<your-change>`) → `pnpm validate` → PR against `main`.
 
 ---
 
-Builds on prior art from [OpenClaw](https://github.com/openclaw/openclaw), [Hermes Agent](https://github.com/NousResearch/hermes-agent), and [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://mariozechner.at/).
+## Community
 
-**License:** [Apache-2.0](LICENSE)
+- **[Discord](https://discord.gg/FsqgJkpp)** - the maintainers are there; bring questions, deployments, and benchmark disputes
+- **[GitHub Discussions](https://github.com/comisai/comis/discussions)** - design proposals and ideas
+- **[Issues](https://github.com/comisai/comis/issues)** - bugs and feature requests
+
+---
+
+Comis builds on prior art from [OpenClaw](https://github.com/openclaw/openclaw), [Hermes Agent](https://github.com/NousResearch/hermes-agent), and [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://mariozechner.at/) - studied closely, credited gladly.
+
+**License:** [Apache-2.0](LICENSE) across all 15 packages - commercial use, modification, redistribution, and private deployment all permitted.

@@ -31,6 +31,7 @@ import {
   ObsDeliveryRecentContract,
   ObsDeliveryStatsContract,
   ObsDiagnosticsContract,
+  ObsExplainContract,
   ObsGetCacheStatsContract,
   ObsResetContract,
   ObsResetTableContract,
@@ -45,11 +46,11 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 24 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(24);
+  it("OBSERVABILITY_CONTRACTS has exactly 25 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(25);
   });
 
-  it("all 24 contracts are admin-scoped", () => {
+  it("all 25 contracts are admin-scoped", () => {
     for (const c of OBSERVABILITY_CONTRACTS) {
       expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
     }
@@ -75,6 +76,8 @@ describe("observability-domain contracts", () => {
       "obs.delivery.recent",
       "obs.delivery.stats",
       "obs.diagnostics",
+      // Incident-report assembler (Phase 153 centerpiece).
+      "obs.explain",
       "obs.getCacheStats",
       "obs.reset",
       "obs.reset.table",
@@ -784,6 +787,21 @@ describe("ObsTrace contracts", () => {
     expect(ObsTraceSearchContract.scopes).toEqual(["admin"]);
   });
 
+  // D9: includeSynthetic admin opt-in (default-exclude synthetic rows).
+  it("ObsTraceSearchContract request parses and retains includeSynthetic:false", () => {
+    // A z.object WITHOUT the field strips the unknown key → the parsed result
+    // would NOT contain includeSynthetic (RED on pre-patch). Once the field is
+    // declared, the boolean survives the parse.
+    const parsed = ObsTraceSearchContract.request.parse({ includeSynthetic: false });
+    expect(parsed).toHaveProperty("includeSynthetic", false);
+  });
+
+  it("ObsTraceSearchContract request rejects a non-boolean includeSynthetic value", () => {
+    expect(
+      ObsTraceSearchContract.request.safeParse({ includeSynthetic: "yes" }).success,
+    ).toBe(false);
+  });
+
   // Test 6
   it("ObsTraceTailContract method equals obs.trace.tail", () => {
     expect(ObsTraceTailContract.method).toBe("obs.trace.tail");
@@ -830,8 +848,8 @@ describe("ObsTrace contracts", () => {
   });
 
   // Test 13
-  it("OBSERVABILITY_CONTRACTS has exactly 24 entries after adding three new contracts", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(24);
+  it("OBSERVABILITY_CONTRACTS has exactly 25 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(25);
   });
 
   // Test 14
@@ -840,5 +858,78 @@ describe("ObsTrace contracts", () => {
     expect(methods.filter((m) => m === "obs.trace.search")).toHaveLength(1);
     expect(methods.filter((m) => m === "obs.trace.tail")).toHaveLength(1);
     expect(methods.filter((m) => m === "obs.trace.export")).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // obs.explain (Phase 153 centerpiece — IncidentReport assembler)
+  // -------------------------------------------------------------------------
+
+  it("obs.explain: declares the method name", () => {
+    expect(ObsExplainContract.method).toBe("obs.explain");
+  });
+
+  it("obs.explain: requires the admin scope", () => {
+    expect(ObsExplainContract.scopes).toEqual(["admin"]);
+  });
+
+  it("obs.explain: request accepts sessionKey alone", () => {
+    expect(() =>
+      ObsExplainContract.request.parse({ sessionKey: "sk-1" }),
+    ).not.toThrow();
+  });
+
+  it("obs.explain: request accepts traceId alone", () => {
+    expect(() =>
+      ObsExplainContract.request.parse({ traceId: "t-1" }),
+    ).not.toThrow();
+  });
+
+  // D9: includeSynthetic admin opt-in (default-exclude synthetic sessions).
+  it("obs.explain: request parses and retains includeSynthetic:true alongside a traceId", () => {
+    // Pre-patch the field is stripped by the z.object → the parsed result lacks
+    // includeSynthetic (RED). After the opt-in is declared the boolean survives.
+    const parsed = ObsExplainContract.request.parse({ traceId: "t-1", includeSynthetic: true });
+    expect(parsed).toHaveProperty("includeSynthetic", true);
+  });
+
+  it("obs.explain: request rejects a non-boolean includeSynthetic value", () => {
+    expect(
+      ObsExplainContract.request.safeParse({ traceId: "t-1", includeSynthetic: "yes" }).success,
+    ).toBe(false);
+  });
+
+  it("obs.explain: request REJECTS neither sessionKey nor traceId", () => {
+    expect(() => ObsExplainContract.request.parse({})).toThrow();
+  });
+
+  it("obs.explain: a present empty sessionKey is REJECTED (min(1) fires before optional)", () => {
+    // `.optional()` only skips validation when the key is ABSENT. A present "" still
+    // hits `.min(1)` and throws — so a malformed empty id is rejected, not silently
+    // ignored (the security-correct behavior; X1 Pitfall 5).
+    expect(() =>
+      ObsExplainContract.request.parse({ sessionKey: "", traceId: "t-1" }),
+    ).toThrow();
+  });
+
+  it("obs.explain: response parses a minimal §6.3 IncidentReport sample", () => {
+    const sample = {
+      schemaVersion: 1,
+      sessionKey: "sk-1",
+      traceId: "t-1",
+      agentId: "agent-1",
+      channel: { type: "discord", id: "chan-1" },
+      outcome: { endReason: "success", degraded: false, severity: "ok" },
+      cost: { costUsd: 0, totalTokens: 0, cacheReadRatio: 0 },
+      timing: { durationMs: 0, turnCount: 0 },
+      toolStats: {},
+      failures: [],
+      breakerTimeline: [],
+      offloads: [],
+      summary: "no incidents",
+      likelyRootCause: null,
+      suggestedNextSteps: [],
+      truncations: [],
+    };
+    expect(() => ObsExplainContract.response.parse(sample)).not.toThrow();
   });
 });

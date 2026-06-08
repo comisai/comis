@@ -12,6 +12,7 @@
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { Context, Message } from "@earendil-works/pi-ai";
 import type { ComisLogger } from "@comis/core";
+import { withDedup } from "@comis/core";
 
 import type { StreamFnWrapper } from "./types.js";
 import { createToolResultSizeGuard, type ContentBlock } from "../../safety/tool-result-size-guard.js";
@@ -61,7 +62,14 @@ export function createToolResultSizeBouncer(
 ): ToolResultSizeBouncerResult {
   const guard = createToolResultSizeGuard();
 
-  // Dedup set keyed by "toolName:toolCallId" -- persists across all LLM calls
+  // Log-dedup: the truncation WARN fires once per "toolName:toolCallId" via
+  // withDedup (@comis/core — NOT @comis/infra; agent↛infra). Process-lifetime
+  // dedup, preserving the prior unbounded-Set behavior.
+  const dedupLogger = withDedup(logger);
+  // Counter-only guard, SEPARATE from the log dedup: gates the once-per-key
+  // `truncatedToolsCount++` accumulator (withDedup collapses the LOG, it has no
+  // counter side-channel). Keyed by "toolName:toolCallId", persists across all
+  // LLM calls.
   const truncationDedup = new Set<string>();
   // Accumulator for execution-level summary
   let truncatedToolsCount = 0;
@@ -88,22 +96,27 @@ export function createToolResultSizeBouncer(
 
         anyTruncated = true;
 
-        // Build dedup key and only log WARN on first occurrence
         const dedupKey = `${msg.toolName}:${msg.toolCallId}`;
+        // Counter: once-per-key accumulator. SEPARATE from the log dedup —
+        // withDedup collapses the WARN but tracks no counter, so the summary
+        // accumulator keeps its own has/add guard.
         if (!truncationDedup.has(dedupKey)) {
           truncationDedup.add(dedupKey);
           truncatedToolsCount++;
-          logger.warn(
-            {
-              toolName: msg.toolName,
-              originalChars: result.metadata!.originalChars,
-              truncatedChars: result.metadata!.truncatedChars,
-              hint: `Tool result from '${msg.toolName}' exceeded ${maxChars} chars and was truncated; increase agents.<name>.maxToolResultChars if this tool legitimately produces large output`,
-              errorKind: "resource" as const,
-            },
-            "Tool result truncated",
-          );
         }
+        // Log: withDedup collapses repeats by dedupKey (the WARN fires once per
+        // key, process-lifetime).
+        dedupLogger.warn(
+          {
+            dedupKey,
+            toolName: msg.toolName,
+            originalChars: result.metadata!.originalChars,
+            truncatedChars: result.metadata!.truncatedChars,
+            hint: `Tool result from '${msg.toolName}' exceeded ${maxChars} chars and was truncated; increase agents.<name>.maxToolResultChars if this tool legitimately produces large output`,
+            errorKind: "resource" as const,
+          },
+          "Tool result truncated",
+        );
 
         // Always accumulate chars regardless of dedup
         totalTruncatedChars += result.metadata!.originalChars - result.metadata!.truncatedChars;

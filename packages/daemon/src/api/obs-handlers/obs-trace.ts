@@ -137,6 +137,7 @@ async function scanSessionIndexByTrace(
   dataDir: string,
   traceId: string,
   limit: number,
+  includeSynthetic = false,
 ): Promise<Array<Record<string, unknown>>> {
   const rows: Array<Record<string, unknown>> = [];
   for (const dayKey of [yesterdayKey(), todayKey()]) {
@@ -154,6 +155,7 @@ async function scanSessionIndexByTrace(
       if (!line || rows.length >= limit) continue;
       try {
         const rec = JSON.parse(line) as Record<string, unknown>;
+        if (rec.synthetic === true && !includeSynthetic) continue; // D9 default-exclude
         if (rec.traceId === traceId) rows.push(rec);
       } catch {
         // Skip malformed lines.
@@ -169,6 +171,7 @@ async function scanSessionIndexByFilter(
   since: string | undefined,
   where: string | undefined,
   limit: number,
+  includeSynthetic = false,
 ): Promise<Array<Record<string, unknown>>> {
   const rows: Array<Record<string, unknown>> = [];
   const sinceMs = since ? parseSinceDuration(since, systemNowMs()) : 0;
@@ -187,6 +190,7 @@ async function scanSessionIndexByFilter(
       if (!line || rows.length >= limit) continue;
       try {
         const rec = JSON.parse(line) as Record<string, unknown>;
+        if (rec.synthetic === true && !includeSynthetic) continue; // D9 default-exclude
         if (sinceMs > 0 && Date.parse(String(rec.ts)) < sinceMs) continue;
         if (where === "error" && rec.lastError == null) continue;
         rows.push(rec);
@@ -204,6 +208,7 @@ async function scanSessionIndexByChat(
   chatId: string,
   sinceMs: number,
   limit: number,
+  includeSynthetic = false,
 ): Promise<Array<Record<string, unknown>>> {
   const rows: Array<Record<string, unknown>> = [];
   for (const dayKey of [yesterdayKey(), todayKey()]) {
@@ -221,6 +226,7 @@ async function scanSessionIndexByChat(
       if (!line || rows.length >= limit) continue;
       try {
         const rec = JSON.parse(line) as Record<string, unknown>;
+        if (rec.synthetic === true && !includeSynthetic) continue; // D9 default-exclude
         // Session index may use channelId or chatId depending on version.
         if (rec.channelId !== chatId && rec.chatId !== chatId) continue;
         if (Date.parse(String(rec.ts)) <= sinceMs) continue;
@@ -283,13 +289,13 @@ export function bindObsTraceHandlers(deps: ObsHandlerDeps): Record<string, RpcHa
         // O(1) LRU lookup; fall through to traceId scan if LRU miss.
         const hit = lruGet(params.messageId);
         if (hit) {
-          rows = await scanSessionIndexByTrace(dataDir, hit.traceId, limit);
+          rows = await scanSessionIndexByTrace(dataDir, hit.traceId, limit, params.includeSynthetic);
         }
         // If LRU miss: return empty rows — caller can retry with --trace-id.
       } else if (params.traceId) {
-        rows = await scanSessionIndexByTrace(dataDir, params.traceId, limit);
+        rows = await scanSessionIndexByTrace(dataDir, params.traceId, limit, params.includeSynthetic);
       } else if (params.since || params.where) {
-        rows = await scanSessionIndexByFilter(dataDir, params.since, params.where, limit);
+        rows = await scanSessionIndexByFilter(dataDir, params.since, params.where, limit, params.includeSynthetic);
       }
 
       const result = { rows };

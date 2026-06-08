@@ -10,9 +10,8 @@
  * @module
  */
 
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { formatSessionKey, safePath, systemDateFrom } from "@comis/core";
+import { fingerprint, formatSessionKey, safePath, systemDateFrom } from "@comis/core";
 import type { AppConfig, AppContainer, SessionKey } from "@comis/core";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import { createGreetingGenerator, type GreetingGenerator, type GreetingTrigger, type CostTracker } from "@comis/agent";
@@ -56,7 +55,7 @@ export function buildExecutionRequestedLogFields(input: {
     messageLen: raw.length,
   };
   if (raw.length > 0) {
-    fields.messageHash = createHash("sha256").update(raw).digest("hex").slice(0, 12);
+    fields.messageHash = fingerprint(raw);
   }
   if (input.connectionId !== undefined) {
     fields.connectionId = input.connectionId;

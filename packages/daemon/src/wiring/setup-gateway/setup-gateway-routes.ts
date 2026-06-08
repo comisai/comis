@@ -168,6 +168,15 @@ export interface GatewayDeps {
   /** Daemon package version (read once from packages/daemon/package.json at
    *  bootstrap). Advertised as MCP `serverInfo.version`. */
   daemonVersion: string;
+  /** 154-03: trust-flag-FREE obs.explain assembler closure for the
+   *  operator-allowlisted `obs_explain` MCP tool. Built at the composition root
+   *  over the obsStore + dataDir; threaded into `buildMcpServerForClient` so the
+   *  obs_explain dispatch branch invokes it DIRECTLY under daemon authority
+   *  (NOT `daemonRpcForMcpClient` → the admin-gated RPC; NO admin trust). Its
+   *  boundary is the per-client `mcpClient.allowlist` + the digest-only report.
+   *  Optional — an obsStore-less boot leaves it undefined and the dispatch
+   *  branch fails closed with a generic dispatch_error sentinel. */
+  obsExplainForMcpClient?: (params: Record<string, unknown>) => Promise<unknown>;
   /** Set of suspended agent IDs for REST API status reporting. */
   suspendedAgents?: ReadonlySet<string>;
   /** Interactive-callback wiring (73-10): the single-use email approval-token map
@@ -343,6 +352,11 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
         defaultToolRateLimit: MCP_DEFAULT_TOOL_RATE_LIMIT,
         toolNameToRpcMethod: mcpToolNameToRpcMethod,
         resourceReadLimit: MCP_RESOURCE_READ_LIMIT,
+        // 154-03: obs_explain runs THIS directly under daemon authority — it is
+        // NOT wired to mcpToolNameToRpcMethod / daemonRpcForMcpClient (it has its
+        // own dispatch branch). The never-inject-admin indirection above is
+        // untouched.
+        obsExplainForMcpClient: deps.obsExplainForMcpClient,
       },
       client,
     );

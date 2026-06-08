@@ -1,0 +1,18 @@
+{
+  "rootCause": "Cumulative token spend (the rising per-record costUsd in the token_usage events) crossed the configured budget ceiling; the session terminated with endReason budget_exhausted (a resource limit, not a tool failure).",
+  "expectedDegraded": true,
+  "visibleSymptoms": [
+    "rising costUsd",
+    "endReason budget_exhausted"
+  ],
+  "hiddenMechanism": "The per-session cost rollup must be summed by hand across token_usage records today (the D5 flight-recorder gap). No single surface reports the running total against the ceiling at the moment of the stop.",
+  "surfaceCeiling": [
+    "trajectory JSONL (read file)",
+    "obs_query tool (diagnostics/billing/delivery/channels only)",
+    "24 obs.* RPC methods",
+    "obs_diagnostics SQLite",
+    "daemon.log",
+    "SOURCE FILES (pi-event-bridge.ts, tool-metadata-registry.ts, tool-retry-breaker.ts)"
+  ],
+  "mechanismTokens": ["budget", "exhausted", "costUsd"]
+}
