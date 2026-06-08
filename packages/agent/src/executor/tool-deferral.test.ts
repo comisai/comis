@@ -2895,3 +2895,87 @@ describe("buildDeferredToolsContext — C3 maxEntries truncation", () => {
     expect(result).toContain("discover_tools");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 5b: applyToolDeferral — SD7 active-tool ceiling for small class
+// ---------------------------------------------------------------------------
+
+describe("applyToolDeferral - SD7 active-tool ceiling", () => {
+  it("small class with activeToolCeiling=3: only ≤3 active tools, cold long-tail deferred", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),      // CORE — always active
+      makeTool("exec"),      // CORE — always active
+      makeTool("message"),   // CORE — always active
+      makeTool("cron"),      // cold long-tail → deferred by ceiling
+      makeTool("browser"),   // cold long-tail → deferred by ceiling
+      makeTool("pipeline"),  // cold long-tail → deferred by ceiling
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "small",
+      toolNames: tools.map(t => t.name),
+      activeToolCeiling: 3,
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+    expect(result.activeTools.map(t => t.name)).toContain("read");
+    expect(result.activeTools.map(t => t.name)).toContain("exec");
+    expect(result.activeTools.map(t => t.name)).toContain("message");
+    expect(result.activeTools.length).toBeLessThanOrEqual(3);
+    expect(result.discoverTool).not.toBeNull();
+  });
+
+  it("recently-used tool is never deferred by ceiling", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),     // CORE
+      makeTool("cron"),     // recently-used → preserved even under ceiling
+      makeTool("browser"),  // cold → deferred
+      makeTool("pipeline"), // cold → deferred
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "small",
+      toolNames: tools.map(t => t.name),
+      recentlyUsedToolNames: new Set(["cron"]),
+      activeToolCeiling: 2,
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+    expect(result.activeTools.map(t => t.name)).toContain("cron");
+    expect(result.activeTools.length).toBeLessThanOrEqual(2);
+  });
+
+  it("deferred tools are reachable via discover_tools (no capability removed)", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),     // CORE
+      makeTool("cron"),     // cold → deferred
+      makeTool("browser"),  // cold → deferred
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "small",
+      toolNames: tools.map(t => t.name),
+      activeToolCeiling: 1,
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+    expect(result.discoverTool).not.toBeNull();
+    expect(result.discoverTool!.name).toBe("discover_tools");
+    const deferredNames = result.deferredEntries.map(e => e.name);
+    expect(deferredNames).toContain("cron");
+    expect(deferredNames).toContain("browser");
+  });
+
+  it("ceiling=undefined (no activeToolCeiling set) never fires ceiling logic", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [makeTool("read"), makeTool("cron"), makeTool("browser")];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "frontier",
+      toolNames: tools.map(t => t.name),
+      // activeToolCeiling not set → undefined
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+    expect(result.deferredCount).toBe(0);
+  });
+});
