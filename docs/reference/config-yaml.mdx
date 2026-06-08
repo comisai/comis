@@ -454,7 +454,7 @@ diagnostics:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `maxChars` | `number` | `20000` | Per-file character limit for workspace files injected into system prompt |
+| `maxChars` | `number` | `20000` for frontier/mid; `3500` for small/nano (capability-gated) | Per-file character limit for workspace files injected into system prompt. For `capabilityClass` in `{small, nano}`, the effective default drops to `3_500` chars per file (SD6, Phase 159). Setting `maxChars: 20000` explicitly is treated the same as "unset" — the capability default of `3_500` still applies for small/nano. Use `capabilityClassOverride: frontier` or set an explicit value other than `20000` to override. |
 | `promptMode` | `enum` | `"full"` | Verbosity: `full`, `minimal` (sub-agents), `none` (identity only) |
 | `groupChatFiltering` | `boolean` | `true` | Exclude USER.md from bootstrap in group chats (privacy) |
 
@@ -2004,9 +2004,11 @@ LLM provider configuration. API keys are referenced by SecretManager key name, n
 
 > **v2.15 capability-gated defaults:** The v2.14 reliability scaffold (GoalAnchor, relevance floor,
 > cost-gated critic) is now **default-ON for `small`/`nano` agents** — no per-agent opt-in required.
-> `frontier`/`mid` behavior is **byte-identical** to v2.14 (the non-regression guarantee).
-> The security guarantee holds: a weaker model class cannot lower the platform's security posture;
-> the scaffolding defaults reinforce it.
+> Phase 159 adds two capacity defaults for `small`/`nano`: `bootstrap.maxChars` drops to `3_500`
+> chars per file (SD6), and the active-tool ceiling is set to 40 tools (SD7; overflow tools stay
+> reachable via `discover_tools`). `frontier`/`mid` behavior is **byte-identical** to v2.14 (the
+> non-regression guarantee). The security guarantee holds: a weaker model class cannot lower the
+> platform's security posture; the scaffolding defaults reinforce it.
 
 **UserModel (providers.entries.{name}.models[])**
 
@@ -2106,6 +2108,58 @@ agents:
     rag:
       baseFloor: 0.3         # Memory relevance floor; capability default is 0.15 for small/nano (0 = sentinel)
 ```
+
+### Capability-gated capacity defaults (Phase 159 — D2)
+
+These defaults fire only for `capabilityClass` in `{small, nano}` (e.g., any Ollama qwen3.6 deployment). The 2026-06-08 re-verification measured ~32K input tokens per qwen3.6 turn — 98 active tool schemas and a 14.4K-char bootstrap file drove a 495% bootstrap warning. Phase 159 adds two capability-gated defaults to address this without changing `frontier`/`mid` behavior.
+
+#### bootstrap.maxChars capability default (SD6)
+
+For `capabilityClass` in `{small, nano}`, `bootstrap.maxChars` defaults to `3_500` chars per file (down from the schema baseline of `20_000`). For `frontier`/`mid`, the value is unchanged (`20_000` per file — byte-identical to v2.14).
+
+Key properties:
+
+- **Per-file limit.** Each workspace file is truncated individually. At `3_500` chars, AGENTS.md (the largest file) is preserved head 70% + tail 20%; smaller identity files (SOUL/IDENTITY/USER/ROLE/TOOLS/HEARTBEAT/BOOT) fit entirely within the limit.
+- **Precedence:** explicit `agents.<id>.bootstrap.maxChars` > capability default (`3_500` for small/nano) > `20_000` (frontier/mid baseline).
+- **Sentinel: `20_000` is treated as "unset".** Setting `bootstrap.maxChars: 20000` explicitly has the same effect as omitting the key — the capability default of `3_500` applies for small/nano. This is because `20_000` is the schema default, so the runtime cannot distinguish "operator chose 20_000" from "no override". To force the `20_000` limit on a small/nano agent, set `agents.<id>.capabilityClassOverride: frontier` instead.
+
+<Warning>
+  If security-critical content lives in the **middle** of AGENTS.md (between the first 70% and last 20%), it may be truncated for small/nano models. Place critical rules in the **first ~2,450 chars** or **last ~700 chars** of AGENTS.md for reliable injection. See AGENTS.md placement guidance for the recommended section order.
+</Warning>
+
+To override the capability default for a single agent:
+
+```yaml
+agents:
+  my-agent:
+    bootstrap:
+      maxChars: 8000   # override the small/nano default of 3_500
+```
+
+#### Active-tool ceiling (SD7)
+
+For `capabilityClass: small`, at most **40 tool schemas** are active in each prompt request. The cold long-tail (tools not in the core set and not recently used) is deferred.
+
+<Note>
+  **No capability is removed.** All deferred tools remain fully callable via the `discover_tools` mechanism. The model can search for and invoke any deferred tool in the same turn. This ceiling is a **prompt-size control**, not a security control — it does not restrict which tools the agent is authorized to use.
+</Note>
+
+The ceiling applies only to `capabilityClass: small`. Key properties:
+
+- **CORE_TOOLS are never deferred.** The following tools are always kept active regardless of the ceiling: `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process`, `message`, `memory_search`, `memory_store`, `memory_get`, `web_search`, `web_fetch`.
+- **Recently-used tools are never deferred.** Any tool the agent invoked in recent turns is preserved in the active set.
+- **`nano` class is not affected.** Nano already uses aggressive CORE_TOOLS-only deferral; the 40-tool ceiling does not change its behavior.
+- **`frontier`/`mid` classes are not affected.** No ceiling applies — behavior is unchanged from v2.14.
+
+#### Summary
+
+| Class | bootstrap.maxChars | Active-tool ceiling | discover_tools reachability |
+|-------|--------------------|---------------------|-----------------------------|
+| `frontier` / `mid` | `20_000` (unchanged) | No ceiling | N/A |
+| `small` | `3_500` (capability default) | 40 tools active | All deferred tools callable |
+| `nano` | `3_500` (capability default) | CORE_TOOLS-only (existing) | All deferred tools callable |
+
+> **Relationship to Phase 158 D1 (reliability defaults):** The GoalAnchor, `rag.baseFloor`, and verification critic defaults from Phase 158 follow the same precedence model — explicit per-agent config > capability default > off. The D2 capacity defaults (bootstrap budget, tool ceiling) are additive: all four default-on behaviors activate together for `small`/`nano` agents with no per-agent config required.
 
 ### General vs. Coding-Tuned Model Guidance
 
