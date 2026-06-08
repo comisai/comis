@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { initSchema } from "../schema.js";
 import { createObservabilityStore } from "./index.js";
+import { reduceFleetWindow } from "./fleet-window-rollup.js";
 import type {
   ObservabilityStore,
   SystemPromptReportRow,
@@ -113,5 +114,334 @@ describe("ObservabilityStore — SystemPromptReport CRUD", () => {
     const result = store.latestSystemPromptReport("agent-1", "session-1");
     expect(result?.runId).toBe("run-b");
     expect(result?.generatedAt).toBe(2_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A1 — aggregateSessionsInWindow (cross-session per-session rollup, GROUP BY)
+//
+// One scan over obs_diagnostics category='session_summary'; one rollup per
+// session_key (latest row wins via MAX(id)); the window predicate excludes
+// rows older than sinceMs. The rollup fields (degraded/costUsd/toolStats/
+// breakerTripCount/turnCount/topErrorKinds/source) are parsed from the row's
+// `details` JSON — proving topErrorKinds + source are now carried INTO the row.
+// ---------------------------------------------------------------------------
+
+/** A session_summary `details` JSON payload as written by sessionSummaryEventToRow. */
+function summaryDetails(
+  overrides: Partial<{
+    degraded: boolean;
+    costUsd: number;
+    toolStats: Record<string, { ok: number; failed: number }>;
+    breakerTripCount: number;
+    turnCount: number;
+    topErrorKinds: Record<string, number>;
+    source: string;
+  }> = {},
+): string {
+  return JSON.stringify({
+    degraded: false,
+    costUsd: 0,
+    toolStats: {},
+    breakerTripCount: 0,
+    turnCount: 0,
+    topErrorKinds: {},
+    source: "runtime",
+    ...overrides,
+  });
+}
+
+describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
+  let db: Database.Database;
+  let store: ObservabilityStore;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createObservabilityStore(db);
+  });
+
+  it("returns one rollup per session_key (GROUP BY) — 2 rows for s1 + 1 for s2 yield exactly 2", () => {
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "s1",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 1 }),
+    });
+    store.insertDiagnostic({
+      timestamp: 2_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s1",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, costUsd: 0.4, turnCount: 4 }),
+    });
+    store.insertDiagnostic({
+      timestamp: 1_500,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "s2",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.2, turnCount: 2 }),
+    });
+
+    const rollups = store.aggregateSessionsInWindow(0);
+
+    // GROUP BY session_key: 3 rows across 2 keys -> 2 rollups.
+    expect(rollups).toHaveLength(2);
+    const keys = rollups.map((r) => r.sessionKey).sort();
+    expect(keys).toEqual(["s1", "s2"]);
+  });
+
+  it("reflects the LATEST row per session_key (latest-wins via MAX(id))", () => {
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "s1",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 1 }),
+    });
+    // Later (higher id) row for the SAME key — this is the one that must win.
+    store.insertDiagnostic({
+      timestamp: 2_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s1",
+      message: "session:summary",
+      details: summaryDetails({
+        degraded: true,
+        costUsd: 0.4,
+        turnCount: 4,
+        breakerTripCount: 2,
+        toolStats: { web_fetch: { ok: 1, failed: 3 } },
+        topErrorKinds: { dependency: 3 },
+        source: "runtime",
+      }),
+    });
+
+    const rollups = store.aggregateSessionsInWindow(0);
+    expect(rollups).toHaveLength(1);
+    const r = rollups[0]!;
+    expect(r.sessionKey).toBe("s1");
+    // Latest (id=2) row's fields, NOT the first row's.
+    expect(r.degraded).toBe(true);
+    expect(r.costUsd).toBe(0.4);
+    expect(r.turnCount).toBe(4);
+    expect(r.breakerTripCount).toBe(2);
+    expect(r.toolStats).toEqual({ web_fetch: { ok: 1, failed: 3 } });
+    expect(r.topErrorKinds).toEqual({ dependency: 3 });
+    expect(r.source).toBe("runtime");
+    expect(r.lastTs).toBe(2_000);
+  });
+
+  it("excludes rows whose timestamp < sinceMs (window predicate)", () => {
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "old",
+      message: "session:summary",
+      details: summaryDetails(),
+    });
+    store.insertDiagnostic({
+      timestamp: 5_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "recent",
+      message: "session:summary",
+      details: summaryDetails(),
+    });
+
+    const rollups = store.aggregateSessionsInWindow(3_000);
+    expect(rollups).toHaveLength(1);
+    expect(rollups[0]!.sessionKey).toBe("recent");
+  });
+
+  it("ignores non-session_summary categories (category predicate)", () => {
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "cache_trace",
+      severity: "info",
+      sessionKey: "s1",
+      message: "not a summary",
+      details: summaryDetails(),
+    });
+
+    expect(store.aggregateSessionsInWindow(0)).toHaveLength(0);
+  });
+
+  it("parses source from details and exposes it on the rollup (the field 159-02 filters on)", () => {
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "synthetic-1",
+      message: "session:summary",
+      details: summaryDetails({ source: "test" }),
+    });
+
+    const rollups = store.aggregateSessionsInWindow(0);
+    expect(rollups).toHaveLength(1);
+    expect(rollups[0]!.source).toBe("test");
+  });
+
+  it("does not abort the scan on a non-object `details` (WR-01: \"null\"/primitive JSON degrade-on-error)", () => {
+    // `details = "null"` is VALID JSON that parses to JS `null`; an unguarded
+    // `d.degraded` then throws TypeError and aborts the WHOLE fleet aggregate —
+    // the exact failure the file's "a corrupt details never aborts the scan
+    // (T-159-01)" contract forbids. Seed the toxic shapes alongside valid rows.
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "toxic-null",
+      message: "session:summary",
+      details: "null", // parses to JS null (NOT a JSON.parse syntax error)
+    });
+    store.insertDiagnostic({
+      timestamp: 1_100,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "toxic-number",
+      message: "session:summary",
+      details: "42", // parses to a primitive number
+    });
+    store.insertDiagnostic({
+      timestamp: 1_200,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "toxic-array",
+      message: "session:summary",
+      details: "[1,2,3]", // parses to an array (typeof === "object" but not a record)
+    });
+    store.insertDiagnostic({
+      timestamp: 1_300,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "valid-1",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, costUsd: 0.5, turnCount: 3 }),
+    });
+    store.insertDiagnostic({
+      timestamp: 1_400,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "valid-2",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.2, turnCount: 1 }),
+    });
+
+    // Must NOT throw — the non-object rows are skipped (degrade-on-error), the
+    // valid rows survive.
+    const rollups = store.aggregateSessionsInWindow(0);
+    const keys = rollups.map((r) => r.sessionKey).sort();
+    expect(keys).toEqual(["valid-1", "valid-2"]);
+    const v1 = rollups.find((r) => r.sessionKey === "valid-1")!;
+    expect(v1.degraded).toBe(true);
+    expect(v1.costUsd).toBe(0.5);
+  });
+
+  it("does not let a malformed nested toolStats/topErrorKinds value reach the rollup (WR-02)", () => {
+    // toolStats carries a number-instead-of-{ok,failed}; topErrorKinds carries a
+    // string-instead-of-number. The blind `as` cast would pass these straight
+    // through; they must instead be validated/dropped so the rollup exposes only
+    // well-typed shapes (finite numbers, {ok,failed} objects).
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "malformed-nested",
+      message: "session:summary",
+      details: JSON.stringify({
+        degraded: false,
+        costUsd: 0,
+        breakerTripCount: 0,
+        turnCount: 0,
+        source: "runtime",
+        // write = bare number (invalid); Read = valid {ok,failed}.
+        toolStats: { write: 5, Read: { ok: 2, failed: 1 } },
+        // timeout = string (invalid); dependency = valid number.
+        topErrorKinds: { timeout: "5", dependency: 3 },
+      }),
+    });
+
+    const rollups = store.aggregateSessionsInWindow(0);
+    expect(rollups).toHaveLength(1);
+    const r = rollups[0]!;
+
+    // The valid nested entries survive with correct types.
+    expect(r.toolStats.Read).toEqual({ ok: 2, failed: 1 });
+    expect(r.topErrorKinds.dependency).toBe(3);
+
+    // The malformed entries must NOT appear as corrupt values: `write` is either
+    // absent or a finite {ok,failed}; `timeout` is either absent or a finite number.
+    if ("write" in r.toolStats) {
+      expect(Number.isFinite(r.toolStats.write.ok)).toBe(true);
+      expect(Number.isFinite(r.toolStats.write.failed)).toBe(true);
+    }
+    if ("timeout" in r.topErrorKinds) {
+      expect(typeof r.topErrorKinds.timeout).toBe("number");
+      expect(Number.isFinite(r.topErrorKinds.timeout)).toBe(true);
+    }
+
+    // End-to-end: feeding the rollup into the A2 reducer must yield finite numbers
+    // (this is the corruption the reducer would otherwise propagate).
+    const fleet = reduceFleetWindow(rollups, { excludeSynthetic: true });
+    for (const s of Object.values(fleet.toolStats)) {
+      expect(Number.isFinite(s.ok)).toBe(true);
+      expect(Number.isFinite(s.failed)).toBe(true);
+    }
+    for (const n of Object.values(fleet.topErrorKinds)) {
+      expect(Number.isFinite(n)).toBe(true);
+    }
+  });
+
+  it("keeps a session whose only in-window row is not the global-latest (WR-04: windowed MAX(id) subquery)", () => {
+    // Session "D" has an in-window row (higher timestamp) AND a later-INSERTED
+    // (higher id) but BACKDATED row whose timestamp falls OUTSIDE the window. An
+    // unwindowed MAX(id) subquery picks the backdated row, the outer window
+    // predicate then excludes it, and session D vanishes — silently under-counting.
+    const SINCE = 1_000;
+
+    // id=1: in-window row for D (ts above the window floor).
+    store.insertDiagnostic({
+      timestamp: 9_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "D",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, costUsd: 0.9, turnCount: 9 }),
+    });
+    // id=2: LATER-inserted but BACKDATED row for D (ts below the window floor —
+    // clock skew / replay / two-daemon write).
+    store.insertDiagnostic({
+      timestamp: 50,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "D",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 1 }),
+    });
+    // A control session entirely in-window so the result is non-empty either way.
+    store.insertDiagnostic({
+      timestamp: 8_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "E",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.2, turnCount: 2 }),
+    });
+
+    const rollups = store.aggregateSessionsInWindow(SINCE);
+    const keys = rollups.map((r) => r.sessionKey).sort();
+    // Session D MUST still appear, represented by its latest IN-WINDOW row (id=1).
+    expect(keys).toEqual(["D", "E"]);
+    const d = rollups.find((r) => r.sessionKey === "D")!;
+    expect(d.lastTs).toBe(9_000); // the in-window row, not the backdated id=2 row
+    expect(d.degraded).toBe(true);
+    expect(d.costUsd).toBe(0.9);
   });
 });

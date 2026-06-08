@@ -571,6 +571,15 @@ export interface ObservabilityApiDeps {
    */
   dataDir?: string;
   /**
+   * Injected ClockPort for obs.fleet.health's `sinceHours` -> `sinceMs`
+   * conversion (the globals gate forbids Date.now()/new Date() in the
+   * handler/assembler). Populated by `buildRpcDispatchDeps` in daemon.ts
+   * (Phase 161-02) from `boot.clock`. Optional preserves existing handler
+   * tests that pass {} for deps; the fleet handler asserts `deps.clock!`
+   * because 161-02 always populates it, and the fleet tests inject a fakeClock.
+   */
+  clock?: import("@comis/core").ClockPort;
+  /**
    * DI seam for the bundle pipeline.
    * Tests inject a stub that returns ok({ bundleDir: "/tmp/bundle", ... }).
    * Production wires the real exportTrajectoryBundle from @comis/observability.

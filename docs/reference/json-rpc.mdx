@@ -814,6 +814,68 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 The `comis explain` CLI command (see the [CLI reference](/reference/cli)) and the `obs_query` agent `explain` / `session_report` actions surface this same report.
 </Note>
 
+### `obs.fleet.health`
+
+Assemble a bounded, redaction-safe **cross-session** fleet-health triage (a `FleetHealthReport`) over a recent time window: how many sessions ran and how many degraded, the merged top error kinds, the total circuit-breaker trips, a per-tool ok/failed rollup, the window cost, the recent activity (agents, channels, exit reasons), the recurring `findings[]` (counts + short codes + hints only -- no raw WARN bodies), and a deterministic `likelyRootCause`. Like `obs.explain`, the report is derived from log + diagnostics evidence only -- no LLM is invoked -- so the same window reproduces the same verdict.
+
+This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.explain` post-mortems ONE session; `obs.fleet.health` rolls up a WINDOW of sessions.
+
+`sinceHours` is optional; the **24h** default is applied in the handler. The report is digest-only: `findings[]` is capped top-N and `topErrorKinds` is merged + capped (counts only), with an honest `truncations[]` ledger recording anything the bounding pass dropped. An optional `coverage` block reports READ-coverage of the fleet sources -- the session-summary store (`{ found, rows }`), the multi-day session index (`{ daysRead, daysMissing }`), and the billing source (`{ present }`) -- so a silently-empty window (e.g. `rows: 0` or `daysMissing > 0`) is self-evident rather than masquerading as a clean zero-activity fleet.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ sinceHours?: number }` -- the aggregation window in hours (positive). Optional; defaults to `24` in the handler. |
+| **Returns** | A `FleetHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "obs.fleet.health",
+  "params": { "sinceHours": 24 },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "schemaVersion": 1,
+    "windowHours": 24,
+    "sessions": { "total": 40, "degraded": 22, "degradedRate": 0.55 },
+    "topErrorKinds": [ { "kind": "dependency", "count": 18 } ],
+    "breakerTripTotal": 3,
+    "toolStats": { "web_fetch": { "ok": 2, "failed": 8 } },
+    "cost": { "costUsd": 1.320669, "totalTokens": 735800 },
+    "activity": {
+      "activeAgents": ["default"],
+      "activeChannels": ["telegram"],
+      "exitReasons": { "completed_with_tool_errors": 22 },
+      "turnTotal": 500,
+      "tokenTotal": 735800
+    },
+    "findings": [
+      { "code": "fleet_recurring_health_signal", "detail": "lcd_divergence recurred across the window", "count": 14, "hint": "inspect the LCD compaction path" }
+    ],
+    "likelyRootCause": {
+      "code": "fleet_high_degraded_rate",
+      "detail": "over half the window's sessions degraded",
+      "suggestedNextSteps": ["obs.explain the worst session", "raise the breaker threshold"]
+    },
+    "suggestedNextSteps": ["raise the breaker threshold"],
+    "truncations": [],
+    "coverage": { "sessionSummary": { "found": true, "rows": 40 }, "sessionIndex": { "daysRead": 1, "daysMissing": 0 }, "billing": { "present": true } }
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+<Note>
+The `comis fleet` CLI command (see the [CLI reference](/reference/cli)) and the `obs_query` agent `fleet_health` action surface this same report. It is the cross-session sibling of `comis explain` -- NOT to be confused with `comis health`, the LOCAL daemon doctor (which runs no RPC).
+</Note>
+
 ### `obs.reset`
 
 | Property | Value |

@@ -969,3 +969,94 @@ describe("S4: security-pinned messages never selected for LCD eviction", () => {
     expect(typeof routed[0]!.payload.securityPinnedCount).toBe("number");
   });
 });
+
+// ===========================================================================
+// I1 (Phase 160): the ordinal-window divergence skip emits context:dag_degraded
+// ===========================================================================
+//
+// The leaf divergence branch (`window === undefined`) is a defensive C3 guard:
+// with the post-fix resolution it never fires on a clean store (the chunk ids
+// always resolve to an ordinal window). To drive it DETERMINISTICALLY we wrap a
+// real seeded store and return getContextItems() with DESCENDING message-ref
+// ordinals — so the selected oldest chunk's FIRST id maps to a HIGHER ordinal
+// than its LAST → chunkOrdinalWindow returns undefined → the divergence skip.
+// RED on pre-patch: the skip only WARNs (Pino-only); it emits nothing.
+
+/**
+ * Wrap a real ContextStorePort but rewrite getContextItems() so the message-ref
+ * ordinals DESCEND in walk order, forcing chunkOrdinalWindow → undefined (the
+ * endOrdinal < startOrdinal divergence). Everything else delegates to the real
+ * store so resolveContext still builds a selectable leaf chunk.
+ */
+function withInvertedMessageOrdinals(real: ContextStorePort): ContextStorePort {
+  return {
+    ...real,
+    append: (input) => real.append(input),
+    getMessages: (scope) => real.getMessages(scope),
+    getSummaries: (scope) => real.getSummaries(scope),
+    getContextItems: (scope) => {
+      const items = real.getContextItems(scope);
+      const maxOrdinal = items.length - 1;
+      // Reverse only the ordinal values; keep refKind/refId so the same chunk is
+      // selected, but its first/last ids now map to inverted ordinals.
+      return items.map((it, idx) => ({ ...it, ordinal: maxOrdinal - idx }));
+    },
+    appendLeafSummary: (input) => real.appendLeafSummary(input),
+    appendCondensedSummary: (input) => real.appendCondensedSummary(input),
+    getSummaryChildren: (scope, id) => real.getSummaryChildren(scope, id),
+    getSummaryMessages: (scope, id) => real.getSummaryMessages(scope, id),
+    searchLcd: (scope, q, o) => real.searchLcd(scope, q, o),
+    runOnConversation: (id, fn) => real.runOnConversation(id, fn),
+  };
+}
+
+describe("maybeRunLeafPass — ordinal-window divergence emits context:dag_degraded (I1)", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("emits context:dag_degraded(reason:leaf_window_divergence) on the ordinal-window skip", async () => {
+    // 40 msgs × 100 tok = 4000 tok; window 1000 → utilization 4.0 ≫ 0.75 so a
+    // pass fires and selects the oldest chunk. The inverted-ordinal wrapper then
+    // makes that chunk's window inverted → the divergence skip path runs.
+    seedHistory(store, 40, 100);
+    const diverged = withInvertedMessageOrdinals(store);
+    const logger = createMockLogger();
+    const { bus, emits } = makeEventBus();
+
+    await maybeRunLeafPass(
+      diverged,
+      SCOPE,
+      opts({ windowTokens: 1_000 }),
+      makeSummarizerDeps(shortSummarizer(), logger),
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // The divergence WARN fired (the guard is unchanged) ...
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    expect(warnCalls.some((c) => (c[0] as { errorKind?: string })?.errorKind === "precondition")).toBe(true);
+    // ... AND now a content-free context:dag_degraded was emitted with the
+    // matching reason. NO leaf summary was persisted (the pass skipped).
+    expect(store.getSummaries(SCOPE).filter((s) => s.kind === "leaf").length).toBe(0);
+    const degraded = emits.filter((e) => e.event === "context:dag_degraded");
+    expect(degraded.length).toBe(1);
+    expect(degraded[0]!.payload.reason).toBe("leaf_window_divergence");
+    expect(degraded[0]!.payload.conversationId).toBe(CONVERSATION_ID);
+    expect(degraded[0]!.payload.agentId).toBe(SCOPE.agentId);
+    expect(degraded[0]!.payload.sessionKey).toBe(SCOPE.sessionKey);
+    expect(typeof degraded[0]!.payload.durationMs).toBe("number");
+    expect(typeof degraded[0]!.payload.timestamp).toBe("number");
+    // Content-free: identifiers + reason + timing only — NEVER message/summary text.
+    expect(Object.keys(degraded[0]!.payload).sort()).toEqual(
+      ["agentId", "conversationId", "durationMs", "reason", "sessionKey", "timestamp"].sort(),
+    );
+  });
+});

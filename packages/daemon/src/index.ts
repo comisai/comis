@@ -136,3 +136,12 @@ export type { StartupInvariantsDeps, StartupInvariants } from "./wiring/setup-st
 export { assembleIncidentReportFromSources } from "./api/obs-handlers/obs-explain.js";
 export { makeRealReader } from "./api/obs-handlers/obs-explain-readers.js";
 export type { IncidentSourceReader } from "./api/obs-handlers/obs-explain-readers.js";
+
+// Fleet-health assembler RE-PROVE seam (v2.15 — mirrors the v2.14 obs-explain
+// precedent above). Re-exported from the TOP-LEVEL barrel so the keyless fleet
+// RE-PROVE scenario (test/live) can `import { assembleFleetHealthReport } from
+// "@comis/daemon"` — the live config aliases ONLY the top-level @comis/daemon ->
+// daemon/dist/index.js (no obs-handlers subpath alias). The gate-free assembler
+// only; the H1 admin gate stays on bindFleetHealthHandlers (fleet-health.ts).
+// Consumer: test/live/scenarios/prove/fleet-reprove.test.ts
+export { assembleFleetHealthReport } from "./api/obs-handlers/fleet-health.js";

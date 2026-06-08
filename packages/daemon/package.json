@@ -48,7 +48,7 @@
     "@comis/scheduler": "workspace:*",
     "@comis/shared": "workspace:*",
     "@comis/skills": "workspace:*",
-    "@earendil-works/pi-ai": "0.78.0",
+    "@earendil-works/pi-ai": "0.78.1",
     "@modelcontextprotocol/sdk": "1.29.0",
     "better-sqlite3": "12.10.0",
     "hono": "4.12.23",
@@ -61,6 +61,6 @@
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
     "typescript": "5.9.3",
-    "vitest": "4.1.7"
+    "vitest": "4.1.8"
   }
 }

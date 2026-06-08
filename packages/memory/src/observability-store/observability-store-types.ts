@@ -21,6 +21,7 @@ import {
   DeliveryStatsDbRowSchema,
   SystemPromptReportDbRowSchema,
 } from "../row-schemas.js";
+import { z } from "zod";
 import { createRowMapper } from "../row-mapper.js";
 import type { CacheStatsQueriesSlice } from "./cache-stats-types.js";
 
@@ -50,6 +51,22 @@ export const providerAggMapper = createRowMapper(ProviderAggDbRowSchema);
 export const agentAggMapper = createRowMapper(AgentAggDbRowSchema);
 export const sessionAggMapper = createRowMapper(SessionAggDbRowSchema);
 export const hourlyBucketMapper = createRowMapper(HourlyBucketDbRowSchema);
+/**
+ * Schema for the per-session GROUP-BY result of `aggregateSessionsInWindow`
+ * (A1, Phase 159) over `obs_diagnostics` `category='session_summary'`. The
+ * health fields live INSIDE the `details` JSON string (parsed in the query
+ * layer), so this row carries only the grouping key + the latest timestamp +
+ * the raw `details`/`severity`. Distinct from `DiagnosticDbRowSchema` — strict
+ * mode rejects the extra `last_ts` / missing `id`,`category`,… columns.
+ */
+export const SessionSummaryRollupDbRowSchema = z.strictObject({
+  session_key: z.string(),
+  last_ts: z.number(),
+  details: z.string(),
+  severity: z.string(),
+});
+/** Per-session GROUP-BY rollup row mapper (A1 `aggregateSessionsInWindow`). */
+export const sessionSummaryRollupMapper = createRowMapper(SessionSummaryRollupDbRowSchema);
 export const deliveryStatsMapper = createRowMapper(DeliveryStatsDbRowSchema);
 /** SystemPromptReport row mapper. */
 export const systemPromptReportMapper = createRowMapper(SystemPromptReportDbRowSchema);
@@ -180,6 +197,25 @@ export interface HourlyBucket {
   totalCacheSaved: number;
 }
 
+/**
+ * Per-session health rollup over `obs_diagnostics` `category='session_summary'`
+ * (A1 `aggregateSessionsInWindow`). One per `session_key`, reflecting the latest
+ * (`MAX(id)`) summary row in the window. The fields below are parsed from that
+ * row's `details` JSON. `source` (provenance enum) is the field the A2 reducer
+ * (Phase 159 plan 02) filters on for synthetic exclusion.
+ */
+export interface SessionSummaryRollup {
+  sessionKey: string;
+  lastTs: number;
+  degraded: boolean;
+  costUsd: number;
+  toolStats: Record<string, { ok: number; failed: number }>;
+  breakerTripCount: number;
+  turnCount: number;
+  topErrorKinds: Record<string, number>;
+  source: string;
+}
+
 /** Delivery status breakdown statistics. */
 export interface DeliveryStats {
   total: number;
@@ -229,6 +265,9 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice {
   aggregateByAgent(sinceMs?: number): AgentAggregation[];
   aggregateBySession(sessionKey: string, sinceMs?: number): SessionAggregation;
   aggregateHourly(sinceMs?: number): HourlyBucket[];
+
+  // Diagnostics — cross-session per-session rollup (A1, fleet aggregate)
+  aggregateSessionsInWindow(sinceMs: number): SessionSummaryRollup[];
 
   // Delivery
   insertDelivery(entry: DeliveryRow): void;

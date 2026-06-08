@@ -269,13 +269,31 @@ export interface MessagingEvents {
    *    single-flight serializer (132-04, R3) — reserved for the bounded-wait signal.
    *  - `breaker_open` / `spend_cap`: the summarizer circuit breaker opened or a
    *    per-tenant summarizer spend ceiling was hit (132-05, R1) — reserved here so
-   *    the union is closed from the start (no later open-string widening). */
+   *    the union is closed from the start (no later open-string widening).
+   *  - `live_store_divergence`: the WR-01 afterTurn ingest skipped because the
+   *    live message array is SHORTER than the LCD store high-water mark
+   *    (`lcd-ingest.ts` divergence branch) — Phase 160 I1.
+   *  - `leaf_window_divergence`: a leaf compaction pass skipped because the chunk
+   *    message ids did not resolve to a `context_items` ordinal window
+   *    (`lcd-compaction-trigger.ts`) — Phase 160 I1.
+   *  - `condense_window_divergence`: a condense pass skipped on an inverted
+   *    ordinal window (`lcd-condense-trigger.ts`) — Phase 160 I1. */
   "context:dag_degraded": {
     conversationId: string;
     agentId: string;
     sessionKey: string;
-    /** Closed union — never an open string (AGENTS.md §2.8). */
-    reason: "fail_closed_rollover" | "serialized_wait" | "breaker_open" | "spend_cap";
+    /** Closed union — never an open string (AGENTS.md §2.8). The three
+     *  `*_divergence` members (Phase 160 I1) widen the union with closed
+     *  literals (the sanctioned §2.8 extension) so the LCD-divergence WARN sites
+     *  emit this event for `health_signal` persistence. */
+    reason:
+      | "fail_closed_rollover"
+      | "serialized_wait"
+      | "breaker_open"
+      | "spend_cap"
+      | "live_store_divergence"
+      | "leaf_window_divergence"
+      | "condense_window_divergence";
     durationMs: number;
     timestamp: number;
   };

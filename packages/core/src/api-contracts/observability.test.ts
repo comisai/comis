@@ -46,11 +46,11 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 25 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(25);
+  it("OBSERVABILITY_CONTRACTS has exactly 26 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(26);
   });
 
-  it("all 25 contracts are admin-scoped", () => {
+  it("all 26 contracts are admin-scoped", () => {
     for (const c of OBSERVABILITY_CONTRACTS) {
       expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
     }
@@ -78,6 +78,8 @@ describe("observability-domain contracts", () => {
       "obs.diagnostics",
       // Incident-report assembler (Phase 153 centerpiece).
       "obs.explain",
+      // Cross-session fleet-health digest (Phase 161 / v2.15).
+      "obs.fleet.health",
       "obs.getCacheStats",
       "obs.reset",
       "obs.reset.table",
@@ -848,8 +850,8 @@ describe("ObsTrace contracts", () => {
   });
 
   // Test 13
-  it("OBSERVABILITY_CONTRACTS has exactly 25 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(25);
+  it("OBSERVABILITY_CONTRACTS has exactly 26 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(26);
   });
 
   // Test 14

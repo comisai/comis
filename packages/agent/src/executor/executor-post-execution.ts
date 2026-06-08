@@ -643,13 +643,16 @@ export function buildSessionEndMetadata(args: {
 /**
  * F2 emit: announce `session:summary` on the eventBus once per execution.
  *
- * The §6.2 minimal payload (ids + counts + typed flags) — deliberately WITHOUT
- * `topErrorKinds` (OQ1: that goes to the sessionEnd metadata + obs diagnostics
- * only, never the event). Fire-and-forget by contract: the eventBus is
- * SYNCHRONOUS, so a throwing in-process listener would otherwise abort the
- * caller's teardown (OQ3). The try/catch here is the sanctioned telemetry guard
- * (mirrors the `:983` `writeSessionMetadata` guard) — a telemetry failure must
- * never break execution.
+ * The payload carries ids + counts + typed flags PLUS `topErrorKinds` and
+ * `source` (Phase 159 A1/A2 — OQ1 reversed): both are threaded into the
+ * persisted `obs_diagnostics` row so the fleet aggregate
+ * (`aggregateSessionsInWindow`) can read them without opening per-session
+ * `_session-metadata.json`. Production emits the constant `source: "runtime"`;
+ * a synthetic/test row is produced by a caller injecting `source: "test"`.
+ * Fire-and-forget by contract: the eventBus is SYNCHRONOUS, so a throwing
+ * in-process listener would otherwise abort the caller's teardown (OQ3). The
+ * try/catch here is the sanctioned telemetry guard (mirrors the `:983`
+ * `writeSessionMetadata` guard) — a telemetry failure must never break execution.
  */
 export function emitSessionSummary(
   deps: { eventBus?: TypedEventBus; logger?: ComisLogger },
@@ -673,6 +676,8 @@ export function emitSessionSummary(
       costUsd: args.rollup.costUsd,
       toolStats: args.rollup.toolStats,
       breakerTripCount: args.rollup.breakerTripCount,
+      topErrorKinds: args.rollup.topErrorKinds,
+      source: "runtime" as const,
       timestamp: args.clock.now(),
     });
   } catch (err) {
@@ -1146,7 +1151,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
 
   // F2: announce session:summary once. Own fire-and-forget guard inside
   // emitSessionSummary — a throwing in-process listener must not abort teardown
-  // (OQ3). The event carries the §6.2 minimal payload (no topErrorKinds — OQ1).
+  // (OQ3). The event carries ids + counts + topErrorKinds + source:"runtime"
+  // (Phase 159 A1/A2) so the row feeds the fleet aggregate.
   emitSessionSummary(
     { eventBus: deps.eventBus, logger: deps.logger },
     {
@@ -1298,16 +1304,36 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // on the deferred compaction, which rides the same queue BEHIND it).
     const ingestStart = deps.clock.now();
     await store.runOnConversation(conversationId, () =>
-      ingestTurnGuarded(store, scope, live, deps.clock.now(), deps.logger, () => {
-        deps.eventBus.emit("context:dag_degraded", {
-          conversationId: scope.conversationId,
-          agentId: scope.agentId,
-          sessionKey: scope.sessionKey,
-          reason: "fail_closed_rollover",
-          durationMs: Math.max(0, deps.clock.now() - ingestStart),
-          timestamp: deps.clock.now(),
-        });
-      }),
+      ingestTurnGuarded(
+        store,
+        scope,
+        live,
+        deps.clock.now(),
+        deps.logger,
+        () => {
+          deps.eventBus.emit("context:dag_degraded", {
+            conversationId: scope.conversationId,
+            agentId: scope.agentId,
+            sessionKey: scope.sessionKey,
+            reason: "fail_closed_rollover",
+            durationMs: Math.max(0, deps.clock.now() - ingestStart),
+            timestamp: deps.clock.now(),
+          });
+        },
+        // Phase 160 I1: the WR-01 live/store-divergence skip emits a content-free
+        // context:dag_degraded so the divergence persists as a health_signal row
+        // (queryable by the fleet lens) instead of being a Pino-only WARN.
+        () => {
+          deps.eventBus.emit("context:dag_degraded", {
+            conversationId: scope.conversationId,
+            agentId: scope.agentId,
+            sessionKey: scope.sessionKey,
+            reason: "live_store_divergence",
+            durationMs: Math.max(0, deps.clock.now() - ingestStart),
+            timestamp: deps.clock.now(),
+          });
+        },
+      ),
     );
 
     // The two NON-FATAL afterTurn passes (T-129-18 / T-130-07 — never reject):

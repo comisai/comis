@@ -460,4 +460,121 @@ describe("checkStorageModeConsistency", () => {
       expect(warnCalls.length).toBeGreaterThan(0);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Group D — Structured findings return (I3): the probe RETURNS its
+  // stranded-secret COUNTS (additive — the WARNs are preserved) so the boot
+  // config_posture snapshot records counts, never secret values.
+  // ---------------------------------------------------------------------------
+
+  describe("Group D — returns structured findings (counts only, additive)", () => {
+    it("file mode: secrets.db with N real secrets returns findings [{ stranded:'encrypted:secrets', entryCount:N }] (RED: pre-patch returns void)", () => {
+      const { logger, warnCalls } = makeTestLogger();
+
+      const db = createSecretsDb();
+      insertCanaryRow(db); // canary excluded from the count
+      insertRealSecretsRow(db, "PRODUCTION_KEY_1");
+      insertRealSecretsRow(db, "PRODUCTION_KEY_2");
+
+      const deps: StorageMismatchDeps = {
+        logger,
+        activeMode: "file",
+        dataDir: "/home/test/.comis",
+        secretsDb: db,
+      };
+
+      const result = checkStorageModeConsistency(deps);
+
+      db.close();
+
+      // The structured return: the 2 real secrets (canary excluded) as a count.
+      expect(result.findings).toEqual([
+        { stranded: "encrypted:secrets", entryCount: 2 },
+      ]);
+
+      // ADDITIVE: the existing WARN is still emitted (the refactor adds a return,
+      // it does not remove the WARN — one probe, two sinks).
+      expect(warnCalls.length).toBeGreaterThan(0);
+
+      // SECURITY: no finding carries a secret value — only the closed label +
+      // the count. (Assert no value-bearing key leaked into the findings.)
+      const findingsJson = JSON.stringify(result.findings);
+      expect(findingsJson).not.toContain("PRODUCTION_KEY_1");
+      expect(findingsJson).not.toContain("PRODUCTION_KEY_2");
+      for (const f of result.findings) {
+        expect(Object.keys(f).sort()).toEqual(["entryCount", "stranded"]);
+        expect(typeof f.entryCount).toBe("number");
+      }
+    });
+
+    it("clean state (nothing stranded) returns { findings: [] }", () => {
+      const { logger } = makeTestLogger();
+
+      // No file-side artifacts (encrypted mode, all existsSync false).
+      vi.mocked(mockFs.existsSync).mockReturnValue(false);
+
+      const deps: StorageMismatchDeps = {
+        logger,
+        activeMode: "encrypted",
+        dataDir: "/home/test/.comis",
+        secretsDb: undefined,
+      };
+
+      const result = checkStorageModeConsistency(deps);
+
+      expect(result.findings).toEqual([]);
+    });
+
+    it("file mode: secrets + oauth_profiles + mcp_credentials all stranded → three findings (counts only)", () => {
+      const { logger } = makeTestLogger();
+
+      const db = createSecretsDb();
+      insertRealSecretsRow(db, "REAL_KEY");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS oauth_profiles (
+          profile_id TEXT PRIMARY KEY,
+          data BLOB NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `);
+      db.prepare(
+        `INSERT INTO oauth_profiles (profile_id, data, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).run("profile-1", Buffer.alloc(32), 1000, 1000);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mcp_credentials (
+          server_id TEXT PRIMARY KEY,
+          token_data BLOB NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `);
+      db.prepare(
+        `INSERT INTO mcp_credentials (server_id, token_data, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).run("my-mcp-server", Buffer.alloc(32), 1000, 1000);
+
+      const deps: StorageMismatchDeps = {
+        logger,
+        activeMode: "file",
+        dataDir: "/home/test/.comis",
+        secretsDb: db,
+      };
+
+      const result = checkStorageModeConsistency(deps);
+
+      db.close();
+
+      // All three credential families surface as count-only findings.
+      expect(result.findings).toEqual(
+        expect.arrayContaining([
+          { stranded: "encrypted:secrets", entryCount: 1 },
+          { stranded: "encrypted:oauth_profiles", entryCount: 1 },
+          { stranded: "encrypted:mcp_credentials", entryCount: 1 },
+        ]),
+      );
+      expect(result.findings).toHaveLength(3);
+    });
+  });
 });

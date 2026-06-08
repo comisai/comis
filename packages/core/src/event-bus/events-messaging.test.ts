@@ -660,3 +660,48 @@ describe("Config nesting integration", () => {
     expect(config.agentToAgent.subagentContext.maxResultTokens).toBe(4_000);
   });
 });
+
+// ---------------------------------------------------------------------------
+// context:dag_degraded reason union (Phase 160 I1 — LCD-divergence widening)
+// ---------------------------------------------------------------------------
+//
+// The closed `reason` union gains the 3 LCD-divergence literals so the
+// lcd-ingest WR-01 shrink skip + the leaf/condense ordinal-window skips can
+// emit `context:dag_degraded` (persisted as a `health_signal` row). RED on
+// pre-patch: the literals are not in the union, so these payload values fail to
+// COMPILE (per AGENTS §2.10 a compile-RED is the failing state for a closed
+// type widen). The union stays CLOSED (string literals only) — §2.8-compliant.
+
+describe("context:dag_degraded reason union (I1 divergence literals)", () => {
+  function emitWithReason(reason: EventMap["context:dag_degraded"]["reason"]): EventMap["context:dag_degraded"]["reason"] {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["context:dag_degraded"] = {
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      sessionKey: "sess-1",
+      reason,
+      durationMs: 5,
+      timestamp: 1000,
+    };
+    bus.on("context:dag_degraded", handler);
+    bus.emit("context:dag_degraded", payload);
+    const received = handler.mock.calls[0]![0] as EventMap["context:dag_degraded"];
+    return received.reason;
+  }
+
+  it("accepts the 3 new divergence reasons (live/leaf/condense window divergence)", () => {
+    // RED on pre-patch: these literals are not in the closed union → the typed
+    // payload above fails to type-check for each.
+    expect(emitWithReason("live_store_divergence")).toBe("live_store_divergence");
+    expect(emitWithReason("leaf_window_divergence")).toBe("leaf_window_divergence");
+    expect(emitWithReason("condense_window_divergence")).toBe("condense_window_divergence");
+  });
+
+  it("still accepts the 4 pre-existing reasons (additive widen — no member removed, no-BC)", () => {
+    expect(emitWithReason("fail_closed_rollover")).toBe("fail_closed_rollover");
+    expect(emitWithReason("serialized_wait")).toBe("serialized_wait");
+    expect(emitWithReason("breaker_open")).toBe("breaker_open");
+    expect(emitWithReason("spend_cap")).toBe("spend_cap");
+  });
+});

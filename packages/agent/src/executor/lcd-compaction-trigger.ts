@@ -424,6 +424,20 @@ async function runOneLeafPass(
       },
       "LCD leaf pass skipped: ordinal-window divergence",
     );
+    // Phase 160 I1: emit a content-free context:dag_degraded so the leaf-window
+    // divergence persists as a health_signal row (queryable by the fleet lens)
+    // instead of being a Pino-only WARN. Identifiers + reason + timing only —
+    // NEVER message/summary content (mirrors the context:dag_compacted emit
+    // below). Reuse the injected clock for durationMs/timestamp (the globals gate
+    // bans Date.now()); a scalar-only caller degrades durationMs to 0.
+    eventBus?.emit("context:dag_degraded", {
+      conversationId,
+      agentId: scope.agentId,
+      sessionKey: scope.sessionKey,
+      reason: "leaf_window_divergence",
+      durationMs: Math.max(0, (nowFn?.() ?? now) - passStart),
+      timestamp: nowFn?.() ?? now,
+    });
     return { made: false, reason: "divergence" };
   }
 

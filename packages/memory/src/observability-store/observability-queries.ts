@@ -17,6 +17,7 @@ import {
   agentAggMapper,
   sessionAggMapper,
   hourlyBucketMapper,
+  sessionSummaryRollupMapper,
   deliveryStatsMapper,
   systemPromptReportMapper,
   deliveryFromRow,
@@ -33,6 +34,7 @@ import {
   type AgentAggregation,
   type SessionAggregation,
   type HourlyBucket,
+  type SessionSummaryRollup,
   type DeliveryStats,
   type SystemPromptReportRow,
 } from "./observability-store-types.js";
@@ -44,6 +46,7 @@ export type ObservabilityQueries = Pick<
   | "aggregateByAgent"
   | "aggregateBySession"
   | "aggregateHourly"
+  | "aggregateSessionsInWindow"
   | "queryDelivery"
   | "deliveryStats"
   | "queryDiagnostics"
@@ -51,6 +54,44 @@ export type ObservabilityQueries = Pick<
   | "latestSystemPromptReport"
   | "listSystemPromptReports"
 >;
+
+/**
+ * Validate the `details.toolStats` record from an untrusted session_summary row,
+ * keeping ONLY entries whose value is an object with finite numeric `ok`/`failed`.
+ * A malformed entry (a bare number, a string, a missing field) is DROPPED rather
+ * than passed through — the A2 reducer does raw arithmetic on these and would
+ * otherwise emit `NaN`. Mirrors the A3 reader's `Number.isFinite` discipline.
+ */
+function parseToolStats(value: unknown): Record<string, { ok: number; failed: number }> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, { ok: number; failed: number }> = {};
+  for (const [tool, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const s = raw as Record<string, unknown>;
+    if (
+      typeof s.ok === "number" && Number.isFinite(s.ok) &&
+      typeof s.failed === "number" && Number.isFinite(s.failed)
+    ) {
+      out[tool] = { ok: s.ok, failed: s.failed };
+    }
+  }
+  return out;
+}
+
+/**
+ * Validate the `details.topErrorKinds` record from an untrusted session_summary
+ * row, keeping ONLY entries whose value is a finite number. A string/NaN count is
+ * DROPPED rather than passed through (the A2 reducer would otherwise concatenate it
+ * into a string or propagate `NaN`). Mirrors the A3 reader's `Number.isFinite` discipline.
+ */
+function parseErrorKinds(value: unknown): Record<string, number> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, number> = {};
+  for (const [kind, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw === "number" && Number.isFinite(raw)) out[kind] = raw;
+  }
+  return out;
+}
 
 /**
  * Prepare query statements and return the read-side slice of the
@@ -100,6 +141,33 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
   const aggHourlySinceStmt = db.prepare(`
     SELECT (timestamp / 3600000) * 3600000 as hour, SUM(cost_total) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count, COALESCE(SUM(cache_saved), 0) as total_cache_saved
     FROM obs_token_usage WHERE timestamp >= ? GROUP BY (timestamp / 3600000) ORDER BY hour
+  `);
+
+  // A1 (fleet aggregate): one rollup per session_key over session_summary rows,
+  // latest-wins via the MAX(id) correlated subquery (a session with >1 summary
+  // row collapses to its newest member, not an arbitrary one). The health fields
+  // live inside `details` JSON — parsed per row in the bound method below. Rides
+  // the idx_obs_diag_session_cat composite index.
+  //
+  // The MAX(id) subquery is WINDOW-CONSISTENT: it carries the same `timestamp >= ?`
+  // predicate as the outer query so "latest" means "latest WITHIN the window". A
+  // backdated/clock-skewed global-latest row (event-time below the window while its
+  // insert-order id is highest) must not be the one the subquery picks and then have
+  // the outer window predicate drop — that silently under-counts the session. With
+  // the predicate pushed in, a session is represented by its latest in-window summary,
+  // so an in-window session whose only in-window row is not the global-latest still
+  // counts. `sinceMs` is therefore bound TWICE (subquery, then outer).
+  const aggSessionsInWindowStmt = db.prepare(`
+    SELECT session_key, MAX(timestamp) as last_ts, details, severity
+    FROM obs_diagnostics
+    WHERE category = 'session_summary'
+      AND timestamp >= ?
+      AND id IN (
+        SELECT MAX(id) FROM obs_diagnostics
+        WHERE category = 'session_summary' AND timestamp >= ?
+        GROUP BY session_key
+      )
+    GROUP BY session_key
   `);
 
   const deliveryStatsAllStmt = db.prepare(`
@@ -229,6 +297,55 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     }));
   }
 
+  function aggregateSessionsInWindow(sinceMs: number): SessionSummaryRollup[] {
+    // `sinceMs` is bound twice: once for the windowed MAX(id) subquery, once for
+    // the outer window predicate (see the prepared-statement comment above).
+    const parsed = sessionSummaryRollupMapper.parseRows(
+      aggSessionsInWindowStmt.all(sinceMs, sinceMs),
+    );
+    // Degrade-on-validation-error: observability aggregate -> empty.
+    const rows = parsed.ok ? parsed.value : [];
+    const out: SessionSummaryRollup[] = [];
+    for (const r of rows) {
+      let d: Record<string, unknown>;
+      try {
+        const value = JSON.parse(r.details) as unknown;
+        // `JSON.parse` accepts the literals null / 42 / true / "s" / [] WITHOUT
+        // throwing — they parse to a non-record JS value, after which a property
+        // read (e.g. `d.degraded` on `null`) throws an uncaught TypeError that
+        // would abort the WHOLE scan. Degrade-on-error on any non-object shape so
+        // a single corrupt row never aborts the aggregate (T-159-01).
+        if (value === null || typeof value !== "object" || Array.isArray(value)) {
+          continue;
+        }
+        d = value as Record<string, unknown>;
+      } catch {
+        // A corrupt `details` JSON for one row never aborts the scan (T-159-01).
+        continue;
+      }
+      out.push({
+        sessionKey: r.session_key,
+        lastTs: r.last_ts,
+        degraded: d.degraded === true,
+        costUsd: typeof d.costUsd === "number" ? d.costUsd : 0,
+        // Validate the nested record shapes rather than blind-casting: a malformed
+        // value (a bare number for toolStats, a string for an errorKind count)
+        // would otherwise flow unchecked into the A2 reducer and corrupt its
+        // arithmetic (NaN / string concatenation). Mirrors the A3 reader's
+        // `typeof … && Number.isFinite(…)` discipline (fleet-session-index.ts).
+        toolStats: parseToolStats(d.toolStats),
+        breakerTripCount: typeof d.breakerTripCount === "number" ? d.breakerTripCount : 0,
+        turnCount: typeof d.turnCount === "number" ? d.turnCount : 0,
+        topErrorKinds: parseErrorKinds(d.topErrorKinds),
+        // Pre-change rows lack `source` -> parse-default "runtime" (additive
+        // read-time default per AGENTS §2.9; not a migration shim). The A2
+        // reducer filters on this.
+        source: typeof d.source === "string" ? d.source : "runtime",
+      });
+    }
+    return out;
+  }
+
   function queryDelivery(params?: DeliveryQueryParams): DeliveryRow[] {
     const conditions: string[] = [];
     const values: unknown[] = [];
@@ -349,6 +466,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     aggregateByAgent,
     aggregateBySession,
     aggregateHourly,
+    aggregateSessionsInWindow,
     queryDelivery,
     deliveryStats,
     queryDiagnostics,

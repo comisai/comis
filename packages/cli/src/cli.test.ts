@@ -82,6 +82,9 @@ describe("CLI entry point", () => {
       "trace",
       // IncidentReport post-mortem surface (obs.explain).
       "explain",
+      // Cross-session FleetHealthReport triage (obs.fleet.health) — the
+      // remote-admin sibling of `explain`, DISTINCT from the local `health` doctor.
+      "fleet",
       "uninstall",
       "auth",
       // Cache stats.
@@ -90,8 +93,8 @@ describe("CLI entry point", () => {
       "mcp",
     ] as const;
 
-    it("registers exactly 24 commands", () => {
-      expect(program.commands).toHaveLength(24);
+    it("registers exactly 25 commands", () => {
+      expect(program.commands).toHaveLength(25);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

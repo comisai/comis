@@ -14,6 +14,8 @@
  *   Trace (3):       obs.trace.{export,search,tail}
  *   Explain (1):     obs.explain  (IncidentReport assembler — Phase 153;
  *                    contract + wire schema in sibling `incident-report.ts`)
+ *   Fleet (1):       obs.fleet.health  (cross-session FleetHealthReport — v2.15
+ *                    Phase 161; contract + wire schema in `fleet-health-report.ts`)
  *
  * Dispatch: the non-Trace methods are web-SPA only (packages/web/src/views/),
  * handled by packages/daemon/src/api/obs-handlers.ts; the Trace group is also
@@ -36,6 +38,14 @@ import { defineContract } from "./types.js";
 import { ObsExplainContract } from "./incident-report.js";
 export { ObsExplainContract, IncidentReportSchema } from "./incident-report.js";
 export type { IncidentReport, IncidentFailure, IncidentSignals } from "./incident-report.js";
+// The `obs.fleet.health` contract + wire schema (v2.15 R2, Phase 161) live in the
+// sibling `fleet-health-report.ts` (file-size split, mirroring incident-report.ts
+// which holds BOTH IncidentReportSchema + ObsExplainContract). Import the contract
+// for the OBSERVABILITY_CONTRACTS array below; re-export the contract + schema so
+// the `@comis/core` public surface + the registered RPC set carry them.
+import { ObsFleetHealthContract } from "./fleet-health-report.js";
+export { ObsFleetHealthContract, FleetHealthReportSchema } from "./fleet-health-report.js";
+export type { FleetHealthReport } from "./fleet-health-report.js";
 // The five obs.billing.* contracts (+ their BillingSnapshot response schema)
 // live in the sibling `observability-billing.ts` (file-size split). Import for
 // the OBSERVABILITY_CONTRACTS array below; re-export so the `@comis/core`
@@ -667,6 +677,7 @@ export const OBSERVABILITY_CONTRACTS = [
   ObsDeliveryStatsContract,
   ObsDiagnosticsContract,
   ObsExplainContract,
+  ObsFleetHealthContract,
   ObsGetCacheStatsContract,
   ObsResetContract,
   ObsResetTableContract,
