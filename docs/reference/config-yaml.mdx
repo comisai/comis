@@ -652,11 +652,11 @@ Periodic LLM-driven consolidation of similar memories into observations. Opt-in 
 
 #### Goal Anchor (agents.\*.goalAnchor)
 
-Injects the current execution objective and uncompleted step checklist at the context tail every turn for scaffolded (`small`/`nano`) tiers. Helps weak models stay on task across multi-turn executions. Gated on `scaffoldLevel === "max"` — frontier/mid agents never receive injection even if `enabled=true`.
+Injects the current execution objective and uncompleted step checklist at the context tail every turn. Helps weak models stay on task across multi-turn executions. **Default-ON** for scaffolded (`small`/`nano`) tiers; **off** by default for `frontier`/`mid`, but injected when `enabled: true` is set explicitly. Precedence: **explicit per-agent config > capability default > off**.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `agents.<id>.goalAnchor.enabled` | `boolean` | automatic for small/nano (no config needed); false for frontier/mid | Enable GoalAnchor tail injection. When `true` (or capability-default-on for small/nano) and `scaffoldLevel=max` (small/nano), the execution objective and uncompleted step checklist is tail-appended each turn. Default `false` for frontier/mid = opt-in, behavior-neutral. |
+| `agents.<id>.goalAnchor.enabled` | `boolean` | automatic for small/nano (no config needed); false for frontier/mid | Enable GoalAnchor tail injection. Default-ON for `small`/`nano` (no config needed); off for `frontier`/`mid` unless `enabled: true` is set explicitly (which injects on `frontier`/`mid` too). When effective, the execution objective and uncompleted step checklist is tail-appended each turn. Precedence: explicit per-agent config > capability default > off. |
 | `agents.<id>.goalAnchor.maxChars` | `number` (100–2000) | `500` | Maximum characters for the injected GoalAnchor block. ~5–10 steps at ~50 chars/step. |
 
 > **Capability-gated default (Phase 158):** For `capabilityClass` in `{small, nano}` (e.g. any Ollama
