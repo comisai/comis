@@ -101,7 +101,7 @@ describe("buildGapGateTable — per-signal recurrence verdict (the gate for Phas
     expect(exercised[0]!.verdict).not.toBe(unexercised[0]!.verdict);
   });
 
-  it("buildGapGateTable recomputes recurs = realCount >= RECURRENCE_THRESHOLD", () => {
+  it("marks recurs true when realCount reaches the recurrence threshold in buildGapGateTable", () => {
     const below = buildGapGateTable([gapRow({ realCount: RECURRENCE_THRESHOLD - 1, pathExercised: true })]);
     const at = buildGapGateTable([gapRow({ realCount: RECURRENCE_THRESHOLD, pathExercised: true })]);
     expect(below[0]!.recurs).toBe(false);
