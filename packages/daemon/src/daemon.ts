@@ -185,6 +185,7 @@ import type { DaemonInstance, DaemonOverrides, BootContext, PermissionCorrection
 import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
+import { recordModelHealth } from "./observability/record-model-health.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -1633,6 +1634,10 @@ async function bootFoundation(
     : undefined;
   const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
+
+  // I2: one-shot model_health boot snapshot — embedding/reranker load-level
+  // signals as a queryable obs_diagnostics row (no-ops when persistence off).
+  recordModelHealth(obsStore, { embeddingAvailable: !!cachedPort, rerankerModelPresent, rerankerBuilt: rerankerPort !== undefined }, clock);
 
   // Create daemon-level runtime registries
   const activeRunRegistry = createActiveRunRegistry();
