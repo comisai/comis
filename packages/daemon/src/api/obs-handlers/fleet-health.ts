@@ -288,12 +288,10 @@ function boundFindings(findings: readonly Finding[], truncations: TruncationEntr
  *   non-finite or non-positive value is clamped to {@link DEFAULT_WINDOW_HOURS}
  *   here (IN-01 defense-in-depth) so a contract-bypassing caller cannot produce
  *   a `-Infinity`/`NaN` window bound.
- * @param opts.includeSynthetic - admin opt-in to include synthetic/test sessions.
  */
 export async function assembleFleetHealthReport(
   deps: { obsStore?: ObservabilityStore; dataDir: string; clock: ClockPort },
   sinceHours: number,
-  opts: { includeSynthetic?: boolean } = {},
 ): Promise<FleetHealthReport> {
   // IN-01 guard (defense-in-depth): the contract rejects a non-finite/non-positive
   // sinceHours at the parse boundary, but the assembler is ALSO reachable directly
@@ -316,14 +314,18 @@ export async function assembleFleetHealthReport(
   // type is not re-exported from @comis/memory, and reduceFleetWindow accepts it
   // structurally — no explicit annotation needed).
   const rows = deps.obsStore?.aggregateSessionsInWindow(sinceMs) ?? [];
-  const fleet = reduceFleetWindow(rows, { excludeSynthetic: opts.includeSynthetic !== true });
+  // Synthetic/test sessions are always excluded from this operator-facing fleet
+  // digest (WR-02): the prior `includeSynthetic` opt-in was unreachable from all
+  // four surfaces, so it was removed rather than left as a dead admin capability.
+  const fleet = reduceFleetWindow(rows, { excludeSynthetic: true });
   // A2 exposes degradedRate but NOT the absolute degraded count — derive it.
   const degraded = rows.filter((r) => r.degraded).length;
 
   // A3 — multi-day session-index activity aggregate (daysRead/daysMissing -> coverage).
   // Thread the SAME `nowMs` as the window upper bound so the A3 day-key range
-  // tracks the injected clock (WR-01), not a hidden second wall-clock read.
-  const activity = readSessionIndexWindow(deps.dataDir, sinceMs, nowMs, opts);
+  // tracks the injected clock (WR-01), not a hidden second wall-clock read. The
+  // reader's own default excludes synthetic rows (WR-02 — no opt-in plumbed).
+  const activity = readSessionIndexWindow(deps.dataDir, sinceMs, nowMs);
 
   // I-track (Phase 160) — windowed health_signal; latest model_health / config_posture.
   const healthSignals = deps.obsStore?.queryDiagnostics({ category: "health_signal", sinceMs }) ?? [];
