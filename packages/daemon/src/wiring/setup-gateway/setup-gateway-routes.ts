@@ -177,6 +177,16 @@ export interface GatewayDeps {
    *  Optional — an obsStore-less boot leaves it undefined and the dispatch
    *  branch fails closed with a generic dispatch_error sentinel. */
   obsExplainForMcpClient?: (params: Record<string, unknown>) => Promise<unknown>;
+  /** 161-02: trust-flag-FREE obs.fleet.health assembler closure for the
+   *  operator-allowlisted `obs_fleet_health` MCP tool — the cross-session fleet
+   *  sibling of `obsExplainForMcpClient`. Built at the composition root over the
+   *  obsStore + dataDir + boot.clock; threaded into `buildMcpServerForClient` so
+   *  the obs_fleet_health dispatch branch invokes it DIRECTLY under daemon
+   *  authority (NOT `daemonRpcForMcpClient` → the admin-gated RPC; NO admin
+   *  trust). Its boundary is the per-client `mcpClient.allowlist` + the
+   *  digest-only report. Optional — an obsStore-less boot leaves it undefined and
+   *  the dispatch branch fails closed with a generic dispatch_error sentinel. */
+  obsFleetHealthForMcpClient?: (params: Record<string, unknown>) => Promise<unknown>;
   /** Set of suspended agent IDs for REST API status reporting. */
   suspendedAgents?: ReadonlySet<string>;
   /** Interactive-callback wiring (73-10): the single-use email approval-token map
@@ -357,6 +367,9 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
         // own dispatch branch). The never-inject-admin indirection above is
         // untouched.
         obsExplainForMcpClient: deps.obsExplainForMcpClient,
+        // 161-02: obs_fleet_health — same direct-assembler posture as obs_explain
+        // (its own dispatch branch; NOT mcpToolNameToRpcMethod / daemonRpcForMcpClient).
+        obsFleetHealthForMcpClient: deps.obsFleetHealthForMcpClient,
       },
       client,
     );

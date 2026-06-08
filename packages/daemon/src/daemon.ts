@@ -98,6 +98,7 @@ import {
   preReadStorageMode,
   systemNowMs,
   ObsExplainContract,
+  ObsFleetHealthContract,
   type SecretStorePort,
   type CredentialStorageMode,
   type ToolCapabilityPort,
@@ -180,7 +181,7 @@ import { createTokenRegistry } from "./api/token-handlers.js";
 // 154-03: the shared obs.explain assembler + production reader, for the
 // trust-flag-FREE obsExplainForMcpClient closure (obs_explain MCP tool runs the
 // assembler directly under daemon authority — no admin RPC, no admin trust).
-import { assembleIncidentReportFromSources, makeRealReader } from "./api/obs-handlers/index.js";
+import { assembleIncidentReportFromSources, assembleFleetHealthReport, makeRealReader } from "./api/obs-handlers/index.js";
 import type { DaemonInstance, DaemonOverrides, BootContext, PermissionCorrection, SessionStoreBridge } from "./daemon-types.js";
 import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
@@ -1067,7 +1068,9 @@ function buildRpcDispatchDeps(deps: {
     // no down-cast to `{ emit }` is needed.
     eventBus: c.container.eventBus,
     mcpClientManager: c.mcpClientManager,
-    obsStore: c.obsStore, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
+    // 161-02: ObservabilityApiDeps.clock = the SAME boot ClockPort (one createSystemClock()
+    // at the composition root) so the obs.fleet.health assembler has a clock (asserts deps.clock!).
+    obsStore: c.obsStore, clock: c.clock, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
     contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
     deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
     channelPlugins: c.channelPlugins, healthMonitor: c.channelHealthMonitor,
@@ -2546,6 +2549,17 @@ async function bootGateway(
     return assembleIncidentReportFromSources(obsExplainReader, obsExplainDataDir, parsed);
   };
 
+  // 161-02: the cross-session fleet sibling of obsExplainForMcpClient — same
+  // never-inject-admin posture. boot.clock is the SAME ClockPort wired into the
+  // RPC handler deps below (buildRpcDispatchDeps clock: c.clock); load-bearing (deps.clock!).
+  const obsFleetHealthForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
+    const parsed = ObsFleetHealthContract.request.parse(params);
+    return assembleFleetHealthReport(
+      { obsStore, dataDir: obsExplainDataDir, clock: boot.clock },
+      parsed.sinceHours ?? 24,
+    );
+  };
+
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({
     container, gwConfig, webhooksConfig: container.config.webhooks, agents, defaultAgentId,
     configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS, gatewayLogger,
@@ -2559,6 +2573,7 @@ async function bootGateway(
     instanceId, startupStartMs,
     interactiveCallbackWiring,
     obsExplainForMcpClient,
+    obsFleetHealthForMcpClient,
   });
 
   // 7.0.1. Wire deferred gateway attachment deps (wsConnections / mediaDir /

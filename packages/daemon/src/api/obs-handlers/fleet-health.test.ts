@@ -347,3 +347,46 @@ describe("bindFleetHealthHandlers (H1 — admin dual-layer gate)", () => {
     expect(r.windowHours).toBe(24);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 161-02: the clock seam is LOAD-BEARING — the wired handler MUST receive a
+// clock (buildRpcDispatchDeps threads boot.clock into ObservabilityApiDeps.clock).
+// The handler asserts `deps.clock!`; an unwired clock throws at request time.
+// These pins prove (a) the clock-wired handler returns a real report (NOT a
+// clock-undefined throw), and (b) the absent-clock state genuinely fails — so
+// the buildRpcDispatchDeps `clock: c.clock` wiring is not decorative.
+// ---------------------------------------------------------------------------
+
+describe("bindFleetHealthHandlers (161-02 — boot.clock wiring is load-bearing)", () => {
+  it("the clock-wired handler returns a FleetHealthReport (NOT a clock-undefined throw)", async () => {
+    const dataDir = makeDataDirWithActivity();
+    const store = makeStore();
+    seedStore(store, systemNowMs());
+    // Deps WITH clock populated — exactly what buildRpcDispatchDeps now wires
+    // (ObservabilityApiDeps.clock = boot.clock). The handler must assemble a
+    // real report, not throw on `deps.clock!`.
+    const handlers = bindFleetHealthHandlers(
+      makeDeps({ obsStore: store, dataDir, clock: createFakeClock(systemNowMs()) }),
+    );
+    const r = (await handlers["obs.fleet.health"]!({
+      sinceHours: 24,
+      _trustLevel: "admin",
+    })) as FleetHealthReport;
+    expect(r.schemaVersion).toBe(1);
+    expect(r.windowHours).toBe(24);
+    expect(r.sessions.total).toBe(2);
+  });
+
+  it("throws when deps.clock is UNWIRED (proves the buildRpcDispatchDeps clock wiring is load-bearing)", async () => {
+    const dataDir = makeDataDirWithActivity();
+    // Deps WITHOUT a clock — the pre-wiring failure mode. The handler's
+    // `deps.clock!` assertion dereferences undefined -> throws. This is the exact
+    // regression the buildRpcDispatchDeps `clock: c.clock` line prevents.
+    const handlers = bindFleetHealthHandlers(
+      makeDeps({ obsStore: makeStore(), dataDir /* clock intentionally omitted */ }),
+    );
+    await expect(
+      handlers["obs.fleet.health"]!({ sinceHours: 24, _trustLevel: "admin" }),
+    ).rejects.toThrow();
+  });
+});
