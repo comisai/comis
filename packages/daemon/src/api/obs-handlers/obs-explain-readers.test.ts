@@ -31,14 +31,43 @@ import type { IncidentSourceReader } from "./obs-explain-readers.js";
 const SESSION_KEY = "default:678314278:678314278:peer:678314278";
 const SESSION_ID = "678314278";
 
+// The REAL production on-disk layout for SESSION_KEY (verified against live
+// ~/.comis): sessions live under <dataDir>/workspace/sessions/<tenant>/<channel>/
+// keyed by the encoded SessionKey filename (sessionKeyToPath), NOT under a flat
+// <dataDir>/sessions/<sessionId>.* path. tenant="default", channel="678314278",
+// file="678314278~peer~678314278.jsonl" (userId[~peer~peerId].jsonl).
+const REAL_TENANT = "default";
+const REAL_CHANNEL = "678314278";
+const REAL_SESSION_FILE = "678314278~peer~678314278.jsonl";
+
+/**
+ * Build the REAL production session directory for SESSION_KEY under a temp
+ * dataDir and return the absolute `.jsonl` sessionFile path. Mirrors what the
+ * pi-agent session manager + trajectory recorder write on disk:
+ *   <dataDir>/workspace/sessions/<tenant>/<channel>/<file>.jsonl   (session JSONL)
+ */
+function makeRealSessionDir(dataDir: string): string {
+  const dir = path.join(dataDir, "workspace", "sessions", REAL_TENANT, REAL_CHANNEL);
+  fs.mkdirSync(dir, { recursive: true });
+  const sessionFile = path.join(dir, REAL_SESSION_FILE);
+  // The session JSONL itself (message log) — empty is fine; the readers target
+  // its trajectory/metadata siblings.
+  fs.writeFileSync(sessionFile, "", "utf-8");
+  return sessionFile;
+}
+
 function tmpDataDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-readers-"));
 }
 
-function writeSessionsFile(dataDir: string, name: string, lines: string[]): void {
-  const sessionsDir = path.join(dataDir, "sessions");
-  fs.mkdirSync(sessionsDir, { recursive: true });
-  fs.writeFileSync(path.join(sessionsDir, name), lines.join("\n") + "\n", "utf-8");
+/**
+ * Write the trajectory JSONL for SESSION_KEY at its REAL co-located path
+ * (`<sessionFile>.trajectory.jsonl`). No pointer file → the reader resolves via
+ * the co-located fallback (exercises the production resolution end-to-end).
+ */
+function writeRealTrajectory(dataDir: string, lines: string[]): void {
+  const sessionFile = makeRealSessionDir(dataDir);
+  fs.writeFileSync(`${sessionFile}.trajectory.jsonl`, lines.join("\n") + "\n", "utf-8");
 }
 
 function writeLogsFile(dataDir: string, name: string, lines: string[]): void {
@@ -61,7 +90,7 @@ describe("makeRealReader.readSessionRecords", () => {
       seq: 1,
       data: { toolName: "web_fetch", success: false },
     });
-    writeSessionsFile(dataDir, `${SESSION_ID}.trajectory.jsonl`, [logLine, eventLine]);
+    writeRealTrajectory(dataDir, [logLine, eventLine]);
 
     const reader = makeRealReader(dataDir);
     const records = await reader.readSessionRecords(SESSION_KEY);
@@ -73,7 +102,7 @@ describe("makeRealReader.readSessionRecords", () => {
   });
 
   it("soft-fails to [] when the session trajectory file is absent", async () => {
-    const dataDir = tmpDataDir(); // no sessions/ written
+    const dataDir = tmpDataDir(); // no workspace/sessions tree written
     const reader = makeRealReader(dataDir);
     const records = await reader.readSessionRecords(SESSION_KEY);
     expect(records).toEqual([]);
@@ -81,7 +110,7 @@ describe("makeRealReader.readSessionRecords", () => {
 
   it("skips malformed JSONL lines and blank lines without throwing", async () => {
     const dataDir = tmpDataDir();
-    writeSessionsFile(dataDir, `${SESSION_ID}.trajectory.jsonl`, [
+    writeRealTrajectory(dataDir, [
       "{ not json",
       "   ", // blank/whitespace-only line — skipped
       JSON.stringify({ toolName: "web_fetch", msg: "Tool execution failed" }),
@@ -91,15 +120,118 @@ describe("makeRealReader.readSessionRecords", () => {
     expect(records.length).toBe(1);
   });
 
-  it("uses the whole sessionKey as the sessionId when it has no colon segment", async () => {
+  it("soft-fails to [] when the sessionKey is not a parseable formatted key", async () => {
+    // The reader resolves the path via parseFormattedSessionKey + sessionKeyToPath
+    // (the authoritative mapper), which needs ≥3 colon-delimited fields. A bare
+    // token has no tenant/user/channel → unparseable → [] (no throw).
     const dataDir = tmpDataDir();
-    const bareKey = "barekey"; // no ':' → sessionId === the whole key
-    writeSessionsFile(dataDir, `${bareKey}.trajectory.jsonl`, [
-      JSON.stringify({ toolName: "web_fetch", msg: "Tool execution failed" }),
-    ]);
     const reader = makeRealReader(dataDir);
-    const records = await reader.readSessionRecords(bareKey);
+    expect(await reader.readSessionRecords("barekey")).toEqual([]);
+  });
+});
+
+describe("makeRealReader REAL production layout (workspace/sessions + pointer)", () => {
+  // Regression net for the centerpiece bug: makeRealReader resolved a flat
+  // <dataDir>/sessions/<sessionId>.* path that DOES NOT EXIST in production.
+  // The real layout is <dataDir>/workspace/sessions/<tenant>/<channel>/<file>,
+  // with the trajectory located via the <file>.trajectory-path.json pointer.
+  // These tests build that exact layout and FAIL on the pre-fix code (which
+  // reads nothing → empty report, endReason=unknown, 0 failures/offloads).
+
+  it("readSessionRecords resolves the trajectory via the .trajectory-path.json pointer (failure + offload events surface)", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeRealSessionDir(dataDir);
+
+    // A real degraded turn: a classified tool failure + an offloaded result.
+    const failureEvent = JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "tool.result",
+      seq: 1,
+      sessionId: SESSION_KEY,
+      data: { toolName: "web_fetch", success: false, classifiedFailureBy: "executor" },
+    });
+    const offloadEvent = JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "tool.result_offloaded",
+      seq: 2,
+      sessionId: SESSION_KEY,
+      data: { toolName: "web_fetch", diskPathRel: "tool-results/call_abc.json" },
+    });
+    // The trajectory lives at a runtimeFile that the POINTER names (the
+    // co-located <sessionFile>.trajectory.jsonl path here, matching prod).
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, [failureEvent, offloadEvent].join("\n") + "\n", "utf-8");
+    // The canonical pointer the recorder writes alongside the session JSONL.
+    fs.writeFileSync(
+      `${sessionFile}.trajectory-path.json`,
+      JSON.stringify({
+        traceSchema: "comis-trajectory-pointer",
+        schemaVersion: 1,
+        sessionId: SESSION_KEY,
+        runtimeFile,
+      }),
+      "utf-8",
+    );
+
+    const reader = makeRealReader(dataDir);
+    const records = await reader.readSessionRecords(SESSION_KEY);
+
+    expect(records.length).toBe(2);
+    expect(records.some((r) => (r.data as Record<string, unknown>)?.classifiedFailureBy === "executor")).toBe(true);
+    expect(records.some((r) => r.type === "tool.result_offloaded")).toBe(true);
+  });
+
+  it("readSessionRecords falls back to co-located <sessionFile>.trajectory.jsonl when the pointer is absent", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeRealSessionDir(dataDir);
+    // NO pointer file written — the reader must fall back to the co-located
+    // convention (the bundle reader's documented step 3).
+    fs.writeFileSync(
+      `${sessionFile}.trajectory.jsonl`,
+      JSON.stringify({ traceSchema: "comis-trajectory", schemaVersion: 1, type: "tool.result", seq: 1, data: { toolName: "x" } }) + "\n",
+      "utf-8",
+    );
+
+    const reader = makeRealReader(dataDir);
+    const records = await reader.readSessionRecords(SESSION_KEY);
     expect(records.length).toBe(1);
+  });
+
+  it("readSessionMetadata reads the <file>_session-metadata.json companion next to the session JSONL (sessionEnd rollup)", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeRealSessionDir(dataDir);
+    // Metadata companion = sessionFile with `.jsonl` → `_session-metadata.json`
+    // (comis-session-manager.ts:392), NOT <dataDir>/sessions/<id>_session-metadata.json.
+    const metadataFile = sessionFile.replace(/\.jsonl$/, "_session-metadata.json");
+    fs.writeFileSync(
+      metadataFile,
+      JSON.stringify({
+        traceId: "trace-1",
+        sessionEnd: {
+          type: "session_end",
+          endReason: "completed_with_tool_errors",
+          degraded: true,
+          costUsd: 1.320669,
+          breakerTripCount: 0,
+        },
+      }),
+      "utf-8",
+    );
+
+    const reader = makeRealReader(dataDir);
+    const meta = await reader.readSessionMetadata(SESSION_KEY);
+    expect(meta).not.toBeNull();
+    expect((meta!.sessionEnd as Record<string, unknown>).endReason).toBe("completed_with_tool_errors");
+    expect((meta!.sessionEnd as Record<string, unknown>).degraded).toBe(true);
+  });
+
+  it("soft-fails to []/null when the workspace session dir is absent (no throw)", async () => {
+    const dataDir = tmpDataDir(); // no workspace/sessions tree written
+    const reader = makeRealReader(dataDir);
+    expect(await reader.readSessionRecords(SESSION_KEY)).toEqual([]);
+    expect(await reader.readSessionMetadata(SESSION_KEY)).toBeNull();
   });
 });
 
@@ -122,13 +254,17 @@ describe("makeRealReader.readCacheTraceRecords", () => {
   });
 });
 
+/** Absolute `_session-metadata.json` companion path for the real SESSION_KEY layout. */
+function realMetadataPath(dataDir: string): string {
+  const sessionFile = makeRealSessionDir(dataDir);
+  return sessionFile.replace(/\.jsonl$/, "_session-metadata.json");
+}
+
 describe("makeRealReader.readSessionMetadata", () => {
-  it("reads the <sessionId>_session-metadata.json companion with sessionEnd fields", async () => {
+  it("reads the <file>_session-metadata.json companion with sessionEnd fields", async () => {
     const dataDir = tmpDataDir();
-    const sessionsDir = path.join(dataDir, "sessions");
-    fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sessionsDir, `${SESSION_ID}_session-metadata.json`),
+      realMetadataPath(dataDir),
       JSON.stringify({
         sessionId: SESSION_ID,
         sessionCostUsd: 1.320669,
@@ -151,13 +287,7 @@ describe("makeRealReader.readSessionMetadata", () => {
 
   it("returns null when the metadata companion is corrupt JSON (soft-fail)", async () => {
     const dataDir = tmpDataDir();
-    const sessionsDir = path.join(dataDir, "sessions");
-    fs.mkdirSync(sessionsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(sessionsDir, `${SESSION_ID}_session-metadata.json`),
-      "{ corrupt json not closed",
-      "utf-8",
-    );
+    fs.writeFileSync(realMetadataPath(dataDir), "{ corrupt json not closed", "utf-8");
     const reader = makeRealReader(dataDir);
     expect(await reader.readSessionMetadata(SESSION_KEY)).toBeNull();
   });
@@ -270,16 +400,18 @@ describe("makeRealReader default data dir", () => {
 });
 
 describe("makeRealReader path containment", () => {
-  it("a traversal sessionId cannot escape <dataDir>/sessions (safePath guard)", async () => {
+  it("a traversal-bearing sessionKey cannot escape <workspaceDir>/sessions (sessionKeyToPath safePath guard)", async () => {
     const dataDir = tmpDataDir();
-    // Plant a file OUTSIDE the dataDir that a naive join would reach.
+    // Plant a file OUTSIDE the workspace sessions tree that a naive join might reach.
     const outside = path.join(dataDir, "..", "escape-target.trajectory.jsonl");
     fs.writeFileSync(outside, JSON.stringify({ secret: "leaked" }) + "\n", "utf-8");
 
     const reader: IncidentSourceReader = makeRealReader(dataDir);
-    // A traversal key whose trailing segment is "..". safePath collapses it so
-    // the read stays inside <dataDir>/sessions and finds nothing → [].
-    const records = await reader.readSessionRecords("default:x:x:peer:..");
+    // A traversal-bearing key: sessionKeyToPath runs every field through safePath
+    // (and `..` survives encodeComponent only as a filename fragment, never a
+    // path segment), so the read stays inside <workspaceDir>/sessions and finds
+    // nothing → [] (no leak, no throw).
+    const records = await reader.readSessionRecords("default:..:..:peer:..");
     expect(records).toEqual([]);
     fs.rmSync(outside, { force: true });
   });

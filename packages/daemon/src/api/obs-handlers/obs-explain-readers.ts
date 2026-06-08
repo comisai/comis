@@ -7,15 +7,23 @@
  * sit behind ONE interface so production reads real files while tests inject
  * fixture records (the X3 fixture-injection seam):
  *
- *   1. readSessionRecords    — the per-session trajectory JSONL
- *      (`<dataDir>/sessions/<sessionId>.trajectory.jsonl`). Returns ALL parsed
- *      lines — log shape AND event shape — WITHOUT the production bundle
- *      reader's `traceSchema === "comis-trajectory"` envelope filter, so the
- *      frozen pre-150 log fixtures pass through to `toIncidentSignals`.
+ *   1. readSessionRecords    — the per-session trajectory JSONL. The session
+ *      lives in the REAL production layout the pi-agent session manager writes:
+ *      `<workspaceDir>/sessions/<tenantId>/<channelId>/<file>.jsonl` (resolved
+ *      by `sessionKeyToPath`, the authoritative SessionKey→path mapper). The
+ *      trajectory is then located the canonical way — read the
+ *      `<sessionFile>.trajectory-path.json` pointer and use its `runtimeFile`,
+ *      else fall back to the co-located `<sessionFile>.trajectory.jsonl` (the
+ *      same resolution `bundle-exporter.ts:readRuntimeTrajectory` performs).
+ *      Returns ALL parsed lines — log shape AND event shape — WITHOUT the
+ *      production bundle reader's `traceSchema === "comis-trajectory"` envelope
+ *      filter, so the frozen pre-150 log fixtures pass through to
+ *      `toIncidentSignals`.
  *   2. readCacheTraceRecords — `<dataDir>/logs/cache-trace.jsonl`, filtered to
  *      the resolved session.
- *   3. readSessionMetadata   — the `<sessionId>_session-metadata.json` companion
- *      (the F1 PRIMARY rollup source).
+ *   3. readSessionMetadata   — the `<sessionFile>`-with-`.jsonl`→`_session-metadata.json`
+ *      companion next to the session JSONL (the F1 PRIMARY rollup source, the
+ *      same naming `comis-session-manager.ts` writes).
  *   4. readDiagnosticsRollup — `obsStore.queryDiagnostics({category, limit:1000})`
  *      then a SESSION-SCOPED filter by `row.sessionKey` (the F2 fallback).
  *      `DiagnosticQueryParams` has NO sessionKey filter, so `{limit:1}` would
@@ -23,16 +31,24 @@
  *      window and filters AFTER. The window is a recency horizon (WR-01): see
  *      `DIAGNOSTICS_QUERY_LIMIT` for why 1000 and the residual bound.
  *
- * Every path segment (sessionId, filename) goes through `safePath` with an
- * absolute base — a `../…` sessionId cannot escape `<dataDir>/sessions`. All
- * reads soft-fail (missing/corrupt file → `[]` / `null`, never throws).
+ * Why the workspace base (not `<dataDir>/sessions`): the writer's source of
+ * truth is `<workspaceDir>/sessions/...` (`setup-agents-runtime.ts`:
+ * `sessionBaseDir = safePath(workspaceDir, "sessions")`, with the default-agent
+ * workspace = `<dataDir>/workspace` per `resolveWorkspaceDir`). The earlier flat
+ * `<dataDir>/sessions/<sessionId>.*` convention NEVER existed on disk, so the
+ * reader returned nothing for every real session — fixed here to match the
+ * writer. `sessionKeyToPath` runs every SessionKey field through `safePath`, so
+ * a traversal-bearing key cannot escape `<workspaceDir>/sessions`. All reads
+ * soft-fail (missing/corrupt file → `[]` / `null`, never throws).
  *
  * @module
  */
 
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { safePath } from "@comis/core";
+import { safePath, parseFormattedSessionKey } from "@comis/core";
+import { sessionKeyToPath } from "@comis/agent";
+import { resolveTrajectoryPointerFilePath } from "@comis/observability";
 import type { ObservabilityStore } from "@comis/memory";
 
 /** Per-read line cap (mirrors observability's MAX_TRAJECTORY_RUNTIME_EVENTS
@@ -75,15 +91,55 @@ function defaultDataDir(): string {
 }
 
 /**
- * Derive the on-disk sessionId from a formatted sessionKey. The session file
- * is keyed by the trailing colon-delimited segment (for
- * `default:678314278:678314278:peer:678314278` → `678314278`). `safePath`
- * collapses any traversal in the segment at the actual read site, so this is a
- * plain extraction.
+ * Resolve the absolute `.jsonl` session-file path for a formatted sessionKey
+ * under the workspace sessions base, via the authoritative `sessionKeyToPath`
+ * mapper (`<sessionsBase>/<tenantId>/<channelId>/<file>.jsonl`).
+ *
+ * Returns `undefined` when the key is not a parseable formatted sessionKey
+ * (the reader then soft-fails to `[]`/`null`). `sessionKeyToPath` runs every
+ * field through `safePath`, so a traversal-bearing key is collapsed and stays
+ * inside `sessionsBase`.
  */
-function sessionIdFromKey(sessionKey: string): string {
-  const idx = sessionKey.lastIndexOf(":");
-  return idx >= 0 ? sessionKey.slice(idx + 1) : sessionKey;
+function resolveSessionFile(sessionKey: string, sessionsBase: string): string | undefined {
+  const key = parseFormattedSessionKey(sessionKey);
+  if (key === undefined) return undefined;
+  return sessionKeyToPath(key, sessionsBase);
+}
+
+/**
+ * Resolve the trajectory JSONL path for a session file, the canonical way:
+ *   1. Read `<sessionFile>.trajectory-path.json` (pointer); if it fence-checks
+ *      (`traceSchema === "comis-trajectory-pointer"`, `schemaVersion === 1`,
+ *      non-empty string `runtimeFile`) use `runtimeFile`.
+ *   2. Else fall back to the co-located `<sessionFile>.trajectory.jsonl`.
+ *
+ * Mirrors `bundle-exporter.ts:readRuntimeTrajectory`'s pointer resolution.
+ * Soft-fail: a missing/corrupt pointer falls through to the co-located path.
+ */
+function resolveTrajectoryFile(sessionFile: string): string {
+  const pointerPath = resolveTrajectoryPointerFilePath(sessionFile);
+  try {
+    const pointer = JSON.parse(fs.readFileSync(pointerPath, "utf-8")) as Record<string, unknown>;
+    if (
+      pointer["traceSchema"] === "comis-trajectory-pointer" &&
+      pointer["schemaVersion"] === 1 &&
+      typeof pointer["runtimeFile"] === "string" &&
+      pointer["runtimeFile"].length > 0
+    ) {
+      return pointer["runtimeFile"];
+    }
+  } catch {
+    // Pointer absent or invalid — fall back to the co-located convention.
+  }
+  return `${sessionFile}.trajectory.jsonl`;
+}
+
+/**
+ * The `_session-metadata.json` companion path for a session file (the same
+ * `.jsonl` → `_session-metadata.json` rename `comis-session-manager.ts` writes).
+ */
+function resolveMetadataFile(sessionFile: string): string {
+  return sessionFile.replace(/\.jsonl$/, "_session-metadata.json");
 }
 
 /**
@@ -120,14 +176,18 @@ export function makeRealReader(
   obsStore?: ObservabilityStore,
 ): IncidentSourceReader {
   const base = dataDir.length > 0 ? dataDir : defaultDataDir();
-  const sessionsDir = safePath(base, "sessions");
+  // The writer's source of truth: sessions live under <workspaceDir>/sessions/,
+  // and the default-agent workspace is <dataDir>/workspace (resolveWorkspaceDir).
+  // Mirror that here (daemon.ts:570 uses the same default workspace base).
+  const sessionsBase = safePath(base, "workspace", "sessions");
   const logsDir = safePath(base, "logs");
 
   return {
     async readSessionRecords(sessionKey: string): Promise<Array<Record<string, unknown>>> {
-      const sessionId = sessionIdFromKey(sessionKey);
-      const file = safePath(sessionsDir, `${sessionId}.trajectory.jsonl`);
-      return readJsonlBounded(file);
+      const sessionFile = resolveSessionFile(sessionKey, sessionsBase);
+      if (sessionFile === undefined) return []; // Unparseable key — soft-fail.
+      const trajectoryFile = resolveTrajectoryFile(sessionFile);
+      return readJsonlBounded(trajectoryFile);
     },
 
     async readCacheTraceRecords(sessionKey: string): Promise<Array<Record<string, unknown>>> {
@@ -138,8 +198,9 @@ export function makeRealReader(
     },
 
     async readSessionMetadata(sessionKey: string): Promise<Record<string, unknown> | null> {
-      const sessionId = sessionIdFromKey(sessionKey);
-      const file = safePath(sessionsDir, `${sessionId}_session-metadata.json`);
+      const sessionFile = resolveSessionFile(sessionKey, sessionsBase);
+      if (sessionFile === undefined) return null; // Unparseable key — soft-fail.
+      const file = resolveMetadataFile(sessionFile);
       let raw: string;
       try {
         raw = fs.readFileSync(file, "utf-8");
