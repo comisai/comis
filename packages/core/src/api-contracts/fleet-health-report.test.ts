@@ -15,8 +15,9 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
-import { FleetHealthReportSchema } from "./fleet-health-report.js";
+import { FleetHealthReportSchema, ObsFleetHealthContract } from "./fleet-health-report.js";
 import type { FleetHealthReport } from "./fleet-health-report.js";
+import { OBSERVABILITY_CONTRACTS } from "./observability.js";
 
 /**
  * A fully-populated, well-formed fleet report (every required field present,
@@ -174,5 +175,37 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
     >;
     const parsed = FleetHealthReportSchema.parse(smuggled) as Record<string, unknown>;
     expect(parsed).not.toHaveProperty("generatedAtMs");
+  });
+});
+
+/**
+ * R2 contract-shape pins (Phase 161): the `obs.fleet.health` RPC contract is the
+ * admin-scoped sibling of `obs.explain`. RED on pre-patch code: `ObsFleetHealthContract`
+ * does not exist, so the import fails to compile and every case below fails (the
+ * 159/160 precedent: an absent symbol IS the RED). GREEN once the `defineContract`
+ * lands in this module and is registered in `OBSERVABILITY_CONTRACTS`.
+ */
+describe("ObsFleetHealthContract (R2 — admin-scoped fleet RPC contract)", () => {
+  it("declares the method `obs.fleet.health`", () => {
+    expect(ObsFleetHealthContract.method).toBe("obs.fleet.health");
+  });
+
+  it("is admin-scoped (scopes deep-equals [\"admin\"])", () => {
+    expect(ObsFleetHealthContract.scopes).toEqual(["admin"]);
+  });
+
+  it("has a refine-free, default-free request: `{}` and `{sinceHours:24}` parse, `{sinceHours:-1}` fails", () => {
+    // sinceHours is optional — an empty request parses (the 24h default is applied
+    // in the HANDLER body, NOT via .default() which is off the 12-shape allowlist).
+    expect(ObsFleetHealthContract.request.parse({})).toEqual({});
+    expect(ObsFleetHealthContract.request.parse({ sinceHours: 24 })).toEqual({ sinceHours: 24 });
+    // .positive() rejects a non-positive window — proves the field validates without
+    // a cross-field .refine (the fleet request has one optional field, no neither-id guard).
+    expect(ObsFleetHealthContract.request.safeParse({ sinceHours: -1 }).success).toBe(false);
+  });
+
+  it("is registered in OBSERVABILITY_CONTRACTS (an entry whose method is obs.fleet.health)", () => {
+    const methods = OBSERVABILITY_CONTRACTS.map((c) => c.method);
+    expect(methods).toContain("obs.fleet.health");
   });
 });

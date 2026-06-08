@@ -26,6 +26,7 @@
  * @module
  */
 import { z } from "zod";
+import { defineContract } from "./types.js";
 
 /**
  * The `obs.fleet.health` response — a bounded cross-session fleet digest.
@@ -118,3 +119,26 @@ export const FleetHealthReportSchema = z.object({
 
 /** The `obs.fleet.health` response (the cross-session fleet digest). Inferred from the Zod schema. */
 export type FleetHealthReport = z.infer<typeof FleetHealthReportSchema>;
+
+/**
+ * `obs.fleet.health` — the cross-session fleet-health triage RPC (v2.15 R2,
+ * Phase 161). Admin-only; the daemon handler fans the Phase-159 A-track
+ * aggregation + Phase-160 I-track diagnostics into the {@link FleetHealthReport}
+ * digest above. The SIBLING of {@link ObsExplainContract} (`incident-report.ts`):
+ * `obs.explain` post-mortems ONE session; this rolls up a WINDOW.
+ *
+ * Request: `{ sinceHours? }` — ONE optional positive window. NO `.refine()` (no
+ * cross-field constraint — `obs.explain` needs one for its neither-id guard, this
+ * does not) and NO `.default()` (off the 12-shape allowlist). The 24h window
+ * DEFAULT is applied in the handler body — the `ObsSystemPromptReportListContract`
+ * `limit` precedent (`observability.ts:573-586`).
+ */
+export const ObsFleetHealthContract = defineContract({
+  method: "obs.fleet.health",
+  request: z.object({
+    /** Window in hours. Optional; the 24h default is applied in the handler body. */
+    sinceHours: z.number().positive().optional(),
+  }),
+  response: FleetHealthReportSchema,
+  scopes: ["admin"] as const,
+});
