@@ -304,6 +304,32 @@ Extensible key-value map of task type to model identifier. Any string key maps t
 | `default` | `string` | _(unset)_ | Default model for unrouted tasks (falls back to `agent.model`) |
 | _(any key)_ | `string` | -- | Custom route name to model ID |
 
+#### Operation Model Overrides (agents.*.operationModels)
+
+Override the model and timeout for specific internal operation types. Each entry is an `OperationModelEntry` with optional `model` (string `"provider:modelId"`) and `timeoutMs` (number) fields. Omit any type to use the agent's primary model.
+
+| Operation type | When it fires | Recommended model |
+|---------------|---------------|-------------------|
+| `cron` | Scheduled cron task execution | — |
+| `heartbeat` | Periodic heartbeat check | — |
+| `subagent` | Sub-agent task delegation | — |
+| `compaction` | Context compaction summarization | Capable model or `contextEngine.compaction.strongerSummarizerModel` |
+| `taskExtraction` | Task extraction from conversation | — |
+| `condensation` | Memory condensation | Capable model |
+| `verification` | Pre-delivery critic (R4). Fires when `agents.<id>.verification.enabled=true` and the response is a completion-claiming response meeting `minResponseChars`. | Cheap model: `"anthropic:claude-haiku-4-5-20250929"` or `"ollama:qwen3.6:27b"` for local self-check. Omit to use the primary model. |
+| `planning` | Pre-execution planner (R5, deferrable on M2). | Capable model for checklist generation. Omit to use the primary model. |
+
+```yaml
+agents:
+  default:
+    operationModels:
+      verification:
+        model: "anthropic:claude-haiku-4-5-20250929"
+        timeoutMs: 30000
+      compaction:
+        model: "anthropic:claude-haiku-4-5-20250929"
+```
+
 #### Model Failover (agents.*.modelFailover)
 
 | Key | Type | Default | Description |
@@ -343,6 +369,9 @@ See [Resilience](/agents/resilience) for how prompt timeouts fit into the full r
 | `maxContextChars` | `number` | `4000` | Maximum characters of memory context injected |
 | `minScore` | `number` | `0.1` | Minimum RRF score threshold (0-1) |
 | `includeTrustLevels` | `string[]` | `["system", "learned"]` | Trust levels to include in retrieval |
+| `baseFloor` | `number` (0–1) | `0` | Minimum BASE relevance score (pre-boost) for memory injection. Boosts cannot resurrect a memory whose base score falls below this threshold. Gates on `ScoreBreakdown.base` (un-boosted cosine/RRF score), applied after `scoreWithBreakdown()`. Default `0` = no floor (exact prior behavior). |
+
+> **Security (S6):** A weaker ModelProfile cannot lower this below the operator-set value. `FROZEN_TRUST_PATHS` and `MemoryWriteValidator` remain enforced for all `capabilityClass`es regardless of this setting.
 
 **Cross-encoder rerank (agents.*.rag.rerank)** — opt-in (default off)
 
@@ -558,6 +587,37 @@ Context engine configuration. Controls the system that manages what your agent s
   The DAG cross-agent isolation adds an `agent_id` column to the full-text search index, created once on a fresh database (no migration — sessions start fresh on the LCD engine). A pre-existing development `~/.comis` database created before this release may need to be wiped to pick up the isolated index; a fresh install needs nothing. See [Compaction](/agents/compaction#per-tenant-agent-session-isolation).
 </Note>
 
+#### Capacity Cap (agents.\*.contextEngine.budget)
+
+Prevents 256K context-window models from over-provisioning when running a small executive (e.g., qwen3.6:27b). Applied in `computeTokenBudgetForProfile` before history budget computation. `frontier` and `mid` classes always receive the full `contextWindow`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.contextEngine.budget.effectiveContextCapSmall` | `number` (non-negative int) | `32000` | Maximum effective context tokens for `capabilityClass="small"`. `0` = no cap (use raw contextWindow). Applied to prevent 256K overfill degrading a 27–35B executive. |
+| `agents.<id>.contextEngine.budget.effectiveContextCapNano` | `number` (non-negative int) | `16000` | Maximum effective context tokens for `capabilityClass="nano"`. `0` = no cap. `frontier` and `mid` classes always receive the full `contextWindow`. |
+
+#### Compaction Routing (agents.\*.contextEngine.compaction)
+
+Controls how the context engine handles LLM summarization for low-capability models. Applied in both pipeline `llm-compaction` and DAG leaf-summarizer layers.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.contextEngine.compaction.preferEvictionByCapability` | `boolean` | `true` | When `true`: `small`/`nano` capabilityClass → eviction-first (or `strongerSummarizerModel` if set) instead of same-model LLM summarization. Prevents degraded summaries from a weak model. A `context:compaction_routed` event fires when routing occurs. |
+| `agents.<id>.contextEngine.compaction.strongerSummarizerModel` | `string` | `""` | Optional `"provider:modelId"` for a stronger summarizer when `small`/`nano` models are detected. Empty string = pure eviction/deterministic fallback. Example: `"anthropic:claude-haiku-4-5-20250929"`. |
+
+> **Security (S4):** Eviction never drops security-relevant context (sender-trust, safety reinforcement, untrusted-content markers, canary token). The `security-context-pinner` enforces this fail-closed.
+
+#### Compact Prompt (agents.\*.contextEngine.compactPrompt)
+
+Controls the compact-secure promptMode for `small`/`nano` models. This mode assembles the system prompt to a bounded target while **always** retaining the full safety core, sender-trust, and config-secret sections.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.contextEngine.compactPrompt.enabled` | `boolean` | `true` | Enable compact-secure promptMode for `small`/`nano` capabilityClass. When `true`, retains the FULL safety core, sender-trust, and config-secret sections — never falls back to minimal mode's empty safety. `frontier`/`mid` agents are unaffected. |
+| `agents.<id>.contextEngine.compactPrompt.targetTokens` | `number` (500–8000) | `3000` | Soft token target for the compact prompt (~chars/3.5). At 3000 ≈ 10,500 chars. |
+
+> **Security warning (S1):** Setting `enabled=false` does **not** make the prompt smaller — it restores the full-size `full` promptMode. The compact prompt is safe for all deployments because it retains the security core. It is **not safe** to use `minimal` promptMode (which drops the safety block) for any security-sensitive deployment.
+
 #### Memory Consolidation (agents.*.memoryConsolidation)
 
 Periodic LLM-driven consolidation of similar memories into observations. Opt-in (default off) because each run spends model tokens -- it is a cost gate. When enabled, a scheduled cron clusters near-duplicate memories and folds each cluster into a single observation; external-trust memories are excluded by default.
@@ -581,6 +641,32 @@ Periodic LLM-driven consolidation of similar memories into observations. Opt-in 
 |-----|------|---------|-------------|
 | `maxResponseBytes` | `number` | `2000000` | Default byte cap for HTTP responses |
 | `stripHiddenHtml` | `boolean` | `true` | Whether to strip hidden HTML before extraction |
+
+#### Goal Anchor (agents.\*.goalAnchor)
+
+Injects the current execution objective and uncompleted step checklist at the context tail every turn for scaffolded (`small`/`nano`) tiers. Helps weak models stay on task across multi-turn executions. Gated on `scaffoldLevel === "max"` — frontier/mid agents never receive injection even if `enabled=true`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.goalAnchor.enabled` | `boolean` | `false` | Enable GoalAnchor tail injection. When `true` and `scaffoldLevel=max` (small/nano), the execution objective and uncompleted step checklist is tail-appended each turn. Default `false` = opt-in, behavior-neutral for frontier/mid. |
+| `agents.<id>.goalAnchor.maxChars` | `number` (100–2000) | `500` | Maximum characters for the injected GoalAnchor block. ~5–10 steps at ~50 chars/step. |
+
+#### Verification Critic (agents.\*.verification)
+
+A pre-delivery critic that checks the terminal response against the GoalAnchor checklist before delivery. Unmet requirements redirect the executor; exhausted retries deliver an honest unmet-list. Meaningful only for `scaffoldLevel=max` (small/nano) agents.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.verification.enabled` | `boolean` | `false` | Enable pre-delivery verification critic. Fires only when a completion-claiming response meets `minResponseChars`. Default `false` = opt-in. |
+| `agents.<id>.verification.minResponseChars` | `number` (50–2000) | `200` | Minimum response length in characters before the critic is invoked. Prevents firing on short acks, clarifying questions, and non-completion replies. |
+
+> **Security (S2):** The critic treats the output-under-review as untrusted (`wrapExternalContent`), inherits the safety core, embeds the canary, fails closed (uncertain → not-verified, never auto-approve), and re-validates any implied tool calls through the same exec gates. Use `agents.<id>.operationModels.verification` to run the critic on a cheaper or faster model.
+
+#### Honesty Guardrail (agents.\*.honesty)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.honesty.maxCriticRetries` | `number` (0–5) | `2` | Maximum critic retry redirects before delivering an honest unmet-list. After this many not-verified verdicts, the executor delivers an honest unmet-list instead of an unqualified "done". Prevents infinite re-prompt loops. |
 
 #### Skills (agents.*.skills)
 
@@ -1887,6 +1973,10 @@ LLM provider configuration. API keys are referenced by SecretManager key name, n
 | `dropThinkingBlockModelHints` | `string[]` | `[]` | Model ID substrings that trigger thinking block suppression |
 | `transcriptToolCallIdMode` | `enum` | `"default"` | Tool call ID format: `default` (pass-through) or `strict9` (truncate to 9 chars for providers with ID length limits) |
 | `transcriptToolCallIdModelHints` | `string[]` | `[]` | Model ID substrings that trigger strict9 tool call ID mode |
+| `supportsVision` | `boolean` | `false` | When `true`, image attachments are forwarded to the model. When `false` (or unset), images are warn-dropped with a log entry. Set `true` for qwen3.6:27b/35b GGUF variants that support image input. |
+| `supportsPromptCache` | `boolean` | _(auto from providerFamily)_ | Whether models on this provider support prompt caching. Auto-detected from `providerFamily`: `true` for `anthropic`/`google`, `false` for `default`/`openai`. Set explicitly to override. When `false`, prompt assembly emits a single block with no `cache_control` split overhead. |
+| `supportsStructuredOutput` | `boolean` | `false` | When `true`, tool-call repair uses constrained decoding (e.g., Ollama's `/api/generate` `format` param) for near-miss tool JSON. When `false`, lenient parse-and-repair is used. |
+| `capabilityClass` | `"frontier"` \| `"mid"` \| `"small"` \| `"nano"` | _(resolver heuristic)_ | Explicit capability-class override for all models on this provider. Overrides the default resolver heuristic (which keys off model context-window and provider-family). Forces `scaffoldLevel` (GoalAnchor, critic) and `securityLevel` (lockdown intensity). Use `"small"` for an Ollama provider running qwen3.6. Setting `"frontier"` for a weak model silences scaffolding — not recommended for production. |
 
 **UserModel (providers.entries.{name}.models[])**
 
@@ -1944,6 +2034,56 @@ providers:
 </Accordion>
 
 </AccordionGroup>
+
+### Recommended Secure qwen3.6 Configuration
+
+The following `config.yaml` snippet shows the recommended settings for a secure, scaffolded qwen3.6 local deployment. All security-relevant keys from Phases 151–155 are shown with their recommended values.
+
+```yaml
+providers:
+  entries:
+    qwen36-local:
+      baseUrl: "http://localhost:11434/v1"
+      # No apiKeyName — keyless Ollama
+      capabilities:
+        capabilityClass: small          # Forces scaffoldLevel=max + securityLevel=locked
+        supportsVision: true            # For 27b/35b GGUF; false for MLX variants
+        supportsStructuredOutput: true  # Enables constrained-decode tool-call repair
+
+models:
+  defaultModel: "qwen36-local:qwen3.6:35b"
+
+agents:
+  default:
+    contextEngine:
+      budget:
+        effectiveContextCapSmall: 32000  # Cap effective history at 32K (prevents 256K overfill)
+      compaction:
+        preferEvictionByCapability: true  # Evict rather than summarize with the small model
+      compactPrompt:
+        enabled: true        # Compact-secure prompt (retains full safety core)
+        targetTokens: 3000
+    goalAnchor:
+      enabled: true          # Tail-inject objective checklist each turn (scaffoldLevel=max)
+      maxChars: 500
+    verification:
+      enabled: true          # Pre-delivery critic (honest unmet-list on failure)
+      minResponseChars: 200
+    honesty:
+      maxCriticRetries: 2
+    rag:
+      baseFloor: 0.3         # Memory relevance floor (0 = no floor, the default)
+```
+
+### General vs. Coding-Tuned Model Guidance
+
+For agent reliability, prefer **general-purpose** qwen3.6 variants over coding-tuned models:
+
+- **General models** (e.g., `qwen3.6:35b`, `qwen3.6:27b`) are the right choice for agentic tasks. They handle multi-turn conversations, multi-constraint instructions, and tool use reliably.
+- **Coding-tuned models** can exhibit **goal fixation** — continuing to pursue a sub-task at the expense of the original objective. The Comis scaffold (GoalAnchor, verification critic, compact-secure prompt) is designed to detect and correct this behavior, but general models avoid the problem in the first place. The v2.14 small-model milestone originated from a snake game incident involving a coding-tuned model; general-purpose qwen3.6 reproduces this scenario far less.
+- The Comis scaffold is designed for general models. It is not a substitute for choosing the right model class.
+
+For local model runtime selection (MLX vs. GGUF), see the [Environment Variables](/reference/environment-variables#local-model-runtime-selection-mlx-vs-gguf) reference.
 
 ## UX Features
 
