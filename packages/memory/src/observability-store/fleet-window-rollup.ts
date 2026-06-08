@@ -87,12 +87,22 @@ export function reduceFleetWindow(
     breakerTripTotal += r.breakerTripCount;
     costUsd += r.costUsd;
     for (const [kind, n] of Object.entries(r.topErrorKinds)) {
-      mergedKinds.set(kind, (mergedKinds.get(kind) ?? 0) + n);
+      // Defensive coercion: the reducer is a public export reachable directly by
+      // the Phase-161 handler, so it must not assume its caller validated. A
+      // non-finite/non-number count contributes 0 rather than producing "05"
+      // (string concat) or NaN — keeping the `number` output contract honest
+      // regardless of caller hygiene (mirrors the A3 reader's Number.isFinite).
+      const inc = typeof n === "number" && Number.isFinite(n) ? n : 0;
+      mergedKinds.set(kind, (mergedKinds.get(kind) ?? 0) + inc);
     }
     for (const [tool, s] of Object.entries(r.toolStats)) {
       const acc = mergedTools.get(tool) ?? { ok: 0, failed: 0 };
-      acc.ok += s.ok;
-      acc.failed += s.failed;
+      // Same input-trust gap as the kinds above: a malformed `{ok,failed}` (a
+      // bare number, an undefined field) contributes finite zeros, never NaN.
+      const ok = typeof s?.ok === "number" && Number.isFinite(s.ok) ? s.ok : 0;
+      const failed = typeof s?.failed === "number" && Number.isFinite(s.failed) ? s.failed : 0;
+      acc.ok += ok;
+      acc.failed += failed;
       mergedTools.set(tool, acc);
     }
   }
@@ -111,7 +121,15 @@ export function reduceFleetWindow(
     degradedRate: sessionCount === 0 ? 0 : degradedCount / sessionCount,
     topErrorKinds,
     breakerTripTotal,
-    toolStats: Object.fromEntries(mergedTools),
+    // Deterministic key enumeration: sort merged tool names ASC before
+    // re-objectifying so the output is byte-stable across input permutations
+    // (a `Map` preserves insertion = input-traversal order). The summed VALUES
+    // are already order-independent; this pins the KEY order for any consumer
+    // that serializes the rollup (cache key / wire digest / snapshot) — the same
+    // discipline already applied to topErrorKinds and the A3 reader's histograms.
+    toolStats: Object.fromEntries(
+      [...mergedTools.entries()].sort((a, b) => a[0].localeCompare(b[0])),
+    ),
     costUsd,
   };
 }
