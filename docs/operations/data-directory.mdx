@@ -106,6 +106,8 @@ The main SQLite database. It stores conversation sessions, long-term memory entr
 
 The observability rows live in the `obs_diagnostics` table, grouped by a `category` label. Among them, `model_health` is a one-shot diagnostic recorded once per boot that captures the daemon's load-level recall signals — whether an embedding provider is available, whether the GGUF reranker loaded, and whether the reranker model is present on disk. It carries booleans only (no model paths, no secrets) and lets the fleet health lens explain why recall was degraded on a given daemon without grepping the log.
 
+`config_posture` is likewise a one-shot snapshot recorded once per boot, capturing the daemon's security posture — whether the gateway is running without TLS, the per-family **counts** of stranded secrets (credentials left in the inactive store that the active `security.storage` mode cannot reach), and a canary-fallback aggregate (how many agents fall back to deterministic canary tokens because `CANARY_SECRET` is unset). It records counts and closed labels only — **never a secret value** — so the fleet health lens can surface a TLS-off / stranded-secret / canary posture without opening the log.
+
 **Written by:** the daemon continuously during operation.
 **Safe to delete?** Deleting it erases all conversation history, stored memories, pending deliveries, and cached embeddings. The daemon will recreate an empty database on next start, but you lose all data permanently.
 

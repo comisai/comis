@@ -186,6 +186,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
+import { buildConfigPostureRecord } from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -2824,7 +2825,22 @@ async function bootShutdown(
     alertBudgetPolicy: container.config.observability?.alertBudget,
     eventBus: container.eventBus,
   });
-  checkStorageModeConsistency({ logger: daemonLogger, activeMode: boot.container.config.security.storage, dataDir: boot.dataDir, secretsDb: boot.secretsDb });
+  const posture = checkStorageModeConsistency({ logger: daemonLogger, activeMode: boot.container.config.security.storage, dataDir: boot.dataDir, secretsDb: boot.secretsDb });
+
+  // 9.2. I3 — config-posture SNAPSHOT (one-shot boot record, NOT an event).
+  // Records the three log-file-only posture FINDINGS — TLS-off, stranded-secret
+  // COUNTS, canary-fallback — as a single config_posture obs_diagnostics row so
+  // the fleet lens can query a daemon's posture without grepping daemon.log.
+  // TLS-off is RECOMPUTED from the gateway config (the source of truth, in
+  // scope) — the gateway WARN is NOT intercepted cross-package. The canary
+  // aggregate is a daemon-global proxy: CANARY_SECRET is an env-level secret, so
+  // when it is absent EVERY configured agent falls back to deterministic
+  // derivation (setup-agents-runtime.ts) — count them; 0 when it is set. This
+  // uses only inputs already in scope (KISS — no deep per-agent plumbing).
+  const tlsOff = (boot.container.config.gateway.tls === undefined) && (boot.container.config.gateway.allowInsecureHttp !== true);
+  const allowInsecureHttp = boot.container.config.gateway.allowInsecureHttp === true;
+  const canaryFallbackAgents = boot.env.get("CANARY_SECRET") ? 0 : Object.keys(agents ?? {}).length;
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackAgents }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.
