@@ -18,10 +18,10 @@ import {
   AgentAggDbRowSchema,
   SessionAggDbRowSchema,
   HourlyBucketDbRowSchema,
-  SessionSummaryRollupDbRowSchema,
   DeliveryStatsDbRowSchema,
   SystemPromptReportDbRowSchema,
 } from "../row-schemas.js";
+import { z } from "zod";
 import { createRowMapper } from "../row-mapper.js";
 import type { CacheStatsQueriesSlice } from "./cache-stats-types.js";
 
@@ -51,6 +51,20 @@ export const providerAggMapper = createRowMapper(ProviderAggDbRowSchema);
 export const agentAggMapper = createRowMapper(AgentAggDbRowSchema);
 export const sessionAggMapper = createRowMapper(SessionAggDbRowSchema);
 export const hourlyBucketMapper = createRowMapper(HourlyBucketDbRowSchema);
+/**
+ * Schema for the per-session GROUP-BY result of `aggregateSessionsInWindow`
+ * (A1, Phase 159) over `obs_diagnostics` `category='session_summary'`. The
+ * health fields live INSIDE the `details` JSON string (parsed in the query
+ * layer), so this row carries only the grouping key + the latest timestamp +
+ * the raw `details`/`severity`. Distinct from `DiagnosticDbRowSchema` — strict
+ * mode rejects the extra `last_ts` / missing `id`,`category`,… columns.
+ */
+export const SessionSummaryRollupDbRowSchema = z.strictObject({
+  session_key: z.string(),
+  last_ts: z.number(),
+  details: z.string(),
+  severity: z.string(),
+});
 /** Per-session GROUP-BY rollup row mapper (A1 `aggregateSessionsInWindow`). */
 export const sessionSummaryRollupMapper = createRowMapper(SessionSummaryRollupDbRowSchema);
 export const deliveryStatsMapper = createRowMapper(DeliveryStatsDbRowSchema);

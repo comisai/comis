@@ -2371,14 +2371,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DiagnosticDbRowSchema",
       "DiagnosticDbRowFromSchema",
       // Per-session GROUP-BY rollup row schema (v2.15 A1, Phase 159-01).
-      // Consumed intra-package by observability-store-types.ts via
-      // createRowMapper(SessionSummaryRollupDbRowSchema) — an intra-file value
-      // reference, NOT a cross-file import — and barrel-surfaced through
-      // `export *` from row-schemas.js, so the export-graph walker counts it as an
-      // orphan. Tracked here like the sibling obs *DbRowSchema entries above (the
-      // checker counts cross-package barrel consumers only). No *DbRowFromSchema
-      // inferred type is exported — SessionSummaryRollup is the camelCase domain
-      // type (in observability-store-types.ts).
+      // Declared and exported from observability-store-types.ts (co-located with
+      // its sole consumer, sessionSummaryRollupMapper) — a same-file value
+      // reference, so it has no cross-file importer and is barrel-surfaced
+      // package-publicly via observability-store-types.ts, making the export-graph
+      // walker count it as an orphan. Tracked here like the sibling obs
+      // *DbRowSchema entries above (the checker counts cross-package barrel
+      // consumers only). No *DbRowFromSchema inferred type is exported —
+      // SessionSummaryRollup is the camelCase domain type (in
+      // observability-store-types.ts).
       "SessionSummaryRollupDbRowSchema",
       "ChannelSnapshotDbRowSchema",
       "ChannelSnapshotDbRowFromSchema",
