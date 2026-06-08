@@ -2005,10 +2005,12 @@ LLM provider configuration. API keys are referenced by SecretManager key name, n
 > **v2.15 capability-gated defaults:** The v2.14 reliability scaffold (GoalAnchor, relevance floor,
 > cost-gated critic) is now **default-ON for `small`/`nano` agents** — no per-agent opt-in required.
 > Phase 159 adds two capacity defaults for `small`/`nano`: `bootstrap.maxChars` drops to `3_500`
-> chars per file (SD6), and the active-tool ceiling is set to 40 tools (SD7; overflow tools stay
-> reachable via `discover_tools`). `frontier`/`mid` behavior is **byte-identical** to v2.14 (the
-> non-regression guarantee). The security guarantee holds: a weaker model class cannot lower the
-> platform's security posture; the scaffolding defaults reinforce it.
+> chars per file (SD6), and the active-tool ceiling is set to 24 tools (SD7; overflow tools stay
+> reachable via `discover_tools`). Phase 160 adds a total bootstrap budget (5,000 chars sum-cap
+> for small/nano), capability-gated graph concurrency (small/nano→2, frontier/mid→4), and a
+> corrected bootstrap-budget warn threshold. `frontier`/`mid` behavior is **byte-identical** to
+> v2.14 (the non-regression guarantee). The security guarantee holds: a weaker model class cannot
+> lower the platform's security posture; the scaffolding defaults reinforce it.
 
 **UserModel (providers.entries.{name}.models[])**
 
@@ -2109,9 +2111,9 @@ agents:
       baseFloor: 0.3         # Memory relevance floor; capability default is 0.15 for small/nano (0 = sentinel)
 ```
 
-### Capability-gated capacity defaults (Phase 159 — D2)
+### Capability-gated capacity defaults (Phase 159/160 — D2/D3)
 
-These defaults fire only for `capabilityClass` in `{small, nano}` (e.g., any Ollama qwen3.6 deployment). The 2026-06-08 re-verification measured ~32K input tokens per qwen3.6 turn — 98 active tool schemas and a 14.4K-char bootstrap file drove a 495% bootstrap warning. Phase 159 adds two capability-gated defaults to address this without changing `frontier`/`mid` behavior.
+These defaults fire only for `capabilityClass` in `{small, nano}` (e.g., any Ollama qwen3.6 deployment). The 2026-06-08 re-verification measured ~32K input tokens per qwen3.6 turn — 98 active tool schemas and a 14.4K-char bootstrap file drove a 495% bootstrap warning. Phase 159 adds two capability-gated defaults to address this without changing `frontier`/`mid` behavior. Phase 160 adds a total bootstrap budget, capability-gated graph concurrency, and a corrected bootstrap-budget warn threshold.
 
 #### bootstrap.maxChars capability default (SD6)
 
@@ -2138,7 +2140,7 @@ agents:
 
 #### Active-tool ceiling (SD7)
 
-For `capabilityClass: small`, at most **40 tool schemas** are active in each prompt request. The cold long-tail (tools not in the core set and not recently used) is deferred.
+For `capabilityClass: small`, at most **24 tool schemas** are active in each prompt request. The cold long-tail (tools not in the core set and not recently used) is deferred.
 
 <Note>
   **No capability is removed.** All deferred tools remain fully callable via the `discover_tools` mechanism. The model can search for and invoke any deferred tool in the same turn. This ceiling is a **prompt-size control**, not a security control — it does not restrict which tools the agent is authorized to use.
@@ -2148,18 +2150,84 @@ The ceiling applies only to `capabilityClass: small`. Key properties:
 
 - **CORE_TOOLS are never deferred.** The following tools are always kept active regardless of the ceiling: `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process`, `message`, `memory_search`, `memory_store`, `memory_get`, `web_search`, `web_fetch`.
 - **Recently-used tools are never deferred.** Any tool the agent invoked in recent turns is preserved in the active set.
-- **`nano` class is not affected.** Nano already uses aggressive CORE_TOOLS-only deferral; the 40-tool ceiling does not change its behavior.
+- **`nano` class is not affected.** Nano already uses aggressive CORE_TOOLS-only deferral; the 24-tool ceiling does not change its behavior.
 - **`frontier`/`mid` classes are not affected.** No ceiling applies — behavior is unchanged from v2.14.
+- **Savings:** 15 CORE_TOOLS + 9 discretionary slots at 24 active tools vs. the previous 40 saves approximately 750–1,250 tokens per turn (~300 chars per tool schema average).
+
+#### Total bootstrap budget (Phase 160 — F2)
+
+For `capabilityClass` in `{small, nano}`, the **total bootstrap budget** caps the sum of all bootstrap file content at **5,000 chars**, applied as a second pass after the per-file `3_500`-char cap (SD6).
+
+Key properties:
+
+- **Sum-cap, not per-file.** If all workspace files together would exceed 5,000 chars after per-file truncation, each file is proportionally scaled down to fit the total budget.
+- **Per-file floor.** Each file retains at least **300 chars**, regardless of how many files compete for the budget. No file is silenced entirely.
+- **Proportional truncation.** Each file's allocation is `(file_chars / total_chars) * totalMaxChars`, floored at 300. Content is taken from the beginning of the file (direct slice — not head+tail; the per-file SD6 pass already applied head+tail truncation).
+- **`frontier`/`mid` unaffected.** No total cap is applied; behavior is byte-identical to v2.14.
+- **Config override.** Explicit `agents.<id>.bootstrap.maxChars` always takes precedence over both the per-file and total-budget capability defaults.
+
+Typical result: with the default workspace files (AGENTS.md, SOUL, IDENTITY, USER, ROLE, TOOLS, HEARTBEAT, BOOT), the total bootstrap fits within 5,000 chars after per-file truncation — the proportional pass is a safety net, not the primary reducer.
+
+To override the total budget for a single agent:
+
+```yaml
+agents:
+  my-agent:
+    bootstrap:
+      maxChars: 8000   # overrides the small/nano per-file default (3_500)
+      # Note: there is no explicit totalMaxChars config key — the total budget is
+      # capability-derived (5_000 for small/nano). Override the per-file limit instead,
+      # or use capabilityClassOverride: frontier to remove both caps entirely.
+```
+
+#### Capability-gated graph concurrency (Phase 160 — F3)
+
+For `capabilityClass` in `{small, nano}`, the graph coordinator's `maxConcurrency` defaults to **2** (down from 4). For `frontier`/`mid`, the default remains **4** (byte-identical to v2.14).
+
+**Why lower concurrency for small/nano?** Local inference on Ollama (or any local GPU-bound runtime) serializes model loads in practice. With 4 concurrent sub-agents, all four issue simultaneous inference requests; the GPU queues them, producing peak saturation that can cause 50–80% of sub-agents to time out on longer prompts. Lowering the default to 2 staggers the load while keeping two in-flight at all times.
+
+To override the default for your deployment:
+
+```yaml
+security:
+  agentToAgent:
+    graphMaxConcurrency: 4   # restore the frontier default, or set any value >= 1
+```
+
+The operator override always takes precedence over the capability-class default.
+
+**Prompt timeout for local Ollama.** The default `promptTimeoutMs` (180,000 ms — 3 minutes) is sized for cloud APIs that typically respond in under 60 seconds. A local model with slow inference (e.g., qwen3.6 on a loaded GPU with multiple concurrent agents) can exceed this. For local deployments, set a longer timeout:
+
+```yaml
+agents:
+  my-agent:
+    promptTimeout:
+      promptTimeoutMs: 300000   # 5 minutes — recommended for local qwen3.6 under load
+```
+
+**Fallback-model recommendation.** For deep multi-agent pipelines on local hardware, configure a `models.failoverModel` pointing to a lighter local model (e.g., a faster quantized variant) that can handle sub-agent calls when the primary model is loaded. This provides graceful degradation rather than timeout cascades.
+
+#### Bootstrap-budget warn re-base (Phase 160 — F4)
+
+The `Bootstrap content exceeds budget threshold` WARN fires when bootstrap files exceed **40%** of the estimated total prompt (system prompt chars + tool schema definition chars).
+
+**Old behavior (pre-Phase 160):** The threshold was 85% of the system prompt character count alone. With the compact-secure prompt (~2,800 chars), this meant bootstrap content over ~2,380 chars triggered the warning — which fired on every small-model turn even with a normal workspace (false-alarm rate: ~100%).
+
+**New behavior:** The denominator is `systemPromptChars + toolDefOverheadChars` (the same formula used by `executor-tool-assembly.ts` for the context-budget breakdown). With a compact-secure system prompt (~2,800 chars) and 24 active tool schemas (~12,000 chars overhead), the denominator is ~14,800 chars. With the Phase 160 F2 total bootstrap budget of 5,000 chars, the ratio is ~34% — below the 40% threshold, so no warning fires under normal conditions.
+
+**When does the warn still fire?** If an operator adds large custom workspace files that push the total bootstrap above 5,920 chars (40% of ~14,800), the warn fires correctly — signaling that bootstrap content is crowding out the system prompt and tool schemas in a meaningful way.
 
 #### Summary
 
-| Class | bootstrap.maxChars | Active-tool ceiling | discover_tools reachability |
-|-------|--------------------|---------------------|-----------------------------|
-| `frontier` / `mid` | `20_000` (unchanged) | No ceiling | N/A |
-| `small` | `3_500` (capability default) | 40 tools active | All deferred tools callable |
-| `nano` | `3_500` (capability default) | CORE_TOOLS-only (existing) | All deferred tools callable |
+| Class | bootstrap.maxChars (per-file) | bootstrap total budget | Active-tool ceiling | Graph maxConcurrency |
+|-------|-------------------------------|------------------------|---------------------|----------------------|
+| `frontier` / `mid` | `20_000` (unchanged) | No total cap | No ceiling | 4 |
+| `small` | `3_500` (capability default) | `5_000` chars sum-cap | 24 tools active | 2 |
+| `nano` | `3_500` (capability default) | `5_000` chars sum-cap | CORE_TOOLS-only (existing) | 2 |
 
-> **Relationship to Phase 158 D1 (reliability defaults):** The GoalAnchor, `rag.baseFloor`, and verification critic defaults from Phase 158 follow the same precedence model — explicit per-agent config > capability default > off. The D2 capacity defaults (bootstrap budget, tool ceiling) are additive: all four default-on behaviors activate together for `small`/`nano` agents with no per-agent config required.
+All capability defaults follow the same precedence: **explicit per-agent config > capability default**. The D2/D3 capacity defaults are additive: all behaviors activate together for `small`/`nano` agents with no per-agent config required.
+
+> **Relationship to Phase 158 D1 (reliability defaults):** The GoalAnchor, `rag.baseFloor`, and verification critic defaults from Phase 158 follow the same precedence model — explicit per-agent config > capability default > off. The D2/D3 capacity defaults (bootstrap budget, tool ceiling, graph concurrency) are additive: all default-on behaviors activate together for `small`/`nano` agents with no per-agent config required.
 
 ### General vs. Coding-Tuned Model Guidance
 
