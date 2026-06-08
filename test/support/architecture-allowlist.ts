@@ -407,6 +407,23 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "Memory context store (853L re-measured; -1L drift from prior measurement); grew from 769→854 lines during mapper retargeting (17 inline mapper factories + 7 named mappers added at module top to honor row-mapper style). Deferred pending dedicated audit of the inline mapper factory pattern — a focused follow-up will split it after the mapper-pattern audit completes (default-defer).",
     removedIn: "deferred",
   },
+  // memory DB-schema core (2 files) — DDL + zod row schemas that grow
+  // monotonically as the observability store gains tables/columns; v2.15
+  // Phase 159 (A1 cross-session aggregate) pushed both past the 800L cap and
+  // Phase 160 (new health_signal category) extends them further, so a trim
+  // would immediately re-trip. Structural split deferred to a schema-refactor wave.
+  {
+    file: "packages/memory/src/row-schemas.ts",
+    lines: 813,
+    reason: "Core memory DB-schema-definition file — zod DB-row schemas (one per obs_* / system_prompt_reports / context-store table) paired 1:1 with the ./types.ts interfaces; grows monotonically as the observability store gains tables/columns. v2.15 Phase 159 added SessionSummaryRollupDbRowSchema (A1 cross-session aggregate) crossing the 800L cap; Phase 160 (health_signal category) extends it further, so a trim would immediately re-trip. Structural split deferred to a schema-refactor wave.",
+    removedIn: "deferred",
+  },
+  {
+    file: "packages/memory/src/schema.ts",
+    lines: 801,
+    reason: "Core memory DB-schema-definition file — DDL (CREATE TABLE / CREATE INDEX for every obs_* + context-store + system_prompt_reports table) that grows monotonically as the observability store gains tables/columns/indexes. v2.15 Phase 159 added idx_obs_diag_session_cat (A1 cross-session aggregate) crossing the 800L cap; Phase 160 (health_signal category) extends it further, so a trim would immediately re-trip. Structural split deferred to a schema-refactor wave.",
+    removedIn: "deferred",
+  },
 ] as const;
 export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   // ============================================================================
