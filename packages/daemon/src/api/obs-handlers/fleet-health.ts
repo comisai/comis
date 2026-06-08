@@ -284,7 +284,10 @@ function boundFindings(findings: readonly Finding[], truncations: TruncationEntr
  * @param deps.dataDir - the data dir for the A3 session-index reader.
  * @param deps.clock - the injected ClockPort. The ONE clock read (for `sinceMs`);
  *   NEVER `Date.now()` (the globals gate).
- * @param sinceHours - the window size (the caller applies the 24h default).
+ * @param sinceHours - the window size (the caller applies the 24h default). A
+ *   non-finite or non-positive value is clamped to {@link DEFAULT_WINDOW_HOURS}
+ *   here (IN-01 defense-in-depth) so a contract-bypassing caller cannot produce
+ *   a `-Infinity`/`NaN` window bound.
  * @param opts.includeSynthetic - admin opt-in to include synthetic/test sessions.
  */
 export async function assembleFleetHealthReport(
@@ -292,12 +295,21 @@ export async function assembleFleetHealthReport(
   sinceHours: number,
   opts: { includeSynthetic?: boolean } = {},
 ): Promise<FleetHealthReport> {
+  // IN-01 guard (defense-in-depth): the contract rejects a non-finite/non-positive
+  // sinceHours at the parse boundary, but the assembler is ALSO reachable directly
+  // (the MCP closure) and a non-finite value here would yield sinceMs = -Infinity
+  // / NaN — a `-Infinity` SQL lower bound and a `RangeError` in the A3 day-key
+  // derivation. Clamp anything non-finite or non-positive to the default window
+  // so the assembler is robust regardless of the caller's validation.
+  const windowHours =
+    Number.isFinite(sinceHours) && sinceHours > 0 ? sinceHours : DEFAULT_WINDOW_HOURS;
+
   // The ONE clock read — captured ONCE and threaded through EVERY windowed
   // source so the whole report is deterministic w.r.t. the injected clock.
-  // `sinceHours -> sinceMs` (window start) + `nowMs` (window upper bound, passed
+  // `windowHours -> sinceMs` (window start) + `nowMs` (window upper bound, passed
   // to the A3 reader). NO Date.now()/new Date() anywhere downstream (WR-01).
   const nowMs = deps.clock.now();
-  const sinceMs = nowMs - sinceHours * MS_PER_HOUR;
+  const sinceMs = nowMs - windowHours * MS_PER_HOUR;
 
   // A1 + A2 — per-session rollups -> cross-session fleet rollup. `rows` is
   // `SessionSummaryRollup[]` (inferred from the store method's return type; the
@@ -343,7 +355,7 @@ export async function assembleFleetHealthReport(
 
   return {
     schemaVersion: 1,
-    windowHours: sinceHours,
+    windowHours,
     sessions: { total: fleet.sessionCount, degraded, degradedRate: fleet.degradedRate },
     topErrorKinds,
     breakerTripTotal: fleet.breakerTripTotal,

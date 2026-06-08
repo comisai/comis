@@ -334,6 +334,35 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.likelyRootCause).toBeNull();
   });
 
+  it("GUARDS a non-finite sinceHours: Infinity is clamped to the default window, not a -Infinity bound (IN-01)", async () => {
+    // IN-01 defense-in-depth: the contract rejects a non-finite sinceHours at
+    // the parse boundary, but the assembler is also reachable directly (the MCP
+    // closure) and must not turn a non-finite sinceHours into windowHours:
+    // Infinity / sinceMs: -Infinity. The guard clamps to the default window.
+    // Pre-fix windowHours is Infinity (RED).
+    const now = systemNowMs();
+    const dataDir = makeDataDirWithActivity();
+    const report = await assembleFleetHealthReport(
+      { obsStore: makeStore(), dataDir, clock: createFakeClock(now) },
+      Number.POSITIVE_INFINITY,
+    );
+
+    // The window is clamped to the finite default — never Infinity.
+    expect(Number.isFinite(report.windowHours)).toBe(true);
+    expect(report.windowHours).toBe(24);
+  });
+
+  it("GUARDS a NaN sinceHours: clamps to the default window rather than producing NaN bounds (IN-01)", async () => {
+    const now = systemNowMs();
+    const dataDir = makeDataDirWithActivity();
+    const report = await assembleFleetHealthReport(
+      { obsStore: makeStore(), dataDir, clock: createFakeClock(now) },
+      Number.NaN,
+    );
+    expect(Number.isFinite(report.windowHours)).toBe(true);
+    expect(report.windowHours).toBe(24);
+  });
+
   it("HEURISTIC: a high degraded rate yields a deterministic likelyRootCause verdict", async () => {
     const now = systemNowMs();
     const store = makeStore();
