@@ -369,9 +369,17 @@ See [Resilience](/agents/resilience) for how prompt timeouts fit into the full r
 | `maxContextChars` | `number` | `4000` | Maximum characters of memory context injected |
 | `minScore` | `number` | `0.1` | Minimum RRF score threshold (0-1) |
 | `includeTrustLevels` | `string[]` | `["system", "learned"]` | Trust levels to include in retrieval |
-| `baseFloor` | `number` (0–1) | `0` | Minimum BASE relevance score (pre-boost) for memory injection. Boosts cannot resurrect a memory whose base score falls below this threshold. Gates on `ScoreBreakdown.base` (un-boosted cosine/RRF score), applied after `scoreWithBreakdown()`. Default `0` = no floor (exact prior behavior). |
+| `baseFloor` | `number` (0–1) | `0` for frontier/mid; `0.15` for small/nano (capability-gated) | Minimum BASE relevance score (pre-boost) for memory injection. Boosts cannot resurrect a memory whose base score falls below this threshold. Gates on `ScoreBreakdown.base` (un-boosted cosine/RRF score), applied after `scoreWithBreakdown()`. Setting `baseFloor: 0` is the unset sentinel — the capability default applies (0.15 for small/nano). Any value greater than 0 is treated as explicit and wins over the capability default. |
 
 > **Security (S6):** A weaker ModelProfile cannot lower this below the operator-set value. `FROZEN_TRUST_PATHS` and `MemoryWriteValidator` remain enforced for all `capabilityClass`es regardless of this setting.
+
+> **Capability-gated default (Phase 158):** For `small`/`nano` agents, `rag.baseFloor` defaults
+> to `0.15` — dropping memories with a base relevance score below 0.15 (the Phase 153 poison
+> mitigation). For `frontier`/`mid`, the default remains `0` (no filter). Setting
+> `rag.baseFloor: 0` explicitly is treated the same as "unset" — the capability default applies.
+> To disable the relevance floor on a small/nano agent, set
+> `providers.<id>.capabilityClass: "frontier"` to override the capability class, or set
+> `rag.baseFloor: 0.01` (any value greater than 0 is treated as explicit and wins over the capability default).
 
 **Cross-encoder rerank (agents.*.rag.rerank)** — opt-in (default off)
 
@@ -648,8 +656,14 @@ Injects the current execution objective and uncompleted step checklist at the co
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `agents.<id>.goalAnchor.enabled` | `boolean` | `false` | Enable GoalAnchor tail injection. When `true` and `scaffoldLevel=max` (small/nano), the execution objective and uncompleted step checklist is tail-appended each turn. Default `false` = opt-in, behavior-neutral for frontier/mid. |
+| `agents.<id>.goalAnchor.enabled` | `boolean` | automatic for small/nano (no config needed); false for frontier/mid | Enable GoalAnchor tail injection. When `true` (or capability-default-on for small/nano) and `scaffoldLevel=max` (small/nano), the execution objective and uncompleted step checklist is tail-appended each turn. Default `false` for frontier/mid = opt-in, behavior-neutral. |
 | `agents.<id>.goalAnchor.maxChars` | `number` (100–2000) | `500` | Maximum characters for the injected GoalAnchor block. ~5–10 steps at ~50 chars/step. |
+
+> **Capability-gated default (Phase 158):** For `capabilityClass` in `{small, nano}` (e.g. any Ollama
+> qwen3.6 deployment), `goalAnchor` is **default-ON** — no `enabled: true` required. Set
+> `agents.<id>.goalAnchor.enabled: false` explicitly to disable it on a small/nano agent.
+> For `frontier`/`mid` agents, behavior is unchanged (default off). Precedence:
+> **explicit per-agent config > capability default > off**.
 
 #### Verification Critic (agents.\*.verification)
 
@@ -657,10 +671,20 @@ A pre-delivery critic that checks the terminal response against the GoalAnchor c
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `agents.<id>.verification.enabled` | `boolean` | `false` | Enable pre-delivery verification critic. Fires only when a completion-claiming response meets `minResponseChars`. Default `false` = opt-in. |
+| `agents.<id>.verification.enabled` | `boolean` | cost-gated automatic for small/nano when a distinct cheap critic is configured; false otherwise | Enable pre-delivery verification critic. Fires only when a completion-claiming response meets `minResponseChars`. Default `false` for frontier/mid and for small/nano when no distinct cheap critic model is configured = opt-in. |
 | `agents.<id>.verification.minResponseChars` | `number` (50–2000) | `200` | Minimum response length in characters before the critic is invoked. Prevents firing on short acks, clarifying questions, and non-completion replies. |
 
 > **Security (S2):** The critic treats the output-under-review as untrusted (`wrapExternalContent`), inherits the safety core, embeds the canary, fails closed (uncertain → not-verified, never auto-approve), and re-validates any implied tool calls through the same exec gates. Use `agents.<id>.operationModels.verification` to run the critic on a cheaper or faster model.
+
+> **Capability-gated default + cost-gate (Phase 158):** For `capabilityClass` in `{small, nano}`,
+> `verification` is **default-ON** — but **only when `agents.<id>.operationModels.verification`
+> resolves to a distinct cheaper model** (i.e. `operationModels.verification.model` is explicitly
+> configured to a different, faster model). If no distinct critic model is configured, the default
+> stays **OFF** — the critic never silently doubles local-CPU inference latency. Set
+> `agents.<id>.verification.enabled: false` explicitly to force-off the critic on a small/nano
+> agent even when a cheap critic is configured. Set `agents.<id>.verification.enabled: true` to
+> force-on the critic regardless of class (including frontier/mid, if a critic model is configured).
+> Precedence: **explicit per-agent config > capability default > off**.
 
 #### Honesty Guardrail (agents.\*.honesty)
 
@@ -1978,6 +2002,12 @@ LLM provider configuration. API keys are referenced by SecretManager key name, n
 | `supportsStructuredOutput` | `boolean` | `false` | When `true`, tool-call repair uses constrained decoding (e.g., Ollama's `/api/generate` `format` param) for near-miss tool JSON. When `false`, lenient parse-and-repair is used. |
 | `capabilityClass` | `"frontier"` \| `"mid"` \| `"small"` \| `"nano"` | _(resolver heuristic)_ | Explicit capability-class override for all models on this provider. Overrides the default resolver heuristic (which keys off model context-window and provider-family). Forces `scaffoldLevel` (GoalAnchor, critic) and `securityLevel` (lockdown intensity). Use `"small"` for an Ollama provider running qwen3.6. Setting `"frontier"` for a weak model silences scaffolding — not recommended for production. |
 
+> **v2.15 capability-gated defaults:** The v2.14 reliability scaffold (GoalAnchor, relevance floor,
+> cost-gated critic) is now **default-ON for `small`/`nano` agents** — no per-agent opt-in required.
+> `frontier`/`mid` behavior is **byte-identical** to v2.14 (the non-regression guarantee).
+> The security guarantee holds: a weaker model class cannot lower the platform's security posture;
+> the scaffolding defaults reinforce it.
+
 **UserModel (providers.entries.{name}.models[])**
 
 | Key | Type | Default | Description |
@@ -2064,15 +2094,17 @@ agents:
         enabled: true        # Compact-secure prompt (retains full safety core)
         targetTokens: 3000
     goalAnchor:
-      enabled: true          # Tail-inject objective checklist each turn (scaffoldLevel=max)
+      # enabled: true is the capability default for small/nano — omit to rely on capability default
+      enabled: true          # Explicit: tail-inject objective checklist each turn (scaffoldLevel=max)
       maxChars: 500
     verification:
-      enabled: true          # Pre-delivery critic (honest unmet-list on failure)
+      # enabled: true is the capability default for small/nano when operationModels.verification is set
+      enabled: true          # Explicit force-on: pre-delivery critic (honest unmet-list on failure)
       minResponseChars: 200
     honesty:
       maxCriticRetries: 2
     rag:
-      baseFloor: 0.3         # Memory relevance floor (0 = no floor, the default)
+      baseFloor: 0.3         # Memory relevance floor; capability default is 0.15 for small/nano (0 = sentinel)
 ```
 
 ### General vs. Coding-Tuned Model Guidance
