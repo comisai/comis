@@ -49,6 +49,27 @@ const SMALL_NANO_DEFAULT_BASE_FLOOR = 0.15 as const;
  */
 const KEYLESS_CRITIC_PROVIDERS = new Set<string>(["ollama", "lm-studio"]);
 
+/** SD6: per-file bootstrap.maxChars default for small/nano.
+ *  At 3_500, AGENTS.md (6,780 chars) truncates to head(2,450)+tail(700);
+ *  all other workspace files (≤2,844 chars) are included whole.
+ *  Rationale: tames the observed 495% bootstrap-budget warning without truncating
+ *  identity files (SOUL/IDENTITY/USER/ROLE/TOOLS/HEARTBEAT/BOOT all under 3,500). */
+const SMALL_NANO_DEFAULT_BOOTSTRAP_MAX_CHARS = 3_500 as const;
+
+/** The schema .default() value for bootstrap.maxChars (BootstrapConfigSchema.default(20_000)).
+ *  Serves as the "unset" sentinel: an operator who has NOT set bootstrap.maxChars in config
+ *  receives exactly 20_000 from the parsed PerAgentConfig.
+ *  Detection: configuredMaxChars === BOOTSTRAP_MAX_CHARS_SENTINEL → apply capability default.
+ *  NOTE: an operator who explicitly sets bootstrap.maxChars:20000 also triggers the sentinel;
+ *  document in D2 that to force 20_000 on a small model, use capabilityClassOverride:"frontier". */
+const BOOTSTRAP_MAX_CHARS_SENTINEL = 20_000 as const;
+
+/** SD7: active-tool ceiling for the `small` capability class.
+ *  Keeps CORE_TOOLS (~15) + recently-used head-room + warm tools active;
+ *  defers cold long-tail behind discover_tools (no capability removal).
+ *  Range: 30–50 per CONTEXT.md SD7; 40 is the conservative center. */
+const SMALL_DEFAULT_ACTIVE_TOOL_CEILING = 40 as const;
+
 // ---------------------------------------------------------------------------
 // Exported types
 // ---------------------------------------------------------------------------
@@ -101,6 +122,27 @@ export interface ScaffoldDefaults {
    * exposed here — the caller falls back to the agent's (already-keyless) primary.
    */
   criticModel?: { provider: string; modelId: string };
+  /**
+   * SD6: effective bootstrap.maxChars per-file budget.
+   *
+   * small/nano with default 20_000 → SMALL_NANO_DEFAULT_BOOTSTRAP_MAX_CHARS (3_500).
+   * frontier/mid: always 20_000.
+   * Explicit config.bootstrap.maxChars !== BOOTSTRAP_MAX_CHARS_SENTINEL always wins.
+   *
+   * Note: 20_000 is BOTH the schema default AND the "unset" sentinel (bootstrap uses
+   * .default() not .optional()). An operator who explicitly sets maxChars:20000 on a
+   * small model still receives the capability default — document this in D2.
+   */
+  bootstrapMaxChars: number;
+  /**
+   * SD7: effective active-tool ceiling (max tool schemas in the prompt request).
+   *
+   * small: SMALL_DEFAULT_ACTIVE_TOOL_CEILING (40). nano/frontier/mid: undefined.
+   * nano already has its own aggressive deferral path (CORE_TOOLS-only, ~15 active);
+   * a ceiling on top would be a no-op.
+   * Ceiling is enforced in applyToolDeferral via DeferralContext.activeToolCeiling.
+   */
+  activeToolCeiling: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,5 +260,30 @@ export function resolveScaffoldDefaults(
       ? { provider: verificationResolution.provider, modelId: verificationResolution.modelId }
       : undefined;
 
-  return { goalAnchorEnabled, baseFloor, verificationEnabled, criticModel };
+  // -------------------------------------------------------------------------
+  // SD6: bootstrap.maxChars capability default.
+  // bootstrap uses .default() not .optional() — config.bootstrap.maxChars is always a number.
+  // The "unset" detection is === BOOTSTRAP_MAX_CHARS_SENTINEL (not ?? undefined).
+  // See RESEARCH.md Pitfall 1 and the SD2 === 0 sentinel analog in this file.
+  // -------------------------------------------------------------------------
+  const configuredMaxChars = config.bootstrap?.maxChars ?? BOOTSTRAP_MAX_CHARS_SENTINEL;
+  const bootstrapMaxChars =
+    configuredMaxChars !== BOOTSTRAP_MAX_CHARS_SENTINEL
+      ? configuredMaxChars                              // explicit non-default value wins
+      : isSmallNano
+        ? SMALL_NANO_DEFAULT_BOOTSTRAP_MAX_CHARS        // small/nano capability default
+        : BOOTSTRAP_MAX_CHARS_SENTINEL;                 // frontier/mid: 20_000 (unchanged)
+
+  // -------------------------------------------------------------------------
+  // SD7: active-tool ceiling — ONLY for small class.
+  // nano is excluded: it already has aggressive CORE_TOOLS-only deferral at applyToolDeferral:413.
+  // Adding a ceiling of 40 on top of nano's ~15-active output would be a no-op, and confusing.
+  // frontier/mid: no ceiling (behavior-neutral).
+  // -------------------------------------------------------------------------
+  const activeToolCeiling: number | undefined =
+    modelProfile.capabilityClass === "small"
+      ? SMALL_DEFAULT_ACTIVE_TOOL_CEILING
+      : undefined;
+
+  return { goalAnchorEnabled, baseFloor, verificationEnabled, criticModel, bootstrapMaxChars, activeToolCeiling };
 }
