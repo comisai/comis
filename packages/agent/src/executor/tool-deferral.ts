@@ -90,6 +90,13 @@ export interface DeferralContext {
    *  queries re-ask for loaded MCPs. Must NOT include names that were
    *  deferred -- pass the post-deferral set, not mergedCustomTools. */
   activeToolNames?: ReadonlySet<string>;
+  /** SD7 (Phase 159): capability-class active-tool ceiling.
+   *  When set, the active tool count is capped to this value after all other
+   *  deferral passes. Only CORE_TOOLS and recently-used tools are guaranteed
+   *  active; the cold long-tail is deferred behind discover_tools until the
+   *  active count <= ceiling.
+   *  undefined = no ceiling (nano has its own aggressive path; frontier/mid uncapped). */
+  activeToolCeiling?: number;
 }
 
 /** Entry describing a deferred tool with its display description and original definition. */
@@ -409,11 +416,33 @@ export function applyToolDeferral(
   // flip means the Anthropic/Google branch now matches their behavior.
 
   // Aggressive deferral for nano-class models (behavior-neutral: old modelTier="small" at <=32K maps to capabilityClass="nano")
-  // Phase 151: only "nano" triggers aggressive deferral. "small" class (qwen3.6 27B/256K) policy activates in Phase 152.
+  // Phase 159/SD7: 'small' class ceiling policy implemented via DeferralContext.activeToolCeiling.
+  // nano retains its own aggressive CORE_TOOLS-only path below.
   if (deferralContext.capabilityClass === "nano") {
     for (const t of tools) {
       if (!deferredSet.has(t.name) && !CORE_TOOLS.has(t.name) && !deferralContext.recentlyUsedToolNames.has(t.name)) {
         deferredSet.add(t.name);
+      }
+    }
+  }
+
+  // SD7 (Phase 159): active-tool ceiling for small class (fills Phase-152/SD7 deferred TODO).
+  // Only fires when DeferralContext.activeToolCeiling is set — undefined guard preserves
+  // the Phase-151 regression test (makeContext without activeToolCeiling → skipped).
+  // CRITICAL: mirrors the nano path — CORE_TOOLS and recently-used tools are NEVER deferred.
+  // Deferred tools remain fully reachable via discover_tools (no capability removal).
+  if (deferralContext.activeToolCeiling !== undefined) {
+    const ceiling = deferralContext.activeToolCeiling;
+    const activeCount = tools.filter(t => !deferredSet.has(t.name)).length;
+    if (activeCount > ceiling) {
+      let remaining = activeCount - ceiling; // how many to defer
+      for (const t of tools) {
+        if (remaining <= 0) break;
+        if (deferredSet.has(t.name)) continue;
+        if (CORE_TOOLS.has(t.name)) continue;
+        if (deferralContext.recentlyUsedToolNames.has(t.name)) continue;
+        deferredSet.add(t.name);
+        remaining--;
       }
     }
   }
