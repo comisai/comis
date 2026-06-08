@@ -264,6 +264,77 @@ describe("comis fleet with an RPC error prints error and exits with code 1", () 
   });
 });
 
+describe("comis fleet table view does not render a misleading '$X · 0 tok' line when A3 degrades (WR-03)", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("omits the contradictory '· 0 tok' when costUsd is non-zero but the A3 token read degraded", async () => {
+    // WR-03: cost.costUsd is A1-sourced (session-summary store), cost.totalTokens
+    // is A3-sourced (session-index files). When A3 degrades (daysMissing > 0) but
+    // A1 survives, the report carries a real costUsd alongside totalTokens: 0 —
+    // the prior render printed "$4.2 · 0 tok", which reads as a data bug. The
+    // coverage block is the honest signal. After the fix the render must NOT emit
+    // the "· 0 tok" contradiction and must surface the degraded-coverage note.
+    const degradedReport = {
+      ...FAKE_REPORT,
+      cost: { costUsd: 4.2, totalTokens: 0 },
+      activity: { ...FAKE_REPORT.activity, tokenTotal: 0 },
+      coverage: {
+        sessionSummary: { found: true, rows: 9 },
+        sessionIndex: { daysRead: 0, daysMissing: 2 },
+        billing: { present: true },
+      },
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(degradedReport),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerFleetCommand(program);
+    await program.parseAsync(["node", "test", "fleet"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    // The surviving A1 cost is still shown.
+    expect(output).toContain("$4.2");
+    // The misleading "0 tok" contradiction must NOT be rendered.
+    expect(output).not.toContain("0 tok");
+    // The honest degraded-coverage signal is surfaced instead.
+    expect(output.toLowerCase()).toContain("tokens unavailable");
+  });
+
+  it("still renders the normal '$X · N tok' line when the A3 token read is healthy", async () => {
+    // Coverage clean (or absent) + a real token total → the normal combined line.
+    const client: RpcClient = {
+      call: () => Promise.resolve(FAKE_REPORT), // totalTokens 735800, no coverage
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerFleetCommand(program);
+    await program.parseAsync(["node", "test", "fleet"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("735800 tok");
+    expect(output.toLowerCase()).not.toContain("tokens unavailable");
+  });
+});
+
 describe("registerFleetCommand registers a command named 'fleet', DISTINCT from 'health'", () => {
   it("adds a 'fleet' command (the remote admin RPC) — NOT 'health' (the local doctor)", () => {
     const program = createTestProgram();

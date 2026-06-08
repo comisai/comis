@@ -68,9 +68,25 @@ export function registerFleetCommand(program: Command): void {
           `Sessions:   ${report.sessions.total} (${report.sessions.degraded} degraded, ${(report.sessions.degradedRate * 100).toFixed(0)}%)`,
         );
         info(`Breaker:    ${report.breakerTripTotal} trips`);
-        info(
-          `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok`,
-        );
+        // WR-03: cost.costUsd is A1-sourced (session-summary store); the token
+        // total is A3-sourced (session-index files) and degrades independently.
+        // When A3 degraded (coverage.sessionIndex.daysMissing > 0) the token
+        // figure is an unreliable 0 — printing "$X · 0 tok" alongside a real
+        // cost reads as a data bug. Drop the contradictory "0 tok" and surface
+        // the honest degraded-coverage signal instead; otherwise the normal line.
+        const tokensDegraded =
+          report.cost.totalTokens === 0 &&
+          report.cost.costUsd > 0 &&
+          (report.coverage?.sessionIndex.daysMissing ?? 0) > 0;
+        if (tokensDegraded) {
+          info(
+            `Cost:       $${report.cost.costUsd} (tokens unavailable: ${report.coverage?.sessionIndex.daysMissing ?? 0} day(s) of session-index missing)`,
+          );
+        } else {
+          info(
+            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok`,
+          );
+        }
         for (const f of report.findings) {
           info(`  [${f.code}] ${f.detail} (×${f.count}) → ${f.hint}`);
         }

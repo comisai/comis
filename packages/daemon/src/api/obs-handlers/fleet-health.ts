@@ -348,6 +348,14 @@ export async function assembleFleetHealthReport(
     topErrorKinds,
     breakerTripTotal: fleet.breakerTripTotal,
     toolStats: fleet.toolStats,
+    // WR-03 — cost is CROSS-SOURCE and degrades asymmetrically: `costUsd` is
+    // A1-sourced (the session-summary store) while `totalTokens` is A3-sourced
+    // (`activity.tokenTotal`, the session-index files). So `totalTokens` may be
+    // 0 even when `costUsd` is non-zero whenever A3 reads degrade
+    // (`coverage.sessionIndex.daysMissing > 0`). `cost.totalTokens` is the SAME
+    // figure as `activity.tokenTotal` (single A3 source of truth — no second
+    // aggregate); consumers cross-reference `coverage` before trusting a 0. The
+    // `comis fleet` table render drops the misleading "· 0 tok" in that case.
     cost: { costUsd: fleet.costUsd, totalTokens: activity.tokenTotal },
     activity: {
       activeAgents: activity.activeAgents,
