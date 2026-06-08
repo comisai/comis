@@ -218,8 +218,9 @@ describe("readSessionIndexWindow", () => {
     expect(excluded.turnTotal).toBe(0);
     expect(excluded.tokenTotal).toBe(0);
 
-    // Opt-in: synthetic included — proves the filter is not a no-op.
-    const included = readSessionIndexWindow(dataDir, systemNowMs(), { includeSynthetic: true });
+    // Opt-in: synthetic included — proves the filter is not a no-op. nowMs is
+    // the explicit window upper bound (the 3rd positional arg post-WR-01).
+    const included = readSessionIndexWindow(dataDir, systemNowMs(), systemNowMs(), { includeSynthetic: true });
     expect(included.activeAgents).toEqual(["agent-real", "agent-synthetic"]);
     expect(included.activeChannels).toEqual(["discord:999", "telegram:111"]);
     expect(included.exitReasons).toEqual({ harness: 1 });
@@ -319,6 +320,36 @@ describe("readSessionIndexWindow", () => {
     expect(result.activeAgents).not.toContain("agent-old");
     expect(result.daysRead).toBe(1);
     expect(result.daysMissing).toBe(0);
+  });
+
+  it("uses the INJECTED nowMs as the window upper bound, not real Date.now() (WR-01 determinism seam)", () => {
+    // WR-01: the day-key window upper bound must be the injected `nowMs`, so a
+    // single clock instant flows through the whole fleet assembly. We key the
+    // day-file to a FIXED historical instant and pass that same instant as
+    // `nowMs`; the reader must resolve the window to that historical day and
+    // read the file. Pre-fix the reader called its own systemNowMs() (real
+    // today) → it iterated real-today's day-key and missed the historical file
+    // (daysRead 0). This FAILS on the pre-patch signature/code.
+    const fixedNow = Date.UTC(2020, 0, 2, 9, 0, 0); // 2020-01-02T09:00:00Z
+    const fixedDayKey = dayKeyForMs(fixedNow); // "2020-01-02"
+    const dataDir = makeDataDirWithDayFiles([
+      {
+        dayKey: fixedDayKey,
+        lines: [
+          JSON.stringify(startedRow({ agentId: "agent-fixed", channelType: "telegram", channelId: "111" })),
+          JSON.stringify(endedRow({ exitReason: "success", turnCount: 2, totalTokens: 42, sessionId: "f1" })),
+        ],
+      },
+    ]);
+
+    // sinceMs = the fixed day's start; nowMs = the fixed instant. The window is
+    // a single historical day-key, resolved entirely from the injected clock.
+    const result = readSessionIndexWindow(dataDir, fixedNow - DAY_MS, fixedNow);
+
+    expect(result.activeAgents).toEqual(["agent-fixed"]);
+    expect(result.turnTotal).toBe(2);
+    expect(result.tokenTotal).toBe(42);
+    expect(result.daysRead).toBe(1);
   });
 
   it("returns a zeroed summary with no throw when the logs directory is entirely absent (soft-fail)", () => {

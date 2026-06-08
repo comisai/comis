@@ -11,10 +11,13 @@
  *   - I-track (Phase 160): seeded `health_signal` / `model_health` / `config_posture`
  *     diagnostic rows via the same store.
  *
- * The ONE clock read (`sinceHours -> sinceMs`) is an injected fakeClock — NO
- * Date.now()/new Date() (the globals gate). The fakeClock is pinned to the REAL
- * `systemNowMs()` so the A1/I-track window (fakeClock-derived `sinceMs`) and the
- * A3 day-keys (the reader's own `systemNowMs()`) agree on "the last N hours".
+ * The ONE clock read (`ClockPort.now()`) is an injected fakeClock — NO
+ * Date.now()/new Date() (the globals gate). Post-WR-01 that single instant is
+ * threaded as BOTH the A1/I-track window start (`sinceMs`) AND the A3 day-key
+ * window upper bound (`nowMs`), so a FIXED (non-real) fake instant drives the
+ * whole report coherently — the CLOCK-INDEPENDENT case pins exactly that. Most
+ * cases below still seed via `systemNowMs()` so the on-disk day-files land on
+ * the real-today key; the clock-independence is proven by the dedicated case.
  *
  * Cases pinned:
  *   1. ASSEMBLY — the 4 sources merge onto FleetHealthReport (sessions/topErrorKinds/
@@ -255,6 +258,41 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     const a = await assembleFleetHealthReport({ obsStore: store, dataDir, clock: createFakeClock(now) }, 24);
     const b = await assembleFleetHealthReport({ obsStore: store, dataDir, clock: createFakeClock(now) }, 24);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it("CLOCK-INDEPENDENT: the A3 window follows the INJECTED clock, not real Date.now() (WR-01)", async () => {
+    // WR-01 regression: the assembler documents "the ONE clock read is the
+    // injected ClockPort". A FIXED, historical fake instant (NOT real now) must
+    // drive BOTH the A1/I-track window AND the A3 day-key window. We write the
+    // session-index day-file keyed to the fixed instant's day; if the A3 reader
+    // honoured the injected clock the report reads it (daysRead>0, real tokens).
+    // Pre-fix the reader uses its own systemNowMs() (real today) → it looks for
+    // a file at the real-today key, misses the historical one → daysRead 0,
+    // tokenTotal 0. This FAILS on the pre-patch code.
+    const fixedNow = Date.UTC(2021, 5, 15, 12, 0, 0); // 2021-06-15T12:00:00Z — not today
+    const fixedClock = createFakeClock(fixedNow);
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-health-fixedclock-"));
+    const logsDir = path.join(dataDir, "logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    const fixedDayKey = dayKeyForMs(fixedNow); // "2021-06-15"
+    fs.writeFileSync(
+      path.join(logsDir, `session-index.${fixedDayKey}.jsonl`),
+      [
+        startedRow({ agentId: "agent-h", channelType: "telegram", channelId: "777", sessionId: "h1" }),
+        endedRow({ exitReason: "success", turnCount: 4, totalTokens: 321, sessionId: "h1" }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+
+    const report = await assembleFleetHealthReport({ obsStore: makeStore(), dataDir, clock: fixedClock }, 24);
+
+    // The A3 reader must have located + read the historical-keyed day-file
+    // because the window upper bound follows the injected clock.
+    expect(report.coverage?.sessionIndex.daysRead).toBe(1);
+    expect(report.activity.activeAgents).toEqual(["agent-h"]);
+    expect(report.activity.turnTotal).toBe(4);
+    expect(report.activity.tokenTotal).toBe(321);
+    expect(report.cost.totalTokens).toBe(321);
   });
 
   it("BOUNDS findings to the cap and records the drop in truncations[]", async () => {

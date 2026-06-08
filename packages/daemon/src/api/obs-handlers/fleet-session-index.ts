@@ -34,8 +34,11 @@
  *   - Path: `safePath(base, "logs", file)` on every segment (path.join is
  *     ESLint-banned); the day-key is a fixed `YYYY-MM-DD` derived from
  *     `systemDateFrom`, never a row field — no user-controlled path component.
- *   - Time: `systemDateFrom(systemNowMs())` for the day-keys (NOT `new Date()` /
- *     `Date.now()` — the globals gate).
+ *   - Time: the window upper bound is the INJECTED `nowMs` (the caller's single
+ *     clock instant) — so the day-key range is deterministic w.r.t. that clock
+ *     (WR-01). It defaults to the sanctioned-root `systemNowMs()` only for
+ *     callers with no clock seam; day-keys are `systemDateFrom(...)` strings,
+ *     NEVER `new Date()` / a raw `Date.now()` (the globals gate).
  *   - All reads soft-fail (`continue`, never throw): a missing day-file
  *     increments `daysMissing`; an unreadable file or a malformed JSONL line is
  *     skipped. The output is deterministic: agents/channels are sorted and the
@@ -110,21 +113,22 @@ function dayKeyForMs(ms: number): string {
 }
 
 /**
- * The inclusive list of `YYYY-MM-DD` day-keys from `sinceMs` forward to today,
- * clamped to the most-recent `MAX_DAYS`. Built by walking day-key strings (not
- * ms arithmetic on the boundary) so a sub-day `sinceMs` still includes its own
- * day, and DST shifts cannot drop or duplicate a key.
+ * The inclusive list of `YYYY-MM-DD` day-keys from `sinceMs` forward to the
+ * window upper bound `nowMs`, clamped to the most-recent `MAX_DAYS`. Built by
+ * walking day-key strings (not ms arithmetic on the boundary) so a sub-day
+ * `sinceMs` still includes its own day, and DST shifts cannot drop or duplicate
+ * a key. `nowMs` is INJECTED (the caller's single clock instant) so the window
+ * is deterministic w.r.t. that clock — no internal `Date.now()` read.
  */
-function dayKeysInWindow(sinceMs: number): string[] {
-  const nowMs = systemNowMs();
+function dayKeysInWindow(sinceMs: number, nowMs: number): string[] {
   // Clamp the start forward so the window never exceeds MAX_DAYS files.
   const earliestAllowedMs = nowMs - (MAX_DAYS - 1) * DAY_MS;
   const startMs = sinceMs < earliestAllowedMs ? earliestAllowedMs : sinceMs;
   const todayKey = dayKeyForMs(nowMs);
 
   const keys: string[] = [];
-  // Step day-by-day from the start instant; stop once we pass today. Cap the
-  // loop iterations defensively at MAX_DAYS (the clamp above already bounds it).
+  // Step day-by-day from the start instant; stop once we pass the upper bound.
+  // Cap the loop iterations defensively at MAX_DAYS (the clamp above bounds it).
   for (let i = 0, cursorMs = startMs; i < MAX_DAYS; i += 1, cursorMs += DAY_MS) {
     const key = dayKeyForMs(cursorMs);
     if (keys[keys.length - 1] !== key) keys.push(key);
@@ -134,12 +138,17 @@ function dayKeysInWindow(sinceMs: number): string[] {
 }
 
 /**
- * Read the session-index aggregate over the window `[sinceMs .. now]`.
+ * Read the session-index aggregate over the window `[sinceMs .. nowMs]`.
  *
  * @param dataDir - data directory containing `logs/session-index.*.jsonl`.
  *   Defaults to `~/.comis` when an empty string is passed.
  * @param sinceMs - epoch-ms lower bound; the reader opens day-keyed files from
- *   `systemDateFrom(sinceMs)` forward to today (clamped to `MAX_DAYS`).
+ *   `systemDateFrom(sinceMs)` forward to the `nowMs` upper bound (clamped to
+ *   `MAX_DAYS`).
+ * @param nowMs - epoch-ms window UPPER bound (the day-key range end). Pass the
+ *   caller's injected clock instant so the window is deterministic w.r.t. that
+ *   clock (WR-01). Defaults to the sanctioned-root `systemNowMs()` for callers
+ *   that genuinely have no clock seam.
  * @param opts.includeSynthetic - when `false` (the default), rows stamped
  *   `synthetic === true` are excluded from every aggregate (D9). `true` includes
  *   them (the admin opt-in).
@@ -149,6 +158,7 @@ function dayKeysInWindow(sinceMs: number): string[] {
 export function readSessionIndexWindow(
   dataDir: string,
   sinceMs: number,
+  nowMs: number = systemNowMs(),
   opts: { includeSynthetic?: boolean } = {},
 ): FleetSessionIndexSummary {
   const includeSynthetic = opts.includeSynthetic === true;
@@ -167,7 +177,7 @@ export function readSessionIndexWindow(
   let daysMissing = 0;
   let linesRead = 0;
 
-  for (const dayKey of dayKeysInWindow(sinceMs)) {
+  for (const dayKey of dayKeysInWindow(sinceMs, nowMs)) {
     if (linesRead >= MAX_RECORDS) break; // window-wide line cap reached.
 
     const file = safePath(logsDir, `session-index.${dayKey}.jsonl`);

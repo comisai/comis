@@ -11,16 +11,20 @@
  *
  *   A1 + A2 — `ObservabilityStore.aggregateSessionsInWindow(sinceMs)` ->
  *             `reduceFleetWindow` (pure cross-session reduce; synthetic excluded).
- *   A3      — `readSessionIndexWindow(dataDir, sinceMs)` (multi-day activity
- *             aggregate; `daysRead`/`daysMissing` feed the coverage honesty block).
+ *   A3      — `readSessionIndexWindow(dataDir, sinceMs, nowMs)` (multi-day
+ *             activity aggregate; `daysRead`/`daysMissing` feed the coverage
+ *             honesty block). `nowMs` is the SAME injected instant as `sinceMs`,
+ *             so the A3 day-key window tracks the injected clock (WR-01).
  *   I-track — `queryDiagnostics({ category })` over the Phase-160
  *             `health_signal` / `model_health` / `config_posture` rows (counts +
  *             labels only — the 160 rows already dropped raw bodies).
  *
- * Determinism (X3): the report root carries NO wall-clock field — the ONE clock
- * read is the injected `ClockPort` for `sinceHours -> sinceMs`. NEVER
- * `Date.now()`/`new Date()` (the globals gate). Same window + same data ->
- * byte-identical report.
+ * Determinism (X3): the report root carries NO wall-clock field — there is ONE
+ * clock read (the injected `ClockPort.now()`), captured once and threaded as
+ * BOTH the window start (`sinceHours -> sinceMs`) AND the A3 reader's window
+ * upper bound (`nowMs`). NEVER `Date.now()`/`new Date()` downstream (the globals
+ * gate). Same injected clock + same data -> byte-identical report — true even
+ * when the injected instant differs from real wall-clock (WR-01).
  *
  * Bounded (digest-only): `findings[]` is capped at {@link FLEET_FINDINGS_CAP}
  * (highest-count-first), recording the drop in `truncations[]` — the
@@ -288,8 +292,12 @@ export async function assembleFleetHealthReport(
   sinceHours: number,
   opts: { includeSynthetic?: boolean } = {},
 ): Promise<FleetHealthReport> {
-  // The ONE clock read — sinceHours -> sinceMs. NO Date.now()/new Date().
-  const sinceMs = deps.clock.now() - sinceHours * MS_PER_HOUR;
+  // The ONE clock read — captured ONCE and threaded through EVERY windowed
+  // source so the whole report is deterministic w.r.t. the injected clock.
+  // `sinceHours -> sinceMs` (window start) + `nowMs` (window upper bound, passed
+  // to the A3 reader). NO Date.now()/new Date() anywhere downstream (WR-01).
+  const nowMs = deps.clock.now();
+  const sinceMs = nowMs - sinceHours * MS_PER_HOUR;
 
   // A1 + A2 — per-session rollups -> cross-session fleet rollup. `rows` is
   // `SessionSummaryRollup[]` (inferred from the store method's return type; the
@@ -301,7 +309,9 @@ export async function assembleFleetHealthReport(
   const degraded = rows.filter((r) => r.degraded).length;
 
   // A3 — multi-day session-index activity aggregate (daysRead/daysMissing -> coverage).
-  const activity = readSessionIndexWindow(deps.dataDir, sinceMs, opts);
+  // Thread the SAME `nowMs` as the window upper bound so the A3 day-key range
+  // tracks the injected clock (WR-01), not a hidden second wall-clock read.
+  const activity = readSessionIndexWindow(deps.dataDir, sinceMs, nowMs, opts);
 
   // I-track (Phase 160) — windowed health_signal; latest model_health / config_posture.
   const healthSignals = deps.obsStore?.queryDiagnostics({ category: "health_signal", sinceMs }) ?? [];
