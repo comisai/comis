@@ -587,6 +587,56 @@ running `comis doctor`, which checks your installation against recommended
 security practices. See [Hardening](/security/hardening) for the full
 walkthrough.
 
+## Local Model Security Posture (v2.14)
+
+### The Model-Independent Guarantee
+
+**The Comis security guarantee is a property of the platform, not the model.** When you configure a local or quantized model (e.g., qwen3.6:27b, qwen3.6:35b-mlx), the following platform controls are enforced regardless of which model is configured:
+
+| Control | Enforced by | What it prevents |
+|---------|-------------|-----------------|
+| Output redaction | `OutputGuard` | Credential and canary token leak in agent responses |
+| Memory recall trust-filter | `FROZEN_TRUST_PATHS` | Injected or fabricated memories from elevating trust level |
+| Untrusted content wrapping | `wrapExternalContent` | Tool results, image inputs, and external content treated as untrusted |
+| Memory write validation | `MemoryWriteValidator` | Unauthorized memory writes or privilege-escalation via memory injection |
+| Exec 13-gate denylist + bwrap sandbox | Exec security layer | Shell command injection and filesystem escape |
+| Canary token | Per-session canary | Exfiltration detection (canary in output → blocked) |
+| Input security guard | `InputSecurityGuard` | Prompt injection patterns in inbound messages |
+
+The v2.14 matrix baseline (Phase 149) confirmed this empirically: **injection-resisted=100%, secret-leaked=0%, over-refused=0%** across all 8 qwen3.6 batches (fair and bare prompts, 27b through 35b, GGUF and MLX). A platform-level control held by `OutputGuard`, `FROZEN_TRUST_PATHS`, and the exec sandbox does not depend on the model's instruction-following quality.
+
+### `securityLevel` Scales Inversely with `capabilityClass`
+
+When `capabilityClass` is set to a weaker class (e.g., via `providers.entries.<id>.capabilities.capabilityClass: small`), the platform automatically increases lockdown intensity:
+
+| `capabilityClass` | `securityLevel` | Lockdown behavior |
+|------------------|-----------------|-------------------|
+| `frontier` | `standard` | Standard safety reinforcement |
+| `mid` | `hardened` | Hardened warning in compact-secure prompt |
+| `small` | `locked` | Mandatory sandbox restriction line injected into compact-secure prompt |
+| `nano` | `locked` | Same as `small` |
+| Unknown / unresolved | `locked` | Fail-closed: unknown model defaults to the most-locked class |
+
+A weaker model receives **more** platform scaffolding, not less. The compact-secure prompt (`contextEngine.compactPrompt.enabled=true`) always retains the full safety core regardless of `capabilityClass`.
+
+### Egress Governance Posture
+
+**Local-only egress is the default.** When running Comis with a local model (Ollama), no model inference data leaves the device. This is the documented and recommended posture for privacy-sensitive deployments.
+
+Off-device escalation to a cloud model (Phase 156 / E1+S5) is **deferred** and not currently built. When implemented, it will require:
+- Explicit operator opt-in
+- `OutputGuard` redaction of all payloads before off-device transmission
+- Payload scope-limit (no full context exfiltration)
+- Canary token in escalated payload (exfiltration detection)
+
+The default escalation target for a local-first deploy would be a **larger local model** (e.g., escalating from qwen3.6:27b to qwen3.6:35b) — no off-device egress required.
+
+### Recommended Secure Local Model Setup
+
+See the [qwen3.6 configuration reference](/reference/config-yaml#recommended-secure-qwen36-configuration) for the complete `config.yaml` snippet with all security-relevant settings.
+
+For model selection guidance: use **general-purpose** qwen3.6 variants (not coding-tuned models) for agent reliability. Coding-tuned models can exhibit goal fixation that the GoalAnchor and verification critic are designed to detect and correct — but general models avoid the issue in the first place.
+
 ## Related
 
 <CardGroup cols={2}>
