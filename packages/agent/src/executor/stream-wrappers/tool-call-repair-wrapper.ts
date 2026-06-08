@@ -4,8 +4,8 @@
  *
  * Intercepts AssistantMessage items in the context where ToolCall arguments
  * arrive as a raw JSON string (when the provider/SDK passes through unparsed
- * argument text) and attempts shape-only repair via repairToolCallJSON before
- * the message reaches the tool executor.
+ * argument text) and attempts shape-only repair via the SDK's parseStreamingJson
+ * before the message reaches the tool executor.
  *
  * When repair fails ("irreparable"), the wrapper injects a synthetic
  * ToolResultMessage with a "Validation failed: ..." prefix into the outgoing
@@ -33,6 +33,7 @@
  * @module
  */
 
+import { parseStreamingJson } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { Message, AssistantMessage, ToolResultMessage, ToolCall } from "@earendil-works/pi-ai";
 import type { ComisLogger, ErrorKind } from "@comis/core";
@@ -45,7 +46,9 @@ import type { ModelProfile } from "../model-profile.js";
  *
  * When a ToolCall's arguments field arrives as a raw JSON string (runtime value
  * is a string despite being typed as Record<string, any>), this wrapper:
- * - Attempts structural repair via repairToolCallJSON
+ * - Attempts structural repair via the SDK's parseStreamingJson (SA9: strict
+ *   superset of the old trailing-comma-only repair; also handles truncated JSON
+ *   and control characters; same function the provider layer uses)
  * - On success: replaces the string with the parsed object (value-preserving)
  * - On failure: injects a synthetic ToolResultMessage error with a "Validation
  *   failed" prefix so the model self-corrects on its next turn. (WR-03: this
@@ -53,11 +56,14 @@ import type { ModelProfile } from "../model-profile.js";
  *   tool-execution events in pi-event-bridge.ts, and unparseable args never
  *   reach tool execution, so the breaker is uninvolved on this path.)
  *
- * @param modelProfile - ModelProfile for the current execution (supportsStructuredOutput flag)
+ * @param _modelProfile - Reserved: ModelProfile for the current execution.
+ *   Previously passed to repairToolCallJSON for supportsStructuredOutput gating;
+ *   now reserved for future constrained-decode integration. API surface kept
+ *   stable (still passed from executor-stream-setup.ts:343).
  * @param logger - Logger for debug/warn output
  */
 export function createToolCallRepairWrapper(
-  modelProfile: ModelProfile,
+  _modelProfile: ModelProfile,
   logger: ComisLogger,
 ): StreamFnWrapper {
   return function toolCallRepairWrapper(next: StreamFn): StreamFn {
@@ -97,10 +103,37 @@ export function createToolCallRepairWrapper(
           // If arguments is already a parsed object (the normal case), pass through unchanged
           if (typeof rawArgs !== "string") return block;
 
-          // Arguments arrived as a raw JSON string — attempt shape-only repair
-          const repairResult = repairToolCallJSON(rawArgs, modelProfile);
+          // Arguments arrived as a raw JSON string — attempt shape-only repair via the SDK's
+          // parseStreamingJson (SA9: same fn the provider layer uses; strict superset of the
+          // old trailing-comma-only repair: handles trailing commas + truncated + control chars).
+          // parseStreamingJson NEVER throws — returns {} or partial object for garbage input.
+          // Cast: rawArgs is narrowed to never by TS (ToolCall.arguments: Record<string,any>)
+          // but we confirmed it is a string above; the cast is safe and intentional.
+          const rawArgsStr = rawArgs as unknown as string;
+          const repaired = parseStreamingJson<Record<string, unknown>>(rawArgsStr);
 
-          if (repairResult.ok) {
+          // Usability check: determine whether the result is a genuine parse failure.
+          // Irreparable = the input was non-trivial (non-empty, not literally "{}") yet the
+          // SDK produced an empty object AND strict JSON.parse also fails. This distinguishes
+          // a real garbage string from a legitimately empty-args call (rawArgs="{}" or rawArgs="").
+          // False-negative guard: garbage input MUST NOT slip through as {} and call a tool.
+          // False-positive guard: a legit "{}" MUST NOT be flagged as irreparable.
+          const trimmed = rawArgsStr.trim();
+          const isLegitEmptyArgs = trimmed === "" || trimmed === "{}";
+          let strictParseFailed = false;
+          if (!isLegitEmptyArgs) {
+            try {
+              JSON.parse(rawArgsStr);
+            } catch {
+              strictParseFailed = true;
+            }
+          }
+          const isIrreparable =
+            !isLegitEmptyArgs &&
+            strictParseFailed &&
+            Object.keys(repaired).length === 0;
+
+          if (!isIrreparable) {
             logger.debug(
               {
                 submodule: "tool-call-repair-wrapper",
@@ -110,7 +143,7 @@ export function createToolCallRepairWrapper(
             );
             modified = true;
             // Return the ToolCall with repaired (parsed) args; value-preserving
-            return { ...toolCall, arguments: repairResult.value as Record<string, unknown> };
+            return { ...toolCall, arguments: repaired };
           }
 
           // Irreparable — inject a synthetic ToolResultMessage error so the model
