@@ -125,3 +125,14 @@ export type { TracingLoggerOptions } from "./observability/trace-logger.js";
 // Consumer: test/integration/incident-replay-2026-05-24.test.ts
 export { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
 export type { StartupInvariantsDeps, StartupInvariants } from "./wiring/setup-startup-invariants.js";
+
+// Obs-explain assembler + reader DI seam — re-exported so the RE-PROVE
+// scenario (test/live) can call the FROZEN Phase-153 assembler over a fixture
+// reader without a deep daemon-internal dist path. Read-only; the admin gate
+// stays on bindObsExplainHandlers (obs-explain.ts:188) — this exports ONLY the
+// gate-free assembler the X3 tests + the obs_explain MCP tool already call with
+// no _trustLevel, NEVER the admin-gated handler.
+// Consumer: test/live/scenarios/prove/diagnosis-reprove.test.ts
+export { assembleIncidentReportFromSources } from "./api/obs-handlers/obs-explain.js";
+export { makeRealReader } from "./api/obs-handlers/obs-explain-readers.js";
+export type { IncidentSourceReader } from "./api/obs-handlers/obs-explain-readers.js";

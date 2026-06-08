@@ -1959,6 +1959,22 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // list is the canonical place to record the planned test consumer.
       "createAuthHandlers",
       "AuthHandlerDeps",
+      // Obs-explain assembler + reader DI seam (Phase 156 G1) — re-exported so
+      // the RE-PROVE scenario + its self-test (test/live/support +
+      // test/live/scenarios/prove) can call the FROZEN Phase-153 assembler over
+      // a fixture reader via the clean @comis/daemon alias. Same rationale as
+      // createMcpHandlers / emitStartupInvariants: the consumer imports these
+      // statically from @comis/daemon under test/**, which the
+      // public-export-consumers AST walker excludes, so this orphan list is the
+      // canonical place to record the planned test consumer. SECURITY: the
+      // surface widens by EXACTLY the gate-free assembler + reader seam — the
+      // admin gate stays on bindObsExplainHandlers (obs-explain.ts:188), which
+      // is NOT re-exported.
+      // Consumer: test/live/support/diagnosis-reprove.test.ts +
+      //           test/live/scenarios/prove/diagnosis-reprove.test.ts (Plan 156-02)
+      "assembleIncidentReportFromSources",
+      "makeRealReader",
+      "IncidentSourceReader",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
