@@ -64,8 +64,14 @@ export function resolveMaxOutputTokens(profile: ModelProfile): number {
     : VERDICT_RESERVE_TOKENS;
 }
 
-/** Reasoning-headroom floor for the MAIN answer path (native profiles only). */
-const NATIVE_REASONING_MAIN_PATH_FLOOR = 4_096;
+/**
+ * Reasoning-headroom floor for the MAIN answer path (native profiles only).
+ * SD4 (Phase 158): raised 4096→16384 so reasoning_content cannot starve the
+ * visible answer on small native-reasoning models (observed finishReason:"length"
+ * with qwen3.6:35b at maxTokens:8192 — reasoning consumed nearly all tokens).
+ * Math.max means models already reporting maxOutputTokens≥16384 are unchanged.
+ */
+const NATIVE_REASONING_MAIN_PATH_FLOOR = 16_384;
 
 /**
  * CR-01: MAIN-PATH output budget. Returns the model's REAL maxOutputTokens so
@@ -226,16 +232,10 @@ async function callCritic(
 
 // ---------------------------------------------------------------------------
 // shouldRunCritic — gate check for the post-execution hook
-//
-// WR-02: the hook has NO secretManager at its layer, so buildSyntheticCriticDeps
-// must call with apiKey:"". A key-REQUIRING provider would auth-fail →
-// fail-closed not-verified → CLOBBER a correct answer. Until cloud key threading
-// lands (Phase 155) the critic runs only for keyless/local providers;
-// key-requiring ones are skipped-with-WARN so the opt-in operator knows it is
-// inert. KEYLESS_CRITIC_PROVIDERS mirrors KEYLESS_PROVIDER_TYPES in
-// credential-resolver.ts / model-registry-adapter.ts.
+// WR-02: keyless-only (no secretManager at this layer). Mirrors KEYLESS_PROVIDER_TYPES.
 // ---------------------------------------------------------------------------
-const KEYLESS_CRITIC_PROVIDERS = new Set<string>(["ollama", "lm-studio"]);
+/** Exported for parity assertion in scaffold-defaults.ts (Plan 02 cross-file test). */
+export const KEYLESS_CRITIC_PROVIDERS = new Set<string>(["ollama", "lm-studio"]);
 
 export function shouldRunCritic(params: {
   capabilityClass: CapabilityClass | undefined;
@@ -245,9 +245,12 @@ export function shouldRunCritic(params: {
   provider: string;
   /** Optional logger for the skip-with-WARN diagnostic (WR-02). */
   logger?: ComisLogger;
+  /** SD3 (Phase 158): pre-resolved effective enabled flag from resolveScaffoldDefaults. */
+  effectiveEnabled?: boolean;
 }): boolean {
-  const { capabilityClass, config, executionPlanRef, provider, logger } = params;
-  if (!config.verification?.enabled) return false;
+  const { capabilityClass, config, executionPlanRef, provider, logger, effectiveEnabled } = params;
+  const verificationEnabled = effectiveEnabled ?? (config.verification?.enabled ?? false);
+  if (!verificationEnabled) return false;
   if (capabilityClass !== "small" && capabilityClass !== "nano") return false;
   if (!executionPlanRef.current?.active) return false;
   // This class WOULD run the critic — but only keyless providers can (no key seam here).

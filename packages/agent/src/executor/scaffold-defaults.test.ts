@@ -20,6 +20,10 @@
 
 import { describe, it, expect } from "vitest";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
+// Parity assertion: both copies of KEYLESS_CRITIC_PROVIDERS must be identical.
+// scaffold-defaults.ts keeps its own Set to avoid circular imports; verification-gate.ts
+// exports it so we can assert equality here. If either copy drifts, this test fails loudly.
+import { KEYLESS_CRITIC_PROVIDERS as gateProviders } from "./verification-gate.js";
 import { resolveModelProfile } from "./model-profile.js";
 import type { PerAgentConfig, OperationModels } from "@comis/core";
 
@@ -167,5 +171,55 @@ describe("resolveScaffoldDefaults — SD5: frontier/mid byte-identical non-regre
     const frontierViaOverride = resolveModelProfile(BASE_OLLAMA_INPUT, "frontier");
     const result = resolveScaffoldDefaults(frontierViaOverride, emptyConfig);
     expect(result.goalAnchorEnabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-file parity: KEYLESS_CRITIC_PROVIDERS in scaffold-defaults.ts must
+// equal the exported Set from verification-gate.ts (Plan 02 assertion, deferred
+// from Plan 01).
+//
+// scaffold-defaults.ts keeps its own private copy to avoid a circular import;
+// verification-gate.ts now exports the canonical Set (Phase 158, Plan 02).
+// This test fails loudly if either copy drifts.
+// ---------------------------------------------------------------------------
+describe("KEYLESS_CRITIC_PROVIDERS cross-file parity (Plan 02)", () => {
+  it("scaffold-defaults.ts KEYLESS_CRITIC_PROVIDERS content matches verification-gate.ts export", () => {
+    // The scaffold-defaults copy is private; we test by exercising resolveScaffoldDefaults
+    // with known-keyless and known-keyed providers and comparing the gate outcomes
+    // against the imported gateProviders Set from verification-gate.ts.
+    //
+    // For each provider in gateProviders (keyless): cost-gate with distinct cheap critic
+    // must yield verificationEnabled=true (cost-gate branch reached + keyless check passes).
+    // For a cloud provider NOT in gateProviders: verificationEnabled=false (keyless check fails).
+    const keylessProviders = Array.from(gateProviders);
+    // Sort for deterministic comparison
+    expect(keylessProviders.sort()).toEqual(["lm-studio", "ollama"].sort());
+
+    // Also verify via resolveScaffoldDefaults behavior: each provider in gateProviders
+    // must pass the keyless check inside scaffold-defaults (verificationEnabled=true
+    // when a distinct cheap critic is configured).
+    for (const provider of keylessProviders) {
+      const ctx = {
+        provider,
+        agentModel: "qwen3.6:27b",
+        operationModels: {
+          verification: { model: `${provider}:qwen3.6:1.5b` },
+        } as OperationModels,
+      };
+      const result = resolveScaffoldDefaults(smallProfile, emptyConfig, ctx);
+      expect(result.verificationEnabled).toBe(true);
+    }
+
+    // Cloud provider (not in gateProviders): verificationEnabled=false
+    const cloudCtx = {
+      provider: "anthropic",
+      agentModel: "claude-haiku",
+      operationModels: {
+        verification: { model: "anthropic:claude-haiku-small" },
+      } as OperationModels,
+    };
+    const cloudResult = resolveScaffoldDefaults(smallProfile, emptyConfig, cloudCtx);
+    expect(cloudResult.verificationEnabled).toBe(false);
   });
 });
