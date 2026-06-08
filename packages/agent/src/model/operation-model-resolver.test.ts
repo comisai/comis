@@ -424,12 +424,18 @@ describe("resolveProviderFamily", () => {
     expect(resolveProviderFamily("google")).toBe("google");
   });
 
-  it("strips -bedrock suffix: 'anthropic-bedrock' -> 'anthropic'", () => {
-    expect(resolveProviderFamily("anthropic-bedrock")).toBe("anthropic");
+  it("passes 'anthropic-bedrock' through as-is (not a pi-ai KnownProvider alias; normalizeProviderId returns as-is)", () => {
+    // SA8: normalizeProviderId does not strip suffixes — it resolves ALIASES only.
+    // "anthropic-bedrock" has no alias entry, so it passes through unchanged.
+    // "amazon-bedrock" is the canonical pi-ai ID (covered by SA8 tests below).
+    expect(resolveProviderFamily("anthropic-bedrock")).toBe("anthropic-bedrock");
   });
 
-  it("strips -vertex suffix: 'google-vertex' -> 'google'", () => {
-    expect(resolveProviderFamily("google-vertex")).toBe("google");
+  it("passes 'google-vertex' through as canonical pi-ai KnownProvider (SA8: no suffix stripping)", () => {
+    // SA8: "google-vertex" is a native pi-ai KnownProvider in getProviders().
+    // normalizeProviderId("google-vertex") = "google-vertex" (no alias match).
+    // Stripping to "google" was never correct for operation-tier lookup.
+    expect(resolveProviderFamily("google-vertex")).toBe("google-vertex");
   });
 
   it("passes through unknown providers unchanged: 'xai' -> 'xai'", () => {

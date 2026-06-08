@@ -124,6 +124,16 @@ export function resolveModelProfile(
         // CR-02: widened to readonly string[] | undefined so ("text"|"image")[]
         // (the SDK's actual type) is assignable without a double-cast at the call site.
         input?: readonly string[] | string[];
+        // SA7: optional SDK fields for prompt-cache enrichment.
+        // compat is typed loosely (unknown) so that any of the SDK's three compat
+        // union members (OpenAICompletionsCompat / OpenAIResponsesCompat /
+        // AnthropicMessagesCompat) is structurally assignable without an index
+        // signature requirement. cacheControlFormat is extracted via a safe
+        // narrowing check inside the resolver body.
+        compat?: unknown;
+        // cost.cacheRead > 0 signals native prompt-cache support (Anthropic/Bedrock:
+        // $0.30/MTok for cache reads). Field is absent on non-caching providers.
+        cost?: { cacheRead?: number } | undefined;
       }
     | undefined,
   capabilityClassOverride?: CapabilityClass,
@@ -174,17 +184,35 @@ export function resolveModelProfile(
   const supportsVision = resolvedModel.input?.includes("image") === true;
   const reasoningStyle: ReasoningStyle = resolvedModel.reasoning === true ? "native" : "none";
 
-  // CR-02: derive supportsPromptCache HONESTLY from the provider family so the
-  // L1/L2 flag carries the real capability. The factory/cache-detection swap
-  // reads `config.modelProfile?.supportsPromptCache ?? isAnthropicFamily(...)`;
-  // that `??` only falls through when the flag is `undefined`, so a hardcoded
-  // `false` silently disabled prompt caching for EVERY Anthropic agent. The
-  // anthropic family (anthropic, amazon-bedrock, and aliases — exactly what
-  // isAnthropicFamily covers) is the set that supports prompt caching. Computing
-  // it the same way makes the swap genuinely behavior-neutral and re-enables
-  // Anthropic/Bedrock caching.
+  // SA7: Derive supportsPromptCache from SDK Model metadata when available,
+  // with providerFamily="anthropic" as the fallback for call sites without
+  // the full Model object. Fail-safe direction: prefer false-negative
+  // (no cache_control injection) over false-positive (inject into a
+  // non-caching provider). Three signals — any one is sufficient:
+  //   1. providerFamily = "anthropic" (anthropic, amazon-bedrock, and aliases —
+  //      CR-02 family fallback; preserves all existing behavior)
+  //   2. Model.compat.cacheControlFormat = "anthropic" (openai-compat providers
+  //      like Fireworks/OpenRouter that inject Anthropic-style cache_control)
+  //   3. Model.cost.cacheRead > 0 (native caching signal from SDK catalog;
+  //      Anthropic/Bedrock: $0.30/MTok for cache reads)
+  //
+  // Production wiring: pi-executor.ts:328 passes the SDK Model<Api> object
+  // (carrying both .compat and .cost) to resolveModelProfile — widening the
+  // param type is sufficient; no wiring change needed at the call site.
+  // Safe narrowing helper: read cacheControlFormat from the compat field (typed
+  // as unknown to accept all three SDK union members without an index signature).
+  const compatCacheFormat =
+    resolvedModel.compat != null &&
+    typeof resolvedModel.compat === "object" &&
+    "cacheControlFormat" in resolvedModel.compat
+      ? (resolvedModel.compat as { cacheControlFormat?: unknown }).cacheControlFormat
+      : undefined;
+
+  const providerCapabilities = resolveProviderCapabilities(resolvedModel.provider);
   const supportsPromptCache =
-    resolveProviderCapabilities(resolvedModel.provider).providerFamily === "anthropic";
+    providerCapabilities.providerFamily === "anthropic" ||
+    compatCacheFormat === "anthropic" ||
+    (resolvedModel.cost?.cacheRead ?? 0) > 0;
 
   return {
     contextWindow,

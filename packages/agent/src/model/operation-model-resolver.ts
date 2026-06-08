@@ -18,6 +18,7 @@
 
 import type { ModelOperationType, OperationModelEntry, OperationModels } from "@comis/core";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
+import { normalizeProviderId } from "../provider/capabilities.js";
 import {
   resolveOperationDefaults,
   OPERATION_TIER_MAP,
@@ -99,16 +100,31 @@ function buildResult(
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve a provider name to its base family by stripping known platform
- * suffixes (-bedrock, -vertex).
+ * Resolve a provider name to its canonical ID for operation-tier catalog lookup.
  *
- * @param provider - Provider name (e.g., "anthropic-bedrock", "google-vertex", "openai")
- * @returns Base provider family name (e.g., "anthropic", "google", "openai")
+ * SA8: routes through normalizeProviderId (resolves user-facing aliases like
+ * "bedrock" → "amazon-bedrock", "aws-bedrock" → "amazon-bedrock") and returns
+ * the normalized ID as-is. Both "amazon-bedrock" and "google-vertex" are native
+ * pi-ai KnownProvider entries in getProviders() — stripping the suffix to
+ * "amazon" or "google" was never correct and caused resolveOperationDefaults
+ * to return {} (Level 5 silent fallback) for Bedrock/Vertex agents.
+ *
+ * Side-effect on executor-context-engine-setup.ts:284 (currentApi drift):
+ * Existing Bedrock and Vertex sessions will emit ONE api_change drift event
+ * on first execution post-deploy (old value: "amazon"/"google", new value:
+ * "amazon-bedrock"/"google-vertex"). This drops signed thinking state once,
+ * then stabilizes. See T-162-05b.
+ *
+ * @param provider - Provider name (e.g., "amazon-bedrock", "google-vertex",
+ *                   "bedrock", "openai")
+ * @returns Canonical provider ID usable as input to resolveOperationDefaults()
  */
 export function resolveProviderFamily(provider: string): string {
-  if (provider.endsWith("-bedrock")) return provider.slice(0, -"-bedrock".length);
-  if (provider.endsWith("-vertex")) return provider.slice(0, -"-vertex".length);
-  return provider;
+  // Resolve user-facing aliases ("bedrock" → "amazon-bedrock", etc.),
+  // then return the full normalized ID. Both "amazon-bedrock" and
+  // "google-vertex" are native pi-ai KnownProvider entries — no suffix
+  // stripping needed or correct for either one.
+  return normalizeProviderId(provider);
 }
 
 // ---------------------------------------------------------------------------
