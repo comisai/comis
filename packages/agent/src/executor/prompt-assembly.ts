@@ -77,7 +77,7 @@ import { buildRelationshipBlock } from "./relationship-block.js";
 import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context-engine/index.js";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
-import type { ModelProfile } from "./model-profile.js";
+import { FAIL_CLOSED_PROFILE, type ModelProfile } from "./model-profile.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import * as os from "node:os";
 
@@ -801,7 +801,13 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   let bootstrapFilesForReport: BootstrapFile[] = [];
   // Capture the bootstrap budget for the report (and any truncation summary
   // the system prompt assembler applies).
-  const bootstrapMaxChars = config.bootstrap?.maxChars ?? 20_000;
+  // SD6 (Phase 159): capability-gated bootstrap.maxChars.
+  // resolveScaffoldDefaults handles the === 20_000 sentinel check internally.
+  // Fail-closed: absent modelProfile → FAIL_CLOSED_PROFILE (nano) → 3_500 (conservative).
+  const bootstrapMaxChars = resolveScaffoldDefaults(
+    params.modelProfile ?? FAIL_CLOSED_PROFILE,
+    config,
+  ).bootstrapMaxChars;
   if (promptMode !== "none") {
     // Snapshot raw bootstrap files on first turn to keep system prompt stable.
     // When the agent writes workspace files mid-session (e.g., IDENTITY.md during onboarding),

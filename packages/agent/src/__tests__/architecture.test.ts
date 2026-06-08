@@ -148,6 +148,7 @@ describe("@comis/agent -- architecture invariants", () => {
       "executor-post-execution.ts", // comment about stripping discover_tools result schemas
       "schema-stripping.ts",       // tool-name discriminant: `msg.toolName !== "discover_tools"`
       "discovery-tracker.ts",      // JSDoc explaining the session-scoped tracker tied to discover_tools
+      "scaffold-defaults.ts",      // JSDoc on SMALL_DEFAULT_ACTIVE_TOOL_CEILING: "defers cold long-tail behind discover_tools"
       "pi-executor.ts",            // JSDoc + comments referring to discover_tools as a known concept (mid-turn injection)
       "pi-executor-types.ts",      // PiExecutorDeps interface JSDoc references discover_tools concept
       // Anthropic payload-reshape identifiers.

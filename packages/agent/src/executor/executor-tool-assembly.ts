@@ -26,6 +26,7 @@ import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, creat
 import type { DeferralContext } from "./tool-deferral.js";
 import type { CapabilityClass } from "./model-profile.js";
 import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
+import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { buildCapabilityIndexContext } from "./capability-index-context.js";
 import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
@@ -396,6 +397,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   );
   const modelProfile = modelProfileParam ?? FAIL_CLOSED_PROFILE;
   const capabilityClass = modelProfile.capabilityClass;
+  // SD7 (Phase 159): resolve capacity defaults (bootstrapMaxChars + activeToolCeiling).
+  const capacityDefaults = resolveScaffoldDefaults(modelProfile, config);
 
   // C3: preamble size guard — warn when preamble tokens exceed the profile cap.
   // This is a soft operator signal: the preamble is already assembled, but the
@@ -528,6 +531,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     providerFamily: resolvedModel?.provider
       ? resolveProviderCapabilities(resolvedModel.provider).providerFamily
       : "default",
+    // SD7 (Phase 159): capability-class active-tool ceiling.
+    activeToolCeiling: capacityDefaults.activeToolCeiling,
   };
   const deferralResult = applyToolDeferral(
     mergedCustomTools,
