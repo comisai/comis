@@ -38,7 +38,7 @@ describe("buildConfigPostureRecord", () => {
         tlsOff: true,
         allowInsecureHttp: false,
         strandedFindings: [{ stranded: "encrypted:secrets", entryCount: 2 }],
-        canaryFallbackAgents: 1,
+        canaryFallbackActive: true,
       },
       clock,
     );
@@ -52,11 +52,13 @@ describe("buildConfigPostureRecord", () => {
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     // EXACTLY the four closed keys — counts + booleans + closed labels only.
+    // WR-01: the canary field is an HONEST boolean (0|N presence proxy keyed on
+    // CANARY_SECRET in env-or-store), NOT a misleading per-agent tally.
     expect(details).toEqual({
       tlsOff: true,
       allowInsecureHttp: false,
       stranded: [{ stranded: "encrypted:secrets", entryCount: 2 }],
-      canaryFallbackAgents: 1,
+      canaryFallbackActive: true,
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
     const strandedJson = JSON.stringify(details["stranded"]);
@@ -73,7 +75,7 @@ describe("buildConfigPostureRecord", () => {
         tlsOff: false,
         allowInsecureHttp: true,
         strandedFindings: [],
-        canaryFallbackAgents: 0,
+        canaryFallbackActive: false,
       },
       clock,
     );
@@ -85,7 +87,7 @@ describe("buildConfigPostureRecord", () => {
       tlsOff: false,
       allowInsecureHttp: true,
       stranded: [],
-      canaryFallbackAgents: 0,
+      canaryFallbackActive: false,
     });
   });
 
@@ -97,7 +99,7 @@ describe("buildConfigPostureRecord", () => {
       const { obsStore, insertDiagnostic } = createSpiedObsStore();
       buildConfigPostureRecord(
         obsStore,
-        { tlsOff: true, allowInsecureHttp: false, strandedFindings: [], canaryFallbackAgents: 0 },
+        { tlsOff: true, allowInsecureHttp: false, strandedFindings: [], canaryFallbackActive: false },
         clock,
       );
       expect((insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow).severity).toBe("warning");
@@ -111,18 +113,18 @@ describe("buildConfigPostureRecord", () => {
           tlsOff: false,
           allowInsecureHttp: false,
           strandedFindings: [{ stranded: "file:secrets", entryCount: 1 }],
-          canaryFallbackAgents: 0,
+          canaryFallbackActive: false,
         },
         clock,
       );
       expect((insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow).severity).toBe("warning");
     }
-    // canaryFallbackAgents > 0 alone
+    // canaryFallbackActive true alone
     {
       const { obsStore, insertDiagnostic } = createSpiedObsStore();
       buildConfigPostureRecord(
         obsStore,
-        { tlsOff: false, allowInsecureHttp: false, strandedFindings: [], canaryFallbackAgents: 3 },
+        { tlsOff: false, allowInsecureHttp: false, strandedFindings: [], canaryFallbackActive: true },
         clock,
       );
       expect((insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow).severity).toBe("warning");
@@ -141,7 +143,7 @@ describe("buildConfigPostureRecord", () => {
           tlsOff: true,
           allowInsecureHttp: false,
           strandedFindings: [{ stranded: "encrypted:secrets", entryCount: 5 }],
-          canaryFallbackAgents: 2,
+          canaryFallbackActive: true,
         },
         clock,
       ),
@@ -156,7 +158,7 @@ describe("buildConfigPostureRecord", () => {
 
     buildConfigPostureRecord(
       obsStore,
-      { tlsOff: false, allowInsecureHttp: false, strandedFindings: [], canaryFallbackAgents: 0 },
+      { tlsOff: false, allowInsecureHttp: false, strandedFindings: [], canaryFallbackActive: false },
       clock,
     );
 

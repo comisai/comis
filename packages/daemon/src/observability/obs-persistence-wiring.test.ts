@@ -299,6 +299,71 @@ describe("dagDegradedEventToRow", () => {
       expect(details.reason).toBe(reason);
     }
   });
+
+  // IN-01: severity must track the reason. The `serialized_wait` member of the
+  // closed union is documented (events-messaging.ts) as the bounded-wait signal
+  // — normal back-pressure, NOT a degrade. Stamping it `warning` would inflate
+  // the fleet lens's degrade count with a benign event.
+  it("maps the benign serialized_wait reason to severity info, not warning", () => {
+    const row = dagDegradedEventToRow({
+      conversationId: "conv-2",
+      agentId: "a2",
+      sessionKey: "sk-2",
+      reason: "serialized_wait",
+      durationMs: 3,
+      timestamp: 1500,
+    });
+    expect(row.severity).toBe("info");
+    // The row is otherwise unchanged — same category + label + carried reason.
+    expect(row.category).toBe("health_signal");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.reason).toBe("serialized_wait");
+  });
+
+  it("maps every genuine-degrade reason to severity warning", () => {
+    for (const reason of [
+      "fail_closed_rollover",
+      "breaker_open",
+      "spend_cap",
+      "live_store_divergence",
+      "leaf_window_divergence",
+      "condense_window_divergence",
+    ] as const) {
+      const row = dagDegradedEventToRow({
+        conversationId: "c",
+        agentId: "a",
+        sessionKey: "s",
+        reason,
+        durationMs: 0,
+        timestamp: 1,
+      });
+      expect(row.severity, `reason ${reason} must be warning`).toBe("warning");
+    }
+  });
+
+  // WR-04: the payload carries `conversationId`. Today it is lossless only
+  // because an internal LCD invariant couples it to `sessionKey`, but the most
+  // security-relevant degrade (`fail_closed_rollover`) fires precisely on a
+  // conversationId/sessionKey CONFLICT — so the row must carry conversationId
+  // (an identifier, not content — bounded-payload still holds) for the Phase-161
+  // fleet lens to join on, instead of silently dropping it.
+  it("carries conversationId into details so a divergent identifier is recoverable", () => {
+    const row = dagDegradedEventToRow({
+      conversationId: "conv-divergent",
+      agentId: "a3",
+      sessionKey: "sk-3",
+      reason: "fail_closed_rollover",
+      durationMs: 7,
+      timestamp: 1600,
+    });
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({
+      signal: "lcd_divergence",
+      reason: "fail_closed_rollover",
+      conversationId: "conv-divergent",
+      durationMs: 7,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
