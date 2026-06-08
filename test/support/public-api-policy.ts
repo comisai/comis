@@ -2370,6 +2370,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DeliveryDbRowFromSchema",
       "DiagnosticDbRowSchema",
       "DiagnosticDbRowFromSchema",
+      // Per-session GROUP-BY rollup row schema (v2.15 A1, Phase 159-01).
+      // Consumed intra-package by observability-store-types.ts via
+      // createRowMapper(SessionSummaryRollupDbRowSchema) — an intra-file value
+      // reference, NOT a cross-file import — and barrel-surfaced through
+      // `export *` from row-schemas.js, so the export-graph walker counts it as an
+      // orphan. Tracked here like the sibling obs *DbRowSchema entries above (the
+      // checker counts cross-package barrel consumers only). No *DbRowFromSchema
+      // inferred type is exported — SessionSummaryRollup is the camelCase domain
+      // type (in observability-store-types.ts).
+      "SessionSummaryRollupDbRowSchema",
       "ChannelSnapshotDbRowSchema",
       "ChannelSnapshotDbRowFromSchema",
       "ProviderAggDbRowSchema",
@@ -2424,6 +2434,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // daemon's existing selectSecretStore call is the sole production consumer of the factory.
       "createSqliteSecretStore",
       "SqliteSecretStoreHandle",
+      // Fleet window-rollup reducer (v2.15 R2/A2, Phase 159-02). reduceFleetWindow
+      // is the PURE cross-session reduce over the A1 SessionSummaryRollup[] (the
+      // synthetic-excluded fleet aggregate); FleetWindowRollup is its output type.
+      // Barrel-exported from packages/memory/src/index.ts so the Phase-161
+      // obs.fleet.health handler can import it — but no in-repo module consumes the
+      // reducer/type until that handler lands. The public-export-consumers walker
+      // excludes *.test.ts (the reducer's only current consumer is its own test) and
+      // self-imports, so both surface as orphans now. Same rationale + precedent as
+      // FleetHealthReportSchema / FleetHealthReport (159-04, @comis/core above).
+      // Remove when the Phase-161 handler consumes them.
+      "reduceFleetWindow",
+      "FleetWindowRollup",
     ])],
     // @comis/scheduler: baseline orphans tracked here.
     ["@comis/scheduler", new Set<string>([

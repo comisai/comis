@@ -241,6 +241,15 @@ export type {
   SystemPromptReportRow,
 } from "./observability-store/index.js";
 
+// Fleet window-rollup reducer (A2, v2.15 Phase 159). reduceFleetWindow is the
+// PURE cross-session reduce over the A1 SessionSummaryRollup[] (synthetic
+// excluded on the real `source` field). Barrel-surfaced AHEAD of its in-repo
+// consumer: the Phase-161 obs.fleet.health handler imports it, but no production
+// module references it yet — tracked in public-api-policy.ts as a planned orphan
+// (mirror FleetHealthReportSchema/FleetHealthReport from 159-04).
+export { reduceFleetWindow } from "./observability-store/fleet-window-rollup.js";
+export type { FleetWindowRollup } from "./observability-store/fleet-window-rollup.js";
+
 // Generic Row mapper factory.
 // Consumed via createRowMapper(schema) at every SQLite call-site to
 // replace `db.prepare(...).all() as Foo[]` casts.

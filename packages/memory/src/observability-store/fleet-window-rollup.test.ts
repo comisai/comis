@@ -120,10 +120,11 @@ describe("reduceFleetWindow", () => {
     expect(out.topErrorKinds.provider_error).toBe(7); // merged 5+2
     expect(out.topErrorKinds.rate_limit).toBe(4);
     // validation_error and timeout TIE at 3 — the deterministic tie-break (kind
-    // name ascending) keeps "timeout" out and "validation_error" in.
-    expect(out.topErrorKinds.validation_error).toBe(3);
-    // The two lowest-ranked kinds are dropped by the cap.
-    expect(out.topErrorKinds).not.toHaveProperty("timeout");
+    // name ASCENDING) ranks "timeout" before "validation_error" ('t' < 'v'), so
+    // the cap (3) keeps "timeout" and drops "validation_error".
+    expect(out.topErrorKinds.timeout).toBe(3);
+    // The lower-ranked tied kind is dropped by the cap.
+    expect(out.topErrorKinds).not.toHaveProperty("validation_error");
   });
 
   it("sums per-tool ok/failed across overlapping tool names and sums per-session cost", () => {
