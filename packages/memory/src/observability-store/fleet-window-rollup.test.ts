@@ -180,6 +180,67 @@ describe("reduceFleetWindow", () => {
     expect(empty.degradedRate).toBe(0);
   });
 
+  it("coerces non-finite / non-number nested values to finite numbers (WR-03: NaN/string corruption guard)", () => {
+    // A malformed row that bypassed query-layer validation (the reducer is a
+    // public export reachable directly by the Phase-161 handler, so it must not
+    // trust its caller). `topErrorKinds.timeout` is a STRING and `toolStats.write`
+    // is a number-instead-of-{ok,failed} — both would corrupt the arithmetic.
+    const malformed = makeRollup({
+      sessionKey: "malformed",
+      // topErrorKinds value is a string → `0 + "5"` = "05" without coercion.
+      topErrorKinds: { timeout: "5" as unknown as number },
+      // toolStats value is a bare number → `acc.ok += s.ok` = NaN without coercion.
+      toolStats: { write: 5 as unknown as { ok: number; failed: number } },
+    });
+    const valid = makeRollup({
+      sessionKey: "valid",
+      topErrorKinds: { timeout: 2 },
+      toolStats: { Read: { ok: 3, failed: 1 } },
+    });
+
+    const out = reduceFleetWindow([malformed, valid], { excludeSynthetic: true });
+
+    // topErrorKinds: the valid `2` survives; the string "5" is coerced to 0 (dropped
+    // from the sum), so `timeout` is a FINITE number, never the string "25"/"05".
+    expect(Number.isFinite(out.topErrorKinds.timeout)).toBe(true);
+    expect(out.topErrorKinds.timeout).toBe(2);
+    expect(typeof out.topErrorKinds.timeout).toBe("number");
+
+    // toolStats: the bare-number `write` contributes finite zeros (not NaN); the
+    // valid `Read` is summed normally.
+    expect(out.toolStats.write).toEqual({ ok: 0, failed: 0 });
+    expect(Number.isFinite(out.toolStats.write.ok)).toBe(true);
+    expect(Number.isFinite(out.toolStats.write.failed)).toBe(true);
+    expect(out.toolStats.Read).toEqual({ ok: 3, failed: 1 });
+
+    // No NaN anywhere in the numeric outputs.
+    expect(Number.isFinite(out.costUsd)).toBe(true);
+    expect(Number.isFinite(out.breakerTripTotal)).toBe(true);
+    expect(Number.isFinite(out.degradedRate)).toBe(true);
+  });
+
+  it("emits toolStats keys in a deterministic (name-asc) order independent of input ordering (WR-05)", () => {
+    // Two rows whose tool names sort differently from their insertion order.
+    const rowsA: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "s1", toolStats: { zzz: { ok: 1, failed: 0 } } }),
+      makeRollup({ sessionKey: "s2", toolStats: { aaa: { ok: 1, failed: 0 } } }),
+    ];
+    // The SAME logical rollups, traversed in the OPPOSITE order.
+    const rowsB: SessionSummaryRollup[] = [...rowsA].reverse();
+
+    const outA = reduceFleetWindow(rowsA, { excludeSynthetic: true });
+    const outB = reduceFleetWindow(rowsB, { excludeSynthetic: true });
+
+    // The toolStats KEY ENUMERATION ORDER must be byte-identical across the two
+    // input permutations (deepEqual is key-order-insensitive, so assert the key
+    // arrays directly — and that they are sorted name-ascending).
+    expect(Object.keys(outA.toolStats)).toEqual(["aaa", "zzz"]);
+    expect(Object.keys(outB.toolStats)).toEqual(["aaa", "zzz"]);
+    expect(Object.keys(outA.toolStats)).toEqual(Object.keys(outB.toolStats));
+    // A JSON serialization (cache-key / wire-digest consumer) is byte-stable.
+    expect(JSON.stringify(outA.toolStats)).toBe(JSON.stringify(outB.toolStats));
+  });
+
   it("is deterministic: same input rows → deeply-equal output, with ties broken by kind name", () => {
     // Build kinds that tie on count so the ordering can only be stable if the
     // tie-break is deterministic (kind name ascending), independent of input order.
