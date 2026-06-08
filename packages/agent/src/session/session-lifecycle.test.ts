@@ -359,6 +359,10 @@ describe("ComisSessionManager.destroySession", () => {
       sessionBaseDir: baseDir,
       lockDir,
       cwd: baseDir,
+      // destroySession appends a `session_ended` row via appendSessionIndexEntry;
+      // point dataDir at the tmp baseDir so the write lands under <baseDir>/logs/
+      // and never the operator's real ~/.comis (D9 test-process write-guard).
+      dataDir: baseDir,
       fileLock: createFileLock(),
     });
 
@@ -397,6 +401,10 @@ describe("ComisSessionManager.destroySession", () => {
       sessionBaseDir: baseDir,
       lockDir,
       cwd: baseDir,
+      // destroySession appends a `session_ended` row via appendSessionIndexEntry;
+      // point dataDir at the tmp baseDir so the write lands under <baseDir>/logs/
+      // and never the operator's real ~/.comis (D9 test-process write-guard).
+      dataDir: baseDir,
       fileLock: createFileLock(),
     });
 
@@ -457,6 +465,11 @@ describe("ComisSessionManager — abnormal-termination cleanup contract via with
       sessionBaseDir: baseDir,
       lockDir,
       cwd: baseDir,
+      // The destroy-after-abnormal test calls destroySession, which appends a
+      // `session_ended` row via appendSessionIndexEntry; point dataDir at the tmp
+      // baseDir so the write lands under <baseDir>/logs/ and never the operator's
+      // real ~/.comis (D9 test-process write-guard).
+      dataDir: baseDir,
       fileLock: createFileLock(),
     });
     const sessionKey: SessionKey = {
