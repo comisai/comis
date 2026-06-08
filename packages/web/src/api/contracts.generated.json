@@ -7725,6 +7725,310 @@
       "admin"
     ]
   },
+  "obs.fleet.health": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sinceHours": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "windowHours": {
+          "type": "number"
+        },
+        "sessions": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "number"
+            },
+            "degraded": {
+              "type": "number"
+            },
+            "degradedRate": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "total",
+            "degraded",
+            "degradedRate"
+          ],
+          "additionalProperties": false
+        },
+        "topErrorKinds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "count": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "kind",
+              "count"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "breakerTripTotal": {
+          "type": "number"
+        },
+        "toolStats": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "number"
+              },
+              "failed": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "ok",
+              "failed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "cost": {
+          "type": "object",
+          "properties": {
+            "costUsd": {
+              "type": "number"
+            },
+            "totalTokens": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "costUsd",
+            "totalTokens"
+          ],
+          "additionalProperties": false
+        },
+        "activity": {
+          "type": "object",
+          "properties": {
+            "activeAgents": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "activeChannels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "exitReasons": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "turnTotal": {
+              "type": "number"
+            },
+            "tokenTotal": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "activeAgents",
+            "activeChannels",
+            "exitReasons",
+            "turnTotal",
+            "tokenTotal"
+          ],
+          "additionalProperties": false
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "count": {
+                "type": "number"
+              },
+              "hint": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "count",
+              "hint"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "likelyRootCause": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "suggestedNextSteps": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "code",
+                "detail",
+                "suggestedNextSteps"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "suggestedNextSteps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "truncations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "pointer": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "field",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "coverage": {
+          "type": "object",
+          "properties": {
+            "sessionSummary": {
+              "type": "object",
+              "properties": {
+                "found": {
+                  "type": "boolean"
+                },
+                "rows": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "found",
+                "rows"
+              ],
+              "additionalProperties": false
+            },
+            "sessionIndex": {
+              "type": "object",
+              "properties": {
+                "daysRead": {
+                  "type": "number"
+                },
+                "daysMissing": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "daysRead",
+                "daysMissing"
+              ],
+              "additionalProperties": false
+            },
+            "billing": {
+              "type": "object",
+              "properties": {
+                "present": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "present"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "sessionSummary",
+            "sessionIndex",
+            "billing"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "windowHours",
+        "sessions",
+        "topErrorKinds",
+        "breakerTripTotal",
+        "toolStats",
+        "cost",
+        "activity",
+        "findings",
+        "likelyRootCause",
+        "suggestedNextSteps",
+        "truncations"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "obs.getCacheStats": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -158,8 +158,11 @@ export function diagnosticEventToRow(event: DiagnosticEvent): DiagnosticRow {
  * to a flat DiagnosticRow stored under `category:"session_summary"`.
  * A degraded run maps to `severity:"warning"` so it surfaces in operator
  * queries; otherwise `"info"`. The `details` JSON carries counts/flags only
- * (degraded/costUsd/toolStats/breakerTripCount/turnCount) — no error bodies,
- * no message text (§2.7). Phase 153's `obs.explain` reads this row.
+ * (degraded/costUsd/toolStats/breakerTripCount/turnCount/topErrorKinds/source)
+ * — no error bodies, no message text (§2.7): `topErrorKinds` keys are ⊂ the
+ * closed `ErrorKind` union (not free text) and `source` is an enum, so the
+ * bounded-payload discipline holds. Phase 153's `obs.explain` and Phase 159's
+ * `aggregateSessionsInWindow` (fleet aggregate) both read this row.
  */
 export function sessionSummaryEventToRow(
   payload: EventMap["session:summary"],
@@ -177,8 +180,118 @@ export function sessionSummaryEventToRow(
       toolStats: payload.toolStats,
       breakerTripCount: payload.breakerTripCount,
       turnCount: payload.turnCount,
+      topErrorKinds: payload.topErrorKinds,
+      source: payload.source,
     }),
     traceId: payload.traceId,
+  };
+}
+
+/**
+ * The `context:dag_degraded` reasons that are NOT genuine degrades. Today only
+ * `serialized_wait` qualifies: it is the bounded-wait back-pressure signal (an
+ * ingest/compaction write queued on the per-conversation single-flight
+ * serializer — events-messaging.ts), a normal operating event, not a robustness
+ * fault. Stamping it `warning` would inflate the Phase-161 fleet lens's degrade
+ * count with benign back-pressure (IN-01). Everything else in the closed union
+ * (the `*_divergence` skips, `fail_closed_rollover`, `breaker_open`, `spend_cap`)
+ * is a real degrade. This is an explicit allow-set, NOT an open default: a future
+ * reason added to the union is treated as a degrade (`warning`) until it is
+ * deliberately listed here — fail-safe toward operator visibility.
+ */
+const BENIGN_DAG_DEGRADED_REASONS: ReadonlySet<EventMap["context:dag_degraded"]["reason"]> =
+  new Set(["serialized_wait"]);
+
+/**
+ * Map a `context:dag_degraded` event payload (Phase 160 I1 — the LCD-divergence
+ * class: WR-01 live/store shrink + the leaf/condense ordinal-window skips) to a
+ * flat DiagnosticRow stored under `category:"health_signal"`. Severity TRACKS the
+ * reason: a genuine degrade is `severity:"warning"` (operator-visible); the
+ * benign `serialized_wait` back-pressure signal is `severity:"info"` so it does
+ * not inflate the fleet lens's degrade count (IN-01). The `details` JSON carries
+ * the closed `signal` label + the closed-union `reason` + the `conversationId`
+ * identifier + the `durationMs` count ONLY — no message/summary text (§2.7; the
+ * lossless store). `conversationId` is carried (WR-04) because the most
+ * security-relevant degrade (`fail_closed_rollover`) fires precisely on a
+ * `conversationId`/`sessionKey` CONFLICT, so the row must keep the divergent
+ * identifier (an identifier, not content — bounded-payload holds) rather than
+ * rely on the internal LCD `conversationId === sessionKey` invariant and drop it.
+ * `traceId` is `undefined`: the payload has NO traceId field — `sessionKey` +
+ * `conversationId` correlate the row to a conversation. The Phase-161 fleet lens
+ * reads these rows so the divergence is queryable/joinable cross-session instead
+ * of log-file-only.
+ */
+export function dagDegradedEventToRow(
+  payload: EventMap["context:dag_degraded"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: BENIGN_DAG_DEGRADED_REASONS.has(payload.reason) ? "info" : "warning",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    message: "context:dag_degraded",
+    details: JSON.stringify({
+      signal: "lcd_divergence",
+      reason: payload.reason,
+      conversationId: payload.conversationId,
+      durationMs: payload.durationMs,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
+ * Map a `health:budget_exceeded` event payload (Phase 160 I1 — an alert-budget
+ * threshold crossing from the health aggregator) to a flat DiagnosticRow stored
+ * under `category:"health_signal"`, `severity:"warning"`. The `details` JSON
+ * carries the closed `signal` label + the `kind` (⊂ the closed ErrorKind union
+ * or a synthetic-map label) + the `count`/`windowMs` counts ONLY — no free text.
+ * The event is daemon-global (no agentId/sessionKey) so the row omits them
+ * (`insertDiagnostic` defaults absent columns to "" — agent-less rows are fine).
+ */
+export function healthBudgetExceededEventToRow(
+  payload: EventMap["health:budget_exceeded"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    message: "health:budget_exceeded",
+    details: JSON.stringify({
+      signal: "alert_budget",
+      kind: payload.kind,
+      count: payload.count,
+      windowMs: payload.windowMs,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
+ * Map a `mcp:server:reconnect_failed` event payload (Phase 160 I1 — MCP
+ * reconnect exhaustion) to a flat DiagnosticRow stored under
+ * `category:"health_signal"`, `severity:"warning"`. The `details` JSON carries
+ * the closed `signal` label + the `serverName` + the `attempts` count ONLY —
+ * the `lastError` BODY is DROPPED (bounded-payload: label+count, not the error
+ * text; the body already lives in the per-session trajectory + daemon.log, and
+ * the queryable health row must never duplicate an untrusted WARN body — T-160-01).
+ * Daemon-global (no agentId/sessionKey) so the row omits them.
+ */
+export function mcpReconnectFailedEventToRow(
+  payload: EventMap["mcp:server:reconnect_failed"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    message: "mcp:server:reconnect_failed",
+    details: JSON.stringify({
+      signal: "mcp_reconnect_failed",
+      serverName: payload.serverName,
+      attempts: payload.attempts,
+    }),
+    traceId: undefined,
   };
 }
 
@@ -295,6 +408,22 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   // (no new table/buffer/transaction) — written under category:"session_summary".
   eventBus.on("session:summary", (payload) => {
     diagnosticBuffer.push(sessionSummaryEventToRow(payload));
+  });
+
+  // I1 (Phase 160): persist the log-file-only high-value WARNs to obs_diagnostics
+  // under category:"health_signal" — the LCD-divergence class + MCP health — via
+  // the SAME diagnosticBuffer (no new table/buffer/transaction). The fleet lens
+  // (Phase 161) reads these rows; today they are Pino-only (LCD) or per-session
+  // trajectory JSONL (MCP), invisible to a cross-session query. Each mapper emits
+  // counts/labels only (no error bodies, no message text — §2.7).
+  eventBus.on("context:dag_degraded", (payload) => {
+    diagnosticBuffer.push(dagDegradedEventToRow(payload));
+  });
+  eventBus.on("health:budget_exceeded", (payload) => {
+    diagnosticBuffer.push(healthBudgetExceededEventToRow(payload));
+  });
+  eventBus.on("mcp:server:reconnect_failed", (payload) => {
+    diagnosticBuffer.push(mcpReconnectFailedEventToRow(payload));
   });
 
   // c. Periodic channel snapshot timer

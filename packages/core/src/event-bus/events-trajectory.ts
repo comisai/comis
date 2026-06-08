@@ -78,7 +78,17 @@ export interface TrajectoryEvents {
     timestamp: number;
   };
 
-  /** Per-session health rollup emitted once at agent-end. Emit site: packages/agent/src/executor/executor-post-execution.ts (D5/F2). */
+  /**
+   * Per-session health rollup emitted once at agent-end. Emit site:
+   * packages/agent/src/executor/executor-post-execution.ts (D5/F2).
+   *
+   * `topErrorKinds` (keys ⊂ the closed `ErrorKind` union, capped at 3) and
+   * `source` (provenance enum, mirroring the session-index SSOT) are carried
+   * onto the event so they land in the persisted `obs_diagnostics` row and the
+   * fleet aggregate (`aggregateSessionsInWindow`, Phase 159 A1/A2) can read them
+   * without opening per-session `_session-metadata.json` files. Production emits
+   * the constant `source: "runtime"`; tests inject `"test"` / `"bench"`.
+   */
   "session:summary": {
     sessionKey: string;
     agentId: string;
@@ -88,6 +98,8 @@ export interface TrajectoryEvents {
     costUsd: number;
     toolStats: Record<string, { ok: number; failed: number }>;
     breakerTripCount: number;
+    topErrorKinds: Record<string, number>;
+    source: "runtime" | "test" | "bench";
     timestamp: number;
   };
 

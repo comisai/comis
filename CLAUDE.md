@@ -114,7 +114,7 @@ Pino auto-redacts credentials (`apiKey`, `token`, `password`, `secret`, `authori
 
 **Instrument for troubleshooting (full observability).** Treat every new boundary crossing — channel inbound, RPC, tool call, external API, queue hop — as something an operator must be able to reconstruct from logs + events alone, with no debugger and no live repro. Per the §2.7 logging matrix in AGENTS.md, that means: an INFO completion line with `durationMs`, an ERROR/WARN carrying `hint` + `errorKind` on every failure branch, a `step:`-tagged DEBUG per intermediate stage, and an `eventBus` event for each state transition / health signal. Let `traceId` ride the AsyncLocalStorage context so one request stitches together across packages — don't open a fresh context mid-flow and orphan it. Litmus test before you call a path done: can you explain exactly how its next production failure would be diagnosed from the logs it emits? If not, add the missing instrumentation now, not after the incident.
 
-## Diagnosing a degraded session
+## Diagnosing a degraded session — or the whole daemon (fleet lens)
 
 **Start with `obs.explain` — do NOT hand-join the logs.** v2.14 "Glass Box" exists so an agent (or you) root-causes a bad session in one call instead of grepping four files. The CLI is not on PATH:
 
@@ -124,7 +124,17 @@ node packages/cli/dist/cli.js explain "<sessionKey|traceId>" [--depth summary|fu
 
 It returns a bounded, digest-only `IncidentReport` (outcome, cost, per-tool `{ok,failed}`, normalized failures with `classifiedFailureBy`/`transportOk`, breaker timeline, large-result offload pointers, and a deterministic `likelyRootCause` — no LLM, same input → same verdict). Same report via the `obs_query` agent `explain`/`session_report` actions and the permission-gated `obs_explain` MCP tool. Docs: `docs/reference/cli.mdx` (`comis explain`) + `docs/reference/json-rpc.mdx` (`obs.explain`).
 
-Only drop to the raw data when you're debugging the **observability layer itself** (it's what `obs.explain` reads). Layout is in `docs/operations/data-directory.mdx`; the load-bearing files:
+**For daemon-wide / cross-session triage — when asked to "review the production logs" — start with `comis fleet`, NOT a `daemon.log` grep.** `obs.explain` sees ONE session; `obs.fleet.health` (v2.15 "Glass Box II") sees the **whole daemon over the last N hours** — the automated version of a by-hand log sweep. CLI is not on PATH:
+
+```bash
+node packages/cli/dist/cli.js fleet --since 24 [--format table|json]    # default window 24h
+```
+
+Returns a bounded, admin-gated, deterministic `FleetHealthReport` — **counts + hints only, never raw WARN bodies or secrets** (so it is safe to paste into a review): cross-session degraded rate, top errorKinds, breaker trips, cost, plus the signals that used to be log-file-only — `health_signal` (LCD-divergence + MCP churn/reconnect/budget), `model_health` (embedding-provider / GGUF load / reranker presence at boot), `config_posture` (TLS-off / stranded-secret-**count** / canary-fallback). Same report via the `obs_query` `fleet_health` action + the permission-gated `obs_fleet_health` MCP tool + the `obs.fleet.health` RPC. Docs: `docs/reference/cli.mdx` (`comis fleet`) + `docs/reference/json-rpc.mdx` (`obs.fleet.health`).
+
+**Two-tier workflow for "troubleshoot the logs":** `comis fleet --since N` to surface the daemon-wide pattern (which signal recurs, how degraded, at what cost) → then `comis explain <sessionKey|traceId>` on the worst session it points at to root-cause that one. Only fall through to a raw `daemon.log` grep if the fleet lens itself looks wrong. **Data caveat:** the ingested `health_signal`/`model_health`/`config_posture` rows only populate once a daemon running the **v2.15+ build** has been up — on an older daemon you still get the session-rollup half (degraded/errors/breaker/cost) but the log-only half will be sparse; restart on the fresh `dist/` first (see the restart note below).
+
+Only drop to the raw data when you're debugging the **observability layer itself** (it's what `obs.explain` / `obs.fleet.health` read). Layout is in `docs/operations/data-directory.mdx`; the load-bearing files:
 - `~/.comis/workspace/sessions/<tenant>/<channel>/<file>.jsonl.trajectory.jsonl` — the trajectory (tool.result with provenance, `tool.result_offloaded` with `diskPathRel`, `session.summary`, `model.completed`). Resolve its path via the co-located `<file>.jsonl.trajectory-path.json` pointer (`runtimeFile`), **not** a hand-built `<dataDir>/sessions/<id>` guess — that path does not exist (it's the bug class §2.10 calls out).
 - `…/<file>_session-metadata.json` — the flight-recorder `sessionEnd` rollup (`degraded`/`costUsd`/`toolStats`/`breakerTripCount`/`topErrorKinds`).
 - `~/.comis/logs/{daemon.*.log, cache-trace.jsonl, session-index.<date>.jsonl}` and `~/.comis/memory.db` → `obs_diagnostics` (`category='session_summary'`).

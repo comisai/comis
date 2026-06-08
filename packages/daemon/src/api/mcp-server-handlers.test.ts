@@ -56,6 +56,11 @@ const stubRegistry = new Map<string, StubMeta>([
   // INJECTED obsExplainForMcpClient assembler DIRECTLY (NOT daemonRpcForMcpClient)
   // and feeds the result into the SAME wrapExternalContent wrap.
   ["obs_explain", { mcpExportPolicy: "permission-gated" }],
+  // obs_fleet_health (161-02): permission-gated SIBLING of obs_explain. Its
+  // dispatch branch invokes the INJECTED obsFleetHealthForMcpClient assembler
+  // DIRECTLY (NOT daemonRpcForMcpClient), never injecting admin, and feeds the
+  // result into the SAME wrapExternalContent wrap.
+  ["obs_fleet_health", { mcpExportPolicy: "permission-gated" }],
   ["tokens_manage", { mcpExportPolicy: "never-export" }],
   ["future_tool_no_policy", {} /* no policy — default-deny safety net */],
 ]);
@@ -215,12 +220,14 @@ describe("buildMcpServerForClient -- default-deny tools/list filter", () => {
       expect(registered).not.toContain("memory_get");
       // obs_explain is permission-gated but NOT in the allowlist → skipped.
       expect(registered).not.toContain("obs_explain");
+      // obs_fleet_health is permission-gated but NOT in the allowlist → skipped.
+      expect(registered).not.toContain("obs_fleet_health");
       // safe tool still present.
       expect(registered).toContain("web_search");
 
       const summary = infoCalls.at(-1);
       expect(summary?.obj["registered"]).toBe(2); // web_search + memory_search
-      expect(summary?.obj["skippedGated"]).toBe(2); // memory_get + obs_explain
+      expect(summary?.obj["skippedGated"]).toBe(3); // memory_get + obs_explain + obs_fleet_health
       expect(summary?.obj["allowlistSize"]).toBe(1);
     } finally {
       restore();
@@ -245,9 +252,10 @@ describe("buildMcpServerForClient -- default-deny tools/list filter", () => {
       expect(registered).not.toContain("memory_search");
       expect(registered).not.toContain("memory_get");
       expect(registered).not.toContain("obs_explain");
+      expect(registered).not.toContain("obs_fleet_health");
 
       const summary = infoCalls.at(-1);
-      expect(summary?.obj["skippedGated"]).toBe(3); // memory_search + memory_get + obs_explain
+      expect(summary?.obj["skippedGated"]).toBe(4); // memory_search + memory_get + obs_explain + obs_fleet_health
     } finally {
       restore();
     }
@@ -1082,6 +1090,179 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
       expect(r.isError).toBe(true);
       const text = r.content?.[0]?.text ?? "";
       expect(text).toContain("[dispatch_error]");
+      // It did NOT fall back to the daemonRpcForMcpClient indirection.
+      expect(rpc.calls.length).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  // ------------------------------------------------------------------------
+  // obs_fleet_health (161-02) — direct-assembler dispatch under daemon authority
+  //
+  // The SECURITY-CRITICAL fleet sibling of obs_explain. Its dispatch branch
+  // invokes the INJECTED obsFleetHealthForMcpClient assembler DIRECTLY (NOT
+  // daemonRpcForMcpClient -> the admin-gated obs.fleet.health RPC) and feeds the
+  // result into the SAME Step-5 wrapExternalContent wrap. Authorization is the
+  // per-client mcpClient.allowlist + the digest-only/bounded report.
+  //
+  // Required invariants (H1-MCP):
+  //   - never-inject-admin: obsFleetHealthForMcpClient called with params that
+  //     DO NOT contain _trustLevel (stripTrustLevel ran); the result is wrapped.
+  //   - fail-closed: undefined closure -> generic dispatch_error, no crash, no
+  //     fall-through to the admin RPC indirection.
+  //   - error-opacity: a throwing closure -> generic dispatch_error with NO raw
+  //     err.message (no sessionKey/path leak).
+  // ------------------------------------------------------------------------
+
+  it("buildMcpServerForClient obs_fleet_health dispatch invokes the direct assembler (NOT daemonRpcForMcpClient), strips _trustLevel, and wraps the result", async () => {
+    const { logger } = makeCapturingLogger();
+    const client = makeMcpClient(["mcp-client"], ["obs_fleet_health"]);
+    const rpc = makeRpcRecorder();
+
+    // The injected assembler — a stand-in for the production
+    // assembleFleetHealthReport closure. Records its params so we can prove
+    // _trustLevel was stripped before it ran.
+    const assemblerCalls: Array<Record<string, unknown>> = [];
+    const obsFleetHealthForMcpClient = vi.fn(
+      async (params: Record<string, unknown>) => {
+        assemblerCalls.push(params);
+        return {
+          windowHours: 6,
+          likelyRootCause: { code: "fleet_high_degraded_rate" },
+          sessions: { total: 3, degraded: 2, degradedRate: 0.66 },
+        };
+      },
+    );
+
+    const { capturedCallback, restore } = captureRegisteredCallback();
+    try {
+      buildMcpServerForClient(
+        {
+          logger,
+          daemonVersion: "0.0.0-test",
+          daemonRpcForMcpClient: rpc.fn,
+          defaultToolRateLimit: 30,
+          toolNameToRpcMethod: identityToolNameToRpcMethod,
+          obsFleetHealthForMcpClient,
+        },
+        client,
+      );
+
+      const cb = capturedCallback["obs_fleet_health"];
+      expect(cb).toBeDefined();
+
+      // A hostile caller smuggles _trustLevel:"admin" in the args. The
+      // dispatcher MUST strip it before invoking the assembler (no admin path).
+      const r = (await cb!({
+        sinceHours: 6,
+        _trustLevel: "admin",
+      })) as {
+        isError?: boolean;
+        content?: Array<{ type: string; text: string }>;
+      };
+
+      // (a) the assembler ran with _trustLevel stripped.
+      expect(obsFleetHealthForMcpClient).toHaveBeenCalledTimes(1);
+      expect(assemblerCalls.length).toBe(1);
+      expect(assemblerCalls[0]).not.toHaveProperty("_trustLevel");
+      expect(assemblerCalls[0]).toMatchObject({ sinceHours: 6 });
+
+      // (b) obs_fleet_health did NOT route through daemonRpcForMcpClient.
+      expect(rpc.calls.length).toBe(0);
+
+      // (c) the result flowed through wrapExternalContent (SECURITY NOTICE +
+      // hex markers) — the digest-only report is treated as untrusted data.
+      expect(r.isError ?? false).toBe(false);
+      const text = r.content?.[0]?.text ?? "";
+      expect(text).toContain("SECURITY NOTICE");
+      expect(text).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+      expect(text).toMatch(/<<<END_UNTRUSTED_[a-f0-9]+>>>/);
+      // The report payload survives between the markers.
+      expect(text).toContain("fleet_high_degraded_rate");
+    } finally {
+      restore();
+    }
+  });
+
+  it("buildMcpServerForClient obs_fleet_health fails closed (dispatch_error, no crash) when obsFleetHealthForMcpClient is unwired", async () => {
+    // Defense-in-depth: an obsStore-less boot / wiring gap leaves the closure
+    // undefined. The dispatch branch must return a generic dispatch_error
+    // sentinel (NOT throw, NOT leak), and MUST NOT fall through to
+    // daemonRpcForMcpClient (which would hit the admin-gated RPC).
+    const { logger } = makeCapturingLogger();
+    const client = makeMcpClient(["mcp-client"], ["obs_fleet_health"]);
+    const rpc = makeRpcRecorder();
+
+    const { capturedCallback, restore } = captureRegisteredCallback();
+    try {
+      buildMcpServerForClient(
+        {
+          logger,
+          daemonVersion: "0.0.0-test",
+          daemonRpcForMcpClient: rpc.fn,
+          defaultToolRateLimit: 30,
+          toolNameToRpcMethod: identityToolNameToRpcMethod,
+          // obsFleetHealthForMcpClient intentionally omitted (unwired).
+        },
+        client,
+      );
+
+      const cb = capturedCallback["obs_fleet_health"];
+      expect(cb).toBeDefined();
+      const r = (await cb!({ sinceHours: 24 })) as {
+        isError?: boolean;
+        content?: Array<{ type: string; text: string }>;
+      };
+      expect(r.isError).toBe(true);
+      const text = r.content?.[0]?.text ?? "";
+      expect(text).toContain("[dispatch_error]");
+      // It did NOT fall back to the daemonRpcForMcpClient indirection.
+      expect(rpc.calls.length).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it("buildMcpServerForClient obs_fleet_health returns a generic dispatch_error (no raw err.message leak) when the assembler throws", async () => {
+    // Error-opacity (T-161-08): a throwing assembler must NOT surface its raw
+    // message (it can carry sessionKeys/file paths). The on-wire response is a
+    // generic sentinel; the structured err is captured on the WARN log only.
+    const { logger } = makeCapturingLogger();
+    const client = makeMcpClient(["mcp-client"], ["obs_fleet_health"]);
+    const rpc = makeRpcRecorder();
+
+    const leakyMessage = "sessionKey /Users/secret/.comis/x leak";
+    const obsFleetHealthForMcpClient = vi.fn(async () => {
+      throw new Error(leakyMessage);
+    });
+
+    const { capturedCallback, restore } = captureRegisteredCallback();
+    try {
+      buildMcpServerForClient(
+        {
+          logger,
+          daemonVersion: "0.0.0-test",
+          daemonRpcForMcpClient: rpc.fn,
+          defaultToolRateLimit: 30,
+          toolNameToRpcMethod: identityToolNameToRpcMethod,
+          obsFleetHealthForMcpClient,
+        },
+        client,
+      );
+
+      const cb = capturedCallback["obs_fleet_health"];
+      expect(cb).toBeDefined();
+      const r = (await cb!({ sinceHours: 24 })) as {
+        isError?: boolean;
+        content?: Array<{ type: string; text: string }>;
+      };
+      expect(r.isError).toBe(true);
+      const text = r.content?.[0]?.text ?? "";
+      expect(text).toContain("[dispatch_error]");
+      // The raw err.message (path/sessionKey) must NOT leak on the wire.
+      expect(text).not.toContain(leakyMessage);
+      expect(text).not.toContain("/Users/secret");
       // It did NOT fall back to the daemonRpcForMcpClient indirection.
       expect(rpc.calls.length).toBe(0);
     } finally {

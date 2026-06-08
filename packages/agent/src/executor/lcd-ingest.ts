@@ -225,6 +225,14 @@ export function isScopeSafeForIngest(
  *                     a content-free `context:dag_degraded` event (the eventBus
  *                     lives agent-side; this module stays bus-free). Never carries
  *                     message content.
+ * @param onDivergence Optional callback fired ONLY on the WR-01 live/store-
+ *                     divergence skip (the live array is shorter than the store
+ *                     high-water mark), carrying the closed-meaning reason tag
+ *                     (`"live_store_divergence"`). The agent-side caller turns it
+ *                     into a content-free `context:dag_degraded` emit so the
+ *                     divergence is queryable as a `health_signal` (Phase 160 I1)
+ *                     rather than log-file-only. Never carries message content;
+ *                     keeps this module bus-free (mirrors `onFailClosed`).
  */
 export function ingestTurnGuarded(
   store: ContextStorePort,
@@ -233,6 +241,7 @@ export function ingestTurnGuarded(
   now: number,
   logger: ComisLogger,
   onFailClosed?: (reason: string) => void,
+  onDivergence?: (reason: string) => void,
 ): void {
   // R3 (132-04) fail-closed rollover: refuse the write on an ambiguous/malformed
   // scope BEFORE touching the store, so a mis-derived session key can never
@@ -275,6 +284,11 @@ export function ingestTurnGuarded(
       },
       "LCD ingest skipped: live/store divergence",
     );
+    // Let the agent-side caller emit a content-free context:dag_degraded
+    // (reason: live_store_divergence) so the WR-01 divergence is queryable as a
+    // health_signal (Phase 160 I1), not log-file-only. Closed-meaning tag only —
+    // NEVER message content (this module stays bus-free).
+    onDivergence?.("live_store_divergence");
     return;
   }
   const delta = live.slice(persisted);

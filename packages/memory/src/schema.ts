@@ -681,7 +681,7 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_obs_diag_timestamp ON obs_diagnostics(timestamp);
     CREATE INDEX IF NOT EXISTS idx_obs_diag_category ON obs_diagnostics(category, timestamp);
     CREATE INDEX IF NOT EXISTS idx_obs_diag_severity ON obs_diagnostics(severity, timestamp);
-
+    CREATE INDEX IF NOT EXISTS idx_obs_diag_session_cat ON obs_diagnostics(session_key, category, timestamp);
     CREATE TABLE IF NOT EXISTS obs_channel_snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       timestamp INTEGER NOT NULL,

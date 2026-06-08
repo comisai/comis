@@ -98,6 +98,7 @@ import {
   preReadStorageMode,
   systemNowMs,
   ObsExplainContract,
+  ObsFleetHealthContract,
   type SecretStorePort,
   type CredentialStorageMode,
   type ToolCapabilityPort,
@@ -180,11 +181,13 @@ import { createTokenRegistry } from "./api/token-handlers.js";
 // 154-03: the shared obs.explain assembler + production reader, for the
 // trust-flag-FREE obsExplainForMcpClient closure (obs_explain MCP tool runs the
 // assembler directly under daemon authority — no admin RPC, no admin trust).
-import { assembleIncidentReportFromSources, makeRealReader } from "./api/obs-handlers/index.js";
+import { assembleIncidentReportFromSources, assembleFleetHealthReport, makeRealReader } from "./api/obs-handlers/index.js";
 import type { DaemonInstance, DaemonOverrides, BootContext, PermissionCorrection, SessionStoreBridge } from "./daemon-types.js";
 import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
+import { recordModelHealth } from "./observability/record-model-health.js";
+import { buildConfigPostureRecord } from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -1065,7 +1068,9 @@ function buildRpcDispatchDeps(deps: {
     // no down-cast to `{ emit }` is needed.
     eventBus: c.container.eventBus,
     mcpClientManager: c.mcpClientManager,
-    obsStore: c.obsStore, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
+    // 161-02: ObservabilityApiDeps.clock = the SAME boot ClockPort (one createSystemClock()
+    // at the composition root) so the obs.fleet.health assembler has a clock (asserts deps.clock!).
+    obsStore: c.obsStore, clock: c.clock, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
     contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
     deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
     channelPlugins: c.channelPlugins, healthMonitor: c.channelHealthMonitor,
@@ -1633,6 +1638,10 @@ async function bootFoundation(
     : undefined;
   const obsStore = obsBundle?.obsStore; // trajectory recorder is per-session (pi-executor.ts).
   const obsPersistence = obsBundle?.obsPersistence;
+
+  // I2: one-shot model_health boot snapshot — embedding/reranker load-level
+  // signals as a queryable obs_diagnostics row (no-ops when persistence off).
+  recordModelHealth(obsStore, { embeddingAvailable: !!cachedPort, rerankerModelPresent, rerankerBuilt: rerankerPort !== undefined }, clock);
 
   // Create daemon-level runtime registries
   const activeRunRegistry = createActiveRunRegistry();
@@ -2540,6 +2549,17 @@ async function bootGateway(
     return assembleIncidentReportFromSources(obsExplainReader, obsExplainDataDir, parsed);
   };
 
+  // 161-02: the cross-session fleet sibling of obsExplainForMcpClient — same
+  // never-inject-admin posture. boot.clock is the SAME ClockPort wired into the
+  // RPC handler deps below (buildRpcDispatchDeps clock: c.clock); load-bearing (deps.clock!).
+  const obsFleetHealthForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
+    const parsed = ObsFleetHealthContract.request.parse(params);
+    return assembleFleetHealthReport(
+      { obsStore, dataDir: obsExplainDataDir, clock: boot.clock },
+      parsed.sinceHours ?? 24,
+    );
+  };
+
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({
     container, gwConfig, webhooksConfig: container.config.webhooks, agents, defaultAgentId,
     configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS, gatewayLogger,
@@ -2553,6 +2573,7 @@ async function bootGateway(
     instanceId, startupStartMs,
     interactiveCallbackWiring,
     obsExplainForMcpClient,
+    obsFleetHealthForMcpClient,
   });
 
   // 7.0.1. Wire deferred gateway attachment deps (wsConnections / mediaDir /
@@ -2819,7 +2840,29 @@ async function bootShutdown(
     alertBudgetPolicy: container.config.observability?.alertBudget,
     eventBus: container.eventBus,
   });
-  checkStorageModeConsistency({ logger: daemonLogger, activeMode: boot.container.config.security.storage, dataDir: boot.dataDir, secretsDb: boot.secretsDb });
+  const posture = checkStorageModeConsistency({ logger: daemonLogger, activeMode: boot.container.config.security.storage, dataDir: boot.dataDir, secretsDb: boot.secretsDb });
+
+  // 9.2. I3 — config-posture SNAPSHOT (one-shot boot record, NOT an event).
+  // Records the three log-file-only posture FINDINGS — TLS-off, stranded-secret
+  // COUNTS, canary-fallback — as a single config_posture obs_diagnostics row so
+  // the fleet lens can query a daemon's posture without grepping daemon.log.
+  // TLS-off is CONFIG-DERIVED here, not read from the gateway's own TLS decision:
+  // `gateway.{tls,allowInsecureHttp}` is the INPUT the gateway acts on, but the
+  // gateway's resolved `tls ? https : http` branch (hono-server.ts) is internal
+  // and NOT exposed on GatewayServerHandle, and threading it back out is the deep
+  // cross-package plumbing this phase's KISS constraint forbids. This recompute
+  // matches the listener's posture today; it only diverges if the gateway gains a
+  // TLS path that bypasses config (an injected cert / env override) — a future
+  // change should thread the gateway's resolved boolean here (WR-02).
+  // canaryFallbackActive is a daemon-global presence proxy: CANARY_SECRET is
+  // folded into `boot.env`/mergedEnv store-wins (buildMergedEnv), so this env read
+  // already honors an encrypted/file secret-store entry — the same source the
+  // per-agent path resolves (setup-agents-runtime.ts). True ⇒ no secret set ⇒
+  // every agent uses the deterministic fallback. KISS — no deep per-agent plumbing.
+  const tlsOff = (boot.container.config.gateway.tls === undefined) && (boot.container.config.gateway.allowInsecureHttp !== true);
+  const allowInsecureHttp = boot.container.config.gateway.allowInsecureHttp === true;
+  const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

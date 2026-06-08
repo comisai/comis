@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:421–456`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 16 (5 required + 11 optional + 0 stale-fallback)
+**Field count:** 17 (5 required + 12 optional + 0 stale-fallback)
 **Location:** Co-located with the `@comis/daemon` package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes this audit from the npm tarball.
 
 ## Field Classification
@@ -19,6 +19,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | deliveryTracer | required | — | packages/daemon/src/api/types.ts:428 |
 | budgetGuards | optional | obs.budget returns an empty snapshot map; per-agent budget enforcement guards are not enumerated for the UI | packages/daemon/src/api/types.ts:429 |
 | obsStore | optional | obs.usage / obs.billing historical-aggregation queries return live in-memory snapshots only; no persisted timeseries is read or written | packages/daemon/src/api/types.ts:431 |
+| clock | optional | the obs.fleet.health assembler reads `deps.clock!` for the window `sinceMs`; absent in handler unit tests that pass `{}` deps, but ALWAYS populated in production from boot.clock (buildRpcDispatchDeps `clock: c.clock`) — an unwired clock throws at request time | packages/daemon/src/api/types.ts:581 |
 | startupTimestamp | optional | obs.diagnostics omits the uptime field; UI shows "unknown" for daemon-uptime | packages/daemon/src/api/types.ts:432 |
 | sharedCostTracker | optional | obs.reset cannot reset the shared cost tracker; only per-agent trackers are reset | packages/daemon/src/api/types.ts:433 |
 | contextPipelineCollector | optional | obs.diagnostics omits the context-pipeline stage metrics; ctx_recall / ctx_search / ctx_inspect / ctx_expand throughput is invisible to operators | packages/daemon/src/api/types.ts:435 |
@@ -37,7 +38,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 14
-- **Final count:** 16 (5 required + 11 optional)
+- **Final count:** 17 (5 required + 12 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

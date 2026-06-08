@@ -864,6 +864,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // IncidentReport off the wire imports this schema. Tracked here per the
       // baseline orphan-export policy; remove if an in-repo value consumer lands.
       "IncidentReportSchema",
+      // FleetHealthReportSchema is the Zod schema VALUE for the obs.fleet.health
+      // response (the v2.15 cross-session fleet digest). The Phase-161 handler +
+      // the ObsFleetHealthContract consume the inferred TYPE `FleetHealthReport`
+      // (now removed from this allowlist — it has a real consumer), and the
+      // contract's `response` field references the schema VALUE internally within
+      // fleet-health-report.ts — but no OTHER in-repo module imports the schema
+      // value directly. It is part of the documented external-API surface (an
+      // external consumer validating a FleetHealthReport off the wire imports it).
+      // Same rationale + precedent as IncidentReportSchema above; remove if an
+      // in-repo value consumer lands.
+      "FleetHealthReportSchema",
       "NodeStatusSchema",
       "GraphStatusSchema",
       "GraphNodeSchema",
@@ -1975,6 +1986,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "assembleIncidentReportFromSources",
       "makeRealReader",
       "IncidentSourceReader",
+      // Fleet-health assembler (Phase 162-01 RE-PROVE seam) — re-exported from
+      // the TOP-LEVEL daemon barrel so the keyless deterministic fleet RE-PROVE
+      // scenario can call it over a seeded tmp store via the clean @comis/daemon
+      // alias (the live config aliases only the top-level @comis/daemon →
+      // daemon/dist/index.js, with no obs-handlers subpath alias). Exact analog
+      // of assembleIncidentReportFromSources above: the sole external consumer
+      // imports it statically from @comis/daemon under test/**, which the
+      // public-export-consumers AST walker excludes, so this orphan list is the
+      // canonical place to record the planned test consumer. SECURITY: the
+      // surface widens by EXACTLY the assembler — the admin gate stays on the
+      // bindObsFleetHealthHandlers RPC (NOT re-exported), and the assembler
+      // itself excludes synthetic sessions (excludeSynthetic: true) and reads
+      // only sqlite + the session-index JSONL (never daemon.log).
+      // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts (Plan 162-01)
+      "assembleFleetHealthReport",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
@@ -2355,6 +2381,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DeliveryDbRowFromSchema",
       "DiagnosticDbRowSchema",
       "DiagnosticDbRowFromSchema",
+      // Per-session GROUP-BY rollup row schema (v2.15 A1, Phase 159-01).
+      // Declared and exported from observability-store-types.ts (co-located with
+      // its sole consumer, sessionSummaryRollupMapper) — a same-file value
+      // reference, so it has no cross-file importer and is barrel-surfaced
+      // package-publicly via observability-store-types.ts, making the export-graph
+      // walker count it as an orphan. Tracked here like the sibling obs
+      // *DbRowSchema entries above (the checker counts cross-package barrel
+      // consumers only). No *DbRowFromSchema inferred type is exported —
+      // SessionSummaryRollup is the camelCase domain type (in
+      // observability-store-types.ts).
+      "SessionSummaryRollupDbRowSchema",
       "ChannelSnapshotDbRowSchema",
       "ChannelSnapshotDbRowFromSchema",
       "ProviderAggDbRowSchema",
@@ -2409,6 +2446,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // daemon's existing selectSecretStore call is the sole production consumer of the factory.
       "createSqliteSecretStore",
       "SqliteSecretStoreHandle",
+      // Fleet window-rollup reducer (v2.15 R2/A2, Phase 159-02). reduceFleetWindow
+      // is the PURE cross-session reduce over the A1 SessionSummaryRollup[] (the
+      // synthetic-excluded fleet aggregate); FleetWindowRollup is its output type.
+      // Barrel-exported from packages/memory/src/index.ts so the Phase-161
+      // obs.fleet.health handler can import it — but no in-repo module consumes the
+      // reducer/type until that handler lands. The public-export-consumers walker
+      // excludes *.test.ts (the reducer's only current consumer is its own test) and
+      // self-imports, so both surface as orphans now. Same rationale + precedent as
+      // FleetHealthReportSchema (@comis/core above). Remove when an in-repo
+      // non-test value consumer of each lands.
+      "reduceFleetWindow",
+      "FleetWindowRollup",
     ])],
     // @comis/scheduler: baseline orphans tracked here.
     ["@comis/scheduler", new Set<string>([

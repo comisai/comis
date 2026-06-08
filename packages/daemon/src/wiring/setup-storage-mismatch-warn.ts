@@ -35,6 +35,35 @@ export interface StorageMismatchDeps {
   secretsDb?: import("better-sqlite3").Database;
 }
 
+/**
+ * The closed set of stranded-credential families this probe can report.
+ * Mirrors the `stranded:` labels already attached to each WARN payload — a
+ * closed label set (never an open string), so the structured finding stays
+ * §2.8-compliant.
+ */
+export type StrandedLabel =
+  | "encrypted:secrets"
+  | "encrypted:oauth_profiles"
+  | "encrypted:mcp_credentials"
+  | "file:secrets"
+  | "file:oauth_profiles"
+  | "file:mcp_tokens";
+
+/** A single stranded-credential finding: a closed label + a COUNT (never a value). */
+export interface StrandedFinding {
+  stranded: StrandedLabel;
+  entryCount: number;
+}
+
+/**
+ * The structured result of the probe. Additive to the existing WARN side-effect
+ * (one probe, two sinks): the I3 boot snapshot records these COUNTS into the
+ * `config_posture` row — never a secret value.
+ */
+export interface StorageMismatchResult {
+  findings: StrandedFinding[];
+}
+
 // ---------------------------------------------------------------------------
 // Main function
 // ---------------------------------------------------------------------------
@@ -44,17 +73,23 @@ export interface StorageMismatchDeps {
  * credential family that holds real entries the operator cannot reach in
  * the current activeMode.
  *
+ * ADDITIVELY returns the structured `{ findings }` it WARNs with (counts +
+ * closed labels only, NEVER secret values) so the boot `config_posture`
+ * snapshot can record the stranded-secret COUNTS without re-probing — one
+ * probe, two sinks (DRY). The WARN side-effect is unchanged.
+ *
  * Pure, synchronous, never throws.
  */
-export function checkStorageModeConsistency(deps: StorageMismatchDeps): void {
+export function checkStorageModeConsistency(
+  deps: StorageMismatchDeps,
+): StorageMismatchResult {
   const { logger, activeMode, dataDir } = deps;
 
   if (activeMode === "file" || activeMode === "env") {
-    probeEncryptedSide(logger, activeMode, dataDir, deps.secretsDb);
-  } else {
-    // activeMode === "encrypted": probe file-side for stranded files
-    probeFileSide(logger, dataDir);
+    return { findings: probeEncryptedSide(logger, activeMode, dataDir, deps.secretsDb) };
   }
+  // activeMode === "encrypted": probe file-side for stranded files
+  return { findings: probeFileSide(logger, dataDir) };
 }
 
 // ---------------------------------------------------------------------------
@@ -66,24 +101,23 @@ function probeEncryptedSide(
   activeMode: "file" | "env",
   dataDir: string,
   secretsDb: import("better-sqlite3").Database | undefined,
-): void {
+): StrandedFinding[] {
   // If a pre-opened handle is provided, use it directly (no file-existence check needed).
   if (secretsDb !== undefined) {
-    querySecretsDbTables(logger, activeMode, secretsDb);
-    return;
+    return querySecretsDbTables(logger, activeMode, secretsDb);
   }
 
   // No pre-opened handle: check if the file exists before attempting to open.
   const dbPath = safePath(dataDir, "secrets.db");
   if (!existsSync(dbPath)) {
-    return; // No encrypted db → nothing stranded
+    return []; // No encrypted db → nothing stranded
   }
 
   // File exists but no handle provided — attempt to open read-only.
   let db: import("better-sqlite3").Database | undefined;
   try {
     db = new Database(dbPath, { readonly: true });
-    querySecretsDbTables(logger, activeMode, db);
+    return querySecretsDbTables(logger, activeMode, db);
   } catch (e) {
     logger.warn(
       {
@@ -93,6 +127,7 @@ function probeEncryptedSide(
       },
       "Could not probe inactive encrypted store — skipping mismatch check",
     );
+    return [];
   } finally {
     try {
       db?.close();
@@ -102,12 +137,18 @@ function probeEncryptedSide(
   }
 }
 
-/** Run the three table-count queries against an already-open secrets.db handle. */
+/**
+ * Run the three table-count queries against an already-open secrets.db handle.
+ * Emits a WARN per non-empty family AND returns the matching count-only
+ * findings (the same `{stranded, entryCount}` objects the WARNs carry).
+ */
 function querySecretsDbTables(
   logger: ComisLogger,
   activeMode: "file" | "env",
   db: import("better-sqlite3").Database,
-): void {
+): StrandedFinding[] {
+  const findings: StrandedFinding[] = [];
+
   // Secrets table (exclude canary)
   try {
     const row = db
@@ -129,6 +170,7 @@ function querySecretsDbTables(
         },
         "Inactive encrypted secrets store has real credentials — they are not reachable in file/env mode",
       );
+      findings.push({ stranded: "encrypted:secrets", entryCount: row.n });
     }
   } catch {
     /* table may not exist yet — treat as empty */
@@ -154,6 +196,7 @@ function querySecretsDbTables(
         },
         "Inactive encrypted OAuth profile store has real profiles — they are not reachable in file/env mode",
       );
+      findings.push({ stranded: "encrypted:oauth_profiles", entryCount: row.n });
     }
   } catch {
     /* table may not exist yet */
@@ -178,17 +221,22 @@ function querySecretsDbTables(
         },
         "Inactive encrypted MCP credential store has real credentials — they are not reachable in file/env mode",
       );
+      findings.push({ stranded: "encrypted:mcp_credentials", entryCount: row.n });
     }
   } catch {
     /* table may not exist yet */
   }
+
+  return findings;
 }
 
 // ---------------------------------------------------------------------------
 // Internal: probe file-side (secrets.json / auth-profiles.json / mcp-tokens/)
 // ---------------------------------------------------------------------------
 
-function probeFileSide(logger: ComisLogger, dataDir: string): void {
+function probeFileSide(logger: ComisLogger, dataDir: string): StrandedFinding[] {
+  const findings: StrandedFinding[] = [];
+
   // secrets.json
   const secretsJsonPath = safePath(dataDir, "secrets.json");
   if (existsSync(secretsJsonPath)) {
@@ -213,6 +261,7 @@ function probeFileSide(logger: ComisLogger, dataDir: string): void {
           },
           "Inactive file secret store has real secrets — they are not reachable in encrypted mode",
         );
+        findings.push({ stranded: "file:secrets", entryCount: count });
       }
     } catch {
       /* corrupt JSON — treat as empty */
@@ -246,6 +295,7 @@ function probeFileSide(logger: ComisLogger, dataDir: string): void {
           },
           "Inactive file OAuth profile store has real profiles — they are not reachable in encrypted mode",
         );
+        findings.push({ stranded: "file:oauth_profiles", entryCount: count });
       }
     } catch {
       /* corrupt JSON */
@@ -273,9 +323,12 @@ function probeFileSide(logger: ComisLogger, dataDir: string): void {
           },
           "Inactive file MCP token store has real tokens — they are not reachable in encrypted mode",
         );
+        findings.push({ stranded: "file:mcp_tokens", entryCount: count });
       }
     } catch {
       /* unreadable dir */
     }
   }
+
+  return findings;
 }

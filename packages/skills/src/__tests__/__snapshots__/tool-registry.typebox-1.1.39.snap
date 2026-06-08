@@ -1000,9 +1000,13 @@
             {
               "const": "session_report",
               "type": "string"
+            },
+            {
+              "const": "fleet_health",
+              "type": "string"
             }
           ],
-          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport)"
+          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), fleet_health (cross-session fleet-health triage: degradation rate, recurring WARNs, model/config health over a window)"
         },
         "agent_id": {
           "description": "Agent identifier (for billing.byAgent)",
@@ -1027,6 +1031,10 @@
         "session_key": {
           "description": "Session key (for billing.bySession)",
           "type": "string"
+        },
+        "since_hours": {
+          "description": "Window in hours for fleet_health (default 24)",
+          "type": "integer"
         },
         "since_ms": {
           "description": "Time filter: only include data since this epoch timestamp (ms)",

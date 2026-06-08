@@ -5,6 +5,9 @@ import {
   deliveryEventToRow,
   diagnosticEventToRow,
   sessionSummaryEventToRow,
+  dagDegradedEventToRow,
+  healthBudgetExceededEventToRow,
+  mcpReconnectFailedEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
 import type { EventMap } from "@comis/core";
@@ -206,6 +209,8 @@ describe("sessionSummaryEventToRow", () => {
       toolStats: { web_fetch: { ok: 2, failed: 8 } },
       breakerTripCount: 1,
       timestamp: 1000,
+      topErrorKinds: { dependency: 8 },
+      source: "runtime",
     });
 
     expect(row.timestamp).toBe(1000);
@@ -224,6 +229,10 @@ describe("sessionSummaryEventToRow", () => {
     expect(details.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
     expect(details.breakerTripCount).toBe(1);
     expect(details.turnCount).toBe(24);
+    // A1 carries topErrorKinds into the row; A2 carries source — both queryable
+    // by the fleet aggregate without opening per-session _session-metadata.json.
+    expect(details.topErrorKinds).toEqual({ dependency: 8 });
+    expect(details.source).toBe("runtime");
   });
 
   it("maps a non-degraded session:summary payload to severity:info", () => {
@@ -237,10 +246,187 @@ describe("sessionSummaryEventToRow", () => {
       toolStats: {},
       breakerTripCount: 0,
       timestamp: 2000,
+      topErrorKinds: {},
+      source: "runtime",
     });
 
     expect(row.category).toBe("session_summary");
     expect(row.severity).toBe("info");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dagDegradedEventToRow (I1 — LCD-divergence → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("dagDegradedEventToRow", () => {
+  it("maps a context:dag_degraded payload to a health_signal row (severity:warning, traceId undefined)", () => {
+    const row = dagDegradedEventToRow({
+      conversationId: "conv-1",
+      agentId: "a1",
+      sessionKey: "sk-1",
+      reason: "live_store_divergence",
+      durationMs: 5,
+      timestamp: 1000,
+    });
+
+    expect(row.timestamp).toBe(1000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("a1");
+    expect(row.sessionKey).toBe("sk-1");
+    expect(row.message).toBe("context:dag_degraded");
+    // The payload has NO traceId field — sessionKey correlates instead.
+    expect(row.traceId).toBeUndefined();
+
+    // details carries ONLY the closed-label signal + closed-union reason +
+    // identifiers + a count — no message/summary text. Exactly
+    // {signal, reason, conversationId, durationMs} (WR-04 carries conversationId).
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({
+      signal: "lcd_divergence",
+      reason: "live_store_divergence",
+      conversationId: "conv-1",
+      durationMs: 5,
+    });
+  });
+
+  it("carries each divergence reason through verbatim (closed union — safe)", () => {
+    for (const reason of ["leaf_window_divergence", "condense_window_divergence"] as const) {
+      const row = dagDegradedEventToRow({
+        conversationId: "c",
+        agentId: "a",
+        sessionKey: "s",
+        reason,
+        durationMs: 0,
+        timestamp: 1,
+      });
+      const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+      expect(details.reason).toBe(reason);
+    }
+  });
+
+  // IN-01: severity must track the reason. The `serialized_wait` member of the
+  // closed union is documented (events-messaging.ts) as the bounded-wait signal
+  // — normal back-pressure, NOT a degrade. Stamping it `warning` would inflate
+  // the fleet lens's degrade count with a benign event.
+  it("maps the benign serialized_wait reason to severity info, not warning", () => {
+    const row = dagDegradedEventToRow({
+      conversationId: "conv-2",
+      agentId: "a2",
+      sessionKey: "sk-2",
+      reason: "serialized_wait",
+      durationMs: 3,
+      timestamp: 1500,
+    });
+    expect(row.severity).toBe("info");
+    // The row is otherwise unchanged — same category + label + carried reason.
+    expect(row.category).toBe("health_signal");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.reason).toBe("serialized_wait");
+  });
+
+  it("maps every genuine-degrade reason to severity warning", () => {
+    for (const reason of [
+      "fail_closed_rollover",
+      "breaker_open",
+      "spend_cap",
+      "live_store_divergence",
+      "leaf_window_divergence",
+      "condense_window_divergence",
+    ] as const) {
+      const row = dagDegradedEventToRow({
+        conversationId: "c",
+        agentId: "a",
+        sessionKey: "s",
+        reason,
+        durationMs: 0,
+        timestamp: 1,
+      });
+      expect(row.severity, `reason ${reason} must be warning`).toBe("warning");
+    }
+  });
+
+  // WR-04: the payload carries `conversationId`. Today it is lossless only
+  // because an internal LCD invariant couples it to `sessionKey`, but the most
+  // security-relevant degrade (`fail_closed_rollover`) fires precisely on a
+  // conversationId/sessionKey CONFLICT — so the row must carry conversationId
+  // (an identifier, not content — bounded-payload still holds) for the Phase-161
+  // fleet lens to join on, instead of silently dropping it.
+  it("carries conversationId into details so a divergent identifier is recoverable", () => {
+    const row = dagDegradedEventToRow({
+      conversationId: "conv-divergent",
+      agentId: "a3",
+      sessionKey: "sk-3",
+      reason: "fail_closed_rollover",
+      durationMs: 7,
+      timestamp: 1600,
+    });
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({
+      signal: "lcd_divergence",
+      reason: "fail_closed_rollover",
+      conversationId: "conv-divergent",
+      durationMs: 7,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// healthBudgetExceededEventToRow (I1 — MCP/alert budget → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("healthBudgetExceededEventToRow", () => {
+  it("maps a health:budget_exceeded payload to a health_signal row (counts/labels only)", () => {
+    const row = healthBudgetExceededEventToRow({
+      kind: "dependency",
+      count: 5,
+      windowMs: 60_000,
+      timestamp: 2000,
+    });
+
+    expect(row.timestamp).toBe(2000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("health:budget_exceeded");
+    // The event has no agentId/sessionKey — the row omits them (daemon-global).
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBeUndefined();
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({ signal: "alert_budget", kind: "dependency", count: 5, windowMs: 60_000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mcpReconnectFailedEventToRow (I1 — MCP reconnect churn → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("mcpReconnectFailedEventToRow", () => {
+  it("maps a mcp:server:reconnect_failed payload to a health_signal row and DROPS lastError (bounded payload)", () => {
+    const longBody = "boom ".repeat(120); // ~600 chars — must NOT reach the row.
+    const row = mcpReconnectFailedEventToRow({
+      serverName: "srv",
+      attempts: 3,
+      lastError: longBody,
+      timestamp: 3000,
+    });
+
+    expect(row.timestamp).toBe(3000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("mcp:server:reconnect_failed");
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBeUndefined();
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // label + count ONLY — the error body lives in the trajectory + daemon.log.
+    expect(details).toEqual({ signal: "mcp_reconnect_failed", serverName: "srv", attempts: 3 });
+    // Defensive: the body never leaks into the row at all.
+    expect(row.details ?? "").not.toContain("boom");
+    expect("lastError" in details).toBe(false);
   });
 });
 
@@ -334,6 +520,60 @@ describe("setupObsPersistence", () => {
     expect(eventBus.on).toHaveBeenCalledWith("diagnostic:message_processed", expect.any(Function));
     // F2: the third subscription — per-session health rollup.
     expect(eventBus.on).toHaveBeenCalledWith("session:summary", expect.any(Function));
+    // I1 (Phase 160): the 3 health_signal subscriptions — LCD divergence + MCP health.
+    expect(eventBus.on).toHaveBeenCalledWith("context:dag_degraded", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("health:budget_exceeded", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("mcp:server:reconnect_failed", expect.any(Function));
+
+    // Cleanup
+    clearInterval(result.snapshotTimer);
+    result.drainAll();
+  });
+
+  it("I1: emitting each health-signal event pushes a category:health_signal row through the diagnostic buffer", () => {
+    const eventBus = createMockEventBus();
+    const obsStore = createMockObsStore();
+    const db = createMockDb();
+    const channelActivityTracker = createMockChannelActivityTracker();
+
+    const result = setupObsPersistence({
+      eventBus: eventBus as never,
+      obsStore: obsStore as never,
+      db: db as never,
+      channelActivityTracker: channelActivityTracker as never,
+      startupTimestamp: Date.now(),
+      snapshotIntervalMs: 300_000,
+    });
+
+    // a. LCD divergence (the widened context:dag_degraded).
+    eventBus.emit("context:dag_degraded", {
+      conversationId: "conv-1",
+      agentId: "a1",
+      sessionKey: "sk-1",
+      reason: "live_store_divergence",
+      durationMs: 7,
+      timestamp: 1000,
+    });
+    // b. Alert-budget threshold crossing.
+    eventBus.emit("health:budget_exceeded", { kind: "dependency", count: 5, windowMs: 60_000, timestamp: 1001 });
+    // c. MCP reconnect exhaustion (lastError must be dropped on the way to the row).
+    eventBus.emit("mcp:server:reconnect_failed", { serverName: "srv", attempts: 3, lastError: "x".repeat(500), timestamp: 1002 });
+
+    // Flush the diagnostic buffer.
+    vi.advanceTimersByTime(500);
+
+    // Exactly one health_signal row per event (3 total), each with the right message.
+    const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
+    const healthRows = calls
+      .map((c) => c[0] as { category?: string; message?: string; details?: string })
+      .filter((r) => r.category === "health_signal");
+    expect(healthRows).toHaveLength(3);
+    const messages = healthRows.map((r) => r.message).sort();
+    expect(messages).toEqual(["context:dag_degraded", "health:budget_exceeded", "mcp:server:reconnect_failed"]);
+
+    // The MCP row never carries the error body (bounded payload).
+    const mcpRow = healthRows.find((r) => r.message === "mcp:server:reconnect_failed")!;
+    expect(mcpRow.details ?? "").not.toContain("xxxx");
 
     // Cleanup
     clearInterval(result.snapshotTimer);
@@ -366,6 +606,8 @@ describe("setupObsPersistence", () => {
       toolStats: { web_fetch: { ok: 2, failed: 8 } },
       breakerTripCount: 1,
       timestamp: 1000,
+      topErrorKinds: { dependency: 8 },
+      source: "runtime",
     });
 
     // Advance timer to trigger buffer flush.
@@ -381,6 +623,14 @@ describe("setupObsPersistence", () => {
         traceId: "t1",
       }),
     );
+    // The full event -> buffer -> insertDiagnostic path carries topErrorKinds +
+    // source into the persisted row's `details` JSON (A1/A2).
+    const insertedRow = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      details?: string;
+    };
+    const insertedDetails = JSON.parse(insertedRow.details ?? "{}") as Record<string, unknown>;
+    expect(insertedDetails.topErrorKinds).toEqual({ dependency: 8 });
+    expect(insertedDetails.source).toBe("runtime");
 
     // Cleanup
     clearInterval(result.snapshotTimer);

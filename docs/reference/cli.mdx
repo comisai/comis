@@ -6,7 +6,7 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis ships **23 command groups** (verified against `packages/cli/src/cli.ts`). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
+Comis ships **24 command groups** (verified against `packages/cli/src/cli.ts`). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
 
 <Snippet file="invocation-modes.mdx" />
 
@@ -1312,6 +1312,32 @@ comis explain "default:user123:telegram:1717000000" --format json
 ```
 
 Requires an admin-scoped gateway token (same as `comis trace`).
+
+---
+
+### `comis fleet`
+
+Assemble a `FleetHealthReport` — a bounded, **cross-session** triage over a recent window: the session count and degradation rate, the recurring `WARN` findings (recurring `lcd_divergence` / model / config-posture signals, counts + hints only), the total circuit-breaker trips, the window cost, and a deterministic likely root cause. Like `comis explain`, the report is derived from log + diagnostics evidence only; no LLM is invoked, so the same window yields the same verdict. Backed by `ObsFleetHealthContract` (`obs.fleet.health`).
+
+This is the cross-session **sibling** of `comis explain` (single-session). It is a **remote admin RPC** over the operator's gateway token — DISTINCT from `comis health`, the **local daemon doctor** that runs offline checks with no RPC. (`comis health` is unaffected; this is a separate command.)
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--since <hours>` | `number` | `24` | Aggregation window in hours |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+```bash
+# Fleet-health triage over the last 24h (default window)
+comis fleet
+
+# Widen the window to 72h
+comis fleet --since 72
+
+# Machine-readable output
+comis fleet --since 24 --format json
+```
+
+Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`).
 
 ---
 

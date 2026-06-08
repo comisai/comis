@@ -616,10 +616,10 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("session_status",   { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_list",    { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_history", { mcpExportPolicy: "permission-gated" });
-  // Observability read (1) — operator allowlists by query scope.
+  // Observability (3) — all permission-gated; operator allowlists by query scope. obs_explain (154-03) + obs_fleet_health (161-02) are READ-ONLY digests that run their assembler directly under daemon authority (NOT the admin RPC); the allowlist is the grant (merged comments to stay under the 800-line cap).
   registerToolMetadata("obs_query", { mcpExportPolicy: "permission-gated" });
-  // Observability incident report (1, 154-03) — READ-ONLY obs.explain digest; runs the assembler directly under daemon authority (NOT the admin RPC), allowlist is the grant. Mirrors obs_query (merged into one call to stay under the 800-line cap).
   registerToolMetadata("obs_explain", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "explain incident root-cause post-mortem session report" });
+  registerToolMetadata("obs_fleet_health", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "fleet health cross-session degradation rate errorKinds breaker trips config posture model health" });
   // Meta-tool (1) — reveals registered-tools attack surface; per-client allowlist required.
   registerToolMetadata("discover_tools", { mcpExportPolicy: "permission-gated" });
   // Media analysis (4) — see media-tools note above. Default permission-gated
