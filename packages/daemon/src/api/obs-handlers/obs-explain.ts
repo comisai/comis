@@ -127,7 +127,11 @@ export async function assembleIncidentReportFromSources(
   // Normalize both shapes → uniform signals; assemble the §6.3 report;
   // stamp the deterministic root cause (X3); bound to the depth budget (X2).
   const signals = toIncidentSignals([...records, ...cache]);
-  const report = assembleIncidentReport(signals, metadata, rollup, sessionKey);
+  // Pass the trajectory READ count (records.length) so coverage.trajectory
+  // reflects what the reader actually READ — the meta-observability point: a
+  // d510322f-class "read nothing" bug surfaces as coverage.trajectory.records:0
+  // on a report that otherwise looks like a clean zero-activity session.
+  const report = assembleIncidentReport(signals, metadata, rollup, sessionKey, records.length);
   // The report is genuinely empty only when NO source surfaced any activity.
   const reportIsEmpty =
     report.failures.length === 0 &&

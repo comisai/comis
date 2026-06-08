@@ -110,6 +110,22 @@ export const IncidentReportSchema = z.object({
       pointer: z.string().optional(),
     }),
   ),
+  /**
+   * READ-coverage breadcrumb (meta-observability): did the assembler actually
+   * locate + read each source, and did every offload pointer resolve? DISTINCT
+   * from `truncations[]` (which records SIZE-drops from the Plan-04 bounding
+   * pass): `coverage` records whether the INPUTS were read, so a silently-empty
+   * report ("0 trajectory records / 0 of N pointers resolved") is self-evident
+   * instead of masquerading as a clean zero-activity session. Optional
+   * (schemaVersion stays 1) — additive; pre-existing constructors omit it.
+   */
+  coverage: z
+    .object({
+      trajectory: z.object({ found: z.boolean(), records: z.number() }),
+      rollup: z.object({ present: z.boolean() }),
+      offloads: z.object({ pointersResolved: z.number(), pointersTotal: z.number() }),
+    })
+    .optional(),
 });
 
 /** The §6.3 IncidentReport (the `obs.explain` response). Inferred from the Zod schema. */

@@ -765,11 +765,13 @@ Accepts EITHER `sessionKey` OR `traceId` (at least one is required). A `traceId`
 
 `depth: "summary"` (the default) bounds the serialized report to roughly 6 KB (about 1,500 tokens) and caps the failure list; `depth: "full"` relaxes the array caps. At BOTH depths the report is digest-only: no raw tool-output body is ever inlined (oversized previews and untrusted external content collapse to a `resultDigest` fingerprint), and an honest `truncations[]` ledger records anything the bounding pass dropped.
 
+An optional `coverage` block reports READ-coverage -- whether the trajectory, rollup, and each offload pointer were actually located and resolved (`{ trajectory: { found, records }, rollup: { present }, offloads: { pointersResolved, pointersTotal } }`) -- distinct from `truncations[]`, which records what the size-bounding pass dropped. A degraded report is self-evident from it (e.g. `records: 0` or `pointersResolved < pointersTotal`) rather than masquerading as a clean session.
+
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ sessionKey?: string, traceId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` required. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
-| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], summary, likelyRootCause, suggestedNextSteps[], truncations[] }` |
+| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -800,7 +802,8 @@ Accepts EITHER `sessionKey` OR `traceId` (at least one is required). A `traceId`
       "detail": "content-heuristic misclassification (tool=web_fetch, token=status): a substring match in a large tool body flipped status-200 successes to failures",
       "suggestedNextSteps": ["audit the web_fetch failureDetector rule for the matched token 'status'", "obs.explain depth=full"]
     },
-    "truncations": []
+    "truncations": [],
+    "coverage": { "trajectory": { "found": true, "records": 25 }, "rollup": { "present": true }, "offloads": { "pointersResolved": 1, "pointersTotal": 1 } }
   },
   "id": 1
 }

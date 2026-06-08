@@ -2,10 +2,12 @@
 /**
  * RED → GREEN for the pure `assembleIncidentReport` (Plan 03, Wave 3).
  *
- * `assembleIncidentReport(signals, metadata, rollup, sessionKey)` merges the
- * normalized {@link IncidentSignals} (Plan 02) + the F1 `_session-metadata.json`
- * rollup (PRIMARY, per OQ3) + the F2 `obs_diagnostics` rollup row (FALLBACK)
- * into a §6.3 {@link IncidentReport} — a PURE function with no I/O and no LLM.
+ * `assembleIncidentReport(signals, metadata, rollup, sessionKey, recordCount)`
+ * merges the normalized {@link IncidentSignals} (Plan 02) + the F1
+ * `_session-metadata.json` rollup (PRIMARY, per OQ3) + the F2 `obs_diagnostics`
+ * rollup row (FALLBACK) into a §6.3 {@link IncidentReport} — a PURE function
+ * with no I/O and no LLM. `recordCount` is the number of trajectory records the
+ * reader READ (the meta-observability signal behind `coverage.trajectory`).
  *
  * These tests pin the contract per field group BEFORE the module exists:
  *   - **cost** comes from the F1 metadata rollup (`sessionEnd.costUsd`) with a
@@ -31,12 +33,19 @@
 import { describe, it, expect } from "vitest";
 import type { IncidentFailure, IncidentSignals } from "@comis/core";
 import { assembleIncidentReport } from "./obs-explain-assemble.js";
+import { boundIncidentReport } from "./obs-explain-bound.js";
 
 // ---------------------------------------------------------------------------
 // Local factories — synthetic signals/metadata (NO real session data, NO disk).
 // ---------------------------------------------------------------------------
 
 const SESSION_KEY = "default:678314278:678314278:peer:678314278";
+
+// A representative non-zero "the reader READ N trajectory records" count for the
+// field-group tests below (none of which assert on `coverage` — they pin
+// cost/outcome/timing/toolStats/failures, for which the read count is immaterial).
+// The dedicated `coverage` tests at the bottom pass explicit per-case counts.
+const READ_COUNT = 2;
 
 function makeFailure(overrides: Partial<IncidentFailure> = {}): IncidentFailure {
   return {
@@ -107,6 +116,7 @@ describe("assembleIncidentReport — cost", () => {
       makeMetadata({ sessionEnd: { endReason: "completed_with_tool_errors", costUsd: 1.320669, totalTokens: 735_800 } }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.cost.costUsd).toBeCloseTo(1.320669, 4);
     expect(report.cost.totalTokens).toBe(735_800);
@@ -121,6 +131,7 @@ describe("assembleIncidentReport — cost", () => {
       }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.cost.costUsd).toBeCloseTo(1.320669, 4);
   });
@@ -131,6 +142,7 @@ describe("assembleIncidentReport — cost", () => {
       makeMetadata({ sessionCostUsd: undefined, sessionEnd: { endReason: "completed_with_tool_errors" } }),
       { costUsd: 0.5 },
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.cost.costUsd).toBe(0.5);
   });
@@ -141,6 +153,7 @@ describe("assembleIncidentReport — cost", () => {
       makeMetadata({ sessionCostUsd: undefined, sessionEnd: { endReason: "success" } }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.cost.costUsd).toBe(0);
   });
@@ -153,12 +166,13 @@ describe("assembleIncidentReport — cost", () => {
       null,
       { details: JSON.stringify({ costUsd: 0.75, degraded: true }) },
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.cost.costUsd).toBe(0.75);
   });
 
   it("never throws and yields a 0 cost when metadata is null and rollup is null", () => {
-    const report = assembleIncidentReport(makeSignals(), null, null, SESSION_KEY);
+    const report = assembleIncidentReport(makeSignals(), null, null, SESSION_KEY, READ_COUNT);
     expect(report.cost.costUsd).toBe(0);
     expect(report.cost.totalTokens).toBe(0);
   });
@@ -174,6 +188,7 @@ describe("assembleIncidentReport — cost", () => {
       },
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.cost.costUsd).toBeCloseTo(1.320669, 4);
     expect(report.cost.totalTokens).toBe(735_800);
@@ -191,6 +206,7 @@ describe("assembleIncidentReport — outcome", () => {
       makeMetadata({ sessionEnd: { endReason: "completed_with_tool_errors", degraded: true } }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.outcome.degraded).toBe(true);
     expect(report.outcome.severity).toBe("degraded");
@@ -203,6 +219,7 @@ describe("assembleIncidentReport — outcome", () => {
       makeMetadata({ sessionEnd: { endReason: "completed_with_tool_errors" } }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.outcome.degraded).toBe(true);
     expect(report.outcome.severity).toBe("degraded");
@@ -214,6 +231,7 @@ describe("assembleIncidentReport — outcome", () => {
       makeMetadata({ sessionEnd: { endReason: "error" } }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.outcome.severity).toBe("failed");
     expect(report.outcome.degraded).toBe(true);
@@ -225,6 +243,7 @@ describe("assembleIncidentReport — outcome", () => {
       makeMetadata({ sessionEnd: { endReason: "success", degraded: false } }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.outcome.degraded).toBe(false);
     expect(report.outcome.severity).toBe("ok");
@@ -236,6 +255,7 @@ describe("assembleIncidentReport — outcome", () => {
       makeMetadata({ sessionEnd: { endReason: "timeout" } }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.outcome.severity).toBe("failed");
   });
@@ -246,6 +266,7 @@ describe("assembleIncidentReport — outcome", () => {
       makeMetadata({ sessionEnd: { endReason: "success" } }),
       { degraded: true },
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.outcome.degraded).toBe(true);
     expect(report.outcome.severity).toBe("degraded");
@@ -269,6 +290,7 @@ describe("assembleIncidentReport — outcome", () => {
       },
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.outcome.endReason).toBe("completed_with_tool_errors");
     expect(report.outcome.degraded).toBe(true);
@@ -287,6 +309,7 @@ describe("assembleIncidentReport — timing", () => {
       makeMetadata({ sessionEnd: { endReason: "completed_with_tool_errors", durationMs: 12_000 } }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.timing.durationMs).toBe(12_000);
   });
@@ -297,6 +320,7 @@ describe("assembleIncidentReport — timing", () => {
       { sessionKey: SESSION_KEY, endReason: "completed_with_tool_errors", durationMs: 9_000 },
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.timing.durationMs).toBe(9_000);
   });
@@ -307,6 +331,7 @@ describe("assembleIncidentReport — timing", () => {
       makeMetadata({ sessionEnd: { endReason: "completed_with_tool_errors" } }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     // 2 ok + 8 failed = 10 tool invocations → turnCount ≥ 1, deterministic.
     expect(report.timing.turnCount).toBeGreaterThanOrEqual(1);
@@ -324,6 +349,7 @@ describe("assembleIncidentReport — toolStats", () => {
       makeMetadata(),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.toolStats.web_fetch?.failed).toBe(8);
     expect(report.toolStats.web_fetch?.ok).toBe(2);
@@ -341,6 +367,7 @@ describe("assembleIncidentReport — toolStats", () => {
       }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     // Signal stats win on overlap, but a rollup-only tool is still surfaced.
     expect(report.toolStats.web_fetch?.failed).toBe(8);
@@ -361,6 +388,7 @@ describe("assembleIncidentReport — failures/breaker/offloads", () => {
       makeMetadata(),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.failures.map((f) => f.seq)).toEqual([5, 3, 1]);
   });
@@ -373,6 +401,7 @@ describe("assembleIncidentReport — failures/breaker/offloads", () => {
       makeMetadata(),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.breakerTimeline).toEqual([
       { seq: 7, event: "opened", toolName: "web_fetch", consecutiveFailures: 5 },
@@ -387,6 +416,7 @@ describe("assembleIncidentReport — failures/breaker/offloads", () => {
       makeMetadata(),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.offloads[0]?.pointer).toBe("sessions/678.offload.json");
     expect(report.offloads[0]?.originalChars).toBe(53_095);
@@ -398,6 +428,7 @@ describe("assembleIncidentReport — failures/breaker/offloads", () => {
       makeMetadata(),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.failures[0]?.errorPreview).toBe("bounded preview ≤200");
   });
@@ -409,32 +440,32 @@ describe("assembleIncidentReport — failures/breaker/offloads", () => {
 
 describe("assembleIncidentReport — identity & invariants", () => {
   it("stamps schemaVersion 1 and echoes the sessionKey argument", () => {
-    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY);
+    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.schemaVersion).toBe(1);
     expect(report.sessionKey).toBe(SESSION_KEY);
   });
 
   it("reads traceId / agentId / channel from the metadata", () => {
-    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY);
+    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.traceId).toBe("f942d38c-0000-0000-0000-000000000000");
     expect(report.agentId).toBe("default");
     expect(report.channel).toEqual({ type: "peer", id: "678314278" });
   });
 
   it("defaults the ids/channel to empty strings when metadata is null (never throws)", () => {
-    const report = assembleIncidentReport(makeSignals(), null, null, SESSION_KEY);
+    const report = assembleIncidentReport(makeSignals(), null, null, SESSION_KEY, READ_COUNT);
     expect(report.traceId).toBe("");
     expect(report.agentId).toBe("");
     expect(report.channel).toEqual({ type: "", id: "" });
   });
 
   it("leaves likelyRootCause null — Plan 05 owns it", () => {
-    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY);
+    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.likelyRootCause).toBeNull();
   });
 
   it("starts truncations and suggestedNextSteps empty — Plan 04/05 own them", () => {
-    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY);
+    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.truncations).toEqual([]);
     expect(report.suggestedNextSteps).toEqual([]);
   });
@@ -445,6 +476,7 @@ describe("assembleIncidentReport — identity & invariants", () => {
       makeMetadata({ sessionEnd: { endReason: "completed_with_tool_errors" } }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.summary.length).toBeGreaterThan(0);
     expect(report.summary).toContain("completed_with_tool_errors");
@@ -456,6 +488,7 @@ describe("assembleIncidentReport — identity & invariants", () => {
       makeMetadata({ traceId: undefined, secondTurnTraceId: "058db0fe-1111-1111-1111-111111111111" }),
       null,
       "arg-session",
+      READ_COUNT,
     );
     // The arg sessionKey is authoritative for the echoed field.
     expect(report.sessionKey).toBe("arg-session");
@@ -469,10 +502,11 @@ describe("assembleIncidentReport — identity & invariants", () => {
       makeMetadata({ sessionEnd: { endReason: "success", cacheReadRatio: 0.42 } }),
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(withRatio.cost.cacheReadRatio).toBeCloseTo(0.42, 4);
 
-    const withoutRatio = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY);
+    const withoutRatio = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(withoutRatio.cost.cacheReadRatio).toBe(0);
   });
 
@@ -491,7 +525,101 @@ describe("assembleIncidentReport — identity & invariants", () => {
       },
       null,
       SESSION_KEY,
+      READ_COUNT,
     );
     expect(report.cost.cacheReadRatio).toBeCloseTo(0.73, 4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// coverage — READ-coverage meta-observability (the silent-empty-report fix).
+//
+// DISTINCT from truncations[] (SIZE-drops): coverage records whether the INPUTS
+// were read — did the assembler locate + read the trajectory, was the rollup
+// present, did every offload pointer resolve. A degraded report
+// (records:0 / pointersResolved<pointersTotal) becomes self-evident instead of
+// masquerading as a clean zero-activity session.
+// ---------------------------------------------------------------------------
+
+describe("assembleIncidentReport — coverage (READ-coverage)", () => {
+  it("populates coverage.trajectory.records from the read count and found from records>0", () => {
+    const report = assembleIncidentReport(
+      makeSignals({ failures: [makeFailure({ seq: 1 })] }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      2,
+    );
+    expect(report.coverage).toBeDefined();
+    expect(report.coverage!.trajectory.found).toBe(true);
+    expect(report.coverage!.trajectory.records).toBe(2);
+  });
+
+  it("reports coverage.trajectory.found=false and records=0 for an empty read (silent-empty made loud)", () => {
+    // recordCount 0 + empty signals + metadata null = the silent-empty case: a
+    // report that on pre-fix code looked like a confident clean session. coverage
+    // now makes the read-failure self-evident.
+    const report = assembleIncidentReport(
+      makeSignals({ failures: [], toolStats: {}, offloads: [], breakerEvents: [] }),
+      null,
+      null,
+      SESSION_KEY,
+      0,
+    );
+    expect(report.coverage!.trajectory.found).toBe(false);
+    expect(report.coverage!.trajectory.records).toBe(0);
+    expect(report.coverage!.rollup.present).toBe(false);
+  });
+
+  it("sets coverage.rollup.present=true when the F1 metadata sessionEnd rollup is present", () => {
+    const report = assembleIncidentReport(
+      makeSignals(),
+      makeMetadata({ sessionEnd: { endReason: "completed_with_tool_errors" } }),
+      null,
+      SESSION_KEY,
+      3,
+    );
+    expect(report.coverage!.rollup.present).toBe(true);
+  });
+
+  it("counts coverage.offloads.pointersResolved as pointers !== '<offloaded>' and pointersTotal as all offloads", () => {
+    const report = assembleIncidentReport(
+      makeSignals({
+        offloads: [
+          { seq: 1, toolName: "web_fetch", originalChars: 1, pointer: "tool-results/x.json" },
+          { seq: 2, toolName: "web_fetch", originalChars: 1, pointer: "<offloaded>" },
+        ],
+      }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      2,
+    );
+    expect(report.coverage!.offloads.pointersResolved).toBe(1);
+    expect(report.coverage!.offloads.pointersTotal).toBe(2);
+  });
+
+  it("preserves coverage unchanged through boundIncidentReport at BOTH summary and full depth (STEP D)", () => {
+    // coverage is a fixed 4-int + 2-bool object far below every cap and is NOT a
+    // REPORT_ARRAY_FIELD, so the bounding pass passes it through untouched. Pin
+    // it at both depths so a future cap change cannot silently drop it.
+    const report = assembleIncidentReport(
+      makeSignals({
+        offloads: [
+          { seq: 1, toolName: "web_fetch", originalChars: 1, pointer: "tool-results/x.json" },
+          { seq: 2, toolName: "web_fetch", originalChars: 1, pointer: "<offloaded>" },
+        ],
+      }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      5,
+    );
+    const summary = boundIncidentReport(report, "summary");
+    const full = boundIncidentReport(report, "full");
+    expect(summary.coverage).toBeDefined();
+    expect(full.coverage).toBeDefined();
+    expect(summary.coverage).toEqual(report.coverage);
+    expect(full.coverage).toEqual(report.coverage);
   });
 });

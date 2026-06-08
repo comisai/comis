@@ -141,12 +141,19 @@ function readRollupNumber(
  * metadata rollup (primary) + the F2 diagnostics rollup (fallback). Pure —
  * no I/O, no LLM. `likelyRootCause` stays `null` (Plan 05) and `truncations`
  * stays `[]` (Plan 04).
+ *
+ * `recordCount` is the number of trajectory records the reader READ (the length
+ * of `readSessionRecords`' result, threaded from the handler). It drives
+ * `coverage.trajectory` — READ-coverage meta-observability, NOT cost. A
+ * d510322f-class "read nothing" bug surfaces as `coverage.trajectory.records: 0`
+ * on a report that otherwise looks like a clean zero-activity session.
  */
 export function assembleIncidentReport(
   signals: IncidentSignals,
   metadata: Record<string, unknown> | null,
   rollup: Record<string, unknown> | null,
   sessionKey: string,
+  recordCount: number,
 ): IncidentReport {
   const sessionEnd = sessionEndOf(metadata);
   const rollupPayload = rollupPayloadOf(rollup);
@@ -240,6 +247,21 @@ export function assembleIncidentReport(
   // --- deterministic summary one-liner (NO LLM) ----------------------------
   const summary = `${failures.length} tool failures across ${turnCount} turns; endReason=${endReason}`;
 
+  // --- READ-coverage (meta-observability, NOT cost) ------------------------
+  // Did the assembler actually locate + read each source? `recordCount` is the
+  // reader's READ count (records.length, threaded from the handler) — distinct
+  // from "the trajectory yielded failures". `rollup.present` reflects the F1
+  // PRIMARY sessionEnd rollup the report is built from. `pointersResolved`
+  // counts offloads whose pointer resolved (signals emit "<offloaded>" when it
+  // did not). A silently-empty read is now self-evident here instead of
+  // masquerading as a clean session.
+  const offloadsResolved = offloads.filter((o) => o.pointer !== "<offloaded>").length;
+  const coverage = {
+    trajectory: { found: recordCount > 0, records: recordCount },
+    rollup: { present: sessionEnd !== undefined },
+    offloads: { pointersResolved: offloadsResolved, pointersTotal: offloads.length },
+  };
+
   return {
     schemaVersion: 1,
     sessionKey,
@@ -259,5 +281,6 @@ export function assembleIncidentReport(
     likelyRootCause: null,
     suggestedNextSteps: [],
     truncations: [],
+    coverage,
   };
 }

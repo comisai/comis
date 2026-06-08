@@ -7766,6 +7766,61 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             ],
             "additionalProperties": false
           }
+        },
+        "coverage": {
+          "type": "object",
+          "properties": {
+            "trajectory": {
+              "type": "object",
+              "properties": {
+                "found": {
+                  "type": "boolean"
+                },
+                "records": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "found",
+                "records"
+              ],
+              "additionalProperties": false
+            },
+            "rollup": {
+              "type": "object",
+              "properties": {
+                "present": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "present"
+              ],
+              "additionalProperties": false
+            },
+            "offloads": {
+              "type": "object",
+              "properties": {
+                "pointersResolved": {
+                  "type": "number"
+                },
+                "pointersTotal": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "pointersResolved",
+                "pointersTotal"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "trajectory",
+            "rollup",
+            "offloads"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
