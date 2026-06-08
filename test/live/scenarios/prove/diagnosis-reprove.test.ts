@@ -216,6 +216,26 @@ describe("DIAG-reprove substrate — obs.explain tool reaches X3 root cause in 1
     expect(countObsExplainCalls(transcript)).toBe(1);
     expect(recordMetrics(transcript).distinctSourceReads).toBe(0);
   });
+
+  it("every live tool-manifest function name is wire-valid for the OpenAI Chat Completions schema (CR-01)", () => {
+    // CR-01 GUARD, keyless: the Stage-C costed RUN sends this manifest to
+    // `/v1/chat/completions`. OpenAI constrains tools[].function.name to
+    // `^[A-Za-z0-9_-]{1,64}$` (NO dot) — a dotted name (the pre-fix
+    // `obs.explain`) HTTP-400s the real endpoint, the ReAct loop breaks with an
+    // empty transcript, countObsExplainCalls returns 0, and the G1 gate
+    // `expect(obsExplainCalls).toBe(1)` fails. Nothing else checked the manifest's
+    // wire-validity, so this defect slipped the green substrate (Stage-A/B never
+    // hits a provider). This asserts over the SAME builder the live loop uses, so
+    // the dotted name can no longer ship. RED on `obs.explain`, GREEN on
+    // `obs_explain`.
+    const manifest = buildReproveToolManifest("obs_query test description");
+    for (const tool of manifest) {
+      expect(
+        OPENAI_FUNCTION_NAME_RE.test(tool.function.name),
+        `tool function name "${tool.function.name}" must match ${OPENAI_FUNCTION_NAME_RE} (OpenAI forbids '.')`,
+      ).toBe(true);
+    }
+  });
 });
 
 // =========================================================================
@@ -318,6 +338,68 @@ function windowTranscript(
   return { text, truncated: true };
 }
 
+/** The wire-safe OpenAI function-name schema: `^[A-Za-z0-9_-]{1,64}$` (no dot). */
+export const OPENAI_FUNCTION_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Build the RE-PROVE OpenAI-compatible tool manifest (the 3-tool set the live
+ * loop sends to `/v1/chat/completions`). Extracted to a module-level builder so
+ * the always-on, KEYLESS Stage-A/B substrate can assert the manifest's
+ * wire-validity (every `function.name` matches the OpenAI schema) over the SAME
+ * object the live RUN ships — not a drifting copy. The only runtime input is the
+ * obs_query tool description (from `createObsQueryTool`, itself keyless).
+ *
+ * CR-01: the 3rd tool is named `obs_explain` (the product's MCP tool name, see
+ * glass-box-ga-readiness.test.ts:78), NOT a dotted `obs.explain` — a dot is
+ * forbidden in an OpenAI function name and HTTP-400s a real endpoint, breaking
+ * the Stage-C costed RUN before the agent can call the tool.
+ */
+export function buildReproveToolManifest(
+  obsQueryDescription: string,
+): Array<{ type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
+  return [
+    {
+      type: "function",
+      function: {
+        name: "obs_query",
+        description: obsQueryDescription,
+        parameters: {
+          type: "object",
+          properties: { action: { type: "string", enum: ["diagnostics", "billing", "delivery", "channels"] } },
+          required: ["action"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "read_source",
+        description: "Read a Comis source file by repo-relative path",
+        parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+      },
+    },
+    // NEW — the RE-PROVE's added tool (PATTERNS:243-256). Wire-safe `obs_explain`
+    // (CR-01): the product MCP tool name; a dotted name fails the OpenAI schema.
+    {
+      type: "function",
+      function: {
+        name: "obs.explain",
+        description:
+          "Get a structured incident report (root cause, breaker timeline, cost) for a session in " +
+          "ONE call. Use this FIRST — it returns the root cause without source reads.",
+        parameters: {
+          type: "object",
+          properties: {
+            sessionKey: { type: "string" },
+            depth: { type: "string", enum: ["summary", "full"] },
+          },
+          required: ["sessionKey"],
+        },
+      },
+    },
+  ];
+}
+
 /**
  * One scripted ReAct diagnosis loop over ONE fixture WITH the obs.explain tool —
  * the RE-PROVE clone of diagnosis-baseline.test.ts:419-541. Three deltas from the
@@ -361,46 +443,9 @@ async function runDiagnosisLoop(opts: {
     "is insufficient. When done, state the root cause in plain text.";
 
   // OpenAI-compatible tool manifest — the RE-PROVE has 3 tools (baseline had 2).
-  const tools = [
-    {
-      type: "function",
-      function: {
-        name: "obs_query",
-        description: obsTool.description,
-        parameters: {
-          type: "object",
-          properties: { action: { type: "string", enum: ["diagnostics", "billing", "delivery", "channels"] } },
-          required: ["action"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "read_source",
-        description: "Read a Comis source file by repo-relative path",
-        parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
-      },
-    },
-    // NEW — the RE-PROVE's added tool (PATTERNS:243-256).
-    {
-      type: "function",
-      function: {
-        name: "obs.explain",
-        description:
-          "Get a structured incident report (root cause, breaker timeline, cost) for a session in " +
-          "ONE call. Use this FIRST — it returns the root cause without source reads.",
-        parameters: {
-          type: "object",
-          properties: {
-            sessionKey: { type: "string" },
-            depth: { type: "string", enum: ["summary", "full"] },
-          },
-          required: ["sessionKey"],
-        },
-      },
-    },
-  ];
+  // Built via the module-level builder so the keyless Stage-A/B substrate asserts
+  // the SAME manifest's wire-validity that the live RUN ships (CR-01).
+  const tools = buildReproveToolManifest(obsTool.description);
 
   // WR-03: window the transcript RETAINING the mechanism evidence (salient
   // failure/status/breaker events). `truncated` is bubbled up so the caller can
