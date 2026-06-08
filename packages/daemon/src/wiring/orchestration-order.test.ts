@@ -237,23 +237,30 @@ describe("daemon orchestration order runtime check", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Daemon-wiring: setupMcp must receive oauthCredentialStore + dataDir.
+  // Daemon-wiring: setupMcp must receive the ONE mode-selected MCP token store.
   //
-  // Confirms that daemon.ts passes `oauthCredentialStore` and `dataDir` to
-  // `setupMcp` so that MCP OAuth tokens are routed through the unified
-  // OAuthCredentialStorePort (not the disk-default fallback).
+  // Confirms that daemon.ts builds the MCP OAuth token store ONCE via
+  // `selectMcpTokenStore` and threads the SAME instance (`mcpTokenStore`) into
+  // the `setupMcp({...})` call — and NO LONGER self-selects inside setup-mcp via
+  // the removed `oauthCredentialStore` / `dataDir` / `secretsDb` / `secretsCrypto`
+  // params. This is what kills the encrypted-mode split-brain (login + manager
+  // share one mode-selected backend).
   //
   // The test is structural: it reads daemon.ts source and verifies the
-  // `setupMcp({...})` call block contains these wiring fields. A runtime
-  // integration harness that spins up `bootAgents` is out of scope (see the
-  // deferred-coverage note in the second `it` block above); the structural
-  // check is sufficient to prevent regression — any future edit to daemon.ts
-  // that strips these fields is caught immediately.
+  // `setupMcp({...})` call block threads `mcpTokenStore` (and not the removed
+  // self-selection params). A runtime integration harness that spins up
+  // `bootAgents` is out of scope (see the deferred-coverage note in the second
+  // `it` block above); the structural check prevents regression — any future
+  // edit to daemon.ts that drops the single-instance threading is caught
+  // immediately.
   // ---------------------------------------------------------------------------
-  it("daemon.ts passes oauthCredentialStore and dataDir to setupMcp", () => {
+  it("daemon.ts builds one store via selectMcpTokenStore and threads mcpTokenStore into setupMcp (no per-mode self-selection params)", () => {
     const __dirname = dirname(fileURLToPath(import.meta.url));
     // daemon.ts lives two directories up from wiring/
     const daemonSrc = readFileSync(join(__dirname, "..", "daemon.ts"), "utf-8");
+
+    // The store is constructed exactly once at the composition root.
+    expect(daemonSrc).toContain("const mcpTokenStore = selectMcpTokenStore({");
 
     // Find the setupMcp({ call block. The block ends at the first `});` that
     // closes the call (the call is never nested inside another block, so this
@@ -268,10 +275,13 @@ describe("daemon orchestration order runtime check", () => {
     expect(windowEnd).toBeGreaterThan(setupMcpCallStart); // sanity: close found
     const setupMcpCallBlock = daemonSrc.slice(setupMcpCallStart, windowEnd + 3);
 
-    // Both wiring fields MUST be present in the setupMcp call block.
-    // These are the fields that route MCP OAuth tokens through the port
-    // instead of the disk-default fallback.
-    expect(setupMcpCallBlock).toContain("oauthCredentialStore");
-    expect(setupMcpCallBlock).toContain("dataDir");
+    // The single mode-selected store instance MUST be threaded.
+    expect(setupMcpCallBlock).toContain("mcpTokenStore");
+
+    // The removed self-selection params MUST NOT reappear in the setupMcp call
+    // (they would reintroduce the split-brain / a redundant second store).
+    expect(setupMcpCallBlock).not.toContain("oauthCredentialStore");
+    expect(setupMcpCallBlock).not.toContain("secretsDb");
+    expect(setupMcpCallBlock).not.toContain("secretsCrypto");
   });
 });

@@ -381,8 +381,14 @@ export interface WorkspaceApiDeps {
    * `McpOauthHandlerDeps.createTokenStore` so both handlers can share one
    * process-wide token-store factory. Optional — undefined skips the
    * pre-check (existing tests construct deps without it).
+   *
+   * The factory itself MAY return undefined: in `env` storage mode
+   * `selectMcpTokenStore` yields no writable store, so the daemon's pass-through
+   * (`() => boot.mcpTokenStore`) returns undefined. Consumers MUST guard the
+   * returned value (treat undefined as "no token store" / fail loudly) rather
+   * than dereferencing it.
    */
-  createTokenStore?: () => TokenStore;
+  createTokenStore?: () => TokenStore | undefined;
 }
 
 /**

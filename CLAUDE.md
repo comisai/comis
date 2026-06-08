@@ -114,6 +114,26 @@ Pino auto-redacts credentials (`apiKey`, `token`, `password`, `secret`, `authori
 
 **Instrument for troubleshooting (full observability).** Treat every new boundary crossing — channel inbound, RPC, tool call, external API, queue hop — as something an operator must be able to reconstruct from logs + events alone, with no debugger and no live repro. Per the §2.7 logging matrix in AGENTS.md, that means: an INFO completion line with `durationMs`, an ERROR/WARN carrying `hint` + `errorKind` on every failure branch, a `step:`-tagged DEBUG per intermediate stage, and an `eventBus` event for each state transition / health signal. Let `traceId` ride the AsyncLocalStorage context so one request stitches together across packages — don't open a fresh context mid-flow and orphan it. Litmus test before you call a path done: can you explain exactly how its next production failure would be diagnosed from the logs it emits? If not, add the missing instrumentation now, not after the incident.
 
+## Diagnosing a degraded session
+
+**Start with `obs.explain` — do NOT hand-join the logs.** v2.14 "Glass Box" exists so an agent (or you) root-causes a bad session in one call instead of grepping four files. The CLI is not on PATH:
+
+```bash
+node packages/cli/dist/cli.js explain "<sessionKey|traceId>" [--depth summary|full] [--format json]
+```
+
+It returns a bounded, digest-only `IncidentReport` (outcome, cost, per-tool `{ok,failed}`, normalized failures with `classifiedFailureBy`/`transportOk`, breaker timeline, large-result offload pointers, and a deterministic `likelyRootCause` — no LLM, same input → same verdict). Same report via the `obs_query` agent `explain`/`session_report` actions and the permission-gated `obs_explain` MCP tool. Docs: `docs/reference/cli.mdx` (`comis explain`) + `docs/reference/json-rpc.mdx` (`obs.explain`).
+
+Only drop to the raw data when you're debugging the **observability layer itself** (it's what `obs.explain` reads). Layout is in `docs/operations/data-directory.mdx`; the load-bearing files:
+- `~/.comis/workspace/sessions/<tenant>/<channel>/<file>.jsonl.trajectory.jsonl` — the trajectory (tool.result with provenance, `tool.result_offloaded` with `diskPathRel`, `session.summary`, `model.completed`). Resolve its path via the co-located `<file>.jsonl.trajectory-path.json` pointer (`runtimeFile`), **not** a hand-built `<dataDir>/sessions/<id>` guess — that path does not exist (it's the bug class §2.10 calls out).
+- `…/<file>_session-metadata.json` — the flight-recorder `sessionEnd` rollup (`degraded`/`costUsd`/`toolStats`/`breakerTripCount`/`topErrorKinds`).
+- `~/.comis/logs/{daemon.*.log, cache-trace.jsonl, session-index.<date>.jsonl}` and `~/.comis/memory.db` → `obs_diagnostics` (`category='session_summary'`).
+
+**Restart the daemon before checking a code change against live `~/.comis`.** The running process holds its `dist/daemon.js` in memory (`pm2 jlist` → `pm_uptime`/`pm_exec_path`); a `pnpm build` does NOT hot-reload it. Use the canonical pm2 clean-start block above, or to test a fix without disturbing a live daemon, call the assembler directly off the fresh dist:
+```bash
+node -e 'const{assembleIncidentReportFromSources,makeRealReader}=require("./packages/daemon/dist/index.js");assembleIncidentReportFromSources(makeRealReader(process.env.HOME+"/.comis"),process.env.HOME+"/.comis",{sessionKey:"<key>",depth:"summary"}).then(r=>console.log(JSON.stringify(r,null,1)))'
+```
+
 ## Git & Branching
 
 **Branch-first — never commit directly to the default branch (`main`).** Before the first change, cut a working branch off `main` (`feature/<desc>`, `fix/<desc>`, `docs/<desc>` — see AGENTS.md §9) and land the work through a PR. Commit or push only when the user asks: approval to *make* a change is not approval to push it, and approval in one turn doesn't carry to the next. If you discover you're already on `main` with uncommitted work, branch before committing — don't add to `main`'s history.

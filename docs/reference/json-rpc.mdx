@@ -723,6 +723,97 @@ Get aggregate delivery statistics: total messages attempted, successes, failures
 ```
 </CodeGroup>
 
+### `obs.trace.search`
+
+Correlate trace rows from the last two days of session-index records. Look up by `messageId` (an O(1) LRU resolves it to a `traceId` first), by `traceId` directly, by `chatId`, or by a `since` window with an optional `where` filter. Results are capped at `limit` (max 1000, default 200).
+
+Synthetic/test-harness session rows are excluded by default; pass `includeSynthetic: true` to include them.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ messageId?: string, traceId?: string, chatId?: string, since?: string, where?: string, limit?: number, includeSynthetic?: boolean }` -- `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
+| **Returns** | `{ rows: Array<Record<string, unknown>> }` -- matching session-index rows (newest-first within each day file), capped at `limit`. |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "obs.trace.search",
+  "params": { "traceId": "f942d38c-e372-43cc-99f1-ead4f0b8582f" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "rows": [
+      { "traceId": "f942d38c-e372-43cc-99f1-ead4f0b8582f", "sessionId": "678314278", "event": "turn_completed", "durationMs": 247740 }
+    ]
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `obs.explain`
+
+Assemble a self-contained, redaction-safe post-mortem (an `IncidentReport`) for a single agent session: outcome, cost, timing, per-tool stats, the normalized failures (newest-first), the circuit-breaker timeline, large-result offloads, a one-line summary, and a deterministic `likelyRootCause`. The report is derived from log evidence only -- no LLM is invoked -- so it reproduces the same verdict from the same session forever.
+
+Accepts EITHER `sessionKey` OR `traceId` (at least one is required). A `traceId` is canonicalized to its `sessionKey` first, so by-trace and by-session produce the identical report.
+
+`depth: "summary"` (the default) bounds the serialized report to roughly 6 KB (about 1,500 tokens) and caps the failure list; `depth: "full"` relaxes the array caps. At BOTH depths the report is digest-only: no raw tool-output body is ever inlined (oversized previews and untrusted external content collapse to a `resultDigest` fingerprint), and an honest `truncations[]` ledger records anything the bounding pass dropped.
+
+An optional `coverage` block reports READ-coverage -- whether the trajectory, rollup, and each offload pointer were actually located and resolved (`{ trajectory: { found, records }, rollup: { present }, offloads: { pointersResolved, pointersTotal } }`) -- distinct from `truncations[]`, which records what the size-bounding pass dropped. A degraded report is self-evident from it (e.g. `records: 0` or `pointersResolved < pointersTotal`) rather than masquerading as a clean session.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ sessionKey?: string, traceId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` required. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
+| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "obs.explain",
+  "params": { "sessionKey": "default:678314278:678314278:peer:678314278", "depth": "summary" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "schemaVersion": 1,
+    "sessionKey": "default:678314278:678314278:peer:678314278",
+    "outcome": { "endReason": "completed_with_tool_errors", "degraded": true, "severity": "degraded" },
+    "cost": { "costUsd": 1.320669, "totalTokens": 735800, "cacheReadRatio": 0 },
+    "timing": { "durationMs": 247740, "turnCount": 25 },
+    "toolStats": { "web_fetch": { "ok": 2, "failed": 8, "topErrorKind": "dependency" } },
+    "failures": [
+      { "seq": 11, "toolName": "web_fetch", "errorKind": "dependency", "resultDigest": "386bf5565d09", "resultBytes": 1500, "errorPreview": "[redacted:untrusted-content digest:386bf5565d09]" }
+    ],
+    "breakerTimeline": [ { "seq": 20, "event": "opened", "toolName": "web_fetch" } ],
+    "summary": "14 tool failures across 25 turns; endReason=completed_with_tool_errors",
+    "likelyRootCause": {
+      "code": "content_heuristic_misclassification",
+      "detail": "content-heuristic misclassification (tool=web_fetch, token=status): a substring match in a large tool body flipped status-200 successes to failures",
+      "suggestedNextSteps": ["audit the web_fetch failureDetector rule for the matched token 'status'", "obs.explain depth=full"]
+    },
+    "truncations": [],
+    "coverage": { "trajectory": { "found": true, "records": 25 }, "rollup": { "present": true }, "offloads": { "pointersResolved": 1, "pointersTotal": 1 } }
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+<Note>
+The `comis explain` CLI command (see the [CLI reference](/reference/cli)) and the `obs_query` agent `explain` / `session_report` actions surface this same report.
+</Note>
+
 ### `obs.reset`
 
 | Property | Value |

@@ -153,6 +153,35 @@ export function diagnosticEventToRow(event: DiagnosticEvent): DiagnosticRow {
   };
 }
 
+/**
+ * Map a `session:summary` event payload (per-session health rollup, F2/D5)
+ * to a flat DiagnosticRow stored under `category:"session_summary"`.
+ * A degraded run maps to `severity:"warning"` so it surfaces in operator
+ * queries; otherwise `"info"`. The `details` JSON carries counts/flags only
+ * (degraded/costUsd/toolStats/breakerTripCount/turnCount) — no error bodies,
+ * no message text (§2.7). Phase 153's `obs.explain` reads this row.
+ */
+export function sessionSummaryEventToRow(
+  payload: EventMap["session:summary"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "session_summary",
+    severity: payload.degraded ? "warning" : "info",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    message: "session:summary",
+    details: JSON.stringify({
+      degraded: payload.degraded,
+      costUsd: payload.costUsd,
+      toolStats: payload.toolStats,
+      breakerTripCount: payload.breakerTripCount,
+      turnCount: payload.turnCount,
+    }),
+    traceId: payload.traceId,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Factory types
 // ---------------------------------------------------------------------------
@@ -260,6 +289,12 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
       sessionKey: payload.sessionKey,
       data: payload as unknown as Record<string, unknown>,
     }));
+  });
+
+  // F2 (D5): the per-session health rollup reuses the EXISTING diagnosticBuffer
+  // (no new table/buffer/transaction) — written under category:"session_summary".
+  eventBus.on("session:summary", (payload) => {
+    diagnosticBuffer.push(sessionSummaryEventToRow(payload));
   });
 
   // c. Periodic channel snapshot timer

@@ -23,21 +23,6 @@ import type { ErrorKind } from "@comis/core";
 import { validateExecCommand } from "../../tools/builtin/exec-security/index.js";
 import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
 
-/**
- * Coerce an arbitrary tool result into a string for failure-signal matching.
- * Pure and total: a string passes through; everything else is JSON-stringified
- * inside a try/catch so a non-serializable (circular) value yields "" rather
- * than throwing — failureDetector bodies MUST NOT throw.
- */
-function resultToText(result: unknown): string {
-  if (typeof result === "string") return result;
-  try {
-    return JSON.stringify(result) ?? "";
-  } catch {
-    return "";
-  }
-}
-
 export function registerAllToolMetadata(): void {
   // =========================================================================
   // Result Size Caps
@@ -552,7 +537,7 @@ export function registerAllToolMetadata(): void {
 
   // --- Privileged management tools ---
   registerToolMetadata("agents_manage",    { searchHint: "fleet list create delete suspend resume agent configure roster inventory" });
-  registerToolMetadata("obs_query",        { searchHint: "diagnostics monitoring metrics billing traces logs health" });
+  registerToolMetadata("obs_query",        { searchHint: "diagnostics monitoring metrics billing health explain incident post-mortem" });
   registerToolMetadata("sessions_manage",  { searchHint: "delete reset export compact session lifecycle cleanup admin" });
   registerToolMetadata("memory_manage",    { searchHint: "delete flush export browse stats storage cleanup purge" });
   registerToolMetadata("channels_manage",  { searchHint: "enable disable restart channel adapter platform connection" });
@@ -617,7 +602,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("web_fetch",  { mcpExportPolicy: "safe" });
   registerToolMetadata("browser",    { mcpExportPolicy: "safe" });
 
-  // --- permission-gated (20) — caller-data-dependent; allowlist required ---
+  // --- permission-gated (21) — caller-data-dependent; allowlist required ---
   // Workspace file access (4) — operator allowlists by path scope at the daemon.
   registerToolMetadata("read", { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("ls",   { mcpExportPolicy: "permission-gated" });
@@ -633,6 +618,8 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("sessions_history", { mcpExportPolicy: "permission-gated" });
   // Observability read (1) — operator allowlists by query scope.
   registerToolMetadata("obs_query", { mcpExportPolicy: "permission-gated" });
+  // Observability incident report (1, 154-03) — READ-ONLY obs.explain digest; runs the assembler directly under daemon authority (NOT the admin RPC), allowlist is the grant. Mirrors obs_query (merged into one call to stay under the 800-line cap).
+  registerToolMetadata("obs_explain", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "explain incident root-cause post-mortem session report" });
   // Meta-tool (1) — reveals registered-tools attack surface; per-client allowlist required.
   registerToolMetadata("discover_tools", { mcpExportPolicy: "permission-gated" });
   // Media analysis (4) — see media-tools note above. Default permission-gated
@@ -704,41 +691,107 @@ export function registerAllToolMetadata(): void {
   // Pure, synchronous predicates consulted in pi-event-bridge.ts BEFORE the
   // tool:executed emit, over the RAW result (the only site that sees it).
   // They flag a logically-failed result the SDK reported as success
-  // (isError:false) — e.g. web_search/web_fetch returning a rate-limit or
-  // "blocked" payload with a 200. MUST NOT throw (resultToText guards
-  // JSON.stringify) and MUST return a canonical ErrorKind member
-  // (resource/timeout/dependency/…). The internal heuristic kinds used
-  // elsewhere in the bridge are NOT valid here — only the closed 10-member
-  // ErrorKind union. When isError is already set the SDK flagged it, so the detector
-  // defers (returns false — no double-flag). exec's non-zero exitCode is
-  // already handled upstream in the bridge, so there is no exec detector here.
-  // Spread-merge attaches these to the EXISTING web_search/web_fetch entries —
+  // (isError:false) — e.g. web_search/web_fetch that returned a real failure
+  // payload alongside a 200.
+  //
+  // They inspect ONLY the tool's STRUCTURED failure fields — NEVER the fetched
+  // body — so legitimate page DATA cannot mis-flag a successful result:
+  //   - web_fetch: classify off `error` (a string set only on real failures) and
+  //     numeric `status` (>= 400). Never read `result.text`/body. This is the fix
+  //     for production session 678314278, where a 200 Yahoo Finance fetch was
+  //     mis-flagged `dependency` because IBM's share price "403.92999267578"
+  //     contains the substring "403" — a body-substring scan over `/403/` matched
+  //     legitimate content, then the tool-retry-breaker told the model to stop
+  //     retrying web_fetch.
+  //   - web_search: classify off the structured failure fields `error` (a stable
+  //     machine code: invalid_provider / invalid_freshness / all_providers_failed),
+  //     `message`, and `failures` (joined). web_search has no numeric `status`. The
+  //     human-readable reason lives in message+failures, NOT the per-result snippets,
+  //     which are never read — so a success snippet containing "rate limit" is safe.
+  //
+  // MUST NOT throw (object-narrowing guards prevent property-access throws; the
+  // regexes only ever run over short structured strings, never untrusted bodies) and
+  // MUST return a canonical ErrorKind member (resource/timeout/dependency/…). The
+  // internal heuristic kinds used elsewhere in the bridge are NOT valid here — only
+  // the closed 10-member ErrorKind union. When isError is already set the SDK flagged
+  // it, so the detector defers (returns false — no double-flag). exec's non-zero
+  // exitCode is already handled upstream in the bridge, so there is no exec detector
+  // here. Spread-merge attaches these to the EXISTING web_search/web_fetch entries —
   // the 51-tool unique count is unchanged.
   // =========================================================================
 
   registerToolMetadata("web_search", {
     failureDetector: (result, isError) => {
       if (isError) return false; // SDK already flagged it — defer.
-      const text = resultToText(result);
+      if (result === null || typeof result !== "object") return false;
+      const r = result as { error?: unknown; message?: unknown; failures?: unknown };
+      // A real web_search failure is signalled by a top-level `error` MACHINE CODE
+      // (invalid_provider / invalid_freshness / all_providers_failed). A SUCCESS payload
+      // carries `results` but NO top-level `error` — so a success whose snippet contains
+      // "rate limit"/"blocked" returns false here (never reads result.results[].snippet).
+      if (typeof r.error !== "string") return false;
+      // Build the classification text from the STRUCTURED failure fields only — the machine
+      // code plus the human-readable `message` and joined `failures` reasons — NEVER the body.
+      const failures = Array.isArray(r.failures)
+        ? r.failures.filter((f): f is string => typeof f === "string").join(" ")
+        : "";
+      const text = `${r.error} ${typeof r.message === "string" ? r.message : ""} ${failures}`;
       if (/rate limit|quota exceeded|too many requests/i.test(text)) {
-        return { errorKind: "resource" satisfies ErrorKind };
+        // Attribute the verdict to the human-readable `message` field (the rate-limit
+        // reason lives there + in `failures`, never in the stable `error` code) and report
+        // the LITERAL rule that matched — a fixed description, not a serialized RegExp.
+        return {
+          errorKind: "resource" satisfies ErrorKind,
+          classifiedField: "message",
+          matchedRule: "/rate limit|quota exceeded|too many requests/",
+        };
       }
-      if (/blocked|forbidden|provider error/i.test(text)) {
-        return { errorKind: "dependency" satisfies ErrorKind };
-      }
-      return false;
+      // blocked/forbidden/provider-error set, broadened to the failures-chain reasons.
+      // A genuine top-level error with an unrecognised reason is still a real failure →
+      // default to dependency (never false once `error` is present). Attributed to the
+      // top-level `error` machine code; no matchedRule/matchedToken (this is the catch-all).
+      return { errorKind: "dependency" satisfies ErrorKind, classifiedField: "error" };
     },
   });
 
   registerToolMetadata("web_fetch", {
     failureDetector: (result, isError) => {
       if (isError) return false; // SDK already flagged it — defer.
-      const text = resultToText(result);
-      if (/timed out|timeout/i.test(text)) {
-        return { errorKind: "timeout" satisfies ErrorKind };
+      if (result === null || typeof result !== "object") return false;
+      const r = result as { error?: unknown; status?: unknown };
+      // Classify off the structured failure fields ONLY. A SUCCESS result has a numeric
+      // `status` 200 and NO `error` key — its body lives in `r.text` and may contain "403"
+      // (e.g. the IBM share price 403.92999267578 — production session 678314278), "blocked",
+      // "timeout" etc. as legitimate DATA. We never read `r.text`/body, so those don't flag.
+      if (typeof r.error === "string") {
+        // Timeout text lives in the descriptive error string ("Fetch failed: …timed out…").
+        // Attribute to the `error` field + the literal timeout rule.
+        if (/\btimed out\b|\btimeout\b/i.test(r.error)) {
+          return {
+            errorKind: "timeout" satisfies ErrorKind,
+            classifiedField: "error",
+            matchedRule: "/timed out|timeout/",
+          };
+        }
+        // Catch-all once `error` is set and the timeout rule did not match — attributed to
+        // the `error` field, no matchedRule/matchedToken.
+        return { errorKind: "dependency" satisfies ErrorKind, classifiedField: "error" };
       }
-      if (/blocked|403|forbidden|connection refused/i.test(text)) {
-        return { errorKind: "dependency" satisfies ErrorKind };
+      if (typeof r.status === "number" && r.status >= 400) {
+        // No `error` key → the numeric HTTP `status` drives the verdict; the concrete code
+        // is the matched token. Gateway-timeout (504) / request-timeout (408) map to timeout.
+        if (r.status === 408 || r.status === 504) {
+          return {
+            errorKind: "timeout" satisfies ErrorKind,
+            classifiedField: "status",
+            matchedToken: String(r.status),
+          };
+        }
+        return {
+          errorKind: "dependency" satisfies ErrorKind,
+          classifiedField: "status",
+          matchedToken: String(r.status),
+        };
       }
       return false;
     },

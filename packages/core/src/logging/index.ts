@@ -4,3 +4,4 @@
 // daemon/skills/cli runtime path.
 
 export * from "./log-fields.js";
+export { fingerprint } from "./fingerprint.js";

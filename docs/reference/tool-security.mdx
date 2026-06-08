@@ -155,6 +155,55 @@ Per-skill tool restrictions from skill manifests provide an additional layer of 
 
 For user-facing configuration guide, see [Tool Policy](/skills/tool-policy).
 
+## MCP Export Policy
+
+Tool policy (above) governs which tools an **agent** may call. A separate,
+stricter layer governs which tools an **external MCP client** may reach over
+`POST /mcp/v1`: every platform tool carries an `mcpExportPolicy` of `safe`,
+`permission-gated`, or `never-export` (a missing annotation is treated as
+`never-export` — default-deny). See the
+[MCP server bucket reference](/integrations/mcp-server) for the full
+classification.
+
+<Info>
+  **Source:** `packages/skills/src/skills/bridge/tool-metadata-registry.ts`
+  (the `mcpExportPolicy` annotations) + `packages/daemon/src/api/mcp-server-handlers.ts`
+  (the registration filter + per-tool dispatch).
+</Info>
+
+### `obs_explain` — read-only incident report, allowlist-gated
+
+`obs_explain` is a **`permission-gated`, `isReadOnly`** MCP tool that surfaces
+the `obs.explain` **IncidentReport** (root-cause post-mortem for a session or
+trace) to an external coding agent. It is reachable **only** when the operator
+adds `"obs_explain"` to that client's `gateway.tokens[].mcpClient.allowlist`.
+
+Three properties make this safe to expose with **no new privilege**:
+
+- **The allowlist IS the granted permission — not admin trust.** `obs_explain`
+  does **not** invoke the admin-gated `obs.explain` RPC. Its dispatch branch runs
+  the report **assembler directly under daemon authority**, bypassing the
+  trust-flag indirection entirely. No `_trustLevel:"admin"` is ever injected, and
+  the admin RPC's own `["admin"]` gate is unchanged for non-MCP callers. A client
+  without `obs_explain` allowlisted is rejected (default-deny).
+- **Digest-only and bounded.** The report is summary-bounded (no raw tool bodies,
+  no raw message content cross the boundary) and flows through
+  `wrapExternalContent` — the calling agent receives it wrapped in a SECURITY
+  NOTICE block + untrusted-content markers, like any other external text.
+- **Read-only + rate-limited.** The tool performs no mutation, and the standard
+  per-client per-tool minute-bucket rate limit applies.
+
+<Warning>
+  **Enumeration implication.** An allowlisted client can request an IncidentReport
+  for any `sessionKey` or `traceId` it can name — there are no per-session ACLs
+  on top of the allowlist grant (out of scope; the report is digest-only/bounded
+  regardless). The operator decides which clients receive `obs_explain` by editing
+  `mcpClient.allowlist`; it must **not** be granted by default. Before flipping
+  `/mcp/v1` live on a publicly reachable instance, a security reviewer should
+  confirm the grant list and the digest-only bounding meet the deployment's
+  threat model.
+</Warning>
+
 ## Content Scanner
 
 The content scanner inspects skill body content at load time for dangerous patterns across six categories. It is a pure function with no side effects -- callers handle audit emission and blocking decisions.

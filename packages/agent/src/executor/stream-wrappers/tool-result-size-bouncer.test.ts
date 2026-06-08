@@ -189,6 +189,36 @@ describe("createToolResultSizeBouncer", () => {
     expect(logger.warn).toHaveBeenCalledTimes(1); // Still 1, not 2
   });
 
+  it("WARN carries a dedupKey field of '${toolName}:${toolCallId}' (withDedup key) and counter stays 1 across repeats", () => {
+    // H2 migration: the truncation WARN now goes through withDedup, which keys
+    // on a `dedupKey` field. The counter (truncatedTools) keeps its OWN guard,
+    // so it increments once per key even though the LOG is collapsed.
+    const { wrapper, getTruncationSummary } = createToolResultSizeBouncer(1_000, logger);
+    const wrappedFn = wrapper(base);
+
+    const toolMsg = makeToolResultMessage("web_fetch", "x".repeat(5_000), "tc-wf-42");
+    const context = makeContext([toolMsg]);
+    const model = {} as any;
+
+    // Two truncations of the SAME (toolName, toolCallId).
+    wrappedFn(model, context);
+    wrappedFn(model, context);
+
+    // (a) WARN fired exactly once and carried the composite dedupKey field.
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dedupKey: "web_fetch:tc-wf-42",
+        toolName: "web_fetch",
+        errorKind: "resource",
+      }),
+      "Tool result truncated",
+    );
+
+    // (b) The counter accumulator stayed at 1 (NOT 0, NOT 2) — its own guard.
+    expect(getTruncationSummary().truncatedTools).toBe(1);
+  });
+
   it("getTruncationSummary returns correct counts", () => {
     const { wrapper, getTruncationSummary } = createToolResultSizeBouncer(1_000, logger);
     const wrappedFn = wrapper(base);

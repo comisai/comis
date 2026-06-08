@@ -1,0 +1,19 @@
+{
+  "rootCause": "Repeated HTTP 503 responses from the upstream provider classified as 'overloaded' tripped the per-tool retry breaker (breaker_opened_repeated_failure) for web_fetch; the breaker is dark today — no event/log records the open transition (GA3).",
+  "expectedDegraded": true,
+  "visibleSymptoms": [
+    "web_fetch failed repeatedly",
+    "HTTP 503",
+    "endReason completed_with_tool_errors"
+  ],
+  "hiddenMechanism": "The breaker open/reset is 100% dark — no tool:breaker_opened event exists (GA3). The only trace is the retry-breaker telling the model 'DO NOT retry'; nothing records that the breaker tripped on a repeated overloaded classification.",
+  "surfaceCeiling": [
+    "trajectory JSONL (read file)",
+    "obs_query tool (diagnostics/billing/delivery/channels only)",
+    "24 obs.* RPC methods",
+    "obs_diagnostics SQLite",
+    "daemon.log",
+    "SOURCE FILES (pi-event-bridge.ts, tool-metadata-registry.ts, tool-retry-breaker.ts)"
+  ],
+  "mechanismTokens": ["503", "breaker", "web_fetch", "repeated"]
+}

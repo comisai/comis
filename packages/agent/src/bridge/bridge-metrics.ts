@@ -11,6 +11,7 @@
  */
 
 import { systemNowMs } from "@comis/core";
+import type { ErrorKind } from "@comis/core";
 import type { ExecutionResult } from "../executor/types.js";
 import type { ContextUsageData } from "../safety/context-window-guard.js";
 import type { ThinkingBlockHash } from "./thinking-block-hash-invariant.js";
@@ -62,9 +63,13 @@ export interface BridgeMetricsState {
    *  `toolArgSnapshots` (which holds the `sanitizeToolArgs` failure-diagnostic
    *  snapshot); deleted in lockstep with `toolArgSnapshots` at tool_execution_end. */
   toolRawArgs: Map<string, unknown>;
-  toolExecResults: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string }>;
+  toolExecResults: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>;
   failedToolCount: number;
   failedToolNames: string[];
+  /** Per-execution count of breaker-open transitions (`tool:breaker_opened`).
+   *  Incremented in pi-event-bridge's opened branch; forwarded as
+   *  `bridgeResult.breakerTripCount` for the session-health rollup (D5/F1). */
+  breakerTripCount: number;
 
   // TTL-split cache write token tracking (estimated, normalized to SDK total)
   totalCacheWrite5mTokens: number;
@@ -216,6 +221,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     toolExecResults: [],
     failedToolCount: 0,
     failedToolNames: [],
+    breakerTripCount: 0,
     cumulativeToolDurationMs: 0,
     cumulativeToolWallclockMs: 0,
     cumulativeLlmDurationMs: 0,
@@ -269,7 +275,8 @@ export function buildBridgeResult(
   lastLlmErrorMessage?: string;
   failedToolCalls?: number;
   failedTools?: string[];
-  toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string }>;
+  toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>;
+  breakerTripCount?: number;
   turnCount?: number;
   lastStopReason?: string;
   cacheWrite5mTokens?: number;
@@ -320,6 +327,7 @@ export function buildBridgeResult(
     failedToolCalls: metrics.failedToolCount,
     failedTools: metrics.failedToolNames.length > 0 ? metrics.failedToolNames : undefined,
     toolExecResults: metrics.toolExecResults.length > 0 ? metrics.toolExecResults : undefined,
+    breakerTripCount: metrics.breakerTripCount,
     turnCount: metrics.turnCount,
     lastStopReason: metrics.lastStopReason,
     cacheWrite5mTokens: metrics.totalCacheWrite5mTokens,

@@ -2,9 +2,10 @@
 ---
 import Base from "../layouts/Base.astro";
 import Footer from "../components/Footer.astro";
+import { FACTS } from "../data/facts";
 
 const title = "Context Management - How Comis Cuts LLM Costs by 81%";
-const description = "Deep dive into Comis's 8-stage context engine (10 implementations), cache fence system, TTL monotonicity enforcement, adaptive cold-start retention, sub-agent spawn staggering, progressive tool disclosure, and the 20+ mechanisms that reduce multi-agent pipeline costs.";
+const description = "Deep dive into Comis's two context engines - the lossless DAG that never deletes history (the default) and the deterministic ten-layer pipeline (opt-in) - plus the cache fence system, TTL monotonicity enforcement, adaptive cold-start retention, sub-agent spawn staggering, and the optimizations that reduce multi-agent pipeline costs.";
 
 const layers = [
   {
@@ -103,7 +104,7 @@ const cacheFenceMechanisms = [
     name: "Adaptive Cold-Start Retention",
     code: "CACHE-23",
     desc: "Parent agents write at 1h TTL from the first call so the system prompt survives pipeline gaps (>5m). Sub-agents inherit mixed 5m/1h TTLs - shared prefix blocks use the first writer's TTL, conversation-specific content uses 5m. Cache refreshes don't upgrade TTL, so the initial write determines the cache lifetime.",
-    impact: "Eliminates re-writes per pipeline gap. 81% cost reduction at steady state.",
+    impact: "Eliminates re-writes per pipeline gap, so the cache survives across waves at steady state.",
   },
   {
     name: "TTL Monotonicity Enforcement",
@@ -176,7 +177,7 @@ const realExample = {
           How Comis cuts LLM costs by 81%
         </h1>
         <p class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed">
-          An 8-stage context engine (10 implementations under the hood), cache fence system, sub-agent spawn staggering, progressive tool disclosure, and 20+ mechanisms - so your agents run indefinitely with predictable costs.
+          Two context engines - a lossless DAG that keeps every turn (the default) and a deterministic multi-stage pipeline you can opt into - plus a cache fence system, sub-agent spawn staggering, and progressive tool disclosure, so your agents run indefinitely with predictable costs.
         </p>
       </div>
     </section>
@@ -187,7 +188,7 @@ const realExample = {
         <div class="bg-navy-light/80 border border-teal/20 rounded-2xl p-8 md:p-12">
           <div class="grid md:grid-cols-4 gap-8 text-center">
             <div>
-              <p class="text-4xl font-bold text-teal font-mono">17x</p>
+              <p class="text-4xl font-bold text-teal font-mono">{FACTS.costs.cacheRatio}</p>
               <p class="text-muted text-sm mt-2">Cache read/write ratio</p>
             </div>
             <div>
@@ -235,22 +236,36 @@ const realExample = {
       </div>
     </section>
 
-    <!-- 8-Layer Pipeline -->
+    <!-- Two engines: DAG default first, then the opt-in pipeline -->
     <section class="px-6 py-16 md:py-24">
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">The solution</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
-          8-stage context engine pipeline (10 implementations)
+          Two context engines, one default that never loses a word
         </h2>
         <p class="text-muted text-lg mb-6 max-w-2xl">
-          Every conversation is processed through a composable pipeline of 8 categorical stages before each LLM call (10 distinct layer implementations counting signature scrubbing and surrogate guards). Each stage targets a specific source of token waste.
+          Comis ships two context engines and runs the lossless one by default. Which engine an agent uses is an operator-only choice (<code class="text-teal text-xs">contextEngine.version</code>) - switched with a single config reload, no restart, fully reversible, no data loss. The same token-budgeting, eviction, masking, and compaction discipline applies in both.
         </p>
-        <p class="text-muted text-sm mb-6 max-w-2xl italic">
-          Every stage has a circuit breaker - 3 consecutive failures disables the layer. No single optimization bug can bring down the pipeline.
-        </p>
-        <div class="bg-navy-light/80 border border-teal/15 rounded-xl p-5 mb-12 max-w-3xl">
+
+        <!-- DAG default - promoted first -->
+        <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 mb-6 max-w-3xl">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-xs font-mono px-2 py-0.5 rounded bg-teal/15 text-teal">Default</span>
+            <h3 class="text-white font-semibold">Lossless DAG context engine</h3>
+          </div>
           <p class="text-muted text-sm leading-relaxed">
-            <span class="text-white font-semibold">DAG is the default.</span> The lossless DAG context engine - full history kept, details recalled on demand via <code class="text-teal text-xs">ctx_search</code> / <code class="text-teal text-xs">ctx_inspect</code> - is the default engine. The classic multi-stage pipeline detailed below is the reversible opt-out mode; operators switch with a single config reload (no restart, fully reversible, no data loss). The same token-budgeting, eviction, masking, and compaction discipline applies in both modes.
+            The default engine keeps the full conversation as a directed graph - nothing is deleted. Older detail is folded into zoomable summaries and recalled on demand via <code class="text-teal text-xs">ctx_search</code>, <code class="text-teal text-xs">ctx_inspect</code>, and <code class="text-teal text-xs">ctx_expand</code>. Compression you can reverse, not destruction you can't.
+          </p>
+        </div>
+
+        <!-- Opt-in pipeline -->
+        <div class="bg-navy-light/80 border border-white/10 rounded-xl p-6 mb-12 max-w-3xl">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-xs font-mono px-2 py-0.5 rounded bg-white/10 text-muted-light">Opt-in</span>
+            <h3 class="text-white font-semibold">Ten-layer deterministic pipeline</h3>
+          </div>
+          <p class="text-muted text-sm leading-relaxed">
+            The classic multi-stage pipeline detailed below is the deterministic opt-in mode (operator-only, the same <code class="text-teal text-xs">contextEngine.version</code> switch). Every conversation runs through 8 categorical stages before each LLM call - 10 distinct layer implementations counting signature scrubbing and surrogate guards - each targeting a specific source of token waste. Every stage has a circuit breaker: 3 consecutive failures disables that layer, so no single optimization bug can bring down the pipeline.
           </p>
         </div>
 
@@ -338,10 +353,10 @@ const realExample = {
           <div class="bg-navy-light/80 rounded-lg p-4 font-mono text-xs text-teal overflow-x-auto">
             <pre class="whitespace-pre">breakpoint callback &rarr; fence index &rarr; layer guards &rarr; trim offset translation
          &uarr;                                                    &darr;
-         &larr;&mdash;&mdash;&mdash;&mdash; persisted across execute() calls &mdash;&mdash;&mdash;&mdash;&rarr;</pre>
+         &larr;---- persisted across execute() calls ----&rarr;</pre>
           </div>
           <p class="text-muted text-sm mt-4 leading-relaxed">
-            Multiple feedback loops ensure cache stability across turns, achieving a <span class="text-teal font-semibold font-mono">16.9x</span> read/write ratio in production - meaning for every token written to cache, 17 tokens are served from it at 10x lower cost.
+            Multiple feedback loops ensure cache stability across turns, achieving a <span class="text-teal font-semibold font-mono">{FACTS.costs.cacheRatio}</span> read/write ratio in production - meaning for every token written to cache, roughly 17 tokens are served from it at 10x lower cost.
           </p>
         </div>
 
@@ -591,17 +606,17 @@ const realExample = {
           </svg>
         </div>
 
-        <!-- Cost comparison -->
+        <!-- Cost comparison (spawn-staggering scenario only - the full-session percentage lives in the production-data section) -->
         <div class="grid md:grid-cols-2 gap-6">
           <div class="bg-navy rounded-xl border border-coral/15 p-6">
-            <p class="text-coral font-semibold text-sm mb-2">Without staggering</p>
+            <p class="text-coral font-semibold text-sm mb-2">Unstaggered fan-out</p>
             <p class="text-3xl font-bold text-white font-mono mb-2">$22.51</p>
-            <p class="text-muted text-sm">4M prompt tokens at input rate. No cache sharing. Each agent pays full write cost for identical system prompts.</p>
+            <p class="text-muted text-sm">4M prompt tokens at input rate. No cache sharing. Each agent pays the full write cost for the identical system prompt.</p>
           </div>
           <div class="bg-navy rounded-xl border border-teal/15 p-6">
-            <p class="text-teal font-semibold text-sm mb-2">With Comis cache system</p>
+            <p class="text-teal font-semibold text-sm mb-2">With spawn staggering</p>
             <p class="text-3xl font-bold text-white font-mono mb-2">$12.48</p>
-            <p class="text-muted text-sm">4.9M tokens from cache reads at $0.50/MTok. First agent writes, siblings read. Fence prevents invalidation. <span class="text-teal font-semibold">81% cost reduction.</span></p>
+            <p class="text-muted text-sm">4.9M tokens served from cache reads at $0.50/MTok. The first agent writes the shared prefix, siblings read it instead of each writing it again, and the fence prevents invalidation - <span class="text-teal font-semibold">roughly half the cost of an unstaggered fan-out</span>. (The full cached-vs-uncached session comparison is in the production-data section below.)</p>
           </div>
         </div>
       </div>
@@ -644,7 +659,7 @@ const realExample = {
             </tbody>
           </table>
         </div>
-        <p class="text-muted text-xs mt-4">Prices per million tokens. Source: Anthropic pricing page, June 2025.</p>
+        <p class="text-muted text-xs mt-4">Prices per million tokens, from Anthropic's published pricing. Verify the current rates before relying on these figures.</p>
       </div>
     </section>
 
@@ -698,7 +713,7 @@ const realExample = {
           Three-tier tool context management
         </h2>
         <p class="text-muted text-lg mb-6 max-w-2xl">
-          With 50+ built-in tools and unlimited MCP integrations, tool definitions can consume more context than the conversation itself. Comis uses a three-tier system that loads tool information progressively based on relevance.
+          A capable agent carries a lot of tools - its own built-ins plus whatever you connect from {FACTS.mcp}. Their definitions can consume more context than the conversation itself. Comis uses a three-tier system that loads tool information progressively based on relevance.
         </p>
         <p class="text-muted text-sm mb-12 max-w-2xl italic">
           Research shows fewer, better-described tools outperform large tool sets. Disambiguation between similar tools yields 8-38% accuracy gains.
@@ -820,9 +835,9 @@ const realExample = {
         </div>
 
         <div class="mt-8 bg-navy-light/80 border border-coral/15 rounded-xl p-6">
-          <p class="text-white font-semibold mb-2">Without context management</p>
+          <p class="text-white font-semibold mb-2">What spawn staggering alone saves</p>
           <p class="text-muted text-sm leading-relaxed">
-            The same 8-agent pipeline without caching costs <span class="text-coral font-semibold">$22.51</span> - 4M prompt tokens at full input rate. With Comis cache system: <span class="text-teal font-semibold">$12.48</span>. The cache fence alone prevented 36K+ tokens of unnecessary re-writes per pipeline turn by protecting the cached prefix from context engine modifications.
+            Run the same 8-agent fan-out with every sibling writing the identical prefix and it costs <span class="text-coral font-semibold">$22.51</span> - 4M prompt tokens at the full input rate. Stagger the spawns so the first agent writes once and the rest read at <span class="text-teal font-mono">$0.50/MTok</span> and it drops to <span class="text-teal font-semibold">$12.48</span>, roughly half. The cache fence on top of that prevented 36K+ tokens of unnecessary re-writes per pipeline turn by protecting the cached prefix from context engine modifications - the full pipeline lands at <span class="text-teal font-semibold">{FACTS.costs.pipelineCost}</span> ({FACTS.costs.pipelineTokens} tokens).
           </p>
         </div>
       </div>
@@ -924,7 +939,7 @@ const realExample = {
           Anthropic dashboard: {realExample.date}
         </h2>
         <p class="text-muted text-lg mb-8 max-w-2xl">
-          Actual token usage and costs from a production Comis instance running multi-agent pipelines on Claude Opus 4.6. Not a benchmark - real user traffic.
+          Actual token usage and costs from a production Comis instance running multi-agent pipelines on Claude Opus 4.6. Not a benchmark - real user traffic. This 76-call session cost <span class="text-teal font-semibold">{FACTS.costs.cachedSession}</span> with caching versus <span class="text-coral font-semibold">{FACTS.costs.uncachedSession}</span> without - <span class="text-teal font-semibold">{FACTS.costs.savingsPct} cheaper</span>. That is the 81% this page leads with.
         </p>
 
         <div class="grid md:grid-cols-2 gap-8">
@@ -1034,8 +1049,11 @@ const realExample = {
         </p>
 
         <div class="flex flex-wrap gap-4 justify-center">
-          <a href="https://docs.comis.ai" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
+          <a href="/#quick-start" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
             Get Started
+          </a>
+          <a href="https://docs.comis.ai/agents/context-management" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
+            Full context-management docs &rarr;
           </a>
           <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
             <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>

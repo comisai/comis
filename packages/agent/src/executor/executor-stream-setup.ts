@@ -174,6 +174,45 @@ export interface StreamSetupResult {
 }
 
 // ---------------------------------------------------------------------------
+// Offload callback (B2 / D7)
+// ---------------------------------------------------------------------------
+
+/** Minimal deps for the microcompaction offload callback. */
+export interface OffloadCallbackDeps {
+  eventBus: import("@comis/core").TypedEventBus;
+  /** Injected wall-clock read — the callback timestamps via `clock.now()`, never the global clock (Pitfall 6). */
+  clock: import("@comis/core").ClockPort;
+  /** Existing cache-break side-effect (cacheBreakDetector.notifyContentModification). */
+  onCacheBreak: () => void;
+}
+
+/**
+ * Build the 4-arg callback the microcompaction guard invokes on each offload.
+ *
+ * The guard holds no eventBus/clock (T-151-07) — it computes the payload
+ * (already with a WORKSPACE-RELATIVE pointer, T-151-05) and passes it here.
+ * This callback performs the two observable effects: it preserves the
+ * existing cache-break notification and emits `tool:result_offloaded` so the
+ * offload lands in the trajectory (Phase 153 `IncidentReport.offloads[]`
+ * drill-down). Extracted as a pure factory so the emit shape is unit-testable
+ * without standing up the full `setupStreamWrappers` dependency graph.
+ */
+export function buildOffloadCallback(
+  deps: OffloadCallbackDeps,
+): (toolName: string, originalChars: number, toolCallId: string, diskPathRel: string) => void {
+  return (toolName, originalChars, toolCallId, diskPathRel) => {
+    deps.onCacheBreak(); // KEEP — existing cacheBreakDetector.notifyContentModification behavior
+    deps.eventBus.emit("tool:result_offloaded", {
+      toolName,
+      toolCallId,
+      originalChars,
+      diskPathRel,
+      timestamp: deps.clock.now(), // injected clock, not the global one (Pitfall 6)
+    });
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Setup function
 // ---------------------------------------------------------------------------
 
@@ -213,9 +252,20 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
   // ancestor-symlink escape (file-mode invariant). Falls back to ~/.comis/ when
   // the daemon hasn't explicitly forwarded its dataDir.
   const microcompactionDataDir = deps.dataDir ?? safePath(homedir(), ".comis");
-  installMicrocompactionGuard(sm, sm.getSessionDir(), microcompactionDataDir, deps.logger, (_toolName) => {
-    cacheBreakDetector.notifyContentModification(formattedKey);
-  });
+  installMicrocompactionGuard(
+    sm,
+    sm.getSessionDir(),
+    microcompactionDataDir,
+    deps.logger,
+    // The guard hands offload payloads (with a workspace-relative pointer) here;
+    // this callback owns both observable effects — cache-break detection AND the
+    // tool:result_offloaded trajectory emit (timestamped via the injected clock).
+    buildOffloadCallback({
+      eventBus: deps.eventBus,
+      clock: deps.clock,
+      onCacheBreak: () => cacheBreakDetector.notifyContentModification(formattedKey),
+    }),
+  );
 
   const wrappers: StreamFnWrapper[] = [];
 

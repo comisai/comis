@@ -76,16 +76,42 @@ function makeManager(): McpClientManager {
 }
 
 /**
+ * Minimal in-memory MCP token store double. The daemon injects the ONE
+ * mode-selected store (selectMcpTokenStore) here; the handler now FAILS LOUDLY
+ * when no store is available, so every login/logout test must supply one (no
+ * implicit plaintext-disk fallback). Tests asserting the absence-of-store guard
+ * opt out explicitly via `noTokenStore` or `createTokenStore: () => undefined`.
+ */
+function makeTokenStoreMock(): TokenStore {
+  return {
+    tokens: vi.fn().mockResolvedValue(undefined),
+    saveTokens: vi.fn().mockResolvedValue(undefined),
+    saveClientInformation: vi.fn().mockResolvedValue(undefined),
+    clientInformation: vi.fn().mockResolvedValue(undefined),
+    saveDiscoveryState: vi.fn().mockResolvedValue(undefined),
+    discoveryState: vi.fn().mockResolvedValue(undefined),
+    deleteAll: vi.fn().mockResolvedValue(undefined),
+    startWatch: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+  } as unknown as TokenStore;
+}
+
+/**
  * Build deps with a persisted `auth:"oauth"` server entry for `serverName`.
  * `container.config.integrations.mcp.servers` is the read path the handler uses.
+ *
+ * A default mode-selected token store is injected unless the caller overrides
+ * `createTokenStore` or sets `noTokenStore: true` (the env-mode "no writable
+ * store" case the fail-loud guard must reject).
  */
 function makeDeps(
   serverName: string,
   overrides: Partial<McpOauthHandlerDeps> & {
     entry?: Record<string, unknown> | null;
+    noTokenStore?: boolean;
   } = {},
 ): McpOauthHandlerDeps {
-  const { entry, ...rest } = overrides;
+  const { entry, noTokenStore, ...rest } = overrides;
   const servers =
     entry === null
       ? []
@@ -98,10 +124,16 @@ function makeDeps(
             oauth: { scope: "read" },
           },
         ];
+  // Default store injection: present unless the caller opts out. An explicit
+  // `createTokenStore` in `rest` wins (spread last).
+  const defaultStore: Partial<McpOauthHandlerDeps> = noTokenStore
+    ? {}
+    : { createTokenStore: () => makeTokenStoreMock() };
   return {
     mcpClientManager: makeManager(),
     logger: makeLogger(),
     container: { config: { integrations: { mcp: { servers } } } } as unknown as McpOauthHandlerDeps["container"],
+    ...defaultStore,
     ...rest,
   } as McpOauthHandlerDeps;
 }
@@ -488,6 +520,75 @@ describe("MCP OAuth RPC handlers", () => {
       await expect(handlers[McpOauthLoginContract.method]({ server_name: "ghost" })).rejects.toThrow(
         /not found/,
       );
+    });
+
+    // ── Fail loudly instead of plaintext-disk fallback (env mode) ────────────
+    // Pre-fix the login handler silently fell back to a plaintext disk store
+    // (`defaultCreateTokenStore`) when no store was injected, ignoring
+    // security.storage. After the fix, no token store ⇒ a clear, actionable
+    // storage-mode error (NOT a success, NOT a disk write). These two cases
+    // cover (a) createTokenStore undefined and (b) createTokenStore() returning
+    // undefined (the env-mode pass-through `() => boot.mcpTokenStore`).
+    it("rejects with a clear storage-mode error when createTokenStore is undefined (no plaintext-disk fallback)", async () => {
+      // runOauthLogin is injected so that IF the handler wrongly fell back to a
+      // disk store and proceeded, the test would observe a non-throwing success
+      // (the pre-fix RED behavior) rather than the required loud failure.
+      const runOauthLogin = vi.fn().mockResolvedValue({ status: "authorized" });
+      const deps = makeDeps("notion", { runOauthLogin, noTokenStore: true });
+      // createTokenStore intentionally absent (env mode has no writable store).
+      expect(deps.createTokenStore).toBeUndefined();
+
+      const handlers = createMcpOauthHandlers(deps);
+      await expect(
+        handlers[McpOauthLoginContract.method]({ server_name: "notion" }),
+      ).rejects.toThrow(/security\.storage/);
+      // The doomed login path must NOT have run against a fallback store.
+      expect(runOauthLogin).not.toHaveBeenCalled();
+    });
+
+    it("rejects with a clear storage-mode error when createTokenStore() returns undefined (env-mode pass-through)", async () => {
+      const runOauthLogin = vi.fn().mockResolvedValue({ status: "authorized" });
+      const deps = makeDeps("notion", {
+        runOauthLogin,
+        // The daemon pass-through is `() => boot.mcpTokenStore`; in env mode that
+        // returns undefined. The handler must treat that as "no store" and fail
+        // loudly, never dereference undefined.
+        createTokenStore: () => undefined,
+      });
+
+      const handlers = createMcpOauthHandlers(deps);
+      await expect(
+        handlers[McpOauthLoginContract.method]({ server_name: "notion" }),
+      ).rejects.toThrow(/security\.storage/);
+      expect(runOauthLogin).not.toHaveBeenCalled();
+    });
+
+    it("login proceeds normally when a token store IS available (guard does not over-fire)", async () => {
+      // Positive control: an injected store must NOT trip the storage-mode guard.
+      const runOauthLogin = vi.fn().mockResolvedValue({ status: "authorized", authUrl: "https://auth.example.com/x" });
+      const tokenStore = {
+        tokens: vi.fn(),
+        saveTokens: vi.fn(),
+        saveClientInformation: vi.fn(),
+        clientInformation: vi.fn(),
+        saveDiscoveryState: vi.fn(),
+        discoveryState: vi.fn(),
+        deleteAll: vi.fn(),
+        startWatch: vi.fn(),
+        close: vi.fn(),
+      } as unknown as TokenStore;
+      const deps = makeDeps("notion", { runOauthLogin, createTokenStore: () => tokenStore });
+      (deps.mcpClientManager.reconnect as ReturnType<typeof vi.fn>).mockResolvedValue(
+        ok({ name: "notion", status: "connected", tools: [] }),
+      );
+
+      const handlers = createMcpOauthHandlers(deps);
+      const res = (await handlers[McpOauthLoginContract.method]({ server_name: "notion" })) as {
+        status: string;
+      };
+
+      expect(runOauthLogin).toHaveBeenCalledOnce();
+      expect(res.status).toBe("authorized");
     });
   });
 

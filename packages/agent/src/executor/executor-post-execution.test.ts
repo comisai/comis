@@ -16,7 +16,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP } from "./executor-post-execution.js";
+import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Learned-recall write side: the turn-end emit threads classifyIntent(msg.text).
 // Imported here for the deterministic-bucket behavior probe (the emit's intent source).
@@ -176,6 +177,17 @@ describe("markRead/markConsumed via tryGetContext + drain", () => {
 // AsyncLocalStorage traceId set in runWithContext. The fix routes the
 // request-scope traceId into traceId and keeps executionId in runId.
 // ---------------------------------------------------------------------------
+// A clean (non-degraded) rollup default for the builder tests that only
+// exercise the traceId/runId/endReason mapping — the F1 rollup-spread is
+// asserted separately in the "F1 persist" describe below.
+const cleanRollup: SessionHealthRollup = {
+  degraded: false,
+  costUsd: 0,
+  toolStats: {},
+  breakerTripCount: 0,
+  topErrorKinds: {},
+};
+
 describe("buildSessionEndMetadata", () => {
   const baseArgs = {
     finishReason: "stop",
@@ -184,6 +196,7 @@ describe("buildSessionEndMetadata", () => {
     executionId: "exec-Y",
     traceId: "trace-X",
     clock: { now: () => Date.now(), nowDate: () => new Date() },
+    rollup: cleanRollup,
   };
 
   it("routes request-scope traceId into traceId, executionId into runId (distinct values)", () => {
@@ -210,9 +223,71 @@ describe("buildSessionEndMetadata", () => {
     expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "circuit_open" }).sessionEnd?.endReason).toBe("circuit_open");
   });
 
+  it("WR-02: maps loop_detected and session_reset EXPLICITLY (not via the catch-all fallthrough)", () => {
+    // Both are known, in-union ExecutionResult.finishReason members — they must
+    // have explicit END_REASON_MAP entries, not lean on the `?? "error"`
+    // defensive bucket reserved for unknown provider strings.
+    expect(Object.prototype.hasOwnProperty.call(END_REASON_MAP, "loop_detected")).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(END_REASON_MAP, "session_reset")).toBe(true);
+    expect(END_REASON_MAP.loop_detected).toBe("error");
+    expect(END_REASON_MAP.session_reset).toBe("error");
+    // And they reach sessionEnd.endReason:"error" through the real builder.
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "loop_detected" }).sessionEnd?.endReason).toBe("error");
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "session_reset" }).sessionEnd?.endReason).toBe("error");
+  });
+
+  it("WR-02: END_REASON_MAP never produces the dead 'timeout' endReason literal", () => {
+    // The SessionMetadata.sessionEnd.endReason union still declares "timeout",
+    // but no source finishReason maps to it — assert the writer cannot emit it so
+    // the dead literal is documented as unreachable from THIS path (not silently
+    // re-introduced via a stray mapping).
+    expect(Object.values(END_REASON_MAP)).not.toContain("timeout");
+  });
+
   it("falls back to 'error' for unmapped finishReasons", () => {
     const result = buildSessionEndMetadata({ ...baseArgs, finishReason: "some_unknown_reason" });
     expect(result.sessionEnd?.endReason).toBe("error");
+  });
+
+  it("CR-01/WR-01: degraded is coupled to END_REASON_MAP over the WHOLE finishReason union (no dual-set drift)", () => {
+    // The enforced single-source invariant: for EVERY ExecutionResult.finishReason
+    // (plus the synthetic completed_with_tool_errors / end_turn that reach the
+    // chokepoint), the rollup's degraded MUST equal `mappedEndReason !== "success"`.
+    // This converts the prose "mirrors END_REASON_MAP" comment into a test —
+    // adding a new finish reason to the union without an END_REASON_MAP entry can
+    // no longer silently reopen the CR-01 divergence (it falls to "error" ⇒
+    // degraded, never to a stale degraded:false).
+    const ALL_FINISH_REASONS = [
+      "stop", "end_turn", "error", "max_steps",
+      "budget_exceeded", "budget_exhausted", "circuit_open", "provider_degraded",
+      "context_loop", "context_exhausted", "session_reset", "loop_detected",
+      "completed_with_tool_errors",
+    ];
+    for (const reason of ALL_FINISH_REASONS) {
+      const mappedEndReason = END_REASON_MAP[reason] ?? "error";
+      const expectedDegraded = mappedEndReason !== "success";
+      // The chokepoint maps once, then passes the mapped endReason to the rollup.
+      expect(buildSessionHealthRollup({}, mappedEndReason).degraded).toBe(expectedDegraded);
+    }
+    // Spotlight the two reasons CR-01 was filed for: both map to "error" ⇒ degraded.
+    expect(buildSessionHealthRollup({}, END_REASON_MAP.loop_detected ?? "error").degraded).toBe(true);
+    expect(buildSessionHealthRollup({}, END_REASON_MAP.session_reset ?? "error").degraded).toBe(true);
+  });
+
+  it("CR-01: the chokepoint maps endReason ONCE and feeds the SAME mapped value to the rollup (single source)", () => {
+    // Source-grep the production module: the rollup must be driven by the mapped
+    // endReason (END_REASON_MAP[...] ?? "error"), NOT a second closed reason set.
+    // A regression that reintroduced a standalone degraded predicate over the raw
+    // finishReason would not match this coupling.
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    // A single endReason is derived from END_REASON_MAP and threaded into the rollup.
+    expect(stripped).toMatch(/END_REASON_MAP\[[^\]]+\]\s*\?\?\s*"error"/);
+    expect(stripped).toMatch(/buildSessionHealthRollup\([^)]*endReason[^)]*\)/);
   });
 
   it("propagates durationMs and totalTokens verbatim into sessionEnd", () => {
@@ -234,6 +309,138 @@ describe("buildSessionEndMetadata", () => {
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
     expect(stripped).toMatch(/buildSessionEndMetadata\([\s\S]*?traceId:\s*tryGetContext\(\)\?\.traceId/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F1/F2: the session-health rollup is computed ONCE and feeds BOTH sinks —
+// the sessionEnd metadata (F1, via buildSessionEndMetadata) and the
+// session:summary event (F2, via emitSessionSummary). The emit is
+// fire-and-forget: a throwing listener must NOT abort the teardown (OQ3).
+// ---------------------------------------------------------------------------
+describe("F1 persist — buildSessionEndMetadata threads the health rollup into sessionEnd", () => {
+  const rollup: SessionHealthRollup = {
+    degraded: true,
+    costUsd: 1.45,
+    toolStats: { web_fetch: { ok: 2, failed: 8 } },
+    breakerTripCount: 1,
+    topErrorKinds: { dependency: 8 },
+  };
+  const baseArgs = {
+    finishReason: "completed_with_tool_errors",
+    durationMs: 1000,
+    totalTokens: 500,
+    executionId: "exec-Z",
+    traceId: "trace-Z",
+    clock: { now: () => 0, nowDate: () => new Date(0) },
+    rollup,
+  };
+
+  it("spreads degraded/costUsd/toolStats/breakerTripCount/topErrorKinds from the rollup onto sessionEnd", () => {
+    const result = buildSessionEndMetadata(baseArgs);
+    expect(result.sessionEnd?.degraded).toBe(true);
+    expect(result.sessionEnd?.costUsd).toBe(1.45);
+    expect(result.sessionEnd?.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
+    expect(result.sessionEnd?.breakerTripCount).toBe(1);
+    expect(result.sessionEnd?.topErrorKinds).toEqual({ dependency: 8 });
+    // The 4 required fields are still present (additive, not replaced).
+    expect(result.sessionEnd?.endReason).toBe("completed_with_tool_errors");
+    expect(result.sessionEnd?.totalTokens).toBe(500);
+  });
+});
+
+describe("F2 emit — emitSessionSummary emits session:summary, fire-and-forget", () => {
+  const rollup: SessionHealthRollup = {
+    degraded: true,
+    costUsd: 1.45,
+    toolStats: { web_fetch: { ok: 2, failed: 8 } },
+    breakerTripCount: 1,
+    topErrorKinds: { dependency: 8 },
+  };
+  const baseArgs = {
+    sessionKey: "tenant_a/user_a/chan",
+    agentId: "agent_a",
+    traceId: "trace-Z",
+    turnCount: 3,
+    rollup,
+    clock: { now: () => 4242, nowDate: () => new Date(4242) },
+  };
+
+  it("emits exactly one session:summary carrying degraded/costUsd/toolStats/breakerTripCount + ids", () => {
+    const emit = vi.fn();
+    const eventBus = { emit, on: vi.fn(), off: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
+
+    emitSessionSummary({ eventBus, logger: undefined }, baseArgs);
+
+    const summaryCalls = emit.mock.calls.filter((c) => c[0] === "session:summary");
+    expect(summaryCalls).toHaveLength(1);
+    const payload = summaryCalls[0]![1] as Record<string, unknown>;
+    expect(payload.degraded).toBe(true);
+    expect(payload.costUsd).toBe(1.45);
+    expect(payload.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
+    expect(payload.breakerTripCount).toBe(1);
+    expect(payload.turnCount).toBe(3);
+    expect(payload.sessionKey).toBe("tenant_a/user_a/chan");
+    expect(payload.agentId).toBe("agent_a");
+    expect(payload.traceId).toBe("trace-Z");
+    expect(payload.timestamp).toBe(4242);
+  });
+
+  it("OMITS topErrorKinds from the emitted event payload (goes to metadata only, OQ1)", () => {
+    const emit = vi.fn();
+    const eventBus = { emit, on: vi.fn(), off: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
+    emitSessionSummary({ eventBus, logger: undefined }, baseArgs);
+    const payload = emit.mock.calls.find((c) => c[0] === "session:summary")![1] as Record<string, unknown>;
+    expect(payload.topErrorKinds).toBeUndefined();
+  });
+
+  it("a THROWING eventBus listener does NOT propagate out of emitSessionSummary (fire-and-forget, OQ3)", () => {
+    const eventBus = {
+      emit: vi.fn().mockImplementation(() => {
+        throw new Error("listener blew up");
+      }),
+      on: vi.fn(),
+      off: vi.fn(),
+    } as unknown as import("@comis/core").TypedEventBus;
+
+    // The synchronous eventBus would propagate the throw without a guard.
+    expect(() => emitSessionSummary({ eventBus, logger: undefined }, baseArgs)).not.toThrow();
+  });
+
+  it("is a silent no-op when no eventBus is wired (legacy / sub-agent path)", () => {
+    // The chokepoint guards with `if (deps.eventBus)`; emitSessionSummary
+    // returns early when the bus is absent — never throwing, nothing emitted.
+    expect(() => emitSessionSummary({ eventBus: undefined, logger: undefined }, baseArgs)).not.toThrow();
+  });
+});
+
+describe("F1/F2 wiring — postExecution computes the rollup once and feeds both sinks", () => {
+  function readPostExec(): string {
+    return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+  }
+  function stripped(): string {
+    return readPostExec()
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+  }
+
+  it("computes the health rollup exactly once at the chokepoint", () => {
+    const callCount = (stripped().match(/buildSessionHealthRollup\(/g) ?? []).length;
+    expect(callCount).toBe(1);
+  });
+
+  it("imports buildSessionHealthRollup from the sibling module", () => {
+    expect(readPostExec()).toMatch(/import\s*\{\s*buildSessionHealthRollup[\s\S]*?\}\s*from\s*"\.\/session-health-rollup\.js"/);
+  });
+
+  it("threads the rollup into the buildSessionEndMetadata call (F1)", () => {
+    expect(stripped()).toMatch(/buildSessionEndMetadata\([\s\S]*?rollup[\s\S]*?\}\)/);
+  });
+
+  it("emits session:summary via emitSessionSummary at the chokepoint (F2)", () => {
+    expect(stripped()).toMatch(/emitSessionSummary\(/);
   });
 });
 
@@ -306,6 +513,7 @@ describe("tool-failure endReason and notice", () => {
       executionId: "exec-1",
       traceId: undefined,
       clock: baseClock,
+      rollup: cleanRollup,
     });
     expect(result.sessionEnd?.endReason).toBe("completed_with_tool_errors");
   });
@@ -318,6 +526,7 @@ describe("tool-failure endReason and notice", () => {
       executionId: "exec-2",
       traceId: undefined,
       clock: baseClock,
+      rollup: cleanRollup,
     });
     expect(result.sessionEnd?.endReason).toBe("success");
   });

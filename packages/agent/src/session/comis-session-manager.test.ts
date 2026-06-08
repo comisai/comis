@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { mkdirSync, writeFileSync, existsSync, mkdtempSync, statSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, mkdtempSync, statSync, readFileSync } from "node:fs";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -291,6 +291,87 @@ describe("comis-session-manager mode invariants on substrate-routed writes", () 
     const metadataPath = join(channelDir, "bot_session-metadata.json");
     expect(existsSync(metadataPath)).toBe(true);
     expect(statSync(metadataPath).mode & 0o777).toBe(0o600);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F1: sessionEnd flight-recorder rollup fields round-trip
+// ---------------------------------------------------------------------------
+
+describe("write_session_metadata round-trips the F1 health-rollup fields on sessionEnd", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs) {
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* cleanup */ }
+    }
+    dirs.length = 0;
+  });
+
+  function setupMgr(): { mgr: ReturnType<typeof createComisSessionManager>; key: SessionKey; metadataPath: string } {
+    const baseDir = makeTmpDir();
+    const lockDir = makeTmpDir();
+    dirs.push(baseDir, lockDir);
+    const mgr = createComisSessionManager({ sessionBaseDir: baseDir, lockDir, cwd: baseDir, fileLock });
+    const key = makeKey();
+    const channelDir = join(baseDir, "default", "cron@3atest-job");
+    mkdirSync(channelDir, { recursive: true, mode: 0o700 });
+    return { mgr, key, metadataPath: join(channelDir, "bot_session-metadata.json") };
+  }
+
+  it("persists degraded, costUsd, toolStats, breakerTripCount, and topErrorKinds verbatim on a write→read cycle", () => {
+    const { mgr, key, metadataPath } = setupMgr();
+
+    mgr.writeSessionMetadata(key, {
+      sessionEnd: {
+        type: "session_end",
+        timestamp: "2026-06-07T00:00:00.000Z",
+        endReason: "completed_with_tool_errors",
+        durationMs: 1000,
+        totalTokens: 500,
+        degraded: true,
+        costUsd: 1.45,
+        toolStats: { web_fetch: { ok: 2, failed: 8 } },
+        breakerTripCount: 1,
+        topErrorKinds: { dependency: 8 },
+      },
+    });
+
+    expect(existsSync(metadataPath)).toBe(true);
+    const persisted = JSON.parse(readFileSync(metadataPath, "utf-8")) as {
+      sessionEnd: NonNullable<import("./comis-session-manager.js").SessionMetadata["sessionEnd"]>;
+    };
+    expect(persisted.sessionEnd.degraded).toBe(true);
+    expect(persisted.sessionEnd.costUsd).toBe(1.45);
+    expect(persisted.sessionEnd.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
+    expect(persisted.sessionEnd.breakerTripCount).toBe(1);
+    expect(persisted.sessionEnd.topErrorKinds).toEqual({ dependency: 8 });
+  });
+
+  it("still round-trips the four required fields when the five rollup fields are omitted (additive, no-BC)", () => {
+    const { mgr, key, metadataPath } = setupMgr();
+
+    // Old-shape sessionEnd: no degraded/costUsd/toolStats/breakerTripCount/topErrorKinds.
+    mgr.writeSessionMetadata(key, {
+      sessionEnd: {
+        type: "session_end",
+        timestamp: "2026-06-07T00:00:00.000Z",
+        endReason: "success",
+        durationMs: 250,
+        totalTokens: 42,
+      },
+    });
+
+    expect(existsSync(metadataPath)).toBe(true);
+    const persisted = JSON.parse(readFileSync(metadataPath, "utf-8")) as {
+      sessionEnd: NonNullable<import("./comis-session-manager.js").SessionMetadata["sessionEnd"]>;
+    };
+    expect(persisted.sessionEnd.type).toBe("session_end");
+    expect(persisted.sessionEnd.endReason).toBe("success");
+    expect(persisted.sessionEnd.durationMs).toBe(250);
+    expect(persisted.sessionEnd.totalTokens).toBe(42);
+    // Omitted optional fields stay absent (readers ignore missing optional, §2.9).
+    expect(persisted.sessionEnd.degraded).toBeUndefined();
+    expect(persisted.sessionEnd.costUsd).toBeUndefined();
   });
 });
 

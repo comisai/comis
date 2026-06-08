@@ -1,0 +1,18 @@
+{
+  "rootCause": "An upstream provider/tool call exceeded its deadline (request timed out after 30000ms), classified as prompt_timeout; degraded the session via a stalled turn.",
+  "expectedDegraded": true,
+  "visibleSymptoms": [
+    "request timed out",
+    "tool call stalled"
+  ],
+  "hiddenMechanism": "The timeout classification provenance (classifiedFailureBy) is not recorded today (GA1). The log shows the deadline breach but not which rule/field assigned the prompt_timeout category, nor whether a retry was attempted on the same stalled endpoint.",
+  "surfaceCeiling": [
+    "trajectory JSONL (read file)",
+    "obs_query tool (diagnostics/billing/delivery/channels only)",
+    "24 obs.* RPC methods",
+    "obs_diagnostics SQLite",
+    "daemon.log",
+    "SOURCE FILES (pi-event-bridge.ts, tool-metadata-registry.ts, tool-retry-breaker.ts)"
+  ],
+  "mechanismTokens": ["timeout", "30000", "prompt_timeout"]
+}

@@ -15,9 +15,10 @@
  * @module
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { resolveMainPathMaxOutputTokens } from "./verification-gate.js";
 import type { ModelProfile } from "./model-profile.js";
+import { buildOffloadCallback } from "./executor-stream-setup.js";
 
 // ---------------------------------------------------------------------------
 // Extracted derivation under test
@@ -146,6 +147,51 @@ describe("CR-01 main-path maxTokens wiring — non-reasoning answer is never cla
 // ---------------------------------------------------------------------------
 // diagnostics.cacheTrace wiring
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// tool:result_offloaded emit (B2b)
+// ---------------------------------------------------------------------------
+
+describe("buildOffloadCallback -- emits tool:result_offloaded and preserves cache-break detection", () => {
+  // The microcompaction guard hands offload payloads to this callback (it holds
+  // no eventBus/clock itself, T-151-07). The callback emits tool:result_offloaded
+  // with deps.clock (NOT Date.now()) and MUST keep the existing
+  // cacheBreakDetector.notifyContentModification side-effect.
+  it("emits tool:result_offloaded carrying {toolName,toolCallId,originalChars,diskPathRel} + clock timestamp", () => {
+    const emit = vi.fn();
+    const onCacheBreak = vi.fn();
+    const callback = buildOffloadCallback({
+      eventBus: { emit } as unknown as import("@comis/core").TypedEventBus,
+      clock: { now: () => 1_700_000_000_000 } as unknown as import("@comis/core").ClockPort,
+      onCacheBreak,
+    });
+
+    callback("bash", 12_345, "call-xyz", "tool-results/call-xyz.json");
+
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith("tool:result_offloaded", {
+      toolName: "bash",
+      toolCallId: "call-xyz",
+      originalChars: 12_345,
+      // workspace-relative pointer ONLY — never the absolute host path (T-151-05)
+      diskPathRel: "tool-results/call-xyz.json",
+      timestamp: 1_700_000_000_000,
+    });
+  });
+
+  it("preserves the existing cacheBreakDetector.notifyContentModification side-effect", () => {
+    const onCacheBreak = vi.fn();
+    const callback = buildOffloadCallback({
+      eventBus: { emit: vi.fn() } as unknown as import("@comis/core").TypedEventBus,
+      clock: { now: () => 0 } as unknown as import("@comis/core").ClockPort,
+      onCacheBreak,
+    });
+
+    callback("web_fetch", 9_000, "call-abc", "tool-results/call-abc.json");
+
+    expect(onCacheBreak).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("diagnostics_cache_trace_returned -- params.cacheTrace surfaces the cache-trace wrapper factory", () => {
   // Pragmatic isolation: setupStreamWrappers has deeply nested dependencies

@@ -1289,6 +1289,32 @@ comis trace export my-session-id
 
 ---
 
+### `comis explain`
+
+Assemble an `IncidentReport` for a single agent session — a bounded, causal post-mortem (outcome, cost, per-tool stats, normalized failures, circuit-breaker timeline, large-result offloads, and a deterministic likely root cause). The report is derived from log evidence only; no LLM is invoked, so the same session always yields the same verdict. Backed by `ObsExplainContract` (`obs.explain`).
+
+The positional argument is routed automatically: a **session key** (`tenant:user:channel:ts`, contains `:`) is passed as `sessionKey`; a **trace ID** (a UUID, no `:`) is passed as `traceId`. The daemon canonicalizes a trace ID to its session key first, so both forms produce the identical report.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+| `--depth <depth>` | `summary` \| `full` | `summary` | `summary` bounds the report to roughly 6 KB (about 1,500 tokens) and caps the failure list; `full` relaxes the array caps. Both depths are digest-only — no raw tool-output body is ever inlined |
+
+```bash
+# Explain a session by session key
+comis explain "default:user123:telegram:1717000000"
+
+# Explain by trace ID, with the uncapped (full) report
+comis explain 6ba7b810-9dad-11d1-80b4-00c04fd430c8 --depth full
+
+# Machine-readable output
+comis explain "default:user123:telegram:1717000000" --format json
+```
+
+Requires an admin-scoped gateway token (same as `comis trace`).
+
+---
+
 ### `comis status`
 
 Display a unified system status overview showing daemon, gateway, channel, and agent information. Connects to the daemon via RPC for live data and handles daemon offline gracefully.

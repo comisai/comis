@@ -7,3 +7,5 @@
 export type { ComisLogger, LogFields, ErrorKind } from "../logging/index.js";
 export { VALID_LOG_LEVELS, isValidLogLevel } from "../logging/index.js";
 export { createConsoleLogger } from "../logging/console-logger.js";
+export { fingerprint } from "../logging/index.js";
+export { withDedup } from "../logging/dedup-logger.js";

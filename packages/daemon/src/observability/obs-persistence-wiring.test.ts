@@ -4,6 +4,7 @@ import {
   tokenUsageEventToRow,
   deliveryEventToRow,
   diagnosticEventToRow,
+  sessionSummaryEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
 import type { EventMap } from "@comis/core";
@@ -190,6 +191,60 @@ describe("diagnosticEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
+// sessionSummaryEventToRow (F2 — per-session health rollup)
+// ---------------------------------------------------------------------------
+
+describe("sessionSummaryEventToRow", () => {
+  it("maps a degraded session:summary payload to a DiagnosticRow(category:session_summary, severity:warning)", () => {
+    const row = sessionSummaryEventToRow({
+      sessionKey: "s1",
+      agentId: "a1",
+      traceId: "t1",
+      degraded: true,
+      turnCount: 24,
+      costUsd: 1.45,
+      toolStats: { web_fetch: { ok: 2, failed: 8 } },
+      breakerTripCount: 1,
+      timestamp: 1000,
+    });
+
+    expect(row.timestamp).toBe(1000);
+    expect(row.category).toBe("session_summary");
+    // degraded run -> warning severity (operator-visible).
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("a1");
+    expect(row.sessionKey).toBe("s1");
+    expect(row.traceId).toBe("t1");
+    expect(row.message.length).toBeGreaterThan(0);
+
+    // details JSON carries counts/flags only — no error bodies, no message text.
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.degraded).toBe(true);
+    expect(details.costUsd).toBe(1.45);
+    expect(details.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
+    expect(details.breakerTripCount).toBe(1);
+    expect(details.turnCount).toBe(24);
+  });
+
+  it("maps a non-degraded session:summary payload to severity:info", () => {
+    const row = sessionSummaryEventToRow({
+      sessionKey: "s2",
+      agentId: "a2",
+      traceId: "t2",
+      degraded: false,
+      turnCount: 3,
+      costUsd: 0.02,
+      toolStats: {},
+      breakerTripCount: 0,
+      timestamp: 2000,
+    });
+
+    expect(row.category).toBe("session_summary");
+    expect(row.severity).toBe("info");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // setupObsPersistence
 // ---------------------------------------------------------------------------
 
@@ -277,6 +332,55 @@ describe("setupObsPersistence", () => {
     // Should have subscribed to both events
     expect(eventBus.on).toHaveBeenCalledWith("observability:token_usage", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("diagnostic:message_processed", expect.any(Function));
+    // F2: the third subscription — per-session health rollup.
+    expect(eventBus.on).toHaveBeenCalledWith("session:summary", expect.any(Function));
+
+    // Cleanup
+    clearInterval(result.snapshotTimer);
+    result.drainAll();
+  });
+
+  it("pushes a session:summary event through the diagnostic buffer to insertDiagnostic", () => {
+    const eventBus = createMockEventBus();
+    const obsStore = createMockObsStore();
+    const db = createMockDb();
+    const channelActivityTracker = createMockChannelActivityTracker();
+
+    const result = setupObsPersistence({
+      eventBus: eventBus as never,
+      obsStore: obsStore as never,
+      db: db as never,
+      channelActivityTracker: channelActivityTracker as never,
+      startupTimestamp: Date.now(),
+      snapshotIntervalMs: 300_000,
+    });
+
+    // §1.1 replay shape: a degraded run (8/10 web_fetch failures).
+    eventBus.emit("session:summary", {
+      sessionKey: "sk-1",
+      agentId: "a1",
+      traceId: "t1",
+      degraded: true,
+      turnCount: 24,
+      costUsd: 1.45,
+      toolStats: { web_fetch: { ok: 2, failed: 8 } },
+      breakerTripCount: 1,
+      timestamp: 1000,
+    });
+
+    // Advance timer to trigger buffer flush.
+    vi.advanceTimersByTime(500);
+
+    expect(obsStore.insertDiagnostic).toHaveBeenCalledTimes(1);
+    expect(obsStore.insertDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "session_summary",
+        severity: "warning",
+        agentId: "a1",
+        sessionKey: "sk-1",
+        traceId: "t1",
+      }),
+    );
 
     // Cleanup
     clearInterval(result.snapshotTimer);

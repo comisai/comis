@@ -1,18 +1,29 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 @import "tailwindcss";
 
-/* -- Brand Palette -- */
+/* -- Brand Palette --
+   Locked identity (RESEARCH Design System): dark navy base = "infrastructure you can
+   trust"; teal = context / memory / benchmarks / trust ("measured"); coral = security /
+   cost / action ("energy"). The token NAMES are the site-wide restyle contract - every
+   component references them - so values are re-tuned HERE only, never renamed.
+   v157 refresh (deliberate, within the locked recommendation):
+   - navy base unchanged (the trusted-infrastructure ground).
+   - coral warmed toward vermilion (less pure-orange; reads as deliberate "action", not
+     an alert). The -dark and -btn/-btn-hover siblings move in lockstep, kept in the same
+     darkness band so white text on the button stays AA.
+   - teal deepened toward a measured cyan; -dark moved with it.
+   Body text (#F9FAFB on --color-navy) is untouched, so its AA contrast is unaffected. */
 @theme {
   --color-navy: #0F172A;
   --color-navy-light: #1E293B;
   --color-navy-lighter: #334155;
   --color-charcoal: #1E293B;
-  --color-coral: #FF6B4A;
-  --color-coral-dark: #E5593A;
-  --color-coral-btn: #BF4024;
-  --color-coral-btn-hover: #A5361E;
-  --color-teal: #06B6D4;
-  --color-teal-dark: #0891B2;
+  --color-coral: #FF6A45;
+  --color-coral-dark: #E2563A;
+  --color-coral-btn: #C2402A;
+  --color-coral-btn-hover: #A6351F;
+  --color-teal: #1FBFD4;
+  --color-teal-dark: #0E8FA6;
   --color-muted: #94A3B8;
   --color-muted-light: #CBD5E1;
 

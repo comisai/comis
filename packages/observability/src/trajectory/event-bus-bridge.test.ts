@@ -115,6 +115,197 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.errorKind).toBe("internal");
   });
 
+  // B1 (D3): the two breaker transitions must land in the trajectory as
+  // tool.breaker_opened / tool.breaker_reset with ids/counts/typed-reason only
+  // (no raw error body, §2.7). Phase 153's obs.explain reads these.
+  it("tool_breaker_opened_maps_to_tool.breaker_opened with toolName/consecutiveFailures/errorTag/reason/seq", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:breaker_opened", {
+      toolName: "bash",
+      consecutiveFailures: 5,
+      errorTag: "spawn_enoent",
+      reason: "tool_failure_threshold",
+      seq: 3,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("tool.breaker_opened");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.toolName).toBe("bash");
+    expect(data.consecutiveFailures).toBe(5);
+    expect(data.errorTag).toBe("spawn_enoent");
+    expect(data.reason).toBe("tool_failure_threshold");
+    expect(data.seq).toBe(3);
+  });
+
+  it("tool_breaker_reset_maps_to_tool.breaker_reset with toolName/reason/seq", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:breaker_reset", {
+      toolName: "web_fetch",
+      reason: "success",
+      seq: 7,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("tool.breaker_reset");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.toolName).toBe("web_fetch");
+    expect(data.reason).toBe("success");
+    expect(data.seq).toBe(7);
+  });
+
+  // F2 (D5): the per-session health rollup must land in the trajectory as
+  // session.summary carrying counts/flags only — the §6.2 replay shape
+  // (degraded run, 8/10 web_fetch failures). Phase 153's obs.explain reads it.
+  it("session_summary_maps_to_session.summary with degraded/turnCount/costUsd/toolStats/breakerTripCount", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("session:summary", {
+      sessionKey: "t1:u1:c1",
+      agentId: "agent-1",
+      traceId: "trace-1",
+      degraded: true,
+      turnCount: 24,
+      costUsd: 1.45,
+      toolStats: { web_fetch: { ok: 2, failed: 8 } },
+      breakerTripCount: 1,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("session.summary");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.degraded).toBe(true);
+    expect(data.turnCount).toBe(24);
+    expect(data.costUsd).toBe(1.45);
+    expect(data.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
+    expect(data.breakerTripCount).toBe(1);
+  });
+
+  // §2.7: the trajectory record carries counts/flags ONLY — the envelope
+  // correlation ids (agentId/sessionKey/traceId) are handled separately and
+  // must NOT appear in the translated data.
+  it("session_summary_strips_envelope_ids_from_data", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("session:summary", {
+      sessionKey: "t1:u1:c1",
+      agentId: "agent-1",
+      traceId: "trace-1",
+      degraded: false,
+      turnCount: 3,
+      costUsd: 0.02,
+      toolStats: {},
+      breakerTripCount: 0,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.traceId).toBeUndefined();
+  });
+
+  it("tool_result_offloaded_maps_to_tool.result_offloaded with toolName/toolCallId/originalChars/diskPathRel", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:result_offloaded", {
+      toolName: "bash",
+      toolCallId: "call-offload-1",
+      originalChars: 42_000,
+      // workspace-relative pointer ONLY — the trajectory record must never
+      // carry the absolute host path (residency; T-151-05).
+      diskPathRel: "tool-results/call-offload-1.json",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("tool.result_offloaded");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.toolName).toBe("bash");
+    expect(data.toolCallId).toBe("call-offload-1");
+    expect(data.originalChars).toBe(42_000);
+    expect(data.diskPathRel).toBe("tool-results/call-offload-1.json");
+  });
+
+  it("tool_executed_forwards_D1_provenance_into_tool.result.data", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:executed", {
+      toolName: "web_fetch",
+      toolCallId: "tc-prov",
+      durationMs: 1234,
+      success: false,
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      // D1 provenance fields (Plan 03 payload — Phase 153 obs.explain reads these).
+      classifiedFailureBy: "failure_detector",
+      transportOk: true,
+      httpStatus: 200,
+      matchedRule: "status_token",
+      matchedToken: "503",
+      resultBytes: 1234,
+      resultDigest: "abc123def456",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("tool.result");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // All 7 provenance fields must reach the trajectory `data` — without
+    // this forwarding, Phase 153's obs.explain is blind (RESEARCH Pitfall 2).
+    expect(data.classifiedFailureBy).toBe("failure_detector");
+    expect(data.transportOk).toBe(true);
+    expect(data.httpStatus).toBe(200);
+    expect(data.matchedRule).toBe("status_token");
+    expect(data.matchedToken).toBe("503");
+    expect(data.resultBytes).toBe(1234);
+    expect(data.resultDigest).toBe("abc123def456");
+  });
+
+  it("tool_executed_omits_absent_provenance_keys_from_tool.result.data", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    // A success with NO provenance fields — the keys must be ABSENT
+    // (presence-conditional, never `undefined` values).
+    bus.emit("tool:executed", {
+      toolName: "bash",
+      toolCallId: "tc-clean",
+      durationMs: 10,
+      success: true,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect("classifiedFailureBy" in data).toBe(false);
+    expect("transportOk" in data).toBe(false);
+    expect("httpStatus" in data).toBe(false);
+    expect("matchedRule" in data).toBe(false);
+    expect("matchedToken" in data).toBe(false);
+    expect("resultBytes" in data).toBe(false);
+    expect("resultDigest" in data).toBe(false);
+  });
+
   it("tool_timeout_event_maps_to_tool.timeout sharing toolCallId for dedup with tool:executed", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -215,6 +406,73 @@ describe("attachTrajectoryToEventBus -- model events", () => {
     expect(data.cacheReadTokens).toBe(100);
     expect(data.cacheCreationTokens).toBe(50);
     expect(data.durationMs).toBe(2500);
+  });
+
+  // B3 (D8): when the per-turn token_usage event carries stopReason/finishReason,
+  // the existing token_usage->model.completed translator forwards them
+  // presence-conditionally (same pattern Phase 150 used for provenance). No new
+  // mapping key / case is added — the event is already mapped to model.completed.
+  it("model_completed_forwards_stopReason_and_finishReason when the token_usage event carries them", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("observability:token_usage", {
+      timestamp: Date.now(),
+      traceId: "trace-tu",
+      agentId: "agent-1",
+      channelId: "c1",
+      executionId: "exec-001",
+      provider: "anthropic",
+      model: "claude-sonnet-4-20250514",
+      tokens: { prompt: 1000, completion: 250, total: 1250 },
+      cost: { input: 0.003, output: 0.015, cacheRead: 0, cacheWrite: 0, total: 0.018 },
+      latencyMs: 2500,
+      cacheReadTokens: 100,
+      cacheWriteTokens: 50,
+      sessionKey: "t1:u1:c1",
+      savedVsUncached: 0,
+      cacheEligible: true,
+      stopReason: "refusal",
+      finishReason: "stop",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("model.completed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.stopReason).toBe("refusal");
+    expect(data.finishReason).toBe("stop");
+  });
+
+  it("model_completed_omits_stopReason_and_finishReason_keys when the token_usage event lacks them (no undefined keys)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("observability:token_usage", {
+      timestamp: Date.now(),
+      traceId: "trace-tu",
+      agentId: "agent-1",
+      channelId: "c1",
+      executionId: "exec-001",
+      provider: "anthropic",
+      model: "claude-sonnet-4-20250514",
+      tokens: { prompt: 1000, completion: 250, total: 1250 },
+      cost: { input: 0.003, output: 0.015, cacheRead: 0, cacheWrite: 0, total: 0.018 },
+      latencyMs: 2500,
+      cacheReadTokens: 100,
+      cacheWriteTokens: 50,
+      sessionKey: "t1:u1:c1",
+      savedVsUncached: 0,
+      cacheEligible: true,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // Presence-conditional: when absent on the source event, NEITHER key is
+    // present on model.completed (not even as an undefined value).
+    expect("stopReason" in data).toBe(false);
+    expect("finishReason" in data).toBe(false);
   });
 });
 
@@ -352,6 +610,9 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
     "tool:executed": { toolName: "x", toolCallId: "tc-1", durationMs: 1, success: true, timestamp: 0 },
     "tool:timeout": { toolName: "x", toolCallId: "tc-1", timeoutMs: 1000, timestamp: 0 },
     "tool:policy_filtered": { profile: "default", filtered: ["tool-a"] },
+    "tool:breaker_opened": { toolName: "x", consecutiveFailures: 5, errorTag: "spawn_enoent", reason: "tool_failure_threshold", seq: 1, timestamp: 0 },
+    "tool:breaker_reset": { toolName: "x", reason: "success", seq: 1, timestamp: 0 },
+    "tool:result_offloaded": { toolName: "x", toolCallId: "tc-1", originalChars: 42_000, diskPathRel: "tool-results/tc-1.json", timestamp: 0 },
     "observability:token_usage": {
       tokens: { prompt: 1, completion: 1, total: 2 },
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
@@ -419,6 +680,13 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       totalOutputTokens: 1,
       durationMs: 1,
       exitReason: "ok",
+    },
+    "session:summary": {
+      degraded: true,
+      turnCount: 1,
+      costUsd: 0.01,
+      toolStats: { web_fetch: { ok: 1, failed: 1 } },
+      breakerTripCount: 1,
     },
     "memory:injected": {
       hitCount: 1,
@@ -2150,12 +2418,14 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Health budget exceeded (bridge entry 55)
+// Health budget exceeded + mapping entry-count guard
 // ---------------------------------------------------------------------------
 
-describe("health:budget_exceeded entry (bridge entry 55)", () => {
-  it("bridge entry count is exactly 55 (health:budget_exceeded included)", () => {
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(55);
+describe("health:budget_exceeded entry (bridge entry count guard)", () => {
+  it("bridge entry count is exactly 59 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152)", () => {
+    // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
+    // + session:summary (F2/D5, Phase 152).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(59);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

@@ -854,6 +854,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "isSecretRef",
       "SecretRefOrStringSchema",
       "DeliveryOriginSchema",
+      // IncidentReportSchema is the Zod schema for the obs.explain response
+      // (the §6.3 IncidentReport wire shape, Phase 153). The handler + the
+      // contract consume the inferred *type* `IncidentReport` (which has
+      // cross-package consumers), and the contract's `response` field
+      // references the schema VALUE internally within observability.ts — but no
+      // OTHER in-repo module imports the schema value directly. It is part of
+      // the documented external-API surface: an external consumer validating an
+      // IncidentReport off the wire imports this schema. Tracked here per the
+      // baseline orphan-export policy; remove if an in-repo value consumer lands.
+      "IncidentReportSchema",
       "NodeStatusSchema",
       "GraphStatusSchema",
       "GraphNodeSchema",
@@ -1949,6 +1959,22 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // list is the canonical place to record the planned test consumer.
       "createAuthHandlers",
       "AuthHandlerDeps",
+      // Obs-explain assembler + reader DI seam (Phase 156 G1) — re-exported so
+      // the RE-PROVE scenario + its self-test (test/live/support +
+      // test/live/scenarios/prove) can call the FROZEN Phase-153 assembler over
+      // a fixture reader via the clean @comis/daemon alias. Same rationale as
+      // createMcpHandlers / emitStartupInvariants: the consumer imports these
+      // statically from @comis/daemon under test/**, which the
+      // public-export-consumers AST walker excludes, so this orphan list is the
+      // canonical place to record the planned test consumer. SECURITY: the
+      // surface widens by EXACTLY the gate-free assembler + reader seam — the
+      // admin gate stays on bindObsExplainHandlers (obs-explain.ts:188), which
+      // is NOT re-exported.
+      // Consumer: test/live/support/diagnosis-reprove.test.ts +
+      //           test/live/scenarios/prove/diagnosis-reprove.test.ts (Plan 156-02)
+      "assembleIncidentReportFromSources",
+      "makeRealReader",
+      "IncidentSourceReader",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is

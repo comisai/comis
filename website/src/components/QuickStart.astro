@@ -29,6 +29,10 @@
               class="tab-btn px-3 py-1 rounded border border-transparent text-muted hover:text-white transition-colors"
             >npm</button>
             <button
+              data-tab="docker"
+              class="tab-btn px-3 py-1 rounded border border-transparent text-muted hover:text-white transition-colors"
+            >Docker</button>
+            <button
               data-tab="source"
               class="tab-btn px-3 py-1 rounded border border-transparent text-muted hover:text-white transition-colors"
             >From source</button>
@@ -53,13 +57,27 @@
       </div>
 
       <!-- Tab content: npm -->
-      <div data-content="npm" class="tab-content hidden relative" data-copy="npm install -g comisai&#10;comis init my-agent&#10;comis channel add telegram --token <YOUR_TOKEN>&#10;comis start">
-        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Requires Node.js 22+</span>
+      <div data-content="npm" class="tab-content hidden relative" data-copy="npm install -g comisai&#10;comis init&#10;comis configure&#10;comis daemon start">
+        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Requires Node.js 22.19+</span>
 
 <span class="text-coral">$</span> <span class="text-teal">npm install -g comisai</span>
-<span class="text-coral">$</span> <span class="text-teal">comis init my-agent</span>
-<span class="text-coral">$</span> <span class="text-teal">comis channel add telegram --token</span> <span class="text-coral">&lt;YOUR_TOKEN&gt;</span>
-<span class="text-coral">$</span> <span class="text-teal">comis start</span></code></pre>
+<span class="text-coral">$</span> <span class="text-teal">comis init</span>
+<span class="text-coral">$</span> <span class="text-teal">comis configure</span>     <span class="text-muted-light"># pick an LLM provider, add keys, connect a channel</span>
+<span class="text-coral">$</span> <span class="text-teal">comis daemon start</span></code></pre>
+        <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
+          <svg class="copy-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-width="2"/></svg>
+          <svg class="check-icon w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          <span class="copied-label hidden text-xs font-mono font-semibold">Copied!</span>
+        </button>
+      </div>
+
+      <!-- Tab content: Docker -->
+      <div data-content="docker" class="tab-content hidden relative" data-copy="docker run -d --name comis -p 4766:4766 \&#10;  -v comis-data:/home/comis/.comis comisai/comis:latest-slim&#10;docker exec -it comis comis init">
+        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Any OS with Docker; the slim image is ~Linux-kernel sandbox-ready</span>
+
+<span class="text-coral">$</span> <span class="text-teal">docker run -d --name comis -p 4766:4766 \</span>
+<span class="text-teal">    -v comis-data:/home/comis/.comis comisai/comis:latest-slim</span>
+<span class="text-coral">$</span> <span class="text-teal">docker exec -it comis comis init</span></code></pre>
         <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
           <svg class="copy-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-width="2"/></svg>
           <svg class="check-icon w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
@@ -69,7 +87,7 @@
 
       <!-- Tab content: From source -->
       <div data-content="source" class="tab-content hidden relative" data-copy="git clone https://github.com/comisai/comis.git&#10;cd comis && pnpm install && pnpm build&#10;node packages/cli/dist/cli.js init my-agent">
-        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Requires Node.js 22+, pnpm</span>
+        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Requires Node.js 22.19+, pnpm</span>
 
 <span class="text-coral">$</span> <span class="text-teal">git clone https://github.com/comisai/comis.git</span>
 <span class="text-coral">$</span> <span class="text-teal">cd comis && pnpm install && pnpm build</span>
@@ -87,8 +105,14 @@
       Works on macOS &amp; Linux. The one-liner installs Node.js and everything else for you.
     </p>
 
+    <p class="text-muted-light mt-3 text-sm font-mono">
+      Verify with <span class="text-teal">curl http://localhost:4766/health</span> &rarr; <span class="text-teal">{`{"status":"ok"}`}</span>, then message your agent on any connected channel.
+    </p>
+
     <a
       href="https://docs.comis.ai"
+      rel="noopener noreferrer"
+      target="_blank"
       class="inline-flex items-center gap-2 mt-6 text-coral hover:text-coral-dark font-medium transition-colors"
     >
       Read the docs &rarr;

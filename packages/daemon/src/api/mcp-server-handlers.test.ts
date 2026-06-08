@@ -52,6 +52,10 @@ const stubRegistry = new Map<string, StubMeta>([
     },
   ],
   ["memory_get", { mcpExportPolicy: "permission-gated" }],
+  // obs_explain (154-03): permission-gated. Its dispatch branch invokes the
+  // INJECTED obsExplainForMcpClient assembler DIRECTLY (NOT daemonRpcForMcpClient)
+  // and feeds the result into the SAME wrapExternalContent wrap.
+  ["obs_explain", { mcpExportPolicy: "permission-gated" }],
   ["tokens_manage", { mcpExportPolicy: "never-export" }],
   ["future_tool_no_policy", {} /* no policy — default-deny safety net */],
 ]);
@@ -209,12 +213,14 @@ describe("buildMcpServerForClient -- default-deny tools/list filter", () => {
       expect(registered).toContain("memory_search");
       // memory_get is permission-gated but NOT in the allowlist → skipped.
       expect(registered).not.toContain("memory_get");
+      // obs_explain is permission-gated but NOT in the allowlist → skipped.
+      expect(registered).not.toContain("obs_explain");
       // safe tool still present.
       expect(registered).toContain("web_search");
 
       const summary = infoCalls.at(-1);
       expect(summary?.obj["registered"]).toBe(2); // web_search + memory_search
-      expect(summary?.obj["skippedGated"]).toBe(1); // memory_get
+      expect(summary?.obj["skippedGated"]).toBe(2); // memory_get + obs_explain
       expect(summary?.obj["allowlistSize"]).toBe(1);
     } finally {
       restore();
@@ -238,9 +244,10 @@ describe("buildMcpServerForClient -- default-deny tools/list filter", () => {
       // No permission-gated tools registered when allowlist is empty.
       expect(registered).not.toContain("memory_search");
       expect(registered).not.toContain("memory_get");
+      expect(registered).not.toContain("obs_explain");
 
       const summary = infoCalls.at(-1);
-      expect(summary?.obj["skippedGated"]).toBe(2);
+      expect(summary?.obj["skippedGated"]).toBe(3); // memory_search + memory_get + obs_explain
     } finally {
       restore();
     }
@@ -918,6 +925,165 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
       // The TypeError message MUST NOT leak to the external MCP client.
       expect(text).not.toContain("TypeError");
       expect(text).not.toContain("Cannot read properties of undefined");
+    } finally {
+      restore();
+    }
+  });
+
+  // ------------------------------------------------------------------------
+  // obs_explain (154-03) — direct-assembler dispatch under daemon authority
+  //
+  // The SECURITY-CRITICAL path: obs_explain reaches the Phase-153 IncidentReport
+  // over POST /mcp/v1 with NO new privilege. Its dispatch branch invokes the
+  // INJECTED obsExplainForMcpClient assembler DIRECTLY (NOT daemonRpcForMcpClient
+  // -> the admin-gated obs.explain RPC, NOT a trust-isolated indirection) and feeds the result
+  // into the SAME Step-5 wrapExternalContent wrap. Authorization is the
+  // per-client mcpClient.allowlist + the digest-only/bounded report.
+  //
+  // Required invariants:
+  //   - ALLOWLISTED: obsExplainForMcpClient called with params that DO NOT
+  //     contain _trustLevel (stripTrustLevel ran); daemonRpcForMcpClient NOT
+  //     called for obs_explain; result wrapped with the SECURITY NOTICE marker.
+  //   - NOT ALLOWLISTED: obs_explain is not registered (default-deny) — the
+  //     callback is absent, i.e. unreachable without the operator allowlist.
+  // ------------------------------------------------------------------------
+
+  it("buildMcpServerForClient obs_explain dispatch invokes the direct assembler (NOT daemonRpcForMcpClient) and strips _trustLevel", async () => {
+    const { logger } = makeCapturingLogger();
+    const client = makeMcpClient(["mcp-client"], ["obs_explain"]);
+    const rpc = makeRpcRecorder();
+
+    // The injected assembler — a stand-in for the production
+    // assembleIncidentReportFromSources closure. Records its params so we can
+    // prove _trustLevel was stripped before it ran.
+    const assemblerCalls: Array<Record<string, unknown>> = [];
+    const obsExplainForMcpClient = vi.fn(
+      async (params: Record<string, unknown>) => {
+        assemblerCalls.push(params);
+        return {
+          sessionKey: "k",
+          likelyRootCause: { code: "content_heuristic_misclassification" },
+          outcome: { degraded: true },
+        };
+      },
+    );
+
+    const { capturedCallback, restore } = captureRegisteredCallback();
+    try {
+      buildMcpServerForClient(
+        {
+          logger,
+          daemonVersion: "0.0.0-test",
+          daemonRpcForMcpClient: rpc.fn,
+          defaultToolRateLimit: 30,
+          toolNameToRpcMethod: identityToolNameToRpcMethod,
+          obsExplainForMcpClient,
+        },
+        client,
+      );
+
+      const cb = capturedCallback["obs_explain"];
+      expect(cb).toBeDefined();
+
+      // A hostile caller smuggles _trustLevel:"admin" in the args. The
+      // dispatcher MUST strip it before invoking the assembler (no admin path).
+      const r = (await cb!({
+        sessionKey: "k",
+        _trustLevel: "admin",
+      })) as {
+        isError?: boolean;
+        content?: Array<{ type: string; text: string }>;
+      };
+
+      // (a) the assembler ran with _trustLevel stripped.
+      expect(obsExplainForMcpClient).toHaveBeenCalledTimes(1);
+      expect(assemblerCalls.length).toBe(1);
+      expect(assemblerCalls[0]).not.toHaveProperty("_trustLevel");
+      expect(assemblerCalls[0]).toMatchObject({ sessionKey: "k" });
+
+      // (b) obs_explain did NOT route through the daemonRpcForMcpClient indirection.
+      expect(rpc.calls.length).toBe(0);
+
+      // (c) the result flowed through wrapExternalContent (SECURITY NOTICE +
+      // hex markers) — the digest-only report is treated as untrusted data.
+      expect(r.isError ?? false).toBe(false);
+      const text = r.content?.[0]?.text ?? "";
+      expect(text).toContain("SECURITY NOTICE");
+      expect(text).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+      expect(text).toMatch(/<<<END_UNTRUSTED_[a-f0-9]+>>>/);
+      // The report payload survives between the markers.
+      expect(text).toContain("content_heuristic_misclassification");
+    } finally {
+      restore();
+    }
+  });
+
+  it("buildMcpServerForClient obs_explain is UNREACHABLE for a client without it allowlisted (permission-gated default-deny)", async () => {
+    const { logger } = makeCapturingLogger();
+    // Empty allowlist — obs_explain is permission-gated, so it must NOT be
+    // registered. The allowlist IS the granted permission; without it there is
+    // no obs_explain callback to invoke (no new privilege).
+    const client = makeMcpClient(["mcp-client"], /* allowlist */ []);
+    const rpc = makeRpcRecorder();
+    const obsExplainForMcpClient = vi.fn(async () => ({ sessionKey: "k" }));
+
+    const { capturedCallback, restore } = captureRegisteredCallback();
+    try {
+      buildMcpServerForClient(
+        {
+          logger,
+          daemonVersion: "0.0.0-test",
+          daemonRpcForMcpClient: rpc.fn,
+          defaultToolRateLimit: 30,
+          toolNameToRpcMethod: identityToolNameToRpcMethod,
+          obsExplainForMcpClient,
+        },
+        client,
+      );
+
+      // obs_explain was never registered → no callback → unreachable.
+      expect(capturedCallback["obs_explain"]).toBeUndefined();
+      // And the assembler was never invoked.
+      expect(obsExplainForMcpClient).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("buildMcpServerForClient obs_explain fails closed (dispatch_error, no crash) when obsExplainForMcpClient is unwired", async () => {
+    // Defense-in-depth: an obsStore-less boot / wiring gap leaves
+    // obsExplainForMcpClient undefined. The dispatch branch must return a
+    // generic dispatch_error sentinel (NOT throw, NOT leak), and MUST NOT fall
+    // through to daemonRpcForMcpClient (which would hit the admin-gated RPC).
+    const { logger } = makeCapturingLogger();
+    const client = makeMcpClient(["mcp-client"], ["obs_explain"]);
+    const rpc = makeRpcRecorder();
+
+    const { capturedCallback, restore } = captureRegisteredCallback();
+    try {
+      buildMcpServerForClient(
+        {
+          logger,
+          daemonVersion: "0.0.0-test",
+          daemonRpcForMcpClient: rpc.fn,
+          defaultToolRateLimit: 30,
+          toolNameToRpcMethod: identityToolNameToRpcMethod,
+          // obsExplainForMcpClient intentionally omitted (unwired).
+        },
+        client,
+      );
+
+      const cb = capturedCallback["obs_explain"];
+      expect(cb).toBeDefined();
+      const r = (await cb!({ sessionKey: "k" })) as {
+        isError?: boolean;
+        content?: Array<{ type: string; text: string }>;
+      };
+      expect(r.isError).toBe(true);
+      const text = r.content?.[0]?.text ?? "";
+      expect(text).toContain("[dispatch_error]");
+      // It did NOT fall back to the daemonRpcForMcpClient indirection.
+      expect(rpc.calls.length).toBe(0);
     } finally {
       restore();
     }

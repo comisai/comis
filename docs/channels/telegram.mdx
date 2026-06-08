@@ -28,13 +28,20 @@ section below; the [Setup](#setup) flow gets the bot online for DMs, then the
 [Groups](#groups) and [Channels](#channels) sections add the chat-type specifics.
 </Note>
 
+<Note>
+**Setting this up for several people or a team?** See
+[Multiple users and teams](/channels/multi-user) for the privacy and isolation
+model - DMs are private per person, but a shared agent shares its learned memory,
+so route each person or group to their own agent for full separation.
+</Note>
+
 <Warning>
 **Group privacy mode is ON by default.** With the default in place, Telegram
 only forwards group messages to your bot when the message @-mentions it, replies
 to one of its messages, or is a `/cmd@<botname>` command. Plain group chatter
 never reaches Comis. If you want the bot to respond freely (or use
 `groupActivation: "always" | "custom"`), follow the
-[Disable BotFather privacy mode](#disable-botfather-privacy-mode) procedure —
+[Disable BotFather privacy mode](#disable-botfather-privacy-mode) procedure -
 **toggling the setting alone is not enough**, you must kick and re-add the bot
 afterwards because Telegram caches the privacy flag at the moment the bot joins.
 </Warning>
@@ -44,7 +51,7 @@ afterwards because Telegram caches the privacy flag at the moment the bot joins.
 <Steps>
   <Step title="Create a bot with BotFather">
     Open Telegram and search for **@BotFather** (the official bot for creating
-    bots — verified with a blue check).
+    bots - verified with a blue check).
 
     Send `/newbot` and follow the prompts:
     1. Choose a display name for your bot (for example, **MyTeamBot**)
@@ -162,7 +169,7 @@ your messages never contain phantom link cards. No configuration is needed.
 
 Telegram **groups** (and **supergroups**) are multi-party chats where many users
 talk together. The bot is just another member, and Telegram applies an extra
-filter — **privacy mode** — that determines which messages the bot can see at
+filter - **privacy mode** - that determines which messages the bot can see at
 all. The Comis activation policy then decides which of those messages should
 trigger a reply. Both layers matter; misconfiguring either one results in the
 bot looking "broken."
@@ -196,7 +203,7 @@ history context but does **not** activate the agent. This is the
   </Step>
 
   <Step title="(Recommended) Disable BotFather privacy mode">
-    Required only if you want the bot to see **all** group messages — for
+    Required only if you want the bot to see **all** group messages - for
     example, when running with `groupActivation: "always"` or `"custom"`,
     or when your agent passively monitors group chatter. If you only need
     mention-gated behavior, **skip this step** and leave privacy on.
@@ -222,7 +229,7 @@ history context but does **not** activate the agent. This is the
     ```
 
     `allowFrom` is sender-keyed, not chat-keyed. Adding the group's chat ID
-    to `allowFrom` does **not** whitelist the group — every individual user
+    to `allowFrom` does **not** whitelist the group - every individual user
     you want to enable must be listed by their Telegram user ID. To find a
     user's ID, ask them to send any message in the group while you tail
     `pm2 logs comis` (the `senderId` field is logged on every inbound).
@@ -245,7 +252,7 @@ history context but does **not** activate the agent. This is the
     Look for a line containing **"Telegram adapter connected"** or
     **"channel-telegram activated"**. In the group, send a fresh
     `@<your_bot_username> hello` (when typing `@`, tap the suggestion popup
-    so Telegram parses it as a mention entity — typing the text alone is not
+    so Telegram parses it as a mention entity - typing the text alone is not
     enough). The bot should reply within seconds.
   </Step>
 </Steps>
@@ -287,7 +294,7 @@ reliably.
     ```
 
     Look for `"can_read_all_group_messages": true`. If it still says
-    `false`, BotFather hasn't propagated the change yet — wait a minute
+    `false`, BotFather hasn't propagated the change yet - wait a minute
     and try again.
   </Step>
 </Steps>
@@ -309,7 +316,7 @@ Comis decides whether to activate the agent based on the
 ```yaml
 autoReplyEngine:
   enabled: true
-  groupActivation: mention-gated   # default — recommended
+  groupActivation: mention-gated   # default - recommended
   customPatterns: []               # used only when groupActivation: custom
   historyInjection: true           # silently buffer non-trigger messages as context
   maxHistoryInjections: 50
@@ -326,7 +333,7 @@ autoReplyEngine:
 ring buffer per session, so when the agent does activate, it has the recent
 context. Set to `false` to drop them entirely.
 
-`custom` example — wake the agent on either a regex trigger or any question:
+`custom` example - wake the agent on either a regex trigger or any question:
 
 ```yaml
 autoReplyEngine:
@@ -338,8 +345,8 @@ autoReplyEngine:
 
 ### Routing different groups to different agents
 
-If you want a single bot to serve multiple agents — one per group, or one per
-user — use top-level `routing` bindings. The
+If you want a single bot to serve multiple agents - one per group, or one per
+user - use top-level `routing` bindings. The
 [Multi-agent routing](#multi-agent-routing) section below has the full schema
 and examples.
 
@@ -368,7 +375,7 @@ Group chat IDs are negative; supergroup IDs are large negative numbers
 ## Channels
 
 Telegram **channels** are one-way broadcast feeds: one or more administrators
-post; subscribers read. Channels are not chats — there are no member messages
+post; subscribers read. Channels are not chats - there are no member messages
 to respond to. Use a channel when you want the agent to publish status
 updates, daily summaries, monitoring alerts, or any kind of scheduled feed.
 
@@ -388,7 +395,7 @@ Use a [group](#groups) instead if you want a conversational bot.
   </Step>
 
   <Step title="Add the bot as an administrator">
-    Channels do not have plain "members" for bots — bots must be
+    Channels do not have plain "members" for bots - bots must be
     administrators or they cannot post.
 
     Open the channel → tap the channel name (header) → **Administrators**
@@ -436,7 +443,7 @@ Use a [group](#groups) instead if you want a conversational bot.
 <Note>
 **Channel privacy mode does not apply.** The BotFather privacy toggle
 governs *groups*, not channels. Bot admins in channels see exactly the
-posts you'd expect to see — there's nothing extra to enable.
+posts you'd expect to see - there's nothing extra to enable.
 </Note>
 
 ### Inbound from channels
@@ -444,7 +451,7 @@ posts you'd expect to see — there's nothing extra to enable.
 Telegram emits `channel_post` updates for messages authored in the channel.
 Comis normalizes these the same way as group messages: `chatType: "channel"`
 in the prompt context, `telegramChatType: "channel"` in metadata. The auto-reply
-gate also applies, so if you want the agent to react to channel posts (rare —
+gate also applies, so if you want the agent to react to channel posts (rare -
 usually channels are write-only from the agent's perspective), set
 `groupActivation: "always"` or `"custom"` and target the channel's chat ID
 in your routing bindings.
@@ -484,10 +491,16 @@ routing:
       agentId: default
 ```
 
-`mention-gated` and `allowFrom` apply **per resolved agent** — first the bot
+`mention-gated` and `allowFrom` apply **per resolved agent** - first the bot
 receives the message, then the router picks the agent, then the agent's gate
 runs. Multi-agent setups don't change addressing rules; they just change which
 agent answers.
+
+Routing to separate agents is also how you isolate **memory** between people:
+each agent keeps its own long-term memory, secrets, and budget, so two users on
+different agents never share learned facts. For the full multi-user model - what
+is private by default and what isn't - see
+[Multiple users and teams](/channels/multi-user).
 
 If you need a literally separate bot identity per agent (different
 `@username`, different command menus), run one Comis daemon per bot:
@@ -644,13 +657,13 @@ Three possible outcomes tell you which layer is failing:
     - **Privacy mode is on AND the message wasn't a recognized mention,
       reply, or `/cmd@<botname>`.** With privacy on, Telegram filters
       every other message before it reaches the bot. Typing
-      `@<your_bot_username>` as plain text is **not** enough — your
+      `@<your_bot_username>` as plain text is **not** enough - your
       Telegram client must parse it as a mention entity at send time
       (look for the in-app suggestion popup when you type the `@`).
     - **The bot isn't actually in the group.** Check the member list.
       Re-add it via the group's **Add Members** flow.
     - **The bot was added to the group while privacy mode was on, then
-      privacy was disabled.** The flag is cached at join time — kick and
+      privacy was disabled.** The flag is cached at join time - kick and
       re-add the bot. See [Disable BotFather privacy mode](#disable-botfather-privacy-mode).
 
     **Verify privacy state directly:**
@@ -685,7 +698,7 @@ Three possible outcomes tell you which layer is failing:
     - `activationMode: "mention-gated"` and the message didn't
       `@`-mention the bot. Either type `@<your_bot_username>` properly
       (tap the suggestion) or switch to `groupActivation: "always"`
-      (privacy must be off — see the [Groups](#groups) section).
+      (privacy must be off - see the [Groups](#groups) section).
     - The message was an edit. Telegram doesn't always re-emit `mention`
       entities for edits; send a fresh message instead.
     - Your activation policy expects a `custom` regex that didn't match.
@@ -713,7 +726,7 @@ Three possible outcomes tell you which layer is failing:
 
     **How to fix it:** add their user ID to `allowFrom`, or remove
     `allowFrom` (or set it to `[]`) to allow all senders. `allowFrom`
-    only matches sender IDs — putting a group's chat ID there does
+    only matches sender IDs - putting a group's chat ID there does
     nothing.
   </Accordion>
 

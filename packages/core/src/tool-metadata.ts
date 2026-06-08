@@ -105,13 +105,31 @@ export interface ComisToolMetadata {
   /** Tool-specific failure classifier consulted *before* the `tool:executed`
    *  emit (§16.10), so observability never sees the raw result. Receives the
    *  tool result and the SDK `isError` flag; returns `true`/`false` (failed or
-   *  not) or `{ errorKind }` (failed, with a closed-union classification).
-   *  Lets a tool flag a logically-failed result that the SDK reported as
-   *  success (e.g. a non-zero exit code). (§16.11). */
+   *  not) or `{ errorKind, … }` (failed, with a closed-union classification plus
+   *  optional verdict provenance). Lets a tool flag a logically-failed result
+   *  that the SDK reported as success (e.g. a non-zero exit code). (§16.11).
+   *
+   *  Verdict provenance (P2/D2) — all optional, additive on the contract:
+   *  - `classifiedField`: which STRUCTURED field drove the verdict (never the body).
+   *  - `matchedRule`: the literal regex/rule description that matched (a fixed
+   *    string, not a serialized RegExp and not tool-output data).
+   *  - `matchedToken`: the concrete token that matched (e.g. a status code). This
+   *    is the only provenance field that may carry tool output, so downstream
+   *    sinks (Plan 04) bound it via `sanitizeLogString(...).slice(0, 1500)`. */
   failureDetector?: (
     result: unknown,
     isError: boolean,
-  ) => boolean | { errorKind: ErrorKind };
+  ) =>
+    | boolean
+    | {
+        errorKind: ErrorKind;
+        /** Which structured field drove the verdict (P2/D2). */
+        classifiedField?: "error" | "status" | "message" | "failures";
+        /** The regex/rule literal that matched (P2/D2). */
+        matchedRule?: string;
+        /** The concrete token that matched, e.g. a status code (P2/D2). */
+        matchedToken?: string;
+      };
 }
 
 // ---------------------------------------------------------------------------
