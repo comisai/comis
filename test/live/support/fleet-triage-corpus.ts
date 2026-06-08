@@ -85,6 +85,30 @@ export interface FleetCorpus {
 // ---------------------------------------------------------------------------
 
 /**
+ * The closed `signal` union, enumerated at runtime — the source of truth for the
+ * shape-guard's membership check (it must stay in lockstep with the {@link FleetSignal}
+ * `signal` union above). An out-of-enum value is rejected at load time so the README's
+ * "an out-of-enum value fails the loader's shape-guard" claim is literally true and a
+ * typo'd / stale signal name cannot reach the gate scorer as a spurious row.
+ */
+const SIGNAL_VALUES = new Set<FleetSignal["signal"]>([
+  "lcd-ingest-skipped",
+  "mcp-reconnect",
+  "budget-exceeded",
+  "config-posture",
+  "session-degradation",
+  "model-health-deferred",
+]);
+
+/** The closed `location` union, enumerated at runtime (twin of {@link SIGNAL_VALUES}). */
+const LOCATION_VALUES = new Set<FleetSignal["location"]>([
+  "daemon.log",
+  "trajectory.jsonl",
+  "obs_diagnostics",
+  "native-stdout",
+]);
+
+/**
  * Parse a `{file}` under `dir` as JSON, rethrowing with the PATH ONLY (never the
  * offending content) on failure — the residency rule (T-158-01-02), mirroring
  * diagnosis-harness.ts:133-142.
@@ -104,20 +128,35 @@ function parseJsonFile(dir: string, file: string): unknown {
  * shape, throwing PATH ONLY on violation (the assertAnswerKey analog,
  * diagnosis-harness.ts:184-196).
  *
- * Rejects: a non-`{signals:[]}` shape, an EMPTY signals array (an empty corpus is a
- * corrupt artifact — there are §2 findings to encode), or any entry lacking a string
- * `signal` / number `byHandCount` / string `location` / boolean `alreadyStructured`.
- * A JSON-valid-but-mis-shaped corpus would otherwise pass parsing and then detonate
- * downstream in the gate scorer with an opaque TypeError and no fixture path.
+ * Rejects: a `null`/non-object root, a non-`{signals:[]}` shape, an EMPTY signals array
+ * (an empty corpus is a corrupt artifact — there are §2 findings to encode), a `null`/
+ * non-object entry, any entry lacking a string `signal` / number `byHandCount` / string
+ * `location` / boolean `alreadyStructured`, or any entry whose `signal`/`location` is a
+ * string OUTSIDE the closed union. A JSON-valid-but-mis-shaped corpus would otherwise
+ * pass parsing and then detonate downstream in the gate scorer with an opaque TypeError
+ * and no fixture path (or, for an out-of-enum name, render as a silent spurious gate row).
+ *
+ * Each branch null/object-guards BEFORE dereferencing, so a bare `null` JSON literal or a
+ * `[null]` entry hits this controlled PATH-NAMED throw, never the raw engine
+ * `TypeError: Cannot read properties of null` the guard exists to replace (WR-01).
  */
 function assertSignals(parsed: unknown): FleetSignal[] {
-  const root = parsed as { signals?: unknown };
-  const signals = root.signals;
+  if (parsed === null || typeof parsed !== "object") {
+    // Guard before dereferencing — a `null`/primitive root must not leak a raw TypeError.
+    throw new Error("fleet-triage-corpus: malformed triage-corpus.json — not an object");
+  }
+  const signals = (parsed as { signals?: unknown }).signals;
   if (!Array.isArray(signals) || signals.length === 0) {
     // Path only — never echo the parsed body.
     throw new Error("fleet-triage-corpus: malformed triage-corpus.json — signals[] missing or empty");
   }
   for (const entry of signals) {
+    if (entry === null || typeof entry !== "object") {
+      // A `null` / primitive entry must not leak a raw TypeError on `entry.signal`.
+      throw new Error(
+        "fleet-triage-corpus: malformed triage-corpus.json — a signal entry is not an object",
+      );
+    }
     const s = entry as Partial<FleetSignal>;
     if (
       typeof s.signal !== "string" ||
@@ -129,6 +168,16 @@ function assertSignals(parsed: unknown): FleetSignal[] {
         "fleet-triage-corpus: malformed triage-corpus.json — a signal entry lacks a load-bearing field",
       );
     }
+    if (
+      !SIGNAL_VALUES.has(s.signal as FleetSignal["signal"]) ||
+      !LOCATION_VALUES.has(s.location as FleetSignal["location"])
+    ) {
+      // The closed-union contract (README + FleetSignal JSDoc): a typo'd / stale signal
+      // or location name is a corrupt artifact, not a new gate row (WR-02).
+      throw new Error(
+        "fleet-triage-corpus: malformed triage-corpus.json — signal/location out of the closed enum",
+      );
+    }
   }
   return signals as FleetSignal[];
 }
@@ -137,8 +186,18 @@ function assertSignals(parsed: unknown): FleetSignal[] {
  * Validate that a parsed `manual-cost-to-beat.json` has the load-bearing
  * ManualCostToBeat shape, throwing PATH ONLY when `severityHistogram` /
  * `groupByMessage` / `pm2ModelScrape` are missing or wrong-typed.
+ *
+ * Null/object-guards the root before dereferencing, so a bare `null` JSON literal hits
+ * this controlled PATH-NAMED throw, never a raw `TypeError` on `c.severityHistogram`
+ * (WR-01).
  */
 function assertManualCost(parsed: unknown): ManualCostToBeat {
+  if (parsed === null || typeof parsed !== "object") {
+    // Path only — guard before dereferencing a `null`/primitive root.
+    throw new Error(
+      "fleet-triage-corpus: malformed manual-cost-to-beat.json — not an object",
+    );
+  }
   const c = parsed as Partial<ManualCostToBeat>;
   if (
     typeof c.severityHistogram !== "object" ||
