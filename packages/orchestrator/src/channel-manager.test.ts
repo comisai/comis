@@ -408,9 +408,9 @@ describe("createChannelManager", () => {
       const executor = makeExecutor({
         execute: vi.fn(async (_msg, _sk, _tools, onDelta) => {
           if (onDelta) {
-            onDelta("Hello");
-            onDelta(" world");
-            onDelta("!");
+            onDelta("Hello", "text");
+            onDelta(" world", "text");
+            onDelta("!", "text");
           }
           return {
             response: "Hello world!",
@@ -445,7 +445,7 @@ describe("createChannelManager", () => {
       const adapter = makeAdapter();
       const executor = makeExecutor({
         execute: vi.fn(async (_msg, _sk, _tools, onDelta) => {
-          if (onDelta) onDelta("Final text");
+          if (onDelta) onDelta("Final text", "text");
           return {
             response: "Final text",
             sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
@@ -513,7 +513,7 @@ describe("createChannelManager", () => {
       const longResponse = "A".repeat(5000);
       const executor = makeExecutor({
         execute: vi.fn(async (_msg, _sk, _tools, onDelta) => {
-          if (onDelta) onDelta(longResponse);
+          if (onDelta) onDelta(longResponse, "text");
           return {
             response: longResponse,
             sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
@@ -669,7 +669,7 @@ describe("createChannelManager", () => {
       const adapter = makeAdapter({ channelType });
       const executor = makeExecutor({
         execute: vi.fn(async (_msg, _sk, _tools, onDelta) => {
-          if (onDelta) onDelta("response");
+          if (onDelta) onDelta("response", "text");
           return {
             response: "response",
             sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
@@ -706,7 +706,7 @@ describe("createChannelManager", () => {
       const adapter = makeAdapter({ channelType: "discord" });
       const executor = makeExecutor({
         execute: vi.fn(async (_msg, _sk, _tools, onDelta) => {
-          if (onDelta) onDelta(longResponse);
+          if (onDelta) onDelta(longResponse, "text");
           return {
             response: longResponse,
             sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
@@ -736,7 +736,7 @@ describe("createChannelManager", () => {
       const adapter = makeAdapter({ channelType: "whatsapp" });
       const executor = makeExecutor({
         execute: vi.fn(async (_msg, _sk, _tools, onDelta) => {
-          if (onDelta) onDelta(shortResponse);
+          if (onDelta) onDelta(shortResponse, "text");
           return {
             response: shortResponse,
             sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },

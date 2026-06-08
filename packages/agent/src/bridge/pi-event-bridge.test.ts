@@ -245,15 +245,19 @@ describe("createPiEventBridge", () => {
   // -------------------------------------------------------------------------
 
   describe("message_update / thinking", () => {
-    it("thinking_delta does NOT call onDelta (confidentiality: chain-of-thought must never reach consumer)", () => {
-      // SA1: thinking_delta events must NOT be forwarded to the onDelta consumer.
-      // The bug: the old code called deps.onDelta(ame.delta) for thinking_delta,
-      // leaking qwen3.6/deepseek-r1 chain-of-thought verbatim to the channel.
+    it("thinking_delta calls onDelta with kind='thinking' (not 'text') — consumer gates accumulation", () => {
+      // SA1: thinking_delta IS forwarded to the onDelta consumer, but with kind='thinking'
+      // so the consumer can gate accumulation to kind==='text' only.
+      // The bug was: old code called deps.onDelta(ame.delta) with NO kind arg, which
+      // means the consumer had no way to distinguish thinking from text — chain-of-thought
+      // leaked verbatim to the channel because accumulated += delta for ALL deltas.
       const { listener } = createPiEventBridge(deps);
 
       listener(makeThinkingDeltaEvent("reasoning chunk") as any);
 
-      expect(deps.onDelta).not.toHaveBeenCalled();
+      // Called once with kind='thinking' (not silently dropped — consumer needs it for TTL refresh)
+      expect(deps.onDelta).toHaveBeenCalledTimes(1);
+      expect(deps.onDelta).toHaveBeenCalledWith("reasoning chunk", "thinking");
     });
 
     it("thinking_delta does NOT flip textEmitted (reserved for text_delta)", () => {
@@ -264,16 +268,19 @@ describe("createPiEventBridge", () => {
       expect(getResult().textEmitted).toBe(false);
     });
 
-    it("thinking_delta followed by text_delta: onDelta called ONCE with kind='text' only", () => {
-      // SA1: only text_delta events reach the consumer; thinking_delta is silently dropped.
-      // The old code called onDelta for both, leaking chain-of-thought before visible text.
+    it("thinking_delta followed by text_delta: onDelta called TWICE with correct kinds", () => {
+      // SA1: bridge now passes kind with each delta.
+      // thinking_delta → kind='thinking'; text_delta → kind='text'.
+      // The consumer (execution-execute) gates accumulation to kind==='text' only.
+      // The old code passed no kind arg at all — consumer had no way to distinguish.
       const { listener, getResult } = createPiEventBridge(deps);
 
       listener(makeThinkingDeltaEvent("reasoning") as any);
       listener(makeTextDeltaEvent("visible text") as any);
 
-      expect(deps.onDelta).toHaveBeenCalledTimes(1);
-      expect(deps.onDelta).toHaveBeenCalledWith("visible text", "text");
+      expect(deps.onDelta).toHaveBeenCalledTimes(2);
+      expect(deps.onDelta).toHaveBeenNthCalledWith(1, "reasoning", "thinking");
+      expect(deps.onDelta).toHaveBeenNthCalledWith(2, "visible text", "text");
       expect(getResult().textEmitted).toBe(true);
     });
 

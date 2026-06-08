@@ -176,8 +176,10 @@ export interface PiEventBridgeDeps {
   logger: ComisLogger;
   /** Optional memory port for flushing compaction summaries to long-term memory. */
   memoryPort?: MemoryPort;
-  /** Called with streaming text deltas for real-time response forwarding. */
-  onDelta?: (delta: string) => void;
+  /** Called with streaming text deltas for real-time response forwarding.
+   *  kind='text' for visible text_delta events; kind='thinking' for thinking_delta events.
+   *  Consumers must only accumulate kind==='text' — thinking deltas must never reach the channel. */
+  onDelta?: (delta: string, kind: "text" | "thinking") => void;
   /** Called when a safety control triggers -- PiExecutor uses this to call session.abort(). */
   onAbort?: () => void;
   /** Called when a `rate_limited` error fires inside the SDK's auto-retry loop --
@@ -404,7 +406,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
             if (deps.onDelta && typeof ame.delta === "string") {
               try {
-                deps.onDelta(ame.delta);
+                // SA1: forward the SDK's typed delta kind so the consumer can gate
+                // accumulation to kind==='text' only. thinking_delta is forwarded
+                // with kind='thinking' so the consumer can still refresh the typing
+                // TTL (proves the agent is alive during extended reasoning phases)
+                // without the chain-of-thought reaching the channel.
+                deps.onDelta(ame.delta, ame.type === "text_delta" ? "text" : "thinking");
               } catch {
                 // Never abort agent due to streaming callback error
               }

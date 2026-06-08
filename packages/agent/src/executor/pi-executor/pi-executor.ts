@@ -184,7 +184,7 @@ export function createPiExecutor(
       msg: NormalizedMessage,
       sessionKey: SessionKey,
       tools?: AgentTool[],
-      onDelta?: (delta: string) => void,
+      onDelta?: (delta: string, kind: "text" | "thinking") => void,
       agentId?: string,
       _directives?: CommandDirectives,
       _prevTimestamp?: number,
@@ -389,7 +389,7 @@ interface RunSessionLockedContext {
   readonly msg: NormalizedMessage;
   readonly sessionKey: SessionKey;
   readonly tools: AgentTool[] | undefined;
-  readonly onDelta: ((delta: string) => void) | undefined;
+  readonly onDelta: ((delta: string, kind: "text" | "thinking") => void) | undefined;
   readonly agentId: string | undefined;
   readonly _directives: CommandDirectives | undefined;
   readonly _prevTimestamp: number | undefined;
