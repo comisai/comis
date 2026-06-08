@@ -207,6 +207,78 @@ describe("resolveScaffoldDefaults — SD5: frontier/mid byte-identical non-regre
 });
 
 // ---------------------------------------------------------------------------
+// SD6: bootstrapMaxChars capability default
+// ---------------------------------------------------------------------------
+
+describe("resolveScaffoldDefaults — SD6: bootstrapMaxChars capability default", () => {
+  it("small model with default bootstrap config (20_000 sentinel) returns bootstrapMaxChars=3_500", () => {
+    const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
+    expect(result.bootstrapMaxChars).toBe(3_500);
+  });
+  it("nano model with default bootstrap config returns bootstrapMaxChars=3_500", () => {
+    const result = resolveScaffoldDefaults(nanoProfile, emptyConfig);
+    expect(result.bootstrapMaxChars).toBe(3_500);
+  });
+  it("small model with explicit maxChars=5000 overrides capability default", () => {
+    const config = { bootstrap: { maxChars: 5_000, promptMode: "full", groupChatFiltering: true } } as PerAgentConfig;
+    const result = resolveScaffoldDefaults(smallProfile, config);
+    expect(result.bootstrapMaxChars).toBe(5_000);
+  });
+  it("small model with explicit maxChars=20000 (sentinel value) — capability default applies, not the explicit 20_000", () => {
+    // 20_000 is the schema .default() value — treated as "unset" sentinel.
+    // An operator who genuinely wants 20_000 on a small model must use capabilityClassOverride:"frontier".
+    const config = { bootstrap: { maxChars: 20_000, promptMode: "full", groupChatFiltering: true } } as PerAgentConfig;
+    const result = resolveScaffoldDefaults(smallProfile, config);
+    expect(result.bootstrapMaxChars).toBe(3_500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SD7: activeToolCeiling capability default
+// ---------------------------------------------------------------------------
+
+describe("resolveScaffoldDefaults — SD7: activeToolCeiling capability default", () => {
+  it("small model returns activeToolCeiling=40", () => {
+    const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
+    expect(result.activeToolCeiling).toBe(40);
+  });
+  it("nano model returns activeToolCeiling=undefined (nano has its own aggressive path — ceiling on top is no-op)", () => {
+    const result = resolveScaffoldDefaults(nanoProfile, emptyConfig);
+    expect(result.activeToolCeiling).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SD8: frontier/mid capacity byte-identical non-regression
+// ---------------------------------------------------------------------------
+
+describe("resolveScaffoldDefaults — SD8: frontier/mid capacity byte-identical non-regression", () => {
+  it("frontier: bootstrapMaxChars=20_000 with no bootstrap config", () => {
+    const result = resolveScaffoldDefaults(frontierProfile, emptyConfig);
+    expect(result.bootstrapMaxChars).toBe(20_000);
+  });
+  it("mid: bootstrapMaxChars=20_000 with no bootstrap config", () => {
+    const result = resolveScaffoldDefaults(midProfile, emptyConfig);
+    expect(result.bootstrapMaxChars).toBe(20_000);
+  });
+  it("frontier: activeToolCeiling=undefined (no ceiling — byte-identical to v2.14)", () => {
+    const result = resolveScaffoldDefaults(frontierProfile, emptyConfig);
+    expect(result.activeToolCeiling).toBeUndefined();
+  });
+  it("mid: activeToolCeiling=undefined (no ceiling — byte-identical to v2.14)", () => {
+    const result = resolveScaffoldDefaults(midProfile, emptyConfig);
+    expect(result.activeToolCeiling).toBeUndefined();
+  });
+  it("capabilityClassOverride=frontier on ollama model → bootstrapMaxChars=20_000 AND activeToolCeiling=undefined", () => {
+    // Mirrors SD5 Test 14 (capabilityClassOverride pattern)
+    const frontierViaOverride = resolveModelProfile(BASE_OLLAMA_INPUT, "frontier");
+    const result = resolveScaffoldDefaults(frontierViaOverride, emptyConfig);
+    expect(result.bootstrapMaxChars).toBe(20_000);
+    expect(result.activeToolCeiling).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cross-file parity: KEYLESS_CRITIC_PROVIDERS in scaffold-defaults.ts must
 // equal the exported Set from verification-gate.ts (Plan 02 assertion, deferred
 // from Plan 01).
