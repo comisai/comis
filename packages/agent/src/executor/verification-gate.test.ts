@@ -1187,6 +1187,88 @@ describe("shouldRunCritic", () => {
 });
 
 // ---------------------------------------------------------------------------
+// SD4 — resolveMainPathMaxOutputTokens floor bump (Phase 158)
+//
+// NATIVE_REASONING_MAIN_PATH_FLOOR raised 4096→16384 so reasoning_content
+// cannot starve the visible answer on small native-reasoning models.
+// RED: tests fail because NATIVE_REASONING_MAIN_PATH_FLOOR=4096
+//   (Math.max(8192, 4096)=8192, not 16384).
+// ---------------------------------------------------------------------------
+describe("SD4 — resolveMainPathMaxOutputTokens floor raised to 16_384 (Phase 158)", () => {
+  const BASE_PROFILE = {
+    contextWindow: 32_768,
+    capabilityClass: "small" as const,
+    scaffoldLevel: "max" as const,
+    securityLevel: "locked" as const,
+    supportsVision: false,
+    supportsTools: true,
+    supportsPromptCache: false,
+    supportsServerToolSearch: false,
+    supportsStructuredOutput: false,
+  };
+
+  it("Test A: native-reasoning profile with maxOutputTokens=8192 → returns 16384 (floor raised 4096→16384)", () => {
+    const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 8192 };
+    // RED: currently returns Math.max(8192, 4096)=8192 (not 16384) — fails until SD4 lands.
+    expect(resolveMainPathMaxOutputTokens(profile)).toBe(16_384);
+  });
+
+  it("Test B: non-reasoning profile with maxOutputTokens=8192 → returns 8192 (floor not applied)", () => {
+    const profile = { ...BASE_PROFILE, reasoningStyle: "none" as const, maxOutputTokens: 8192 };
+    // Non-reasoning path returns profile.maxOutputTokens unchanged.
+    expect(resolveMainPathMaxOutputTokens(profile)).toBe(8192);
+  });
+
+  it("Test C: native-reasoning profile with maxOutputTokens=32768 → returns 32768 (already above 16384 floor)", () => {
+    const profile = { ...BASE_PROFILE, reasoningStyle: "native" as const, maxOutputTokens: 32_768 };
+    // Math.max(32768, 16384)=32768 — model budget preserved.
+    expect(resolveMainPathMaxOutputTokens(profile)).toBe(32_768);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SD3 — shouldRunCritic effectiveEnabled parameter (Phase 158)
+//
+// effectiveEnabled is the pre-resolved flag from resolveScaffoldDefaults.
+// When provided, it replaces the config.verification?.enabled check:
+//   effectiveEnabled=true  → override-on  (even if config not set)
+//   effectiveEnabled=false → override-off (explicit false wins)
+// The keyless-provider check (WR-02) still applies AFTER the effectiveEnabled
+// gate.
+// RED: tests fail because shouldRunCritic does not yet accept effectiveEnabled.
+// ---------------------------------------------------------------------------
+describe("SD3 — shouldRunCritic effectiveEnabled parameter (Phase 158)", () => {
+  const activePlan = { current: BASE_PLAN };
+
+  it("Test D: effectiveEnabled=true + small + ollama + active plan → returns true (override-on)", () => {
+    // config has NO verification.enabled set — effectiveEnabled supplies the gate.
+    expect(
+      shouldRunCritic({
+        capabilityClass: "small",
+        config: {} as never,
+        executionPlanRef: activePlan,
+        provider: "ollama",
+        effectiveEnabled: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("Test E: effectiveEnabled=false + small + ollama + active plan → returns false (explicit false wins even for small/keyless)", () => {
+    // Even though class=small + keyless + config.verification.enabled=true,
+    // effectiveEnabled=false (pre-resolved by resolveScaffoldDefaults) wins.
+    expect(
+      shouldRunCritic({
+        capabilityClass: "small",
+        config: { verification: { enabled: true, minResponseChars: 200 } } as never,
+        executionPlanRef: activePlan,
+        provider: "ollama",
+        effectiveEnabled: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // createVerificationCritic — factory function
 // ---------------------------------------------------------------------------
 describe("createVerificationCritic", () => {
