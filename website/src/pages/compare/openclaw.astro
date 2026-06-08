@@ -24,7 +24,7 @@ const architectureRows: Row[] = [
     comis:
       `Hexagonal (ports & adapters). ${FACTS.packages}-package monorepo with compile-time enforced dependency graph via TypeScript composite references.`,
     openclaw:
-      "Monolith plus 82 extension packages. Plugin-driven with dynamic loader for runtime discovery.",
+      "Real monorepo: ~21 internal workspace packages plus 130+ extension packages. Plugin-driven with a dynamic loader for runtime discovery.",
     verdict: "comis",
   },
   {
@@ -32,7 +32,7 @@ const architectureRows: Row[] = [
     comis:
       `${FACTS.packages} packages in a large TypeScript monorepo. Strict separation via package references and pnpm workspaces.`,
     openclaw:
-      "Single src/ directory (~3K source files) plus 82 extensions. Single tsconfig, pnpm workspace.",
+      "Structured src/ (~5K source files) plus 21 workspace packages and 130+ extensions. pnpm workspace.",
     verdict: "comis",
   },
   {
@@ -75,7 +75,7 @@ const securityRows: Row[] = [
     comis:
       `SecretManager with frozen snapshots. ESLint-banned process.env access. AES-256-GCM-ready encryption (HKDF-SHA256), a ${SECURITY.contentScannerRules}-rule skill content scanner (exec injection, exfiltration, XML breakout) plus Pino structured field redaction.`,
     openclaw:
-      "${VAR_NAME} template references with SecretRef type (env/file/exec sources). No secret-specific lint rules.",
+      "${VAR_NAME} template references with SecretRef type (env/file/exec sources). No ESLint-banned process.env rule (relies on CodeQL/opengrep secret scanning in CI instead).",
     verdict: "comis",
   },
   {
@@ -83,15 +83,15 @@ const securityRows: Row[] = [
     comis:
       "DNS-pinned validation with cloud metadata IP blocklist and private range blocking.",
     openclaw:
-      "SSRF policy in plugin-sdk with less granular controls.",
-    verdict: "comis",
+      "DNS-pinned validation with DNS-rebinding re-checks, a cloud-metadata IP blocklist, and IPv4/IPv6 private-range blocking (src/infra/net + net-policy package).",
+    verdict: "tie",
   },
   {
     label: "Path traversal",
     comis:
       "safePath() with null byte, URL-decode, and symlink detection. ESLint-banned path.join().",
     openclaw:
-      "boundary-path.ts (861 lines) with symlink escape detection and Windows ACL support.",
+      "Path safety via the @openclaw/fs-safe package (realpath + symlink-escape checks) plus Windows ACL inspection.",
     verdict: "tie",
   },
   {
@@ -99,7 +99,7 @@ const securityRows: Row[] = [
     comis:
       "AuditEvent with action classification (read/mutate/destructive). Fail-closed default.",
     openclaw:
-      "SecurityAuditFinding[] with 114 checks across 4 audit modules and severity ratings.",
+      "SecurityAuditFinding[] across ~18 audit modules (140+ finding sites) with severity ratings.",
     verdict: "tie",
   },
   {
@@ -122,7 +122,7 @@ const securityRows: Row[] = [
     comis:
       "Kernel-enforced exec sandbox wraps every shell command in a filesystem namespace (bubblewrap on Linux, sandbox-exec on macOS). Agents can only access their workspace, graph shared directory, and system binaries.",
     openclaw:
-      "Optional Docker sandbox for tool execution. Heavier weight, requires Docker daemon.",
+      "Optional sandbox backends (Docker, SSH, and a pluggable backend registry), off by default.",
     verdict: "comis",
   },
   {
@@ -272,7 +272,7 @@ const contextRows: Row[] = [
   {
     label: "Token budgeting",
     comis:
-      "Formula: H = W - S - O - M - R. 25% context rot buffer (citing Chroma 2025 research on 13.9-85% degradation at limits), 5% safety margin with 2K floor, 8K output reserve. Dual-ratio token estimation (2x weighting for tool result chars). Pure function with zero side effects.",
+      "Formula: H = W - S - O - M - R - P (window minus system, output reserve, safety margin, recall, and fresh-tail preamble). 25% context rot buffer (citing Chroma 2025 research on 13.9-85% degradation at limits), 5% safety margin with 2K floor, 8K output reserve. Dual-ratio token estimation (2x weighting for tool result chars). Pure function with zero side effects.",
     openclaw:
       "75% input headroom ratio on context window (CONTEXT_INPUT_HEADROOM_RATIO = 0.75). 50% per-tool-result context share cap. 1.2x safety margin on all token estimates. 4K summarization overhead reserve. Context window guard: 16K hard minimum, 32K warning threshold, 200K default. Per-agent contextTokens cap overrides model native window.",
     verdict: "comis",
@@ -296,7 +296,7 @@ const contextRows: Row[] = [
   {
     label: "Context engine ecosystem",
     comis:
-      "Built-in pipeline and DAG engines cover all use cases. No plugin marketplace needed. DAG mode uses SQLite with FTS5 for depth-aware hierarchical summarization (operational, session, phase, project memory levels). JSONL-to-DAG reconciliation for crash recovery.",
+      "Built-in pipeline and DAG engines cover all use cases. No plugin marketplace needed. DAG mode uses SQLite with FTS5 for depth-aware hierarchical summarization (leaf and condensed tiers by recursion depth). JSONL-to-DAG reconciliation for crash recovery.",
     openclaw:
       "Growing plugin ecosystem: lossless-claw (DAG-based, scored 74.8 on OOLONG benchmark vs Claude Code's 70.3), MemOS Cloud (cross-session recall via external API), QuantClaw (C++ reimpl), 12-layer community architecture (lossless-claw + facts.db + LightRAG GraphRAG). ContextEngine slot API enables full pipeline replacement by third parties.",
     verdict: "openclaw",
@@ -304,7 +304,7 @@ const contextRows: Row[] = [
   {
     label: "Lossless context (DAG mode)",
     comis:
-      "Built-in DAG context engine (config: version: \"dag\"). 12-table SQLite schema (ctx_ prefix). Depth-aware summarization prompts per level. Three-tier escalation (normal, aggressive, sentence-boundary truncation). Leaf pass: min fanout 8, target 1.2K tokens. Condensed pass: min fanout 4. Integrity checking with auto-repair. DAG assembler with budget-aware selection and fresh tail protection.",
+      "Built-in DAG context engine (config: version: \"dag\"). 6-table SQLite schema (lcd_ prefix). Depth-aware summarization prompts per level. Three-tier escalation (normal, aggressive, sentence-boundary truncation). Leaf pass: min fanout 8, target 1.2K tokens. Condensed pass: min fanout 4. Integrity checking with auto-repair. DAG assembler with budget-aware selection and fresh tail protection.",
     openclaw:
       "Via lossless-claw plugin (third-party, requires separate install). SQLite + FTS5 storage. Leaf summaries: up to 20K tokens input, ~1.2K target, min fanout 8. Condensed nodes: ~2K target, min fanout 4. Triggers at 75% context window. Fresh tail: last 32 messages protected. Retrieval tools: lcm_grep (FTS5), lcm_describe (semantic), lcm_expand (decompress to source). Large file interception at 25K tokens with separate summarization.",
     verdict: "tie",
@@ -312,7 +312,7 @@ const contextRows: Row[] = [
   {
     label: "Memory search",
     comis:
-      "SQLite + FTS5 + sqlite-vec. Hybrid search via reciprocal rank fusion across tunable lanes, with an on-device cross-encoder reranker that turns on automatically when its model is present (zero download out of the box). Trust-first recall (system/learned/external): contradictions resolve by trust first, then recency, without deleting history. Repeated facts consolidate into corroborated observations whose proof accrues across runs, and an opt-in feedback loop lets recall learn from which memories actually got used. RAG retriever injects memories with provenance annotations and trust-level tags. Budget-capped injection with per-query maxChars. Prompt injection sanitization on retrieved content.",
+      "SQLite + FTS5 + sqlite-vec. Hybrid search via reciprocal rank fusion across tunable lanes, with an on-device cross-encoder reranker that turns on automatically when its model is present (zero download out of the box). Trust-first recall (system/learned/external): contradictions resolve by trust first, then recency, without deleting history. Repeated facts consolidate into corroborated observations whose proof accrues across runs, and an opt-out (on-by-default) feedback loop lets recall learn from which memories actually got used. RAG retriever injects memories with provenance annotations and trust-level tags. Budget-capped injection with per-query maxChars. Prompt injection sanitization on retrieved content.",
     openclaw:
       "SQLite + FTS5 + vector embeddings (OpenAI, Gemini, Voyage, Mistral, Ollama). Hybrid search with configurable weights (vector 0.7, text 0.3). MMR diversity reranking (lambda 0.7). Temporal decay with 30-day half-life. Batch API for providers that support it. Max 6 results, min score 0.35. Community 12-layer architecture adds facts.db (770+ facts with Hebbian activation/decay), file-vec index, and LightRAG GraphRAG (4,909 entities, 6,089 relations).",
     verdict: "tie",
@@ -331,7 +331,7 @@ const autonomyRows: Row[] = [
   {
     label: "Self-evolution",
     comis:
-      "Agents maintain 8 workspace files (SOUL.md, IDENTITY.md, USER.md, etc.) autonomously. Git-tracked personality changes via identity-updater. Memory maintenance during heartbeats.",
+      "Agents maintain 9 workspace files (SOUL.md, IDENTITY.md, USER.md, etc.) autonomously. Git-tracked personality changes via identity-updater. Memory maintenance during heartbeats.",
     openclaw:
       "Configuration-driven personality. No self-modification of behavior or identity files. Changes require external intervention.",
     verdict: "comis",
@@ -459,7 +459,7 @@ const cacheRows: Row[] = [
   {
     label: "Observation masking for cache",
     comis:
-      "Hysteresis band: 120K activation, 100K deactivation. Monotonic tracking (everMaskedIds) ensures once-masked content stays masked. Fence takes priority over everMaskedIds. Persistent write-back to disk. 25-result keep window.",
+      "Hysteresis band: 120K activation, 80K deactivation. Monotonic tracking (everMaskedIds) ensures once-masked content stays masked. Fence takes priority over everMaskedIds. Persistent write-back to disk. 25-result keep window.",
     openclaw:
       "No observation masking system. Tool results handled via context pruning extension (cache-TTL based, in-memory only). No hysteresis or anti-oscillation.",
     verdict: "comis",
@@ -526,9 +526,9 @@ const testRows: Row[] = [
   {
     label: "Test volume",
     comis:
-      "847 unit + 122 integration test files (~969 total). Coverage enforced via Vitest with 14 per-package floor thresholds (e.g. infra 95% lines / 100% functions), gated in CI.",
+      "~1,650 unit + ~175 integration test files. Coverage enforced via Vitest with 14 per-package floor thresholds (e.g. infra 95% lines / 100% functions), gated in CI.",
     openclaw:
-      "2,242 test files (1,914 in src/, 270 extensions, 46 UI, 11 harness). Coverage thresholds enforced: 70% lines/functions, 55% branches.",
+      "6,000+ test files (~3,600 in src/, ~2,000 in extensions, ~100 in packages). Coverage thresholds enforced: 70% lines/functions, 55% branches.",
     verdict: "openclaw",
   },
   {
@@ -544,7 +544,7 @@ const testRows: Row[] = [
     comis:
       "Provider-gated via TEST_PROVIDER_MODE=mock. Tests skip LLM calls if API keys missing. 14 provider keys detected from ~/.comis/.env.",
     openclaw:
-      "15 dedicated .live.test.ts files calling real LLM APIs. Gated by OPENCLAW_LIVE_TEST env var. Separate vitest.live.config.ts with sequential execution.",
+      "60+ dedicated .live.test.ts files calling real LLM APIs. Gated by OPENCLAW_LIVE_TEST env var. Separate vitest.live.config.ts with sequential execution.",
     verdict: "openclaw",
   },
   {
@@ -552,7 +552,7 @@ const testRows: Row[] = [
     comis:
       "15+ E2E test files with real daemon. Sequential forked execution. No Docker or browser testing.",
     openclaw:
-      "33 E2E test files, 7 Docker-based suites (live models, gateway, onboarding, plugins), 46 browser tests via Playwright + headless Chromium.",
+      "70+ E2E test files, Docker-based suites (live models, gateway, onboarding, plugins), plus browser tests via Playwright + headless Chromium.",
     verdict: "openclaw",
   },
   {
@@ -703,7 +703,7 @@ const sectionMeta = [
         </p>
         <p class="mt-3 text-sm text-muted/70">
           Both projects are open source. This comparison reflects the codebases
-          as of April 2026.
+          as of June 2026.
         </p>
       </div>
     </section>
@@ -967,7 +967,7 @@ const sectionMeta = [
                 <span class="font-semibold text-white">Extensibility DX:</span>
                 The plugin SDK with 219+ exports and dynamic loader makes adding
                 channels and tools lower friction. <span
-                  class="font-semibold text-white">140+ extensions</span
+                  class="font-semibold text-white">130+ extensions</span
                 > demonstrate real ecosystem maturity.
               </li>
               <li>
@@ -1004,8 +1004,8 @@ const sectionMeta = [
                     "comis",
                   )}-{count(testRows, "tie")}):</span
                 >
-                2,242 test files, 15 dedicated live-model tests, 7 Docker E2E suites,
-                and 46 browser tests via Playwright. Comis counters with ChaosEchoAdapter
+                6,000+ test files, 60+ dedicated live-model tests, Docker E2E suites,
+                and browser tests via Playwright. Comis counters with ChaosEchoAdapter
                 fault injection, structured log validation, and its own GitHub Actions
                 CI running the full validate gate.
               </li>
