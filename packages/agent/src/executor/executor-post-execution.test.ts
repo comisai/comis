@@ -386,12 +386,17 @@ describe("F2 emit — emitSessionSummary emits session:summary, fire-and-forget"
     expect(payload.timestamp).toBe(4242);
   });
 
-  it("OMITS topErrorKinds from the emitted event payload (goes to metadata only, OQ1)", () => {
+  it("CARRIES topErrorKinds + source:'runtime' on the emitted event payload (A1/A2, Phase 159 — OQ1 reversed)", () => {
+    // OQ1 is reversed: the fleet aggregate (A1/A2) needs topErrorKinds + source
+    // on the row, and the row is written from this event payload. Production
+    // emits the constant "runtime"; tests inject "test" by building the payload.
     const emit = vi.fn();
     const eventBus = { emit, on: vi.fn(), off: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
     emitSessionSummary({ eventBus, logger: undefined }, baseArgs);
     const payload = emit.mock.calls.find((c) => c[0] === "session:summary")![1] as Record<string, unknown>;
-    expect(payload.topErrorKinds).toBeUndefined();
+    expect(payload.topErrorKinds).toEqual({ dependency: 8 });
+    expect(payload.topErrorKinds).toBe(baseArgs.rollup.topErrorKinds);
+    expect(payload.source).toBe("runtime");
   });
 
   it("a THROWING eventBus listener does NOT propagate out of emitSessionSummary (fire-and-forget, OQ3)", () => {

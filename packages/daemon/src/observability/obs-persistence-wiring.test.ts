@@ -206,6 +206,8 @@ describe("sessionSummaryEventToRow", () => {
       toolStats: { web_fetch: { ok: 2, failed: 8 } },
       breakerTripCount: 1,
       timestamp: 1000,
+      topErrorKinds: { dependency: 8 },
+      source: "runtime",
     });
 
     expect(row.timestamp).toBe(1000);
@@ -224,6 +226,10 @@ describe("sessionSummaryEventToRow", () => {
     expect(details.toolStats).toEqual({ web_fetch: { ok: 2, failed: 8 } });
     expect(details.breakerTripCount).toBe(1);
     expect(details.turnCount).toBe(24);
+    // A1 carries topErrorKinds into the row; A2 carries source — both queryable
+    // by the fleet aggregate without opening per-session _session-metadata.json.
+    expect(details.topErrorKinds).toEqual({ dependency: 8 });
+    expect(details.source).toBe("runtime");
   });
 
   it("maps a non-degraded session:summary payload to severity:info", () => {
@@ -237,6 +243,8 @@ describe("sessionSummaryEventToRow", () => {
       toolStats: {},
       breakerTripCount: 0,
       timestamp: 2000,
+      topErrorKinds: {},
+      source: "runtime",
     });
 
     expect(row.category).toBe("session_summary");
@@ -366,6 +374,8 @@ describe("setupObsPersistence", () => {
       toolStats: { web_fetch: { ok: 2, failed: 8 } },
       breakerTripCount: 1,
       timestamp: 1000,
+      topErrorKinds: { dependency: 8 },
+      source: "runtime",
     });
 
     // Advance timer to trigger buffer flush.
@@ -381,6 +391,14 @@ describe("setupObsPersistence", () => {
         traceId: "t1",
       }),
     );
+    // The full event -> buffer -> insertDiagnostic path carries topErrorKinds +
+    // source into the persisted row's `details` JSON (A1/A2).
+    const insertedRow = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      details?: string;
+    };
+    const insertedDetails = JSON.parse(insertedRow.details ?? "{}") as Record<string, unknown>;
+    expect(insertedDetails.topErrorKinds).toEqual({ dependency: 8 });
+    expect(insertedDetails.source).toBe("runtime");
 
     // Cleanup
     clearInterval(result.snapshotTimer);
