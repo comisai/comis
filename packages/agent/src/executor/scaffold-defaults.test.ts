@@ -148,6 +148,38 @@ describe("resolveScaffoldDefaults — SD3: verification cost-gate", () => {
 });
 
 // ---------------------------------------------------------------------------
+// SD3 / WR-01: the cost-gate must expose the DISTINCT CHEAP critic model the
+// critic actually runs on — NOT the agent's primary. The cost-gate's defining
+// guarantee ("never silently doubles local-CPU latency") is false if the critic
+// auto-enables on a cheap model's existence but then runs the primary. This is
+// the regression the SD3 gate-decision tests above could not catch (code review
+// WR-03): they only asserted the on/off decision, never the model identity.
+// ---------------------------------------------------------------------------
+
+describe("resolveScaffoldDefaults — SD3/WR-01: resolved critic model", () => {
+  it("exposes the distinct cheap critic model the critic runs on (qwen3.6:1.5b), not the primary (qwen3.6:27b)", () => {
+    const result = resolveScaffoldDefaults(smallProfile, emptyConfig, criticContextWithDistinctCheapModel);
+    expect(result.verificationEnabled).toBe(true);
+    // The critic MUST run on the resolved distinct cheap model — not config.model (the primary).
+    expect(result.criticModel).toEqual({ provider: "ollama", modelId: "qwen3.6:1.5b" });
+    expect(result.criticModel?.modelId).not.toBe(criticContextWithDistinctCheapModel.agentModel);
+  });
+
+  it("criticModel is undefined when verification is off (no criticContext)", () => {
+    const result = resolveScaffoldDefaults(smallProfile, emptyConfig, undefined);
+    expect(result.verificationEnabled).toBe(false);
+    expect(result.criticModel).toBeUndefined();
+  });
+
+  it("criticModel is undefined when explicit verification.enabled=false force-off (even with a cheap critic configured)", () => {
+    const config = { verification: { enabled: false } } as PerAgentConfig;
+    const result = resolveScaffoldDefaults(smallProfile, config, criticContextWithDistinctCheapModel);
+    expect(result.verificationEnabled).toBe(false);
+    expect(result.criticModel).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // SD5: Non-regression — frontier/mid byte-identical to pre-Phase-158
 // ---------------------------------------------------------------------------
 
