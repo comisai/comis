@@ -238,9 +238,9 @@ describe("resolveScaffoldDefaults — SD6: bootstrapMaxChars capability default"
 // ---------------------------------------------------------------------------
 
 describe("resolveScaffoldDefaults — SD7: activeToolCeiling capability default", () => {
-  it("small model returns activeToolCeiling=40", () => {
+  it("small model returns activeToolCeiling=24", () => {
     const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
-    expect(result.activeToolCeiling).toBe(40);
+    expect(result.activeToolCeiling).toBe(24);
   });
   it("nano model returns activeToolCeiling=undefined (nano has its own aggressive path — ceiling on top is no-op)", () => {
     const result = resolveScaffoldDefaults(nanoProfile, emptyConfig);
@@ -275,6 +275,52 @@ describe("resolveScaffoldDefaults — SD8: frontier/mid capacity byte-identical 
     const result = resolveScaffoldDefaults(frontierViaOverride, emptyConfig);
     expect(result.bootstrapMaxChars).toBe(20_000);
     expect(result.activeToolCeiling).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SD9: bootstrapTotalMaxChars capability default
+// ---------------------------------------------------------------------------
+
+describe("resolveScaffoldDefaults — SD9: bootstrapTotalMaxChars capability default", () => {
+  it("small model returns bootstrapTotalMaxChars=5_000", () => {
+    const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
+    expect(result.bootstrapTotalMaxChars).toBe(5_000);
+  });
+  it("nano model returns bootstrapTotalMaxChars=5_000", () => {
+    const result = resolveScaffoldDefaults(nanoProfile, emptyConfig);
+    expect(result.bootstrapTotalMaxChars).toBe(5_000);
+  });
+  it("frontier model returns bootstrapTotalMaxChars=undefined (no total cap)", () => {
+    const result = resolveScaffoldDefaults(frontierProfile, emptyConfig);
+    expect(result.bootstrapTotalMaxChars).toBeUndefined();
+  });
+  it("mid model returns bootstrapTotalMaxChars=undefined", () => {
+    const result = resolveScaffoldDefaults(midProfile, emptyConfig);
+    expect(result.bootstrapTotalMaxChars).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F5: frontier/mid byte-identical after F1+F2 retune (non-regression)
+// ---------------------------------------------------------------------------
+
+describe("resolveScaffoldDefaults — F5: frontier/mid byte-identical after F1+F2 retune", () => {
+  it("frontier: activeToolCeiling=undefined (no ceiling — unchanged by F1 retune)", () => {
+    expect(resolveScaffoldDefaults(frontierProfile, emptyConfig).activeToolCeiling).toBeUndefined();
+  });
+  it("mid: activeToolCeiling=undefined", () => {
+    expect(resolveScaffoldDefaults(midProfile, emptyConfig).activeToolCeiling).toBeUndefined();
+  });
+  it("frontier: bootstrapMaxChars=20_000 with no total cap (F2 total cap is small/nano only)", () => {
+    const result = resolveScaffoldDefaults(frontierProfile, emptyConfig);
+    expect(result.bootstrapMaxChars).toBe(20_000);
+    expect(result.bootstrapTotalMaxChars).toBeUndefined();
+  });
+  it("mid: bootstrapMaxChars=20_000 with no total cap", () => {
+    const result = resolveScaffoldDefaults(midProfile, emptyConfig);
+    expect(result.bootstrapMaxChars).toBe(20_000);
+    expect(result.bootstrapTotalMaxChars).toBeUndefined();
   });
 });
 
