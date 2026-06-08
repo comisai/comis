@@ -22,6 +22,15 @@ export {
 } from "./obs-explain.js";
 export { makeRealReader } from "./obs-explain-readers.js";
 
+// A3 (159-03): the multi-day session-index aggregate reader — the activity half
+// of the fleet lens. Generalizes the single-traceId resolveTraceToSession into a
+// windowed aggregate over <dataDir>/logs/session-index.*.jsonl. Re-exported so
+// the Phase-161 obs.fleet.health handler can assemble it alongside A1/A2.
+export {
+  readSessionIndexWindow,
+  type FleetSessionIndexSummary,
+} from "./fleet-session-index.js";
+
 import type { RpcHandler } from "../types.js";
 import type { ObsHandlerDeps } from "./obs-helpers.js";
 import { bindObsMetricsHandlers } from "./obs-metrics.js";
