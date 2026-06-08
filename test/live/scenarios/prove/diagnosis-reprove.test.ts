@@ -78,6 +78,7 @@ import {
   countObsExplainCalls,
   assert678Report,
   assert503Report,
+  OBS_EXPLAIN_TOOL_NAME,
 } from "../../support/diagnosis-reprove.js";
 
 const isLive = !!process.env["COMIS_LIVE"];
@@ -192,18 +193,19 @@ describe("DIAG-reprove substrate — obs.explain tool reaches X3 root cause in 1
     expect(compareToAnswerKey(JSON.stringify(report), fx503.answerKey).reached).toBe(true);
   });
 
-  it("a 1-obs.explain-call transcript yields countObsExplainCalls === 1 and distinctSourceReads === 0 (the G1 metric, keyless)", () => {
+  it("a 1-obs_explain-call transcript yields countObsExplainCalls === 1 and distinctSourceReads === 0 (the G1 metric, keyless)", () => {
     // The G1 proof shape, proven without a token: a single assistant turn that
-    // calls obs.explain ONCE and reads NO source files. recordMetrics is reused
+    // calls obs_explain ONCE and reads NO source files. recordMetrics is reused
     // VERBATIM (it counts the 3rd tool automatically); distinctSourceReads is the
     // zero-reads half. countObsExplainCalls is the 1-call half. BOTH matter
     // (Pitfall 4) — reaching the root cause is not the proof unless it was reached
-    // in 1 call with 0 reads.
+    // in 1 call with 0 reads. The synthetic transcript uses the wire-safe
+    // OBS_EXPLAIN_TOOL_NAME — the SAME string the live manifest ships (CR-01).
     const transcript: AgentTurn[] = [
       {
         role: "assistant",
         toolCalls: [
-          { name: "obs.explain", arguments: JSON.stringify({ sessionKey: "x", depth: "summary" }) },
+          { name: OBS_EXPLAIN_TOOL_NAME, arguments: JSON.stringify({ sessionKey: "x", depth: "summary" }) },
         ],
         usage: { totalTokens: 1430 },
       },
@@ -383,7 +385,7 @@ export function buildReproveToolManifest(
     {
       type: "function",
       function: {
-        name: "obs.explain",
+        name: OBS_EXPLAIN_TOOL_NAME,
         description:
           "Get a structured incident report (root cause, breaker timeline, cost) for a session in " +
           "ONE call. Use this FIRST — it returns the root cause without source reads.",
@@ -404,13 +406,14 @@ export function buildReproveToolManifest(
  * One scripted ReAct diagnosis loop over ONE fixture WITH the obs.explain tool —
  * the RE-PROVE clone of diagnosis-baseline.test.ts:419-541. Three deltas from the
  * baseline:
- *   1. MANIFEST: a 3rd `obs.explain` tool (root cause + breaker timeline + cost in
- *      ONE call).
- *   2. SYSTEM PROMPT: positions obs.explain as the PRIMARY tool while KEEPING
+ *   1. MANIFEST: a 3rd `obs_explain` tool (root cause + breaker timeline + cost in
+ *      ONE call). Named `obs_explain` (the wire-safe MCP tool name), NOT a dotted
+ *      `obs.explain` the OpenAI function-name schema rejects (CR-01).
+ *   2. SYSTEM PROMPT: positions obs_explain as the PRIMARY tool while KEEPING
  *      read_source available — so "0 source reads" is EARNED by the agent
- *      choosing obs.explain, not by removing the fallback (RESEARCH anti-pattern
+ *      choosing obs_explain, not by removing the fallback (RESEARCH anti-pattern
  *      + Pitfall 4).
- *   3. DISPATCH: the obs.explain branch calls the in-process assembler over the
+ *   3. DISPATCH: the obs_explain branch calls the in-process assembler over the
  *      CURRENT fixture's reader (`fixtureId` threaded in as an opt, mirroring how
  *      `readSourceImpl` is threaded). read_source + obs_query branches kept.
  *
@@ -431,15 +434,17 @@ async function runDiagnosisLoop(opts: {
   const obsRpc = makeFixtureBackedRpc(fixtureEvents);
   const obsTool = createObsQueryTool(obsRpc);
 
-  // SYSTEM PROMPT: obs.explain PRIMARY, read_source kept available so 0 reads is
-  // earned (not removed). PATTERNS:262-268.
+  // SYSTEM PROMPT: obs_explain PRIMARY, read_source kept available so 0 reads is
+  // earned (not removed). PATTERNS:262-268. The tool name MUST match the manifest's
+  // wire-safe `obs_explain` (CR-01) — instructing the model to call a dotted
+  // `obs.explain` would name a tool the manifest does not expose.
   const systemPrompt =
     "You are diagnosing a degraded Comis session. The session transcript is provided " +
     "as JSONL. Find the ROOT CAUSE (the causal MECHANISM — which field/rule misclassified " +
-    "and the cascade — not just the symptom). You have three tools: obs.explain (CALL THIS " +
+    "and the cascade — not just the symptom). You have three tools: obs_explain (CALL THIS " +
     "FIRST — it returns the root cause, breaker timeline, and cost in one call), obs_query " +
     "(actions: diagnostics, billing, delivery, channels), and read_source(path) to read " +
-    "Comis source files. Use obs.explain first; only fall back to read_source if obs.explain " +
+    "Comis source files. Use obs_explain first; only fall back to read_source if obs_explain " +
     "is insufficient. When done, state the root cause in plain text.";
 
   // OpenAI-compatible tool manifest — the RE-PROVE has 3 tools (baseline had 2).
@@ -513,7 +518,7 @@ async function runDiagnosisLoop(opts: {
         } catch (err) {
           resultContent = `read_source error: ${err instanceof Error ? err.name : "error"}`;
         }
-      } else if (tc.function?.name === "obs.explain" && typeof args["sessionKey"] === "string") {
+      } else if (tc.function?.name === OBS_EXPLAIN_TOOL_NAME && typeof args["sessionKey"] === "string") {
         // The 1-call root cause: call the in-process assembler over the CURRENT
         // fixture's reader. The fixture reader ignores the sessionKey arg (it
         // returns the loaded fixture's records for any key), so the agent's
@@ -542,13 +547,22 @@ describe.skipIf(!isLive)("DIAG-reprove RUN — fresh agent WITH obs.explain (gat
 
       // Agent model config — reuse the DOCUMENTED judge provider/model/key as the
       // agent model (NO new env var; the operator already sets COMIS_LIVE_JUDGE_*
-      // for the judge). The base URL defaults to the provider's OpenAI-compatible
-      // endpoint convention.
+      // for the judge).
       const agentApiKey = process.env["COMIS_LIVE_JUDGE_API_KEY"] ?? "";
       const agentModel = process.env["COMIS_LIVE_JUDGE_MODEL"] ?? "gpt-4o-mini";
-      const agentBaseUrl = process.env["COMIS_LIVE_JUDGE_PROVIDER"] === "openai"
-        ? "https://api.openai.com"
-        : "https://api.openai.com"; // operator may point at any OpenAI-compatible endpoint
+      // IN-02: the prior ternary returned "https://api.openai.com" from BOTH arms,
+      // so the runbook's "point COMIS_LIVE_JUDGE_PROVIDER at any OpenAI-compatible
+      // endpoint" was a dead claim — every provider value was pinned to OpenAI and a
+      // non-OpenAI endpoint was unreachable. Honor the configured provider WITHOUT a
+      // new env var: if COMIS_LIVE_JUDGE_PROVIDER is itself a URL (an
+      // OpenAI-compatible base URL), use it; "openai"/unset defaults to OpenAI. The
+      // raw-fetch loop needs an explicit base URL (unlike the judge, which resolves
+      // the endpoint inside pi-ai's provider map), so the provider value doubles as
+      // the base-URL override.
+      const judgeProvider = process.env["COMIS_LIVE_JUDGE_PROVIDER"] ?? "openai";
+      const agentBaseUrl = /^https?:\/\//.test(judgeProvider)
+        ? judgeProvider
+        : "https://api.openai.com";
 
       for (let i = 0; i < FIXTURE_IDS.length; i++) {
         const id = FIXTURE_IDS[i]!;
@@ -607,10 +621,11 @@ describe.skipIf(!isLive)("DIAG-reprove RUN — fresh agent WITH obs.explain (gat
           judgeVerdict: v.verdict,
           // skip != fail: an absent judge key → "skip" (excluded from the denominator).
           rootCauseReached: v.verdict === "skip" ? "skip" : v.verdict === "pass",
-          // The RE-PROVE surfaces: obs.explain (the 1-call root cause) FIRST, then
+          // The RE-PROVE surfaces: obs_explain (the 1-call root cause) FIRST, then
           // the truncation marker (if any) + any read_source paths (should be none).
+          // Labels the surface with the wire-safe tool name (CR-01).
           surfacesUsed: [
-            "obs.explain",
+            OBS_EXPLAIN_TOOL_NAME,
             ...(truncated ? ["input-truncated:salient-window"] : []),
             ...Array.from(readSource.readPaths),
           ],

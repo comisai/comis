@@ -37,12 +37,22 @@ import type { IncidentReport } from "@comis/core";
 // ---------------------------------------------------------------------------
 
 /**
- * Count how many times `obs.explain` was invoked across an agent transcript.
+ * The wire-safe live tool name (CR-01): the product's MCP tool name `obs_explain`
+ * (see glass-box-ga-readiness.test.ts:78). The single source of truth for BOTH the
+ * live manifest's function name and this metric's target string — a dotted
+ * `obs.explain` is forbidden by the OpenAI function-name schema and HTTP-400s a real
+ * endpoint, so the live manifest, the synthetic transcripts, and this counter all
+ * standardize on the one wire-safe string.
+ */
+export const OBS_EXPLAIN_TOOL_NAME = "obs_explain";
+
+/**
+ * Count how many times `obs_explain` was invoked across an agent transcript.
  *
  * Iterates every turn's `toolCalls`, counting entries whose `name` is exactly
- * `"obs.explain"`. Mirrors recordMetrics' WR-02 non-empty-name guard: a nameless
- * tool call (small models sometimes emit no `function.name`) is skipped, never
- * counted. Returns the raw INVOCATION count (not a distinct-set size) — the G1
+ * {@link OBS_EXPLAIN_TOOL_NAME}. Mirrors recordMetrics' WR-02 non-empty-name guard:
+ * a nameless tool call (small models sometimes emit no `function.name`) is skipped,
+ * never counted. Returns the raw INVOCATION count (not a distinct-set size) — the G1
  * proof is `=== 1`, and a second call must read as 2, never collapse to 1.
  */
 export function countObsExplainCalls(transcript: AgentTurn[]): number {
@@ -51,7 +61,7 @@ export function countObsExplainCalls(transcript: AgentTurn[]): number {
     for (const call of turn.toolCalls ?? []) {
       // WR-02 parity: a nameless call is not a tool invocation.
       if (!call.name) continue;
-      if (call.name === "obs.explain") count += 1;
+      if (call.name === OBS_EXPLAIN_TOOL_NAME) count += 1;
     }
   }
   return count;

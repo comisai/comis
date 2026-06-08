@@ -93,7 +93,16 @@ gate always shows all 5 classes and loudly flags a partial run — it never pres
 partial corpus as the full gate.
 
 The agent model reuses the documented `COMIS_LIVE_JUDGE_*` provider/model/key (no new
-env var); point `COMIS_LIVE_JUDGE_PROVIDER` at any OpenAI-compatible endpoint.
+env var). To target any OpenAI-compatible endpoint, set `COMIS_LIVE_JUDGE_PROVIDER` to
+its **base URL** (e.g. `https://my-proxy.example.com` — the agent loop appends
+`/v1/chat/completions`); the literal `openai` (or unset) defaults the agent base URL to
+`https://api.openai.com`.
+
+> **Tool name.** The RE-PROVE manifest registers the third tool as `obs_explain` (the
+> product's wire-safe MCP tool name) — **not** a dotted `obs.explain`, which the OpenAI
+> Chat Completions function-name schema (`^[A-Za-z0-9_-]{1,64}$`) rejects with HTTP 400.
+> A keyless Stage-A/B guard asserts every manifest function name is wire-valid, so the
+> dotted name can no longer ship and break the costed RUN.
 
 ---
 

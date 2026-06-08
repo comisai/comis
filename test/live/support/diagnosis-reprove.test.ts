@@ -39,6 +39,7 @@ import {
   countObsExplainCalls,
   assert678Report,
   assert503Report,
+  OBS_EXPLAIN_TOOL_NAME,
 } from "./diagnosis-reprove.js";
 import { loadFixture, recordMetrics, type AgentTurn } from "./diagnosis-harness.js";
 
@@ -77,14 +78,15 @@ describe("DIAG-reprove substrate — @comis/daemon re-exports the obs-explain as
 });
 
 describe("DIAG-reprove substrate — countObsExplainCalls + recordMetrics over a synthetic transcript (Task 2)", () => {
-  it("counts exactly 1 obs.explain call and 0 source reads over a 1-call/0-reads transcript", () => {
-    // A synthetic transcript: a single assistant turn that calls obs.explain
-    // ONCE and reads NO source files (the G1 proof shape).
+  it("counts exactly 1 obs_explain call and 0 source reads over a 1-call/0-reads transcript", () => {
+    // A synthetic transcript: a single assistant turn that calls obs_explain
+    // ONCE and reads NO source files (the G1 proof shape). Uses the wire-safe
+    // OBS_EXPLAIN_TOOL_NAME — the SAME string the live manifest ships (CR-01).
     const transcript: AgentTurn[] = [
       {
         role: "assistant",
         toolCalls: [
-          { name: "obs.explain", arguments: JSON.stringify({ sessionKey: "x", depth: "summary" }) },
+          { name: OBS_EXPLAIN_TOOL_NAME, arguments: JSON.stringify({ sessionKey: "x", depth: "summary" }) },
         ],
         usage: { totalTokens: 1430 },
       },
@@ -99,12 +101,12 @@ describe("DIAG-reprove substrate — countObsExplainCalls + recordMetrics over a
     expect(recordMetrics(transcript).distinctSourceReads).toBe(0);
   });
 
-  it("a nameless tool call is not counted as an obs.explain invocation", () => {
+  it("a nameless tool call is not counted as an obs_explain invocation", () => {
     const transcript: AgentTurn[] = [
       { role: "assistant", toolCalls: [{ name: "", arguments: "{}" }] },
       {
         role: "assistant",
-        toolCalls: [{ name: "obs.explain", arguments: JSON.stringify({ sessionKey: "y" }) }],
+        toolCalls: [{ name: OBS_EXPLAIN_TOOL_NAME, arguments: JSON.stringify({ sessionKey: "y" }) }],
       },
     ];
     expect(countObsExplainCalls(transcript)).toBe(1);
