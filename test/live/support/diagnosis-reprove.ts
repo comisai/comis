@@ -73,8 +73,18 @@ export function countObsExplainCalls(transcript: AgentTurn[]): number {
 // compareToAnswerKey (the 678 token gap; Critical Nuance 1).
 // ---------------------------------------------------------------------------
 
-/** The 4-decimal float window for the 678 sessionCostUsd field. */
+/** The frozen 678 sessionCostUsd reference (obs-explain.test.ts:110). */
 const COST_678_USD = 1.320669;
+
+/**
+ * The cost-match tolerance (WR-03). Aligned with the frozen reference assertion
+ * `expect(r.cost.costUsd).toBeCloseTo(1.320669, 4)` in obs-explain.test.ts:110:
+ * vitest's `toBeCloseTo(x, 4)` passes iff `|actual - x| < 0.5 * 10^-4 = 5e-5`. The
+ * prior `>= 1e-4` window was 2x looser and would admit a ~9e-5 cost drift the
+ * centerpiece test rejects — for a proof artifact the field-level assert must be at
+ * least as strict as the reference it mirrors.
+ */
+const COST_678_TOLERANCE = 5e-5;
 
 /**
  * Assert the 678 IncidentReport reaches the X3 root cause at FIELD level:
@@ -82,7 +92,8 @@ const COST_678_USD = 1.320669;
  *   - likelyRootCause.detail matches /web_fetch/
  *   - outcome.degraded === true
  *   - breakerTimeline.length > 0
- *   - cost.costUsd ≈ 1.320669 (to 4 decimal places)
+ *   - cost.costUsd ≈ 1.320669 (within 5e-5 — matches obs-explain.test.ts:110's
+ *     toBeCloseTo(...,4) reference; WR-03)
  *
  * Throws FIELD-NAME-ONLY on any failure (`diagnosis-reprove: 678 report missing
  * <field>`) — never echoes the report body (the residency rule,
@@ -103,7 +114,7 @@ export function assert678Report(r: IncidentReport): void {
   if (r.breakerTimeline.length <= 0) {
     throw new Error("diagnosis-reprove: 678 report missing breakerTimeline");
   }
-  if (Math.abs(r.cost.costUsd - COST_678_USD) >= 1e-4) {
+  if (Math.abs(r.cost.costUsd - COST_678_USD) >= COST_678_TOLERANCE) {
     throw new Error("diagnosis-reprove: 678 report missing cost.costUsd");
   }
 }
