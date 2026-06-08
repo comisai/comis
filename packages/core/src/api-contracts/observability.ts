@@ -36,6 +36,24 @@ import { defineContract } from "./types.js";
 import { ObsExplainContract } from "./incident-report.js";
 export { ObsExplainContract, IncidentReportSchema } from "./incident-report.js";
 export type { IncidentReport, IncidentFailure, IncidentSignals } from "./incident-report.js";
+// The five obs.billing.* contracts (+ their BillingSnapshot response schema)
+// live in the sibling `observability-billing.ts` (file-size split). Import for
+// the OBSERVABILITY_CONTRACTS array below; re-export so the `@comis/core`
+// public surface + registered RPC set are unchanged (wire-identical).
+import {
+  ObsBillingByAgentContract,
+  ObsBillingByProviderContract,
+  ObsBillingBySessionContract,
+  ObsBillingTotalContract,
+  ObsBillingUsage24hContract,
+} from "./observability-billing.js";
+export {
+  ObsBillingByAgentContract,
+  ObsBillingByProviderContract,
+  ObsBillingBySessionContract,
+  ObsBillingTotalContract,
+  ObsBillingUsage24hContract,
+} from "./observability-billing.js";
 
 // ---------------------------------------------------------------------------
 // Shared sub-schemas — loose-record projection.
@@ -63,18 +81,6 @@ const ObsRecord = z.record(z.string(), z.unknown());
  * `obs.context.dag`).
  */
 const ObsRecordArray = z.array(z.record(z.string(), z.unknown()));
-
-/**
- * Shared BillingSnapshot shape (mirrors
- * `packages/daemon/src/observability/billing-estimator.ts` lines
- * 15-21). Plain numerics — safe to model tightly.
- */
-const BillingSnapshotSchema = z.object({
-  totalCost: z.number(),
-  totalTokens: z.number(),
-  callCount: z.number(),
-  totalCacheSaved: z.number().optional(),
-});
 
 /**
  * Rows-deleted summary used by `obs.reset` and `obs.reset.table`
@@ -127,139 +133,11 @@ export const ObsDiagnosticsContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
-// obs.billing.byProvider
+// obs.billing.{byProvider,byAgent,bySession,total,usage24h} + BillingSnapshot
+// live in the sibling `observability-billing.ts` (file-size split). They are
+// imported + re-exported at the top of this module and registered into
+// OBSERVABILITY_CONTRACTS below — wire-identical, no shape change.
 // ---------------------------------------------------------------------------
-
-/**
- * `obs.billing.byProvider` — Per-provider billing breakdown (sorted
- * by `totalCost` desc — handler:183). Admin-only (in-handler gate;
- * handler:117).
- *
- * Request: `{ sinceMs? }`.
- *
- * Response: `{ providers: ProviderBilling[] }`. Each row carries
- * `{ provider, totalCost, totalTokens, callCount, totalCacheSaved?,
- *   models: Array<{ model, cost, tokens, calls }> }` — modeled loose
- * (nested model array would otherwise require tight pinning).
- */
-export const ObsBillingByProviderContract = defineContract({
-  method: "obs.billing.byProvider",
-  request: z.object({
-    sinceMs: z.number().optional(),
-  }),
-  response: z.object({
-    providers: ObsRecordArray,
-  }),
-  scopes: ["admin"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// obs.billing.byAgent
-// ---------------------------------------------------------------------------
-
-/**
- * `obs.billing.byAgent` — Billing snapshot for a specific agent +
- * optional budgetUsed wrapper. Admin-only (in-handler gate;
- * handler:192). The `agentId` parameter is required and the handler
- * throws `"Invalid request: agentId parameter is required"`
- * (handler:194) when absent — the contract uses `z.string().min(1)`
- * to mirror that gate.
- *
- * Request: `{ agentId, sinceMs? }`.
- *
- * Response: `BillingSnapshot & { budgetUsed?: { perExecution, perHour, perDay } }`
- * (handler:232-241). The handler spreads `merged` (a BillingSnapshot)
- * then adds an optional `budgetUsed` field — modeled as a loose
- * record because `perExecution`/`perHour`/`perDay` carry a nested
- * `{ used, limit? }` shape.
- */
-export const ObsBillingByAgentContract = defineContract({
-  method: "obs.billing.byAgent",
-  request: z.object({
-    agentId: z.string().min(1),
-    sinceMs: z.number().optional(),
-  }),
-  response: z.object({
-    totalCost: z.number(),
-    totalTokens: z.number(),
-    callCount: z.number(),
-    totalCacheSaved: z.number().optional(),
-    budgetUsed: ObsRecord.optional(),
-  }),
-  scopes: ["admin"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// obs.billing.bySession
-// ---------------------------------------------------------------------------
-
-/**
- * `obs.billing.bySession` — Billing snapshot for a specific session.
- * Admin-only (in-handler gate; handler:249). `sessionKey` required
- * (handler:251).
- *
- * Request: `{ sessionKey, sinceMs? }`.
- *
- * Response: BillingSnapshot directly (no wrapper) — handler:261-266.
- */
-export const ObsBillingBySessionContract = defineContract({
-  method: "obs.billing.bySession",
-  request: z.object({
-    sessionKey: z.string().min(1),
-    sinceMs: z.number().optional(),
-  }),
-  response: BillingSnapshotSchema,
-  scopes: ["admin"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// obs.billing.total
-// ---------------------------------------------------------------------------
-
-/**
- * `obs.billing.total` — Overall billing totals. Admin-only
- * (in-handler gate; handler:274).
- *
- * Request: `{ sinceMs? }`.
- *
- * Response: BillingSnapshot directly (handler:301-306). Includes
- * `totalCacheSaved` aggregation.
- */
-export const ObsBillingTotalContract = defineContract({
-  method: "obs.billing.total",
-  request: z.object({
-    sinceMs: z.number().optional(),
-  }),
-  response: BillingSnapshotSchema,
-  scopes: ["admin"] as const,
-});
-
-// ---------------------------------------------------------------------------
-// obs.billing.usage24h
-// ---------------------------------------------------------------------------
-
-/**
- * `obs.billing.usage24h` — Token usage aggregated by hour-of-day for
- * the last 24 hours. Admin-only (in-handler gate; handler:314).
- *
- * Request: `{}` (no parameters — the 24-hour window is hardcoded
- * inside billingEstimator.usage24h() — billing-estimator.ts).
- *
- * Response: Array of `{ hour, tokens }` (TokenUsagePoint[]) — the
- * handler returns the bare array (handler:335). Modeled as
- * `z.array(z.record(z.string(), z.unknown()))` per the
- * array-of-loose-records pattern.
- *
- * Note: at the contract level the bare array-of-records is the
- * response root. `z.array` IS in the 12-shape allowlist; root-level
- * non-object responses are permitted.
- */
-export const ObsBillingUsage24hContract = defineContract({
-  method: "obs.billing.usage24h",
-  request: z.object({}),
-  response: ObsRecordArray,
-  scopes: ["admin"] as const,
-});
 
 // ---------------------------------------------------------------------------
 // obs.channels.all
