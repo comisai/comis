@@ -56,6 +56,12 @@ export interface AssembleIncidentReportParams {
   readonly sessionKey?: string;
   readonly traceId?: string;
   readonly depth?: "summary" | "full";
+  /**
+   * D9 admin opt-in: when `true`, a `traceId` that resolves only through a
+   * synthetic (test/harness) session-index row is still canonicalized. Default
+   * (absent/`false`) excludes synthetic rows from the by-traceId resolution.
+   */
+  readonly includeSynthetic?: boolean;
 }
 
 /**
@@ -95,7 +101,7 @@ export async function assembleIncidentReportFromSources(
   // and by-session collapse to one assembler path. `sessionKey` is present
   // when traceId is absent (the contract .refine guarantees one of the two).
   const sessionKey = params.traceId
-    ? await resolveTraceToSession(dataDir, params.traceId)
+    ? await resolveTraceToSession(dataDir, params.traceId, params.includeSynthetic)
     : params.sessionKey!;
 
   // WR-04: a traceId that resolves to "" (no row in today/yesterday's session

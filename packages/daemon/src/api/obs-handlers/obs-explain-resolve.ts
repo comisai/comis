@@ -48,11 +48,16 @@ function yesterdayKey(): string {
  * @param dataDir - data directory containing `logs/session-index.*.jsonl`.
  *   Defaults to `~/.comis` when an empty string is passed.
  * @param traceId - the trace identifier to canonicalize.
+ * @param includeSynthetic - when `false` (the default), rows stamped
+ *   `synthetic === true` (D9 test/harness sessions) are skipped, so a synthetic
+ *   row never canonicalizes a traceId for `obs.explain`. Pass `true` to resolve
+ *   them (the admin opt-in).
  * @returns the canonical sessionKey, or `""` when unresolvable.
  */
 export async function resolveTraceToSession(
   dataDir: string,
   traceId: string,
+  includeSynthetic = false,
 ): Promise<string> {
   const base = dataDir.length > 0 ? dataDir : defaultDataDir();
   for (const dayKey of [yesterdayKey(), todayKey()]) {
@@ -73,6 +78,7 @@ export async function resolveTraceToSession(
       } catch {
         continue; // Skip malformed JSONL lines per standard convention.
       }
+      if (rec.synthetic === true && !includeSynthetic) continue; // D9 default-exclude
       if (rec.traceId !== traceId) continue;
       // Canonical sessionKey is preferred; fall back to a sessionId-derived
       // key for rows that predate the sessionKey field.

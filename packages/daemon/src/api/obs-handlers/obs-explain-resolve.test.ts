@@ -120,4 +120,42 @@ describe("resolveTraceToSession", () => {
     const resolved = await resolveTraceToSession(dataDir, TRACE_TURN_1);
     expect(resolved).toBe(CANONICAL_SESSION_KEY);
   });
+
+  // D9: default-exclude synthetic rows; includeSynthetic opt-in resolves them.
+
+  it("returns empty string when ONLY a synthetic row carries the traceId (default-exclude)", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({ traceId: TRACE_TURN_1, sessionKey: CANONICAL_SESSION_KEY, synthetic: true }),
+    ]);
+    const resolved = await resolveTraceToSession(dataDir, TRACE_TURN_1);
+    expect(resolved).toBe("");
+  });
+
+  it("resolves a synthetic row's traceId to its sessionKey when includeSynthetic is true", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({ traceId: TRACE_TURN_1, sessionKey: CANONICAL_SESSION_KEY, synthetic: true }),
+    ]);
+    const resolved = await resolveTraceToSession(dataDir, TRACE_TURN_1, true);
+    expect(resolved).toBe(CANONICAL_SESSION_KEY);
+  });
+
+  it("resolves a runtime (non-synthetic) row regardless of the includeSynthetic flag", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({ traceId: TRACE_TURN_1, sessionKey: CANONICAL_SESSION_KEY }),
+    ]);
+    const off = await resolveTraceToSession(dataDir, TRACE_TURN_1);
+    const on = await resolveTraceToSession(dataDir, TRACE_TURN_1, true);
+    expect(off).toBe(CANONICAL_SESSION_KEY);
+    expect(on).toBe(CANONICAL_SESSION_KEY);
+  });
+
+  it("treats a string 'true' synthetic field as NON-synthetic and still resolves (strict === true)", async () => {
+    // Untrusted JSONL: only a real boolean true excludes — a string must not be
+    // truthy-coerced into a spurious exclusion of a real session.
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({ traceId: TRACE_TURN_1, sessionKey: CANONICAL_SESSION_KEY, synthetic: "true" }),
+    ]);
+    const resolved = await resolveTraceToSession(dataDir, TRACE_TURN_1);
+    expect(resolved).toBe(CANONICAL_SESSION_KEY);
+  });
 });
