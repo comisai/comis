@@ -93,6 +93,8 @@ export {
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";
 export type { BackgroundTaskOrigin } from "../domain/background-task-origin.js";
 
+export { KEYLESS_PROVIDER_TYPES } from "../provider/keyless-providers.js";
+
 export type {
   Attachment,
   NormalizedMessage,

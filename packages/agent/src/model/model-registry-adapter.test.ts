@@ -13,6 +13,54 @@ import {
 } from "./model-registry-adapter.js";
 
 // ---------------------------------------------------------------------------
+// SA6 RED tests — KEYLESS_PROVIDER_TYPES shared from @comis/core
+// ---------------------------------------------------------------------------
+
+describe("SA6 KEYLESS_PROVIDER_TYPES (shared from @comis/core)", () => {
+  it("SA6 KEYLESS_PROVIDER_TYPES includes lm-studio", async () => {
+    // Import KEYLESS_PROVIDER_TYPES from the source under test.
+    // This test fails on the current code because model-registry-adapter.ts
+    // defines a LOCAL const KEYLESS_PROVIDER_TYPES = new Set(["ollama"]) that
+    // does NOT include lm-studio. After SA6b, the file must import from
+    // @comis/core which has the canonical {ollama, lm-studio} set.
+    //
+    // We verify the behavior indirectly: register an lm-studio provider without
+    // an API key — it must succeed (registered=1) because lm-studio is keyless.
+    // On current code it fails (registered=0, WARN) because lm-studio is not
+    // in the local KEYLESS_PROVIDER_TYPES set.
+    const secretManager = createSecretManager({});
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const registry = createModelRegistryAdapter(authStorage);
+    const warns: string[] = [];
+    const logger = {
+      warn: (_obj: Record<string, unknown>, msg: string) => warns.push(msg),
+      debug: (_obj: Record<string, unknown>, _msg: string) => {},
+    };
+
+    const { registered } = registerCustomProviders(
+      registry,
+      {
+        "local-lmstudio": {
+          type: "lm-studio",
+          baseUrl: "http://localhost:1234/v1",
+          apiKeyName: "",
+          enabled: true,
+          headers: {},
+          models: [{ id: "qwen3-8b" }],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    // FAILS TODAY: registered=0 (lm-studio not in local keyless set)
+    // GREEN after SA6b: registered=1 (lm-studio in shared @comis/core set)
+    expect(registered).toBe(1);
+    expect(warns).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

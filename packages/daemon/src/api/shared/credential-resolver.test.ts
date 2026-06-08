@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { resolveProviderCredential } from "./credential-resolver.js";
+import { KEYLESS_PROVIDER_TYPES } from "@comis/core";
 import type { ProviderEntry } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -312,5 +313,83 @@ describe("resolveProviderCredential — Source C (oauth_profile)", () => {
     expect(r.reason).toContain('Cannot set agent provider to "openai-codex"');
     expect(r.reason).toContain('OAuth profile "openai-codex:user_a@example.com" is configured but not found');
     expect(r.reason).toContain("comis auth login --provider openai-codex");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SA5 RED tests — canonicalEnvKeyHint uses SDK findEnvKeys
+// ---------------------------------------------------------------------------
+
+describe("SA5 canonicalEnvKeyHint — SDK findEnvKeys delegation", () => {
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_OAUTH_TOKEN;
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("SA5 canonicalEnvKeyHint uses findEnvKeys for anthropic", () => {
+    // Rejection message for anthropic (no entry, no env key) must contain
+    // "ANTHROPIC_API_KEY" — the canonical hint the SDK returns via findEnvKeys.
+    // FAILS TODAY if the local hardcoded map is removed.
+    // GREEN after SA5: canonicalEnvKeyHint delegates to findEnvKeys which returns
+    // ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN"] → first is "ANTHROPIC_API_KEY".
+    const r = resolveProviderCredential("anthropic", {
+      providerEntries: {},
+      secretManager: { has: () => false },
+    });
+    expect(r.ok).toBe(false);
+    // The error message must include the canonical env-key hint from the SDK.
+    // This test is messaging-only — canonicalEnvKeyHint is used only in error messages.
+    expect(r.reason).toContain("ANTHROPIC_API_KEY");
+  });
+
+  it("SA5 canonicalEnvKeyHint safe-fallback for unknown provider", () => {
+    // For a completely unknown provider, findEnvKeys returns undefined.
+    // canonicalEnvKeyHint must not throw and must return undefined.
+    // The rejection message is still actionable (env_list fallback), just without a hint.
+    const r = resolveProviderCredential("my-custom-provider", {
+      providerEntries: {},
+      secretManager: { has: () => false },
+    });
+    expect(r.ok).toBe(false);
+    // Must not throw — safe fallback
+    expect(r.reason).toContain('Cannot set agent provider to "my-custom-provider"');
+    // No env-key hint expected for unknown provider
+    expect(r.reason).not.toContain("MY_CUSTOM_PROVIDER_API_KEY");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SA6 RED tests — KEYLESS_PROVIDER_TYPES shared source
+// ---------------------------------------------------------------------------
+
+describe("SA6 KEYLESS_PROVIDER_TYPES shared source", () => {
+  it("SA6 credential-resolver KEYLESS_PROVIDER_TYPES source is shared — includes both ollama and lm-studio", () => {
+    // Verify that the KEYLESS_PROVIDER_TYPES imported from @comis/core
+    // (the shared canonical source after SA6b) includes both "ollama" and "lm-studio".
+    // PASSES even on current code because @comis/core now exports the correct set
+    // — the RED failure is in the agent-side (model-registry-adapter) test above,
+    // and in the production code that still has local Sets that don't import from core.
+    expect(KEYLESS_PROVIDER_TYPES.has("ollama")).toBe(true);
+    expect(KEYLESS_PROVIDER_TYPES.has("lm-studio")).toBe(true);
+  });
+
+  it("SA6 lm-studio keyless pass through credential-resolver when shared set is used", () => {
+    // After SA6b, credential-resolver imports KEYLESS_PROVIDER_TYPES from @comis/core.
+    // This test verifies the keyless path works for lm-studio via the resolver.
+    // PASSES today (lm-studio is already in credential-resolver's local set).
+    // Regression test: after SA6b the shared set must still include lm-studio.
+    const r = resolveProviderCredential("my-lmstudio", {
+      providerEntries: { "my-lmstudio": makeEntry({ type: "lm-studio" }) },
+      secretManager: { has: () => false },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("keyless");
   });
 });
