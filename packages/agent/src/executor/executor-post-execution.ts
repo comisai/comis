@@ -128,6 +128,17 @@ export interface PostExecutionBridgeResult {
   breakerTripCount?: number;
   /** Turn count for the session:summary event (Plan 02/F2). */
   turnCount?: number;
+  /**
+   * The SDK-normalized stop reason of the session's FINAL turn (QT3). The bridge
+   * captures `AssistantMessage.stopReason` at EVERY `turn_end`
+   * (pi-event-bridge.ts), so the value carried here is the TERMINAL one. Its
+   * union is `"stop" | "length" | "toolUse" | "error" | "aborted"` (pi-ai) — a
+   * terminal `"length"` is the output-cap truncation the chokepoint promotes to
+   * `finishReason:"output_starved"` (see {@link promoteOutputStarved}). Already
+   * returned by `buildBridgeResult`; surfaced on this interface so the chokepoint
+   * can read it without a second source.
+   */
+  lastStopReason?: string;
   /** Session-cumulative cache savings across all turns (USD). */
   sessionCacheSavedUsd?: number;
   /** Thinking tokens from SDK reasoningTokens field. */
@@ -592,6 +603,62 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
 };
 
 /**
+ * The SDK-normalized terminal stop reasons that mark an output-cap truncation
+ * (QT3). The pi-ai `StopReason` union normalizes the output cap to `"length"`
+ * (pi-ai/types.d.ts) — that is the authoritative value. `"max_tokens"` /
+ * `"maxTokens"` are accepted defensively in case a future/non-Anthropic provider
+ * surfaces a provider-raw variant; the conservative terminal-only gate below
+ * keeps that breadth from ever flagging a healthy session. Module-level so the
+ * post-execution path does not reallocate it per turn.
+ */
+const TERMINAL_OUTPUT_STARVED_STOP_REASONS: ReadonlySet<string> = new Set([
+  "length",
+  "max_tokens",
+  "maxTokens",
+]);
+
+/**
+ * QT3 — promote a PATHOLOGICAL terminal output truncation to the named cause.
+ *
+ * Returns `"output_starved"` IFF the run would OTHERWISE end clean
+ * (`stop`/`end_turn` → `success`) AND the session's FINAL turn stopped at the
+ * model output cap (`lastStopReason ∈ {length, max_tokens}`). Otherwise it
+ * returns `effectiveFinishReason` UNCHANGED.
+ *
+ * This is deliberately conservative — the hard rule is "do not flag healthy
+ * sessions" (the spike's load-bearing guard):
+ *   - It fires ONLY on a CLEAN would-be terminal. A run that already settled on
+ *     a non-clean cause (tool errors, budget, breaker, context_exhausted, error)
+ *     keeps that upstream cause — the truncation is not the headline there.
+ *   - It keys on the TERMINAL stop reason. `m.lastStopReason` is overwritten at
+ *     every `turn_end` (pi-event-bridge.ts), so a mid-run length-stop the agent
+ *     CONTINUED past (output escalation re-ran, or another turn followed) carries
+ *     a NON-length terminal value (`stop`/`end`/`toolUse`) by the time it reaches
+ *     here and is correctly NOT flagged. Only a run whose LAST turn was cut off
+ *     at the cap — with nothing after it — qualifies.
+ *
+ * Pure: no I/O, no side effects. Exported for unit tests (both directions pinned).
+ *
+ * @param effectiveFinishReason - the settled finish reason at the chokepoint
+ *   (already reconciled for tool failures → completed_with_tool_errors).
+ * @param lastStopReason - the bridge's terminal `AssistantMessage.stopReason`.
+ */
+export function promoteOutputStarved(
+  effectiveFinishReason: string,
+  lastStopReason: string | undefined,
+): string {
+  // Gate 1: only a CLEAN would-be terminal is eligible (the conservative guard).
+  if (effectiveFinishReason !== "stop" && effectiveFinishReason !== "end_turn") {
+    return effectiveFinishReason;
+  }
+  // Gate 2: the terminal model stop must be the output cap.
+  if (lastStopReason !== undefined && TERMINAL_OUTPUT_STARVED_STOP_REASONS.has(lastStopReason)) {
+    return "output_starved";
+  }
+  return effectiveFinishReason;
+}
+
+/**
  * Build the SessionMetadata payload written to `_session-metadata.json` at the
  * end of an execution.
  *
@@ -1046,10 +1113,22 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const hasToolFailures = (bridgeResult.failedTools?.length ?? 0) > 0;
   const finishReasonStr = result.finishReason as string;
   const isStopTurn = finishReasonStr === "stop" || finishReasonStr === "end_turn";
-  const effectiveFinishReason =
+  // Stage 1: tool-failure reconciliation (a clean stop turn with failed tools
+  // becomes completed_with_tool_errors).
+  const toolReconciledFinishReason =
     hasToolFailures && isStopTurn
       ? "completed_with_tool_errors"
       : result.finishReason;
+  // Stage 2 (QT3): promote a PATHOLOGICAL terminal output truncation. Fires ONLY
+  // when stage 1 left a CLEAN would-be terminal (stop/end_turn) AND the session's
+  // FINAL turn stopped at the output cap (bridge's terminal lastStopReason). A
+  // tool-error / budget / breaker / context_exhausted terminal is untouched (the
+  // upstream cause wins), and a continued/mid-run length-stop is not flagged
+  // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
+  const effectiveFinishReason = promoteOutputStarved(
+    toolReconciledFinishReason,
+    bridgeResult.lastStopReason,
+  );
   // Notice append is gated: only when the model did NOT acknowledge the failure
   // AND the response is not a silent sentinel.
   if (
