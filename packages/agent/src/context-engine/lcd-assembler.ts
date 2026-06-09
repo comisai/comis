@@ -178,10 +178,28 @@ export function createLcdContextEngine(
         );
       }
       const contextItems: LcdContextItem[] = readScope ? store.getContextItems(readScope) : [];
-      const rows: LcdMessage[] = readScope ? store.getMessages(readScope) : [];
+      // EFF-01: collect the refId sets from contextItems FIRST so we can issue
+      // bounded IN-clause reads instead of fetching ALL rows for the scope.
+      // An empty set short-circuits to [] without any DB query (zero wasted I/O).
+      // Assembly output is byte-identical because the map-lookup logic is unchanged;
+      // only the pre-populate step is bounded. T-170-01-01/02: R4 scope triple is
+      // always passed through to getMessagesByIds / getSummariesByIds.
+      const messageRefIds = contextItems
+        .filter((ci) => ci.refKind === "message")
+        .map((ci) => ci.refId);
+      const summaryRefIds = contextItems
+        .filter((ci) => ci.refKind === "summary")
+        .map((ci) => ci.refId);
+      const rows: LcdMessage[] =
+        readScope && messageRefIds.length > 0
+          ? store.getMessagesByIds(readScope, messageRefIds)
+          : [];
       const rowById = new Map<string, LcdMessage>(rows.map((row) => [row.id, row]));
       const summaryById = new Map<string, LcdSummary>(
-        (readScope ? store.getSummaries(readScope) : []).map((s) => [s.summaryId, s]),
+        (readScope && summaryRefIds.length > 0
+          ? store.getSummariesByIds(readScope, summaryRefIds)
+          : []
+        ).map((s) => [s.summaryId, s]),
       );
       let resolved: BudgetItem[] = [];
       // Parallel to `resolved`: the ref kind of each resolved item, used by the
