@@ -1581,3 +1581,70 @@ describe("CWF-01 characterization — frontier/mid byte-identity (no-regression)
     expect(budgetTokens).toBeGreaterThan(0);
   });
 });
+
+describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 165)", () => {
+  let store: ContextStorePort;
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("CWF-01-A RED: unthreaded 131K window → budgetTokens uncapped (57808 pre-patch, capped post-patch)", async () => {
+    // Reproduces the live NVDA incident: W=131072, S=25584, P=166
+    // The profile is NOT threaded into deps (modelProfile absent) — this is the
+    // production pre-patch state where setupContextEngine never passes modelProfile.
+    // Pre-patch: frontier fallback → budgetTokens=57808 (fails this assertion)
+    // Post-patch: fail-closed nano cap fires → budgetTokens=0 (passes this assertion)
+    const { deps, logger } = makeDeps(store);
+    const depsUnthreaded = {
+      ...deps,
+      // modelProfile deliberately absent — reproduces the live incident (unthreaded profile)
+      getModel: () => ({ reasoning: false, contextWindow: 131_072, maxTokens: 8_192 }),
+      getSystemTokensEstimate: () => 25_584,
+      getFreshTailPreambleTokensEstimate: () => 166,
+    };
+    const engine = createLcdContextEngine(dagConfig(2), depsUnthreaded);
+    await engine.transformContext([]);
+
+    const evictCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
+    expect(evictCalls.length).toBeGreaterThan(0);
+    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
+    // RED: pre-patch budgetTokens = 57808 (frontier fallback, no cap) — fails (57808 >= 32000)
+    // GREEN: post-patch budgetTokens = 0 (fail-closed nano cap; 16K < 25584 → H<0 → clamped)
+    expect(budgetTokens).toBeLessThan(32_000);
+  });
+
+  it("CWF-01-B RED: undefined modelProfile → WARN(errorKind:config) + nano cap applied", async () => {
+    // Pre-patch: no WARN is emitted with errorKind:"config" (fails the warn assertion)
+    // Post-patch: WARN emitted with errorKind:"config" + nano cap (passes both assertions)
+    const { deps: baseDeps, logger } = makeDeps(store);
+    // Deliberately omit modelProfile (it is not set by makeDeps — this is the missing-wire scenario)
+    const depsWithoutProfile = {
+      ...baseDeps,
+      // modelProfile: deliberately absent — tests the fail-closed path
+      getModel: () => ({ reasoning: false, contextWindow: 131_072, maxTokens: 8_192 }),
+      getSystemTokensEstimate: () => 25_584,
+      getFreshTailPreambleTokensEstimate: () => 166,
+    };
+    const engine = createLcdContextEngine(dagConfig(2), depsWithoutProfile);
+    await engine.transformContext([]);
+
+    // RED assertion 1: WARN emitted with errorKind:"config"
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "config" }),
+      expect.any(String),
+    );
+
+    // RED assertion 2: budget was capped to nano (≤16000 effective window)
+    // The nano profile sets contextWindow=W in the fallback, then classCap(nano)=16000 applies
+    // effectiveWindow = min(W=131072, nano_cap=16000) = 16000
+    // H will be negative (16000 - 25584 - ...) → clamped to 0
+    const evictCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
+    expect(evictCalls.length).toBeGreaterThan(0);
+    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
+    expect(budgetTokens).toBeLessThan(16_000);
+  });
+});
