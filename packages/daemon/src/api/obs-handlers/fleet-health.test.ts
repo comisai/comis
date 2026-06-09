@@ -69,6 +69,7 @@ function summaryDetails(
     turnCount: number;
     topErrorKinds: Record<string, number>;
     source: string;
+    endReason: string;
   }> = {},
 ): string {
   return JSON.stringify({
@@ -79,6 +80,7 @@ function summaryDetails(
     turnCount: 0,
     topErrorKinds: {},
     source: "runtime",
+    endReason: "success",
     ...overrides,
   });
 }
@@ -174,6 +176,7 @@ function seedStore(store: ObservabilityStore, now: number): void {
       breakerTripCount: 2,
       topErrorKinds: { tool_timeout: 3 },
       toolStats: { web_search: { ok: 1, failed: 4 } },
+      endReason: "context_exhausted",
     }),
   });
   store.insertDiagnostic({
@@ -220,6 +223,9 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.sessions.total).toBe(2);
     expect(report.sessions.degraded).toBe(1);
     expect(report.sessions.degradedRate).toBeCloseTo(0.5);
+    // QT2/QT3: the degraded session is bucketed by its named endReason cause.
+    // The clean session (endReason:success) does NOT appear here.
+    expect(report.degradedByCause).toEqual({ context_exhausted: 1 });
     // Merged errorKinds (capped) + breaker total + per-tool ok/failed from the reducer.
     expect(report.topErrorKinds).toEqual([{ kind: "tool_timeout", count: 3 }]);
     expect(report.breakerTripTotal).toBe(2);
