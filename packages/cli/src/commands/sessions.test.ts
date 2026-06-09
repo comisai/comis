@@ -268,14 +268,15 @@ describe("renderSystemPromptReport — Tools/Skills lines never render 'undefine
 });
 
 // ---------------------------------------------------------------------------
-// Phase 164-03 (RR4): sessions reset-lcd subcommand wiring
-// Phase 164-05 (gap-closure): honest-defer for --memory not-implemented
+// Phase 164-06 (gap-closure): sessions reset — complete cross-mode conversation reset
+// Replaces Phase 164-03 sessions reset-lcd (LCD-only).
 //
-// CLI1: subcommand is registered under `sessions`
-// CLI2: sends context.reset_lcd with { session_key } when --yes is passed
+// CLI1: subcommand `sessions reset` is registered (NOT `sessions reset-lcd`)
+// CLI2: sends session.reset_conversation with { session_key } when --yes is passed
 // CLI3: --memory flag threads memory: true to the request
-// CLI4: --memory with memoriesDeleted===undefined (not-implemented) → ⚠ warning to stderr
+// CLI4: --memory with memoriesDeleted===undefined → ⚠ warning to stderr
 // CLI4b: --memory with memoriesDeleted defined (future impl) → RAG line to stdout
+// CLI5: output includes both lcdRowsDeleted and sessionMessagesCleared counts
 //
 // Uses vi.mock for withClient (same pattern as trace.test.ts).
 // ---------------------------------------------------------------------------
@@ -300,40 +301,46 @@ vi.mock("@clack/prompts", () => ({
 
 const { withClient: mockedWithClient } = await import("../client/rpc-client.js");
 
-/** Minimal context.reset_lcd success response — memoriesDeleted OMITTED (Phase 164-05 honest-defer) */
-const RESET_LCD_RESPONSE = {
+/** Minimal session.reset_conversation success response — memoriesDeleted OMITTED (honest-defer) */
+const RESET_CONVERSATION_RESPONSE = {
   sessionKey: "tenant1:user1:chan1",
   lcdRowsDeleted: 7,
+  sessionMessagesCleared: 4,
   // memoriesDeleted is intentionally absent: the handler omits it when RAG clear is not-implemented
 };
 
-describe("CLI1: sessions reset-lcd subcommand registration (Phase 164-03)", () => {
-  it("CLI1: registerSessionsCommand registers sessions reset-lcd subcommand", () => {
+describe("CLI1: sessions reset subcommand registration (Phase 164-06)", () => {
+  it("CLI1: registerSessionsCommand registers sessions reset subcommand (not reset-lcd)", () => {
     const program = new Command();
     registerSessionsCommand(program);
 
     const sessionsCmd = program.commands.find((c) => c.name() === "sessions");
     expect(sessionsCmd).toBeDefined();
 
-    const resetLcdCmd = sessionsCmd!.commands.find((c) => c.name() === "reset-lcd");
-    expect(resetLcdCmd).toBeDefined();
-    expect(resetLcdCmd!.description()).toContain("LCD");
+    // New name is 'reset' (Phase 164-06 rename)
+    const resetCmd = sessionsCmd!.commands.find((c) => c.name() === "reset");
+    expect(resetCmd).toBeDefined();
+    expect(resetCmd!.description()).toMatch(/conversation|session|clear|reset/i);
+
+    // Old name 'reset-lcd' must NOT exist (renamed in Phase 164-06)
+    const oldResetLcdCmd = sessionsCmd!.commands.find((c) => c.name() === "reset-lcd");
+    expect(oldResetLcdCmd).toBeUndefined();
   });
 
-  it("CLI1b: reset-lcd subcommand has --memory and --yes options", () => {
+  it("CLI1b: reset subcommand has --memory and --yes options", () => {
     const program = new Command();
     registerSessionsCommand(program);
 
     const sessionsCmd = program.commands.find((c) => c.name() === "sessions")!;
-    const resetLcdCmd = sessionsCmd.commands.find((c) => c.name() === "reset-lcd")!;
+    const resetCmd = sessionsCmd.commands.find((c) => c.name() === "reset")!;
 
-    const optNames = resetLcdCmd.options.map((o) => o.long);
+    const optNames = resetCmd.options.map((o) => o.long);
     expect(optNames).toContain("--memory");
     expect(optNames).toContain("--yes");
   });
 });
 
-describe("CLI2: sessions reset-lcd calls context.reset_lcd via callTyped (Phase 164-03)", () => {
+describe("CLI2: sessions reset calls session.reset_conversation via callTyped (Phase 164-06)", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -348,14 +355,16 @@ describe("CLI2: sessions reset-lcd calls context.reset_lcd via callTyped (Phase 
     exitSpy.restore();
   });
 
-  it("CLI2: sends context.reset_lcd with session_key when --yes is passed", async () => {
+  it("CLI2: sends session.reset_conversation with session_key when --yes is passed", async () => {
+    const capturedMethods: string[] = [];
     const capturedParams: unknown[] = [];
 
     vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
       const mockClient = {
-        call: vi.fn().mockImplementation(async (_method: string, params?: unknown) => {
+        call: vi.fn().mockImplementation(async (method: string, params?: unknown) => {
+          capturedMethods.push(method);
           capturedParams.push(params);
-          return RESET_LCD_RESPONSE;
+          return RESET_CONVERSATION_RESPONSE;
         }),
         close: vi.fn(),
         onNotification: vi.fn(),
@@ -367,20 +376,20 @@ describe("CLI2: sessions reset-lcd calls context.reset_lcd via callTyped (Phase 
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset-lcd", "tenant1:user1:chan1",
+      "sessions", "reset", "tenant1:user1:chan1",
       "--yes",
     ]);
 
     expect(vi.mocked(mockedWithClient)).toHaveBeenCalledTimes(1);
-    expect(capturedParams).toHaveLength(1);
+    expect(capturedMethods[0]).toBe("session.reset_conversation");
     const params = capturedParams[0] as Record<string, unknown>;
     expect(params["session_key"]).toBe("tenant1:user1:chan1");
   });
 
-  it("CLI2b: output includes lcdRowsDeleted count on success", async () => {
+  it("CLI2b: output includes both lcdRowsDeleted and sessionMessagesCleared counts on success", async () => {
     vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("context.reset_lcd", RESET_LCD_RESPONSE)
+        .onCall("session.reset_conversation", RESET_CONVERSATION_RESPONSE)
         .build();
       return fn(mockClient);
     });
@@ -389,16 +398,18 @@ describe("CLI2: sessions reset-lcd calls context.reset_lcd via callTyped (Phase 
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset-lcd", "tenant1:user1:chan1",
+      "sessions", "reset", "tenant1:user1:chan1",
       "--yes",
     ]);
 
     const output = consoleSpy.log.mock.calls.map((c) => c.join(" ")).join("\n");
-    expect(output).toMatch(/7/);
+    // Output must reference both cleared counts
+    expect(output).toMatch(/7/);   // lcdRowsDeleted
+    expect(output).toMatch(/4/);   // sessionMessagesCleared
   });
 });
 
-describe("CLI3: sessions reset-lcd --memory threads memory: true (Phase 164-03)", () => {
+describe("CLI3: sessions reset --memory threads memory: true (Phase 164-06)", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
 
@@ -420,8 +431,7 @@ describe("CLI3: sessions reset-lcd --memory threads memory: true (Phase 164-03)"
       const mockClient = {
         call: vi.fn().mockImplementation(async (_method: string, params?: unknown) => {
           capturedParams.push(params);
-          // honest-defer: handler omits memoriesDeleted when not implemented
-          return RESET_LCD_RESPONSE;
+          return RESET_CONVERSATION_RESPONSE;
         }),
         close: vi.fn(),
         onNotification: vi.fn(),
@@ -433,7 +443,7 @@ describe("CLI3: sessions reset-lcd --memory threads memory: true (Phase 164-03)"
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset-lcd", "tenant1:user1:chan1",
+      "sessions", "reset", "tenant1:user1:chan1",
       "--yes",
       "--memory",
     ]);
@@ -450,7 +460,7 @@ describe("CLI3: sessions reset-lcd --memory threads memory: true (Phase 164-03)"
       const mockClient = {
         call: vi.fn().mockImplementation(async (_method: string, params?: unknown) => {
           capturedParams.push(params);
-          return RESET_LCD_RESPONSE;
+          return RESET_CONVERSATION_RESPONSE;
         }),
         close: vi.fn(),
         onNotification: vi.fn(),
@@ -462,7 +472,7 @@ describe("CLI3: sessions reset-lcd --memory threads memory: true (Phase 164-03)"
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset-lcd", "tenant1:user1:chan1",
+      "sessions", "reset", "tenant1:user1:chan1",
       "--yes",
     ]);
 
@@ -473,13 +483,10 @@ describe("CLI3: sessions reset-lcd --memory threads memory: true (Phase 164-03)"
 });
 
 // ---------------------------------------------------------------------------
-// Phase 164-05 (gap-closure): CLI4 — --memory not-implemented warning output
-//
-// CLI4:  --memory passed + memoriesDeleted===undefined → ⚠ warning written to stderr
-// CLI4b: --memory passed + memoriesDeleted defined (future) → RAG line to stdout
+// CLI4: --memory not-implemented warning output (Phase 164-06)
 // ---------------------------------------------------------------------------
 
-describe("CLI4: sessions reset-lcd --memory not-implemented warning (Phase 164-05)", () => {
+describe("CLI4: sessions reset --memory not-implemented warning (Phase 164-06)", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
   let stderrSpy: ReturnType<typeof vi.fn>;
@@ -497,10 +504,10 @@ describe("CLI4: sessions reset-lcd --memory not-implemented warning (Phase 164-0
     stderrSpy.mockRestore();
   });
 
-  it("CLI4: --memory + memoriesDeleted===undefined prints ⚠ not-implemented warning to stderr", async () => {
+  it("CLI4: --memory + memoriesDeleted===undefined prints not-implemented warning to stderr", async () => {
     vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
       const mockClient = {
-        call: vi.fn().mockResolvedValue(RESET_LCD_RESPONSE), // no memoriesDeleted field
+        call: vi.fn().mockResolvedValue(RESET_CONVERSATION_RESPONSE), // no memoriesDeleted field
         close: vi.fn(),
         onNotification: vi.fn(),
       };
@@ -511,16 +518,16 @@ describe("CLI4: sessions reset-lcd --memory not-implemented warning (Phase 164-0
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset-lcd", "tenant1:user1:chan1",
+      "sessions", "reset", "tenant1:user1:chan1",
       "--yes",
       "--memory",
     ]);
 
-    // stderr must contain the ⚠ warning about not-implemented
+    // stderr must contain the warning about not-implemented
     const stderrOutput = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
     expect(stderrOutput).toMatch(/not yet implemented|RAG memory was NOT cleared/i);
 
-    // stdout must NOT contain a "RAG memories cleared" line (it wasn't cleared)
+    // stdout must NOT contain a "RAG memories cleared" line
     const stdoutOutput = consoleSpy.log.mock.calls.map((c) => c.join(" ")).join("\n");
     expect(stdoutOutput).not.toMatch(/RAG memories cleared/i);
   });
@@ -528,7 +535,7 @@ describe("CLI4: sessions reset-lcd --memory not-implemented warning (Phase 164-0
   it("CLI4b: --memory + memoriesDeleted defined → RAG line printed to stdout, no stderr warning", async () => {
     vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
       const mockClient = {
-        call: vi.fn().mockResolvedValue({ ...RESET_LCD_RESPONSE, memoriesDeleted: 3 }),
+        call: vi.fn().mockResolvedValue({ ...RESET_CONVERSATION_RESPONSE, memoriesDeleted: 3 }),
         close: vi.fn(),
         onNotification: vi.fn(),
       };
@@ -539,7 +546,7 @@ describe("CLI4: sessions reset-lcd --memory not-implemented warning (Phase 164-0
     registerSessionsCommand(program);
     await program.parseAsync([
       "node", "test",
-      "sessions", "reset-lcd", "tenant1:user1:chan1",
+      "sessions", "reset", "tenant1:user1:chan1",
       "--yes",
       "--memory",
     ]);

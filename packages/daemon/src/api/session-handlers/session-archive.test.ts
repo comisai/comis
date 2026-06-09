@@ -4,15 +4,23 @@
  *   - session.delete (admin-gated, transcript archive)
  *   - session.reset (message clear, metadata preserved)
  *   - session.export (admin-gated, full payload dump)
- *   - context.reset_lcd (admin-gated, LCD history clear — RR4 / Phase 164-03)
+ *   - session.reset_conversation (admin-gated, COMPLETE cross-mode forget — Phase 164-06)
+ *     Replaces the Phase 164-03 context.reset_lcd which was LCD-only.
  *
- * Tests for context.reset_lcd cover:
- *   H1: non-admin caller is rejected (T-164-reset-authz defense-in-depth)
+ * Tests for session.reset_conversation cover:
+ *   H1: non-admin caller is rejected (defense-in-depth)
+ *   H1b: caller with no _trustLevel is also rejected
  *   H2: missing session_key is rejected
- *   H3: absent deps.lcdStore fails-closed with explicit error (T-164-09)
- *   H4: happy path — mock lcdStore returns 5, handler returns { sessionKey, lcdRowsDeleted: 5 }
- *   H5: --memory flag accepted; memoriesDeleted OMITTED (not-implemented); WARN logged (Phase 164-05 honest-defer)
- *   H5b: --memory omitted; memoriesDeleted is also OMITTED (only returned when RAG clear succeeds)
+ *   H3: absent deps.lcdStore fails-closed with explicit error
+ *   H4: dag case — sessionStore populated + LCD populated → both cleared, counts returned
+ *   H4b: deleteConversationLcd is called inside runOnConversation (scope threaded correctly)
+ *   H4c: sessionStore saveByFormattedKey called with empty messages ([] + original metadata)
+ *   H5: pipeline case — sessionStore populated, LCD returns 0 (no LCD rows) → session cleared, lcdRowsDeleted:0, no throw
+ *   H6: absent session case — LCD rows exist, no session in store → LCD cleared, sessionMessagesCleared:0, no throw
+ *   H7: --memory flag accepted; memoriesDeleted OMITTED (not-implemented); WARN logged
+ *   H7b: --memory omitted; memoriesDeleted is OMITTED
+ *   H8: approvalGate.clearApprovalCache called with sessionKey after both clears
+ *   H9: response includes both lcdRowsDeleted and sessionMessagesCleared
  *
  * @module
  */
@@ -96,16 +104,18 @@ function makeDeps(overrides: Partial<SessionHandlerDeps> = {}): SessionHandlerDe
 }
 
 // ---------------------------------------------------------------------------
-// context.reset_lcd tests (Phase 164-03, RR4)
+// session.reset_conversation tests (Phase 164-06)
+// Complete cross-mode forget: clears BOTH LCD store AND daemon sessionStore.
+// Replaces the Phase 164-03 context.reset_lcd (LCD-only) handler.
 // ---------------------------------------------------------------------------
 
-describe("context.reset_lcd handler", () => {
-  it("H1: non-admin caller is rejected with an 'Admin' error (T-164-reset-authz)", async () => {
+describe("session.reset_conversation handler", () => {
+  it("H1: non-admin caller is rejected with an 'Admin' error", async () => {
     const deps = makeDeps({ lcdStore: makeLcdStore() });
     const handlers = bindSessionArchiveHandlers(deps);
 
     await expect(
-      handlers["context.reset_lcd"]!({
+      handlers["session.reset_conversation"]!({
         session_key: SESSION_KEY,
         _trustLevel: "rpc",
       }),
@@ -117,7 +127,7 @@ describe("context.reset_lcd handler", () => {
     const handlers = bindSessionArchiveHandlers(deps);
 
     await expect(
-      handlers["context.reset_lcd"]!({ session_key: SESSION_KEY }),
+      handlers["session.reset_conversation"]!({ session_key: SESSION_KEY }),
     ).rejects.toThrow(/Admin/i);
   });
 
@@ -126,43 +136,55 @@ describe("context.reset_lcd handler", () => {
     const handlers = bindSessionArchiveHandlers(deps);
 
     await expect(
-      handlers["context.reset_lcd"]!({ _trustLevel: "admin" }),
+      handlers["session.reset_conversation"]!({ _trustLevel: "admin" }),
     ).rejects.toThrow("Missing required parameter: session_key");
   });
 
-  it("H3: absent deps.lcdStore fails-closed with explicit error (T-164-09)", async () => {
+  it("H3: absent deps.lcdStore fails-closed with explicit error", async () => {
     const deps = makeDeps({ lcdStore: undefined });
     const handlers = bindSessionArchiveHandlers(deps);
 
     await expect(
-      handlers["context.reset_lcd"]!({
+      handlers["session.reset_conversation"]!({
         session_key: SESSION_KEY,
         _trustLevel: "admin",
       }),
     ).rejects.toThrow(/LCD store not available/i);
   });
 
-  it("H4: happy path — returns { sessionKey, lcdRowsDeleted: 5 }", async () => {
+  it("H4: dag case — sessionStore and LCD both populated → both cleared, counts returned", async () => {
     const lcdStore = makeLcdStore(5);
-    const deps = makeDeps({ lcdStore });
+    // sessionStore has 3 messages
+    const sessionStore = {
+      ...makeSessionStore(),
+      loadByFormattedKey: vi.fn().mockReturnValue({
+        messages: [{ role: "user", content: "msg1" }, { role: "assistant", content: "msg2" }, { role: "user", content: "msg3" }],
+        metadata: { someKey: "someVal" },
+        createdAt: 1000,
+        updatedAt: 2000,
+      }),
+      saveByFormattedKey: vi.fn(),
+    };
+    const deps = makeDeps({ lcdStore, sessionStore });
     const handlers = bindSessionArchiveHandlers(deps);
 
-    const result = (await handlers["context.reset_lcd"]!({
+    const result = (await handlers["session.reset_conversation"]!({
       session_key: SESSION_KEY,
       _trustLevel: "admin",
-    })) as { sessionKey: string; lcdRowsDeleted: number };
+    })) as { sessionKey: string; lcdRowsDeleted: number; sessionMessagesCleared: number };
 
     expect(result.sessionKey).toBe(SESSION_KEY);
     expect(result.lcdRowsDeleted).toBe(5);
+    expect(result.sessionMessagesCleared).toBe(3);
     expect(lcdStore.deleteConversationLcd).toHaveBeenCalledTimes(1);
   });
 
-  it("H4b: deleteConversationLcd is called inside runOnConversation (scope threaded correctly)", async () => {
+  it("H4b: deleteConversationLcd called inside runOnConversation (scope threaded correctly)", async () => {
     const lcdStore = makeLcdStore(5);
     const deps = makeDeps({ lcdStore });
     const handlers = bindSessionArchiveHandlers(deps);
 
-    await handlers["context.reset_lcd"]!({
+    await handlers["session.reset_conversation"]!({
       session_key: SESSION_KEY,
       _trustLevel: "admin",
     });
@@ -170,7 +192,6 @@ describe("context.reset_lcd handler", () => {
     // runOnConversation MUST have been called (single-flight guard)
     expect(lcdStore.runOnConversation).toHaveBeenCalledTimes(1);
     // The scope passed to deleteConversationLcd must contain all three columns
-    // (T-164-reset-scope: cross-tenant/cross-agent isolation)
     const deleteArgs = (lcdStore.deleteConversationLcd as ReturnType<typeof vi.fn>).mock.calls[0] as [{
       conversationId: string;
       agentId: string;
@@ -183,22 +204,99 @@ describe("context.reset_lcd handler", () => {
     expect(deleteArgs[0].sessionKey).toBe(SESSION_KEY);
   });
 
-  it("H5: --memory flag accepted; memoriesDeleted OMITTED (not-implemented) and WARN emitted (Phase 164-05 honest-defer)", async () => {
+  it("H4c: sessionStore.saveByFormattedKey called with empty messages preserving metadata", async () => {
+    const lcdStore = makeLcdStore(2);
+    const originalMetadata = { someKey: "someVal", agentId: "default" };
+    const sessionStore = {
+      ...makeSessionStore(),
+      loadByFormattedKey: vi.fn().mockReturnValue({
+        messages: [{ role: "user", content: "hi" }],
+        metadata: originalMetadata,
+        createdAt: 1000,
+        updatedAt: 2000,
+      }),
+      saveByFormattedKey: vi.fn(),
+    };
+    const deps = makeDeps({ lcdStore, sessionStore });
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    });
+
+    // MUST have been called with empty messages array and original metadata
+    expect(sessionStore.saveByFormattedKey).toHaveBeenCalledTimes(1);
+    const [calledKey, calledMessages, calledMeta] =
+      (sessionStore.saveByFormattedKey as ReturnType<typeof vi.fn>).mock.calls[0] as [string, unknown[], Record<string, unknown>];
+    expect(calledKey).toBe(SESSION_KEY);
+    expect(calledMessages).toEqual([]);
+    expect(calledMeta).toEqual(originalMetadata);
+  });
+
+  it("H5: pipeline case — sessionStore populated, LCD returns 0 → session cleared, no throw", async () => {
+    // Pipeline mode: LCD is empty (lcdRowsDeleted = 0) but sessionStore has messages
+    const lcdStore = makeLcdStore(0);
+    const sessionStore = {
+      ...makeSessionStore(),
+      loadByFormattedKey: vi.fn().mockReturnValue({
+        messages: [{ role: "user", content: "pipeline msg" }],
+        metadata: { mode: "pipeline" },
+        createdAt: 1000,
+        updatedAt: 2000,
+      }),
+      saveByFormattedKey: vi.fn(),
+    };
+    const deps = makeDeps({ lcdStore, sessionStore });
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    // Must not throw even though LCD rows = 0
+    const result = (await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    })) as { sessionKey: string; lcdRowsDeleted: number; sessionMessagesCleared: number };
+
+    expect(result.lcdRowsDeleted).toBe(0);
+    expect(result.sessionMessagesCleared).toBe(1);
+    expect(sessionStore.saveByFormattedKey).toHaveBeenCalledTimes(1);
+  });
+
+  it("H6: absent session case — LCD rows exist, no session in store → LCD cleared, sessionMessagesCleared:0, no throw", async () => {
+    // dag conversation has LCD rows but no live session entry (e.g., session was deleted)
+    const lcdStore = makeLcdStore(8);
+    const sessionStore = {
+      ...makeSessionStore(),
+      loadByFormattedKey: vi.fn().mockReturnValue(undefined), // no session
+      saveByFormattedKey: vi.fn(),
+    };
+    const deps = makeDeps({ lcdStore, sessionStore });
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    // Must not throw when session is absent
+    const result = (await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    })) as { sessionKey: string; lcdRowsDeleted: number; sessionMessagesCleared: number };
+
+    expect(result.lcdRowsDeleted).toBe(8);
+    expect(result.sessionMessagesCleared).toBe(0);
+    // saveByFormattedKey must NOT have been called (no session to clear)
+    expect(sessionStore.saveByFormattedKey).not.toHaveBeenCalled();
+  });
+
+  it("H7: --memory flag accepted; memoriesDeleted OMITTED (not-implemented); WARN emitted", async () => {
     const lcdStore = makeLcdStore(5);
     const deps = makeDeps({ lcdStore });
     const handlers = bindSessionArchiveHandlers(deps);
 
-    const result = (await handlers["context.reset_lcd"]!({
+    const result = (await handlers["session.reset_conversation"]!({
       session_key: SESSION_KEY,
       memory: true,
       _trustLevel: "admin",
-    })) as { sessionKey: string; lcdRowsDeleted: number; memoriesDeleted?: number };
+    })) as { sessionKey: string; lcdRowsDeleted: number; sessionMessagesCleared: number; memoriesDeleted?: number };
 
-    // LCD rows still cleared
     expect(result.lcdRowsDeleted).toBe(5);
-    // memoriesDeleted must be OMITTED (undefined), not a misleading 0
     expect(result.memoriesDeleted).toBeUndefined();
-    // logger.warn must have been called with errorKind:"precondition" and a hint about deferral
     const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
     expect(warnCalls.length).toBeGreaterThanOrEqual(1);
     const warnArg = warnCalls[0][0] as Record<string, unknown>;
@@ -206,18 +304,57 @@ describe("context.reset_lcd handler", () => {
     expect(String(warnArg["hint"] ?? "")).toMatch(/not yet implemented|deferred/i);
   });
 
-  it("H5b: --memory omitted; memoriesDeleted is OMITTED (only set when RAG clear actually runs)", async () => {
+  it("H7b: --memory omitted; memoriesDeleted is OMITTED", async () => {
     const lcdStore = makeLcdStore(3);
     const deps = makeDeps({ lcdStore });
     const handlers = bindSessionArchiveHandlers(deps);
 
-    const result = (await handlers["context.reset_lcd"]!({
+    const result = (await handlers["session.reset_conversation"]!({
       session_key: SESSION_KEY,
       _trustLevel: "admin",
-    })) as { sessionKey: string; lcdRowsDeleted: number; memoriesDeleted?: number };
+    })) as { sessionKey: string; lcdRowsDeleted: number; sessionMessagesCleared: number; memoriesDeleted?: number };
 
     expect(result.lcdRowsDeleted).toBe(3);
-    // memoriesDeleted should be omitted when --memory is not passed
     expect(result.memoriesDeleted).toBeUndefined();
+  });
+
+  it("H8: approvalGate.clearApprovalCache called with sessionKey after both clears", async () => {
+    const lcdStore = makeLcdStore(2);
+    const approvalGate = { clearApprovalCache: vi.fn() };
+    const deps = makeDeps({ lcdStore, approvalGate } as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    });
+
+    expect(approvalGate.clearApprovalCache).toHaveBeenCalledTimes(1);
+    expect(approvalGate.clearApprovalCache).toHaveBeenCalledWith(SESSION_KEY);
+  });
+
+  it("H9: response includes both lcdRowsDeleted and sessionMessagesCleared", async () => {
+    const lcdStore = makeLcdStore(7);
+    const sessionStore = {
+      ...makeSessionStore(),
+      loadByFormattedKey: vi.fn().mockReturnValue({
+        messages: [{ role: "user", content: "a" }, { role: "assistant", content: "b" }],
+        metadata: {},
+        createdAt: 0,
+        updatedAt: 0,
+      }),
+      saveByFormattedKey: vi.fn(),
+    };
+    const deps = makeDeps({ lcdStore, sessionStore });
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    const result = (await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    })) as Record<string, unknown>;
+
+    expect(result["lcdRowsDeleted"]).toBe(7);
+    expect(result["sessionMessagesCleared"]).toBe(2);
+    expect(result["sessionKey"]).toBe(SESSION_KEY);
   });
 });
