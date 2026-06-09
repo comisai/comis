@@ -1920,13 +1920,16 @@ describe("CWF-05: degraded-reply wiring", () => {
 
   it("WR-02 (Phase 169): effectiveFinishReason derivation appears BEFORE bookend log", () => {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
-    // The bookend log is identified by the "Execution complete" message.
-    const bookendPos = src.indexOf('"Execution complete"');
+    // The bookend log is identified by the deps.logger.info call with "Execution complete".
+    // Use the call-site marker (the deps.logger.info invocation) rather than the string
+    // literal, since "Execution complete" also appears in a comment at line ~229 which
+    // would give a false earlier position via indexOf.
+    const bookendLogCallPos = src.indexOf('"Execution complete",');
     // effectiveFinishReason must be declared (const effectiveFinishReason =) before the bookend.
     const firstDeclarationPos = src.indexOf("const effectiveFinishReason =");
-    expect(bookendPos).toBeGreaterThan(-1);
+    expect(bookendLogCallPos).toBeGreaterThan(-1);
     expect(firstDeclarationPos).toBeGreaterThan(-1);
-    expect(firstDeclarationPos).toBeLessThan(bookendPos);
+    expect(firstDeclarationPos).toBeLessThan(bookendLogCallPos);
   });
 
   // ---------------------------------------------------------------------------
