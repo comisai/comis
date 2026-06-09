@@ -8,6 +8,11 @@ import {
   TypedEventBus,
 } from "@comis/core";
 import { createNodeTypeRegistry } from "./node-type-registry.js";
+// v2.19: the graph-timeout makespan floor raises a too-low requested timeout to at
+// least the DAG's critical-path makespan (graph-timeout-floor.ts). Graphs whose
+// nodes carry no explicit timeout floor at DEFAULT_NODE_TIMEOUT_MS per wave, so the
+// timeout-mechanism tests below advance PAST that floor to trip the graph timer.
+import { DEFAULT_NODE_TIMEOUT_MS } from "./graph-timeout-floor.js";
 import { handleGraphCompletion } from "./graph-completion.js";
 import type { CoordinatorSharedState, GraphRunState } from "./graph-coordinator-state.js";
 
@@ -562,8 +567,10 @@ describe("createGraphCoordinator", () => {
       const runIdA = runner._getSpawnCalls()[0]!._runId as string;
       const runIdB = runner._getSpawnCalls()[1]!._runId as string;
 
-      // Advance time past graph timeout
-      vi.advanceTimersByTime(100);
+      // Advance past the FLOORED graph timeout (nodes carry no timeout → floor =
+      // DEFAULT_NODE_TIMEOUT_MS; they have no node-level timer, so only the graph
+      // timer fires here and cancels the still-running nodes).
+      vi.advanceTimersByTime(DEFAULT_NODE_TIMEOUT_MS + 100);
 
       // Verify killRun called for both
       expect(runner._getKillCalls()).toContain(runIdA);
@@ -1323,8 +1330,8 @@ describe("createGraphCoordinator", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
 
-      // Advance past timeout
-      vi.advanceTimersByTime(100);
+      // Advance past the floored graph timeout (see DEFAULT_NODE_TIMEOUT_MS note above).
+      vi.advanceTimersByTime(DEFAULT_NODE_TIMEOUT_MS + 100);
 
       expect(completedEvents).toHaveLength(1);
       const completed = completedEvents[0]!;
@@ -1712,8 +1719,8 @@ describe("createGraphCoordinator", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
 
-      // Advance past timeout
-      vi.advanceTimersByTime(200);
+      // Advance past the floored graph timeout (see DEFAULT_NODE_TIMEOUT_MS note above).
+      vi.advanceTimersByTime(DEFAULT_NODE_TIMEOUT_MS + 100);
 
       expect(completedEvents).toHaveLength(1);
       expect(completedEvents[0]!.cancelReason).toBe("timeout");

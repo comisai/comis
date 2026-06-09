@@ -35,6 +35,7 @@ import {
   handleGraphTimeout as handleGraphTimeoutFn,
 } from "./graph-completion.js";
 import { clearAllTimers, sweepExpiredGraphs } from "./graph-cleanup.js";
+import { computeGraphTimeoutFloorMs } from "./graph-timeout-floor.js";
 
 export type { GraphCoordinatorDeps, GraphRunState, CoordinatorSharedState, CoordinatorConfig } from "./graph-coordinator-state.js";
 import type {
@@ -269,8 +270,42 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       "Graph run assigned traceId for sub-agent correlation",
     );
 
-    if (params.graph.graph.timeoutMs !== undefined && params.graph.graph.timeoutMs > 0) {
-      gs.graphTimer = systemSetTimeout(() => handleGraphTimeoutFn(state, deps, gs), params.graph.graph.timeoutMs);
+    // v2.19: enforce a makespan floor on the graph timeout. A weak model routinely
+    // sets it too low for the DAG it just decomposed — observed live: a 6-node NVDA
+    // pipeline given 10 min, where the 4 analysts (small-model concurrency = 2)
+    // consumed the whole budget and the debate + head-trader were starved. The floor
+    // is the critical-path makespan if every node ran to its timeout, accounting for
+    // concurrency waves. max(requested, floor) lets the model decompose freely but
+    // never starve later phases. See graph-timeout-floor.ts. `gs.graph === params.graph`
+    // (state init), so updating timeoutMs keeps the completion-path timeout report accurate.
+    // Only RAISE an existing positive timeout — never invent one. A graph with no
+    // timeout (timeoutMs undefined/0) keeps the original "no graph-level timer, rely
+    // on node timeouts" behavior. In production the schema default (1.5M = 25 min) is
+    // always present, so the floor is max(1.5M, makespan) and never shortens anything.
+    const requestedGraphTimeoutMs = params.graph.graph.timeoutMs ?? 0;
+    if (requestedGraphTimeoutMs > 0) {
+      const graphTimeoutFloorMs = computeGraphTimeoutFloorMs(
+        params.graph.graph.nodes,
+        deps.maxConcurrency ?? 4,
+      );
+      const effectiveGraphTimeoutMs = Math.max(requestedGraphTimeoutMs, graphTimeoutFloorMs);
+      if (effectiveGraphTimeoutMs > requestedGraphTimeoutMs) {
+        deps.logger?.warn(
+          {
+            graphId,
+            requestedTimeoutMs: requestedGraphTimeoutMs,
+            effectiveTimeoutMs: effectiveGraphTimeoutMs,
+            timeoutFloorMs: graphTimeoutFloorMs,
+            nodeCount: params.graph.graph.nodes.length,
+            maxConcurrency: deps.maxConcurrency ?? 4,
+            hint: "graph timeout raised to the DAG makespan floor so later phases (debate/head-trader) are not starved by earlier ones",
+            errorKind: "config" as const,
+          },
+          "Graph timeout raised to makespan floor",
+        );
+        params.graph.graph.timeoutMs = effectiveGraphTimeoutMs;
+      }
+      gs.graphTimer = systemSetTimeout(() => handleGraphTimeoutFn(state, deps, gs), effectiveGraphTimeoutMs);
       if (typeof gs.graphTimer === "object" && "unref" in gs.graphTimer) {
         gs.graphTimer.unref();
       }
