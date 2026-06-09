@@ -18,7 +18,7 @@
  * @module
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 // Parity assertion: both copies of KEYLESS_CRITIC_PROVIDERS must be identical.
 // scaffold-defaults.ts keeps its own Set to avoid circular imports; verification-gate.ts
@@ -26,6 +26,11 @@ import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { KEYLESS_CRITIC_PROVIDERS as gateProviders } from "./verification-gate.js";
 import { resolveModelProfile } from "./model-profile.js";
 import type { PerAgentConfig, OperationModels } from "@comis/core";
+import { applyToolDeferral } from "./tool-deferral.js";
+import type { DeferralContext } from "./tool-deferral.js";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createDiscoveryTracker } from "./discovery-tracker.js";
+import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
 // Profile fixtures — use capabilityClassOverride so tests do not depend on
@@ -371,5 +376,86 @@ describe("KEYLESS_CRITIC_PROVIDERS cross-file parity (Plan 02)", () => {
     };
     const cloudResult = resolveScaffoldDefaults(smallProfile, emptyConfig, cloudCtx);
     expect(cloudResult.verificationEnabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CWF-04: resolveScaffoldDefaults → ceiling → applyToolDeferral E2E chain
+//
+// Phase-0 static determination (2026-06-09): WIRING-OK — the ceiling and compact-prompt
+// ARE correctly wired in current source (post-Phase 165). The live incident's
+// activeToolCount: 83 was stale-dist, not a code gate. Phase 168 scope = regression
+// test (this file) + orchestration-reachability change (tool-deferral.ts).
+// No tool-path threading fix needed.
+//
+// CWF-04-E (compact-prompt binding): small profile → resolvePromptModeForProfile
+// returns 'compact-secure'. This is locked by the existing WR-03 suite at
+// prompt-assembly.test.ts:2159. Confirm it stays GREEN after the GREEN commit.
+// ---------------------------------------------------------------------------
+
+describe("CWF-04: resolveScaffoldDefaults→ceiling→applyToolDeferral E2E chain (small + 83 tools)", () => {
+  function makeTool(name: string): ToolDefinition {
+    return {
+      name,
+      description: "x".repeat(50),
+      parameters: {
+        type: "object" as const,
+        properties: {
+          input: { type: "string" as const, description: "y".repeat(10) },
+        },
+      },
+      execute: vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "ok" }],
+        isError: false,
+      }),
+    } as unknown as ToolDefinition;
+  }
+
+  it("CWF-04-A: small profile → resolveScaffoldDefaults returns activeToolCeiling=24 (chain entry lock)", () => {
+    const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
+    expect(result.activeToolCeiling).toBe(24);
+  });
+
+  it("CWF-04: small + 83 tools → active ≤ 24 AND pipeline in active set (E2E chain — RED: pipeline deferred today)", () => {
+    // RED test: fails today because pipeline is currently deferred by the ceiling.
+    // GREEN: SMALL_CLASS_ORCHESTRATION_TOOLS exempts pipeline inside the ceiling block.
+    //
+    // This integrates resolveScaffoldDefaults → applyToolDeferral end-to-end.
+    // No existing test covers this full chain — this is the regression lock.
+    const logger = createMockLogger();
+    const defaults = resolveScaffoldDefaults(smallProfile, emptyConfig);
+    expect(defaults.activeToolCeiling).toBe(24); // confirm chain entry
+
+    const coreToolNames = [
+      "read", "edit", "write", "grep", "find", "ls", "apply_patch",
+      "exec", "process",
+      "message",
+      "memory_search", "memory_store", "memory_get",
+      "web_search", "web_fetch",
+    ];
+    const tools: ToolDefinition[] = [
+      ...coreToolNames.map(n => makeTool(n)),
+      makeTool("pipeline"),
+      ...Array.from({ length: 67 }, (_, i) => makeTool(`cold_tool_${i}`)),
+    ];
+    expect(tools.length).toBe(83);
+
+    const ctx: DeferralContext = {
+      trustLevel: "admin",
+      channelType: undefined,
+      capabilityClass: "small",
+      recentlyUsedToolNames: new Set(),
+      toolNames: tools.map(t => t.name),
+      discoveryTracker: createDiscoveryTracker(),
+      providerFamily: "anthropic",
+      activeToolCeiling: defaults.activeToolCeiling, // = 24 from resolveScaffoldDefaults
+    };
+
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+
+    // Ceiling holds
+    expect(result.activeTools.length).toBeLessThanOrEqual(24);
+    // KEY ASSERTION (RED → GREEN): pipeline must be in the active set for small
+    expect(result.activeTools.map(t => t.name)).toContain("pipeline");
   });
 });
