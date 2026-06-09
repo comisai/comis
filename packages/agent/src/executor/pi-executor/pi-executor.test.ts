@@ -6509,3 +6509,43 @@ describe("capabilityClassOverride from providerCapabilities (Q3)", () => {
     expect(profile.scaffoldLevel).toBe("standard");
   });
 });
+
+// ---------------------------------------------------------------------------
+// CWF-03-H: Non-keyless (anthropic) characterization — effectiveWindow unchanged
+// ---------------------------------------------------------------------------
+// Verifies that DEFAULT_EFFECTIVE_CAP_BY_CLASS is exported from budget-capacity-cap.ts
+// and that for anthropic (frontier, cap=Infinity, no servedContextWindow), the
+// resolveEffectiveContextWindow pure function returns the configured window exactly.
+// This is a wiring-correctness characterization: if the import fails or the cap table
+// is wrong, the test fails and blocks the pi-executor reconcile wiring.
+
+describe("CWF-03-H: anthropic provider — effectiveWindow byte-identical to configured", () => {
+  it("DEFAULT_EFFECTIVE_CAP_BY_CLASS exported from budget-capacity-cap (precondition for pi-executor wiring)", async () => {
+    // This dynamic import FAILS before the export is added → RED gate.
+    const mod = await import("../../context-engine/budget-capacity-cap.js");
+    expect(typeof (mod as Record<string, unknown>).DEFAULT_EFFECTIVE_CAP_BY_CLASS).toBe("object");
+  });
+
+  it("frontier cap is Infinity (anthropic → no capability constraint)", async () => {
+    const mod = await import("../../context-engine/budget-capacity-cap.js");
+    const cap = (mod as Record<string, unknown>).DEFAULT_EFFECTIVE_CAP_BY_CLASS as Record<string, number>;
+    expect(cap["frontier"]).toBe(Infinity);
+  });
+
+  it("resolveEffectiveContextWindow: anthropic no served → effectiveWindow=200000, source='configured' (CWF-03-H exact-pin)", async () => {
+    const { resolveEffectiveContextWindow } = await import("../model/effective-context-window.js");
+    const mod = await import("../../context-engine/budget-capacity-cap.js");
+    const cap = (mod as Record<string, unknown>).DEFAULT_EFFECTIVE_CAP_BY_CLASS as Record<string, number>;
+
+    // Anthropic: frontier cap = Infinity; no servedContextWindow (undefined)
+    const result = resolveEffectiveContextWindow({
+      configured: 200_000,
+      served: undefined,
+      capabilityCap: cap["frontier"] ?? Infinity,
+    });
+
+    // EXACT-PIN: effectiveWindow must equal the configured value (no probe, no cap constraint)
+    expect(result.effectiveWindow).toBe(200_000);
+    expect(result.source).toBe("configured");
+  });
+});
