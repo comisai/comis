@@ -57,6 +57,11 @@ const FAKE_REPORT = {
   schemaVersion: 1 as const,
   windowHours: 12,
   sessions: { total: 40, degraded: 22, degradedRate: 0.55 },
+  // QT2/QT3 — the fleet degradation detector. Required on FleetHealthReportSchema
+  // (the real callTyped parses the response), so every fixture must carry it.
+  // Intentionally NOT pre-sorted (output_starved < context_exhausted by count) so
+  // the render test proves the renderer sorts count-desc, not insertion-order.
+  degradedByCause: { output_starved: 9, context_exhausted: 13 },
   topErrorKinds: [{ kind: "dependency", count: 18 }],
   breakerTripTotal: 3,
   toolStats: { web_fetch: { ok: 2, failed: 8 } },
@@ -332,6 +337,63 @@ describe("comis fleet table view does not render a misleading '$X · 0 tok' line
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("735800 tok");
     expect(output.toLowerCase()).not.toContain("tokens unavailable");
+  });
+});
+
+describe("comis fleet table view renders the degraded-by-cause breakdown (QT2/QT3) and omits it when empty", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("renders 'Degraded by cause:' sorted count-desc (then name-asc) when degradedByCause is non-empty", async () => {
+    // FAKE_REPORT.degradedByCause is { output_starved: 9, context_exhausted: 13 }
+    // — insertion order puts output_starved first, but the render must sort by
+    // count DESC so context_exhausted (13) leads. Pre-fix the renderer emitted no
+    // degraded-by-cause line at all, so this FAILS on the pre-patch code (RED).
+    const { client } = captureClient();
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerFleetCommand(program);
+    await program.parseAsync(["node", "test", "fleet"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Degraded by cause:");
+    // Count-desc ordering: context_exhausted (13) before output_starved (9).
+    expect(output).toContain("Degraded by cause: context_exhausted=13, output_starved=9");
+    // Closed-set labels + capped counts only — no raw bodies (bounded-payload).
+    expect(output).not.toContain("undefined");
+  });
+
+  it("OMITS the 'Degraded by cause' line entirely when degradedByCause is {} (no spurious empty line)", async () => {
+    // An all-clean window (or no named causes) → degradedByCause: {}. The render
+    // must drop the line, not print "Degraded by cause: " with an empty list.
+    const cleanReport = { ...FAKE_REPORT, degradedByCause: {} };
+    const client: RpcClient = {
+      call: () => Promise.resolve(cleanReport),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerFleetCommand(program);
+    await program.parseAsync(["node", "test", "fleet"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    // Sanity: the table still rendered (so the omission is the cause, not a crash).
+    expect(output).toContain("Sessions");
+    expect(output).not.toContain("Degraded by cause");
   });
 });
 
