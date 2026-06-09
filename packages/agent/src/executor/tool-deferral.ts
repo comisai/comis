@@ -195,6 +195,9 @@ export const CORE_TOOLS = new Set([
  *
  * Extend only when O2 DAG templates demand it (future milestone); never add all four
  * orchestration primitives — each extra schema fights the ceiling this fix pursues.
+ *
+ * Exported for test access (mirrors the `CORE_TOOLS` convention); no non-test external
+ * caller currently consumes this constant.
  */
 export const SMALL_CLASS_ORCHESTRATION_TOOLS = new Set(["pipeline"]);
 
