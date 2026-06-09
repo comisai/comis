@@ -269,6 +269,9 @@ export interface PiExecutorDeps {
   storeCompletions?: boolean;
   /** Provider capabilities resolved from config. Consumer: resolveProviderCapabilities(). */
   providerCapabilities?: import("@comis/core").ProviderCapabilities;
+  /** Discovered Ollama served num_ctx from the boot-time capacity probe.
+   *  undefined = not probed (non-Ollama provider or probe failed — falls back to configured). */
+  servedContextWindow?: number;
   /** Optional Gemini CachedContent lifecycle manager for explicit cache reuse. */
   geminiCacheManager?: GeminiCacheManager;
   /** Resolve platform message character limit for a channel type.

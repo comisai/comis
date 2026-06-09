@@ -102,6 +102,8 @@ import { normalizeModelCompat } from "../../provider/model-compat.js";
 import { normalizeModelId } from "../../provider/model-id-normalize.js";
 import { resolveModelProfile } from "../model-profile.js";
 import type { ModelProfile } from "../model-profile.js";
+import { resolveEffectiveContextWindow } from "../../model/effective-context-window.js";
+import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capacity-cap.js";
 import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
 import { validateRoleAttribution } from "../../context-engine/index.js";
@@ -326,8 +328,33 @@ export function createPiExecutor(
       // When set, this overrides the provider-family heuristic (ollama → "small" etc.)
       // and lets operators pin a specific capabilityClass in config (e.g., to treat a
       // large quantized ollama model as "mid" for context budget + security purposes).
+
+      // CWF-03: Reconcile effective context window before resolveModelProfile.
+      // capabilityCap is derived from deps.providerCapabilities?.capabilityClass (pre-resolver,
+      // config-side value) — NOT from modelProfile.capabilityClass, which does not exist yet
+      // (resolveModelProfile is what creates it). Using modelProfile here would be circular.
+      const capabilityCap =
+        DEFAULT_EFFECTIVE_CAP_BY_CLASS[deps.providerCapabilities?.capabilityClass ?? "nano"] ?? 32_000;
+      const effectiveContextWindowResult = resolveEffectiveContextWindow({
+        configured: resolvedModel?.contextWindow ?? 8_192,
+        served: deps.servedContextWindow,
+        capabilityCap,
+      });
+      if (effectiveContextWindowResult.source !== "configured") {
+        deps.logger.debug({
+          source: effectiveContextWindowResult.source,
+          effectiveWindow: effectiveContextWindowResult.effectiveWindow,
+          configured: resolvedModel?.contextWindow,
+          served: deps.servedContextWindow,
+          capabilityCap,
+          module: "pi-executor",
+          submodule: "context-window-reconcile",
+        }, "Context window reconciled (served or capability cap bound)");
+      }
       const modelProfile = resolveModelProfile(
-        resolvedModel ?? undefined,
+        resolvedModel
+          ? { ...resolvedModel, contextWindow: effectiveContextWindowResult.effectiveWindow }
+          : undefined,
         deps.providerCapabilities?.capabilityClass,
       );
 

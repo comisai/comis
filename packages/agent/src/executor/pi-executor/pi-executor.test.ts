@@ -6533,7 +6533,7 @@ describe("CWF-03-H: anthropic provider — effectiveWindow byte-identical to con
   });
 
   it("resolveEffectiveContextWindow: anthropic no served → effectiveWindow=200000, source='configured' (CWF-03-H exact-pin)", async () => {
-    const { resolveEffectiveContextWindow } = await import("../model/effective-context-window.js");
+    const { resolveEffectiveContextWindow } = await import("../../model/effective-context-window.js");
     const mod = await import("../../context-engine/budget-capacity-cap.js");
     const cap = (mod as Record<string, unknown>).DEFAULT_EFFECTIVE_CAP_BY_CLASS as Record<string, number>;
 
