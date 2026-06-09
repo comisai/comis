@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:63–100`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 14 (11 required + 3 optional + 0 stale-fallback)
+**Field count:** 16 (11 required + 5 optional + 0 stale-fallback)
 **Location:** co-located with @comis/daemon package. The `files: ["dist", "bundled-skills"]` entry in `packages/daemon/package.json` excludes this doc from the npm tarball.
 
 ## Field Classification
@@ -28,15 +28,16 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | approvalGate | optional | session.delete / session.reset skip approval-cache clearing (`session-handlers.ts:899` `deps.approvalGate?.clearApprovalCache`); no-op when absent | packages/daemon/src/api/types.ts:98 |
 | summarizeSession | optional | session.search returns raw matches without an LLM-summary (`session-handlers.ts:498` gate); only fires when both `shouldSummarize` and the dep are truthy | packages/daemon/src/api/types.ts:100 |
 | deliveryQueue | optional | session.history skips the deliveryStatus join (`session-read.ts` `loadPendingKeySet`); every message reported as `confirmed` when absent (no channel queue == nothing pending to mark) | packages/daemon/src/api/types.ts:102 |
+| lcdStore | optional | session.reset_conversation is the only consumer; it fails CLOSED when absent (`session-archive.ts:135` `if (!deps.lcdStore) throw "LCD store not available"`) rather than silently returning 0 — absent only before full daemon init (Phase 164-06) | packages/daemon/src/api/types.ts:109 |
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field has a verified production absent-mode code path: `agentDataDir` gates the JSONL session scan, `approvalGate` gates approval-cache clearing on session.delete/reset, `summarizeSession` gates the LLM summarization branch of session.search, `deliveryQueue` gates the deliveryStatus join. Daemon wires all four unconditionally in `buildRpcDispatchDeps` when their upstream prerequisites exist; tests omit them to exercise the absent-branch paths.
+**None.** Every optional field has a verified production absent-mode code path: `agentDataDir` gates the JSONL session scan, `approvalGate` gates approval-cache clearing on session.delete/reset, `summarizeSession` gates the LLM summarization branch of session.search, `deliveryQueue` gates the deliveryStatus join, `lcdStore` gates session.reset_conversation (fail-closed throw when absent). Daemon wires them unconditionally in `buildRpcDispatchDeps` when their upstream prerequisites exist; tests omit them to exercise the absent-branch paths.
 
 ## Summary
 
-- **Pre-audit count:** 15
-- **Final count:** 15 (11 required + 4 optional)
+- **Pre-audit count:** 16
+- **Final count:** 16 (11 required + 5 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

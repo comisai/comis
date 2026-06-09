@@ -20,6 +20,7 @@ import {
   SessionExportContract,
   SessionResetConversationContract,
   stripInternalFields,
+  systemNowMs,
 } from "@comis/core";
 import type { ContextStoreScope } from "@comis/core";
 import type { RpcHandler } from "../types.js";
@@ -137,7 +138,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       const userParams = stripInternalFields(rawParams);
       SessionResetConversationContract.request.parse(userParams);
 
-      const startMs = Date.now();
+      const startMs = systemNowMs();
 
       // Scope derived from trusted daemon context (never from user params).
       const scope: ContextStoreScope = {
@@ -177,7 +178,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
           tenantId: scope.tenantId,
           lcdRowsDeleted,
           sessionMessagesCleared,
-          durationMs: Date.now() - startMs,
+          durationMs: systemNowMs() - startMs,
           submodule: "session-reset-conversation",
         },
         "Conversation reset (LCD + sessionStore)",
@@ -192,7 +193,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
             method: SessionResetConversationContract.method,
             conversationId: scope.conversationId,
             submodule: "session-reset-conversation",
-            errorKind: "precondition",
+            errorKind: "precondition" as const,
             hint: "RAG-memory clearing (--memory) is not yet implemented; cleared LCD history and sessionStore only — see Phase 164 deferred follow-up",
           },
           "--memory requested but RAG-memory clear is not yet implemented — LCD + sessionStore cleared only",

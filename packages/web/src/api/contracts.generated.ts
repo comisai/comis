@@ -9590,6 +9590,51 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "admin"
     ]
   },
+  "session.reset_conversation": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "session_key": {
+          "type": "string"
+        },
+        "memory": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "session_key"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionKey": {
+          "type": "string"
+        },
+        "lcdRowsDeleted": {
+          "type": "number"
+        },
+        "sessionMessagesCleared": {
+          "type": "number"
+        },
+        "memoriesDeleted": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "sessionKey",
+        "lcdRowsDeleted",
+        "sessionMessagesCleared"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "session.run_status": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

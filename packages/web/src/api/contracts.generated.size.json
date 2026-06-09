@@ -1,8 +1,8 @@
 {
-  "totalMinified": 120652,
-  "totalGzipped": 11608,
+  "totalMinified": 121205,
+  "totalGzipped": 11665,
   "budget": {
-    "minified": 121000,
+    "minified": 122000,
     "gzipped": 38912
   },
   "overBudget": false,
@@ -178,6 +178,7 @@
     "session.history": 1449,
     "session.list": 834,
     "session.reset": 464,
+    "session.reset_conversation": 536,
     "session.run_status": 816,
     "session.search": 361,
     "session.send": 458,
