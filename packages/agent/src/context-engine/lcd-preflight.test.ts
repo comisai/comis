@@ -55,6 +55,70 @@ function makeBudgetItems(count: number, tokensEach: number): BudgetItem[] {
 }
 
 // ---------------------------------------------------------------------------
+// OF-01 (v2.19): the pre-flight must count the FULL SDK prompt (system + tools)
+//
+// Live qwen3.6 re-measure: systemTokens=25584 (the dominant term) was OMITTED
+// from the fit-check, so a real ~31.5K prompt looked like ~6.5K, passed the
+// check, and the model truncated silently at stopReason:length — the governor /
+// clamp / context-exhausted ladder never engaged. These tests reproduce that:
+// with S counted, the check fires (governor down-shift, or loud context_exhausted)
+// instead of a silent pass. See design/small-model-orchestration-fidelity.md §6 Fix 1.
+// ---------------------------------------------------------------------------
+describe("OF-01: pre-flight counts systemTokens in the assembled-input fit check", () => {
+  it("engages the thinking governor when system+history exceeds the headroom bound (was: silent pass)", () => {
+    // Live turn: S=25584, effectiveWindow=32000, native/high → headroom 8960, bound 23040.
+    // Pre-patch: assembledInput = history(200) only → 200 < 23040 → check never fires (silent).
+    // Post-patch: S(25584)+200 = 25784 > 23040 → governor fires; at medium (bound 28160) it fits.
+    const onThinkingDownshifted = vi.fn();
+    const onAssembledInputTokens = vi.fn();
+    const deps = makeDeps({
+      getThinkingLevel: () => "high",
+      getSystemTokensEstimate: () => 25_584,
+      onThinkingDownshifted,
+      onAssembledInputTokens,
+      eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
+      onEffectiveWindow: vi.fn(),
+    });
+    const evictable = makeBudgetItems(2, 100); // 200 tokens of history
+    runPreflightFitCheck(deps, 32_000, evictable, 2, [], "native");
+    expect(onThinkingDownshifted).toHaveBeenCalled();
+    // onAssembledInputTokens reports the FULL prompt incl. systemTokens (not the ~200 undercount).
+    const reported = onAssembledInputTokens.mock.calls[0]?.[0] as number;
+    expect(reported).toBeGreaterThanOrEqual(25_584);
+  });
+
+  it("throws ContextExhaustionError when system+freshTail is infeasible even at the thinking floor (live turn-4)", () => {
+    // S=25584 + a ~6000-token fresh tail (the accumulated tool results) = ~31584,
+    // which exceeds even the off-thinking bound (32000-768=31232) → loud degrade.
+    // Pre-patch: assembledInput = freshTail(6000) only → 6000 < 23040 → no throw (silent length-trunc).
+    const deps = makeDeps({
+      getThinkingLevel: () => "high",
+      getSystemTokensEstimate: () => 25_584,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      onThinkingDownshifted: vi.fn(),
+      eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
+    });
+    const freshTail = [{ role: "user", content: "x".repeat(21_000) }]; // ~6000 tokens
+    expect(() => runPreflightFitCheck(deps, 32_000, [], 0, freshTail as never, "native")).toThrow(ContextExhaustionError);
+  });
+
+  it("is byte-identical when no systemTokens estimate is supplied (frontier/test path)", () => {
+    // getSystemTokensEstimate unset → S=0 → assembledInput = history only → no fire (as before).
+    const onThinkingDownshifted = vi.fn();
+    const deps = makeDeps({
+      getThinkingLevel: () => "high",
+      onThinkingDownshifted,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+    });
+    const evictable = makeBudgetItems(2, 100); // 200 tokens, S=0 → 200 < 23040 → no fire
+    runPreflightFitCheck(deps, 32_000, evictable, 2, [], "native");
+    expect(onThinkingDownshifted).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WR-01: errorKind "resource" in WARN calls
 // ---------------------------------------------------------------------------
 
