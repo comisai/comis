@@ -460,3 +460,42 @@ describe("CWF-04: resolveScaffoldDefaults→ceiling→applyToolDeferral E2E chai
     expect(result.activeTools.map(t => t.name)).toContain("pipeline");
   });
 });
+
+// ---------------------------------------------------------------------------
+// SD (v2.19): maxToolResultChars capability-gated default
+//
+// A single tool result defaults to up to 50_000 chars (~12.5K tokens). On a
+// small model (32K window) two such results exhaust the context — the live NVDA
+// analysts hit context_exhausted at assembled ~33-35K because web_search/read
+// results were 20-35K chars each. Cap them for small/nano; frontier/mid unchanged.
+// ---------------------------------------------------------------------------
+describe("resolveScaffoldDefaults — maxToolResultChars capability default", () => {
+  it("small + unset → 12_000 char cap", () => {
+    expect(resolveScaffoldDefaults(smallProfile, emptyConfig).maxToolResultChars).toBe(12_000);
+  });
+
+  it("nano + unset → 8_000 char cap (tighter for the 16K window)", () => {
+    expect(resolveScaffoldDefaults(nanoProfile, emptyConfig).maxToolResultChars).toBe(8_000);
+  });
+
+  it("frontier + unset → undefined (consumer uses config 50_000, byte-identical)", () => {
+    expect(resolveScaffoldDefaults(frontierProfile, emptyConfig).maxToolResultChars).toBeUndefined();
+  });
+
+  it("mid + unset → undefined", () => {
+    expect(resolveScaffoldDefaults(midProfile, emptyConfig).maxToolResultChars).toBeUndefined();
+  });
+
+  it("small + explicit operator override → undefined (operator value wins via config fallback)", () => {
+    const config = { maxToolResultChars: 30_000 } as PerAgentConfig;
+    expect(resolveScaffoldDefaults(smallProfile, config).maxToolResultChars).toBeUndefined();
+  });
+
+  it("small + explicit 50_000 (the schema-default sentinel) → still capped (12_000)", () => {
+    // 50_000 is BOTH the schema default and an explicit value — like the SD6 20_000
+    // sentinel, a small model still receives the capability cap. Operators force the
+    // full value via capabilityClassOverride:"frontier".
+    const config = { maxToolResultChars: 50_000 } as PerAgentConfig;
+    expect(resolveScaffoldDefaults(smallProfile, config).maxToolResultChars).toBe(12_000);
+  });
+});

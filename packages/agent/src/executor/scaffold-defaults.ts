@@ -77,6 +77,22 @@ const SMALL_DEFAULT_ACTIVE_TOOL_CEILING = 24 as const;
  *  file — total bootstrap stays ~12.9K. A total cap of 5_000 forces proportional reduction. */
 const SMALL_NANO_DEFAULT_BOOTSTRAP_TOTAL_CHARS = 5_000 as const;
 
+/** v2.19: per-tool-result char cap for the `small` class.
+ *  The schema default (50_000 chars ≈ 12.5K tokens) lets ONE tool result eat ~40% of a
+ *  32K-token window — two exhaust it. Live, NVDA analysts hit context_exhausted at
+ *  assembled ~33-35K because web_search/read results were 20-35K chars each. 12_000 chars
+ *  (~3K tokens) lets a small model hold ~7 results in its working space; the offload
+ *  guard keeps the full content on disk so nothing is permanently lost. */
+const SMALL_DEFAULT_MAX_TOOL_RESULT_CHARS = 12_000 as const;
+
+/** v2.19: tighter per-tool-result char cap for `nano` (16K window) — ~2K tokens. */
+const NANO_DEFAULT_MAX_TOOL_RESULT_CHARS = 8_000 as const;
+
+/** The schema .default() for maxToolResultChars (50_000). Doubles as the "unset" sentinel,
+ *  exactly like BOOTSTRAP_MAX_CHARS_SENTINEL: a small model that explicitly sets 50_000 still
+ *  receives the capability cap (force the full value via capabilityClassOverride:"frontier"). */
+const MAX_TOOL_RESULT_CHARS_SENTINEL = 50_000 as const;
+
 // ---------------------------------------------------------------------------
 // Exported types
 // ---------------------------------------------------------------------------
@@ -158,6 +174,19 @@ export interface ScaffoldDefaults {
    * Applied in buildBootstrapContextFiles as an additional constraint after per-file truncation.
    */
   bootstrapTotalMaxChars: number | undefined;
+  /**
+   * v2.19: effective per-tool-result char cap (truncation threshold).
+   *
+   * small → SMALL_DEFAULT_MAX_TOOL_RESULT_CHARS (12_000).
+   * nano  → NANO_DEFAULT_MAX_TOOL_RESULT_CHARS (8_000).
+   * frontier/mid → undefined (consumer uses config.maxToolResultChars = 50_000, byte-identical).
+   * Explicit operator config.maxToolResultChars (!= 50_000 sentinel) → undefined (operator value
+   * wins via the consumer's `scaffold.maxToolResultChars ?? config.maxToolResultChars` fallback).
+   *
+   * Consumed at the tool-result-size-bouncer wiring (executor-stream-setup) so a single oversized
+   * tool result cannot blow a small model's window.
+   */
+  maxToolResultChars: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -309,5 +338,20 @@ export function resolveScaffoldDefaults(
     ? SMALL_NANO_DEFAULT_BOOTSTRAP_TOTAL_CHARS
     : undefined;
 
-  return { goalAnchorEnabled, baseFloor, verificationEnabled, criticModel, bootstrapMaxChars, activeToolCeiling, bootstrapTotalMaxChars };
+  // -------------------------------------------------------------------------
+  // v2.19: per-tool-result char cap — small/nano only, when unset (=== 50_000 sentinel).
+  // Returns a number ONLY when the scaffold wants to override; undefined means "use
+  // config.maxToolResultChars as-is" (frontier/mid, or an explicit operator value).
+  // -------------------------------------------------------------------------
+  const configuredMaxToolResultChars = config.maxToolResultChars ?? MAX_TOOL_RESULT_CHARS_SENTINEL;
+  const maxToolResultChars: number | undefined =
+    configuredMaxToolResultChars !== MAX_TOOL_RESULT_CHARS_SENTINEL
+      ? undefined                                       // explicit operator value → consumer uses config
+      : modelProfile.capabilityClass === "nano"
+        ? NANO_DEFAULT_MAX_TOOL_RESULT_CHARS
+        : modelProfile.capabilityClass === "small"
+          ? SMALL_DEFAULT_MAX_TOOL_RESULT_CHARS
+          : undefined;                                  // frontier/mid → consumer uses config (50_000)
+
+  return { goalAnchorEnabled, baseFloor, verificationEnabled, criticModel, bootstrapMaxChars, activeToolCeiling, bootstrapTotalMaxChars, maxToolResultChars };
 }

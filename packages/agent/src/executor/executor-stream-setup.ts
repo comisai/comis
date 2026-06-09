@@ -49,6 +49,7 @@ import type { TruncationSummary } from "./stream-wrappers/tool-result-size-bounc
 import type { TurnBudgetSummary } from "./stream-wrappers/turn-result-budget-wrapper.js";
 import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
 import type { CapabilityClass, ModelProfile } from "./model-profile.js";
+import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { MIN_VISIBLE_OUTPUT_TOKENS } from "../context-engine/output-headroom.js";
 import { resolveMainPathMaxOutputTokens } from "./verification-gate.js";
 import { createStubFilterInjector } from "./stream-wrappers/stub-filter-injector.js";
@@ -297,8 +298,15 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     ["file_ops", "Read specific line ranges instead of entire files"],
     ["memory_search", "Reduce limit parameter or narrow search query"],
   ]);
+  // v2.19: small/nano cap a single tool result far below the 50_000-char schema default
+  // so one oversized web_search/read result cannot blow the window (the live NVDA analysts
+  // exhausted at assembled ~33-35K from 20-35K-char results). The scaffold returns a number
+  // only when it wants to override; otherwise fall back to the operator/schema config value.
+  const effectiveMaxToolResultChars =
+    (modelProfile ? resolveScaffoldDefaults(modelProfile, config).maxToolResultChars : undefined)
+    ?? config.maxToolResultChars;
   const { wrapper: bouncerWrapper, getTruncationSummary } = createToolResultSizeBouncer(
-    config.maxToolResultChars,
+    effectiveMaxToolResultChars,
     deps.logger,
     truncationHints,
     registerTruncation,
