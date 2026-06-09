@@ -1821,6 +1821,31 @@ describe("R4 critic hook — thin wiring in executor-post-execution.ts", () => {
     expect(awaitCriticPos).toBeGreaterThan(toolFailurePos);
     expect(awaitCriticPos).toBeLessThan(sessionMetaPos);
   });
+
+  // WR-01 (Phase 169): CWF-05 guard — critic must be skipped for degraded turns.
+  // Source-grep verifies the explicit isDegradedTurn guard is present and wraps
+  // the shouldRunCritic call. This makes the guard structural (not implicit) and
+  // catches any future edits that accidentally remove it.
+  it("WR-01 (Phase 169): isDegradedTurn guard wraps shouldRunCritic call (explicit CWF-05 protection)", () => {
+    const src = strippedSource();
+    // The guard variable must be declared with both degraded reasons.
+    expect(src).toMatch(/isDegradedTurn\s*=/);
+    expect(src).toMatch(/output_starved/);
+    expect(src).toMatch(/context_exhausted/);
+    // The shouldRunCritic call must be conditioned on !isDegradedTurn.
+    expect(src).toMatch(/!isDegradedTurn.*shouldRunCritic|isDegradedTurn.*&&.*shouldRunCritic/s);
+  });
+
+  it("WR-01 (Phase 169): isDegradedTurn guard appears AFTER CWF-05 block (correct ordering)", () => {
+    const src = readPostExecSource();
+    const cwf05Pos = src.indexOf("CWF-05: degrade loudly");
+    const degradedGuardPos = src.indexOf("isDegradedTurn");
+    expect(cwf05Pos).toBeGreaterThan(-1);
+    expect(degradedGuardPos).toBeGreaterThan(-1);
+    // The isDegradedTurn variable must appear AFTER the CWF-05 block so it
+    // can refer to the already-written result.response.
+    expect(degradedGuardPos).toBeGreaterThan(cwf05Pos);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1833,6 +1858,8 @@ describe("R4 critic hook — thin wiring in executor-post-execution.ts", () => {
 //   (D) the gate uses effectiveFinishReason (NOT result.finishReason) for context_exhausted
 //   (E) fail-closed: empty partial text + annotation = non-empty reply
 //   (F) no-regression: healthy reasons return undefined from buildDegradedReply
+//   (G) WR-02 (Phase 169): effectiveFinishReason is emitted in the bookend log
+//   (H) IN-01 (Phase 169): behavioral gate tests — actual result.response mutation
 // ---------------------------------------------------------------------------
 describe("CWF-05: degraded-reply wiring", () => {
   function readStripped(): string {
@@ -1879,5 +1906,110 @@ describe("CWF-05: degraded-reply wiring", () => {
   it("no-regression — buildDegradedReply returns undefined for healthy reasons (strict no-op)", () => {
     expect(buildDegradedReply("stop")).toBeUndefined();
     expect(buildDegradedReply("end_turn")).toBeUndefined();
+  });
+
+  // WR-02 (Phase 169): effectiveFinishReason must appear in the bookend log.
+  // Source-grep verifies the conditional spread that emits it when it differs
+  // from result.finishReason (which stays "stop" for output_starved turns).
+  it("WR-02 (Phase 169): effectiveFinishReason is conditionally emitted in bookend log", () => {
+    const stripped = readStripped();
+    // The bookend must include the conditional effectiveFinishReason spread.
+    // Pattern: the conditional spread that only emits it when it differs from result.finishReason.
+    expect(stripped).toMatch(/effectiveFinishReason\s*!==\s*result\.finishReason.*effectiveFinishReason/s);
+  });
+
+  it("WR-02 (Phase 169): effectiveFinishReason derivation appears BEFORE bookend log", () => {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    // The bookend log is identified by the "Execution complete" message.
+    const bookendPos = src.indexOf('"Execution complete"');
+    // effectiveFinishReason must be declared (const effectiveFinishReason =) before the bookend.
+    const firstDeclarationPos = src.indexOf("const effectiveFinishReason =");
+    expect(bookendPos).toBeGreaterThan(-1);
+    expect(firstDeclarationPos).toBeGreaterThan(-1);
+    expect(firstDeclarationPos).toBeLessThan(bookendPos);
+  });
+
+  // ---------------------------------------------------------------------------
+  // IN-01 (Phase 169): behavioral gate tests — actual result.response mutation
+  //
+  // These exercise the real gate logic: promoteOutputStarved (the promotion
+  // that sets effectiveFinishReason) + buildDegradedReply (the builder that
+  // produces the exact strings) + the mutation pattern used at the call site.
+  // The "smallest real seam" is the combination of these two pure exported
+  // functions, which together constitute the entire CWF-05 gate without
+  // requiring the 30+ postExecution deps.
+  //
+  // Each test simulates exactly what postExecution does:
+  //   effectiveFinishReason = promoteOutputStarved(toolReconciled, lastStopReason)
+  //   if output_starved: response = (response ?? "") + buildOutputStarvedAnnotation()
+  //   if context_exhausted: response = buildContextExhaustedReply()
+  //   else: response unchanged
+  // ---------------------------------------------------------------------------
+  it("IN-01 (a): output_starved with partial text — response ENDS WITH annotation (partial preserved)", () => {
+    const partial = "Here is my analysis of the code.";
+    const lastStopReason = "length"; // bridge-reported output-cap stop
+    const effective = promoteOutputStarved("stop", lastStopReason);
+    expect(effective).toBe("output_starved");
+    // Apply the gate mutation exactly as postExecution does it:
+    let response: string = partial;
+    if (effective === "output_starved") {
+      response = (response ?? "") + buildOutputStarvedAnnotation();
+    }
+    // Partial text is preserved (APPEND, not REPLACE).
+    expect(response).toContain(partial);
+    // Annotation is appended.
+    expect(response).toContain(buildOutputStarvedAnnotation());
+    // Result ends with the annotation.
+    expect(response.endsWith(buildOutputStarvedAnnotation())).toBe(true);
+  });
+
+  it("IN-01 (b): output_starved with undefined partial — result.response is non-empty (fail-closed)", () => {
+    const lastStopReason = "length";
+    const effective = promoteOutputStarved("stop", lastStopReason);
+    expect(effective).toBe("output_starved");
+    // Apply gate mutation with undefined partial (the ?? "" fail-closed path):
+    let response: string | undefined = undefined;
+    if (effective === "output_starved") {
+      response = (response ?? "") + buildOutputStarvedAnnotation();
+    }
+    // Must be non-empty even though partial was undefined.
+    expect(response).toBeDefined();
+    expect((response ?? "").trim().length).toBeGreaterThan(0);
+    expect(response).toBe(buildOutputStarvedAnnotation());
+  });
+
+  it("IN-01 (c): context_exhausted — response is REPLACED with synthesized reply (not Phase-166 placeholder, not [Stopped:)", () => {
+    const effective = promoteOutputStarved("context_exhausted", undefined);
+    // context_exhausted is NOT a stop/end_turn, so promoteOutputStarved passes it through.
+    expect(effective).toBe("context_exhausted");
+    // Apply gate mutation:
+    let response: string | undefined = "[Stopped: context_exhausted] — please reset the session.";
+    if (effective === "context_exhausted") {
+      response = buildContextExhaustedReply();
+    }
+    // Must equal the synthesized reply exactly (REPLACE semantics).
+    expect(response).toBe(buildContextExhaustedReply());
+    // Must NOT contain the Phase-166 placeholder or operator redirect.
+    expect(response).not.toContain("[Stopped:");
+    expect((response ?? "").toLowerCase()).not.toContain("too large");
+    // Must reference context window in user-friendly terms.
+    expect((response ?? "").toLowerCase()).toContain("context window");
+  });
+
+  it("IN-01 (d): healthy stop turn — result.response is BYTE-IDENTICAL (strict no-op)", () => {
+    const original = "Here is the plan you requested, broken into three steps.";
+    const lastStopReason = "stop"; // clean stop, not output-cap
+    const effective = promoteOutputStarved("stop", lastStopReason);
+    expect(effective).toBe("stop"); // not promoted
+    // Apply gate logic: neither branch fires for "stop".
+    let response: string = original;
+    if (effective === "output_starved") {
+      response = (response ?? "") + buildOutputStarvedAnnotation();
+    }
+    if (effective === "context_exhausted") {
+      response = buildContextExhaustedReply();
+    }
+    // Strict byte-identical no-op.
+    expect(response).toBe(original);
   });
 });

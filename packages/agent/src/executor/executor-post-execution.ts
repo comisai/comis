@@ -992,6 +992,31 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     recordLastResponseTs(formattedKey, capturedRetention.getRetention(), deps.clock);
   }
 
+  // Derive effectiveFinishReason BEFORE the bookend log so it is visible there.
+  // WR-02: the bookend must log effectiveFinishReason (not result.finishReason) so that
+  // an output_starved turn — which carries result.finishReason="stop" until promoted here —
+  // is visible in the bookend as degraded. The variables are declared early and referenced
+  // again by the tool-failure append and CWF-05 gate below (no double-computation).
+  const hasToolFailures = (bridgeResult.failedTools?.length ?? 0) > 0;
+  const finishReasonStr = result.finishReason as string;
+  const isStopTurn = finishReasonStr === "stop" || finishReasonStr === "end_turn";
+  // Stage 1: tool-failure reconciliation (a clean stop turn with failed tools
+  // becomes completed_with_tool_errors).
+  const toolReconciledFinishReason =
+    hasToolFailures && isStopTurn
+      ? "completed_with_tool_errors"
+      : result.finishReason;
+  // Stage 2 (QT3): promote a PATHOLOGICAL terminal output truncation. Fires ONLY
+  // when stage 1 left a CLEAN would-be terminal (stop/end_turn) AND the session's
+  // FINAL turn stopped at the output cap (bridge's terminal lastStopReason). A
+  // tool-error / budget / breaker / context_exhausted terminal is untouched (the
+  // upstream cause wins), and a continued/mid-run length-stop is not flagged
+  // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
+  const effectiveFinishReason = promoteOutputStarved(
+    toolReconciledFinishReason,
+    bridgeResult.lastStopReason,
+  );
+
   // Execution bookend INFO log with summary stats
   const durationMs = deps.clock.now() - executionStartMs;
   // LLM/tool/contextEngine duration breakdown from bridge cumulative trackers
@@ -1021,6 +1046,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       toolCalls: result.stepsExecuted,
       llmCalls: result.llmCalls,
       finishReason: result.finishReason,
+      // WR-02 (Phase 169): log the post-promotion effectiveFinishReason so an
+      // output_starved degradation is visible in the bookend (result.finishReason
+      // stays "stop" for output_starved; only effectiveFinishReason reflects the
+      // promotion). Emitted only when it differs from finishReason to avoid noise
+      // on the common case where they are identical.
+      ...(effectiveFinishReason !== result.finishReason && { effectiveFinishReason }),
       tokensIn: result.tokensUsed.input,
       tokensOut: result.tokensUsed.output,
       tokensTotal: result.tokensUsed.total,
@@ -1137,27 +1168,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     );
   }
 
-  // Derive effectiveFinishReason — override is UNCONDITIONAL when a tool
-  // failed on a stop/end_turn turn (modelAcknowledgedFailure does NOT gate this).
-  const hasToolFailures = (bridgeResult.failedTools?.length ?? 0) > 0;
-  const finishReasonStr = result.finishReason as string;
-  const isStopTurn = finishReasonStr === "stop" || finishReasonStr === "end_turn";
-  // Stage 1: tool-failure reconciliation (a clean stop turn with failed tools
-  // becomes completed_with_tool_errors).
-  const toolReconciledFinishReason =
-    hasToolFailures && isStopTurn
-      ? "completed_with_tool_errors"
-      : result.finishReason;
-  // Stage 2 (QT3): promote a PATHOLOGICAL terminal output truncation. Fires ONLY
-  // when stage 1 left a CLEAN would-be terminal (stop/end_turn) AND the session's
-  // FINAL turn stopped at the output cap (bridge's terminal lastStopReason). A
-  // tool-error / budget / breaker / context_exhausted terminal is untouched (the
-  // upstream cause wins), and a continued/mid-run length-stop is not flagged
-  // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
-  const effectiveFinishReason = promoteOutputStarved(
-    toolReconciledFinishReason,
-    bridgeResult.lastStopReason,
-  );
   // Notice append is gated: only when the model did NOT acknowledge the failure
   // AND the response is not a silent sentinel.
   if (
@@ -1217,7 +1227,16 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     config,
     { provider, agentModel: config.model, operationModels: config.operationModels ?? {} },
   );
-  if (shouldRunCritic({ // R4: critic hook (WR-02: keyless-only gate)
+  // CWF-05 guard: skip the verification critic entirely for degraded turns. The
+  // CWF-05 block above wrote an honest synthesized reply into result.response; the
+  // critic must never overwrite it with an LLM "not-verified" unmet-list derived
+  // from a one-line error message. This guard makes the degraded reply authoritative
+  // regardless of future edits to the synthesized strings (no implicit string-match
+  // dependency on isCompletionClaim patterns).
+  const isDegradedTurn =
+    effectiveFinishReason === "output_starved" ||
+    effectiveFinishReason === "context_exhausted";
+  if (!isDegradedTurn && shouldRunCritic({ // R4: critic hook (WR-02: keyless-only gate)
     capabilityClass, config, executionPlanRef, provider,
     logger: deps.logger,
     effectiveEnabled: effectiveVerification, // SD3: pre-resolved via cost-gate
