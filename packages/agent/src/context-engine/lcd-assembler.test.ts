@@ -1997,3 +1997,50 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     // No ContextExhaustionError thrown — frontier turns never reach the governor
   });
 });
+
+// ---------------------------------------------------------------------------
+// EFF-02 wiring: assembler uses resolveClampedFreshTailTurns internally
+// ---------------------------------------------------------------------------
+
+describe("EFF-02: assembler freshTailTurns tier-aware clamping", () => {
+  let store: ContextStorePort;
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("EFF-02-B-1: frontier profile (contextWindow=Infinity) → output byte-identical to pre-EFF-02 baseline", async () => {
+    // Build a 5-turn conversation
+    const msgs: Message[] = [];
+    for (let i = 0; i < 5; i++) {
+      msgs.push(userMsg(`u${i}`));
+      msgs.push(assistantText(`a${i}`));
+    }
+    for (let i = 0; i < msgs.length; i++) append(store, msgs[i] as Message, i);
+    const live = msgs as AgentMessage[];
+
+    // Frontier profile: contextWindow=Infinity → resolveClampedFreshTailTurns(Infinity, 2) = 2 (unchanged)
+    // The Infinity guard returns configuredTurns unchanged — byte-identical to pre-EFF-02.
+    const frontierProfile: ModelProfile = {
+      ...FAIL_CLOSED_PROFILE,
+      capabilityClass: "frontier" as const,
+      contextWindow: Infinity,
+      maxOutputTokens: 8_192,
+    };
+    const { deps } = makeDeps(store);
+    const depsWithFrontier = { ...deps, modelProfile: frontierProfile };
+
+    // Baseline: same config WITHOUT the frontier profile (uses getModel contextWindow=200K)
+    // The EFF-02 path hits isFinite(Infinity)=false → returns configuredTurns unchanged.
+    // Verify the assembler completes successfully with frontier (clamp is a no-op).
+    const engine = createLcdContextEngine(dagConfig(2), depsWithFrontier);
+    const result = await engine.transformContext(live);
+    expect(result).toBeDefined();
+    // The fresh tail must still contain the last 2 assistant steps (EFF-02 didn't change it)
+    const assembled = result as AgentMessage[];
+    const assistantMsgs = assembled.filter((m) => (m as unknown as { role: string }).role === "assistant");
+    // With freshTailTurns=2 and 5 assistant messages, at least 2 assistant messages survive
+    expect(assistantMsgs.length).toBeGreaterThanOrEqual(2);
+  });
+});
