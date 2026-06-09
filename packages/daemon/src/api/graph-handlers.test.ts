@@ -1183,11 +1183,14 @@ describe("graph-handlers", () => {
       );
     });
 
+    // Both-or-neither stays strict for the six real typed nodes; the redundant
+    // "agent" type is collapsed to a regular node before validation (Bug-1 / OR-01),
+    // so these rejection tests use a real typed-node shape.
     it("rejects nodes with type_id but missing type_config", async () => {
       await expect(
         saveHandlers["graph.save"]!({
           label: "bad",
-          nodes: [{ node_id: "a", task: "Do A", type_id: "agent" }],
+          nodes: [{ node_id: "a", task: "Do A", type_id: "debate" }],
         }),
       ).rejects.toThrow(/Graph validation failed/);
 
@@ -1198,11 +1201,25 @@ describe("graph-handlers", () => {
       await expect(
         saveHandlers["graph.save"]!({
           label: "bad",
-          nodes: [{ node_id: "a", task: "Do A", type_config: { agent: "x" } }],
+          nodes: [{ node_id: "a", task: "Do A", type_config: { voters: ["x", "y"] } }],
         }),
       ).rejects.toThrow(/Graph validation failed/);
 
       expect(mockStore.save).not.toHaveBeenCalled();
+    });
+
+    it("normalizes the agent footgun (lone type_id, bare config, or both) to a saved regular node", async () => {
+      const result = await saveHandlers["graph.save"]!({
+        label: "footgun",
+        nodes: [
+          { node_id: "a", task: "Do A", type_id: "agent" },
+          { node_id: "b", task: "Do B", type_config: { agent: "x" } },
+        ],
+      });
+
+      const r = result as Record<string, unknown>;
+      expect(r).toMatchObject({ id: expect.any(String), saved: true });
+      expect(mockStore.save).toHaveBeenCalledOnce();
     });
 
     it("accepts valid typed nodes", async () => {

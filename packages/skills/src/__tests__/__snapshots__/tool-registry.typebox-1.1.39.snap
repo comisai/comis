@@ -383,7 +383,7 @@
                 "type": "integer"
               },
               "type_config": {
-                "description": "Configuration for the node type. Required when type_id is set. Examples:\n  agent:         { \"agent\": \"ta-analyst\" }\n  debate:        { \"agents\": [\"ta-bull\", \"ta-bear\"], \"rounds\": 2, \"synthesizer\": \"ta-judge\" }\n  vote:          { \"voters\": [\"analyst-1\", \"analyst-2\", \"analyst-3\"] }\n  refine:        { \"reviewers\": [\"drafter\", \"editor\", \"pm\"] }\n  collaborate:   { \"agents\": [\"team-1\", \"team-2\"], \"rounds\": 1 }\n  approval-gate: { \"message\": \"Approve the trade?\", \"timeout_minutes\": 60 }\n  map-reduce:    { \"mappers\": [{\"agent\": \"a1\"}, {\"agent\": \"a2\"}], \"reducer\": \"pm\" }",
+                "description": "Configuration for a MULTI-agent node type. MUST be set whenever type_id is set, and MUST be omitted when type_id is omitted (both-or-neither). For a single-agent node, set the node's \"agent\" field and OMIT both type_id and type_config. Examples (by type_id):\n  debate:        { \"agents\": [\"ta-bull\", \"ta-bear\"], \"rounds\": 2, \"synthesizer\": \"ta-judge\" }\n  vote:          { \"voters\": [\"analyst-1\", \"analyst-2\", \"analyst-3\"] }\n  refine:        { \"reviewers\": [\"drafter\", \"editor\", \"pm\"] }\n  collaborate:   { \"agents\": [\"team-1\", \"team-2\"], \"rounds\": 1 }\n  approval-gate: { \"message\": \"Approve the trade?\", \"timeout_minutes\": 60 }\n  map-reduce:    { \"mappers\": [{\"agent\": \"a1\"}, {\"agent\": \"a2\"}], \"reducer\": \"pm\" }",
                 "patternProperties": {
                   "^.*$": {}
                 },
@@ -420,7 +420,7 @@
                     "type": "string"
                   }
                 ],
-                "description": "Built-in node type. If omitted, runs as regular single-agent task. Valid values: agent (single sub-agent, ~1 LLM call), debate (multi-round adversarial, ~N*R calls), vote (parallel independent voting, ~N calls), refine (sequential review chain, ~N calls), collaborate (sequential building, ~N*R calls), approval-gate (pause for human approval, 0 calls), map-reduce (parallel map then reduce, ~N+1 calls)"
+                "description": "Built-in node type for MULTI-agent orchestration. OMIT this for a regular single-agent node (just set \"agent\" + \"task\" — that already runs one sub-agent). Only set type_id when you need: debate (multi-round adversarial, ~N*R calls), vote (parallel independent voting, ~N calls), refine (sequential review chain, ~N calls), collaborate (sequential building, ~N*R calls), approval-gate (pause for human approval, 0 calls), map-reduce (parallel map then reduce, ~N+1 calls). Each of these REQUIRES a matching type_config. (\"agent\" is accepted but redundant — a node with \"agent\"+\"task\" already runs one sub-agent, so omit type_id instead.)"
               }
             },
             "required": [
