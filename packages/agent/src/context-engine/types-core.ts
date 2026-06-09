@@ -233,6 +233,35 @@ export interface ContextEngineDeps {
    *  budget with 8K-starvation fix and 256K-overfill cap for small/nano).
    *  Absent ⇒ lcd-assembler applies the fail-closed nano cap + emits a config WARN. */
   modelProfile?: import("../executor/model-profile.js").ModelProfile;
+
+  // --- Phase 166 CWF-02: pre-flight fit check + security-pin threading ---
+
+  /** Phase 166 T-S4: security-pin markers for the dag eviction filter.
+   *  When provided, messages containing canaryToken/contentDelimiter/senderTrustPrefix
+   *  are NEVER evicted from history, regardless of window pressure.
+   *  Source: deps.canaryToken threaded from pi-executor at the setupContextEngine call site.
+   *  isSecurityRelevantMessage is fail-closed: absent/empty content → pin. */
+  securityPinMarkers?: import("./security-context-pinner.js").SecurityPinMarkers;
+
+  /** Phase 166: callback invoked by the pre-flight fit check when assembled input tokens
+   *  are measured. Plan 04 sets a getter here so config-resolver can clamp max_tokens. */
+  onAssembledInputTokens?: (tokens: number) => void;
+
+  /** Phase 166: callback invoked when the effective window is known (budget.windowTokens).
+   *  Plan 04 sets this to populate effectiveWindowRef for dynamic max_tokens clamping.
+   *  ONE callback per transformContext call — emit after budget is computed. */
+  onEffectiveWindow?: (windowTokens: number) => void;
+
+  /** Phase 166: callback invoked when the thinking-effort governor down-shifts thinkingLevel.
+   *  Plan 04 sets this to call session.setThinkingLevel(level) for the current dispatch.
+   *  Wired at the pi-executor.ts setupContextEngine call site where the SDK session object
+   *  is in scope (setupStreamWrappers only receives sm: SessionManager, not the SDK session). */
+  onThinkingDownshifted?: (level: string) => void;
+
+  /** Phase 166: getter returning the current thinking level for this dispatch.
+   *  Source: the agent config's thinkingLevel field, read at call time.
+   *  When absent, the pre-flight check falls back to "medium" (conservative). */
+  getThinkingLevel?: () => string | undefined;
 }
 
 // ---------------------------------------------------------------------------

@@ -68,6 +68,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
 import { computeTokenBudgetForProfile } from "./budget-capacity-cap.js";
 import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
+import { runPreflightFitCheck } from "./lcd-preflight.js";
 import {
   CHARS_PER_TOKEN_RATIO,
   LCD_FALLBACK_HEADER_MARKER,
@@ -435,6 +436,21 @@ export function createLcdContextEngine(
       //    ANY input: out-of-order results re-placed, unpaired calls get a marked
       //    synthesized result, orphan/duplicate results dropped.
       const repaired = sanitizeToolUseResultPairing(normalized, now());
+
+      // Phase 166 CWF-02: pre-flight fit check — enforce assembledInputTokens ≤ effectiveWindow − outputHeadroom.
+      // Security-pinned messages (T-S4) are filtered via isSecurityRelevantMessage and NEVER evicted.
+      // Throws ContextExhaustionError when infeasible even at the thinking-level floor.
+      // Extracted to lcd-preflight.ts to keep this file ≤ 820 lines.
+      // Pass evictable (BudgetItem[]) + keptCount so the helper can recompute token sums
+      // (evictHistoryUnderBudget returns AgentMessage[] which carries no token metadata).
+      runPreflightFitCheck(
+        deps,
+        budget.windowTokens,
+        evictable,
+        budgeted.length,
+        freshTail,
+        (profile.reasoningStyle ?? "none") as "none" | "native",
+      );
 
       deps.logger.info(
         {

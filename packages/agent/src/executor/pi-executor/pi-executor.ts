@@ -911,6 +911,14 @@ async function runSessionLocked(
     onAnchorReset: () => { tokenAnchor = null; },
     currentDiscoveryTracker,
     modelProfile,  // already in scope: resolveModelProfile() at line 328; used by assembleTools at :502
+    // Phase 166 T-S4: thread security-pin markers so the dag eviction never drops canary/security context.
+    // contentDelimiter defaults to "" (fail-closed: isSecurityRelevantMessage with empty contentDelimiter
+    // only matches on canaryToken — defense-in-depth; a real delimiter is injected by Plan 04).
+    securityPinMarkers: frozenDeps.canaryToken
+      ? { canaryToken: frozenDeps.canaryToken, contentDelimiter: "" }
+      : undefined,
+    // onAssembledInputTokens, onEffectiveWindow, onThinkingDownshifted, getThinkingLevel
+    // are wired by Plan 04 at this same call site.
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK internal: no public type for agent.transformContext
   (session.agent as any).transformContext = ceSetup.contextEngine.transformContext;

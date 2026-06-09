@@ -1786,26 +1786,28 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     expect(reported).toBeLessThanOrEqual(32000);
   });
 
-  it("CWF-02-D: tight 32K native/high window → thinking governor fires and down-shifts to medium or lower", async () => {
-    // W=32768, reasoningStyle="native", getThinkingLevel()="high"
+  it("CWF-02-D: tight 32K native/high window with large fresh tail → thinking governor fires and down-shifts", async () => {
+    // Governor triggers when: assembledInputTokens > effectiveWindow − outputHeadroom("native","high")
+    // effectiveWindow = min(32768, 32000) = 32000 (small cap)
     // computeOutputHeadroom("native","high") = 8192 + 768 = 8960
-    // headroomBound = 32768 − 8960 = 23808
-    // Seed 20 messages × 1500 tokens each = 30000 tokens → exceeds 23808
-    // Governor should fire: down-shift high→medium; computeOutputHeadroom("native","medium")=3840
-    // headroomBound_medium = 32768 − 3840 = 28928 > 30000 still? Let's think more carefully.
-    // Actually eviction will shrink assembledInputTokens. With 20 msgs × 1500 = 30000 tokens
-    // and budget.availableHistoryTokens = computeTokenBudgetForProfile(smallNativeProfile,...).availableHistoryTokens
-    // the pre-flight check fires when assembledInputTokens > headroomBound.
-    // We need the post-eviction tokens to still exceed high-headroomBound but fit under medium-headroomBound.
-    // Use freshTailTurns=1 so fresh tail = 2 messages ~ 0 chars (short text).
-    // After normal eviction, budgetedTokens is controlled by the budget formula.
-    // Use high token counts (1500 each) to guarantee overflow at "high" level.
-    seedTurnsWithTokens(10, 1_500);
-    const live: AgentMessage[] = [];
-    for (let i = 0; i < 10; i++) {
-      live.push(userMsg(`u${i}`) as AgentMessage);
-      live.push(assistantText(`a${i}`) as AgentMessage);
-    }
+    // headroomBound_high = 32000 − 8960 = 23040
+    //
+    // Strategy: seed small history (fits comfortably), create a LARGE fresh-tail user
+    // message. assembledInputTokens = budgetedTokens + freshTailTokens.
+    // budgetedTokens ≤ availableHistoryTokens ≈ 17856 for this profile (see plan).
+    // We set freshTailTokens > headroomBound − budgetedTokens + 1.
+    // With budgetedTokens=0 (empty store), freshTailTokens must > 23040.
+    // freshTailTokens = ceil(chars / 3.5) → chars = 23040 * 3.5 + 1 = 80641 chars.
+    //
+    // After governor down-shifts to "medium": headroomBound_medium = 32000 - (3072+768) = 28160
+    // assembledInputTokens = freshTailTokens ≈ 23041 < 28160 → fits under "medium". Governor wins.
+    const LARGE_CONTENT = "X".repeat(85_000); // 85000 / 3.5 ≈ 24286 tokens > headroomBound_high=23040
+
+    const live: AgentMessage[] = [
+      userMsg(LARGE_CONTENT) as AgentMessage,   // large user message in fresh tail
+      assistantText("done") as AgentMessage,
+    ];
+    // Nothing persisted → store is empty; fresh tail = entire live array
 
     const downshiftSpy = vi.fn<[string], void>();
     const eventBusEmit = vi.fn<[string, unknown], void>();
@@ -1823,7 +1825,7 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
       eventBus: { emit: eventBusEmit },
     };
 
-    const engine = createLcdContextEngine(dagConfig(1), deps);
+    const engine = createLcdContextEngine(dagConfig(8), deps);
     await engine.transformContext(live);
 
     // The governor must have fired: either onThinkingDownshifted was called
@@ -1835,29 +1837,33 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
   });
 
   it("CWF-02-E: infeasible turn even at low-effort → throws ContextExhaustionError", async () => {
-    // W=8192, reasoningStyle="native", massive history that won't fit even at "low" effort
+    // ContextExhaustionError triggers when assembled tokens exceed the floor headroomBound
+    // even after down-shifting thinking to "low".
+    // W=32768, reasoningStyle="native", floor="low"
+    // effectiveWindow = min(32768, 32000) = 32000 (small cap)
     // computeOutputHeadroom("native","low") = 1024 + 768 = 1792
-    // headroomBound_low = 8192 − 1792 = 6400
-    // Seed 10 messages × 1000 tokens each = 10000 tokens > 6400
-    // Even at "low" (the floor) assembled tokens will exceed headroomBound_low → ContextExhaustionError
-    seedTurnsWithTokens(5, 1_000);
-    const live: AgentMessage[] = [];
-    for (let i = 0; i < 5; i++) {
-      live.push(userMsg(`u${i}`) as AgentMessage);
-      live.push(assistantText(`a${i}`) as AgentMessage);
-    }
+    // headroomBound_low = 32000 − 1792 = 30208
+    //
+    // Use a VERY large fresh-tail user message that exceeds even the "low" headroomBound:
+    // freshTailTokens > 30208 → chars > 30208 * 3.5 = 105728 → use 115000 chars
+    const VERY_LARGE_CONTENT = "X".repeat(115_000); // 115000 / 3.5 ≈ 32857 tokens > 30208
 
     const nativeSmallProfile: ModelProfile = {
       ...FAIL_CLOSED_PROFILE,
       capabilityClass: "small" as const,
-      contextWindow: 8_192,
-      maxOutputTokens: 2_048,
+      contextWindow: 32_768,
+      maxOutputTokens: 4_096,
       reasoningStyle: "native" as const,
     };
 
+    const live: AgentMessage[] = [
+      userMsg(VERY_LARGE_CONTENT) as AgentMessage,
+      assistantText("done") as AgentMessage,
+    ];
+
     const deps: ContextEngineDeps = {
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
-      getModel: () => ({ reasoning: true, contextWindow: 8_192, maxTokens: 2_048 }),
+      getModel: () => ({ reasoning: true, contextWindow: 32_768, maxTokens: 4_096 }),
       contextStore: store,
       conversationId: CONVERSATION_ID,
       agentId: "agent_a",
@@ -1867,10 +1873,11 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
       getThinkingLevel: () => "high",
     };
 
-    const engine = createLcdContextEngine(dagConfig(1), deps);
+    const engine = createLcdContextEngine(dagConfig(8), deps);
     await expect(engine.transformContext(live)).rejects.toThrow(ContextExhaustionError);
     // Also verify the error name
-    await expect(engine.transformContext(live)).rejects.toMatchObject({ name: "ContextExhaustionError" });
+    const engine2 = createLcdContextEngine(dagConfig(8), deps);
+    await expect(engine2.transformContext(live)).rejects.toMatchObject({ name: "ContextExhaustionError" });
   });
 
   it("CWF-02-F (T-S4): security-pinned message survives aggressive eviction under tight 8K window", async () => {
