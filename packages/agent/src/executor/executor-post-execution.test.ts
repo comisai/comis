@@ -453,8 +453,21 @@ describe("F2 emit — emitSessionSummary emits session:summary, fire-and-forget"
     traceId: "trace-Z",
     turnCount: 3,
     rollup,
+    endReason: "context_exhausted",
     clock: { now: () => 4242, nowDate: () => new Date(4242) },
   };
+
+  it("CARRIES the named endReason cause on the emitted event payload (QT2/QT3 — fleet aggregates by cause)", () => {
+    // The mapped endReason (e.g. context_exhausted / output_starved) is the
+    // headline cause. It must ride the session:summary event so the daemon row
+    // (sessionSummaryEventToRow) persists it and obs.fleet.health can aggregate
+    // degradedByCause WITHOUT opening per-session _session-metadata.json.
+    const emit = vi.fn();
+    const eventBus = { emit, on: vi.fn(), off: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
+    emitSessionSummary({ eventBus, logger: undefined }, baseArgs);
+    const payload = emit.mock.calls.find((c) => c[0] === "session:summary")![1] as Record<string, unknown>;
+    expect(payload.endReason).toBe("context_exhausted");
+  });
 
   it("emits exactly one session:summary carrying degraded/costUsd/toolStats/breakerTripCount + ids", () => {
     const emit = vi.fn();
