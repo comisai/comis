@@ -14,6 +14,9 @@
 import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
+import Database from "better-sqlite3";
+import { existsSync, chmodSync } from "node:fs";
+import os from "node:os";
 import {
   SessionListContract,
   SessionStatusContract,
@@ -273,6 +276,43 @@ export function registerSessionsCommand(program: Command): void {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to reset conversation: ${msg}`);
         process.exit(1);
+      }
+    });
+
+  // sessions backup — SQLite Online Backup API (Phase 170-04 DOC-02)
+  // Opens memory.db as readonly and calls db.backup(destPath) — the SQLite
+  // Online Backup API — which is hot-backup-safe (daemon can continue writing).
+  // The backup file is created with a timestamp suffix and immediately chmod
+  // 0600 to prevent other OS users from reading session data.
+  sessions
+    .command("backup")
+    .description(
+      "Create a timestamped backup of memory.db using the SQLite Online Backup API." +
+      " Safe to run while the daemon is running.",
+    )
+    .option("--data-dir <dir>", "Override data directory (default: ~/.comis)")
+    .action(async (options: { dataDir?: string }) => {
+      const dataDir = options.dataDir ?? (os.homedir() + "/.comis");
+      const dbPath = dataDir + "/memory.db";
+      if (!existsSync(dbPath)) {
+        error("memory.db not found at " + dbPath);
+        process.exit(1);
+      }
+      // Timestamped destination: memory.db.backup.20260610T120000000Z
+      const ts = new Date().toISOString().replace(/[:.]/g, "").replace("T", "T");
+      const destPath = dbPath + ".backup." + ts;
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        await db.backup(destPath);
+        // chmod 0600 immediately — db.backup creates a world-readable file by default
+        chmodSync(destPath, 0o600);
+        success("Backup created: " + destPath);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error("Backup failed: " + msg);
+        process.exit(1);
+      } finally {
+        db.close();
       }
     });
 
