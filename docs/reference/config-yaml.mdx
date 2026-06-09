@@ -603,6 +603,15 @@ Prevents 256K context-window models from over-provisioning when running a small 
 |-----|------|---------|-------------|
 | `agents.<id>.contextEngine.budget.effectiveContextCapSmall` | `number` (non-negative int) | `32000` | Maximum effective context tokens for `capabilityClass="small"`. `0` = no cap (use raw contextWindow). Applied to prevent 256K overfill degrading a 27–35B executive. |
 | `agents.<id>.contextEngine.budget.effectiveContextCapNano` | `number` (non-negative int) | `16000` | Maximum effective context tokens for `capabilityClass="nano"`. `0` = no cap. `frontier` and `mid` classes always receive the full `contextWindow`. |
+| `agents.<id>.contextEngine.budget.minVisibleOutputTokens` | `number` (int, 256–8192) | `768` | Minimum visible output tokens guaranteed on every LLM dispatch — the non-reasoning floor (answer or tool-call body) that must remain after the model's thinking block. The total output headroom is `thinkingReserve(reasoningStyle, thinkingLevel) + minVisibleOutputTokens`. Raising this value increases the safety margin but reduces available history tokens. Applies to all capability classes; the thinking reserve on top of this floor varies by `thinkingLevel` (`high` adds 2,048 tokens; `xhigh` adds 4,096 tokens; models with no thinking block add 0). |
+
+#### Thinking-Effort Governor (agents.\*.thinking)
+
+Controls whether the thinking-effort governor may automatically adjust the active `thinkingLevel` when the remaining context window after eviction is tight.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.thinking.downshiftOnTightWindow` | `boolean` | `true` | When `true`, the thinking-effort governor may automatically lower `thinkingLevel` (high → medium → low) for a dispatch when the remaining context room after eviction cannot cover `thinkingReserve(thinkingLevel) + minVisibleOutputTokens`. This prevents the model's thinking block from consuming the entire output budget and silently truncating the answer or tool call. For frontier and mid-capability models the governor is always a no-op regardless of this setting (their effective windows are large enough that the threshold is never reached). Set to `false` to disable down-shifting and always preserve the configured `thinkingLevel` (may result in `context_exhausted` degradation on tight windows instead of graceful down-shift). |
 
 #### Compaction Routing (agents.\*.contextEngine.compaction)
 
