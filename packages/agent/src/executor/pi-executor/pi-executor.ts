@@ -333,8 +333,13 @@ export function createPiExecutor(
       // capabilityCap is derived from deps.providerCapabilities?.capabilityClass (pre-resolver,
       // config-side value) — NOT from modelProfile.capabilityClass, which does not exist yet
       // (resolveModelProfile is what creates it). Using modelProfile here would be circular.
-      const capabilityCap =
-        DEFAULT_EFFECTIVE_CAP_BY_CLASS[deps.providerCapabilities?.capabilityClass ?? "nano"] ?? 32_000;
+      // CR-01 fix: when no explicit capabilityClass is present (e.g. plain anthropic/openai
+      // provider with no providers.entries block), treat the cap as Infinity (no constraint).
+      // Only apply a class-derived cap when the operator explicitly set capabilityClass.
+      const explicitClass = deps.providerCapabilities?.capabilityClass;
+      const capabilityCap = explicitClass != null
+        ? (DEFAULT_EFFECTIVE_CAP_BY_CLASS[explicitClass] ?? Infinity)
+        : Infinity;
       const effectiveContextWindowResult = resolveEffectiveContextWindow({
         configured: resolvedModel?.contextWindow ?? 8_192,
         served: deps.servedContextWindow,
