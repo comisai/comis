@@ -154,6 +154,7 @@ import {
   createBackgroundSessionResolver,
   createGeminiCacheManager,
   createSessionTrackerRegistry,
+  probeAllOllamaProviders,
   seedDefaultDagTemplates,
   validateProviderOverrides,
   wireGeminiCacheCleanup,
@@ -1861,6 +1862,19 @@ async function bootAgents(
     mcpTokenStore,
   });
 
+  // CWF-03: Ollama served-window probe — best-effort, fail-open.
+  // Must run before setupAgents so the result can be threaded into each executor.
+  // daemon.ts is the globals allowlist root; raw fetch is permitted here.
+  const servedWindowByProvider = await probeAllOllamaProviders({
+    providerEntries: container.config.providers?.entries ?? {},
+    fetchFn: (url: string, init: RequestInit) => fetch(url, init),
+    timeoutMs: 5_000,
+    logger: agentLogger,
+  }).catch((err: unknown) => {
+    agentLogger.warn({ err }, "Ollama served-window probe threw unexpectedly — starting with empty map (fail-open)");
+    return new Map<string, number>();
+  });
+
   const {
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters,
@@ -1911,6 +1925,7 @@ async function bootAgents(
     // per-agent ToolCapabilityPort adapter construction.
     mcpClientManager,
     clock, env, timers,
+    servedWindowByProvider,  // CWF-03: Ollama served context-window probe result
   });
 
   // Log operation model resolutions at startup (dry-run validation)
