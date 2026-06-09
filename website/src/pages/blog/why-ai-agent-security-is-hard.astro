@@ -4,7 +4,7 @@ import Base from "../../layouts/Base.astro";
 import Footer from "../../components/Footer.astro";
 
 const title = "Why AI Agent Security Is Hard (And What We Built to Solve It)";
-const description = "Most AI frameworks bolt security on after launch. Comis was designed around a different question: what happens when an AI agent has real power and someone tries to abuse it? Defense in depth - a kernel-enforced sandbox, a credential broker, content scanning, trust-partitioned memory, and a fail-closed action classifier - here's what I learned.";
+const description = "Most AI frameworks bolt security on after launch. Comis was designed around a different question: what happens when an AI agent has real power and someone tries to abuse it? Defense in depth - sandboxed execution where supported, a credential broker, content scanning, trust-partitioned memory, and a fail-closed action classifier - here's what I learned.";
 const publishDate = "April 10, 2026";
 ---
 
@@ -62,7 +62,7 @@ const publishDate = "April 10, 2026";
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            That question led me down a rabbit hole that consumed weeks and produced layered, kernel-enforced defenses spanning the whole attack surface - perimeter, secrets, network, and access control. This is the story of how they came to be.
+            That question led me down a rabbit hole that consumed weeks and produced layered runtime defenses spanning the whole attack surface - perimeter, secrets, network, and access control. This is the story of how they came to be.
           </p>
         </div>
 
@@ -176,12 +176,12 @@ const publishDate = "April 10, 2026";
           <!-- Defense 2: Sandbox -->
           <div class="bg-navy-light/80 border-l-4 border-teal rounded-r-xl p-6 my-8">
             <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-2">Defense #2</p>
-            <h3 class="text-xl font-bold text-white mb-3">Kernel-enforced filesystem sandbox</h3>
+            <h3 class="text-xl font-bold text-white mb-3">Sandboxed filesystem execution</h3>
             <p class="text-muted-light text-sm leading-relaxed mb-4">
               This one was non-negotiable. When an AI agent runs <code class="text-teal text-xs">bash("ls /etc")</code>, it should see <em>nothing</em>. Not because we filtered the output - because the kernel won't let it access the path.
             </p>
             <p class="text-muted-light text-sm leading-relaxed mb-4">
-              On Linux, every shell command runs inside a bubblewrap (<code class="text-teal text-xs">bwrap</code>) container with full namespace unsharing - mount, PID, user, cgroup, IPC. The agent's workspace is bind-mounted in. Everything else is invisible. On macOS, we use <code class="text-teal text-xs">sandbox-exec</code> with deny-default SBPL profiles.
+              On supported Linux hosts, shell commands run inside a bubblewrap (<code class="text-teal text-xs">bwrap</code>) container with full namespace unsharing - mount, PID, user, cgroup, IPC. The agent's workspace is bind-mounted in. On macOS, supported hosts use <code class="text-teal text-xs">sandbox-exec</code> with deny-default SBPL profiles.
             </p>
             <p class="text-muted-light text-sm leading-relaxed">
               The key insight: this isn't about trusting the LLM to not access sensitive files. It's about making it <strong class="text-white">physically impossible</strong> regardless of what the LLM decides to do. The prompt can say "read /etc/shadow" all day long - the syscall will fail.
@@ -239,7 +239,7 @@ const publishDate = "April 10, 2026";
             <div>
               <h3 class="text-lg font-semibold text-white mb-2">2. The LLM is not your security boundary</h3>
               <p class="text-muted-light text-base leading-relaxed">
-                "The model is smart enough to not do bad things" is not a security strategy. Models get jailbroken. New attack vectors emerge monthly. Your security must work <em>even if the LLM is fully compromised</em>. That's why we use kernel-level sandboxing, not prompt-level restrictions. The LLM can decide to read <code class="text-sm">/etc/shadow</code> - the kernel says no.
+                "The model is smart enough to not do bad things" is not a security strategy. Models get jailbroken. New attack vectors emerge monthly. Your security must work <em>even if the LLM is fully compromised</em>. That's why we use platform sandboxing where supported, not prompt-level restrictions. The LLM can decide to read <code class="text-sm">/etc/shadow</code> - the sandbox policy should be the thing that says no.
               </p>
             </div>
 
@@ -253,7 +253,7 @@ const publishDate = "April 10, 2026";
             <div>
               <h3 class="text-lg font-semibold text-white mb-2">4. Make security the default, not the option</h3>
               <p class="text-muted-light text-base leading-relaxed">
-                The input guard runs by default. The sandbox runs by default. The output guard runs by default. You have to <em>explicitly</em> opt out. Most frameworks do the opposite - security is something you enable in a config file that nobody reads. We flipped it: the secure path is the easy path.
+                The input guard runs by default. The exec sandbox is configured by default where supported. The output guard runs by default. Most frameworks do the opposite - security is something you enable in a config file that nobody reads. We flipped it: the safer path is the easy path.
               </p>
             </div>
           </div>
@@ -268,7 +268,7 @@ const publishDate = "April 10, 2026";
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            But I'd rather start from layered, kernel-enforced defenses and iterate than from a safety prompt and hope. If you're building AI agents that have real tools and real access, I hope this gives you a framework for thinking about the problem.
+            But I'd rather start from layered runtime defenses and iterate than from a safety prompt and hope. If you're building AI agents that have real tools and real access, I hope this gives you a framework for thinking about the problem.
           </p>
 
           <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 mt-12 mb-8">
@@ -299,7 +299,7 @@ const publishDate = "April 10, 2026";
           Security engineered in. Not bolted on.
         </h2>
         <p class="text-muted text-lg mb-10">
-          Defense in depth. Kernel-enforced sandbox. Credential broker. Memory trust partitioning. All open source.
+          Defense in depth. Sandboxed tools where supported. Credential broker. Memory trust partitioning. All open source.
         </p>
         <div class="flex flex-wrap gap-4 justify-center">
           <a href="/security" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">

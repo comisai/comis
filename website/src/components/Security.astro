@@ -12,8 +12,8 @@ const threats = [
   {
     threat: "Unchecked tool access",
     desc: "An agent with shell and file access can read, write, and run anything on your machine.",
-    answer: "Kernel-enforced exec sandbox - on by default.",
-    detail: "Tools run jailed by the operating system itself, not by a setting you have to remember to switch on. No network by default; agents can only see their own workspace, not your host system.",
+    answer: "Sandboxed exec by default where supported.",
+    detail: "Tool execution is isolated with platform sandbox providers when available. Agents can be limited to their own workspace, and unsupported hosts are detected and logged rather than presented as fully isolated.",
   },
   {
     threat: "Prompt injection",
@@ -43,7 +43,7 @@ const threats = [
     threat: "Credential exposure",
     desc: "API keys and secrets leaked through logs, tool outputs, or unencrypted storage.",
     answer: "Encrypted secrets.",
-    detail: "AES-256 at rest. Secrets are kept out of logs, tool output, and chat responses.",
+    detail: "AES-256-GCM at rest. Secrets are kept out of logs, tool output, and chat responses.",
   },
   {
     threat: "Credential exposure via agentic CLIs",
@@ -104,7 +104,7 @@ const threats = [
     </p>
     <div class="text-center mt-6">
       <a href="/security" class="inline-flex items-center gap-2 text-sm font-semibold text-coral hover:text-coral-dark transition-colors">
-        Deep dive: {SECURITY.layerFraming}, including kernel-enforced OS-level sandboxing
+        Deep dive: {SECURITY.layerFraming}, including sandboxed tool execution
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
       </a>
     </div>

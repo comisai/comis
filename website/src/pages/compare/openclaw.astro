@@ -120,7 +120,7 @@ const securityRows: Row[] = [
   {
     label: "Process isolation",
     comis:
-      "Kernel-enforced exec sandbox wraps every shell command in a filesystem namespace (bubblewrap on Linux, sandbox-exec on macOS). Agents can only access their workspace, graph shared directory, and system binaries.",
+      "Exec sandboxing is configured by default, with kernel-backed filesystem isolation where the host supports it (bubblewrap on Linux, sandbox-exec on macOS). Agents can be limited to their workspace, graph shared directory, and approved system binaries.",
     openclaw:
       "Optional sandbox backends (Docker, SSH, and a pluggable backend registry), off by default.",
     verdict: "comis",
@@ -128,15 +128,15 @@ const securityRows: Row[] = [
   {
     label: "Credentialed exec (keys never in sandbox)",
     comis:
-      "Broker-only network mode: credentialed sandbox runs with --unshare-net; the broker unix socket is the only reachable network destination (Linux, kernel-enforced; validated on the production host class). Key never enters the sandbox - injected at the TLS boundary by the in-daemon broker. Fails closed: no secret → 502, never forwarded.",
+      "Credential broker keeps the real key in the daemon and injects it at the TLS boundary. On supported Linux hosts, broker-only network mode prevents direct egress from credentialed sandboxes. Gate failures fail closed before upstream traffic is forwarded.",
     openclaw:
-      "Relies on agent voluntarily honouring HTTPS_PROXY. A jailbroken agent ignores the proxy and calls the API directly. Credentials must be present in the process environment to authenticate.",
+      "Supports SecretRef sources and proxy-based credential patterns, but the exec sandbox is optional and not the default security floor.",
     verdict: "comis",
   },
   {
     label: "Local-model security floor & tuning",
     comis:
-      "The security floor is a property of the platform, not the model: the kernel sandbox, credential broker, and skill content scanner apply identically whether you run a frontier cloud model or a local one (Ollama, vLLM, etc.) - the guarantees never depend on the model's goodwill. And the floor is only half of it: an immutable capability profile actively tunes Comis to the model - prompt-size budgets, focused tool sets, and deterministic tool selection so a small model isn't drowned in context it can't use, plus reliability rails (goal re-anchoring, a poison-resistant recall floor, tool-call JSON repair with self-correction, and reasoning models' chain-of-thought kept out of the reply). Weaker model, stricter lockdown and more scaffolding; capable models pay nothing for it.",
+      "The security posture belongs to the platform, not the model: sandboxed execution where supported, the credential broker, and the skill content scanner apply whether you run a frontier cloud model or a local one. Capability profiles also tune prompt-size budgets, focused tool sets, JSON repair, and self-correction to the model tier.",
     openclaw:
       "Local models are supported (Ollama, LM Studio, vLLM). No model-aware hardening or scaffolding - the same context and tool presentation regardless of the model, and the security posture does not change for a weaker model.",
     verdict: "comis",
@@ -256,7 +256,7 @@ const contextRows: Row[] = [
   {
     label: "Pipeline architecture",
     comis:
-      "Built-in 8-layer sequential pipeline (thinking cleaner, reasoning tag stripper, history window, dead content evictor, observation masker, LLM compaction, rehydration, objective reinforcement) with per-layer circuit breaker (3-failure threshold disables layer for session). Plus a DAG-mode alternative engine sharing the same transformContext hook.",
+      "Built-in context pipeline (thinking cleaner, reasoning tag stripper, history window, dead content evictor, observation masker, LLM compaction, rehydration, objective reinforcement) with per-layer circuit breakers. DAG-backed recovery shares the same context transform path.",
     openclaw:
       "Pluggable context engine registry with 7-lifecycle-hook interface (bootstrap, maintain, ingest, ingestBatch, afterTurn, assemble, compact). Built-in LegacyContextEngine is a pass-through wrapper. Third-party lossless-claw plugin replaces entire pipeline with DAG-based hierarchical summarization. Extensions add compaction safeguard and context pruning.",
     verdict: "comis",
@@ -304,7 +304,7 @@ const contextRows: Row[] = [
   {
     label: "Context engine ecosystem",
     comis:
-      "Built-in pipeline and DAG engines cover all use cases. No plugin marketplace needed. DAG mode uses SQLite with FTS5 for depth-aware hierarchical summarization (leaf and condensed tiers by recursion depth). JSONL-to-DAG reconciliation for crash recovery.",
+      "Built-in pipeline and DAG engines cover Comis's core context needs without a plugin marketplace. DAG mode uses SQLite with FTS5 for depth-aware hierarchical summarization and JSONL-to-DAG reconciliation for crash recovery.",
     openclaw:
       "Growing plugin ecosystem: lossless-claw (DAG-based, scored 74.8 on OOLONG benchmark vs Claude Code's 70.3), MemOS Cloud (cross-session recall via external API), QuantClaw (C++ reimpl), 12-layer community architecture (lossless-claw + facts.db + LightRAG GraphRAG). ContextEngine slot API enables full pipeline replacement by third parties.",
     verdict: "openclaw",
@@ -312,7 +312,7 @@ const contextRows: Row[] = [
   {
     label: "Lossless context (DAG mode)",
     comis:
-      "Built-in DAG context engine (config: version: \"dag\"). 6-table SQLite schema (lcd_ prefix). Depth-aware summarization prompts per level. Three-tier escalation (normal, aggressive, sentence-boundary truncation). Leaf pass: min fanout 8, target 1.2K tokens. Condensed pass: min fanout 4. Integrity checking with auto-repair. DAG assembler with budget-aware selection and fresh tail protection.",
+      "DAG-backed context engine (config: version: \"dag\"). 6-table SQLite schema (lcd_ prefix). Depth-aware summarization prompts per level. Three-tier escalation, integrity checking with auto-repair, and a budget-aware assembler with fresh-tail protection.",
     openclaw:
       "Via lossless-claw plugin (third-party, requires separate install). SQLite + FTS5 storage. Leaf summaries: up to 20K tokens input, ~1.2K target, min fanout 8. Condensed nodes: ~2K target, min fanout 4. Triggers at 75% context window. Fresh tail: last 32 messages protected. Retrieval tools: lcm_grep (FTS5), lcm_describe (semantic), lcm_expand (decompress to source). Large file interception at 25K tokens with separate summarization.",
     verdict: "tie",
@@ -320,7 +320,7 @@ const contextRows: Row[] = [
   {
     label: "Memory search",
     comis:
-      "SQLite + FTS5 + sqlite-vec. Hybrid search via reciprocal rank fusion across tunable lanes, with an on-device cross-encoder reranker that turns on automatically when its model is present (zero download out of the box). Trust-first recall (system/learned/external): contradictions resolve by trust first, then recency, without deleting history. Repeated facts consolidate into corroborated observations whose proof accrues across runs, and an opt-out (on-by-default) feedback loop lets recall learn from which memories actually got used. RAG retriever injects memories with provenance annotations and trust-level tags. Budget-capped injection with per-query maxChars. Prompt injection sanitization on retrieved content.",
+      "Memory that learns, not just remembers: SQLite + FTS5 + sqlite-vec, hybrid search via reciprocal rank fusion, optional on-device reranking, trust-first recall, proof-accruing observations, and an opt-in feedback loop that learns from which memories are actually used.",
     openclaw:
       "SQLite + FTS5 + vector embeddings (OpenAI, Gemini, Voyage, Mistral, Ollama). Hybrid search with configurable weights (vector 0.7, text 0.3). MMR diversity reranking (lambda 0.7). Temporal decay with 30-day half-life. Batch API for providers that support it. Max 6 results, min score 0.35. Community 12-layer architecture adds facts.db (770+ facts with Hebbian activation/decay), file-vec index, and LightRAG GraphRAG (4,909 entities, 6,089 relations).",
     verdict: "tie",
@@ -1103,8 +1103,8 @@ const sectionMeta = [
           <blockquote
             class="border-l-2 border-teal/40 pl-5 text-lg text-muted-light italic leading-relaxed"
           >
-            A &ldquo;personal assistant&rdquo; (one trusted operator, potentially
-            many agents), not a &ldquo;shared multi-tenant bus.&rdquo; The exec
+            A "personal assistant" (one trusted operator, potentially
+            many agents), not a "shared multi-tenant bus." The exec
             sandbox is opt-in and off by default, and prompt injection is out of
             scope absent a boundary bypass.
           </blockquote>
@@ -1207,8 +1207,8 @@ const sectionMeta = [
           the field, <span class="font-semibold text-teal">OpenClaw is excellent</span>
           - that's its design center, by its own documentation. If you want an
           agent platform you can hand to your team, your family, or your company -
-          multi-tenant by design, with the sandbox on by default, keys the agent
-          can never read, and every action reconstructable from the logs alone -
+          multi-tenant by design, with sandboxed tools where supported, keys the
+          agent can never read, and every action reconstructable from the logs alone -
           <span class="font-semibold text-coral">that's Comis</span>.
         </p>
       </div>
@@ -1233,7 +1233,7 @@ const sectionMeta = [
           Ready to try Comis?
         </h2>
         <p class="text-muted text-lg mb-10">
-          Free, open source, and takes four commands to set up.
+          Free, open source, and quick to try from the one-line installer.
         </p>
 
         <div class="flex flex-wrap gap-4 justify-center">
