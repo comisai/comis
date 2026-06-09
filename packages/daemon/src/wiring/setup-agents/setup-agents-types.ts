@@ -221,6 +221,10 @@ export interface SingleAgentDeps {
    * drain open recorders.
    */
   trajectoryRegistry: import("@comis/observability").SessionTrajectoryHandleRegistry;
+  /** Ollama served context-window probe result from bootAgents (CWF-03).
+   *  Map from provider config key (e.g. "qwen36-local") to discovered num_ctx.
+   *  Absent → probe not run or all failed; executors fall back to configured window. */
+  servedWindowByProvider?: Map<string, number>;
 }
 
 /** Per-agent outputs from setupSingleAgent(), matching the Maps in AgentsResult. */
