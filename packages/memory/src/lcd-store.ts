@@ -659,6 +659,94 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       return out;
     },
 
+    getMessagesByIds(scope: ContextStoreScope, ids: string[]): LcdMessage[] {
+      // EFF-01: bounded fetch — short-circuit immediately on empty set so zero
+      // DB queries are issued (the IN() SQL with zero placeholders is also an
+      // error in most SQLite builds, making the guard doubly necessary).
+      if (ids.length === 0) return [];
+      // Variable-length IN — built at call time (NOT a cached prepare).
+      // Documented deviation from the prepare-once rule: the working set is
+      // bounded by context_items cardinality (max ~100 items per turn), so the
+      // extra statement-prepare cost is negligible and avoids a placeholder-count
+      // mismatch at the boundary. T-170-01-01: ids are always bound as '?'
+      // parameters — never string-interpolated — so SQL injection is structurally
+      // impossible. T-170-01-02: the three-column R4 scope triple
+      // (conversation_id, agent_id, tenant_id) is always present so a cross-agent
+      // id lookup returns [] (EFF-01-S-4).
+      const placeholders = ids.map(() => "?").join(",");
+      const stmt = db.prepare(
+        `SELECT * FROM lcd_messages
+         WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?
+           AND id IN (${placeholders})
+         ORDER BY seq`,
+      );
+      const out: LcdMessage[] = [];
+      for (const rawMsg of stmt.all(scope.conversationId, scope.agentId, scope.tenantId, ...ids)) {
+        const parsedMsg = messageRowMapper.parseOptionalRow(rawMsg);
+        if (!parsedMsg.ok || !parsedMsg.value) continue;
+        const row = parsedMsg.value;
+        const parts: LcdMessagePart[] = [];
+        for (const rawPart of selectParts.all(row.id)) {
+          const parsedPart = partRowMapper.parseOptionalRow(rawPart);
+          if (!parsedPart.ok || !parsedPart.value) continue;
+          const p = parsedPart.value;
+          parts.push({
+            kind: p.kind as LcdPartKind,
+            toolCallId: p.tool_call_id ?? undefined,
+            toolName: p.tool_name ?? undefined,
+            toolInput: parseJsonColumn(p.tool_input),
+            toolOutput: parseJsonColumn(p.tool_output),
+            isError: intToBool(p.is_error),
+            metadata: parseMetadata(p.metadata),
+          });
+        }
+        out.push({
+          id: row.id,
+          conversationId: row.conversation_id,
+          seq: row.seq,
+          role: row.role as LcdRole,
+          tokenCount: row.token_count,
+          createdAt: row.created_at,
+          parts,
+        });
+      }
+      return out;
+    },
+
+    getSummariesByIds(scope: ContextStoreScope, ids: string[]): LcdSummary[] {
+      // EFF-01: bounded fetch — short-circuit on empty set (zero DB queries).
+      if (ids.length === 0) return [];
+      const placeholders = ids.map(() => "?").join(",");
+      const stmt = db.prepare(
+        `SELECT * FROM lcd_summaries
+         WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?
+           AND summary_id IN (${placeholders})
+         ORDER BY created_at, summary_id`,
+      );
+      const out: LcdSummary[] = [];
+      for (const raw of stmt.all(scope.conversationId, scope.agentId, scope.tenantId, ...ids)) {
+        const parsed = summaryRowMapper.parseOptionalRow(raw);
+        if (!parsed.ok || !parsed.value) continue;
+        const row = parsed.value;
+        out.push({
+          summaryId: row.summary_id,
+          conversationId: row.conversation_id,
+          kind: row.kind as LcdSummaryKind,
+          depth: row.depth,
+          earliestAt: row.earliest_at,
+          latestAt: row.latest_at,
+          descendantCount: row.descendant_count,
+          tokenCount: row.token_count,
+          content: row.content,
+          fileIds: parseFileIds(row.file_ids),
+          taint: row.taint !== 0,
+          fallback: row.fallback !== 0,
+          createdAt: row.created_at,
+        });
+      }
+      return out;
+    },
+
     getSummaryChildren(scope: ContextStoreScope, parentSummaryId: string): LcdSummary[] {
       // E1 region walk: the immediate child summaries of a condensed summary
       // (lcd_summary_parents condensed→child edge). Same map-to-DTO discipline as

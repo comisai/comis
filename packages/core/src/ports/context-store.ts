@@ -88,6 +88,25 @@ export interface ContextStorePort {
    */
   getSummaries(scope: ContextStoreScope): LcdSummary[];
   /**
+   * EFF-01: Bounded read path — fetch only the message rows whose ids are in
+   * the provided set. Scoped by (conversationId, agentId, tenantId) — R4 isolation
+   * identical to getMessages. Returns rows ordered by seq, same as getMessages.
+   *
+   * Returns [] when ids is empty (no DB query issued). Callers must collect
+   * refIds from getContextItems before calling this method.
+   */
+  getMessagesByIds(scope: ContextStoreScope, ids: string[]): LcdMessage[];
+
+  /**
+   * EFF-01: Bounded read path — fetch only the summary rows whose summaryIds are
+   * in the provided set. Scoped by (conversationId, agentId, tenantId) — R4 isolation
+   * identical to getSummaries. Returns rows ordered by created_at, summary_id.
+   *
+   * Returns [] when ids is empty (no DB query issued).
+   */
+  getSummariesByIds(scope: ContextStoreScope, ids: string[]): LcdSummary[];
+
+  /**
    * E1 region walk: the immediate CHILD summaries of a condensed summary
    * (the lcd_summary_parents condensed→child edge). Returns [] when the
    * summary has no children (a leaf) or does not exist. Scoped by

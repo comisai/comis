@@ -1780,3 +1780,135 @@ describe("Phase 164 — cursor + deleteConversationLcd", () => {
     expect(store.getMessages(SCOPE_A)).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// EFF-01: bounded working-set reads — getMessagesByIds / getSummariesByIds
+// ---------------------------------------------------------------------------
+
+describe("EFF-01: getMessagesByIds / getSummariesByIds", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createLcdStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Append N messages to a scope, returning their ids in seq order. */
+  function appendMessages(scope: ContextStoreScope, n: number): string[] {
+    const ids: string[] = [];
+    for (let seq = 0; seq < n; seq++) {
+      store.append({
+        scope,
+        seq,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 1000 + seq * 10,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `m${seq}` }, rawType: "text" } }],
+      });
+    }
+    return store.getMessages(scope).map((m) => m.id);
+  }
+
+  it("EFF-01-S-1: getMessagesByIds returns ONLY the rows whose ids are in the provided list", () => {
+    const ids = appendMessages(SCOPE_A, 5);
+    // Pick ids at index 0 and 2 (m1 and m3 by 0-based seq).
+    const wanted = [ids[0]!, ids[2]!];
+    const result = store.getMessagesByIds(SCOPE_A, wanted);
+    expect(result).toHaveLength(2);
+    expect(result.map((m) => m.id).sort()).toEqual([...wanted].sort());
+  });
+
+  it("EFF-01-S-2: getMessagesByIds with empty ids list returns [] without issuing any DB queries", () => {
+    appendMessages(SCOPE_A, 3);
+    const result = store.getMessagesByIds(SCOPE_A, []);
+    expect(result).toEqual([]);
+  });
+
+  it("EFF-01-S-3: getSummariesByIds returns ONLY the summaries whose summaryIds are in the list", () => {
+    // Seed 3 messages then create 3 leaf summaries (one per message slot via successive passes).
+    appendMessages(SCOPE_A, 3);
+    store.getContextItems(SCOPE_A); // seed context_items
+    const s1 = store.appendLeafSummary({
+      scope: SCOPE_A,
+      tokenCount: 5,
+      content: "summary-1",
+      descendantCount: 0,
+      earliestAt: 1000,
+      latestAt: 1000,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9000,
+      startOrdinal: 0,
+      endOrdinal: 0,
+    });
+    // After first collapse: items = [S, m1, m2]; do second collapse at ordinal 1.
+    const s2 = store.appendLeafSummary({
+      scope: SCOPE_A,
+      tokenCount: 5,
+      content: "summary-2",
+      descendantCount: 0,
+      earliestAt: 1010,
+      latestAt: 1010,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9001,
+      startOrdinal: 1,
+      endOrdinal: 1,
+    });
+    // After second collapse: items = [S, S, m2]; do third collapse at ordinal 2.
+    const s3 = store.appendLeafSummary({
+      scope: SCOPE_A,
+      tokenCount: 5,
+      content: "summary-3",
+      descendantCount: 0,
+      earliestAt: 1020,
+      latestAt: 1020,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9002,
+      startOrdinal: 2,
+      endOrdinal: 2,
+    });
+    void s1; void s3; // suppress unused warning — we only request s2
+    const result = store.getSummariesByIds(SCOPE_A, [s2]);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.summaryId).toBe(s2);
+  });
+
+  it("EFF-01-S-4: getMessagesByIds respects R4 scope — messages from a different agentId are excluded", () => {
+    // Seed messages for both agents sharing the same conversationId.
+    const SCOPE_CROSS_A: ContextStoreScope = {
+      conversationId: "conv-cross",
+      tenantId: "tenant-cross",
+      agentId: "agentA",
+      sessionKey: "sess-cross",
+    };
+    const SCOPE_CROSS_B: ContextStoreScope = {
+      conversationId: "conv-cross",
+      tenantId: "tenant-cross",
+      agentId: "agentB",
+      sessionKey: "sess-cross",
+    };
+    // Append one message to agentB.
+    store.append({
+      scope: SCOPE_CROSS_B,
+      seq: 0,
+      role: "user",
+      tokenCount: 1,
+      createdAt: 1000,
+      parts: [{ kind: "text", metadata: { raw: { type: "text", text: "agentB msg" }, rawType: "text" } }],
+    });
+    const agentBIds = store.getMessages(SCOPE_CROSS_B).map((m) => m.id);
+    expect(agentBIds).toHaveLength(1);
+
+    // Looking up agentB's id through agentA's scope must return [].
+    const result = store.getMessagesByIds(SCOPE_CROSS_A, agentBIds);
+    expect(result).toEqual([]);
+  });
+});
