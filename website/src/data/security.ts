@@ -4,8 +4,8 @@
  *
  * The audited README deliberately leads with MECHANISMS and never headlines a
  * "layer count" - this module mirrors that. The only locked security numbers
- * are the 18 skill-content-scanner rules and the credential-broker / kernel-
- * sandbox mechanisms (CONTEXT "Accuracy contract (LOCKED)"). It does NOT encode
+ * are the 18 skill-content-scanner rules and the credential-broker / sandbox
+ * mechanisms (CONTEXT "Accuracy contract (LOCKED)"). It does NOT encode
  * a 22/23/24/25 layer tally anywhere, and it carries the corrected cache-
  * architecture wording so compare pages have a ready, accurate replacement for
  * the cache phrasing the accuracy audit retired.
@@ -24,11 +24,11 @@ export const SECURITY = {
    */
   mechanisms: [
     {
-      name: "Kernel-enforced exec sandbox",
+      name: "Sandboxed exec runtime",
       promise:
-        "Tools run jailed by the operating system itself - on by default, not a setting you have to remember to turn on.",
+        "Tool execution is sandboxed by default when a supported provider is available, and downgrades are logged instead of hidden.",
       forEngineers:
-        "Bubblewrap on Linux (full namespace unshare: mount, PID, user, cgroup, IPC; private /tmp and /dev); sandbox-exec on macOS with profiles that open `(deny default)`. No network by default, even for interactive terminal sessions the agent drives.",
+        "Bubblewrap on Linux (full namespace unshare: mount, PID, user, cgroup, IPC; private /tmp and /dev) and sandbox-exec on macOS with deny-default profiles where available. Interactive terminal sessions fail closed if a jail cannot be materialized; dev/container hosts that cannot provide the same guarantees are detected and logged.",
     },
     {
       name: "Credential broker",
