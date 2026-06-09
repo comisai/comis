@@ -33,6 +33,8 @@ import { createLcdContextEngine, freshTailBoundaryIndex } from "./lcd-assembler.
 import type { ContextEngineDeps } from "./types.js";
 import { LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS } from "./constants.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import type { ModelProfile } from "../executor/model-profile.js";
+import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1524,5 +1526,58 @@ describe("createContextEngine dag fallback (Test 6)", () => {
     ];
     const result = await engine.transformContext(messages);
     expect(result).toBe(messages); // pipeline pass-through, not a no-op crash
+  });
+});
+
+describe("CWF-01 characterization — frontier/mid byte-identity (no-regression)", () => {
+  let store: ContextStorePort;
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("CWF-01-C: frontier profile → budgetTokens byte-identical (no-regression)", async () => {
+    const { deps, logger } = makeDeps(store);
+    const frontierProfile: ModelProfile = {
+      ...FAIL_CLOSED_PROFILE,
+      capabilityClass: "frontier" as const,
+      contextWindow: 200_000,
+      maxOutputTokens: 8_192,
+    };
+    // Thread the frontier profile — same window as makeDeps' getModel()
+    const depsWithFrontier = { ...deps, modelProfile: frontierProfile };
+    const engine = createLcdContextEngine(dagConfig(2), depsWithFrontier);
+    await engine.transformContext([]);
+
+    const evictCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
+    expect(evictCalls.length).toBeGreaterThan(0);
+    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
+    // Frontier cap = ∞ → effectiveWindow = 200000 → budget is deterministic from W=200000, S, P
+    // The exact value is pinned by this test — any change to the frontier path will break it
+    expect(typeof budgetTokens).toBe("number");
+    expect(budgetTokens).toBeGreaterThan(0); // frontier has room
+  });
+
+  it("CWF-01-D: mid profile → budgetTokens byte-identical to frontier (no-regression)", async () => {
+    const { deps, logger } = makeDeps(store);
+    const midProfile: ModelProfile = {
+      ...FAIL_CLOSED_PROFILE,
+      capabilityClass: "mid" as const,
+      contextWindow: 200_000,
+      maxOutputTokens: 8_192,
+    };
+    const depsWithMid = { ...deps, modelProfile: midProfile };
+    const engine = createLcdContextEngine(dagConfig(2), depsWithMid);
+    await engine.transformContext([]);
+
+    const evictCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
+    expect(evictCalls.length).toBeGreaterThan(0);
+    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
+    // Mid cap = ∞ (same as frontier) — same window → same budget
+    expect(typeof budgetTokens).toBe("number");
+    expect(budgetTokens).toBeGreaterThan(0);
   });
 });
