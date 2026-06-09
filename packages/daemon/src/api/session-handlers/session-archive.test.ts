@@ -11,7 +11,8 @@
  *   H2: missing session_key is rejected
  *   H3: absent deps.lcdStore fails-closed with explicit error (T-164-09)
  *   H4: happy path — mock lcdStore returns 5, handler returns { sessionKey, lcdRowsDeleted: 5 }
- *   H5: --memory flag accepted; memoriesDeleted: 0 stub returned (thin second step)
+ *   H5: --memory flag accepted; memoriesDeleted OMITTED (not-implemented); WARN logged (Phase 164-05 honest-defer)
+ *   H5b: --memory omitted; memoriesDeleted is also OMITTED (only returned when RAG clear succeeds)
  *
  * @module
  */
@@ -182,7 +183,7 @@ describe("context.reset_lcd handler", () => {
     expect(deleteArgs[0].sessionKey).toBe(SESSION_KEY);
   });
 
-  it("H5: --memory flag accepted; memoriesDeleted: 0 stub returned (thin second step)", async () => {
+  it("H5: --memory flag accepted; memoriesDeleted OMITTED (not-implemented) and WARN emitted (Phase 164-05 honest-defer)", async () => {
     const lcdStore = makeLcdStore(5);
     const deps = makeDeps({ lcdStore });
     const handlers = bindSessionArchiveHandlers(deps);
@@ -193,11 +194,19 @@ describe("context.reset_lcd handler", () => {
       _trustLevel: "admin",
     })) as { sessionKey: string; lcdRowsDeleted: number; memoriesDeleted?: number };
 
+    // LCD rows still cleared
     expect(result.lcdRowsDeleted).toBe(5);
-    expect(result.memoriesDeleted).toBe(0);
+    // memoriesDeleted must be OMITTED (undefined), not a misleading 0
+    expect(result.memoriesDeleted).toBeUndefined();
+    // logger.warn must have been called with errorKind:"precondition" and a hint about deferral
+    const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    expect(warnCalls.length).toBeGreaterThanOrEqual(1);
+    const warnArg = warnCalls[0][0] as Record<string, unknown>;
+    expect(warnArg["errorKind"]).toBe("precondition");
+    expect(String(warnArg["hint"] ?? "")).toMatch(/not yet implemented|deferred/i);
   });
 
-  it("H5b: --memory omitted; memoriesDeleted is 0 (default)", async () => {
+  it("H5b: --memory omitted; memoriesDeleted is OMITTED (only set when RAG clear actually runs)", async () => {
     const lcdStore = makeLcdStore(3);
     const deps = makeDeps({ lcdStore });
     const handlers = bindSessionArchiveHandlers(deps);
@@ -208,6 +217,7 @@ describe("context.reset_lcd handler", () => {
     })) as { sessionKey: string; lcdRowsDeleted: number; memoriesDeleted?: number };
 
     expect(result.lcdRowsDeleted).toBe(3);
-    expect(result.memoriesDeleted).toBe(0);
+    // memoriesDeleted should be omitted when --memory is not passed
+    expect(result.memoriesDeleted).toBeUndefined();
   });
 });

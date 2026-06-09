@@ -269,10 +269,13 @@ describe("renderSystemPromptReport — Tools/Skills lines never render 'undefine
 
 // ---------------------------------------------------------------------------
 // Phase 164-03 (RR4): sessions reset-lcd subcommand wiring
+// Phase 164-05 (gap-closure): honest-defer for --memory not-implemented
 //
 // CLI1: subcommand is registered under `sessions`
 // CLI2: sends context.reset_lcd with { session_key } when --yes is passed
 // CLI3: --memory flag threads memory: true to the request
+// CLI4: --memory with memoriesDeleted===undefined (not-implemented) → ⚠ warning to stderr
+// CLI4b: --memory with memoriesDeleted defined (future impl) → RAG line to stdout
 //
 // Uses vi.mock for withClient (same pattern as trace.test.ts).
 // ---------------------------------------------------------------------------
@@ -297,11 +300,11 @@ vi.mock("@clack/prompts", () => ({
 
 const { withClient: mockedWithClient } = await import("../client/rpc-client.js");
 
-/** Minimal context.reset_lcd success response */
+/** Minimal context.reset_lcd success response — memoriesDeleted OMITTED (Phase 164-05 honest-defer) */
 const RESET_LCD_RESPONSE = {
   sessionKey: "tenant1:user1:chan1",
   lcdRowsDeleted: 7,
-  memoriesDeleted: 0,
+  // memoriesDeleted is intentionally absent: the handler omits it when RAG clear is not-implemented
 };
 
 describe("CLI1: sessions reset-lcd subcommand registration (Phase 164-03)", () => {
@@ -417,7 +420,8 @@ describe("CLI3: sessions reset-lcd --memory threads memory: true (Phase 164-03)"
       const mockClient = {
         call: vi.fn().mockImplementation(async (_method: string, params?: unknown) => {
           capturedParams.push(params);
-          return { ...RESET_LCD_RESPONSE, memoriesDeleted: 0 };
+          // honest-defer: handler omits memoriesDeleted when not implemented
+          return RESET_LCD_RESPONSE;
         }),
         close: vi.fn(),
         onNotification: vi.fn(),
@@ -465,5 +469,87 @@ describe("CLI3: sessions reset-lcd --memory threads memory: true (Phase 164-03)"
     expect(capturedParams).toHaveLength(1);
     const params = capturedParams[0] as Record<string, unknown>;
     expect(params["memory"]).toBeFalsy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 164-05 (gap-closure): CLI4 — --memory not-implemented warning output
+//
+// CLI4:  --memory passed + memoriesDeleted===undefined → ⚠ warning written to stderr
+// CLI4b: --memory passed + memoriesDeleted defined (future) → RAG line to stdout
+// ---------------------------------------------------------------------------
+
+describe("CLI4: sessions reset-lcd --memory not-implemented warning (Phase 164-05)", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+  let stderrSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.mocked(mockedWithClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+    stderrSpy.mockRestore();
+  });
+
+  it("CLI4: --memory + memoriesDeleted===undefined prints ⚠ not-implemented warning to stderr", async () => {
+    vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
+      const mockClient = {
+        call: vi.fn().mockResolvedValue(RESET_LCD_RESPONSE), // no memoriesDeleted field
+        close: vi.fn(),
+        onNotification: vi.fn(),
+      };
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerSessionsCommand(program);
+    await program.parseAsync([
+      "node", "test",
+      "sessions", "reset-lcd", "tenant1:user1:chan1",
+      "--yes",
+      "--memory",
+    ]);
+
+    // stderr must contain the ⚠ warning about not-implemented
+    const stderrOutput = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+    expect(stderrOutput).toMatch(/not yet implemented|RAG memory was NOT cleared/i);
+
+    // stdout must NOT contain a "RAG memories cleared" line (it wasn't cleared)
+    const stdoutOutput = consoleSpy.log.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(stdoutOutput).not.toMatch(/RAG memories cleared/i);
+  });
+
+  it("CLI4b: --memory + memoriesDeleted defined → RAG line printed to stdout, no stderr warning", async () => {
+    vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
+      const mockClient = {
+        call: vi.fn().mockResolvedValue({ ...RESET_LCD_RESPONSE, memoriesDeleted: 3 }),
+        close: vi.fn(),
+        onNotification: vi.fn(),
+      };
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerSessionsCommand(program);
+    await program.parseAsync([
+      "node", "test",
+      "sessions", "reset-lcd", "tenant1:user1:chan1",
+      "--yes",
+      "--memory",
+    ]);
+
+    // stdout must contain the RAG line
+    const stdoutOutput = consoleSpy.log.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(stdoutOutput).toMatch(/RAG memories cleared.*3/i);
+
+    // stderr must NOT contain the not-implemented warning
+    const stderrOutput = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+    expect(stderrOutput).not.toMatch(/not yet implemented|RAG memory was NOT cleared/i);
   });
 });
