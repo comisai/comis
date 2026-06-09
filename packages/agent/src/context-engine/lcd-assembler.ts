@@ -390,7 +390,7 @@ export function createLcdContextEngine(
         {
           step: "lcd-evict",
           budgetTokens: budget.availableHistoryTokens,
-          windowTokens: W,
+          windowTokens: budget.windowTokens,
           systemTokens: S,
           freshTailPreambleTokens,
           evictableCount: evictable.length,
