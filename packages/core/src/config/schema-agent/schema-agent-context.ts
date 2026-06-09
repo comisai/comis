@@ -348,10 +348,17 @@ export const ContextEngineConfigSchema = z.strictObject({
     /** Max effective context tokens for capabilityClass="small". 0 = no cap (use raw contextWindow). */
     effectiveContextCapSmall: z.number().int().nonnegative().default(32_000),
     /** Max effective context tokens for capabilityClass="nano". 0 = no cap. */
-    effectiveContextCapNano: z.number().int().nonnegative().default(16_000),
+    effectiveContextCapNano:  z.number().int().nonnegative().default(16_000),
+    /** Fix 3 / Phase 166 CWF-02: minimum visible output tokens guaranteed on every LLM
+     *  dispatch — the non-reasoning floor (answer/tool-call body after the thinking block).
+     *  Runtime override for the compile-time constant MIN_VISIBLE_OUTPUT_TOKENS=768.
+     *  Values below 256 are rejected by the schema (too small to be useful).
+     *  Used by: lcd-assembler.ts headroom check + config-resolver.ts max_tokens clamp.
+     *  Design ref: design/small-model-context-fidelity.md §4 Fix 3. */
+    minVisibleOutputTokens: z.number().int().min(256).max(8_192).default(768),
     // Fully-populated default object (NOT `.default({})`) — see summarizerSpend pattern above.
     // Zod does NOT re-parse inner field defaults from `.default({})`.
-  }).default({ effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000 }),
+  }).default({ effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000, minVisibleOutputTokens: 768 }),
 
   /** C4: Capability-routed compaction. For small/nano capabilityClass, prefer eviction
    *  or a configured stronger summarizer over same-model LLM summarization (which degrades). */

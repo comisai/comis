@@ -55,8 +55,8 @@ describe("ContextEngineConfigSchema", () => {
       deferCompaction: true,
       summarizerSpend: { maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 },
       summarizerBreaker: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
-      // Phase 152 capacity + prompt-security knobs (C1/C2/C4)
-      budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000 },
+      // Phase 152 capacity + prompt-security knobs (C1/C2/C4) + Phase 166 CWF-02
+      budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000, minVisibleOutputTokens: 768 },
       compactPrompt: { enabled: true, targetTokens: 3_000 },
       compaction: { preferEvictionByCapability: true, strongerSummarizerModel: "" },
     });
@@ -134,8 +134,8 @@ describe("ContextEngineConfigSchema", () => {
       deferCompaction: true,
       summarizerSpend: { maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 },
       summarizerBreaker: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
-      // Phase 152 knobs (not overridden in this test — default through)
-      budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000 },
+      // Phase 152 knobs + Phase 166 CWF-02 (not overridden in this test — default through)
+      budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000, minVisibleOutputTokens: 768 },
       compactPrompt: { enabled: true, targetTokens: 3_000 },
       compaction: { preferEvictionByCapability: true, strongerSummarizerModel: "" },
     });
