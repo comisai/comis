@@ -98,6 +98,15 @@ export interface SessionsApiDeps {
    *  consumes the derived field to filter to CONFIRMED-only messages, but the
    *  field is also useful to the dashboard / observers. */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
+  /** LCD lossless-store write+run surface — the `context.reset_lcd` handler
+   *  (Phase 164-03, RR4) calls `deleteConversationLcd` inside
+   *  `runOnConversation` to clear a conversation's lcd_* rows. Optional:
+   *  the handler fails-closed (throws "LCD store not available") when absent,
+   *  never silently returning a 0 count (T-164-09). The same ContextStorePort
+   *  instance is also on MemoryApiDeps; the SessionsApiDeps copy here lets the
+   *  session-archive.ts handler access it without widening the consumption type
+   *  to the full MemoryApiDeps slice. */
+  lcdStore?: import("@comis/core").ContextStorePort;
 }
 
 /**

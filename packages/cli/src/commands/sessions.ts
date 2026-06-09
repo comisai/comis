@@ -20,6 +20,7 @@ import {
   SessionDeleteContract,
   ObsSystemPromptReportLatestContract,
   ObsSystemPromptReportListContract,
+  ContextResetLcdContract,
 } from "@comis/core";
 import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, json } from "../output/format.js";
@@ -226,6 +227,41 @@ export function registerSessionsCommand(program: Command): void {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to delete session: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // sessions reset-lcd — RR4 (Phase 164-03): explicit LCD history clear
+  // Admin-gated destructive operation: clears lcd_* rows for the given session.
+  // --memory also clears RAG memories (GDPR / full-forget path).
+  // --yes skips confirmation (required for scripted/automated use).
+  sessions
+    .command("reset-lcd <sessionKey>")
+    .description("Clear the LCD durable conversation history for a session (admin). Use --memory to also clear RAG memories.")
+    .option("--memory", "Also clear RAG memories for this session")
+    .option("--yes", "Skip confirmation prompt")
+    .action(async (sessionKeyArg: string, opts: { memory?: boolean; yes?: boolean }) => {
+      if (!opts.yes) {
+        // Destructive and admin-only: require --yes to avoid accidental wipes.
+        // Interactive readline would require a TTY dep not available in all
+        // non-interactive contexts; the --yes flag is the authoritative guard.
+        error("LCD history reset is irreversible. Pass --yes to confirm.");
+        process.exit(1);
+      }
+      try {
+        const result = await withClient(async (client) => {
+          return await callTyped(client, ContextResetLcdContract, {
+            session_key: sessionKeyArg,
+            memory: opts.memory ?? false,
+          });
+        });
+        console.log(`LCD history cleared: ${result.lcdRowsDeleted} rows deleted.`);
+        if (result.memoriesDeleted !== undefined) {
+          console.log(`RAG memories cleared: ${result.memoriesDeleted} memories deleted.`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error(`Failed to reset LCD history: ${msg}`);
         process.exit(1);
       }
     });
