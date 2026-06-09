@@ -124,6 +124,38 @@ export const IncidentReportSchema = z.object({
       trajectory: z.object({ found: z.boolean(), records: z.number() }),
       rollup: z.object({ present: z.boolean() }),
       offloads: z.object({ pointersResolved: z.number(), pointersTotal: z.number() }),
+      /**
+       * QT1 — toolStats reconciliation between THIS report (the whole-session
+       * trajectory union, the headline `toolStats`) and the persisted per-session
+       * rollup that `obs.fleet.health` reads (latest-execution-wins). The two
+       * lenses read structurally-different sources, so they CAN legitimately
+       * differ — but only in one direction: the rollup is built per-execution and
+       * the `sessionEnd` is overwritten each execution, so it is a SUBSET of the
+       * trajectory (`rollup.{ok,failed} ≤ trajectory.{ok,failed}` per tool). This
+       * block makes that divergence TRANSPARENT instead of letting the two
+       * commands silently contradict: `reconciled` is the directional invariant
+       * (rollup ⊆ trajectory) holding; `rollupSource` names WHY the rollup can be
+       * smaller; `divergentTools[]` lists each tool whose persisted rollup differs
+       * from the trajectory with BOTH count pairs, so an operator cross-
+       * referencing `comis explain` vs `comis fleet` sees exactly the gap. A
+       * rollup OVERcount (the forbidden direction — incl. a tool present in the
+       * rollup but absent from the trajectory) flips `reconciled` to `false` and
+       * surfaces the offending tool. Bounded: counts + tool names only, capped by
+       * the distinct tool set (same bound as `toolStats`).
+       */
+      toolStats: z
+        .object({
+          reconciled: z.boolean(),
+          rollupSource: z.literal("last-execution"),
+          divergentTools: z.array(
+            z.object({
+              tool: z.string(),
+              rollup: z.object({ ok: z.number(), failed: z.number() }),
+              trajectory: z.object({ ok: z.number(), failed: z.number() }),
+            }),
+          ),
+        })
+        .optional(),
     })
     .optional(),
 });

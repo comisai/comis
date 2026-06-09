@@ -767,6 +767,8 @@ Accepts EITHER `sessionKey` OR `traceId` (at least one is required). A `traceId`
 
 An optional `coverage` block reports READ-coverage -- whether the trajectory, rollup, and each offload pointer were actually located and resolved (`{ trajectory: { found, records }, rollup: { present }, offloads: { pointersResolved, pointersTotal } }`) -- distinct from `truncations[]`, which records what the size-bounding pass dropped. A degraded report is self-evident from it (e.g. `records: 0` or `pointersResolved < pointersTotal`) rather than masquerading as a clean session.
 
+`coverage.toolStats` reconciles this report's per-tool `toolStats` (the **whole-session** trajectory union) against the persisted per-session rollup that [`obs.fleet.health`](#obs-fleet-health) reads (the **latest-execution** rollup -- it is built per execution and the session metadata is overwritten each turn). The two lenses read structurally-different sources, so they CAN differ for the same session -- but only in one direction: the rollup is a subset of the trajectory (`rollup.{ok,failed} <= trajectory.{ok,failed}` per tool). The block (`{ reconciled, rollupSource: "last-execution", divergentTools: [{ tool, rollup: { ok, failed }, trajectory: { ok, failed } }] }`) makes that gap transparent so `comis explain` and `comis fleet` can never silently contradict: `divergentTools[]` names each tool whose persisted rollup differs from the trajectory with both count pairs, and `reconciled` is the directional invariant (a rollup that OVER-counts the trajectory -- the forbidden direction, including a tool present in the rollup but absent from the trajectory -- flips it to `false` and surfaces the offending tool instead of hiding it).
+
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
@@ -803,7 +805,12 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
       "suggestedNextSteps": ["audit the web_fetch failureDetector rule for the matched token 'status'", "obs.explain depth=full"]
     },
     "truncations": [],
-    "coverage": { "trajectory": { "found": true, "records": 25 }, "rollup": { "present": true }, "offloads": { "pointersResolved": 1, "pointersTotal": 1 } }
+    "coverage": {
+      "trajectory": { "found": true, "records": 25 },
+      "rollup": { "present": true },
+      "offloads": { "pointersResolved": 1, "pointersTotal": 1 },
+      "toolStats": { "reconciled": true, "rollupSource": "last-execution", "divergentTools": [ { "tool": "web_fetch", "rollup": { "ok": 2, "failed": 3 }, "trajectory": { "ok": 2, "failed": 8 } } ] }
+    }
   },
   "id": 1
 }
