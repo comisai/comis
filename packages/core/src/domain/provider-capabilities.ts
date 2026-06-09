@@ -66,6 +66,12 @@ export const ProviderCapabilitiesSchema = z.strictObject({
    * Used by resolveModelProfile() in packages/agent.
    */
   capabilityClass: z.enum(["frontier", "mid", "small", "nano"]).optional(),
+  /**
+   * Whether to probe the served context window at daemon boot (Ollama providers only).
+   * Default: true for `type: "ollama"` providers; omit or set false to skip the probe
+   * (e.g., if the Ollama server is offline at boot time).
+   */
+  probeServedWindow: z.boolean().optional(),
 });
 
 export type ProviderCapabilities = z.infer<typeof ProviderCapabilitiesSchema>;

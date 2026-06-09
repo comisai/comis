@@ -23563,6 +23563,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("pro
                 },
                 "type": "array"
               },
+              "probeServedWindow": {
+                "type": "boolean"
+              },
               "providerFamily": {
                 "default": "default",
                 "enum": [
@@ -35645,6 +35648,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "probeServedWindow": {
+                    "type": "boolean"
                   },
                   "providerFamily": {
                     "default": "default",
