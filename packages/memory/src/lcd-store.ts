@@ -56,7 +56,7 @@ import {
   type LcdSummary,
   type LcdSummaryKind,
 } from "@comis/core";
-import type { LcdSearchHit } from "@comis/core";
+import type { LcdSearchResult } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { renderMessageFtsText, searchLcdImpl, isFtsAvailable } from "./lcd-fts.js";
 import { createIngestSerializer } from "./lcd-ingest-serializer.js";
@@ -818,13 +818,15 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       scope: ContextStoreScope,
       query: string,
       opts: { limit: number; scope?: "messages" | "summaries" | "both" },
-    ): LcdSearchHit[] {
+    ): LcdSearchResult {
       // E1 search: delegate the FTS5-MATCH-with-LIKE-fallback branch to lcd-fts.ts
       // (the extract that keeps this file under the 800-line cap). The `query`
       // arrives pre-sanitized (the tool sanitizes — the cut bars memory from the
       // skills sanitizer). R4: scoped by (conversation_id, agent_id) — BOTH the
       // FTS MATCH path AND the LIKE fallback filter agent_id (WR-02, Pitfall 3);
       // the conversation_id prefix carries the tenant boundary. Never throws.
+      // Returns LcdSearchResult (EFF-03): { hits, cjkZeroHit } — propagated
+      // directly from searchLcdImpl; no transformation needed.
       return searchLcdImpl(db, scope.conversationId, scope.agentId, query, opts);
     },
 

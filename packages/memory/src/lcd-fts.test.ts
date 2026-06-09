@@ -59,10 +59,11 @@ describe("lcd-fts — LIKE fallback when FTS5 is unavailable", () => {
     `).run();
 
     // No FTS table exists → the probe reports unavailable → LIKE scan, never throws.
-    let hits: ReturnType<typeof searchLcdImpl> = [];
+    let result: ReturnType<typeof searchLcdImpl> = { hits: [], cjkZeroHit: false };
     expect(() => {
-      hits = searchLcdImpl(db, "conv-a", "a", "revenue", { limit: 10, scope: "summaries" });
+      result = searchLcdImpl(db, "conv-a", "a", "revenue", { limit: 10, scope: "summaries" });
     }).not.toThrow();
+    const { hits } = result;
 
     const hit = hits.find((h) => h.refId === "s1");
     expect(hit).toBeDefined();
@@ -84,7 +85,7 @@ describe("lcd-fts — LIKE fallback when FTS5 is unavailable", () => {
       JSON.stringify({ raw: { type: "text", text: "ship the falcon release" }, rawType: "text" }),
     );
 
-    const hits = searchLcdImpl(db, "conv-a", "a", "falcon", { limit: 10, scope: "messages" });
+    const { hits } = searchLcdImpl(db, "conv-a", "a", "falcon", { limit: 10, scope: "messages" });
     expect(hits.map((h) => h.refId)).toContain("m1");
     expect(hits.some((h) => h.refId === "m2")).toBe(false); // conv-b excluded
     expect(hits.every((h) => h.rank === undefined)).toBe(true);
@@ -100,7 +101,7 @@ describe("lcd-fts — LIKE fallback when FTS5 is unavailable", () => {
         VALUES (?,'conv-a','t','a','s','leaf',0,1,1,1,1,?, '[]',0,0,?)
       `).run(`s${i}`, `keyword match number ${i}`, i);
     }
-    const hits = searchLcdImpl(db, "conv-a", "a", "keyword", { limit: 2, scope: "summaries" });
+    const { hits } = searchLcdImpl(db, "conv-a", "a", "keyword", { limit: 2, scope: "summaries" });
     expect(hits.length).toBeLessThanOrEqual(2);
   });
 });
@@ -184,7 +185,7 @@ describe("lcd-fts — FTS path degrades a corrupt hit PER ROW, not all-or-nothin
       ],
     });
 
-    const hits = searchLcdImpl(db, "conv-a", "a", "revenue", { limit: 10, scope: "summaries" });
+    const { hits } = searchLcdImpl(db, "conv-a", "a", "revenue", { limit: 10, scope: "summaries" });
 
     // The good row survives the bad sibling (WR-01: one bad row must not poison
     // the whole result set).
@@ -248,14 +249,14 @@ describe("lcd-fts — LIKE fallback degrades a corrupt hit PER ROW, not all-or-n
       ],
     });
 
-    const hits = searchLcdImpl(db, "conv-a", "a", "revenue", { limit: 10, scope: "summaries" });
+    const { hits: summaryHits } = searchLcdImpl(db, "conv-a", "a", "revenue", { limit: 10, scope: "summaries" });
 
     // The valid hit survives its corrupt sibling.
-    expect(hits.map((h) => h.refId)).toContain("s-good");
+    expect(summaryHits.map((h) => h.refId)).toContain("s-good");
     // The corrupt row is SKIPPED, not surfaced with an undefined snippet.
-    expect(hits.some((h) => h.refId === "s-bad")).toBe(false);
+    expect(summaryHits.some((h) => h.refId === "s-bad")).toBe(false);
     // No hit ever carries a non-string snippet (the bug this guards).
-    expect(hits.every((h) => typeof h.snippet === "string")).toBe(true);
+    expect(summaryHits.every((h) => typeof h.snippet === "string")).toBe(true);
   });
 
   it("searchLcdImpl LIKE messages fallback skips a corrupt row (undefined ref_id) instead of emitting it", () => {
@@ -268,11 +269,11 @@ describe("lcd-fts — LIKE fallback degrades a corrupt hit PER ROW, not all-or-n
       ],
     });
 
-    const hits = searchLcdImpl(db, "conv-a", "a", "falcon", { limit: 10, scope: "messages" });
+    const { hits: msgHits } = searchLcdImpl(db, "conv-a", "a", "falcon", { limit: 10, scope: "messages" });
 
-    expect(hits.map((h) => h.refId)).toContain("m-good");
+    expect(msgHits.map((h) => h.refId)).toContain("m-good");
     // Every emitted hit has a real string id + snippet — the corrupt row is gone.
-    expect(hits.every((h) => typeof h.refId === "string" && typeof h.snippet === "string")).toBe(true);
+    expect(msgHits.every((h) => typeof h.refId === "string" && typeof h.snippet === "string")).toBe(true);
   });
 });
 
@@ -291,7 +292,7 @@ describe("lcd-fts — scope=both merges fairly across the two FTS tables (WR-03)
       ],
     });
 
-    const hits = searchLcdImpl(db, "conv-a", "a", "match", { limit: 2, scope: "both" });
+    const { hits } = searchLcdImpl(db, "conv-a", "a", "match", { limit: 2, scope: "both" });
 
     expect(hits.length).toBe(2);
     // The summary table must NOT be wholly evicted by the message table's
@@ -322,7 +323,7 @@ describe("lcd-fts — scope=both merges fairly across the two FTS tables (WR-03)
       ],
     });
 
-    const hits = searchLcdImpl(db, "conv-a", "a", "one", { limit: 6, scope: "both" });
+    const { hits } = searchLcdImpl(db, "conv-a", "a", "one", { limit: 6, scope: "both" });
 
     expect(hits.length).toBe(6);
     const order = hits.map((h) => h.refId);
@@ -375,12 +376,12 @@ describe("lcd-fts — R4 cross-agent search isolation (WR-02)", () => {
     const db = ftsDbWithTwoAgentSummaries("revenue");
 
     // Agent A's scoped FTS search returns ONLY agent A's summary.
-    const aHits = searchLcdImpl(db, "conv-shared", "agent-a", "revenue", { limit: 10, scope: "summaries" });
+    const { hits: aHits } = searchLcdImpl(db, "conv-shared", "agent-a", "revenue", { limit: 10, scope: "summaries" });
     expect(aHits.map((h) => h.refId)).toContain("sum-a");
     expect(aHits.some((h) => h.refId === "sum-b")).toBe(false);
 
     // Agent B's scoped search returns ONLY agent B's summary (symmetry).
-    const bHits = searchLcdImpl(db, "conv-shared", "agent-b", "revenue", { limit: 10, scope: "summaries" });
+    const { hits: bHits } = searchLcdImpl(db, "conv-shared", "agent-b", "revenue", { limit: 10, scope: "summaries" });
     expect(bHits.map((h) => h.refId)).toContain("sum-b");
     expect(bHits.some((h) => h.refId === "sum-a")).toBe(false);
   });
@@ -399,7 +400,7 @@ describe("lcd-fts — R4 cross-agent search isolation (WR-02)", () => {
     insert.run("sum-b", "agent-b", "agent-b margin figures", 2);
 
     // The LIKE fallback (FTS absent) must still scope by agent_id.
-    const aHits = searchLcdImpl(db, "conv-shared", "agent-a", "margin", { limit: 10, scope: "summaries" });
+    const { hits: aHits } = searchLcdImpl(db, "conv-shared", "agent-a", "margin", { limit: 10, scope: "summaries" });
     expect(aHits.map((h) => h.refId)).toContain("sum-a");
     expect(aHits.some((h) => h.refId === "sum-b")).toBe(false);
     // Fallback hits carry no rank (the contract marker).
@@ -418,7 +419,7 @@ describe("lcd-fts — R4 cross-agent search isolation (WR-02)", () => {
       JSON.stringify({ raw: { type: "text", text: "deploy the falcon build" }, rawType: "text" }),
     );
 
-    const aHits = searchLcdImpl(db, "conv-shared", "agent-a", "falcon", { limit: 10, scope: "messages" });
+    const { hits: aHits } = searchLcdImpl(db, "conv-shared", "agent-a", "falcon", { limit: 10, scope: "messages" });
     expect(aHits.map((h) => h.refId)).toContain("m-a");
     expect(aHits.some((h) => h.refId === "m-b")).toBe(false); // agent B's message excluded
   });

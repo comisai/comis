@@ -81,6 +81,7 @@ export type {
   LcdContextItem,
   LcdRefKind,
   LcdSearchHit,
+  LcdSearchResult,
   AppendSummaryInput,
   AppendCondensedSummaryInput,
   FileLockPort,

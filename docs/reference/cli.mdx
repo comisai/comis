@@ -533,6 +533,8 @@ comis daemon logs -n 100
 
 Run diagnostic health checks across six categories: configuration, daemon, gateway, channels, workspace, and oauth. Supports auto-repair mode for fixable issues. The `oauth` category covers JWT expiry, schema mismatch, ca-certificates, HTTPS_PROXY drift, and TLS preflight — see [OAuth concepts → Error classification](/security/oauth#error-classification).
 
+**LCD Store checks** — when `memory.db` is present, six read-only scan classes run automatically against the lossless context store: orphaned summaries, dangling `context_items` references, fallback-marker summaries (quality debt), `lcd_ingest_cursor` inconsistencies, FTS row-count drift, and R4 scope anomalies (NULL tenant/agent keys). Output is content-free: findings carry only counts and row ids, never message text. Silently skipped on new installs where `memory.db` does not exist yet.
+
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--repair` | `boolean` | `false` | Auto-fix repairable issues |

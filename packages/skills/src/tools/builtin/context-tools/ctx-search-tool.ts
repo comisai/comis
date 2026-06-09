@@ -21,7 +21,7 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { wrapExternalContent, scrubSecretsFromText, type LcdSearchHit } from "@comis/core";
+import { wrapExternalContent, scrubSecretsFromText, type LcdSearchHit, type LcdSearchResult } from "@comis/core";
 
 import { jsonResult, throwToolError, readStringParam, readNumberParam } from "../../../platform-tools/tool-helpers.js";
 import { sanitizeFts5Query } from "../../../platform-tools/tools/fts5-sanitizer.js";
@@ -92,7 +92,11 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       const limit = Math.min(Math.max(1, requested), 30);
 
       const t0 = deps.nowMs();
-      const hits: LcdSearchHit[] = deps.store.searchLcd(ctxScope, q, { limit, scope });
+      // EFF-03: searchLcd now returns LcdSearchResult { hits, cjkZeroHit } — destructure
+      // to preserve the hits array for downstream processing and surface the CJK flag
+      // at THIS logging boundary (infra-free seam: @comis/memory has no logger import).
+      const result: LcdSearchResult = deps.store.searchLcd(ctxScope, q, { limit, scope });
+      const hits: LcdSearchHit[] = result.hits;
 
       // (3) SCRUB + TAINT — scrub secrets out of every recovered snippet, THEN wrap
       //     it as untrusted before it leaves the tool. A snippet can legitimately
@@ -111,6 +115,16 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       // emit durationMs, AND the emit timestamp, so the three are a single
       // consistent clock snapshot (the afterTurn triggers' one-read pattern).
       const endMs = deps.nowMs();
+      // EFF-03: CJK zero-hit counter — content-free DEBUG event (boolean flag only;
+      // the query string is intentionally ABSENT per T-170-05-01). This is the
+      // §14.4 instrumented trigger for the deferred CJK-trigram FTS path: when this
+      // counter climbs on a real non-Latin channel, CJK-01 (trigram FTS) is activated.
+      if (result.cjkZeroHit) {
+        deps.logger.debug(
+          { step: "lcd-search", agentId: ctxScope.agentId, sessionKey: ctxScope.sessionKey, cjkZeroHit: true },
+          "lcd FTS returned zero hits for CJK query",
+        );
+      }
       deps.logger.debug(
         {
           toolName: "ctx_search",

@@ -1287,7 +1287,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
       leafInput(0, 1, { content: "Q3 quarterly revenue grew sharply" }),
     );
 
-    const hits = store.searchLcd(SCOPE_A, "revenue", { limit: 10 });
+    const { hits } = store.searchLcd(SCOPE_A, "revenue", { limit: 10 });
     const hit = hits.find((h) => h.refId === summaryId);
     expect(hit).toBeDefined();
     expect(hit!.kind).toBe("summary");
@@ -1298,7 +1298,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
   it("searchLcd finds a message by rendered part text when FTS5 is available", () => {
     const messageId = appendTextMessage("we should deploy the canary build first", 0);
 
-    const hits = store.searchLcd(SCOPE_A, "canary", { limit: 10, scope: "messages" });
+    const { hits } = store.searchLcd(SCOPE_A, "canary", { limit: 10, scope: "messages" });
     const hit = hits.find((h) => h.refId === messageId);
     expect(hit).toBeDefined();
     expect(hit!.kind).toBe("message");
@@ -1312,7 +1312,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
     store.getContextItems(SCOPE_A);
     store.appendLeafSummary(leafInput(1, 1, { content: "alpha summary note" }));
 
-    const both = store.searchLcd(SCOPE_A, "alpha", { limit: 10, scope: "both" });
+    const { hits: both } = store.searchLcd(SCOPE_A, "alpha", { limit: 10, scope: "both" });
     const kinds = new Set(both.map((h) => h.kind));
     expect(kinds.has("message")).toBe(true);
     expect(kinds.has("summary")).toBe(true);
@@ -1322,7 +1322,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
     appendTextMessage("shared keyword zebra", 0, SCOPE_A);
     appendTextMessage("shared keyword zebra", 0, SCOPE_B);
 
-    const aHits = store.searchLcd(SCOPE_A, "zebra", { limit: 10, scope: "messages" });
+    const { hits: aHits } = store.searchLcd(SCOPE_A, "zebra", { limit: 10, scope: "messages" });
     expect(aHits.length).toBeGreaterThan(0);
     // Every hit belongs to conv-a — none of conv-b's message ids appear.
     const bIds = new Set(store.getMessages(SCOPE_B).map((m) => m.id));
@@ -1369,7 +1369,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
       agentId: "a",
       sessionKey: "s",
     };
-    const hits = bareStore.searchLcd(preScope, "margin", { limit: 10, scope: "summaries" });
+    const { hits } = bareStore.searchLcd(preScope, "margin", { limit: 10, scope: "summaries" });
     expect(hits.some((h) => h.refId === "pre1")).toBe(true);
   });
 });

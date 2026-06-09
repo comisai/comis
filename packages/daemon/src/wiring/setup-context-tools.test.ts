@@ -25,7 +25,7 @@ import { describe, it, expect, vi } from "vitest";
 
 import { wireContextTools } from "./setup-context-tools.js";
 import { runWithContext } from "@comis/core";
-import type { ContextStorePort, LcdSearchHit } from "@comis/core";
+import type { ContextStorePort, LcdSearchHit, LcdSearchResult } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 type ToolLike = {
@@ -40,7 +40,7 @@ const THREE_NAMES = ["ctx_search", "ctx_inspect", "ctx_expand"];
  * implemented (AGENTS.md §2.5 hand-built `as unknown as` double). `searchLcd`
  * is a vi.fn so we can assert it was invoked through the injected reference.
  */
-function makeStubStore(searchLcd = vi.fn((): LcdSearchHit[] => [])): ContextStorePort {
+function makeStubStore(searchLcd = vi.fn((): LcdSearchResult => ({ hits: [], cjkZeroHit: false }))): ContextStorePort {
   return {
     searchLcd,
     getSummaries: vi.fn(() => []),
@@ -72,9 +72,10 @@ describe("wireContextTools — daemon composition root", () => {
   });
 
   it("threads the injected store and deps into each tool (ctx_search calls store.searchLcd)", async () => {
-    const searchLcd = vi.fn((): LcdSearchHit[] => [
-      { kind: "summary", refId: "s1", snippet: "recovered" },
-    ]);
+    const searchLcd = vi.fn((): LcdSearchResult => ({
+      hits: [{ kind: "summary", refId: "s1", snippet: "recovered" } as LcdSearchHit],
+      cjkZeroHit: false,
+    }));
     const tools: ToolLike[] = [];
     wireContextTools(tools as never, makeStubStore(searchLcd), "agent-a", makeDeps());
 

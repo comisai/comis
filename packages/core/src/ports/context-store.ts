@@ -27,7 +27,7 @@ import type {
   LcdContextItem,
   LcdConversationPage,
   LcdMessage,
-  LcdSearchHit,
+  LcdSearchResult,
   LcdSummary,
 } from "./context-store-types.js";
 
@@ -145,12 +145,17 @@ export interface ContextStorePort {
    * (conversationId, agentId) — full isolation (R4): BOTH the FTS path AND the
    * LIKE fallback filter agent_id so a different agent's hits never leak (WR-02,
    * Pitfall 3). The conversation_id prefix carries the tenant boundary.
+   *
+   * Returns an {@link LcdSearchResult} wrapper: `hits` is the FTS/LIKE result
+   * array; `cjkZeroHit` is true when the query contained CJK codepoints AND
+   * `hits.length === 0` — the §14.4 instrumented trigger (EFF-03). The flag is
+   * content-free; the caller's logging boundary emits a DEBUG event when true.
    */
   searchLcd(
     scope: ContextStoreScope,
     query: string,
     opts: { limit: number; scope?: "messages" | "summaries" | "both" },
-  ): LcdSearchHit[];
+  ): LcdSearchResult;
   /**
    * Per-conversation single-flight (R3, Plan 132-04): run `fn` on the queue
    * dedicated to `conversationId`. Serializes the live ingest write and the

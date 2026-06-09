@@ -295,6 +295,22 @@ export interface LcdSearchHit {
 }
 
 /**
+ * EFF-03: wrapper returned by {@link ContextStorePort.searchLcd} and
+ * `searchLcdImpl` to carry the CJK zero-hit diagnostic flag alongside the hits.
+ *
+ * `cjkZeroHit` is the §14.4 instrumented trigger for the deferred CJK-trigram
+ * FTS path: it is true ONLY when the query contained CJK codepoints AND the
+ * search returned 0 hits. The flag is content-free (boolean only — never the
+ * query text). The caller's logging boundary (skills/agent — NOT @comis/memory)
+ * emits a DEBUG event when this flag is true.
+ */
+export interface LcdSearchResult {
+  hits: LcdSearchHit[];
+  /** true iff the query had CJK codepoints AND hits.length === 0 */
+  cjkZeroHit: boolean;
+}
+
+/**
  * The write-path DTO for the compaction transaction (C3): persist one leaf
  * summary, link it to the covered messages, and range-replace the covered
  * context_items message-refs with one summary-ref — all atomically.

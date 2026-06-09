@@ -33,6 +33,7 @@ import {
   type LcdSummary,
   type LcdMessage,
   type LcdSearchHit,
+  type LcdSearchResult,
   type LcdMessagePart,
 } from "@comis/core";
 
@@ -141,6 +142,7 @@ interface StoreStub {
   /** Records the scope of every scoped read (getSummaries/Children/Messages/getMessages) for multi-agent assertions. */
   readScopes: ContextStoreScope[];
   searchLcdReturn: LcdSearchHit[];
+  cjkZeroHit: boolean;
   getSummariesReturn: LcdSummary[];
   getSummaryChildrenReturn: LcdSummary[];
   getSummaryMessagesReturn: string[];
@@ -152,6 +154,7 @@ function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: Con
     searchLcdArgs: [],
     readScopes: [],
     searchLcdReturn: [],
+    cjkZeroHit: false,
     getSummariesReturn: [],
     getSummaryChildrenReturn: [],
     getSummaryMessagesReturn: [],
@@ -159,9 +162,9 @@ function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: Con
     ...over,
   };
   const store = {
-    searchLcd(scope: ContextStoreScope, query: string, opts: unknown): LcdSearchHit[] {
+    searchLcd(scope: ContextStoreScope, query: string, opts: unknown): LcdSearchResult {
       stub.searchLcdArgs.push({ scope, query, opts });
-      return stub.searchLcdReturn;
+      return { hits: stub.searchLcdReturn, cjkZeroHit: stub.cjkZeroHit };
     },
     getSummaries(scope: ContextStoreScope): LcdSummary[] {
       stub.readScopes.push(scope);
