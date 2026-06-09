@@ -66,6 +66,7 @@ import type {
 import type { ContextEngineConfig } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
+import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
 import { computeTokenBudgetForProfile } from "./budget-capacity-cap.js";
 import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import { runPreflightFitCheck } from "./lcd-preflight.js";
@@ -236,12 +237,20 @@ export function createLcdContextEngine(
 
       // 3. FRESH TAIL: the last N STEPS of the LIVE array, VERBATIM (original
       //    structured blocks — never reconstructed-from-text). A1.
-      const tailStart = freshTailBoundaryIndex(liveMessages, config.freshTailTurns);
+      // EFF-02: clamp freshTailTurns to what the effective window can afford.
+      // deps.modelProfile?.contextWindow is Infinity for frontier/mid — clamp never fires.
+      const effectiveWindow = deps.modelProfile?.contextWindow ?? Infinity;
+      const clampedFreshTailTurns = resolveClampedFreshTailTurns(
+        effectiveWindow,
+        config.freshTailTurns,
+      );
+      const tailStart = freshTailBoundaryIndex(liveMessages, clampedFreshTailTurns);
       const rawFreshTail = liveMessages.slice(tailStart);
       deps.logger.debug(
         {
           step: "lcd-fresh-tail",
-          freshTailSteps: config.freshTailTurns,
+          freshTailSteps: clampedFreshTailTurns,
+          configuredFreshTailSteps: config.freshTailTurns,
           freshTailCount: rawFreshTail.length,
           tailStart,
           agentId: deps.agentId,
