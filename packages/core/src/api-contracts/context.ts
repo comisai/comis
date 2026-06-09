@@ -109,36 +109,6 @@ export const ContextTreeContract = defineContract({
   scopes: ["rpc"] as const,
 });
 
-// ---------------------------------------------------------------------------
-// context.reset_lcd
-// ---------------------------------------------------------------------------
-
-/**
- * `context.reset_lcd` — delete ALL lcd_* rows for the conversation identified
- * by `session_key`. Admin-gated (T-164-02: `scopes: ["admin"]`). Returns a
- * count-only response — NO message content is returned or logged (T-164-03).
- *
- * `memory: true` additionally clears the conversation's RAG memories (the
- * GDPR / full-forget path). Defaults to `false` when absent.
- *
- * Plan 03 wires the daemon handler; this contract is the type-level gate.
- * Schema uses only the 12-shape allowlist: z.object, z.string, z.number,
- * z.boolean, z.optional (ASVS V5 / contract policy).
- */
-export const ContextResetLcdContract = defineContract({
-  method: "context.reset_lcd",
-  request: z.object({
-    session_key: z.string(),
-    memory: z.boolean().optional(),
-  }),
-  response: z.object({
-    sessionKey: z.string(),
-    lcdRowsDeleted: z.number(),
-    memoriesDeleted: z.number().optional(),
-  }),
-  scopes: ["admin"] as const,
-});
-
 // ===========================================================================
 // Aggregator
 // ===========================================================================
@@ -151,9 +121,13 @@ export const ContextResetLcdContract = defineContract({
  * absent — they are the deferred content-recovery / FTS methods and remain
  * unregistered until implemented (the view degrades to load + render the DAG
  * structure without per-node deep-inspect / in-conversation search).
+ *
+ * Phase 164-06: `context.reset_lcd` (LCD-only forget) has been superseded by
+ * `session.reset_conversation` (complete cross-mode forget: LCD + sessionStore).
+ * The new contract lives in `sessions.ts` under `SESSIONS_CONTRACTS`; the
+ * handler is in `session-archive.ts`.
  */
 export const CONTEXT_CONTRACTS = [
   ContextConversationsContract,
   ContextTreeContract,
-  ContextResetLcdContract,
 ] as const;

@@ -18,9 +18,9 @@ import {
   SessionListContract,
   SessionStatusContract,
   SessionDeleteContract,
+  SessionResetConversationContract,
   ObsSystemPromptReportLatestContract,
   ObsSystemPromptReportListContract,
-  ContextResetLcdContract,
 } from "@comis/core";
 import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, json } from "../output/format.js";
@@ -231,45 +231,47 @@ export function registerSessionsCommand(program: Command): void {
       }
     });
 
-  // sessions reset-lcd — RR4 (Phase 164-03): explicit LCD history clear
-  // Admin-gated destructive operation: clears lcd_* rows for the given session.
-  // --memory also clears RAG memories (GDPR / full-forget path).
+  // sessions reset — Phase 164-06: complete cross-mode conversation reset.
+  // Supersedes Phase 164-03 sessions reset-lcd (LCD-only).
+  // Admin-gated destructive operation: clears BOTH the LCD durable history
+  // AND the daemon sessionStore working transcript for the given session.
+  // After this reset, a follow-up turn has NO prior context in both dag mode
+  // (LCD empty) and pipeline mode (sessionStore empty → rehydrates empty).
+  // --memory also clears RAG memories (GDPR / full-forget path, deferred).
   // --yes skips confirmation (required for scripted/automated use).
   sessions
-    .command("reset-lcd <sessionKey>")
-    .description("Clear the LCD durable conversation history for a session (admin). Use --memory to also clear RAG memories.")
+    .command("reset <sessionKey>")
+    .description("Reset a conversation to a clean slate: clears LCD history + working session transcript (admin). Use --memory to also clear RAG memories.")
     .option("--memory", "Also clear RAG memories for this session")
     .option("--yes", "Skip confirmation prompt")
     .action(async (sessionKeyArg: string, opts: { memory?: boolean; yes?: boolean }) => {
       if (!opts.yes) {
         // Destructive and admin-only: require --yes to avoid accidental wipes.
-        // Interactive readline would require a TTY dep not available in all
-        // non-interactive contexts; the --yes flag is the authoritative guard.
-        error("LCD history reset is irreversible. Pass --yes to confirm.");
+        error("Conversation reset is irreversible. Pass --yes to confirm.");
         process.exit(1);
       }
       try {
         const result = await withClient(async (client) => {
-          return await callTyped(client, ContextResetLcdContract, {
+          return await callTyped(client, SessionResetConversationContract, {
             session_key: sessionKeyArg,
             memory: opts.memory ?? false,
           });
         });
-        console.log(`LCD history cleared: ${result.lcdRowsDeleted} rows deleted.`);
+        console.log(`Conversation reset: ${result.lcdRowsDeleted} LCD rows deleted, ${result.sessionMessagesCleared} session messages cleared.`);
         if (opts.memory) {
           if (result.memoriesDeleted !== undefined) {
             // RAG memory clear was implemented and ran — surface the count.
             console.log(`RAG memories cleared: ${result.memoriesDeleted} memories deleted.`);
           } else {
-            // Handler omitted memoriesDeleted → not yet implemented (Phase 164 deferred).
+            // Handler omitted memoriesDeleted → not yet implemented (deferred).
             process.stderr.write(
-              "⚠ --memory is not yet implemented — RAG memory was NOT cleared (only LCD history was cleared).\n",
+              "⚠ --memory is not yet implemented — RAG memory was NOT cleared (only LCD history and session transcript were cleared).\n",
             );
           }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        error(`Failed to reset LCD history: ${msg}`);
+        error(`Failed to reset conversation: ${msg}`);
         process.exit(1);
       }
     });

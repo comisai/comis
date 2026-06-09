@@ -7,6 +7,9 @@
  *   - session.delete: delete session + return transcript (admin-only)
  *   - session.reset: clear session messages while preserving metadata
  *   - session.export: dump full session payload (admin-only)
+ *   - session.reset_conversation: COMPLETE cross-mode forget — clears BOTH
+ *     the LCD lossless-store history AND the daemon sessionStore working
+ *     transcript (Phase 164-06; supersedes Phase 164-03 context.reset_lcd).
  *
  * @module
  */
@@ -15,7 +18,7 @@ import {
   SessionDeleteContract,
   SessionResetContract,
   SessionExportContract,
-  ContextResetLcdContract,
+  SessionResetConversationContract,
   stripInternalFields,
 } from "@comis/core";
 import type { ContextStoreScope } from "@comis/core";
@@ -106,14 +109,22 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       };
     },
 
-    // RR4 (Phase 164-03): admin-gated explicit LCD history reset.
-    // T-164-reset-authz: dual-layer admin check (contract scopes:["admin"] +
-    // in-handler _trustLevel check for defense-in-depth).
-    // T-164-reset-scope: scope derived from (sessionKey, defaultAgentId,
-    // tenantId) — all from trusted daemon context, never from user params.
-    // T-164-09: fail-closed when lcdStore is absent (no silent 0 return).
-    [ContextResetLcdContract.method]: async (rawParams) => {
-      // Defense-in-depth admin check (mirrors SessionDeleteContract pattern).
+    // Phase 164-06: COMPLETE cross-mode conversation reset.
+    // Supersedes Phase 164-03 context.reset_lcd (LCD-only).
+    //
+    // This operation clears BOTH layers to guarantee a clean slate in all modes:
+    //   1. LCD store (dag mode: the durable history the model reads at turn-start)
+    //   2. Daemon sessionStore (both modes: the working JSONL-backed transcript
+    //      that feeds state.messages on the next turn)
+    //
+    // Best-effort on each layer — neither empty LCD nor absent sessionStore
+    // is an error (pipeline sessions may have no LCD rows; a dag session may
+    // have had its JSONL deleted by housekeeping before this reset).
+    //
+    // Defense-in-depth admin check (contract scopes:["admin"] +
+    // in-handler _trustLevel check, mirrors SessionDeleteContract).
+    // Fail-closed when lcdStore absent (never silently return 0).
+    [SessionResetConversationContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") throw new Error("Admin trust level required");
 
@@ -124,14 +135,11 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       if (!deps.lcdStore) throw new Error("LCD store not available — daemon not fully initialized");
 
       const userParams = stripInternalFields(rawParams);
-      ContextResetLcdContract.request.parse(userParams);
+      SessionResetConversationContract.request.parse(userParams);
 
       const startMs = Date.now();
 
-      // DEFINITIVE scope (RESEARCH.md Q3 / T-164-reset-scope): the formatted
-      // sessionKey IS the conversationId; agentId/tenantId come from the
-      // trusted daemon request context — never re-derived from user params.
-      // Refuse the reset if any scope column is empty/blank (fail-closed).
+      // Scope derived from trusted daemon context (never from user params).
       const scope: ContextStoreScope = {
         conversationId: sessionKey,
         agentId: deps.defaultAgentId,
@@ -139,53 +147,71 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         sessionKey,
       };
 
-      // Run inside the single-flight serializer so the delete serializes
-      // against any concurrent live ingest on this conversation.
+      // Layer 1: LCD store — serialized against concurrent live ingest.
       const lcdRowsDeleted = await deps.lcdStore.runOnConversation(
         scope.conversationId,
         () => deps.lcdStore!.deleteConversationLcd(scope),
       );
 
-      // RR4 audit: INFO log with count only — no message content (T-164-10).
+      // Layer 2: Daemon sessionStore — clear working transcript (keep identity/metadata).
+      // Best-effort: if no session entry exists (e.g., dag conversation with LCD rows
+      // but no live session, or pipeline session whose JSONL was already deleted),
+      // skip the save and report 0.
+      let sessionMessagesCleared = 0;
+      const sessionData = deps.sessionStore.loadByFormattedKey(sessionKey);
+      if (sessionData) {
+        sessionMessagesCleared = sessionData.messages.length;
+        deps.sessionStore.saveByFormattedKey(sessionKey, [], sessionData.metadata);
+      }
+
+      // Clear approval cache to prevent stale approvals from auto-approving in a
+      // fresh context after the reset (same pattern as session.delete + session.reset).
+      deps.approvalGate?.clearApprovalCache(sessionKey);
+
+      // Audit: INFO log with counts only — no message content.
       deps.logger.info(
         {
-          method: ContextResetLcdContract.method,
+          method: SessionResetConversationContract.method,
           conversationId: scope.conversationId,
           agentId: scope.agentId,
           tenantId: scope.tenantId,
           lcdRowsDeleted,
+          sessionMessagesCleared,
           durationMs: Date.now() - startMs,
-          submodule: "context-reset-lcd",
+          submodule: "session-reset-conversation",
         },
-        "LCD history reset",
+        "Conversation reset (LCD + sessionStore)",
       );
 
-      // DEFERRED (Phase 164 gap): conversation-scoped RAG-memory clear spans ~12 memory
-      // stores — not yet wired. --memory clears LCD only and reports not-implemented.
-      // Follow-up: a dedicated phase to inject deleteMemoriesBySession from the composition
-      // root into SessionHandlerDeps.
+      // DEFERRED: conversation-scoped RAG-memory clear spans ~12 memory stores.
+      // --memory is accepted without error but not yet implemented.
       const requestMemory = (rawParams.memory ?? false) as boolean;
       if (requestMemory) {
         deps.logger.warn(
           {
-            method: ContextResetLcdContract.method,
+            method: SessionResetConversationContract.method,
             conversationId: scope.conversationId,
-            submodule: "context-reset-lcd",
+            submodule: "session-reset-conversation",
             errorKind: "precondition",
-            hint: "RAG-memory clearing (--memory) is not yet implemented; cleared LCD history only — see Phase 164 deferred follow-up",
+            hint: "RAG-memory clearing (--memory) is not yet implemented; cleared LCD history and sessionStore only — see Phase 164 deferred follow-up",
           },
-          "--memory requested but RAG-memory clear is not yet implemented — LCD history cleared only",
+          "--memory requested but RAG-memory clear is not yet implemented — LCD + sessionStore cleared only",
         );
       }
 
-      // memoriesDeleted is intentionally OMITTED (left undefined): returning 0 would falsely
-      // imply an attempted-but-empty RAG clear. Omission signals not-implemented; callers
-      // (CLI, API) surface this as a ⚠ warning rather than a count.
-      const result: { sessionKey: string; lcdRowsDeleted: number; memoriesDeleted?: number } = {
+      // memoriesDeleted is intentionally OMITTED: returning 0 would falsely
+      // imply an attempted-but-empty RAG clear.
+      const result: {
+        sessionKey: string;
+        lcdRowsDeleted: number;
+        sessionMessagesCleared: number;
+        memoriesDeleted?: number;
+      } = {
         sessionKey,
         lcdRowsDeleted,
+        sessionMessagesCleared,
       };
-      if (IS_DEV) ContextResetLcdContract.response.parse(result);
+      if (IS_DEV) SessionResetConversationContract.response.parse(result);
       return result;
     },
   };

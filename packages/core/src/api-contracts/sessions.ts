@@ -587,16 +587,68 @@ export const SessionCompactContract = defineContract({
   scopes: ["admin"] as const,
 });
 
+// ---------------------------------------------------------------------------
+// session.reset_conversation (admin)
+// ---------------------------------------------------------------------------
+
+/**
+ * `session.reset_conversation` — COMPLETE cross-mode forget for a session.
+ * Clears BOTH the LCD lossless-store history AND the daemon sessionStore
+ * working transcript (the JSONL-backed messages that feed `state.messages`
+ * next turn). After this, a follow-up turn has NO prior context in both dag
+ * mode (LCD empty) and pipeline mode (sessionStore empty → rehydrates empty).
+ *
+ * Supersedes the Phase 164-03 `context.reset_lcd` which cleared the LCD only
+ * and therefore provided no forget guarantee in pipeline mode. Handler path:
+ * session-archive.ts (bound in bindSessionArchiveHandlers).
+ *
+ * Admin-gated (defense-in-depth: contract scopes:["admin"] + in-handler
+ * _trustLevel check). The operation is serialized against live ingest via
+ * lcdStore.runOnConversation. Returns count-only — no message content is
+ * returned or logged.
+ *
+ * `memory: true` additionally clears the conversation's RAG memories (the
+ * GDPR / full-forget path). Deferred — accepted without error but not yet
+ * implemented; the response will omit `memoriesDeleted` to signal that state.
+ *
+ * Best-effort on each layer:
+ *   - If sessionStore has no entry for the session (e.g., dag conversation
+ *     with LCD rows but no live session), `sessionMessagesCleared` is 0 and
+ *     no error is raised.
+ *   - If lcdStore returns 0 rows (e.g., pipeline-mode session with no LCD
+ *     history), `lcdRowsDeleted` is 0 and no error is raised.
+ *
+ * Request: `{ session_key, memory? }`.
+ * Response: `{ sessionKey, lcdRowsDeleted, sessionMessagesCleared, memoriesDeleted? }`.
+ *
+ * Schema uses the 12-shape allowlist: z.object, z.string, z.number,
+ * z.boolean, z.optional (ASVS V5 / contract policy).
+ */
+export const SessionResetConversationContract = defineContract({
+  method: "session.reset_conversation",
+  request: z.object({
+    session_key: z.string(),
+    memory: z.boolean().optional(),
+  }),
+  response: z.object({
+    sessionKey: z.string(),
+    lcdRowsDeleted: z.number(),
+    sessionMessagesCleared: z.number(),
+    memoriesDeleted: z.number().optional(),
+  }),
+  scopes: ["admin"] as const,
+});
+
 // ===========================================================================
 // Aggregator
 // ===========================================================================
 
 /**
- * Tuple of every contract for the sessions umbrella (12 contracts spanning
- * the single `session-handlers.ts` factory file). The bidirectional 1:1
- * architecture test treats this as an unordered set; the per-method order
- * below mirrors `setup-gateway-api.ts` registration order for documentation
- * clarity (rpc group first, then admin group).
+ * Tuple of every contract for the sessions umbrella (13 contracts spanning
+ * the single `session-handlers.ts` factory file plus session-archive.ts).
+ * The bidirectional 1:1 architecture test treats this as an unordered set;
+ * the per-method order below mirrors `setup-gateway-api.ts` registration
+ * order for documentation clarity (rpc group first, then admin group).
  */
 export const SESSIONS_CONTRACTS = [
   // rpc scope (session-handlers.ts — registered at setup-gateway-api.ts:136-145
@@ -615,4 +667,6 @@ export const SESSIONS_CONTRACTS = [
   SessionResetContract,
   SessionExportContract,
   SessionCompactContract,
+  // admin scope (session-archive.ts — complete cross-mode conversation reset)
+  SessionResetConversationContract,
 ] as const;
