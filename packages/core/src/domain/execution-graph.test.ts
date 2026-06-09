@@ -217,20 +217,47 @@ describe("GraphNodeSchema typeId/typeConfig", () => {
     }
   });
 
-  it("rejects only typeId without typeConfig", () => {
+  // OR-01 (v2.19): a node that DECLARES a typed driver (typeId) but forgets its
+  // typeConfig must be told to ADD the config in the shape that driver needs —
+  // NOT "omit both for a regular single-agent node", which would silently demote
+  // the user's debate/vote/etc. to a plain agent and destroy intent. This was the
+  // live attempt-1 failure: bull_bear_debate emitted type_id:"debate" with no config,
+  // the generic message advised demotion. See design/small-model-orchestration-fidelity.md §4.
+  it("rejects typeId without typeConfig with a TYPE-AWARE add-config message (debate)", () => {
     const result = GraphNodeSchema.safeParse({
-      nodeId: "a",
-      task: "Do A",
+      nodeId: "bull_bear_debate",
+      task: "Debate NVDA",
       typeId: "debate",
     });
     expect(result.success).toBe(false);
     if (!result.success) {
       const message = result.error.issues.map((i) => i.message).join(" ");
-      expect(message).toContain("typeId and typeConfig must both be present or both absent");
+      // Names the node type, points at typeConfig, and shows the required shape (agents).
+      expect(message).toContain("debate");
+      expect(message).toContain("typeConfig");
+      expect(message).toContain("agents");
+      // Must guide toward ADDING config, not demoting — the misleading
+      // "omit both for a regular single-agent node" steer must be gone.
+      expect(message).not.toContain("Omit both for a regular single-agent node");
     }
   });
 
-  it("rejects only typeConfig without typeId", () => {
+  it("includes the right config hint for other typed nodes (vote / map-reduce)", () => {
+    const vote = GraphNodeSchema.safeParse({ nodeId: "v", task: "Vote", typeId: "vote" });
+    expect(vote.success).toBe(false);
+    if (!vote.success) {
+      expect(vote.error.issues.map((i) => i.message).join(" ")).toContain("voters");
+    }
+    const mr = GraphNodeSchema.safeParse({ nodeId: "m", task: "Map", typeId: "map-reduce" });
+    expect(mr.success).toBe(false);
+    if (!mr.success) {
+      const msg = mr.error.issues.map((i) => i.message).join(" ");
+      expect(msg).toContain("mappers");
+      expect(msg).toContain("reducer");
+    }
+  });
+
+  it("rejects typeConfig without typeId with an add-typeId / omit-config message", () => {
     const result = GraphNodeSchema.safeParse({
       nodeId: "a",
       task: "Do A",
@@ -239,7 +266,9 @@ describe("GraphNodeSchema typeId/typeConfig", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       const message = result.error.issues.map((i) => i.message).join(" ");
-      expect(message).toContain("typeId and typeConfig must both be present or both absent");
+      // Tells the model the typeId is missing and how to resolve (add it, or omit config).
+      expect(message).toContain("typeId");
+      expect(message.toLowerCase()).toContain("omit");
     }
   });
 });
