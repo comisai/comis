@@ -17,6 +17,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
 import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved } from "./executor-post-execution.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildDegradedReply } from "./degraded-reply.js";
 import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Learned-recall write side: the turn-end emit threads classifyIntent(msg.text).
@@ -1819,5 +1820,64 @@ describe("R4 critic hook — thin wiring in executor-post-execution.ts", () => {
     // critic must come AFTER tool-failure notice and BEFORE session metadata write.
     expect(awaitCriticPos).toBeGreaterThan(toolFailurePos);
     expect(awaitCriticPos).toBeLessThan(sessionMetaPos);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CWF-05: degraded-reply wiring — source-grep + behavior probes
+//
+// These tests verify that:
+//   (A) executor-post-execution.ts imports and calls buildOutputStarvedAnnotation
+//   (B) the gate uses effectiveFinishReason (NOT result.finishReason) for output_starved
+//   (C) executor-post-execution.ts imports and calls buildContextExhaustedReply
+//   (D) the gate uses effectiveFinishReason (NOT result.finishReason) for context_exhausted
+//   (E) fail-closed: empty partial text + annotation = non-empty reply
+//   (F) no-regression: healthy reasons return undefined from buildDegradedReply
+// ---------------------------------------------------------------------------
+describe("CWF-05: degraded-reply wiring", () => {
+  function readStripped(): string {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    return src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+  }
+
+  it("source-grep — executor-post-execution imports and calls buildOutputStarvedAnnotation", () => {
+    const stripped = readStripped();
+    expect(stripped).toMatch(/buildOutputStarvedAnnotation/);
+  });
+
+  it("source-grep — output_starved gate uses effectiveFinishReason (not result.finishReason)", () => {
+    const stripped = readStripped();
+    expect(stripped).toMatch(
+      /effectiveFinishReason.*output_starved|output_starved.*effectiveFinishReason/,
+    );
+  });
+
+  it("source-grep — executor-post-execution imports and calls buildContextExhaustedReply", () => {
+    const stripped = readStripped();
+    expect(stripped).toMatch(/buildContextExhaustedReply/);
+  });
+
+  it("source-grep — context_exhausted gate uses effectiveFinishReason (not result.finishReason)", () => {
+    const stripped = readStripped();
+    expect(stripped).toMatch(
+      /effectiveFinishReason.*context_exhausted|context_exhausted.*effectiveFinishReason/,
+    );
+  });
+
+  it("fail-closed — output_starved with empty partial text still delivers non-empty reply", () => {
+    // Simulates: (result.response ?? "") + buildOutputStarvedAnnotation()
+    // where result.response is empty. The annotation alone must be non-empty.
+    const annotation = buildOutputStarvedAnnotation();
+    const delivered = "" + annotation;
+    expect(delivered.trim().length).toBeGreaterThan(0);
+  });
+
+  it("no-regression — buildDegradedReply returns undefined for healthy reasons (strict no-op)", () => {
+    expect(buildDegradedReply("stop")).toBeUndefined();
+    expect(buildDegradedReply("end_turn")).toBeUndefined();
   });
 });

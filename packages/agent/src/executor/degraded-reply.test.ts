@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Pure-builder unit tests for degraded-reply.ts (CWF-05-D, CWF-05-E).
+//
+// These tests assert that:
+//   - buildDegradedReply is deterministic (same input → same output)
+//   - output_starved → returns a non-empty annotation string
+//   - context_exhausted → returns a non-empty synthesized reply
+//   - healthy finishReasons (stop/end_turn/error) → returns undefined (strict no-op)
+//   - vocabulary alignment: output_starved annotation contains "output limit" or "cut off"
+//   - vocabulary alignment: context_exhausted reply contains "context window"
+//   - security: context_exhausted reply does NOT contain "[Stopped:" (operator redirect leak)
+//   - security: context_exhausted reply does NOT contain "too large" (Phase-166 placeholder echo)
+
+import { describe, it, expect } from "vitest";
+import {
+  buildOutputStarvedAnnotation,
+  buildContextExhaustedReply,
+  buildDegradedReply,
+} from "./degraded-reply.js";
+
+describe("buildDegradedReply — deterministic per endReason (CWF-05-D, CWF-05-E)", () => {
+  it("output_starved → returns the annotation string (non-empty)", () => {
+    const annotation = buildDegradedReply("output_starved");
+    expect(annotation).toBeDefined();
+    expect(annotation!.length).toBeGreaterThan(0);
+  });
+
+  it("output_starved → same input → same output (deterministic, no LLM)", () => {
+    const a1 = buildDegradedReply("output_starved");
+    const a2 = buildDegradedReply("output_starved");
+    expect(a1).toBe(a2);
+  });
+
+  it("context_exhausted → returns the synthesized reply (non-empty)", () => {
+    const reply = buildDegradedReply("context_exhausted");
+    expect(reply).toBeDefined();
+    expect(reply!.length).toBeGreaterThan(0);
+  });
+
+  it("context_exhausted → same input → same output (deterministic, no LLM)", () => {
+    const r1 = buildDegradedReply("context_exhausted");
+    const r2 = buildDegradedReply("context_exhausted");
+    expect(r1).toBe(r2);
+  });
+
+  it("healthy cause (stop) → returns undefined (strict no-op)", () => {
+    expect(buildDegradedReply("stop")).toBeUndefined();
+  });
+
+  it("healthy cause (end_turn) → returns undefined (strict no-op)", () => {
+    expect(buildDegradedReply("end_turn")).toBeUndefined();
+  });
+
+  it("healthy cause (error) → returns undefined (strict no-op)", () => {
+    expect(buildDegradedReply("error")).toBeUndefined();
+  });
+});
+
+describe("buildOutputStarvedAnnotation — vocabulary + content invariants", () => {
+  it("returns a non-empty annotation string", () => {
+    const annotation = buildOutputStarvedAnnotation();
+    expect(typeof annotation).toBe("string");
+    expect(annotation.length).toBeGreaterThan(0);
+  });
+
+  it("contains vocabulary aligned with obs-explain-heuristics ('output limit' or 'cut off')", () => {
+    const annotation = buildOutputStarvedAnnotation();
+    const hasVocab =
+      annotation.toLowerCase().includes("output limit") ||
+      annotation.toLowerCase().includes("cut off");
+    expect(hasVocab).toBe(true);
+  });
+
+  it("called twice → same string (deterministic)", () => {
+    expect(buildOutputStarvedAnnotation()).toBe(buildOutputStarvedAnnotation());
+  });
+});
+
+describe("buildContextExhaustedReply — vocabulary + security invariants", () => {
+  it("returns a non-empty synthesized reply string", () => {
+    const reply = buildContextExhaustedReply();
+    expect(typeof reply).toBe("string");
+    expect(reply.length).toBeGreaterThan(0);
+  });
+
+  it("contains vocabulary aligned with obs-explain-heuristics ('context window')", () => {
+    const reply = buildContextExhaustedReply();
+    expect(reply.toLowerCase()).toContain("context window");
+  });
+
+  it("does NOT contain '[Stopped:' (must not leak operator redirect text)", () => {
+    const reply = buildContextExhaustedReply();
+    expect(reply).not.toContain("[Stopped:");
+  });
+
+  it("does NOT contain 'too large' (must not echo Phase-166 placeholder)", () => {
+    const reply = buildContextExhaustedReply();
+    expect(reply.toLowerCase()).not.toContain("too large");
+  });
+
+  it("called twice → same string (deterministic)", () => {
+    expect(buildContextExhaustedReply()).toBe(buildContextExhaustedReply());
+  });
+});
