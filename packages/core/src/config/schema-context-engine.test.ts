@@ -1169,6 +1169,76 @@ describe("ContextEngineConfigSchema", () => {
   });
 
   // -------------------------------------------------------------------------
+  // budget.minVisibleOutputTokens (Fix 3 / Phase 166 CWF-02)
+  // -------------------------------------------------------------------------
+
+  describe("budget.minVisibleOutputTokens", () => {
+    it("defaults to 768 when budget is omitted", () => {
+      const result = ContextEngineConfigSchema.parse({});
+      // CWF-02: non-reasoning floor defaults to 768 tokens.
+      expect(result.budget.minVisibleOutputTokens).toBe(768);
+    });
+
+    it("defaults are fully populated including minVisibleOutputTokens when budget is omitted entirely", () => {
+      const result = ContextEngineConfigSchema.parse({});
+      expect(result.budget).toEqual({
+        effectiveContextCapSmall: 32_000,
+        effectiveContextCapNano: 16_000,
+        minVisibleOutputTokens: 768,
+      });
+    });
+
+    it("accepts custom minVisibleOutputTokens override", () => {
+      const result = ContextEngineConfigSchema.parse({
+        budget: { minVisibleOutputTokens: 1024 },
+      });
+      expect(result.budget.minVisibleOutputTokens).toBe(1024);
+    });
+
+    it("accepts boundary values (256 and 8192)", () => {
+      const min = ContextEngineConfigSchema.parse({
+        budget: { minVisibleOutputTokens: 256 },
+      });
+      expect(min.budget.minVisibleOutputTokens).toBe(256);
+
+      const max = ContextEngineConfigSchema.parse({
+        budget: { minVisibleOutputTokens: 8_192 },
+      });
+      expect(max.budget.minVisibleOutputTokens).toBe(8_192);
+    });
+
+    it("rejects below minimum (255) — CWF-02 threat T-166-02-01", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        budget: { minVisibleOutputTokens: 255 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects above maximum (8193) — CWF-02 threat T-166-02-01", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        budget: { minVisibleOutputTokens: 8_193 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects non-integer value", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        budget: { minVisibleOutputTokens: 512.5 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("fully-populated default literal works: parse({budget:{}}) gives all three budget fields", () => {
+      // Zod does NOT re-parse inner field defaults from .default({}).
+      // The .default({...}) literal on the parent must include ALL fields.
+      const result = ContextEngineConfigSchema.parse({ budget: {} });
+      expect(result.budget.effectiveContextCapSmall).toBe(32_000);
+      expect(result.budget.effectiveContextCapNano).toBe(16_000);
+      expect(result.budget.minVisibleOutputTokens).toBe(768);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // summarizerBreaker (R1) — reuses CircuitBreakerConfigSchema
   // -------------------------------------------------------------------------
 
