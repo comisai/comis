@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, unrecoveredFailedToolNames } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildDegradedReply } from "./degraded-reply.js";
 import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
@@ -697,6 +697,94 @@ describe("tool-failure endReason and notice", () => {
     if (buildCallMatch) {
       expect(buildCallMatch[0]).not.toMatch(/finishReason\s*:\s*result\.finishReason/);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // HR-01 (v2.19) — the user-facing '[tool failure]' notice must NOT fire for a
+  // tool that FAILED then SUCCEEDED on retry in the SAME turn (recovered).
+  // Live: pipeline attempt-1 (validation) failed, attempt-2 launched the graph,
+  // yet the user still saw "[tool failure] pipeline reported an error". The notice
+  // must surface only UNRECOVERED failures (a failed tool with no same-name
+  // success this turn). Observability (effectiveFinishReason/logs/fleet) still
+  // records the failure — only the user-facing reply is gated.
+  // See design/small-model-orchestration-fidelity.md §4.
+  it("source-grep — failure notice gated on unrecoveredFailedToolNames (recovered failures suppressed)", () => {
+    const stripped = readPostExecStripped();
+    // The notice call site must consult the recovery-aware helper, not raw failedTools.
+    expect(stripped).toMatch(/unrecoveredFailedToolNames/);
+    // The notice append must be guarded by a non-empty unrecovered set.
+    const noticeBlock = stripped.match(/unrecovered[A-Za-z]*\s*\.length\s*>\s*0[\s\S]{0,400}?\[tool failure\]/);
+    expect(noticeBlock).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// unrecoveredFailedToolNames — recovery-aware failure classification (HR-01)
+// ---------------------------------------------------------------------------
+describe("unrecoveredFailedToolNames", () => {
+  it("treats a fail-then-succeed of the SAME tool as recovered (empty result)", () => {
+    // The live NVDA case: pipeline failed (validation) then succeeded (launch).
+    expect(
+      unrecoveredFailedToolNames(
+        ["pipeline"],
+        [
+          { toolName: "pipeline", success: false, durationMs: 21 },
+          { toolName: "pipeline", success: true, durationMs: 27 },
+        ],
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports a tool that failed and never succeeded as unrecovered", () => {
+    expect(
+      unrecoveredFailedToolNames(
+        ["pipeline"],
+        [{ toolName: "pipeline", success: false, durationMs: 21 }],
+      ),
+    ).toEqual(["pipeline"]);
+  });
+
+  it("a DIFFERENT tool succeeding does NOT count as recovery", () => {
+    expect(
+      unrecoveredFailedToolNames(
+        ["write"],
+        [
+          { toolName: "write", success: false, durationMs: 5 },
+          { toolName: "read", success: true, durationMs: 3 },
+        ],
+      ),
+    ).toEqual(["write"]);
+  });
+
+  it("dedups repeated failed tool names", () => {
+    expect(
+      unrecoveredFailedToolNames(
+        ["pipeline", "pipeline"],
+        [{ toolName: "pipeline", success: true, durationMs: 27 }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("safe fallback: missing toolExecResults → all failed tools are unrecovered (current behavior)", () => {
+    expect(unrecoveredFailedToolNames(["pipeline"], undefined)).toEqual(["pipeline"]);
+    expect(unrecoveredFailedToolNames(["pipeline"], [])).toEqual(["pipeline"]);
+  });
+
+  it("empty failedTools → empty", () => {
+    expect(unrecoveredFailedToolNames([], undefined)).toEqual([]);
+  });
+
+  it("mixed: one recovered, one not → only the unrecovered survives", () => {
+    expect(
+      unrecoveredFailedToolNames(
+        ["pipeline", "search"],
+        [
+          { toolName: "pipeline", success: false, durationMs: 21 },
+          { toolName: "pipeline", success: true, durationMs: 27 },
+          { toolName: "search", success: false, durationMs: 9 },
+        ],
+      ),
+    ).toEqual(["search"]);
   });
 });
 

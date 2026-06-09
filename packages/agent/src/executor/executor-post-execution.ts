@@ -826,6 +826,37 @@ export function snapshotSummarizerDepsForDefer(
 }
 
 /**
+ * Classify failed tools into the subset that was NOT recovered this turn (HR-01).
+ *
+ * A tool failure is "recovered" when the SAME tool name also has a successful
+ * execution in `toolExecResults` for this turn — e.g. the model retried after a
+ * transient error and the retry succeeded. The user-facing `[tool failure]`
+ * notice must surface only UNRECOVERED failures: a tool that failed and never
+ * succeeded. The live case is the NVDA pipeline — attempt-1 (validation) failed,
+ * attempt-2 launched the graph, yet the user saw "[tool failure] pipeline reported
+ * an error" because the notice keyed off raw failedTools.
+ *
+ * Safe fallback: when `toolExecResults` is absent/empty (success record not
+ * plumbed on some path) every failed tool is reported as unrecovered — i.e. the
+ * pre-HR-01 behavior, so this never HIDES a genuine unrecovered failure.
+ *
+ * Observability is unaffected: effectiveFinishReason / logs / fleet rollup still
+ * record the failure. Only the user-facing reply is gated.
+ *
+ * Pure: no I/O, no side effects. Returns deduped failed names with no same-name success.
+ */
+export function unrecoveredFailedToolNames(
+  failedTools: string[],
+  toolExecResults?: Array<{ toolName: string; success: boolean }>,
+): string[] {
+  if (failedTools.length === 0) return [];
+  const succeeded = new Set(
+    (toolExecResults ?? []).filter((r) => r.success).map((r) => r.toolName),
+  );
+  return [...new Set(failedTools)].filter((name) => !succeeded.has(name));
+}
+
+/**
  * Returns true when the model response already acknowledges the failure of
  * one of the failed tools — used to suppress the auto-appended failure notice
  * when the model has explicitly mentioned the error.
@@ -1168,15 +1199,24 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     );
   }
 
-  // Notice append is gated: only when the model did NOT acknowledge the failure
-  // AND the response is not a silent sentinel.
+  // Notice append is gated (HR-01): surface ONLY tools that failed and were NOT
+  // recovered (no same-name success this turn) — a fail-then-retry-succeed (e.g.
+  // the NVDA pipeline's attempt-1 validation error → attempt-2 launch) must not
+  // read as a user-facing failure. Also suppressed when the model already
+  // acknowledged the failure or the response is a silent sentinel. The
+  // observability label (effectiveFinishReason) is unchanged — operators still
+  // see the recovered failure in logs/fleet.
+  const unrecoveredFailed = unrecoveredFailedToolNames(
+    bridgeResult.failedTools ?? [],
+    bridgeResult.toolExecResults,
+  );
   if (
-    hasToolFailures &&
+    unrecoveredFailed.length > 0 &&
     isStopTurn &&
-    !modelAcknowledgedFailure(result.response ?? "", bridgeResult.failedTools ?? []) &&
+    !modelAcknowledgedFailure(result.response ?? "", unrecoveredFailed) &&
     !isSilentResponse(result.response ?? "")
   ) {
-    const failedToolName = bridgeResult.failedTools?.[0] ?? "unknown tool";
+    const failedToolName = unrecoveredFailed[0];
     result.response = (result.response ?? "") +
       `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
   }
