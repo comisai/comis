@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved } from "./executor-post-execution.js";
 import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Learned-recall write side: the turn-end emit threads classifyIntent(msg.text).
@@ -336,6 +336,69 @@ describe("buildSessionEndMetadata", () => {
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
     expect(stripped).toMatch(/buildSessionEndMetadata\([\s\S]*?traceId:\s*tryGetContext\(\)\?\.traceId/);
+  });
+});
+
+describe("promoteOutputStarved (QT3 — conservative terminal-truncation promotion)", () => {
+  // The SDK-normalized AssistantMessage.stopReason union is
+  // "stop" | "length" | "toolUse" | "error" | "aborted" (pi-ai types.d.ts), so
+  // "length" is the output-cap truncation signal. m.lastStopReason is captured at
+  // EVERY turn_end (pi-event-bridge.ts), so the FINAL value is the terminal stop.
+
+  it("PROMOTES a terminal length-stop on an otherwise-clean run to output_starved", () => {
+    // The model got cut off at the output cap as the terminal state, and the run
+    // would OTHERWISE map to a clean reason (stop → success). THIS is the
+    // pathological terminal the detector must name.
+    expect(promoteOutputStarved("stop", "length")).toBe("output_starved");
+    expect(promoteOutputStarved("end_turn", "length")).toBe("output_starved");
+    // Defensive provider-raw variants are also accepted as the terminal cap stop.
+    expect(promoteOutputStarved("stop", "max_tokens")).toBe("output_starved");
+    expect(promoteOutputStarved("stop", "maxTokens")).toBe("output_starved");
+    // And the promoted reason maps to the named cause end-to-end.
+    expect(END_REASON_MAP[promoteOutputStarved("stop", "length")]).toBe("output_starved");
+  });
+
+  it("does NOT flag a benign continued/non-terminal length-stop — a clean terminal stays success", () => {
+    // The load-bearing guard against flagging healthy sessions. A long answer that
+    // hit the cap mid-run but the agent CONTINUED past (output escalation re-ran,
+    // or another turn followed) ends with a NON-length terminal stopReason
+    // ("stop"/"end"/"toolUse") — m.lastStopReason was overwritten at the later
+    // turn_end. Such a run must stay clean (success), never output_starved.
+    expect(promoteOutputStarved("stop", "stop")).toBe("stop");
+    expect(promoteOutputStarved("stop", "end")).toBe("stop");
+    expect(promoteOutputStarved("end_turn", "toolUse")).toBe("end_turn");
+    // No terminal stop reason captured at all ⇒ no promotion.
+    expect(promoteOutputStarved("stop", undefined)).toBe("stop");
+    // Sanity: a clean run with a clean terminal stays mapped to success.
+    expect(END_REASON_MAP[promoteOutputStarved("stop", "stop")]).toBe("success");
+  });
+
+  it("does NOT override a NON-clean terminal cause even with a terminal length-stop", () => {
+    // If the run already settled on a non-clean cause (tool errors, budget,
+    // breaker, error), the output-cap truncation is NOT the headline — the
+    // upstream cause wins. The promotion fires ONLY when the would-be endReason
+    // is clean, so these pass through untouched.
+    expect(promoteOutputStarved("completed_with_tool_errors", "length")).toBe("completed_with_tool_errors");
+    expect(promoteOutputStarved("budget_exhausted", "length")).toBe("budget_exhausted");
+    expect(promoteOutputStarved("circuit_open", "length")).toBe("circuit_open");
+    expect(promoteOutputStarved("error", "length")).toBe("error");
+    expect(promoteOutputStarved("context_exhausted", "length")).toBe("context_exhausted");
+  });
+
+  it("source-grep — the chokepoint threads lastStopReason through promoteOutputStarved into the mapped endReason", () => {
+    // Pin that the production chokepoint actually CALLS the promotion (so the
+    // pure helper is not dead code) and feeds its result into END_REASON_MAP —
+    // the single mapped endReason that drives BOTH the persisted sessionEnd and
+    // the session:summary emit.
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    expect(stripped).toMatch(/promoteOutputStarved\(/);
+    // lastStopReason must be read off the bridge result and threaded in.
+    expect(stripped).toMatch(/lastStopReason/);
   });
 });
 
