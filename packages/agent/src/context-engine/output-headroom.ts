@@ -42,17 +42,21 @@ export const THINKING_RESERVE_TOKENS: Readonly<
 /**
  * Compute reasoning-aware output headroom for a single dispatch.
  *
- * outputHeadroom = thinkingReserve[reasoningStyle][thinkingLevel] + MIN_VISIBLE_OUTPUT_TOKENS
+ * outputHeadroom = thinkingReserve[reasoningStyle][thinkingLevel] + visibleOutputFloor
  *
- * @param reasoningStyle - Model's reasoning style: "none" (standard) or "native" (thinking block).
- * @param thinkingLevel  - Configured thinking effort level.
+ * @param reasoningStyle      - Model's reasoning style: "none" (standard) or "native" (thinking block).
+ * @param thinkingLevel       - Configured thinking effort level.
+ * @param visibleOutputFloor  - Minimum visible output tokens (defaults to MIN_VISIBLE_OUTPUT_TOKENS).
+ *                              WR-02: pass contextEngine.budget.minVisibleOutputTokens here when
+ *                              the config value differs from the compile-time constant.
  * @returns Total output headroom tokens to reserve from the context window.
  */
 export function computeOutputHeadroom(
   reasoningStyle: "none" | "native",
   thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh",
+  visibleOutputFloor: number = MIN_VISIBLE_OUTPUT_TOKENS,
 ): number {
-  return THINKING_RESERVE_TOKENS[reasoningStyle][thinkingLevel] + MIN_VISIBLE_OUTPUT_TOKENS;
+  return THINKING_RESERVE_TOKENS[reasoningStyle][thinkingLevel] + visibleOutputFloor;
 }
 
 /** The governor's down-shift order — the meaningful thinking levels

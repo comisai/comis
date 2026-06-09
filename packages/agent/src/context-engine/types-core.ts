@@ -262,6 +262,13 @@ export interface ContextEngineDeps {
    *  Source: the agent config's thinkingLevel field, read at call time.
    *  When absent, the pre-flight check falls back to "medium" (conservative). */
   getThinkingLevel?: () => string | undefined;
+
+  /** WR-02 (Phase 166): operator-configurable minimum visible output token floor.
+   *  Sourced from contextEngine.budget.minVisibleOutputTokens in the agent config.
+   *  When absent, the pre-flight check uses the compile-time constant MIN_VISIBLE_OUTPUT_TOKENS (768).
+   *  This makes the schema field live rather than dead config. Frontier/mid: default 768
+   *  → byte-identical result (MIN_VISIBLE_OUTPUT_TOKENS=768). */
+  minVisibleOutputTokens?: number;
 }
 
 // ---------------------------------------------------------------------------

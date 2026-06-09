@@ -644,6 +644,10 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     onEffectiveWindow: params.onEffectiveWindow,
     onThinkingDownshifted: params.onThinkingDownshifted,
     getThinkingLevel: params.getThinkingLevel,
+    // WR-02 (Phase 166): thread the operator-configurable floor so the schema field
+    // contextEngine.budget.minVisibleOutputTokens has live runtime effect.
+    // Absent ⇒ pre-flight uses the compile-time constant (768) — byte-identical.
+    minVisibleOutputTokens: contextEngineConfig.budget?.minVisibleOutputTokens,
   });
 
   // Wire context engine to the mutable holder so requestBodyInjector

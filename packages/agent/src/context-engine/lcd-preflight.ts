@@ -60,8 +60,13 @@ export function runPreflightFitCheck(
     ? (rawThinkingLevel as TLevel)
     : "medium";
 
+  // WR-02: use the operator-configurable floor (from contextEngine.budget.minVisibleOutputTokens)
+  // when provided; otherwise fall back to the compile-time constant (768). Frontier/mid:
+  // default 768 → byte-identical result.
+  const minVisibleFloor = deps.minVisibleOutputTokens;
+
   let effectiveThinkingLevel: TLevel = thinkingLevelInput;
-  let outputHeadroom = computeOutputHeadroom(reasoningStyle, effectiveThinkingLevel);
+  let outputHeadroom = computeOutputHeadroom(reasoningStyle, effectiveThinkingLevel, minVisibleFloor);
   const headroomBound = effectiveWindow - outputHeadroom;
 
   // Compute budgetedTokens: the NEWEST keptCount items in evictable were kept by the normal
@@ -70,15 +75,28 @@ export function runPreflightFitCheck(
   const budgetedTokens = evictable.slice(keptStart).reduce((s, b) => s + b.tokens, 0);
 
   // Estimate fresh tail token count from char lengths (CHARS_PER_TOKEN_RATIO heuristic).
-  const freshTailChars = freshTail.reduce(
-    (s, m) =>
-      s + (typeof (m as { content?: unknown }).content === "string"
-        ? ((m as { content: string }).content).length
-        : 0),
-    0,
-  );
+  // IN-01 fix: count chars from both string and array (multi-part/tool-result) content.
+  const freshTailChars = freshTail.reduce((s, m) => {
+    const content = (m as { content?: unknown }).content;
+    if (typeof content === "string") return s + content.length;
+    if (Array.isArray(content)) {
+      return s + content.reduce((acc: number, block: unknown) => {
+        if (typeof block === "string") return acc + block.length;
+        if (block !== null && typeof block === "object") {
+          const b = block as { text?: string; content?: string };
+          return acc + (b.text?.length ?? b.content?.length ?? 0);
+        }
+        return acc;
+      }, 0);
+    }
+    return s;
+  }, 0);
   const freshTailTokens = Math.ceil(freshTailChars / CHARS_PER_TOKEN_RATIO);
-  let assembledInputTokens = budgetedTokens + freshTailTokens;
+  // CR-03: save the ORIGINAL assembled count (what is actually dispatched to the LLM)
+  // BEFORE any simulation in step (a). onAssembledInputTokens must always report this
+  // value — NOT the simulated undercount from the security-pin harder-eviction pass.
+  const originalAssembledInputTokens = budgetedTokens + freshTailTokens;
+  let assembledInputTokens = originalAssembledInputTokens;
 
   if (assembledInputTokens > headroomBound) {
     // (a) Evict harder with security-pinned messages excluded (T-S4).
@@ -106,7 +124,7 @@ export function runPreflightFitCheck(
       let downshifted = downshiftThinkingLevel(effectiveThinkingLevel);
       while (downshifted !== undefined) {
         effectiveThinkingLevel = downshifted;
-        outputHeadroom = computeOutputHeadroom(reasoningStyle, effectiveThinkingLevel);
+        outputHeadroom = computeOutputHeadroom(reasoningStyle, effectiveThinkingLevel, minVisibleFloor);
         const newBound = effectiveWindow - outputHeadroom;
         if (assembledInputTokens <= newBound) {
           // Governor fired — emit WARN + signal caller.
@@ -136,7 +154,7 @@ export function runPreflightFitCheck(
     }
 
     // (d) If still infeasible after all down-shifts → ContextExhaustionError.
-    const finalHeadroom = computeOutputHeadroom(reasoningStyle, effectiveThinkingLevel);
+    const finalHeadroom = computeOutputHeadroom(reasoningStyle, effectiveThinkingLevel, minVisibleFloor);
     const finalBound = effectiveWindow - finalHeadroom;
     if (assembledInputTokens > finalBound) {
       deps.logger.warn(
@@ -155,6 +173,10 @@ export function runPreflightFitCheck(
     }
   }
 
-  // Expose assembledInputTokens for dynamic max_tokens clamping (Plan 04).
-  deps.onAssembledInputTokens?.(assembledInputTokens);
+  // CR-03: always report the ORIGINAL assembled count (what is actually dispatched).
+  // The simulated harder-eviction in step (a) only measures feasibility; it does NOT
+  // change the actual context array dispatched (that is built from `repaired` in
+  // lcd-assembler.ts). Reporting the simulated count would give config-resolver a
+  // stale undercount → dynamicMax set too high → silent LLM truncation.
+  deps.onAssembledInputTokens?.(originalAssembledInputTokens);
 }
