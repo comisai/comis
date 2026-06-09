@@ -45,6 +45,8 @@ export interface OllamaProbeError {
   message: string;
   /** Structured error kind for logging. */
   errorKind: ErrorKind;
+  /** Elapsed milliseconds at the point of failure (for observability). */
+  durationMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,15 +124,14 @@ export async function probeOllamaServedWindow(
     }
   } catch (error: unknown) {
     const durationMs = systemNowMs() - startMs;
-    void durationMs; // timing info available to callers via logs
     if (
       error instanceof DOMException &&
       (error.name === "AbortError" || error.code === 20)
     ) {
-      return err({ message: `Probe timeout after ${timeoutMs}ms`, errorKind: "timeout" });
+      return err({ message: `Probe timeout after ${timeoutMs}ms`, errorKind: "timeout", durationMs });
     }
     const message = error instanceof Error ? error.message : String(error);
-    return err({ message, errorKind: "dependency" });
+    return err({ message, errorKind: "dependency", durationMs });
   }
 
   if (!psResponse.ok) {
@@ -304,6 +305,7 @@ export async function probeAllOllamaProviders(
               provider: providerId,
               err: result.error.message,
               errorKind: result.error.errorKind,
+              durationMs: result.error.durationMs,
               hint: "Falling back to configured contextWindow; start Ollama or set capabilities.probeServedWindow: false to suppress",
               submodule: "ollama-capacity-probe",
             },
