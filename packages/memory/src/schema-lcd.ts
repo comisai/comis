@@ -174,6 +174,26 @@ export function ensureLcdTables(db: Database.Database): void {
     -- the old index for the common one-agent-per-conversation case.
     CREATE UNIQUE INDEX IF NOT EXISTS idx_lcd_ctx_items_conv_agent_ord
       ON lcd_context_items(conversation_id, agent_id, tenant_id, ordinal);
+
+    -- ── Phase 164 (RR1): durable per-conversation ingest cursor ────────────────
+    -- Stores the durable per-conversation epoch cursor used by the afterTurn
+    -- ingest to detect JSONL re-bases (a fresh/disjoint live transcript) and
+    -- continue-append without a gap. Primary key = (conversation_id, agent_id,
+    -- tenant_id) — the same three-column R4 isolation scope as lcd_messages.
+    -- updated_at is caller-supplied epoch ms (the store never reads the clock).
+    -- Forward-only, re-run-safe (CREATE … IF NOT EXISTS only; NO DROP TABLE /
+    -- down-migration — design §9). An existing memory.db gains the empty table at
+    -- the next boot; existing conversations have no cursor row (first-turn after
+    -- upgrade detects null → treats as epoch A with ingestedLiveLen=0, correct).
+    CREATE TABLE IF NOT EXISTS lcd_ingest_cursor (
+      conversation_id   TEXT    NOT NULL,
+      agent_id          TEXT    NOT NULL,
+      tenant_id         TEXT    NOT NULL,
+      epoch_anchor      TEXT    NOT NULL,       -- messageEpochAnchor(live[0]): "role:ts:fp"
+      ingested_live_len INTEGER NOT NULL,       -- ingestedLiveLen at last successful ingest
+      updated_at        INTEGER NOT NULL,       -- caller-supplied epoch ms
+      PRIMARY KEY (conversation_id, agent_id, tenant_id)
+    );
   `);
 
   // ── LCD full-text search (Phase 131, E1 ctx_search) ────────────────────────

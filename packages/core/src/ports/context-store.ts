@@ -131,6 +131,45 @@ export interface ContextStorePort {
    * conversation queue ONLY through this port method (the agent↛memory cut holds).
    */
   runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T>;
+
+  /**
+   * RR1 (Phase 164): Read the durable ingest cursor for this
+   * (conversation, agent, tenant) scope.
+   * Returns null when no row exists — new conversation or first run after the
+   * Phase 164 upgrade (the lcd_ingest_cursor table is added forward-only).
+   * The caller interprets null as "no prior epoch: treat as epoch A with
+   * ingestedLiveLen = 0" — the steady-state continue path.
+   */
+  getIngestCursor(scope: ContextStoreScope): { epochAnchor: string; ingestedLiveLen: number } | null;
+
+  /**
+   * RR1 (Phase 164): Atomically upsert the durable ingest cursor.
+   * MUST be called inside runOnConversation by the caller (lcd-store's
+   * single-flight serializer ensures the cursor write and the message append
+   * are serialized for the same conversation).
+   * `updatedAt` is caller-supplied epoch ms — the store never reads the clock.
+   */
+  upsertIngestCursor(
+    scope: ContextStoreScope,
+    cursor: { epochAnchor: string; ingestedLiveLen: number },
+    updatedAt: number,
+  ): void;
+
+  /**
+   * RR4 (Phase 164): Delete ALL lcd_* rows for this (conversation, agent, tenant)
+   * scope in FK-safe dependency order:
+   * lcd_summary_messages (RESTRICT FK) → lcd_summary_parents → lcd_context_items →
+   * lcd_summaries → lcd_messages (CASCADE deletes lcd_message_parts) → lcd_ingest_cursor.
+   *
+   * Returns the count of lcd_messages rows deleted.
+   * MUST be called inside runOnConversation so it serializes against live ingest.
+   * Never throws; returns 0 on no-op (empty conversation).
+   *
+   * T-164-01: the three-column scope filter (conversation_id, agent_id, tenant_id)
+   * on every DELETE statement mirrors the lcd-store selectMsgs read isolation —
+   * a cross-tenant or cross-agent wipe is impossible by construction.
+   */
+  deleteConversationLcd(scope: ContextStoreScope): number;
 }
 
 /**

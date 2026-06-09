@@ -133,6 +133,15 @@ const summaryMessageIdRowMapper = createRowMapper(SummaryMessageIdRowSchema);
 const MessageRowidRowSchema = z.strictObject({ rowid: z.number() });
 const messageRowidRowMapper = createRowMapper(MessageRowidRowSchema);
 
+/**
+ * Phase 164 (RR1): cursor row schema — two projected columns only
+ * (`epoch_anchor` + `ingested_live_len`). Uses `z.strictObject` (drift
+ * detection) and `createRowMapper` (degrade-to-undefined, never throws) —
+ * the same pattern as every other row mapper in this module.
+ */
+const CursorRowSchema = z.strictObject({ epoch_anchor: z.string(), ingested_live_len: z.number() });
+const cursorRowMapper = createRowMapper(CursorRowSchema);
+
 /** The verbatim canonical block is opaque at the row layer (F1). */
 const LcdPartMetadataSchema = z.looseObject({
   raw: z.unknown(),
@@ -368,6 +377,62 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       )
     ORDER BY m.seq
   `);
+
+  // ── Phase 164 (RR1): durable ingest cursor ──────────────────────────────────
+  // Two prepared statements: an upsert (INSERT … ON CONFLICT DO UPDATE) and a
+  // point-select for the two cursor fields. Static SQL, bound params, no
+  // interpolated identifiers (T-127-09). The primary key is the three-column R4
+  // isolation scope (conversation_id, agent_id, tenant_id) — identical to every
+  // other lcd_* table so a cross-tenant/cross-agent wipe is impossible (T-164-01).
+  const upsertCursorStmt = db.prepare(
+    "INSERT INTO lcd_ingest_cursor (conversation_id, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)" +
+    " VALUES (?,?,?,?,?,?)" +
+    " ON CONFLICT(conversation_id,agent_id,tenant_id)" +
+    " DO UPDATE SET epoch_anchor=excluded.epoch_anchor, ingested_live_len=excluded.ingested_live_len, updated_at=excluded.updated_at",
+  );
+
+  const selectCursorStmt = db.prepare(
+    "SELECT epoch_anchor, ingested_live_len FROM lcd_ingest_cursor WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
+  );
+
+  // ── Phase 164 (RR4): deleteConversationLcd transaction ──────────────────────
+  // Deletes ALL lcd_* rows for a (conversation, agent, tenant) scope in FK-safe
+  // dependency order. The RESTRICT FK on lcd_summary_messages.message_id →
+  // lcd_messages.id REQUIRES deleting lcd_summary_messages rows BEFORE
+  // lcd_messages rows (verified: schema-lcd.ts:138). lcd_message_parts rows are
+  // removed automatically by the ON DELETE CASCADE on message_id. The
+  // lcd_messages_fts contentless shadow rows are orphaned (FTS5 contentless tables
+  // degrade gracefully — no FK; documented tradeoff). Never throws; returns the
+  // count of lcd_messages rows deleted (0 for an empty/nonexistent conversation).
+  const deleteConversationLcdTxn = db.transaction((scope: ContextStoreScope): number => {
+    // 1. lcd_summary_messages: RESTRICT FK on message_id — must delete BEFORE lcd_messages.
+    db.prepare(
+      "DELETE FROM lcd_summary_messages WHERE summary_id IN" +
+      " (SELECT summary_id FROM lcd_summaries WHERE conversation_id=? AND agent_id=? AND tenant_id=?)",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    // 2. lcd_summary_parents: CASCADE FK on parent_summary_id — safe to delete before/after lcd_summaries.
+    db.prepare(
+      "DELETE FROM lcd_summary_parents WHERE parent_summary_id IN" +
+      " (SELECT summary_id FROM lcd_summaries WHERE conversation_id=? AND agent_id=? AND tenant_id=?)",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    // 3. lcd_context_items (no FK dependency on messages/summaries order).
+    db.prepare(
+      "DELETE FROM lcd_context_items WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    // 4. lcd_summaries: after lcd_summary_messages + lcd_summary_parents rows are gone.
+    db.prepare(
+      "DELETE FROM lcd_summaries WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    // 5. lcd_messages: CASCADE deletes lcd_message_parts rows (ON DELETE CASCADE on message_id).
+    const info = db.prepare(
+      "DELETE FROM lcd_messages WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    // 6. lcd_ingest_cursor: clear the durable epoch cursor for this scope.
+    db.prepare(
+      "DELETE FROM lcd_ingest_cursor WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    return info.changes as number;
+  });
 
   /**
    * Idempotent INCREMENTAL backfill of the model-facing view from lcd_messages
@@ -757,6 +822,45 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // queue is per-conversation). The store does not log here — observability
       // is agent-side (Plan 132-04 Task 3).
       return ingestSerializer.runOnConversation(conversationId, fn);
+    },
+
+    // ── Phase 164 (RR1): durable ingest cursor ──────────────────────────────
+
+    getIngestCursor(scope: ContextStoreScope): { epochAnchor: string; ingestedLiveLen: number } | null {
+      // Point-select the cursor row for this (conversation, agent, tenant) scope.
+      // Returns null when no row exists (new conversation or first run after upgrade).
+      // Per-row parseOptionalRow + skip on validation failure (never throws — WR-02).
+      const row = selectCursorStmt.get(scope.conversationId, scope.agentId, scope.tenantId);
+      if (!row) return null;
+      const parsed = cursorRowMapper.parseOptionalRow(row);
+      if (!parsed.ok || !parsed.value) return null;
+      return { epochAnchor: parsed.value.epoch_anchor, ingestedLiveLen: parsed.value.ingested_live_len };
+    },
+
+    upsertIngestCursor(
+      scope: ContextStoreScope,
+      cursor: { epochAnchor: string; ingestedLiveLen: number },
+      updatedAt: number,
+    ): void {
+      // Atomically upsert — INSERT on first use, UPDATE on subsequent writes.
+      // Must be called inside runOnConversation by the caller.
+      upsertCursorStmt.run(
+        scope.conversationId,
+        scope.agentId,
+        scope.tenantId,
+        cursor.epochAnchor,
+        cursor.ingestedLiveLen,
+        updatedAt,
+      );
+    },
+
+    // ── Phase 164 (RR4): explicit LCD reset ─────────────────────────────────
+
+    deleteConversationLcd(scope: ContextStoreScope): number {
+      // Delegate to the db.transaction that deletes in FK-safe dependency order.
+      // Must be called inside runOnConversation so it serializes against live ingest.
+      // Returns the count of lcd_messages rows deleted (0 for an empty scope).
+      return deleteConversationLcdTxn(scope);
     },
   };
 }
