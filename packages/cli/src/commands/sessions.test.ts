@@ -618,7 +618,9 @@ describe("DOC-02: sessions backup subcommand (Phase 170-04)", () => {
     const files = readdirSync(tmpDir);
     const backupFiles = files.filter((f) => f.startsWith("memory.db.backup."));
     expect(backupFiles).toHaveLength(1);
-    expect(backupFiles[0]).toMatch(/^memory\.db\.backup\.\d{8}T\d{9}Z$/);
+    // Format: memory.db.backup.2026-06-09T231354876Z
+    // (ISO timestamp with colons+dots removed, dashes preserved)
+    expect(backupFiles[0]).toMatch(/^memory\.db\.backup\.\d{4}-\d{2}-\d{2}T\d{9}Z$/);
   });
 
   it("DOC-02-T-2: backup file reopens as a valid SQLite DB with matching row count", async () => {

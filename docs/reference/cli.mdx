@@ -1201,6 +1201,7 @@ Session management commands for listing, inspecting, and deleting conversation s
 | `sessions inspect <key>` | Display full details of a session |
 | `sessions delete <key>` | Delete a session |
 | `sessions reset <sessionKey>` | Reset a conversation to a clean slate: clears LCD history + working session transcript |
+| `sessions backup` | Create a timestamped backup of `memory.db` |
 
 #### `sessions list`
 
@@ -1252,6 +1253,31 @@ comis sessions reset "default:user123:telegram" --yes
 # Pass --memory (reserved, not yet implemented — prints warning; only LCD + session are cleared)
 comis sessions reset "default:user123:telegram" --memory --yes
 ```
+
+#### `sessions backup`
+
+Creates a timestamped copy of `memory.db` using the SQLite Online Backup API. Safe to run while
+the daemon is running — the backup API handles concurrent writes atomically. The backup file is
+placed in the same directory as `memory.db` with restricted permissions (`0600`).
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--data-dir <dir>` | `string` | `~/.comis` | Override the data directory |
+
+```bash
+# Back up memory.db (safe while daemon is running)
+comis sessions backup
+
+# Back up from a custom data directory
+comis sessions backup --data-dir /var/comis
+```
+
+The backup filename includes an ISO timestamp: `memory.db.backup.20260610T120000000Z`.
+
+<Note>
+Run `comis sessions backup` before schema migrations or destructive operations. To restore,
+copy the backup file back to `memory.db` while the daemon is stopped.
+</Note>
 
 ---
 
