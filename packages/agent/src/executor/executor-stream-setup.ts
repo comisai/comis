@@ -49,6 +49,8 @@ import type { TruncationSummary } from "./stream-wrappers/tool-result-size-bounc
 import type { TurnBudgetSummary } from "./stream-wrappers/turn-result-budget-wrapper.js";
 import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
 import type { CapabilityClass, ModelProfile } from "./model-profile.js";
+import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
+import { MIN_VISIBLE_OUTPUT_TOKENS } from "../context-engine/output-headroom.js";
 import { resolveMainPathMaxOutputTokens } from "./verification-gate.js";
 import { createStubFilterInjector } from "./stream-wrappers/stub-filter-injector.js";
 import { createToolCallRepairWrapper } from "./stream-wrappers/tool-call-repair-wrapper.js";
@@ -171,6 +173,18 @@ export interface StreamSetupResult {
   /** Shared mutable TTL split estimate, populated by requestBodyInjector,
    *  consumed by pi-event-bridge on turn_end for per-TTL cost calculation. */
   ttlSplit: TtlSplitEstimate;
+  /** Phase 166: mutable ref for assembled input tokens (set by lcd-assembler via onAssembledInputTokens).
+   *  Exposed so pi-executor.ts can wire the callback into setupContextEngine. */
+  assembledInputTokensRef: { current: number };
+  /** Phase 166: mutable ref for effective window (set by lcd-assembler via onEffectiveWindow).
+   *  Exposed so pi-executor.ts can wire the callback into setupContextEngine. */
+  effectiveWindowRef: { current: number };
+  /** Phase 166 CR-02: mutable ref for reasoning-aware output headroom.
+   *  Initialised to MIN_VISIBLE_OUTPUT_TOKENS (768). pi-executor.ts updates it via
+   *  computeOutputHeadroom(reasoningStyle, thinkingLevel) in the onEffectiveWindow
+   *  and onThinkingDownshifted callbacks so config-resolver always uses the REAL
+   *  floor for the current dispatch (8960 for native/high, not 768). */
+  outputHeadroomRef: { current: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -284,8 +298,15 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     ["file_ops", "Read specific line ranges instead of entire files"],
     ["memory_search", "Reduce limit parameter or narrow search query"],
   ]);
+  // v2.19: small/nano cap a single tool result far below the 50_000-char schema default
+  // so one oversized web_search/read result cannot blow the window (the live NVDA analysts
+  // exhausted at assembled ~33-35K from 20-35K-char results). The scaffold returns a number
+  // only when it wants to override; otherwise fall back to the operator/schema config value.
+  const effectiveMaxToolResultChars =
+    (modelProfile ? resolveScaffoldDefaults(modelProfile, config).maxToolResultChars : undefined)
+    ?? config.maxToolResultChars;
   const { wrapper: bouncerWrapper, getTruncationSummary } = createToolResultSizeBouncer(
-    config.maxToolResultChars,
+    effectiveMaxToolResultChars,
     deps.logger,
     truncationHints,
     registerTruncation,
@@ -301,6 +322,12 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
 
   // Shared TTL split estimate, populated by requestBodyInjector, consumed by bridge
   const ttlSplit: TtlSplitEstimate = { cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 };
+
+  // Phase 166 Fix 3: assembled input tokens + effective window set by lcd-assembler via callbacks,
+  // read lazily by configResolver at dispatch time (lazy evaluation — assembler runs AFTER wrapper chain is built).
+  const assembledInputTokensRef = { current: 0 };
+  const effectiveWindowRef = { current: Infinity };
+  const outputHeadroomRef = { current: MIN_VISIBLE_OUTPUT_TOKENS };
 
   // Capture adaptive retention into local const to prevent race condition.
   const capturedRetention = getAdaptiveRetention();
@@ -357,6 +384,16 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
         maxTokens: config.maxTokens ?? (modelProfile
           ? resolveMainPathMaxOutputTokens(modelProfile)
           : undefined),
+        // Phase 166 Fix 3: dynamic max_tokens clamp via closure-ref getters.
+        // The assembler sets these refs during transformContext (AFTER wrapper chain is built).
+        // When the guard fires (assembled > 0 AND effectiveWindow < Infinity), config-resolver
+        // clamps max_tokens per-dispatch. Frontier/mid: refs stay at defaults (0/Infinity) →
+        // guard never fires → static maxTokens path is byte-identical (CWF-02-H).
+        getAssembledInputTokens: () => assembledInputTokensRef.current > 0
+          ? assembledInputTokensRef.current
+          : undefined,
+        getEffectiveWindow: () => effectiveWindowRef.current,
+        getOutputHeadroom: () => outputHeadroomRef.current,
         temperature: config.temperature ?? (capabilityClass === "nano" ? 0.0 : 0.1),
         // SDK breakpoint on last message must always use "short" (5m).
         // getMessageRetention() now returns "long" after escalation, but the SDK's
@@ -574,5 +611,8 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     getTurnBudgetSummary,
     capturedRetention,
     ttlSplit,
+    assembledInputTokensRef,
+    effectiveWindowRef,
+    outputHeadroomRef,
   };
 }

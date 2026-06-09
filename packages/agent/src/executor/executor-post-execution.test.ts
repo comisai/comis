@@ -16,7 +16,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, unrecoveredFailedToolNames } from "./executor-post-execution.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildDegradedReply } from "./degraded-reply.js";
 import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Learned-recall write side: the turn-end emit threads classifyIntent(msg.text).
@@ -696,6 +697,94 @@ describe("tool-failure endReason and notice", () => {
     if (buildCallMatch) {
       expect(buildCallMatch[0]).not.toMatch(/finishReason\s*:\s*result\.finishReason/);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // HR-01 (v2.19) — the user-facing '[tool failure]' notice must NOT fire for a
+  // tool that FAILED then SUCCEEDED on retry in the SAME turn (recovered).
+  // Live: pipeline attempt-1 (validation) failed, attempt-2 launched the graph,
+  // yet the user still saw "[tool failure] pipeline reported an error". The notice
+  // must surface only UNRECOVERED failures (a failed tool with no same-name
+  // success this turn). Observability (effectiveFinishReason/logs/fleet) still
+  // records the failure — only the user-facing reply is gated.
+  // See design/small-model-orchestration-fidelity.md §4.
+  it("source-grep — failure notice gated on unrecoveredFailedToolNames (recovered failures suppressed)", () => {
+    const stripped = readPostExecStripped();
+    // The notice call site must consult the recovery-aware helper, not raw failedTools.
+    expect(stripped).toMatch(/unrecoveredFailedToolNames/);
+    // The notice append must be guarded by a non-empty unrecovered set.
+    const noticeBlock = stripped.match(/unrecovered[A-Za-z]*\s*\.length\s*>\s*0[\s\S]{0,400}?\[tool failure\]/);
+    expect(noticeBlock).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// unrecoveredFailedToolNames — recovery-aware failure classification (HR-01)
+// ---------------------------------------------------------------------------
+describe("unrecoveredFailedToolNames", () => {
+  it("treats a fail-then-succeed of the SAME tool as recovered (empty result)", () => {
+    // The live NVDA case: pipeline failed (validation) then succeeded (launch).
+    expect(
+      unrecoveredFailedToolNames(
+        ["pipeline"],
+        [
+          { toolName: "pipeline", success: false, durationMs: 21 },
+          { toolName: "pipeline", success: true, durationMs: 27 },
+        ],
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports a tool that failed and never succeeded as unrecovered", () => {
+    expect(
+      unrecoveredFailedToolNames(
+        ["pipeline"],
+        [{ toolName: "pipeline", success: false, durationMs: 21 }],
+      ),
+    ).toEqual(["pipeline"]);
+  });
+
+  it("a DIFFERENT tool succeeding does NOT count as recovery", () => {
+    expect(
+      unrecoveredFailedToolNames(
+        ["write"],
+        [
+          { toolName: "write", success: false, durationMs: 5 },
+          { toolName: "read", success: true, durationMs: 3 },
+        ],
+      ),
+    ).toEqual(["write"]);
+  });
+
+  it("dedups repeated failed tool names", () => {
+    expect(
+      unrecoveredFailedToolNames(
+        ["pipeline", "pipeline"],
+        [{ toolName: "pipeline", success: true, durationMs: 27 }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("safe fallback: missing toolExecResults → all failed tools are unrecovered (current behavior)", () => {
+    expect(unrecoveredFailedToolNames(["pipeline"], undefined)).toEqual(["pipeline"]);
+    expect(unrecoveredFailedToolNames(["pipeline"], [])).toEqual(["pipeline"]);
+  });
+
+  it("empty failedTools → empty", () => {
+    expect(unrecoveredFailedToolNames([], undefined)).toEqual([]);
+  });
+
+  it("mixed: one recovered, one not → only the unrecovered survives", () => {
+    expect(
+      unrecoveredFailedToolNames(
+        ["pipeline", "search"],
+        [
+          { toolName: "pipeline", success: false, durationMs: 21 },
+          { toolName: "pipeline", success: true, durationMs: 27 },
+          { toolName: "search", success: false, durationMs: 9 },
+        ],
+      ),
+    ).toEqual(["search"]);
   });
 });
 
@@ -1819,5 +1908,199 @@ describe("R4 critic hook — thin wiring in executor-post-execution.ts", () => {
     // critic must come AFTER tool-failure notice and BEFORE session metadata write.
     expect(awaitCriticPos).toBeGreaterThan(toolFailurePos);
     expect(awaitCriticPos).toBeLessThan(sessionMetaPos);
+  });
+
+  // WR-01 (Phase 169): CWF-05 guard — critic must be skipped for degraded turns.
+  // Source-grep verifies the explicit isDegradedTurn guard is present and wraps
+  // the shouldRunCritic call. This makes the guard structural (not implicit) and
+  // catches any future edits that accidentally remove it.
+  it("WR-01 (Phase 169): isDegradedTurn guard wraps shouldRunCritic call (explicit CWF-05 protection)", () => {
+    const src = strippedSource();
+    // The guard variable must be declared with both degraded reasons.
+    expect(src).toMatch(/isDegradedTurn\s*=/);
+    expect(src).toMatch(/output_starved/);
+    expect(src).toMatch(/context_exhausted/);
+    // The shouldRunCritic call must be conditioned on !isDegradedTurn.
+    expect(src).toMatch(/!isDegradedTurn.*shouldRunCritic|isDegradedTurn.*&&.*shouldRunCritic/s);
+  });
+
+  it("WR-01 (Phase 169): isDegradedTurn guard appears AFTER CWF-05 block (correct ordering)", () => {
+    const src = readPostExecSource();
+    const cwf05Pos = src.indexOf("CWF-05: degrade loudly");
+    const degradedGuardPos = src.indexOf("isDegradedTurn");
+    expect(cwf05Pos).toBeGreaterThan(-1);
+    expect(degradedGuardPos).toBeGreaterThan(-1);
+    // The isDegradedTurn variable must appear AFTER the CWF-05 block so it
+    // can refer to the already-written result.response.
+    expect(degradedGuardPos).toBeGreaterThan(cwf05Pos);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CWF-05: degraded-reply wiring — source-grep + behavior probes
+//
+// These tests verify that:
+//   (A) executor-post-execution.ts imports and calls buildOutputStarvedAnnotation
+//   (B) the gate uses effectiveFinishReason (NOT result.finishReason) for output_starved
+//   (C) executor-post-execution.ts imports and calls buildContextExhaustedReply
+//   (D) the gate uses effectiveFinishReason (NOT result.finishReason) for context_exhausted
+//   (E) fail-closed: empty partial text + annotation = non-empty reply
+//   (F) no-regression: healthy reasons return undefined from buildDegradedReply
+//   (G) WR-02 (Phase 169): effectiveFinishReason is emitted in the bookend log
+//   (H) IN-01 (Phase 169): behavioral gate tests — actual result.response mutation
+// ---------------------------------------------------------------------------
+describe("CWF-05: degraded-reply wiring", () => {
+  function readStripped(): string {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    return src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+  }
+
+  it("source-grep — executor-post-execution imports and calls buildOutputStarvedAnnotation", () => {
+    const stripped = readStripped();
+    expect(stripped).toMatch(/buildOutputStarvedAnnotation/);
+  });
+
+  it("source-grep — output_starved gate uses effectiveFinishReason (not result.finishReason)", () => {
+    const stripped = readStripped();
+    expect(stripped).toMatch(
+      /effectiveFinishReason.*output_starved|output_starved.*effectiveFinishReason/,
+    );
+  });
+
+  it("source-grep — executor-post-execution imports and calls buildContextExhaustedReply", () => {
+    const stripped = readStripped();
+    expect(stripped).toMatch(/buildContextExhaustedReply/);
+  });
+
+  it("source-grep — context_exhausted gate uses effectiveFinishReason (not result.finishReason)", () => {
+    const stripped = readStripped();
+    expect(stripped).toMatch(
+      /effectiveFinishReason.*context_exhausted|context_exhausted.*effectiveFinishReason/,
+    );
+  });
+
+  it("fail-closed — output_starved with empty partial text still delivers non-empty reply", () => {
+    // Simulates: (result.response ?? "") + buildOutputStarvedAnnotation()
+    // where result.response is empty. The annotation alone must be non-empty.
+    const annotation = buildOutputStarvedAnnotation();
+    const delivered = "" + annotation;
+    expect(delivered.trim().length).toBeGreaterThan(0);
+  });
+
+  it("no-regression — buildDegradedReply returns undefined for healthy reasons (strict no-op)", () => {
+    expect(buildDegradedReply("stop")).toBeUndefined();
+    expect(buildDegradedReply("end_turn")).toBeUndefined();
+  });
+
+  // WR-02 (Phase 169): effectiveFinishReason must appear in the bookend log.
+  // Source-grep verifies the conditional spread that emits it when it differs
+  // from result.finishReason (which stays "stop" for output_starved turns).
+  it("WR-02 (Phase 169): effectiveFinishReason is conditionally emitted in bookend log", () => {
+    const stripped = readStripped();
+    // The bookend must include the conditional effectiveFinishReason spread.
+    // Pattern: the conditional spread that only emits it when it differs from result.finishReason.
+    expect(stripped).toMatch(/effectiveFinishReason\s*!==\s*result\.finishReason.*effectiveFinishReason/s);
+  });
+
+  it("WR-02 (Phase 169): effectiveFinishReason derivation appears BEFORE bookend log", () => {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    // The bookend log is identified by the deps.logger.info call with "Execution complete".
+    // Use the call-site marker (the deps.logger.info invocation) rather than the string
+    // literal, since "Execution complete" also appears in a comment at line ~229 which
+    // would give a false earlier position via indexOf.
+    const bookendLogCallPos = src.indexOf('"Execution complete",');
+    // effectiveFinishReason must be declared (const effectiveFinishReason =) before the bookend.
+    const firstDeclarationPos = src.indexOf("const effectiveFinishReason =");
+    expect(bookendLogCallPos).toBeGreaterThan(-1);
+    expect(firstDeclarationPos).toBeGreaterThan(-1);
+    expect(firstDeclarationPos).toBeLessThan(bookendLogCallPos);
+  });
+
+  // ---------------------------------------------------------------------------
+  // IN-01 (Phase 169): behavioral gate tests — actual result.response mutation
+  //
+  // These exercise the real gate logic: promoteOutputStarved (the promotion
+  // that sets effectiveFinishReason) + buildDegradedReply (the builder that
+  // produces the exact strings) + the mutation pattern used at the call site.
+  // The "smallest real seam" is the combination of these two pure exported
+  // functions, which together constitute the entire CWF-05 gate without
+  // requiring the 30+ postExecution deps.
+  //
+  // Each test simulates exactly what postExecution does:
+  //   effectiveFinishReason = promoteOutputStarved(toolReconciled, lastStopReason)
+  //   if output_starved: response = (response ?? "") + buildOutputStarvedAnnotation()
+  //   if context_exhausted: response = buildContextExhaustedReply()
+  //   else: response unchanged
+  // ---------------------------------------------------------------------------
+  it("IN-01 (a): output_starved with partial text — response ENDS WITH annotation (partial preserved)", () => {
+    const partial = "Here is my analysis of the code.";
+    const lastStopReason = "length"; // bridge-reported output-cap stop
+    const effective = promoteOutputStarved("stop", lastStopReason);
+    expect(effective).toBe("output_starved");
+    // Apply the gate mutation exactly as postExecution does it:
+    let response: string = partial;
+    if (effective === "output_starved") {
+      response = (response ?? "") + buildOutputStarvedAnnotation();
+    }
+    // Partial text is preserved (APPEND, not REPLACE).
+    expect(response).toContain(partial);
+    // Annotation is appended.
+    expect(response).toContain(buildOutputStarvedAnnotation());
+    // Result ends with the annotation.
+    expect(response.endsWith(buildOutputStarvedAnnotation())).toBe(true);
+  });
+
+  it("IN-01 (b): output_starved with undefined partial — result.response is non-empty (fail-closed)", () => {
+    const lastStopReason = "length";
+    const effective = promoteOutputStarved("stop", lastStopReason);
+    expect(effective).toBe("output_starved");
+    // Apply gate mutation with undefined partial (the ?? "" fail-closed path):
+    let response: string | undefined = undefined;
+    if (effective === "output_starved") {
+      response = (response ?? "") + buildOutputStarvedAnnotation();
+    }
+    // Must be non-empty even though partial was undefined.
+    expect(response).toBeDefined();
+    expect((response ?? "").trim().length).toBeGreaterThan(0);
+    expect(response).toBe(buildOutputStarvedAnnotation());
+  });
+
+  it("IN-01 (c): context_exhausted — response is REPLACED with synthesized reply (not Phase-166 placeholder, not [Stopped:)", () => {
+    const effective = promoteOutputStarved("context_exhausted", undefined);
+    // context_exhausted is NOT a stop/end_turn, so promoteOutputStarved passes it through.
+    expect(effective).toBe("context_exhausted");
+    // Apply gate mutation:
+    let response: string | undefined = "[Stopped: context_exhausted] — please reset the session.";
+    if (effective === "context_exhausted") {
+      response = buildContextExhaustedReply();
+    }
+    // Must equal the synthesized reply exactly (REPLACE semantics).
+    expect(response).toBe(buildContextExhaustedReply());
+    // Must NOT contain the Phase-166 placeholder or operator redirect.
+    expect(response).not.toContain("[Stopped:");
+    expect((response ?? "").toLowerCase()).not.toContain("too large");
+    // Must reference context window in user-friendly terms.
+    expect((response ?? "").toLowerCase()).toContain("context window");
+  });
+
+  it("IN-01 (d): healthy stop turn — result.response is BYTE-IDENTICAL (strict no-op)", () => {
+    const original = "Here is the plan you requested, broken into three steps.";
+    const lastStopReason = "stop"; // clean stop, not output-cap
+    const effective = promoteOutputStarved("stop", lastStopReason);
+    expect(effective).toBe("stop"); // not promoted
+    // Apply gate logic: neither branch fires for "stop".
+    let response: string = original;
+    if (effective === "output_starved") {
+      response = (response ?? "") + buildOutputStarvedAnnotation();
+    }
+    if (effective === "context_exhausted") {
+      response = buildContextExhaustedReply();
+    }
+    // Strict byte-identical no-op.
+    expect(response).toBe(original);
   });
 });

@@ -33,6 +33,7 @@ import { PromptTimeoutError } from "../prompt-timeout.js";
 import { classifyError, classifyPromptTimeout } from "../error-classifier.js";
 import { scanWithOutputGuard } from "../executor-response-filter.js";
 import type { PromptRunResult } from "../prompt-runner/prompt-runner-types.js";
+import { ContextExhaustionError } from "../../context-engine/errors.js";
 
 /**
  * State surface for message-envelope outcome handling. The `result` is the
@@ -110,6 +111,26 @@ export function handleEnvelopeException(
   },
 ): void {
   const { error, sessionKey, agentId } = ctx;
+
+  // CR-01 (Phase 166): ContextExhaustionError is a clean escalation — it means
+  // the pre-flight fit check determined the conversation cannot fit in the context
+  // window even after all down-shifts.  It must map to "context_exhausted" so
+  // END_REASON_MAP fires the correct degradation cause for fleet-health reporting.
+  // Handle it BEFORE the generic classification so it is never mis-labeled "error".
+  if (error instanceof ContextExhaustionError) {
+    deps.logger.warn(
+      {
+        step: "lcd-pre-flight",
+        hint: "context exhausted: conversation too large for context window; user should reset conversation",
+        errorKind: "resource" as ErrorKind,
+        agentId,
+      },
+      "context_exhausted: mapped to finishReason",
+    );
+    state.result.finishReason = "context_exhausted";
+    state.result.response = "The conversation history is too large to process. Please start a new conversation or use the `sessions reset` command.";
+    return;
+  }
 
   deps.logger.warn(
     {

@@ -102,6 +102,8 @@ import { normalizeModelCompat } from "../../provider/model-compat.js";
 import { normalizeModelId } from "../../provider/model-id-normalize.js";
 import { resolveModelProfile } from "../model-profile.js";
 import type { ModelProfile } from "../model-profile.js";
+import { resolveEffectiveContextWindow } from "../../model/effective-context-window.js";
+import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capacity-cap.js";
 import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
 import { validateRoleAttribution } from "../../context-engine/index.js";
@@ -126,6 +128,7 @@ import { createTurnLoopDetector } from "../turn-loop-detector.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import type { PiExecutorDeps } from "./pi-executor-types.js";
 export type { PiExecutorDeps } from "./pi-executor-types.js";
+import { computeOutputHeadroom } from "../../context-engine/output-headroom.js";
 
 /** Number of turns to restrict breakpoints after server eviction. */
 const EVICTION_COOLDOWN_TURNS = 2;
@@ -325,8 +328,37 @@ export function createPiExecutor(
       // When set, this overrides the provider-family heuristic (ollama → "small" etc.)
       // and lets operators pin a specific capabilityClass in config (e.g., to treat a
       // large quantized ollama model as "mid" for context budget + security purposes).
+
+      // CWF-03: Reconcile effective context window before resolveModelProfile.
+      // capabilityCap is derived from deps.providerCapabilities?.capabilityClass (pre-resolver,
+      // config-side value) — NOT from modelProfile.capabilityClass, which does not exist yet
+      // (resolveModelProfile is what creates it). Using modelProfile here would be circular.
+      // CR-01 fix: when no explicit capabilityClass is present (e.g. plain anthropic/openai
+      // provider with no providers.entries block), treat the cap as Infinity (no constraint).
+      // Only apply a class-derived cap when the operator explicitly set capabilityClass.
+      const explicitClass = deps.providerCapabilities?.capabilityClass;
+      const capabilityCap = explicitClass != null
+        ? (DEFAULT_EFFECTIVE_CAP_BY_CLASS[explicitClass] ?? Infinity)
+        : Infinity;
+      const effectiveContextWindowResult = resolveEffectiveContextWindow({
+        configured: resolvedModel?.contextWindow ?? 8_192,
+        served: deps.servedContextWindow,
+        capabilityCap,
+      });
+      if (effectiveContextWindowResult.source !== "configured") {
+        deps.logger.debug({
+          source: effectiveContextWindowResult.source,
+          effectiveWindow: effectiveContextWindowResult.effectiveWindow,
+          configured: resolvedModel?.contextWindow,
+          served: deps.servedContextWindow,
+          capabilityCap,
+          submodule: "context-window-reconcile",
+        }, "Context window reconciled (served or capability cap bound)");
+      }
       const modelProfile = resolveModelProfile(
-        resolvedModel ?? undefined,
+        resolvedModel
+          ? { ...resolvedModel, contextWindow: effectiveContextWindowResult.effectiveWindow }
+          : undefined,
         deps.providerCapabilities?.capabilityClass,
       );
 
@@ -910,6 +942,64 @@ async function runSessionLocked(
     getTokenAnchor: () => tokenAnchor,
     onAnchorReset: () => { tokenAnchor = null; },
     currentDiscoveryTracker,
+    modelProfile,  // already in scope: resolveModelProfile() at line 328; used by assembleTools at :502
+    // Phase 166 T-S4: thread security-pin markers so the dag eviction never drops canary/security context.
+    // contentDelimiter defaults to "" (fail-closed: isSecurityRelevantMessage with empty contentDelimiter
+    // only matches on canaryToken — defense-in-depth; a real delimiter is injected by Plan 04).
+    securityPinMarkers: frozenDeps.canaryToken
+      ? { canaryToken: frozenDeps.canaryToken, contentDelimiter: "" }
+      : undefined,
+    // Phase 166 Fix 3 (Plan 04): thread assembled-input + effective-window tokens so
+    // config-resolver can clamp max_tokens per-dispatch (CWF-02).
+    onAssembledInputTokens: (tokens: number) => {
+      streamSetup.assembledInputTokensRef.current = tokens;
+    },
+    onEffectiveWindow: (windowTokens: number) => {
+      streamSetup.effectiveWindowRef.current = windowTokens;
+      // CR-02 (Phase 166): also update outputHeadroomRef so config-resolver uses the
+      // REAL floor for this dispatch (not the stale MIN_VISIBLE_OUTPUT_TOKENS=768).
+      // Re-derive from the current thinking level + model reasoning style so the
+      // headroom always tracks the live values at the moment the pre-flight fires.
+      const rsStyle = (modelProfile?.reasoningStyle ?? "none") as "none" | "native";
+      const tLevel = (config.thinkingLevel ?? "medium") as "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+      streamSetup.outputHeadroomRef.current = computeOutputHeadroom(rsStyle, tLevel);
+    },
+    getThinkingLevel: () => config.thinkingLevel ?? undefined,
+    // Phase 166 Fix 3: thinking-effort governor — down-shifts session.setThinkingLevel
+    // before the LLM call when the context engine detects the window is too tight.
+    // Gated by config.thinking.downshiftOnTightWindow (D-05 discretion).
+    // Pattern from executor-command-handlers.ts:98 — try/catch with WARN + errorKind.
+    // A bare empty catch is PROHIBITED (AGENTS.md §2.2): silent swallow means thinking
+    // is never reduced — the exact failure mode the governor must prevent.
+    onThinkingDownshifted: config.thinking?.downshiftOnTightWindow !== false
+      ? (level: string) => {
+          // CR-02 (Phase 166): update outputHeadroomRef with the POST-DOWNSHIFT headroom
+          // so config-resolver clamps max_tokens to the REDUCED thinking reserve after
+          // the governor fires. This must happen BEFORE session.setThinkingLevel so the
+          // headroom tracks the final level that will be used for this dispatch.
+          const rsStyle = (modelProfile?.reasoningStyle ?? "none") as "none" | "native";
+          const downshiftedLevel = level as "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+          streamSetup.outputHeadroomRef.current = computeOutputHeadroom(rsStyle, downshiftedLevel);
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK internal API not typed
+            (session as any).setThinkingLevel(level);
+            frozenDeps.logger.debug(
+              { thinkingLevel: level },
+              "thinking-effort governor: session.setThinkingLevel applied",
+            );
+          } catch (govErr) {
+            frozenDeps.logger.warn(
+              {
+                err: govErr,
+                thinkingLevel: level,
+                hint: "session.setThinkingLevel() failed in thinking-effort governor; thinking reserve not reduced — dispatch continues at original level",
+                errorKind: "config" as const,
+              },
+              "thinking-effort governor: setThinkingLevel failed",
+            );
+          }
+        }
+      : undefined,
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK internal: no public type for agent.transformContext
   (session.agent as any).transformContext = ceSetup.contextEngine.transformContext;

@@ -55,6 +55,8 @@ import { CONDENSED_FALLBACK_SUMMARY_MARKER } from "./constants.js";
 import { computeTokenBudget } from "./token-budget.js";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 import type { ContextEngineDeps } from "./types.js";
+import type { ModelProfile } from "../executor/model-profile.js";
+import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // The synthesized-placeholder marker transcript repair emits for an unpaired
@@ -302,6 +304,17 @@ function makeDagDeps(store: ContextStorePort, contextWindow: number): ContextEng
   return {
     logger: logger as unknown as ContextEngineDeps["logger"],
     getModel: () => ({ reasoning: true, contextWindow, maxTokens: 8_192 }),
+    // Phase 165 (CWF-01) made the dag assembler fail CLOSED to the nano cap (16K)
+    // when modelProfile is absent. In production the profile is always threaded
+    // (pi-executor → setupContextEngine), so this fixture supplies a frontier
+    // profile at the intended window — otherwise the nano cap would evict the
+    // condensed summary this suite asserts on. effectiveWindow = min(W, ∞) = W.
+    modelProfile: {
+      ...FAIL_CLOSED_PROFILE,
+      capabilityClass: "frontier" as const,
+      contextWindow,
+      maxOutputTokens: 8_192,
+    } as ModelProfile,
     getSystemTokensEstimate: () => 0,
     contextStore: store,
     conversationId: CONVERSATION_ID,

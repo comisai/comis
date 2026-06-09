@@ -177,6 +177,31 @@ export const CORE_TOOLS = new Set([
 ]);
 
 /**
+ * CWF-04 (Phase 168): orchestration entry primitives that stay active for `small`-class
+ * models even under the SD7 tool-ceiling. Only `small` — nano's aggressive CORE_TOOLS-only
+ * path fires before the ceiling block, so nano retains its own deliberate policy (nano is
+ * below the NL→DAG comprehension cliff; promoting pipeline for nano gives it a tool it
+ * cannot use and needlessly expands its manifest). frontier/mid: ceiling never fires.
+ *
+ * Net manifest impact: 83→24 ceiling saves ~5057 tokens; pipeline schema (~1729 tokens)
+ * costs less than the saving → net ≈ 3328 tokens saved vs no-pipeline ceiling.
+ * Formula: (83-24) tools × ~300 chars avg ÷ 3.5 chars/tok = ~5057 tokens;
+ * pipeline schema ~6052 chars ÷ 3.5 = ~1729 tokens.
+ *
+ * Pre-deferral systemTokens estimate (cachedSystemTokensEstimate) remains stale for the
+ * CURRENT turn (it's computed before deferral fires) — this is a pre-existing known
+ * subtlety (Pitfall 4), not introduced by Phase 168. Budget algebra will accurately reflect
+ * the post-ceiling manifest on the NEXT assembly.
+ *
+ * Extend only when O2 DAG templates demand it (future milestone); never add all four
+ * orchestration primitives — each extra schema fights the ceiling this fix pursues.
+ *
+ * Exported for test access (mirrors the `CORE_TOOLS` convention); no non-test external
+ * caller currently consumes this constant.
+ */
+export const SMALL_CLASS_ORCHESTRATION_TOOLS = new Set(["pipeline"]);
+
+/**
  * Anthropic models that support server-side tool-search via defer_loading.
  * Sonnet 4.x+, Opus 4.x+; NOT Haiku.
  *
@@ -440,6 +465,13 @@ export function applyToolDeferral(
         if (remaining <= 0) break;
         if (deferredSet.has(t.name)) continue;
         if (CORE_TOOLS.has(t.name)) continue;
+        // CWF-04 (Phase 168): pipeline (and future orchestration entries) stays active for
+        // small-class models. Only fires in this ceiling block — which only runs for small
+        // (activeToolCeiling is undefined for nano/frontier/mid). The capabilityClass check
+        // is technically redundant (the block only runs for small) but makes the SMALL-ONLY
+        // intent unambiguous. Nano's aggressive path above is unaffected — nano stays
+        // byte-identical (pipeline still deferred for nano, test :485 GREEN).
+        if (deferralContext.capabilityClass === "small" && SMALL_CLASS_ORCHESTRATION_TOOLS.has(t.name)) continue;
         if (deferralContext.recentlyUsedToolNames.has(t.name)) continue;
         deferredSet.add(t.name);
         remaining--;

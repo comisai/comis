@@ -99,6 +99,8 @@ import type { CapabilityClass } from "./model-profile.js";
 import { createHash, randomUUID } from "node:crypto";
 // R4: critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
+// CWF-05: deterministic user-facing reply for named degraded terminal causes.
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply } from "./degraded-reply.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
@@ -824,6 +826,37 @@ export function snapshotSummarizerDepsForDefer(
 }
 
 /**
+ * Classify failed tools into the subset that was NOT recovered this turn (HR-01).
+ *
+ * A tool failure is "recovered" when the SAME tool name also has a successful
+ * execution in `toolExecResults` for this turn — e.g. the model retried after a
+ * transient error and the retry succeeded. The user-facing `[tool failure]`
+ * notice must surface only UNRECOVERED failures: a tool that failed and never
+ * succeeded. The live case is the NVDA pipeline — attempt-1 (validation) failed,
+ * attempt-2 launched the graph, yet the user saw "[tool failure] pipeline reported
+ * an error" because the notice keyed off raw failedTools.
+ *
+ * Safe fallback: when `toolExecResults` is absent/empty (success record not
+ * plumbed on some path) every failed tool is reported as unrecovered — i.e. the
+ * pre-HR-01 behavior, so this never HIDES a genuine unrecovered failure.
+ *
+ * Observability is unaffected: effectiveFinishReason / logs / fleet rollup still
+ * record the failure. Only the user-facing reply is gated.
+ *
+ * Pure: no I/O, no side effects. Returns deduped failed names with no same-name success.
+ */
+export function unrecoveredFailedToolNames(
+  failedTools: string[],
+  toolExecResults?: Array<{ toolName: string; success: boolean }>,
+): string[] {
+  if (failedTools.length === 0) return [];
+  const succeeded = new Set(
+    (toolExecResults ?? []).filter((r) => r.success).map((r) => r.toolName),
+  );
+  return [...new Set(failedTools)].filter((name) => !succeeded.has(name));
+}
+
+/**
  * Returns true when the model response already acknowledges the failure of
  * one of the failed tools — used to suppress the auto-appended failure notice
  * when the model has explicitly mentioned the error.
@@ -990,6 +1023,31 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     recordLastResponseTs(formattedKey, capturedRetention.getRetention(), deps.clock);
   }
 
+  // Derive effectiveFinishReason BEFORE the bookend log so it is visible there.
+  // WR-02: the bookend must log effectiveFinishReason (not result.finishReason) so that
+  // an output_starved turn — which carries result.finishReason="stop" until promoted here —
+  // is visible in the bookend as degraded. The variables are declared early and referenced
+  // again by the tool-failure append and CWF-05 gate below (no double-computation).
+  const hasToolFailures = (bridgeResult.failedTools?.length ?? 0) > 0;
+  const finishReasonStr = result.finishReason as string;
+  const isStopTurn = finishReasonStr === "stop" || finishReasonStr === "end_turn";
+  // Stage 1: tool-failure reconciliation (a clean stop turn with failed tools
+  // becomes completed_with_tool_errors).
+  const toolReconciledFinishReason =
+    hasToolFailures && isStopTurn
+      ? "completed_with_tool_errors"
+      : result.finishReason;
+  // Stage 2 (QT3): promote a PATHOLOGICAL terminal output truncation. Fires ONLY
+  // when stage 1 left a CLEAN would-be terminal (stop/end_turn) AND the session's
+  // FINAL turn stopped at the output cap (bridge's terminal lastStopReason). A
+  // tool-error / budget / breaker / context_exhausted terminal is untouched (the
+  // upstream cause wins), and a continued/mid-run length-stop is not flagged
+  // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
+  const effectiveFinishReason = promoteOutputStarved(
+    toolReconciledFinishReason,
+    bridgeResult.lastStopReason,
+  );
+
   // Execution bookend INFO log with summary stats
   const durationMs = deps.clock.now() - executionStartMs;
   // LLM/tool/contextEngine duration breakdown from bridge cumulative trackers
@@ -1019,6 +1077,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       toolCalls: result.stepsExecuted,
       llmCalls: result.llmCalls,
       finishReason: result.finishReason,
+      // WR-02 (Phase 169): log the post-promotion effectiveFinishReason so an
+      // output_starved degradation is visible in the bookend (result.finishReason
+      // stays "stop" for output_starved; only effectiveFinishReason reflects the
+      // promotion). Emitted only when it differs from finishReason to avoid noise
+      // on the common case where they are identical.
+      ...(effectiveFinishReason !== result.finishReason && { effectiveFinishReason }),
       tokensIn: result.tokensUsed.input,
       tokensOut: result.tokensUsed.output,
       tokensTotal: result.tokensUsed.total,
@@ -1135,38 +1199,44 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     );
   }
 
-  // Derive effectiveFinishReason — override is UNCONDITIONAL when a tool
-  // failed on a stop/end_turn turn (modelAcknowledgedFailure does NOT gate this).
-  const hasToolFailures = (bridgeResult.failedTools?.length ?? 0) > 0;
-  const finishReasonStr = result.finishReason as string;
-  const isStopTurn = finishReasonStr === "stop" || finishReasonStr === "end_turn";
-  // Stage 1: tool-failure reconciliation (a clean stop turn with failed tools
-  // becomes completed_with_tool_errors).
-  const toolReconciledFinishReason =
-    hasToolFailures && isStopTurn
-      ? "completed_with_tool_errors"
-      : result.finishReason;
-  // Stage 2 (QT3): promote a PATHOLOGICAL terminal output truncation. Fires ONLY
-  // when stage 1 left a CLEAN would-be terminal (stop/end_turn) AND the session's
-  // FINAL turn stopped at the output cap (bridge's terminal lastStopReason). A
-  // tool-error / budget / breaker / context_exhausted terminal is untouched (the
-  // upstream cause wins), and a continued/mid-run length-stop is not flagged
-  // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
-  const effectiveFinishReason = promoteOutputStarved(
-    toolReconciledFinishReason,
-    bridgeResult.lastStopReason,
+  // Notice append is gated (HR-01): surface ONLY tools that failed and were NOT
+  // recovered (no same-name success this turn) — a fail-then-retry-succeed (e.g.
+  // the NVDA pipeline's attempt-1 validation error → attempt-2 launch) must not
+  // read as a user-facing failure. Also suppressed when the model already
+  // acknowledged the failure or the response is a silent sentinel. The
+  // observability label (effectiveFinishReason) is unchanged — operators still
+  // see the recovered failure in logs/fleet.
+  const unrecoveredFailed = unrecoveredFailedToolNames(
+    bridgeResult.failedTools ?? [],
+    bridgeResult.toolExecResults,
   );
-  // Notice append is gated: only when the model did NOT acknowledge the failure
-  // AND the response is not a silent sentinel.
   if (
-    hasToolFailures &&
+    unrecoveredFailed.length > 0 &&
     isStopTurn &&
-    !modelAcknowledgedFailure(result.response ?? "", bridgeResult.failedTools ?? []) &&
+    !modelAcknowledgedFailure(result.response ?? "", unrecoveredFailed) &&
     !isSilentResponse(result.response ?? "")
   ) {
-    const failedToolName = bridgeResult.failedTools?.[0] ?? "unknown tool";
+    const failedToolName = unrecoveredFailed[0];
     result.response = (result.response ?? "") +
       `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
+  }
+
+  // CWF-05: degrade loudly — deliver an honest user-facing reply for named degraded causes.
+  // APPEND for output_starved (partial text exists); REPLACE for context_exhausted (no usable text).
+  // Gate on effectiveFinishReason (NOT result.finishReason — output_starved is only set here).
+  if (effectiveFinishReason === "output_starved") {
+    result.response = (result.response ?? "") + buildOutputStarvedAnnotation();
+    deps.logger.warn(
+      { step: "degraded-reply", errorKind: "resource" as const, hint: "output_starved annotation appended" },
+      "CWF-05: output_starved — annotated truncated reply",
+    );
+  }
+  if (effectiveFinishReason === "context_exhausted") {
+    result.response = buildContextExhaustedReply();
+    deps.logger.warn(
+      { step: "degraded-reply", errorKind: "resource" as const, hint: "context_exhausted synthesized reply" },
+      "CWF-05: context_exhausted — synthesized honest reply delivered",
+    );
   }
 
   // SD3 (Phase 158): resolve capability-gated verification default before the gate check.
@@ -1197,7 +1267,16 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     config,
     { provider, agentModel: config.model, operationModels: config.operationModels ?? {} },
   );
-  if (shouldRunCritic({ // R4: critic hook (WR-02: keyless-only gate)
+  // CWF-05 guard: skip the verification critic entirely for degraded turns. The
+  // CWF-05 block above wrote an honest synthesized reply into result.response; the
+  // critic must never overwrite it with an LLM "not-verified" unmet-list derived
+  // from a one-line error message. This guard makes the degraded reply authoritative
+  // regardless of future edits to the synthesized strings (no implicit string-match
+  // dependency on isCompletionClaim patterns).
+  const isDegradedTurn =
+    effectiveFinishReason === "output_starved" ||
+    effectiveFinishReason === "context_exhausted";
+  if (!isDegradedTurn && shouldRunCritic({ // R4: critic hook (WR-02: keyless-only gate)
     capabilityClass, config, executionPlanRef, provider,
     logger: deps.logger,
     effectiveEnabled: effectiveVerification, // SD3: pre-resolved via cost-gate

@@ -270,6 +270,10 @@ export async function setupAgents(deps: {
    * block is a no-op.
    */
   obsStore?: import("@comis/memory").ObservabilityStore;
+  /** Ollama served context-window probe result from bootAgents (CWF-03).
+   *  Map from provider config key (e.g. "qwen36-local") to discovered num_ctx.
+   *  Absent → probe not run or all failed; executors fall back to configured window. */
+  servedWindowByProvider?: Map<string, number>;
 }): Promise<AgentsResult> {
   const { container, memoryAdapter, sessionStore, agentLogger } = deps;
 
@@ -496,6 +500,8 @@ export async function setupAgents(deps: {
     // Session-scoped trajectory recorder registry — threaded into every
     // per-agent executor so the same registry is shared across agents.
     trajectoryRegistry,
+    // CWF-03: Ollama served-window probe result from bootAgents.
+    servedWindowByProvider: deps.servedWindowByProvider,
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
@@ -588,9 +594,5 @@ export async function setupAgents(deps: {
   };
 }
 
-// ---------------------------------------------------------------------------
-// OAuth credential store selection lives in @comis/agent (CLI cannot import
-// from @comis/daemon, so the helper must live where both daemon and CLI
-// consume it).
-// See: packages/agent/src/model/oauth-credential-store-selector.ts
-// ---------------------------------------------------------------------------
+// OAuth credential store selection: @comis/agent/src/model/oauth-credential-store-selector.ts
+// (CLI cannot import from @comis/daemon, so the helper lives where both daemon and CLI consume it)

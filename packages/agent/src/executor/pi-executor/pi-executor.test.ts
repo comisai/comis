@@ -6509,3 +6509,143 @@ describe("capabilityClassOverride from providerCapabilities (Q3)", () => {
     expect(profile.scaffoldLevel).toBe("standard");
   });
 });
+
+// ---------------------------------------------------------------------------
+// CWF-03-H: Non-keyless (anthropic) characterization — effectiveWindow unchanged
+// ---------------------------------------------------------------------------
+// Verifies that DEFAULT_EFFECTIVE_CAP_BY_CLASS is exported from budget-capacity-cap.ts
+// and that for anthropic (frontier, cap=Infinity, no servedContextWindow), the
+// resolveEffectiveContextWindow pure function returns the configured window exactly.
+// This is a wiring-correctness characterization: if the import fails or the cap table
+// is wrong, the test fails and blocks the pi-executor reconcile wiring.
+
+describe("CWF-03-H: anthropic provider — effectiveWindow byte-identical to configured", () => {
+  it("DEFAULT_EFFECTIVE_CAP_BY_CLASS exported from budget-capacity-cap (precondition for pi-executor wiring)", async () => {
+    // This dynamic import FAILS before the export is added → RED gate.
+    const mod = await import("../../context-engine/budget-capacity-cap.js");
+    expect(typeof (mod as Record<string, unknown>).DEFAULT_EFFECTIVE_CAP_BY_CLASS).toBe("object");
+  });
+
+  it("frontier cap is Infinity (anthropic → no capability constraint)", async () => {
+    const mod = await import("../../context-engine/budget-capacity-cap.js");
+    const cap = (mod as Record<string, unknown>).DEFAULT_EFFECTIVE_CAP_BY_CLASS as Record<string, number>;
+    expect(cap["frontier"]).toBe(Infinity);
+  });
+
+  it("resolveEffectiveContextWindow: anthropic no served → effectiveWindow=200000, source='configured' (CWF-03-H exact-pin)", async () => {
+    const { resolveEffectiveContextWindow } = await import("../../model/effective-context-window.js");
+    const mod = await import("../../context-engine/budget-capacity-cap.js");
+    const cap = (mod as Record<string, unknown>).DEFAULT_EFFECTIVE_CAP_BY_CLASS as Record<string, number>;
+
+    // Anthropic: frontier cap = Infinity; no servedContextWindow (undefined)
+    const result = resolveEffectiveContextWindow({
+      configured: 200_000,
+      served: undefined,
+      capabilityCap: cap["frontier"] ?? Infinity,
+    });
+
+    // EXACT-PIN: effectiveWindow must equal the configured value (no probe, no cap constraint)
+    expect(result.effectiveWindow).toBe(200_000);
+    expect(result.source).toBe("configured");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IN-01: CR-01 regression — pi-executor wiring with providerCapabilities=undefined
+// ---------------------------------------------------------------------------
+// The CR-01 bug: when providerCapabilities is absent (plain anthropic/openai provider,
+// no providers.entries block), the old code defaulted capabilityClass to "nano" (16K cap),
+// silently capping a 200K anthropic context to 16K on every execution.
+//
+// This test exercises the FULL pi-executor.execute() path (not just the pure function)
+// with providerCapabilities=undefined and resolvedModel.contextWindow=200_000, and asserts
+// that NO capability-cap debug log is emitted (source === "configured"), proving the
+// effective window stays 200_000 (not capped to 16_000).
+
+describe("IN-01 (CR-01 regression): pi-executor capabilityCap absent-providerCapabilities=Infinity", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearSessionToolNameSnapshot(formatSessionKey(testSessionKey));
+    clearSessionBootstrapFileSnapshot(formatSessionKey(testSessionKey));
+    clearSessionPromptSkillsXmlSnapshot(formatSessionKey(testSessionKey));
+    clearSessionToolSchemaSnapshot(formatSessionKey(testSessionKey));
+    clearSessionToolSchemaSnapshotHash(formatSessionKey(testSessionKey));
+    mockPrompt.mockResolvedValue(undefined);
+    mockGetLastAssistantText.mockReturnValue("test response");
+    mockSetModel.mockResolvedValue(undefined);
+    mockSubscribe.mockReturnValue(vi.fn());
+  });
+
+  it("anthropic provider with no providerCapabilities and contextWindow=200000 → no capability-cap log emitted (effectiveWindow stays 200000)", async () => {
+    // Deps with providerCapabilities explicitly absent (undefined) and
+    // modelRegistry.find() returning a model with a large frontier contextWindow.
+    // servedContextWindow is also absent (not an Ollama provider).
+    const deps = createMockDeps({
+      modelRegistry: {
+        find: vi.fn().mockReturnValue({
+          provider: "anthropic",
+          id: "claude-sonnet-4-5-20250929",
+          contextWindow: 200_000,
+        }),
+        getAll: vi.fn().mockReturnValue([]),
+        getAvailable: vi.fn().mockReturnValue([]),
+      } as any,
+      providerCapabilities: undefined,
+      servedContextWindow: undefined,
+    });
+    const executor = createPiExecutor(testConfig, deps);
+
+    await executor.execute(testMessage, testSessionKey);
+
+    // With the CR-01 fix, capabilityCap = Infinity (no explicit class).
+    // resolveEffectiveContextWindow({configured:200000,served:undefined,capabilityCap:Infinity})
+    //   → source="configured" (Infinity excluded from the min race).
+    // The debug log "Context window reconciled" is ONLY emitted when source !== "configured",
+    // so its ABSENCE proves the effective window was NOT capped below 200_000.
+    const debugCalls = vi.mocked(deps.logger.debug).mock.calls;
+    const capLogCall = debugCalls.find(
+      (args) =>
+        typeof args[1] === "string" &&
+        args[1].includes("Context window reconciled"),
+    );
+    expect(capLogCall).toBeUndefined();
+  });
+
+  it("ollama provider with explicit capabilityClass=small and contextWindow=256000 → capability-cap log IS emitted (cap applied)", async () => {
+    // Regression guard: when capabilityClass IS set (small → 32K), the cap SHOULD apply.
+    // This ensures the fix only removes the cap for absent providers, not for
+    // explicitly-classified small/nano providers.
+    const deps = createMockDeps({
+      modelRegistry: {
+        find: vi.fn().mockReturnValue({
+          provider: "ollama",
+          id: "qwen3.6:4b",
+          contextWindow: 256_000,
+        }),
+        getAll: vi.fn().mockReturnValue([]),
+        getAvailable: vi.fn().mockReturnValue([]),
+      } as any,
+      providerCapabilities: { capabilityClass: "small" } as any,
+      servedContextWindow: undefined,
+    });
+    const executor = createPiExecutor(testConfig, deps);
+
+    await executor.execute(testMessage, testSessionKey);
+
+    // small capabilityClass → DEFAULT_EFFECTIVE_CAP_BY_CLASS["small"] = 32_000.
+    // resolveEffectiveContextWindow({configured:256000,served:undefined,capabilityCap:32000})
+    //   → source="capability" (32_000 < 256_000).
+    // The debug log SHOULD be emitted here.
+    const debugCalls = vi.mocked(deps.logger.debug).mock.calls;
+    const capLogCall = debugCalls.find(
+      (args) =>
+        typeof args[1] === "string" &&
+        args[1].includes("Context window reconciled"),
+    );
+    expect(capLogCall).toBeDefined();
+    // Verify the capabilityCap in the log is 32_000 (not Infinity, not 16_000).
+    const logPayload = capLogCall![0] as Record<string, unknown>;
+    expect(logPayload["source"]).toBe("capability");
+    expect(logPayload["effectiveWindow"]).toBe(32_000);
+  });
+});

@@ -131,6 +131,21 @@ export interface ContextEngineSetupParams {
   onAnchorReset: () => void;
   /** Current discovery tracker (if active) */
   currentDiscoveryTracker?: DiscoveryTracker;
+  /** C1 (Phase 165): the resolved ModelProfile for the current turn.
+   *  Absent ⇒ lcd-assembler applies the fail-closed nano cap + WARN.
+   *  Pass params.modelProfile (already in scope at the pi-executor call site). */
+  modelProfile?: import("./model-profile.js").ModelProfile;
+  /** Phase 166 T-S4: security-pin markers sourced from pi-executor's deps.canaryToken.
+   *  Threaded into ContextEngineDeps so the dag eviction never drops security context. */
+  securityPinMarkers?: import("../context-engine/security-context-pinner.js").SecurityPinMarkers;
+  /** Phase 166: callback invoked when assembled input tokens are measured (Plan 04 uses this). */
+  onAssembledInputTokens?: (tokens: number) => void;
+  /** Phase 166: callback invoked when the effective window is known (Plan 04 uses this). */
+  onEffectiveWindow?: (windowTokens: number) => void;
+  /** Phase 166: callback invoked when thinking-effort governor down-shifts thinkingLevel. */
+  onThinkingDownshifted?: (level: string) => void;
+  /** Phase 166: getter returning the current thinking level for this dispatch. */
+  getThinkingLevel?: () => string | undefined;
 }
 
 /** Result of context engine setup. */
@@ -250,6 +265,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     contextEngineRef,
     getCachedSystemTokensEstimate, getCachedFreshTailPreambleTokens, getTokenAnchor, onAnchorReset,
     currentDiscoveryTracker,
+    modelProfile,
   } = params;
 
   // DAG-CRIT-1: prefer the caller-supplied turn agentId (the positional
@@ -619,6 +635,19 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // The dag assembler stamps assembly duration + synthesized-tool-result
     // timestamps via this injected clock (production never calls Date.now()).
     clock: deps.clock,
+    // C1 (Phase 165): the resolved ModelProfile for budget-aware eviction cap.
+    // Absent ⇒ lcd-assembler applies the fail-closed nano cap + WARN.
+    modelProfile,
+    // Phase 166 T-S4: security-pin markers so the dag eviction never drops security context.
+    securityPinMarkers: params.securityPinMarkers,
+    onAssembledInputTokens: params.onAssembledInputTokens,
+    onEffectiveWindow: params.onEffectiveWindow,
+    onThinkingDownshifted: params.onThinkingDownshifted,
+    getThinkingLevel: params.getThinkingLevel,
+    // WR-02 (Phase 166): thread the operator-configurable floor so the schema field
+    // contextEngine.budget.minVisibleOutputTokens has live runtime effect.
+    // Absent ⇒ pre-flight uses the compile-time constant (768) — byte-identical.
+    minVisibleOutputTokens: contextEngineConfig.budget?.minVisibleOutputTokens,
   });
 
   // Wire context engine to the mutable holder so requestBodyInjector

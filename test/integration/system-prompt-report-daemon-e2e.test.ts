@@ -11,7 +11,7 @@
  *   - the WIRING CHAIN by source-grep regression guards:
  *       setup-agents-runtime.ts: observabilityStore: deps.obsStore
  *       pi-executor-types.ts:    observabilityStore?: ...
- *       executor-tool-assembly.ts ToolAssemblyDeps:
+ *       executor-tool-assembly-types.ts ToolAssemblyDeps:
  *                                observabilityStore?: ...
  *       executor-tool-assembly.ts call site:
  *                                observabilityStore: deps.observabilityStore
@@ -21,6 +21,12 @@
  *
  * Together these prove (a) the chain is connected in code and (b) the
  * library shape is compatible with what the runtime hands it.
+ *
+ * Also guards modelProfile threading (Phase 165 / WR-02):
+ *   - pi-executor.ts passes modelProfile into setupContextEngine
+ *   - executor-context-engine-setup.ts forwards it into createLcdContextEngine deps (C1)
+ * If either wiring leg is accidentally dropped the fail-closed WARN fires at runtime
+ * but no build gate catches it — these source-grep assertions are the gate.
  *
  * Imports from `dist/` — requires `pnpm build` first.
  *
@@ -71,11 +77,19 @@ describe("SystemPromptReport — daemon-level E2E wiring", () => {
       path.join(repoRoot, "packages/agent/src/executor/executor-tool-assembly.ts"),
       "utf-8",
     );
+    // ToolAssemblyDeps type contracts were extracted to
+    // executor-tool-assembly-types.ts (Phase 152/153 file-size split); the
+    // `observabilityStore?:` type declaration lives there now, while the
+    // value-forwarding call site stays in executor-tool-assembly.ts.
+    const toolAssemblyTypesSrc = fs.readFileSync(
+      path.join(repoRoot, "packages/agent/src/executor/executor-tool-assembly-types.ts"),
+      "utf-8",
+    );
 
     // Wiring chain checkpoints — each regex MUST match in current source.
     expect(setupAgentsSrc).toMatch(/observabilityStore:\s*deps\.obsStore/);
     expect(piExecTypesSrc).toMatch(/observabilityStore\?:\s*import\("@comis\/observability"\)\.ObservabilityStoreLike/);
-    expect(toolAssemblySrc).toMatch(/observabilityStore\?:\s*import\("@comis\/observability"\)\.ObservabilityStoreLike/);
+    expect(toolAssemblyTypesSrc).toMatch(/observabilityStore\?:\s*import\("@comis\/observability"\)\.ObservabilityStoreLike/);
     expect(toolAssemblySrc).toMatch(/observabilityStore:\s*deps\.observabilityStore/);
 
     // Step 2: Behavioral assertion — run the LIBRARY persist path
@@ -140,5 +154,30 @@ describe("SystemPromptReport — daemon-level E2E wiring", () => {
     const list = obsStore.listSystemPromptReports("session-list", 10);
     expect(list.length).toBeGreaterThanOrEqual(1);
     expect(list[0]!.agentId).toBe("agent-list");
+  });
+
+  it("modelProfile wiring — pi-executor passes modelProfile into setupContextEngine, setup forwards it to createLcdContextEngine (WR-02)", () => {
+    // Source-grep regression guards for Phase 165 modelProfile threading.
+    // Structurally identical to the observabilityStore guards above.
+    // These FAIL to RED if a future refactor accidentally drops either leg of
+    // the modelProfile wiring (pi-executor → setupContextEngine → lcd deps).
+    const repoRoot = process.cwd();
+    const piExecutorSrc = fs.readFileSync(
+      path.join(repoRoot, "packages/agent/src/executor/pi-executor/pi-executor.ts"),
+      "utf-8",
+    );
+    const ceSetupSrc = fs.readFileSync(
+      path.join(repoRoot, "packages/agent/src/executor/executor-context-engine-setup.ts"),
+      "utf-8",
+    );
+
+    // (a) pi-executor.ts: resolveModelProfile() result is forwarded into setupContextEngine.
+    // The inline comment documents the provenance ("resolveModelProfile() at line 328").
+    expect(piExecutorSrc).toMatch(/modelProfile,\s*\/\/.*resolveModelProfile/);
+
+    // (b) executor-context-engine-setup.ts: modelProfile is forwarded into the
+    // createLcdContextEngine deps object (the C1 annotation marks the intent).
+    expect(ceSetupSrc).toMatch(/\/\/ C1 \(Phase 165\)/);
+    expect(ceSetupSrc).toMatch(/modelProfile,\s*\n\s*\}\)/);
   });
 });

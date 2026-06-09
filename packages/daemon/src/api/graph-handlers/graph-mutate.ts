@@ -171,7 +171,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         async: true,
         nodeCount: finalValidated.graph.nodes.length,
         label: finalValidated.graph.label,
-        hint: "Graph is running asynchronously and survives independently of this session. You will be automatically notified with results when it completes — do NOT poll with status/cron. Just tell the user it's running.",
+        hint: "Pipeline launched — your job is now DONE. Tell the user the pipeline is running (and what it will produce), then STOP. Do NOT research this topic yourself, do NOT call more tools, and do NOT poll with status/cron: the sub-agents are doing the work in isolated contexts and you will be notified automatically with results when it completes. Duplicating their research here only exhausts your own context window.",
         ...(unresolvedWarnings.length > 0 && { warnings: unresolvedWarnings }),
       };
       if (IS_DEV) GraphExecuteContract.response.parse(result);

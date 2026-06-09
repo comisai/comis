@@ -154,4 +154,24 @@ describe("createContextWindowResolver", () => {
       expect(resolver.resolve("mystery-provider", "mystery-model")).toBe(32000);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // CWF-03-G: override seam characterization — discovered served window beats
+  // catalog value (proves the globalOverride seam is viable for probe results)
+  // -------------------------------------------------------------------------
+
+  describe("CWF-03-G: override seam (served window beats catalog)", () => {
+    it("globalOverride of 32768 beats catalog value of 131072 (CWF-03-G: override seam proof)", () => {
+      const catalog = makeCatalogWithEntry("ollama", "qwen3.6:35b", 131_072);
+      const resolver = createContextWindowResolver({
+        catalog,
+        globalOverride: 32_768,
+        fallbackDefault: 8_192,
+      });
+
+      // The discovered served window (32768) beats the catalog-configured value (131072).
+      // This characterizes the override seam: probe result CAN be injected via globalOverride.
+      expect(resolver.resolve("ollama", "qwen3.6:35b")).toBe(32_768);
+    });
+  });
 });

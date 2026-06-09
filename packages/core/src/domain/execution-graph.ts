@@ -58,6 +58,29 @@ export const NodeTypeIdSchema = z.enum([
 
 export type NodeTypeId = z.infer<typeof NodeTypeIdSchema>;
 
+/**
+ * Required-config shape hint per built-in node type (OR-01, v2.19).
+ *
+ * Surfaced in the both-or-neither validation error so a weak model that
+ * declares a typed driver (e.g. `typeId:"debate"`) but forgets its
+ * `typeConfig` is told EXACTLY what config to add — instead of the old
+ * generic "omit both for a regular single-agent node" steer, which silently
+ * demoted the user's debate/vote/etc. to a plain agent and destroyed intent
+ * (the live bull_bear_debate attempt-1 failure). These are descriptive hints,
+ * not the authoritative driver schemas (those live in the orchestrator and are
+ * validated at the RPC layer); `?` marks an optional field.
+ * See design/small-model-orchestration-fidelity.md §4.
+ */
+const TYPE_CONFIG_HINTS: Record<NodeTypeId, string> = {
+  agent: `{ "agent": "agent-id" }`,
+  debate: `{ "agents": ["agent-a", "agent-b"], "synthesizer"?: "judge-agent", "rounds"?: 2 }`,
+  vote: `{ "voters": ["agent-1", "agent-2", "agent-3"] }`,
+  refine: `{ "reviewers": ["drafter", "editor", "pm"] }`,
+  collaborate: `{ "agents": ["team-1", "team-2"], "rounds"?: 1 }`,
+  "approval-gate": `{ "message": "Approve the action?", "timeout_minutes"?: 60 }`,
+  "map-reduce": `{ "mappers": [{ "agent": "a1" }, { "agent": "a2" }], "reducer": "pm" }`,
+};
+
 // ---------------------------------------------------------------------------
 // Graph Node
 // ---------------------------------------------------------------------------
@@ -102,10 +125,33 @@ export const GraphNodeSchema = z.strictObject({
   typeId: NodeTypeIdSchema.optional(),
   /** Type-specific configuration -- validated against the driver's configSchema at the RPC layer */
   typeConfig: z.record(z.string(), z.unknown()).optional(),
-}).refine(
-  (n) => (n.typeId === undefined) === (n.typeConfig === undefined),
-  "typeId and typeConfig must both be present or both absent. Omit both for a regular single-agent node.",
-);
+}).superRefine((n, ctx) => {
+  // both-or-neither (OR-01). When violated, emit a TYPE-AWARE message that steers
+  // the model toward the correct self-correction instead of a generic both-or-neither
+  // string that mis-advises demotion (see TYPE_CONFIG_HINTS above).
+  const hasTypeId = n.typeId !== undefined;
+  const hasConfig = n.typeConfig !== undefined;
+  if (hasTypeId === hasConfig) return;
+  if (hasTypeId && !hasConfig) {
+    // Declared a typed driver but forgot its config → tell it what config to ADD.
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        `node "${n.nodeId}": node type "${n.typeId}" requires a typeConfig — ` +
+        `${TYPE_CONFIG_HINTS[n.typeId as NodeTypeId] ?? "provide the driver's config object"}. ` +
+        `(For a plain single-agent node, omit typeId entirely.)`,
+    });
+    return;
+  }
+  // Has config but no typeId → add the matching typeId, or omit the config.
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    message:
+      `node "${n.nodeId}": typeConfig is set but typeId is missing — ` +
+      `add the matching typeId (one of: ${NodeTypeIdSchema.options.join(", ")}), ` +
+      `or omit typeConfig for a regular single-agent node.`,
+  });
+});
 
 export type GraphNode = z.infer<typeof GraphNodeSchema>;
 

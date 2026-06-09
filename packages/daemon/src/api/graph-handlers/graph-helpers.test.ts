@@ -24,9 +24,31 @@
  * @module
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 
 import { transformNodes, isWeakCapabilityClass, buildGraphInput } from "./graph-helpers.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+// v2.19: after a successful graph.execute dispatch, the model-facing hint must be a
+// strong STOP signal — a weak model that dispatched a 6-node NVDA pipeline then kept
+// researching NVDA itself (130 tool calls) and exhausted its own context. The hint
+// lives in graph-mutate.ts; assert its load-bearing directives via source-grep.
+describe("graph.execute dispatch hint (caller stop-after-delegate, v2.19)", () => {
+  it("tells the model its job is DONE, to STOP, and to NOT research the topic itself", () => {
+    const src = readFileSync(resolve(here, "graph-mutate.ts"), "utf-8");
+    const hintMatch = src.match(/hint:\s*"([^"]*Pipeline launched[^"]*)"/);
+    expect(hintMatch).not.toBeNull();
+    const hint = (hintMatch?.[1] ?? "").toLowerCase();
+    expect(hint).toContain("done");
+    expect(hint).toContain("stop");
+    expect(hint).toContain("do not research");
+    expect(hint).toContain("exhaust");
+  });
+});
 
 describe("transformNodes", () => {
   it("forwards mcp_servers snake_case input as mcpServers", () => {
@@ -91,6 +113,138 @@ describe("transformNodes", () => {
     expect(node.contextMode).toBe("graph");
     expect(node.typeId).toBe("approval-gate");
     expect(node.typeConfig).toEqual({ mode: "noop" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug-1 (v2.19 OR-01): normalize a lone `type_id:"agent"` (no type_config).
+//
+// A weak model often emits `type_id:"agent"` for a single-agent node WITHOUT a
+// type_config (the node's own `agent` field already specifies the agent). The
+// graph validator requires typeId+typeConfig both-or-neither, so the live NVDA
+// pipeline (4 analyst nodes, each `type_id:"agent"`, no type_config) was hard-
+// rejected ("Graph validation failed: typeId and typeConfig must both be present
+// or both absent"). transformNodes must drop the redundant lone `typeId:"agent"`
+// so the node runs as a regular single-agent node; an explicit `typeId:"agent"`
+// WITH a type_config (deliberate driver use) and all other typed nodes are
+// untouched. See design/small-model-orchestration-fidelity.md §4.
+// ---------------------------------------------------------------------------
+describe("transformNodes — lone typeId:agent normalization (OR-01)", () => {
+  it("drops a lone type_id:agent with no type_config (regular single-agent node)", () => {
+    const result = transformNodes([
+      { node_id: "analyst_technical", task: "Research NVDA technicals", agent: "ta-analyst", max_steps: 30, context_mode: "full", type_id: "agent" },
+    ]);
+    const node = result[0] as Record<string, unknown>;
+    expect("typeId" in node).toBe(false);
+    expect(node.agentId).toBe("ta-analyst");
+    expect("typeConfig" in node).toBe(false);
+  });
+
+  it("collapses type_config:{agent} with NO type_id to a regular node (the live 8-node NVDA shape)", () => {
+    // The live qwen3.6 model emitted every node as { agent, type_config:{agent} }
+    // with NO type_id — the MIRROR of the first failure. The both-or-neither rule
+    // rejects typeConfig-without-typeId too. Collapse it: drop the redundant
+    // type_config, agentId from the node's agent (or the config's agent).
+    const result = transformNodes([
+      { node_id: "analyst-technical", task: "t", agent: "ta-analyst", type_config: { agent: "ta-analyst" } },
+      { node_id: "debate-summary", task: "t", type_config: { agent: "ta-analyst" }, depends_on: ["bull"] }, // agent ONLY in config
+    ]);
+    const a = result[0] as Record<string, unknown>;
+    expect("typeId" in a).toBe(false);
+    expect("typeConfig" in a).toBe(false);
+    expect(a.agentId).toBe("ta-analyst");
+    const b = result[1] as Record<string, unknown>;
+    expect("typeConfig" in b).toBe(false);
+    expect(b.agentId).toBe("ta-analyst"); // lifted from type_config.agent
+    expect(b.dependsOn).toEqual(["bull"]);
+  });
+
+  it("collapses type_id:agent WITH a {agent} type_config to a regular node (redundant driver use)", () => {
+    const result = transformNodes([
+      { node_id: "x", task: "t", type_id: "agent", type_config: { agent: "ta-analyst" } },
+    ]);
+    const node = result[0] as Record<string, unknown>;
+    expect("typeId" in node).toBe(false);
+    expect("typeConfig" in node).toBe(false);
+    expect(node.agentId).toBe("ta-analyst");
+  });
+
+  it("does NOT normalize other typed nodes — a lone type_id:debate keeps its typeId", () => {
+    const result = transformNodes([
+      { node_id: "x", task: "t", type_id: "debate" },
+    ]);
+    const node = result[0] as Record<string, unknown>;
+    expect(node.typeId).toBe("debate");
+  });
+
+  it("does NOT collapse a real typed node config (type_id:debate + {agents:[...]})", () => {
+    const result = transformNodes([
+      { node_id: "x", task: "t", type_id: "debate", type_config: { agents: ["a", "b"], rounds: 2 } },
+    ]);
+    const node = result[0] as Record<string, unknown>;
+    expect(node.typeId).toBe("debate");
+    expect(node.typeConfig).toEqual({ agents: ["a", "b"], rounds: 2 });
+  });
+});
+
+describe("buildGraphInput — full 8-node NVDA DAG (type_config:{agent} no type_id, live payload)", () => {
+  // The exact 8-node graph the live qwen3.6 model emitted (analysts → bull/bear →
+  // debate-summary → head-trader), every node with type_config:{agent} and NO
+  // type_id — rejected with "typeId and typeConfig must both be present or both absent".
+  const PARAMS: Record<string, unknown> = {
+    nodes: [
+      { node_id: "analyst-technical", task: "tech", agent: "ta-analyst", type_config: { agent: "ta-analyst" } },
+      { node_id: "analyst-fundamental", task: "fund", agent: "ta-analyst", type_config: { agent: "ta-analyst" } },
+      { node_id: "analyst-sector", task: "sector", agent: "ta-analyst", type_config: { agent: "ta-analyst" } },
+      { node_id: "analyst-catalyst", task: "catalyst", agent: "ta-analyst", type_config: { agent: "ta-analyst" } },
+      { node_id: "bull-debater", task: "bull", agent: "ta-analyst", type_config: { agent: "ta-analyst" }, depends_on: ["analyst-technical", "analyst-fundamental", "analyst-sector", "analyst-catalyst"] },
+      { node_id: "bear-debater", task: "bear", agent: "ta-analyst", type_config: { agent: "ta-analyst" }, depends_on: ["analyst-technical", "analyst-fundamental", "analyst-sector", "analyst-catalyst"] },
+      { node_id: "debate-summary", task: "summary", type_config: { agent: "ta-analyst" }, depends_on: ["bull-debater", "bear-debater"] },
+      { node_id: "head-trader", task: "call", agent: "ta-trader", type_config: { agent: "ta-trader" }, depends_on: ["debate-summary"] },
+    ],
+  };
+
+  it("does NOT throw on the full 8-node config-only DAG (was: Graph validation failed nodes.0..7)", () => {
+    expect(() => buildGraphInput(PARAMS)).not.toThrow();
+  });
+
+  it("collapses all 8 nodes to regular single-agent nodes with the right agentIds + edges", () => {
+    const result = buildGraphInput(PARAMS);
+    expect(result.graph.nodes).toHaveLength(8);
+    for (const n of result.graph.nodes) {
+      expect(n.typeId).toBeUndefined();
+      expect(n.agentId === "ta-analyst" || n.agentId === "ta-trader").toBe(true);
+    }
+    expect(result.graph.nodes.find((n) => n.nodeId === "head-trader")?.agentId).toBe("ta-trader");
+    // depends_on edges preserved → a valid execution order exists.
+    expect(result.executionOrder.length).toBe(8);
+  });
+});
+
+describe("buildGraphInput — lone typeId:agent DAG no longer rejected (OR-01, live NVDA payload)", () => {
+  // The exact shape the live qwen3.6 model emitted to graph.execute, which was
+  // hard-rejected with "Graph validation failed: typeId and typeConfig must both
+  // be present or both absent."
+  const NVDA_PARAMS: Record<string, unknown> = {
+    nodes: [
+      { node_id: "analyst_technical", task: "NVDA technical analysis", agent: "ta-analyst", max_steps: 30, context_mode: "full", type_id: "agent" },
+      { node_id: "analyst_fundamentals", task: "NVDA fundamental analysis", agent: "ta-analyst", max_steps: 30, context_mode: "full", type_id: "agent" },
+      { node_id: "analyst_industry", task: "NVDA industry analysis", agent: "ta-analyst", max_steps: 30, context_mode: "full", type_id: "agent" },
+      { node_id: "analyst_valuation", task: "NVDA valuation analysis", agent: "ta-analyst", max_steps: 30, context_mode: "full", type_id: "agent" },
+    ],
+  };
+
+  it("does NOT throw on the lone-typeId:agent NVDA payload (was: Graph validation failed)", () => {
+    expect(() => buildGraphInput(NVDA_PARAMS)).not.toThrow();
+  });
+
+  it("normalizes each node to a regular single-agent node (agentId set, typeId undefined)", () => {
+    const result = buildGraphInput(NVDA_PARAMS);
+    expect(result.graph.nodes).toHaveLength(4);
+    for (const n of result.graph.nodes) {
+      expect(n.agentId).toBe("ta-analyst");
+      expect(n.typeId).toBeUndefined();
+    }
   });
 });
 

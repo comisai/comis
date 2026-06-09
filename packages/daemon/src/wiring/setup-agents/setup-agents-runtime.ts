@@ -537,6 +537,7 @@ export async function setupSingleAgent(
     fastMode: effectiveConfig.fastMode,
     storeCompletions: effectiveConfig.storeCompletions,
     providerCapabilities: container.config.providers?.entries?.[resolved.provider]?.capabilities,
+    servedContextWindow: deps.servedWindowByProvider?.get(resolved.provider),  // CWF-03: Ollama served-window
     maxSendsPerExecution: container.config.messages?.maxSendsPerExecution,
     // Runtime adapter ports threaded into the executor.
     clock: deps.clock,

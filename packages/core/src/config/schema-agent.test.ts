@@ -96,6 +96,45 @@ describe("AgentConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  // -------------------------------------------------------------------------
+  // thinking.downshiftOnTightWindow (Fix 3 / Phase 166 CWF-02)
+  // -------------------------------------------------------------------------
+
+  describe("thinking.downshiftOnTightWindow", () => {
+    it("defaults thinking.downshiftOnTightWindow to true when thinking is omitted", () => {
+      const result = AgentConfigSchema.parse({});
+      // CWF-02: thinking-effort governor defaults to enabled.
+      expect(result.thinking.downshiftOnTightWindow).toBe(true);
+    });
+
+    it("thinking defaults to { downshiftOnTightWindow: true } when omitted entirely", () => {
+      const result = AgentConfigSchema.parse({});
+      expect(result.thinking).toEqual({ downshiftOnTightWindow: true });
+    });
+
+    it("accepts explicit downshiftOnTightWindow: false (operator opt-out)", () => {
+      const result = AgentConfigSchema.parse({ thinking: { downshiftOnTightWindow: false } });
+      expect(result.thinking.downshiftOnTightWindow).toBe(false);
+    });
+
+    it("accepts explicit downshiftOnTightWindow: true", () => {
+      const result = AgentConfigSchema.parse({ thinking: { downshiftOnTightWindow: true } });
+      expect(result.thinking.downshiftOnTightWindow).toBe(true);
+    });
+
+    it("rejects unknown keys inside thinking (strictObject enforcement)", () => {
+      const result = AgentConfigSchema.safeParse({
+        thinking: { downshiftOnTightWindow: true, unknownField: "bad" },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects non-boolean downshiftOnTightWindow", () => {
+      const result = AgentConfigSchema.safeParse({ thinking: { downshiftOnTightWindow: "yes" } });
+      expect(result.success).toBe(false);
+    });
+  });
+
   it("accepts valid cacheRetention values", () => {
     for (const val of ["none", "short", "long"] as const) {
       const result = AgentConfigSchema.safeParse({ cacheRetention: val });
@@ -1401,7 +1440,7 @@ describe("BroadcastGroupSchema", () => {
     }
   });
 
-  it("rejects empty id", () => {
+  it("rejects a provider entry with an empty id at schema parse", () => {
     const result = BroadcastGroupSchema.safeParse({ id: "" });
     expect(result.success).toBe(false);
   });

@@ -81,6 +81,16 @@ export const AgentConfigSchema = z.strictObject({
     maxSteps: z.number().int().positive().default(150),
     /** SDK thinking level override (off/minimal/low/medium/high/xhigh). Optional -- only overrides when set. */
     thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+    /** Phase 166 Fix 3: thinking-effort governor config.
+     *  Controls whether the governor may down-shift thinkingLevel on tight windows. */
+    thinking: z.strictObject({
+      /** When true (default), the thinking-effort governor may lower thinkingLevel
+       *  (high→medium→low) when remaining room < thinkingReserve + MIN_VISIBLE_OUTPUT.
+       *  For frontier/mid models the governor is always a no-op (large windows).
+       *  Frontier/mid: irrelevant — governor never fires on large windows regardless.
+       *  Design ref: design/small-model-context-fidelity.md §4 Fix 3 item 4. */
+      downshiftOnTightWindow: z.boolean().default(true),
+    }).default({ downshiftOnTightWindow: true }),
     /** SDK max tokens override. Optional -- only overrides when set. */
     maxTokens: z.number().int().positive().optional(),
     /** SDK temperature override (0-2). Optional -- only overrides when set. */

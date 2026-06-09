@@ -322,7 +322,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // stream-wrapper wiring (~30L) into independent helpers.
   {
     file: "packages/agent/src/executor/pi-executor/pi-executor.ts",
-    lines: 1397,
+    lines: 1565,  // updated Phase 165 (+168 from v2.14–v2.17 additions)
     reason: "Thinned PiExecutor factory + withSession callback (fallback); 4 co-equal/closure-extracted helpers shipped; inside-lock callback deferred to focused follow-up. Structural test GREEN non-vacuously (5 closure-extracted helpers walked).",
     removedIn: "deferred",
   },
@@ -363,8 +363,8 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/agent/src/executor/executor-post-execution.ts",
-    lines: 1044,
-    reason: "Executor-adjacent afterTurn finally-block module (1,044L re-measured). Already over the 800L cap; Phase 129-06 added a THIN gated call (runLeafPassAfterTurn — body in lcd-compaction-trigger.ts) and Phase 130-02 added a SECOND THIN gated call (runCondensePassAfterTurn — body in lcd-condense-trigger.ts) + its import comment, both inside the existing if (deps.contextStore) block, per the plan's hard constraint that the pass bodies live elsewhere. The afterTurn write-path bodies (ingest, leaf trigger, condense trigger) all live in sibling modules; this file remains an orchestration shell of per-turn cleanup steps. Defer pending global-removal shrinkage or a focused post-run-cleanup/metrics helper extraction",
+    lines: 1636,
+    reason: "Executor-adjacent afterTurn finally-block module (1,636L re-measured after Phase 169 CWF-05 addition). Already over the 800L cap; Phase 129-06 added a THIN gated call (runLeafPassAfterTurn — body in lcd-compaction-trigger.ts) and Phase 130-02 added a SECOND THIN gated call (runCondensePassAfterTurn — body in lcd-condense-trigger.ts) + its import comment, both inside the existing if (deps.contextStore) block, per the plan's hard constraint that the pass bodies live elsewhere. Phase 169 added ~20 lines of degraded-reply wiring at the effectiveFinishReason chokepoint (import + CWF-05 gate block). The afterTurn write-path bodies (ingest, leaf trigger, condense trigger) all live in sibling modules; this file remains an orchestration shell of per-turn cleanup steps. Defer pending global-removal shrinkage or a focused post-run-cleanup/metrics helper extraction",
     removedIn: "deferred",
   },
 

@@ -35,7 +35,7 @@ import type { ModelProfile } from "../executor/model-profile.js";
  * nano: 16K (matches Zod schema default; validated against Phase 149 comprehension data).
  * Operators can tune small/nano via contextEngine.budget.effectiveContextCapSmall/Nano.
  */
-const DEFAULT_EFFECTIVE_CAP_BY_CLASS: Readonly<Record<string, number>> = {
+export const DEFAULT_EFFECTIVE_CAP_BY_CLASS: Readonly<Record<string, number>> = {
   frontier: Infinity,
   mid: Infinity, // mid (Google Gemini) genuinely uses long context; no cap in Phase 152
   small: 32_000,

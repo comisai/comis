@@ -2921,7 +2921,15 @@ describe("applyToolDeferral - SD7 active-tool ceiling", () => {
     expect(result.activeTools.map(t => t.name)).toContain("read");
     expect(result.activeTools.map(t => t.name)).toContain("exec");
     expect(result.activeTools.map(t => t.name)).toContain("message");
-    expect(result.activeTools.length).toBeLessThanOrEqual(3);
+    // CWF-04: pipeline is orchestration-exempt (SMALL_CLASS_ORCHESTRATION_TOOLS), so the
+    // effective minimum active set is CORE_TOOLS + pipeline = 16+ tools. At ceiling=3 with
+    // only [cron, browser] as cold non-exempt tools, remaining=1 deferral target goes unmet
+    // → 4 active (3 CORE + pipeline). Arithmetic: ceiling=3, activeCount=6, remaining=3;
+    // read→CORE skip; exec→CORE skip; message→CORE skip; cron→defer(remaining=2);
+    // browser→defer(remaining=1); pipeline→SMALL_CLASS_ORCHESTRATION_TOOLS skip;
+    // loop exhausted with remaining=1 unmet → 4 active: {read, exec, message, pipeline}.
+    expect(result.activeTools.length).toBe(4);
+    expect(result.activeTools.map(t => t.name)).toContain("pipeline");
     expect(result.discoverTool).not.toBeNull();
   });
 
@@ -2942,7 +2950,12 @@ describe("applyToolDeferral - SD7 active-tool ceiling", () => {
     });
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
     expect(result.activeTools.map(t => t.name)).toContain("cron");
-    expect(result.activeTools.length).toBeLessThanOrEqual(2);
+    // CWF-04: pipeline is orchestration-exempt. At ceiling=2:
+    // read→CORE skip; cron→recentlyUsed skip; browser→defer(remaining=1);
+    // pipeline→SMALL_CLASS_ORCHESTRATION_TOOLS skip; remaining=1 unmet.
+    // Final active = {read, cron(recently-used), pipeline} = 3.
+    expect(result.activeTools.length).toBe(3);
+    expect(result.activeTools.map(t => t.name)).toContain("pipeline");
   });
 
   it("deferred tools are reachable via discover_tools (no capability removed)", () => {
@@ -2977,5 +2990,127 @@ describe("applyToolDeferral - SD7 active-tool ceiling", () => {
     });
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
     expect(result.deferredCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite CWF-04: orchestration reachability — ceiling=24 + pipeline active (SMALL-ONLY)
+//
+// Phase-0 static determination (2026-06-09): WIRING-OK — the ceiling and compact-prompt
+// ARE correctly wired in current source (post-Phase 165). The live incident's
+// activeToolCount: 83 was stale-dist. Scope = regression test (this file) +
+// orchestration-reachability change (tool-deferral.ts). WIRING-OK also confirmed
+// for compact-prompt: resolvePromptModeForProfile returns compact-secure for small
+// (WR-03 suite, prompt-assembly.test.ts:2159 — stays GREEN).
+// Live re-measure deferred to operator.
+//
+// Schema-cost-vs-ceiling-saving net:
+// Net saving: 83→24 ceiling shrinks ~5057 tokens; pipeline promotion costs ~1729 tokens
+// → net ≈ 3328 tokens saved. Formula: (83-24) tools × ~300 chars avg ÷ 3.5 chars/tok
+// = ~5057 tokens; pipeline schema ~6052 chars ÷ 3.5 = ~1729 tokens.
+// ---------------------------------------------------------------------------
+
+describe("applyToolDeferral - CWF-04 orchestration reachability (ceiling=24 + pipeline, SMALL-ONLY)", () => {
+  it("small + ceiling=24: pipeline stays ACTIVE (orchestration reachability — SMALL-ONLY)", () => {
+    // RED test: fails today because pipeline is currently deferred by the ceiling.
+    // GREEN: SMALL_CLASS_ORCHESTRATION_TOOLS exempts pipeline inside the ceiling block.
+    //
+    // Note: cachedSystemTokensEstimate (executor-tool-assembly.ts:339-346) is computed
+    // BEFORE deferral using the full pre-deferral tool list — it remains stale for the
+    // current turn. This is a pre-existing known subtlety (Pitfall 4), not introduced
+    // by Phase 168. Budget algebra accurately reflects the post-ceiling manifest on
+    // the NEXT assembly. This test verifies the DEFERRAL output (activeTools.length),
+    // not the systemTokens estimate.
+    //
+    // CWF-04 also requires compact-secure prompt binding (ceiling AND prompt must bind).
+    // Compact-secure binding locked by WR-03 suite at prompt-assembly.test.ts:2159 —
+    // confirm it stays GREEN after the GREEN commit.
+    const logger = createMockLogger();
+    // 83-tool list: 14 CORE tools + pipeline + 68 cold tools (matching the live incident count)
+    const coreToolNames = [
+      "read", "edit", "write", "grep", "find", "ls", "apply_patch",
+      "exec", "process",
+      "message",
+      "memory_search", "memory_store", "memory_get",
+      "web_search", "web_fetch",
+    ];
+    const tools: ToolDefinition[] = [
+      ...coreToolNames.map(n => makeTool(n)),
+      makeTool("pipeline"),
+      ...Array.from({ length: 67 }, (_, i) => makeTool(`cold_tool_${i}`)),
+    ];
+    expect(tools.length).toBe(83);
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "small",
+      toolNames: tools.map(t => t.name),
+      activeToolCeiling: 24,
+    });
+
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+
+    // KEY ASSERTION (RED → GREEN): pipeline must be in activeTools for small
+    expect(result.activeTools.map(t => t.name)).toContain("pipeline");
+    expect(result.deferredNames).not.toContain("pipeline");
+    // Ceiling still holds
+    expect(result.activeTools.length).toBeLessThanOrEqual(24);
+    // CORE_TOOLS are never deferred
+    for (const name of coreToolNames) {
+      expect(result.deferredNames).not.toContain(name);
+    }
+  });
+
+  it("frontier: pipeline NOT force-active — ceiling never fires, deferredCount exactly 0 (byte-identical)", () => {
+    // Characterization test: PASSES in RED state (frontier has no ceiling).
+    // EXACT pin — never toBe(> 0), per Phase 165/166/167 lesson.
+    const logger = createMockLogger();
+    const coreToolNames = [
+      "read", "edit", "write", "grep", "find", "ls", "apply_patch",
+      "exec", "process",
+      "message",
+      "memory_search", "memory_store", "memory_get",
+      "web_search", "web_fetch",
+    ];
+    const tools: ToolDefinition[] = [
+      ...coreToolNames.map(n => makeTool(n)),
+      makeTool("pipeline"),
+      ...Array.from({ length: 67 }, (_, i) => makeTool(`cold_tool_${i}`)),
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "frontier",
+      toolNames: tools.map(t => t.name),
+      // No activeToolCeiling → ceiling block never fires
+    });
+
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+
+    // frontier: ceiling never fires → zero deferral (EXACT pin)
+    expect(result.deferredCount).toBe(0);
+  });
+
+  it("nano: pipeline stays DEFERRED — nano is below NL→DAG cliff, existing :485 invariant preserved", () => {
+    // Real assertion: SMALL_CLASS_ORCHESTRATION_TOOLS only fires inside the ceiling block
+    // which is gated on capabilityClass === "small". For nano, the aggressive CORE_TOOLS-only
+    // path fires first (and there is no activeToolCeiling), so the exemption never applies —
+    // pipeline must remain deferred for nano. A future regression (e.g. widening the exemption
+    // to all classes, or checking !== "nano" instead of === "small") would fail this test.
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("exec"),
+      makeTool("pipeline"),
+      makeTool("cron"),
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      toolNames: tools.map(t => t.name),
+      // No activeToolCeiling — nano uses aggressive CORE_TOOLS-only path, not ceiling
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+    expect(result.deferredNames).toContain("pipeline");
+    expect(result.deferredNames).not.toContain("read");
+    expect(result.deferredNames).not.toContain("exec");
   });
 });

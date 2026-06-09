@@ -234,7 +234,7 @@ Top-level parameters that apply to the entire graph:
 | `nodes` | `array` | For define/execute/save | Array of node definitions |
 | `label` | `string` | No | Human-readable graph label |
 | `on_failure` | `string` | No | `fail-fast` (default) or `continue` |
-| `timeout_ms` | `integer` | No | Graph-level timeout in milliseconds |
+| `timeout_ms` | `integer` | No | Graph-level timeout in milliseconds (default: `1500000` / 25 min). Automatically raised to the DAG's critical-path makespan (topological depth × concurrency waves × per-node timeout) when set too low, so later phases — e.g. a debate or final-synthesis node — are not starved by earlier parallel ones. |
 | `graph_id` | `string` | For status/cancel/outputs | ID of a running/completed graph |
 | `id` | `string` | For save/load/delete | Named graph ID for persistence |
 | `budget` | `object` | No | `{ max_tokens, max_cost }` -- resource limits |

@@ -55,8 +55,8 @@ describe("ContextEngineConfigSchema", () => {
       deferCompaction: true,
       summarizerSpend: { maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 },
       summarizerBreaker: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
-      // Phase 152 capacity + prompt-security knobs (C1/C2/C4)
-      budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000 },
+      // Phase 152 capacity + prompt-security knobs (C1/C2/C4) + Phase 166 CWF-02
+      budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000, minVisibleOutputTokens: 768 },
       compactPrompt: { enabled: true, targetTokens: 3_000 },
       compaction: { preferEvictionByCapability: true, strongerSummarizerModel: "" },
     });
@@ -134,8 +134,8 @@ describe("ContextEngineConfigSchema", () => {
       deferCompaction: true,
       summarizerSpend: { maxTokensPerTenantPerHour: 500_000, maxTokensPerTenantPerDay: 5_000_000 },
       summarizerBreaker: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenTimeoutMs: 30_000 },
-      // Phase 152 knobs (not overridden in this test — default through)
-      budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000 },
+      // Phase 152 knobs + Phase 166 CWF-02 (not overridden in this test — default through)
+      budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000, minVisibleOutputTokens: 768 },
       compactPrompt: { enabled: true, targetTokens: 3_000 },
       compaction: { preferEvictionByCapability: true, strongerSummarizerModel: "" },
     });
@@ -1165,6 +1165,76 @@ describe("ContextEngineConfigSchema", () => {
         summarizerSpend: { maxTokensPerTenantPerHour: 1000, unknownField: "bad" },
       });
       expect(result.success).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // budget.minVisibleOutputTokens (Fix 3 / Phase 166 CWF-02)
+  // -------------------------------------------------------------------------
+
+  describe("budget.minVisibleOutputTokens", () => {
+    it("defaults to 768 when budget is omitted", () => {
+      const result = ContextEngineConfigSchema.parse({});
+      // CWF-02: non-reasoning floor defaults to 768 tokens.
+      expect(result.budget.minVisibleOutputTokens).toBe(768);
+    });
+
+    it("defaults are fully populated including minVisibleOutputTokens when budget is omitted entirely", () => {
+      const result = ContextEngineConfigSchema.parse({});
+      expect(result.budget).toEqual({
+        effectiveContextCapSmall: 32_000,
+        effectiveContextCapNano: 16_000,
+        minVisibleOutputTokens: 768,
+      });
+    });
+
+    it("accepts custom minVisibleOutputTokens override", () => {
+      const result = ContextEngineConfigSchema.parse({
+        budget: { minVisibleOutputTokens: 1024 },
+      });
+      expect(result.budget.minVisibleOutputTokens).toBe(1024);
+    });
+
+    it("accepts boundary values (256 and 8192)", () => {
+      const min = ContextEngineConfigSchema.parse({
+        budget: { minVisibleOutputTokens: 256 },
+      });
+      expect(min.budget.minVisibleOutputTokens).toBe(256);
+
+      const max = ContextEngineConfigSchema.parse({
+        budget: { minVisibleOutputTokens: 8_192 },
+      });
+      expect(max.budget.minVisibleOutputTokens).toBe(8_192);
+    });
+
+    it("rejects below minimum (255) — CWF-02 threat T-166-02-01", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        budget: { minVisibleOutputTokens: 255 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects above maximum (8193) — CWF-02 threat T-166-02-01", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        budget: { minVisibleOutputTokens: 8_193 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects non-integer value", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        budget: { minVisibleOutputTokens: 512.5 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("fully-populated default literal works: parse({budget:{}}) gives all three budget fields", () => {
+      // Zod does NOT re-parse inner field defaults from .default({}).
+      // The .default({...}) literal on the parent must include ALL fields.
+      const result = ContextEngineConfigSchema.parse({ budget: {} });
+      expect(result.budget.effectiveContextCapSmall).toBe(32_000);
+      expect(result.budget.effectiveContextCapNano).toBe(16_000);
+      expect(result.budget.minVisibleOutputTokens).toBe(768);
     });
   });
 

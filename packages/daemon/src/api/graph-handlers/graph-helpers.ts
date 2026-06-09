@@ -74,14 +74,40 @@ export interface ValidationIssue {
 export function transformNodes(rawNodes: unknown[]): unknown[] {
   return rawNodes.map((raw) => {
     const node = raw as Record<string, unknown>;
+    const rawTypeId = node.type_id ?? node.typeId;
+    const rawTypeConfig = node.type_config ?? node.typeConfig;
+    // Bug-1 (OR-01) — collapse the redundant `agent` node type, in ALL its forms,
+    // to a regular single-agent node. The `agent` driver's config
+    // (`{agent, model?, max_steps?}`) merely duplicates fields a regular
+    // {agent, task} node already carries, so it is pure redundancy. Weak models
+    // emit it three malformed/redundant ways, each tripping the validator's
+    // both-or-neither refine:
+    //   (1) type_id:"agent" with NO type_config
+    //   (2) type_config:{agent:X} with NO type_id   ← the live 8-node NVDA DAG
+    //   (3) type_id:"agent" WITH type_config:{agent:X}
+    // Collapse all three to a regular node (lifting agent/model/max_steps out of
+    // the config), keeping the both-or-neither rule strict for the SIX real typed
+    // nodes (debate/vote/refine/collaborate/approval-gate/map-reduce — none of
+    // which use a bare `agent` config). See design/small-model-orchestration-fidelity.md §4.
+    const tc = (rawTypeConfig !== null && typeof rawTypeConfig === "object" && !Array.isArray(rawTypeConfig))
+      ? (rawTypeConfig as Record<string, unknown>) : undefined;
+    // A "bare agent config" is the agent-driver shape: an `agent` string plus at
+    // most the optional model/max_steps the agent driver also accepts.
+    const isBareAgentConfig = tc !== undefined && typeof tc.agent === "string"
+      && Object.keys(tc).every((k) => k === "agent" || k === "model" || k === "max_steps" || k === "maxSteps");
+    const isAgentFootgun = rawTypeId === "agent" || (rawTypeId === undefined && isBareAgentConfig);
+    // Lift agent/model/max_steps out of a bare agent config (the node's own fields win).
+    const agentId = node.agent ?? node.agentId ?? (isAgentFootgun ? tc?.agent : undefined);
+    const model = node.model ?? (isAgentFootgun ? tc?.model : undefined);
+    const maxSteps = node.max_steps ?? node.maxSteps ?? (isAgentFootgun ? (tc?.max_steps ?? tc?.maxSteps) : undefined);
     return {
       nodeId: node.node_id ?? node.nodeId,
       task: node.task,
-      agentId: node.agent ?? node.agentId,
-      model: node.model,
+      agentId,
+      model,
       dependsOn: node.depends_on ?? node.dependsOn,
       timeoutMs: node.timeout_ms ?? node.timeoutMs,
-      maxSteps: node.max_steps ?? node.maxSteps,
+      maxSteps,
       ...(node.mcp_servers ?? node.mcpServers
         ? { mcpServers: node.mcp_servers ?? node.mcpServers } : {}),
       ...(node.barrier_mode ?? node.barrierMode
@@ -89,10 +115,10 @@ export function transformNodes(rawNodes: unknown[]): unknown[] {
       ...(node.retries !== undefined ? { retries: node.retries } : {}),
       ...(node.context_mode ?? node.contextMode
         ? { contextMode: node.context_mode ?? node.contextMode } : {}),
-      ...(node.type_id ?? node.typeId
-        ? { typeId: node.type_id ?? node.typeId } : {}),
-      ...(node.type_config ?? node.typeConfig
-        ? { typeConfig: node.type_config ?? node.typeConfig } : {}),
+      // Drop typeId+typeConfig entirely for the agent footgun (collapse to a regular
+      // node); preserve them for the six real typed nodes.
+      ...(rawTypeId !== undefined && !isAgentFootgun ? { typeId: rawTypeId } : {}),
+      ...(rawTypeConfig !== undefined && !isAgentFootgun ? { typeConfig: rawTypeConfig } : {}),
     };
   });
 }

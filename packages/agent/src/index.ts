@@ -100,6 +100,11 @@ export type { CacheProviderInfo } from "./executor/cache-usage-helpers.js";
 export { createModelScanner } from "./model/model-scanner.js";
 export type { ScanResult, ModelScanner, ModelScannerDeps } from "./model/model-scanner.js";
 
+// Ollama capacity probe (CWF-03: boot-time served num_ctx discovery)
+// Only probeAllOllamaProviders is consumed cross-package (daemon boot);
+// the remaining probe symbols are intra-package only.
+export { probeAllOllamaProviders } from "./model/ollama-capacity-probe.js";
+
 // OAuth token manager (runtime stays in agent due to chokidar + pi-ai/oauth deps)
 export { createOAuthTokenManager } from "./model/oauth-token-manager.js";
 
