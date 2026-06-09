@@ -3,9 +3,9 @@
 import Base from "../layouts/Base.astro";
 import Footer from "../components/Footer.astro";
 
-const title = "Memory benchmark — measured, reproducible, honest";
+const title = "Memory that learns, not just remembers - measured, reproducible, honest";
 const description =
-  "Comis agent-memory results measured at $0 and cross-judged, every number linked to its committed run manifest.";
+  "Comis agent-memory results measured at $0 and cross-judged, with every number linked to its committed run manifest.";
 
 // The GitHub tree the manifest links point at (the run dirs are committed under benchmarks/results/).
 const repoTree = "https://github.com/comisai/comis/tree/main";
@@ -194,14 +194,12 @@ const headToHead = {
         <a href="/" class="inline-flex items-center gap-1 text-sm text-muted hover:text-teal transition-colors mb-8">
           &larr; Back to Home
         </a>
-        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Measured at $0</p>
+        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Memory that learns, not just remembers</p>
         <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.1] text-white">
-          Accuracy, cross-judged — every number linked to its run manifest
+          Measured memory, with every number linked to its run manifest
         </h1>
         <p class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed">
-          The numbers below were graded by two independent LLM judges (gpt-4o + gpt-4.1) under one
-          disclosed protocol. Each one links to the committed run that produced it — nothing here is
-          asserted, and there is no placeholder.
+          Comis recall combines trust-ranked memory, evidence-backed observations, and measured learning signals. The numbers below were graded by two independent LLM judges under one disclosed protocol, and each one links to the committed run that produced it.
         </p>
       </div>
     </section>

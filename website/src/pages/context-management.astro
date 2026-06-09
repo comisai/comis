@@ -5,7 +5,7 @@ import Footer from "../components/Footer.astro";
 import { FACTS } from "../data/facts";
 
 const title = "Context Management - How Comis Cuts LLM Costs by 81%";
-const description = "Deep dive into Comis's two context engines - the lossless DAG that never deletes history (the default) and the deterministic ten-layer pipeline (opt-in) - plus the cache fence system, TTL monotonicity enforcement, adaptive cold-start retention, sub-agent spawn staggering, and the optimizations that reduce multi-agent pipeline costs.";
+const description = "Deep dive into Comis context management: DAG-backed recovery, deterministic compaction, cache fences, TTL monotonicity enforcement, adaptive cold-start retention, sub-agent spawn staggering, and optimizations that reduce multi-agent pipeline costs.";
 
 const layers = [
   {
@@ -177,7 +177,7 @@ const realExample = {
           How Comis cuts LLM costs by 81%
         </h1>
         <p class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed">
-          Two context engines - a lossless DAG that keeps every turn (the default) and a deterministic multi-stage pipeline you can opt into - plus a cache fence system, sub-agent spawn staggering, and progressive tool disclosure, so your agents run indefinitely with predictable costs.
+          DAG-backed recovery, deterministic compaction, cache fences, sub-agent spawn staggering, and progressive tool disclosure keep long-running agents useful without sending every old token back to the model.
         </p>
       </div>
     </section>
@@ -241,31 +241,31 @@ const realExample = {
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">The solution</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
-          Two context engines, one default that never loses a word
+          Two context paths, one goal: keep useful detail recoverable
         </h2>
         <p class="text-muted text-lg mb-6 max-w-2xl">
-          Comis ships two context engines and runs the lossless one by default. Which engine an agent uses is an operator-only choice (<code class="text-teal text-xs">contextEngine.version</code>) - switched with a single config reload, no restart, fully reversible, no data loss. The same token-budgeting, eviction, masking, and compaction discipline applies in both.
+          Comis combines deterministic compaction with DAG-backed recovery. Operators can choose the context engine (<code class="text-teal text-xs">contextEngine.version</code>) and switch with a config reload. The same token-budgeting, eviction, masking, and compaction discipline applies in both paths.
         </p>
 
-        <!-- DAG default - promoted first -->
+        <!-- DAG context -->
         <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 mb-6 max-w-3xl">
           <div class="flex items-center gap-2 mb-3">
-            <span class="text-xs font-mono px-2 py-0.5 rounded bg-teal/15 text-teal">Default</span>
+            <span class="text-xs font-mono px-2 py-0.5 rounded bg-teal/15 text-teal">Recoverable</span>
             <h3 class="text-white font-semibold">Lossless DAG context engine</h3>
           </div>
           <p class="text-muted text-sm leading-relaxed">
-            The default engine keeps the full conversation as a directed graph - nothing is deleted. Older detail is folded into zoomable summaries and recalled on demand via <code class="text-teal text-xs">ctx_search</code>, <code class="text-teal text-xs">ctx_inspect</code>, and <code class="text-teal text-xs">ctx_expand</code>. Compression you can reverse, not destruction you can't.
+            Older detail can be folded into zoomable summaries and recalled on demand via <code class="text-teal text-xs">ctx_search</code>, <code class="text-teal text-xs">ctx_inspect</code>, and <code class="text-teal text-xs">ctx_expand</code>. Compression stays inspectable in-session instead of becoming a one-way summary.
           </p>
         </div>
 
-        <!-- Opt-in pipeline -->
+        <!-- Deterministic pipeline -->
         <div class="bg-navy-light/80 border border-white/10 rounded-xl p-6 mb-12 max-w-3xl">
           <div class="flex items-center gap-2 mb-3">
-            <span class="text-xs font-mono px-2 py-0.5 rounded bg-white/10 text-muted-light">Opt-in</span>
+            <span class="text-xs font-mono px-2 py-0.5 rounded bg-white/10 text-muted-light">Deterministic</span>
             <h3 class="text-white font-semibold">Ten-layer deterministic pipeline</h3>
           </div>
           <p class="text-muted text-sm leading-relaxed">
-            The classic multi-stage pipeline detailed below is the deterministic opt-in mode (operator-only, the same <code class="text-teal text-xs">contextEngine.version</code> switch). Every conversation runs through 8 categorical stages before each LLM call - 10 distinct layer implementations counting signature scrubbing and surrogate guards - each targeting a specific source of token waste. Every stage has a circuit breaker: 3 consecutive failures disables that layer, so no single optimization bug can bring down the pipeline.
+            The classic multi-stage pipeline detailed below runs through 8 categorical stages before LLM calls - 10 distinct layer implementations counting signature scrubbing and surrogate guards - each targeting a specific source of token waste. Every stage has a circuit breaker, so no single optimization bug can bring down the pipeline.
           </p>
         </div>
 
