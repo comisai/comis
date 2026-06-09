@@ -30,15 +30,15 @@ const compareRows: CompareRow[] = [
   },
   {
     dimension: "Exec sandbox",
-    comis: "Configured by default; kernel-backed where supported (Bubblewrap / sandbox-exec)",
+    comis: "Kernel-enforced, on by default (Bubblewrap / sandbox-exec)",
     openclaw: "Docker sandbox, opt-in (off by default)",
     hermes: "Host-first by default; containers confine the shell tool, not the agent",
   },
   {
     dimension: "Secrets at rest",
     comis: "AES-256-GCM encrypted store",
-    openclaw: "Config/auth profiles support plaintext paths and SecretRefs",
-    hermes: ".env + file permissions (Bitwarden opt-in)",
+    openclaw: "Plaintext JSON + file permissions",
+    hermes: "Plaintext .env + file permissions (Bitwarden opt-in)",
   },
   {
     dimension: "API keys vs. agent runtime",
@@ -60,7 +60,7 @@ const compareRows: CompareRow[] = [
   },
   {
     dimension: "Context at scale",
-    comis: "DAG-backed context recovery - compressed detail remains inspectable in-session",
+    comis: "Lossless DAG engine (default) - nothing deleted, compression reversible in-session",
     openclaw: "Compaction / pruning hooks; tool-result compaction",
     hermes: "Auto-compression at 50% of window (cheap-model summary)",
   },
@@ -78,7 +78,7 @@ const compareRows: CompareRow[] = [
   },
   {
     dimension: "Typed errors end-to-end",
-    comis: "Result<T, E> first - failures are typed and architecture-tested",
+    comis: "Result<T, E> everywhere - zero stray exceptions",
     openclaw: "-",
     hermes: "-",
   },
@@ -183,7 +183,7 @@ const compareRows: CompareRow[] = [
           Designed for a shared install from day one.
         </h2>
         <p class="text-muted text-lg mb-12 max-w-2xl leading-relaxed">
-          OpenClaw and Hermes are built around one trusted operator. Comis is built for a team, family, or company - many agents and operators sharing one install - so separation, secret handling, and auditability are platform properties, not prompt instructions.
+          OpenClaw and Hermes are built for one trusted person. Comis is built for a team, a family, or a company - many agents and many operators sharing one install - so its security is enforced by the kernel and the compiler, not by prompts.
         </p>
 
         <div class="grid md:grid-cols-2 gap-x-8 gap-y-4">

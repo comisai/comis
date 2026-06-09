@@ -67,12 +67,12 @@ const highlights = [
   {
     stat: "3-level fallback",
     label: "Compaction resilience",
-    desc: "Full structured summary with quality validation, filtered summarization, or a guaranteed count-only note if summarization fails.",
+    desc: "Full structured summary with quality validation, filtered summarization, or guaranteed count-only note. Never fails.",
   },
   {
-    stat: "DAG-backed recall",
+    stat: "DAG by default",
     label: "Lossless context engine",
-    desc: "A depth-aware DAG keeps compressed history inspectable and recalls detail on demand via ctx_search / ctx_inspect. Compression stays reversible in-session instead of becoming a one-way summary.",
+    desc: "The depth-aware DAG engine is now the default: a directed acyclic graph with hierarchical summarization (operational detail, session summaries, phase summaries, durable project memory) that keeps full history and recalls detail on demand via ctx_search / ctx_inspect. The classic multi-stage pipeline is the reversible opt-out - switch with one config reload, no restart, no data loss.",
   },
   {
     stat: "Circuit breakers",
@@ -86,13 +86,13 @@ const highlights = [
   <div class="max-w-5xl mx-auto">
     <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Context intelligence</p>
     <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
-      Context that stays useful.
+      Context that never dies.
     </h2>
     <p class="text-muted text-lg mb-6 max-w-2xl">
       Most AI agents degrade as conversations grow. Context windows fill up, earlier context gets dropped, and the agent forgets what mattered. Comis runs a multi-layer context engine before every LLM call - compressing intelligently, evicting dead content, and rehydrating critical context after compression.
     </p>
     <p class="text-muted-light text-sm mb-14 max-w-2xl">
-      The result: long-running agents stay coherent without blindly sending every old token back to the model.
+      The result: your agents maintain coherence across sessions that would break any other system.
     </p>
 
     <!-- Pipeline visualization -->
@@ -106,7 +106,7 @@ const highlights = [
         </div>
         <div>
           <p class="text-white font-semibold">Context Engine</p>
-          <p class="text-muted text-sm">Runs before LLM calls, keeps active state in view, and leaves room for DAG-backed recovery when older detail matters. Each layer is fault-isolated.</p>
+          <p class="text-muted text-sm">The lossless DAG engine is the default; the classic pipeline below is the reversible opt-out. Runs before every LLM call. Each layer is fault-isolated.</p>
         </div>
       </div>
 
@@ -146,7 +146,7 @@ const highlights = [
     <div class="mt-16 bg-navy-light/50 border border-white/5 rounded-xl p-8">
       <div class="flex flex-col md:flex-row gap-8">
         <div class="flex-1">
-          <h3 class="text-lg font-semibold text-white mb-3">Memory that learns, not just remembers</h3>
+          <h3 class="text-lg font-semibold text-white mb-3">Persistent memory that recalls the right thing</h3>
           <p class="text-muted leading-relaxed">
             SQLite + FTS5 full-text search and vector embeddings fuse across lanes for recall. An optional cross-encoder reranker re-reads candidates against the actual question for relevance; an optional entity lane brings back associatively related memories. Read-time temporal resolution answers with what's currently true without deleting history, repeated facts can consolidate into evidence-backed observations, and recall is trust-partitioned and trust-ranked so external content can never overwrite learned knowledge - all on-device.
           </p>
@@ -154,14 +154,14 @@ const highlights = [
         <div class="flex-1">
           <h3 class="text-lg font-semibold text-white mb-3">Session continuity across restarts</h3>
           <p class="text-muted leading-relaxed">
-            JSONL session persistence with crash recovery. The context engine reconciles session state after restarts so agents can resume with the right state instead of repeating work. Microcompaction offloads large tool results to disk while keeping lightweight references inline.
+            JSONL session persistence with crash recovery. The DAG context engine reconciles session state after restarts - no lost context, no repeated work. Microcompaction offloads large tool results to disk while keeping lightweight references inline.
           </p>
         </div>
       </div>
     </div>
 
     <p class="text-center mt-14 text-lg text-muted">
-      Other agents forget what matters. <span class="text-white font-semibold">Comis compresses, rehydrates, and learns.</span>
+      Other agents forget what matters. <span class="text-white font-semibold">Comis compresses, rehydrates, and remembers.</span>
     </p>
     <div class="text-center mt-6">
       <a href="/context-management" class="inline-flex items-center gap-2 text-sm font-semibold text-teal hover:text-teal-dark transition-colors">

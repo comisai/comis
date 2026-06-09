@@ -50,7 +50,7 @@ const securityRows: Row[] = [
   {
     label: "Exec sandbox",
     comis:
-      "Configured by default, with kernel-backed isolation where supported - Bubblewrap on Linux (full namespace unshare) and sandbox-exec on macOS. Credentialed CLI spawns can run through broker-only mode so secrets stay outside the agent process.",
+      "Kernel-enforced and on by default - Bubblewrap on Linux (full namespace unshare), sandbox-exec on macOS. Tools run jailed by the OS itself, not by a setting you have to remember to turn on; credentialed CLI spawns additionally run with no network (broker-only mode).",
     hermes:
       "Host-first by default. Containers confine the shell tool, not the agent. The agent process itself runs on the host.",
     verdict: "comis",
@@ -160,7 +160,7 @@ const contextRows: Row[] = [
   {
     label: "Context at scale",
     comis:
-      "DAG-backed context recovery - old turns can compress into a zoomable leaf->condensed summary DAG the agent can drill back into (ctx_search / ctx_inspect / ctx_expand). Compression remains inspectable in-session instead of becoming a one-way summary.",
+      "Lossless DAG context engine, on by default - nothing is deleted; old turns compress into a zoomable leaf→condensed summary DAG the agent can drill back into (ctx_search / ctx_inspect / ctx_expand). Compression you can reverse, not destruction you can't.",
     hermes:
       "Auto-compression at roughly 50% of the context window, using a cheaper model to summarize. Effective, but lossy - the compressed detail isn't recoverable in-session.",
     verdict: "comis",
@@ -176,7 +176,7 @@ const contextRows: Row[] = [
   {
     label: "Local-model security floor & tuning",
     comis:
-      "The security posture belongs to the platform, not the model: sandboxed execution where supported, the credential broker, and the skill content scanner apply whether you run a frontier cloud model or a local one. Capability profiles also tune prompt-size budgets, focused tool sets, JSON repair, and self-correction to the model tier.",
+      "The security floor is a property of the platform, not the model: the kernel sandbox, credential broker, and skill content scanner apply identically whether you run a frontier cloud model or a local one (Ollama, vLLM, etc.) - the guarantees never depend on the model's goodwill. And the floor is only half of it: an immutable capability profile actively tunes Comis to the model - prompt-size budgets, focused tool sets, and deterministic tool selection so a small model isn't drowned in context it can't use, plus reliability rails (goal re-anchoring, a poison-resistant recall floor, tool-call JSON repair with self-correction, and reasoning models' chain-of-thought kept out of the reply). Weaker model, stricter lockdown and more scaffolding; capable models pay nothing for it.",
     hermes:
       "Local models are supported (Ollama, LM Studio, vLLM and similar). The OS is the boundary, whatever the model - there is no model-aware hardening.",
     verdict: "comis",
@@ -258,7 +258,7 @@ const sectionMeta = [
   },
   {
     title: "Security",
-    subtitle: "Layered runtime defense vs. the OS as the primary boundary.",
+    subtitle: "Kernel-enforced defense in depth vs. the OS as the boundary.",
     icon: `<path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />`,
   },
   {
@@ -592,13 +592,13 @@ const sectionMeta = [
             <div class="space-y-3 text-muted-light">
               <p>
                 <span class="text-white font-medium">Design center:</span> A platform
-                for teams and communities, isolated by design - many agents, many operators,
+                for whole teams, isolated by design - many agents, many operators,
                 one auditable install.
               </p>
               <p>
                 <span class="text-white font-medium">Security stance:</span> Defense
-                in depth with sandboxed tools where supported, typed boundaries,
-                encrypted secrets, and a broker that keeps keys away from agents.
+                in depth, enforced by the kernel and the compiler - not by prompts.
+                Sandbox on by default; keys never meet the agent.
               </p>
               <p>
                 <span class="text-white font-medium">Self-improvement:</span> In

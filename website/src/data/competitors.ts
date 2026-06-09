@@ -81,7 +81,7 @@ export const COMPETITORS = {
  */
 export const COMIS_WINS = [
   "Platform / multi-tenant design center - many agents × many operators, one auditable install",
-  "Exec sandbox configured by default, with kernel-backed isolation where supported",
+  "Kernel-enforced exec sandbox, on by default",
   "Encrypted secrets (AES-256-GCM) + credential broker - keys never meet agents",
   "Layered + benchmarked prompt-injection defense",
   "Trust-partitioned learning memory (bounded tuner, trust weight frozen)",

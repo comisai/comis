@@ -133,7 +133,7 @@ const packages = [
   { name: "observability", desc: "Diagnostics substrate: queued writer, payload bounding, sanitization, path guards", deps: "core, shared", layer: "Service" },
   { name: "orchestrator", desc: "Inbound orchestration: channel-manager lifecycle, inbound pipeline, execute-and-deliver, routing", deps: "core, agent, channels", layer: "Service" },
   { name: "gateway", desc: "Hono HTTP, JSON-RPC, WebSocket, mTLS", deps: "core", layer: "Adapter" },
-  { name: "channels", desc: `${FACTS.channels} platform adapters`, deps: "core, shared", layer: "Adapter" },
+  { name: "channels", desc: `${FACTS.channels} platform adapters`, deps: "core, agent, infra", layer: "Adapter" },
   { name: "daemon", desc: "Composition root - wires every package, systemd lifecycle", deps: "all packages", layer: "Composition" },
   { name: "cli", desc: "Commander.js, JSON-RPC client", deps: "core, agent", layer: "Adapter" },
   { name: "comis", desc: "Namespace re-exports", deps: "all packages", layer: "Composition" },
@@ -144,7 +144,7 @@ const patterns = [
   {
     name: "Result<T, E>",
     what: "Discriminated union for error handling",
-    why: "Keeps domain and internal control flow explicit. Callers handle success and failure as typed values instead of relying on stray exceptions.",
+    why: "Eliminates exception-driven control flow. Every function explicitly declares success and failure types. The compiler enforces handling of both paths.",
     example: "ok(value) | err(error) - narrows on result.ok discriminant",
   },
   {
@@ -243,8 +243,8 @@ const benefits = [
               <p class="text-muted text-sm mt-2">Adapters</p>
             </div>
             <div>
-              <p class="text-4xl font-bold text-white font-mono">Typed</p>
-              <p class="text-muted text-sm mt-2">Result-first errors</p>
+              <p class="text-4xl font-bold text-white font-mono">0</p>
+              <p class="text-muted text-sm mt-2">Thrown exceptions</p>
             </div>
           </div>
         </div>
@@ -386,10 +386,10 @@ const benefits = [
     <section class="px-6 py-16 md:py-24">
       <div class="max-w-3xl mx-auto text-center">
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
-          Read the code. Then help improve it.
+          Read the code. It speaks for itself.
         </h2>
         <p class="text-muted text-lg mb-10">
-          Apache-2.0-licensed TypeScript monorepo. Result-first domain code, typed ports, strict package boundaries, and clear contribution rules make the project approachable without making it loose.
+          Apache-2.0-licensed TypeScript monorepo. Every function returns a typed Result. Every port has a test suite. Every package has a clear responsibility.
         </p>
 
         <div class="flex flex-wrap gap-4 justify-center">
