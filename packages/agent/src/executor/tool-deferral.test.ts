@@ -3090,10 +3090,27 @@ describe("applyToolDeferral - CWF-04 orchestration reachability (ceiling=24 + pi
   });
 
   it("nano: pipeline stays DEFERRED — nano is below NL→DAG cliff, existing :485 invariant preserved", () => {
-    // Documentation test: the nano pipeline-deferred invariant is locked by the
-    // existing nano test at tool-deferral.test.ts:485. Phase 168 uses
-    // SMALL_CLASS_ORCHESTRATION_TOOLS (ceiling-block only, capabilityClass==='small')
-    // so the nano aggressive path is unaffected. DO NOT modify the :485 test.
-    expect(true).toBe(true);
+    // Real assertion: SMALL_CLASS_ORCHESTRATION_TOOLS only fires inside the ceiling block
+    // which is gated on capabilityClass === "small". For nano, the aggressive CORE_TOOLS-only
+    // path fires first (and there is no activeToolCeiling), so the exemption never applies —
+    // pipeline must remain deferred for nano. A future regression (e.g. widening the exemption
+    // to all classes, or checking !== "nano" instead of === "small") would fail this test.
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("exec"),
+      makeTool("pipeline"),
+      makeTool("cron"),
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      toolNames: tools.map(t => t.name),
+      // No activeToolCeiling — nano uses aggressive CORE_TOOLS-only path, not ceiling
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+    expect(result.deferredNames).toContain("pipeline");
+    expect(result.deferredNames).not.toContain("read");
+    expect(result.deferredNames).not.toContain("exec");
   });
 });
