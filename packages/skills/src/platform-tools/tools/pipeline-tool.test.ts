@@ -40,7 +40,21 @@ describe("createPipelineTool", () => {
     const tool = createPipelineTool(rpcCall);
     expect(tool.name).toBe("pipeline");
     expect(tool.label).toBe("Pipeline");
-    expect(tool.description).toContain("execution graphs");
+    expect(tool.description).toContain("execution graph");
+  });
+
+  // v2.19: the description must be INTENT-led so a weak model maps a natural
+  // orchestration request ("four analysts in parallel, then a debate…") to this
+  // tool instead of researching everything itself in one context. Live, the
+  // mechanics-led description ("DAG pipelines") failed to steer qwen3.6.
+  it("description steers multi-agent / parallel / debate intent and delegation", () => {
+    const tool = createPipelineTool(rpcCall);
+    const d = tool.description.toLowerCase();
+    expect(d).toContain("parallel");
+    expect(d).toContain("debate");
+    expect(d).toContain("delegate");
+    // Names the isolated-context benefit that makes delegation necessary for small models.
+    expect(d).toContain("isolated");
   });
 
   // -----------------------------------------------------------------------
@@ -1112,7 +1126,9 @@ describe("createPipelineTool", () => {
       expect(tool.description).toContain("execute");
       expect(tool.description).toContain("DAG");
       expect(tool.description).toContain("pipeline");
-      expect(tool.description.length).toBeLessThanOrEqual(300);
+      // Intent-led steering (v2.19) needs a little more room than the old mechanics-
+      // only line, but must stay lean — it rides in every turn's tool manifest.
+      expect(tool.description.length).toBeLessThanOrEqual(450);
     });
   });
 });

@@ -24,9 +24,31 @@
  * @module
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 
 import { transformNodes, isWeakCapabilityClass, buildGraphInput } from "./graph-helpers.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+// v2.19: after a successful graph.execute dispatch, the model-facing hint must be a
+// strong STOP signal — a weak model that dispatched a 6-node NVDA pipeline then kept
+// researching NVDA itself (130 tool calls) and exhausted its own context. The hint
+// lives in graph-mutate.ts; assert its load-bearing directives via source-grep.
+describe("graph.execute dispatch hint (caller stop-after-delegate, v2.19)", () => {
+  it("tells the model its job is DONE, to STOP, and to NOT research the topic itself", () => {
+    const src = readFileSync(resolve(here, "graph-mutate.ts"), "utf-8");
+    const hintMatch = src.match(/hint:\s*"([^"]*Pipeline launched[^"]*)"/);
+    expect(hintMatch).not.toBeNull();
+    const hint = (hintMatch?.[1] ?? "").toLowerCase();
+    expect(hint).toContain("done");
+    expect(hint).toContain("stop");
+    expect(hint).toContain("do not research");
+    expect(hint).toContain("exhaust");
+  });
+});
 
 describe("transformNodes", () => {
   it("forwards mcp_servers snake_case input as mcpServers", () => {

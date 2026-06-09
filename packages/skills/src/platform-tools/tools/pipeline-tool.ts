@@ -322,9 +322,10 @@ export function createPipelineTool(rpcCall: RpcCall, logger?: ToolLogger, approv
     name: "pipeline",
     label: "Pipeline",
     description:
-      "Define, execute, monitor, cancel multi-node execution graphs (DAG pipelines). " +
-      "When asked to create/build a pipeline, use action=save to persist it as a reusable template with ${VARIABLE} placeholders. " +
-      "Use action=execute for running saved pipelines (load by id) or explicit one-shot requests.",
+      "Orchestrate MULTIPLE agents in parallel/sequence as one execution graph (DAG): use whenever several " +
+      "roles are needed at once — analysts in parallel, a bull-vs-bear debate, review/voting chains. Each node " +
+      "is an ISOLATED sub-agent with its own context, so DELEGATE work too large for one agent here instead of " +
+      "researching it all yourself. action=execute runs a pipeline; action=save persists a ${VARIABLE} template.",
     parameters: PipelineParams,
 
     async execute(
