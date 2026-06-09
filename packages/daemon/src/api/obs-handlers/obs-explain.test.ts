@@ -126,6 +126,55 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
+  // QT2/QT3 — the named degradation causes surface END-TO-END through the
+  // handler: the metadata endReason flows to outcome.endReason AND drives
+  // likelyRootCause (the handler threads it into signals before rootCause).
+  // ------------------------------------------------------------------------
+
+  it("QT2: a context_exhausted session (no tool failures) → outcome.endReason + likelyRootCause name the cause", async () => {
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => [],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({
+        agentId: "a1",
+        sessionEnd: { type: "session_end", endReason: "context_exhausted", degraded: true },
+      }),
+      readDiagnosticsRollup: async () => null,
+    };
+    const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
+    const r = (await handlers["obs.explain"]!({
+      sessionKey: "tenant_a:user_a:chan",
+      _trustLevel: "admin",
+    })) as IncidentReport;
+
+    // The named cause shows in the outcome (free z.string passthrough)…
+    expect(r.outcome.endReason).toBe("context_exhausted");
+    expect(r.outcome.degraded).toBe(true);
+    // …AND drives the deterministic verdict (handler threads endReason → rootCause).
+    expect(r.likelyRootCause?.code).toBe("context_exhausted");
+  });
+
+  it("QT3: an output_starved session → likelyRootCause names output_starved", async () => {
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => [],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({
+        agentId: "a1",
+        sessionEnd: { type: "session_end", endReason: "output_starved", degraded: true },
+      }),
+      readDiagnosticsRollup: async () => null,
+    };
+    const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
+    const r = (await handlers["obs.explain"]!({
+      sessionKey: "tenant_a:user_a:chan",
+      _trustLevel: "admin",
+    })) as IncidentReport;
+
+    expect(r.outcome.endReason).toBe("output_starved");
+    expect(r.likelyRootCause?.code).toBe("output_starved");
+  });
+
+  // ------------------------------------------------------------------------
   // X1 — by-traceId == by-sessionKey (both 678 traceIds → one report).
   // ------------------------------------------------------------------------
 
