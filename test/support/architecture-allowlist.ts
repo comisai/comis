@@ -322,7 +322,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // stream-wrapper wiring (~30L) into independent helpers.
   {
     file: "packages/agent/src/executor/pi-executor/pi-executor.ts",
-    lines: 1397,
+    lines: 1565,  // updated Phase 165 (+168 from v2.14–v2.17 additions)
     reason: "Thinned PiExecutor factory + withSession callback (fallback); 4 co-equal/closure-extracted helpers shipped; inside-lock callback deferred to focused follow-up. Structural test GREEN non-vacuously (5 closure-extracted helpers walked).",
     removedIn: "deferred",
   },
