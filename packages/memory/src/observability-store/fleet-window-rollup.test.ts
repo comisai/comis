@@ -160,6 +160,39 @@ describe("reduceFleetWindow", () => {
     expect(out.degradedRate).toBe(0.5); // 2 of 4
   });
 
+  it("exposes the ABSOLUTE degradedCount over the KEPT (synthetic-excluded) rows, reconciling with degradedRate (WR-01)", () => {
+    // WR-01: the reducer already excludes synthetic rows from every metric and
+    // computes the absolute degraded count internally; it must EXPOSE that count
+    // so the fleet handler's `sessions.degraded` shares the synthetic-excluded
+    // population with `total` (sessionCount) and `degradedRate` — instead of
+    // re-deriving degraded from the UNFILTERED rows (which double-counts a
+    // synthetic degraded row). A `{degraded:true, source:"test"}` row must NOT
+    // inflate degradedCount, and degradedCount/sessionCount must equal
+    // degradedRate exactly. Pre-patch the rollup has no `degradedCount` field at
+    // all, so this FAILS to type-check / is undefined (RED).
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "r1", source: "runtime", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "r2", source: "runtime", degraded: false }),
+      makeRollup({ sessionKey: "r3", source: "runtime", degraded: false }),
+      // A SYNTHETIC degraded row — must be excluded from the absolute count.
+      makeRollup({ sessionKey: "t1", source: "test", degraded: true, endReason: "output_starved" }),
+    ];
+    const out = reduceFleetWindow(rows, { excludeSynthetic: true });
+
+    // Only the runtime degraded row counts: 1, not 2.
+    expect(out.degradedCount).toBe(1);
+    // degradedCount is over the SAME kept population as sessionCount/degradedRate.
+    expect(out.sessionCount).toBe(3);
+    expect(out.degradedCount / out.sessionCount).toBeCloseTo(out.degradedRate);
+    // The absolute count never exceeds the kept session total.
+    expect(out.degradedCount).toBeLessThanOrEqual(out.sessionCount);
+    // And it reconciles with sum(degradedByCause) (also synthetic-excluded).
+    const sumByCause = Object.values(out.degradedByCause).reduce((a, b) => a + b, 0);
+    expect(out.degradedCount).toBe(sumByCause);
+    // The synthetic row's cause is absent from degradedByCause.
+    expect(out.degradedByCause).not.toHaveProperty("output_starved");
+  });
+
   it("returns degradedRate 0 (no divide-by-zero) when sessionCount is 0", () => {
     // All-synthetic input under excludeSynthetic:true → zero kept sessions.
     const rows: SessionSummaryRollup[] = [
