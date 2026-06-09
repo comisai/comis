@@ -349,6 +349,52 @@ describe("reduceFleetWindow", () => {
     expect(out.degradedByCause.context_exhausted).toBe(1);
   });
 
+  it("keeps EVERY distinct degraded cause in a window — the cap covers the full closed endReason union, so no real cause is silently dropped (IN-02)", () => {
+    // IN-02: the cap must cover the FULL closed degraded-cause union so a
+    // pathological window that touches every cause cannot silently drop the
+    // lowest-count tail (which would understate sum(degradedByCause) vs
+    // sessions.degraded with no truncations[] breadcrumb). The reachable
+    // degraded causes are the 9 non-"success" members of the sessionEnd.endReason
+    // union (error, timeout, budget_exceeded, budget_exhausted, circuit_open,
+    // provider_degraded, completed_with_tool_errors, context_exhausted,
+    // output_starved) PLUS the defensive "unknown" bucket = 10 distinct causes.
+    // Pre-patch the cap is 5, so 5 of these 10 are silently dropped (RED).
+    const degradedCauses = [
+      "error",
+      "timeout",
+      "budget_exceeded",
+      "budget_exhausted",
+      "circuit_open",
+      "provider_degraded",
+      "completed_with_tool_errors",
+      "context_exhausted",
+      "output_starved",
+      "unknown",
+    ] as const;
+    // One degraded session per distinct cause (each count == 1) — the worst case
+    // for a cap (no cause is "more important" by count, so any drop is arbitrary).
+    const rows: SessionSummaryRollup[] = degradedCauses.map((cause, i) =>
+      makeRollup({
+        sessionKey: `s${i}`,
+        degraded: true,
+        // The "unknown" cause is produced by a blank endReason (the reducer's
+        // UNKNOWN_CAUSE fold), exactly as a real missing-endReason row would be.
+        endReason: cause === "unknown" ? "" : cause,
+      }),
+    );
+    const out = reduceFleetWindow(rows, { excludeSynthetic: true });
+
+    // Every distinct degraded cause is present — none silently dropped.
+    expect(Object.keys(out.degradedByCause).length).toBe(degradedCauses.length);
+    for (const cause of degradedCauses) {
+      expect(out.degradedByCause[cause]).toBe(1);
+    }
+    // sum(degradedByCause) reconciles with the absolute degraded count (no drop).
+    const sumByCause = Object.values(out.degradedByCause).reduce((a, b) => a + b, 0);
+    expect(sumByCause).toBe(out.degradedCount);
+    expect(out.degradedCount).toBe(degradedCauses.length);
+  });
+
   it("is deterministic + bounded: degradedByCause is capped and key-order-stable across input permutations", () => {
     // More distinct causes than the cap so the bound is exercised; counts differ
     // so the top-N selection + tie-break are deterministic.
