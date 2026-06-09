@@ -225,6 +225,104 @@ describe("createConfigResolver", () => {
 });
 
 
+describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
+  it("CWF-02-G: clamps max_tokens to remaining room when assembled tokens provided", async () => {
+    // assembledInputTokens=30000, effectiveWindow=32768, configuredMax=8192
+    // remainingRoom = max(768, 32768 - 30000) = max(768, 2768) = 2768
+    // dynamicMax = min(8192, 2768) = 2768
+    const resolver = createConfigResolver({
+      maxTokens: 8192,
+      getAssembledInputTokens: () => 30_000,
+      getEffectiveWindow: () => 32_768,
+      getOutputHeadroom: () => 768,
+    }, createMockLogger());
+    let capturedOptions: Record<string, unknown> = {};
+    const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
+    await wrappedFn({} as never, {} as never, {});
+    expect(capturedOptions.maxTokens).toBe(2_768);  // EXACT pin
+  });
+
+  it("CWF-02-G: max_tokens = remaining room when no configuredMax", async () => {
+    // assembledInputTokens=30000, effectiveWindow=32768, no configuredMax
+    // dynamicMax = max(768, 32768-30000) = 2768
+    const resolver = createConfigResolver({
+      getAssembledInputTokens: () => 30_000,
+      getEffectiveWindow: () => 32_768,
+      getOutputHeadroom: () => 768,
+    }, createMockLogger());
+    let capturedOptions: Record<string, unknown> = {};
+    const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
+    await wrappedFn({} as never, {} as never, {});
+    expect(capturedOptions.maxTokens).toBe(2_768);
+  });
+
+  it("CWF-02-G: configuredMax wins when remaining room is larger", async () => {
+    // assembledInputTokens=1000, effectiveWindow=32768, configuredMax=8192
+    // remainingRoom = 32768-1000=31768; dynamicMax = min(8192, 31768) = 8192
+    const resolver = createConfigResolver({
+      maxTokens: 8192,
+      getAssembledInputTokens: () => 1_000,
+      getEffectiveWindow: () => 32_768,
+      getOutputHeadroom: () => 768,
+    }, createMockLogger());
+    let capturedOptions: Record<string, unknown> = {};
+    const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
+    await wrappedFn({} as never, {} as never, {});
+    expect(capturedOptions.maxTokens).toBe(8_192);
+  });
+
+  it("CWF-02-H CHARACTERIZATION: frontier/mid — max_tokens byte-identical when no dynamic info", async () => {
+    // When getAssembledInputTokens is absent → falls back to static config.maxTokens
+    // Pin EXACT value: config.maxTokens = 8192 → injected.maxTokens = 8192 (unchanged)
+    const resolver = createConfigResolver({ maxTokens: 8_192 }, createMockLogger());
+    let capturedOptions: Record<string, unknown> = {};
+    const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
+    await wrappedFn({} as never, {} as never, {});
+    expect(capturedOptions.maxTokens).toBe(8_192);  // EXACT pin — byte-identical
+  });
+
+  it("floor guard: max_tokens never below MIN_VISIBLE_OUTPUT_TOKENS (768) even on extreme pressure", async () => {
+    // assembledInputTokens=32767, effectiveWindow=32768 → remaining=1; floor clamp to 768
+    const resolver = createConfigResolver({
+      getAssembledInputTokens: () => 32_767,
+      getEffectiveWindow: () => 32_768,
+      getOutputHeadroom: () => 768,
+    }, createMockLogger());
+    let capturedOptions: Record<string, unknown> = {};
+    const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
+    await wrappedFn({} as never, {} as never, {});
+    expect(capturedOptions.maxTokens).toBe(768);  // floor applied
+  });
+
+  it("effectiveWindow=Infinity guard: dynamic clamp skipped → static maxTokens (frontier path)", async () => {
+    // When effectiveWindow is Infinity the condition effectiveWindow < Infinity is false → static fallback
+    const resolver = createConfigResolver({
+      maxTokens: 8_192,
+      getAssembledInputTokens: () => 1_000,
+      getEffectiveWindow: () => Infinity,
+      getOutputHeadroom: () => 768,
+    }, createMockLogger());
+    let capturedOptions: Record<string, unknown> = {};
+    const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
+    await wrappedFn({} as never, {} as never, {});
+    expect(capturedOptions.maxTokens).toBe(8_192);  // static path taken
+  });
+
+  it("guard: assembledInputTokens=0 → falls through to static maxTokens", async () => {
+    // Guard: assembledInputTokensRef.current > 0 is false → static fallback
+    const resolver = createConfigResolver({
+      maxTokens: 8_192,
+      getAssembledInputTokens: () => 0,
+      getEffectiveWindow: () => 32_768,
+      getOutputHeadroom: () => 768,
+    }, createMockLogger());
+    let capturedOptions: Record<string, unknown> = {};
+    const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
+    await wrappedFn({} as never, {} as never, {});
+    expect(capturedOptions.maxTokens).toBe(8_192);  // static path taken (guard: assembled > 0 fails)
+  });
+});
+
 describe("resolveBreakpointStrategy", () => {
   it("resolves 'auto' to 'multi-zone' for all providers (W11)", () => {
     expect(resolveBreakpointStrategy("auto", "anthropic")).toBe("multi-zone");
