@@ -218,6 +218,16 @@ export interface IncidentSignals {
   hasMisclassificationSignal: boolean; // ≥N success:true co-existing with ≥N "Tool execution failed" + "status"/"403"/"200" substring in an errorText
   misclassifiedTool?: string;
   misclassifiedToken?: string; // e.g. "403"|"status"|"200"
+  /**
+   * The mapped terminal `endReason` (the NAMED degradation cause — QT2/QT3 Glass
+   * Box degradation detectors). Metadata-derived (NOT from the trajectory record
+   * stream — `toIncidentSignals` omits it), so the handler threads
+   * `report.outcome.endReason` onto the signals before running the registry. The
+   * two lowest-priority heuristics (`context_exhausted` / `output_starved`) key
+   * on it — they explain the TERMINAL state, so a tool-failure cause out-ranks
+   * them. Absent ⇒ those rules do not fire (a clean session names no cause).
+   */
+  endReason?: string;
 }
 
 /**
