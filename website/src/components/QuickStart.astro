@@ -46,7 +46,7 @@
 
       <!-- Tab content: One-liner -->
       <div data-content="oneliner" class="tab-content relative" data-copy="curl -fsSL https://comis.ai/install.sh | bash">
-        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># One-liner installs Node.js and everything else (macOS & Linux)</span>
+        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Works everywhere. Installs everything. Friendly about it.</span>
 
 <span class="text-coral">$</span> <span class="text-teal">curl -fsSL https://comis.ai/install.sh | bash</span></code></pre>
         <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
@@ -57,11 +57,12 @@
       </div>
 
       <!-- Tab content: npm -->
-      <div data-content="npm" class="tab-content hidden relative" data-copy="npm install -g comisai&#10;comis init&#10;comis daemon start">
+      <div data-content="npm" class="tab-content hidden relative" data-copy="npm install -g comisai&#10;comis init&#10;comis configure&#10;comis daemon start">
         <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Requires Node.js 22.19+</span>
 
 <span class="text-coral">$</span> <span class="text-teal">npm install -g comisai</span>
 <span class="text-coral">$</span> <span class="text-teal">comis init</span>
+<span class="text-coral">$</span> <span class="text-teal">comis configure</span>     <span class="text-muted-light"># pick an LLM provider, add keys, connect a channel</span>
 <span class="text-coral">$</span> <span class="text-teal">comis daemon start</span></code></pre>
         <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
           <svg class="copy-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-width="2"/></svg>
@@ -71,13 +72,11 @@
       </div>
 
       <!-- Tab content: Docker -->
-      <div data-content="docker" class="tab-content hidden relative" data-copy="docker run -d --name comis --restart unless-stopped \&#10;  -p 127.0.0.1:4766:4766 \&#10;  -v comis-data:/home/comis/.comis \&#10;  comisai/comis:latest-slim&#10;docker exec -it comis comis init">
-        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Best production sandbox support is on a Linux host</span>
+      <div data-content="docker" class="tab-content hidden relative" data-copy="docker run -d --name comis -p 4766:4766 \&#10;  -v comis-data:/home/comis/.comis comisai/comis:latest-slim&#10;docker exec -it comis comis init">
+        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Any OS with Docker; the slim image is ~Linux-kernel sandbox-ready</span>
 
-<span class="text-coral">$</span> <span class="text-teal">docker run -d --name comis --restart unless-stopped \</span>
-<span class="text-teal">    -p 127.0.0.1:4766:4766 \</span>
-<span class="text-teal">    -v comis-data:/home/comis/.comis \</span>
-<span class="text-teal">    comisai/comis:latest-slim</span>
+<span class="text-coral">$</span> <span class="text-teal">docker run -d --name comis -p 4766:4766 \</span>
+<span class="text-teal">    -v comis-data:/home/comis/.comis comisai/comis:latest-slim</span>
 <span class="text-coral">$</span> <span class="text-teal">docker exec -it comis comis init</span></code></pre>
         <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
           <svg class="copy-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-width="2"/></svg>
@@ -107,7 +106,7 @@
     </p>
 
     <p class="text-muted-light mt-3 text-sm font-mono">
-      Verify with <span class="text-teal">curl http://127.0.0.1:4766/health</span>, then message your agent on any connected channel.
+      Verify with <span class="text-teal">curl http://localhost:4766/health</span> &rarr; <span class="text-teal">{`{"status":"ok"}`}</span>, then message your agent on any connected channel.
     </p>
 
     <a

@@ -2,7 +2,7 @@
 /**
  * The single source of truth for every counted, benchmarked, and cost fact the
  * website states. Import `FACTS` instead of hardcoding a number in a page or
- * component - so "9 channels", "15 packages", "35 providers", or "~71%" can
+ * component - so "9 channels", "15 packages", "27 providers", or "~71%" can
  * never be stated two different ways across the site.
  *
  * Every value here is copied verbatim from the audited README + the phase-157
@@ -15,11 +15,13 @@
 
 export const FACTS = {
   // Positioning spine (mirror README header). Plain-language, non-technical-first.
-  // Used by: Hero, Footer, AboutName, every page's meta title/description voice.
-  // No trailing period; consumers (Footer/AboutName) add their own.
-  spine: "Self-hosted AI agents for teams, communities, and serious personal workflows",
+  // Used by: Hero (splits on ", " to render the emphasis clause in the gradient),
+  // Footer, AboutName, every page's meta title/description voice. KEEP the comma
+  // separator so the Hero's two-line treatment works. No trailing period;
+  // consumers (Footer/AboutName) add their own.
+  spine: "Self-hosted AI agents for your whole team, isolated by design",
   subspine:
-    "Messaging-native agents, encrypted secrets, sandboxed tools, learning memory, and an auditable operations surface - all on infrastructure you control.",
+    "Self-hosted AI assistants for your whole team, right in the chat apps you already use. Runs on your own computer, every agent isolated, so your data stays yours.",
 
   // Counts.
   // Used by: homepage / Channels / compare pages (channels), Everything-in-the-box (packages).
@@ -36,15 +38,15 @@ export const FACTS = {
   // count is never conflated with the MCP-server ecosystem figure).
   // Used by: homepage Features / Any-model section, compare pages.
   models:
-    "35 catalog providers via pi-ai, local Ollama/LM Studio, and any OpenAI-compatible endpoint",
-  modelProvidersCount: 35,
+    "27 hosted providers via the pi-ai catalog, local Ollama, and any OpenAI-compatible endpoint",
+  modelProvidersCount: 27,
   mcp: "the MCP ecosystem's 50+ servers - none bundled, you choose",
 
   // Docker sandbox (corrected wording - the daemon detects the constraint and
   // auto-disables the exec sandbox; it never does so without surfacing it).
   // Used by: QuickStart / security / docker callouts.
   dockerSandbox:
-    "Comis detects unsupported dev/container sandbox hosts at startup, logs the downgrade, and auto-disables exec sandboxing rather than pretending isolation exists",
+    "Comis detects this at startup (a one-shot smoke test) and auto-disables the exec sandbox",
 
   // Benchmarks (each maps to a committed manifest).
   // Used by: memory page, compare pages, homepage CostSavings/memory hooks.

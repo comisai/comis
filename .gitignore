@@ -79,3 +79,5 @@ packages/comis/package.json.workspace-backup
 
 # Log files
 *.log
+
+design/

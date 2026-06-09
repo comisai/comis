@@ -43,7 +43,7 @@ const publishDate = "April 26, 2026";
       <div class="max-w-4xl mx-auto">
         <img
           src="/images/blog-dag-pipeline-hero.jpg"
-          alt="A single line of glowing prompt text expanding into a constellation of luminous nodes - the multi-agent DAG"
+          alt="A single line of glowing prompt text expanding into a constellation of luminous nodes — the multi-agent DAG"
           class="w-full rounded-2xl border border-white/5"
           loading="eager"
         />
@@ -88,7 +88,7 @@ const publishDate = "April 26, 2026";
           </div>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            Then it called <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">{`pipeline.execute({"id":"stock-deep-dive","variables":{"TICKER":"NVDA"}})`}</code>, the daemon spawned six sub-agents, and returned a Telegram-style "Pipeline is live ⚡️" acknowledgement to me. That was the chat-API call - done. The actual research was happening in the background, on six separate session keys.
+            Then it called <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">{`pipeline.execute({"id":"stock-deep-dive","variables":{"TICKER":"NVDA"}})`}</code>, the daemon spawned six sub-agents, and returned a Telegram-style "Pipeline is live ⚡️" acknowledgement to me. That was the chat-API call — done. The actual research was happening in the background, on six separate session keys.
           </p>
         </div>
 
@@ -97,7 +97,7 @@ const publishDate = "April 26, 2026";
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">What the agent actually built</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            The shape isn't novel. What's interesting is that the LLM produced it from one sentence, including correct dependency ordering, sensible <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">max_steps</code> budgets, and parameterizable variables (so the same pipeline reruns on AAPL, TSLA, MSFT - no second prompt).
+            The shape isn't novel. What's interesting is that the LLM produced it from one sentence, including correct dependency ordering, sensible <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">max_steps</code> budgets, and parameterizable variables (so the same pipeline reruns on AAPL, TSLA, MSFT — no second prompt).
           </p>
 
           <img
@@ -108,7 +108,7 @@ const publishDate = "April 26, 2026";
           />
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            Four analysts at the top fan out in parallel. Each runs in its own sub-agent session - separate memory, separate workspace, separate tool budget. They converge into a debate node that reads all four outputs and runs a multi-round bull-vs-bear synthesis. The debate output flows into a head-trader node that produces the final actionable call.
+            Four analysts at the top fan out in parallel. Each runs in its own sub-agent session — separate memory, separate workspace, separate tool budget. They converge into a debate node that reads all four outputs and runs a multi-round bull-vs-bear synthesis. The debate output flows into a head-trader node that produces the final actionable call.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
@@ -119,7 +119,7 @@ const publishDate = "April 26, 2026";
 <pre class="text-muted-light whitespace-pre leading-relaxed">{`sub-agent-1903d99a-...   technical analyst
 sub-agent-195c0701-...   fundamental analyst
 sub-agent-6fb4128e-...   sentiment analyst
-sub-agent-f7d0e988-...   macro analyst         (the heavy lifter - see below)
+sub-agent-f7d0e988-...   macro analyst         (the heavy lifter — see below)
 sub-agent-7badeca0-...   bull vs bear debate
 sub-agent-d3f829c9-...   head trader`}</pre>
           </div>
@@ -134,9 +134,9 @@ sub-agent-d3f829c9-...   head trader`}</pre>
           </p>
 
           <ul class="list-disc pl-6 space-y-2 text-muted-light text-base leading-relaxed mb-6">
-            <li><strong class="text-white">Its own session key</strong> - <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">default:sub-agent-f7d0e988-...:sub-agent:f7d0e988-...</code> - completely isolated from the parent's conversation history.</li>
+            <li><strong class="text-white">Its own session key</strong> — <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">default:sub-agent-f7d0e988-...:sub-agent:f7d0e988-...</code> — completely isolated from the parent's conversation history.</li>
             <li><strong class="text-white">Its own context window</strong>, with system prompt, tool descriptions, and the analyst's task injected at boot. Nothing else.</li>
-            <li><strong class="text-white">Its own tool budget</strong> - <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">max_steps: 40</code> per analyst, set by the parent at pipeline construction.</li>
+            <li><strong class="text-white">Its own tool budget</strong> — <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">max_steps: 40</code> per analyst, set by the parent at pipeline construction.</li>
             <li><strong class="text-white">Its own workspace</strong> for in-flight tool ops, at <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">~/.comis/workspace/sessions/default/sub-agent@&lt;id&gt;/</code>. Final node output (the analyst's markdown summary) lands one level up in <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">~/.comis/graph-runs/&lt;graph-id&gt;/&lt;node-id&gt;-output.md</code>, alongside a <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">_run-metadata.json</code> with per-node stats.</li>
           </ul>
 
@@ -154,7 +154,7 @@ sub-agent-d3f829c9-...   head trader`}</pre>
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Inside the macro analyst: 34 tool calls</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            One sub-agent did the heavy lifting. The macro analyst made <strong class="text-white">34 tool calls across 21 LLM turns</strong> over 128 seconds - more than a third of the total session activity. That's the right shape: macro research means a lot of independent threads to chase, and the parallel-isolation lets this sub-agent grind through them without slowing the others down.
+            One sub-agent did the heavy lifting. The macro analyst made <strong class="text-white">34 tool calls across 21 LLM turns</strong> over 128 seconds — more than a third of the total session activity. That's the right shape: macro research means a lot of independent threads to chase, and the parallel-isolation lets this sub-agent grind through them without slowing the others down.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
@@ -175,7 +175,7 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
           </div>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            The analyst pulled real numbers - $700B hyperscaler AI capex in 2026, Fed near-neutral, GDP at 2.2-2.4%, the $5.5B export-control charge, semiconductor revenue crossing $1.3T - and folded them into a "moderately bullish" outlook with specific risk flags (tariff escalation could shave 0.5-1% from GDP). Not regurgitated training data; live web research with the source URLs in the tool-result files.
+            The analyst pulled real numbers — $700B hyperscaler AI capex in 2026, Fed near-neutral, GDP at 2.2-2.4%, the $5.5B export-control charge, semiconductor revenue crossing $1.3T — and folded them into a "moderately bullish" outlook with specific risk flags (tariff escalation could shave 0.5-1% from GDP). Not regurgitated training data; live web research with the source URLs in the tool-result files.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
@@ -218,7 +218,7 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
           </div>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            Two of those 101 tool calls failed (a 2% failure rate - typical noise from <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">exec</code> shell ops). Both were caught by the runtime and the agent recovered without aborting. No retries needed at the orchestration layer.
+            Two of those 101 tool calls failed (a 2% failure rate — typical noise from <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">exec</code> shell ops). Both were caught by the runtime and the agent recovered without aborting. No retries needed at the orchestration layer.
           </p>
         </div>
 
@@ -241,14 +241,14 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
           <div class="bg-navy-light/40 border-l-4 border-teal/60 rounded-r-xl p-5 my-8 text-sm leading-relaxed">
             <div class="text-teal font-semibold mb-2">🐂 Bull highlights</div>
             <ul class="list-disc pl-5 space-y-1 text-muted-light mb-4">
-              <li>PEG under 0.4 - paying a value multiple for hypergrowth</li>
+              <li>PEG under 0.4 — paying a value multiple for hypergrowth</li>
               <li>$700B AI capex supercycle, Blackwell supply-constrained</li>
-              <li>CUDA moat deepening - $97B FCF, 80% share, fortress balance sheet</li>
+              <li>CUDA moat deepening — $97B FCF, 80% share, fortress balance sheet</li>
               <li>Every analyst Strong Buy, consensus PT $266 (+28%)</li>
             </ul>
             <div class="text-coral font-semibold mb-2">🐻 Bear highlights</div>
             <ul class="list-disc pl-5 space-y-1 text-muted-light mb-4">
-              <li>$5T market cap pricing in perfection - one stumble = massive drawdown (beta 2.34)</li>
+              <li>$5T market cap pricing in perfection — one stumble = massive drawdown (beta 2.34)</li>
               <li><strong class="text-white">Every single insider selling aggressively, zero buying</strong></li>
               <li>AI capex could prove cyclical (like crypto mining), not secular (like cloud)</li>
               <li>Export controls, tariff escalation, hyperscaler custom silicon all chip at the moat</li>
@@ -258,7 +258,7 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
           </div>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            That's a useful structure. The model didn't pick a side; it surfaced the actual disagreement and let the next node resolve it. Comis's tool policy left the debate sub-agent with read-only access to upstream tool-result files - it could see what the analysts found, but not run new searches. That constraint was set at pipeline construction, not handed to the LLM as an instruction.
+            That's a useful structure. The model didn't pick a side; it surfaced the actual disagreement and let the next node resolve it. Comis's tool policy left the debate sub-agent with read-only access to upstream tool-result files — it could see what the analysts found, but not run new searches. That constraint was set at pipeline construction, not handed to the LLM as an instruction.
           </p>
         </div>
 
@@ -267,18 +267,18 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Head trader's call</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            Five tool calls in this sub-agent - all reads, pulling the four analyst summaries and the debate document. Three LLM calls, 45 seconds. The output:
+            Five tool calls in this sub-agent — all reads, pulling the four analyst summaries and the debate document. Three LLM calls, 45 seconds. The output:
           </p>
 
           <div class="bg-navy-light/40 border border-amber-500/30 rounded-xl p-6 my-8">
             <div class="flex items-center gap-2 text-sm text-amber-400 mb-4 font-mono">
               <span>⚡ HEAD TRADER FINAL CALL</span>
             </div>
-            <div class="text-2xl text-white font-bold mb-2">📌 BUY - ON PULLBACK</div>
+            <div class="text-2xl text-white font-bold mb-2">📌 BUY — ON PULLBACK</div>
             <div class="text-sm text-muted mb-6">Conviction: MEDIUM-HIGH</div>
 
             <p class="text-muted-light text-sm leading-relaxed mb-5 italic border-l-2 border-amber-500/40 pl-4">
-              NVDA is the most dominant tech franchise of this decade - 80% AI share, 73% revenue growth, $97B FCF, forward P/E 25x. But it's overbought at $208 against $212 resistance with every insider selling. Buy the dip on a generational compounder - don't chase into resistance.
+              NVDA is the most dominant tech franchise of this decade — 80% AI share, 73% revenue growth, $97B FCF, forward P/E 25x. But it's overbought at $208 against $212 resistance with every insider selling. Buy the dip on a generational compounder — don't chase into resistance.
             </p>
 
             <div class="overflow-x-auto mb-5">
@@ -329,7 +329,7 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            None of that is in Claude Opus 4.6's training data - the prices are from yesterday. Every number above came from a tool call.
+            None of that is in Claude Opus 4.6's training data — the prices are from yesterday. Every number above came from a tool call.
           </p>
         </div>
 
@@ -381,7 +381,7 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
           </div>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            Add the parent orchestration call and a few smaller bookkeeping calls for chat overhead, and the run rolled up to <strong class="text-white">15 Execution events across about 9.8 minutes of total compute time</strong>. Every sub-agent's system prompt and tool-description pack was a 100% cache hit after the first call - the staggered spawn strategy lets all six share the parent's prompt-cache prefix instead of each one writing a fresh cache.
+            Add the parent orchestration call and a few smaller bookkeeping calls for chat overhead, and the run rolled up to <strong class="text-white">15 Execution events across about 9.8 minutes of total compute time</strong>. Every sub-agent's system prompt and tool-description pack was a 100% cache hit after the first call — the staggered spawn strategy lets all six share the parent's prompt-cache prefix instead of each one writing a fresh cache.
           </p>
 
           <div class="grid grid-cols-2 md:grid-cols-4 gap-4 my-10">
@@ -422,7 +422,7 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
           </div>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            The pi-coding-agent SDK's <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">tools</code> field is an <em>allowlist of tool names</em>, not a list of definitions. An empty array is treated as a non-empty allowlist that allows zero tools - including all customTools - and every Comis tool got filtered out of the SDK's registry. The Anthropic API request went out with no <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">tools: [...]</code> parameter, the model had no structured way to invoke anything, and you got plaintext markup back. Universal: chat API, Telegram, Discord, every entry point.
+            The pi-coding-agent SDK's <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">tools</code> field is an <em>allowlist of tool names</em>, not a list of definitions. An empty array is treated as a non-empty allowlist that allows zero tools — including all customTools — and every Comis tool got filtered out of the SDK's registry. The Anthropic API request went out with no <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">tools: [...]</code> parameter, the model had no structured way to invoke anything, and you got plaintext markup back. Universal: chat API, Telegram, Discord, every entry point.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
@@ -434,8 +434,8 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
           </p>
 
           <ul class="list-disc pl-6 space-y-2 text-muted-light text-base leading-relaxed mb-6">
-            <li><code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">"passes customTool names as the SDK's tools allowlist"</code> - confirms the array is populated.</li>
-            <li><code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">"does NOT pass an empty tools allowlist when customTools is non-empty"</code> - explicit guard against re-introducing the bug.</li>
+            <li><code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">"passes customTool names as the SDK's tools allowlist"</code> — confirms the array is populated.</li>
+            <li><code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">"does NOT pass an empty tools allowlist when customTools is non-empty"</code> — explicit guard against re-introducing the bug.</li>
           </ul>
         </div>
 
@@ -448,7 +448,7 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            The model invented "stock-deep-dive" as a graph ID, decided that 4 analysts was the right fan-out width, picked which dimensions were worth analyzing (technical, fundamental, sentiment, macro - not "earnings, options flow, dark pool, lunar phase"), set <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">max_steps: 40</code> as a sane budget per analyst, parameterized the ticker so the same pipeline reruns on AAPL, parameterized the sub-agent task prompts to encode the analyst persona inline, and ordered dependencies correctly. None of that was hardcoded. None of it required me to write any YAML.
+            The model invented "stock-deep-dive" as a graph ID, decided that 4 analysts was the right fan-out width, picked which dimensions were worth analyzing (technical, fundamental, sentiment, macro — not "earnings, options flow, dark pool, lunar phase"), set <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">max_steps: 40</code> as a sane budget per analyst, parameterized the ticker so the same pipeline reruns on AAPL, parameterized the sub-agent task prompts to encode the analyst persona inline, and ordered dependencies correctly. None of that was hardcoded. None of it required me to write any YAML.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
@@ -460,8 +460,8 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
             <li><strong class="text-white">Sub-agent sessions</strong> with isolated context, isolated memory, and isolated workspace directories.</li>
             <li><strong class="text-white">A staggered spawn strategy</strong> that delays parallel sub-agent boot by ~1-4 seconds each so they share the parent's prompt-cache prefix instead of each one writing a fresh cache (this is what got the 100% hit rate; it's the main idea in <a href="/blog/cache-optimization-journey" class="text-teal hover:text-teal-dark underline">the cache optimization post</a>).</li>
             <li><strong class="text-white">A tool-result persistence layer</strong> that writes each sub-agent's output to disk so downstream nodes (and the parent) can read it without holding everything in context.</li>
-            <li><strong class="text-white">A real prompt-cache implementation</strong> - every sub-agent inherits the parent's cached prompt prefix, so the system prompt and tool-description pack are written once and read by all six. 100% cache hit rate after the first call across the whole run.</li>
-            <li><strong class="text-white">A working tool-use API integration</strong> - the bug the SDK fix resolved, without which none of the above produces structured tool calls.</li>
+            <li><strong class="text-white">A real prompt-cache implementation</strong> — every sub-agent inherits the parent's cached prompt prefix, so the system prompt and tool-description pack are written once and read by all six. 100% cache hit rate after the first call across the whole run.</li>
+            <li><strong class="text-white">A working tool-use API integration</strong> — the bug the SDK fix resolved, without which none of the above produces structured tool calls.</li>
           </ul>
         </div>
 
@@ -484,11 +484,11 @@ web_search   "hyperscaler capex 2026 cloud infrastructure spend"
           </div>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            That's it. Within seconds the bot replies with a <strong class="text-white">"Pipeline is live ⚡️"</strong> acknowledgement and the ASCII diagram of the DAG. Then six sub-agents fan out and go to work in the background. Five to ten minutes later the bot pushes the full report back into the same chat - the four analyst summaries, the bull/bear debate, and the head trader's call - because the Telegram chat <em>is</em> the announce channel for that graph.
+            That's it. Within seconds the bot replies with a <strong class="text-white">"Pipeline is live ⚡️"</strong> acknowledgement and the ASCII diagram of the DAG. Then six sub-agents fan out and go to work in the background. Five to ten minutes later the bot pushes the full report back into the same chat — the four analyst summaries, the bull/bear debate, and the head trader's call — because the Telegram chat <em>is</em> the announce channel for that graph.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            The first invocation has to write the prompt cache from scratch on the parent and on each new sub-agent. Every subsequent ticker on the same daemon instance hits the cache for the entire pipeline scaffold and runs noticeably faster. The daemon also saves the <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">stock-deep-dive</code> graph definition, so on the second invocation the agent doesn't even need to redesign the DAG - it dispatches the saved one.
+            The first invocation has to write the prompt cache from scratch on the parent and on each new sub-agent. Every subsequent ticker on the same daemon instance hits the cache for the entire pipeline scaffold and runs noticeably faster. The daemon also saves the <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">stock-deep-dive</code> graph definition, so on the second invocation the agent doesn't even need to redesign the DAG — it dispatches the saved one.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">

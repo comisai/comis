@@ -4,7 +4,7 @@ import Base from "../../layouts/Base.astro";
 import Footer from "../../components/Footer.astro";
 
 const title = "Anatomy of a Context Engine: 8 Layers That Keep AI Agents Affordable";
-const description = "How Comis strips thinking traces and inline reasoning tags, evicts dead content, masks old observations, compresses long conversations, and keeps useful detail recoverable.";
+const description = "How Comis's deterministic pipeline mode strips thinking traces and inline reasoning tags, evicts dead content, masks old observations, and compresses entire conversations to keep costs predictable. This pipeline is now the opt-in mode; the lossless DAG (LCD) engine ships as the default.";
 const publishDate = "April 9, 2026";
 ---
 
@@ -49,11 +49,11 @@ const publishDate = "April 9, 2026";
     <article class="px-6 pb-24">
       <div class="max-w-3xl mx-auto">
 
-        <!-- Editor's note: context engine options have evolved since publication. -->
+        <!-- Editor's note: pipeline is now the opt-in mode; DAG/LCD is the default -->
         <div class="bg-teal/5 border border-teal/20 rounded-xl p-6 mt-8 mb-4">
           <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-3">A note on what changed</p>
           <p class="text-muted-light text-base leading-relaxed">
-            This post describes Comis's deterministic context pipeline: the original engine and still a fast, predictable option. Since publication, Comis also added DAG-backed recovery: older turns can compress into a zoomable summary the agent can drill back into with <code class="text-teal text-xs">ctx_search</code>, <code class="text-teal text-xs">ctx_inspect</code>, and <code class="text-teal text-xs">ctx_expand</code>. The pipeline mechanics below remain accurate for the deterministic path.
+            This post describes Comis's <strong class="text-white">deterministic pipeline mode</strong> - the original context engine, and still a fast, predictable option. Since then it has become the <strong class="text-white">opt-in</strong> mode. The <strong class="text-white">default</strong> is now the lossless DAG engine (LCD): instead of evicting old turns, it compresses them into a <em>zoomable</em> summary the agent can drill back into with <code class="text-teal text-xs">ctx_search</code>, <code class="text-teal text-xs">ctx_inspect</code>, and <code class="text-teal text-xs">ctx_expand</code> - compression you can reverse, not destruction you can't. The pipeline mechanics below are accurate to the pipeline mode and remain in use when an operator selects it.
           </p>
         </div>
 
@@ -328,7 +328,7 @@ const publishDate = "April 9, 2026";
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Build it once, run it forever</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            The context engine runs before LLM calls across parent sessions, sub-agents, cron heartbeats, and graph pipeline nodes. It is designed to add negligible user-facing latency and works out of the box, while still exposing thresholds for operators who want to tune it.
+            The context engine runs on every single LLM call in Comis. Parent sessions, sub-agents, cron heartbeats, graph pipeline nodes - all of them. It processes in 1-5ms. No user-facing latency. No configuration needed (though every threshold is tunable).
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
@@ -338,7 +338,7 @@ const publishDate = "April 9, 2026";
           <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 mt-12 mb-8">
             <p class="text-white font-semibold mb-2">Want the full technical spec?</p>
             <p class="text-muted text-sm leading-relaxed">
-              The <a href="/context-management" class="text-teal hover:text-teal-dark underline">context management page</a> covers the cache fence, progressive tool disclosure, microcompaction, budget guards, and DAG-backed recovery. The context engine source lives in <code class="text-teal text-xs">packages/agent/src/context-engine/</code>.
+              The <a href="/context-management" class="text-teal hover:text-teal-dark underline">context management page</a> covers all 20+ cost optimization mechanisms including the cache fence, progressive tool disclosure, microcompaction, and budget guards. The context engine source lives in <code class="text-teal text-xs">packages/agent/src/context-engine/</code>.
             </p>
           </div>
         </div>

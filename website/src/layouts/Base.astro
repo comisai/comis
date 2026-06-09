@@ -11,8 +11,8 @@ interface Props {
 }
 
 const {
-  title = "Comis - Self-hosted AI agents for teams | Open Source",
-  description = `${FACTS.spine}. Messaging-native agents, learning memory, sandboxed tools, encrypted secrets, and audit trails across ${FACTS.channelList.slice(0, -1).join(", ")} and ${FACTS.channelList[FACTS.channelList.length - 1]}.`,
+  title = "Comis - Self-hosted AI agents for your whole team | Open Source",
+  description = `${FACTS.spine}. Multiple agents and operators on one auditable install across ${FACTS.channelList.slice(0, -1).join(", ")} and ${FACTS.channelList[FACTS.channelList.length - 1]} - security enforced by the kernel and the compiler, not by prompts.`,
   ogTitle,
   ogDescription,
 } = Astro.props;
@@ -66,7 +66,7 @@ const breadcrumbSegments = Astro.url.pathname
       "name": "Comis",
       "url": "https://comis.ai",
       "logo": "https://comis.ai/images/comis-logo.png",
-      "description": `${FACTS.spine}. Messaging-native agents, learning memory, sandboxed tools, encrypted secrets, and audit trails on infrastructure you control.`,
+      "description": `${FACTS.spine}. Multiple agents and operators on one auditable install, with security enforced by the kernel and the compiler, not by prompts.`,
       "sameAs": [
         "https://github.com/comisai/comis",
         "https://twitter.com/comis_ai",

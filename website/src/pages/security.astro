@@ -6,7 +6,7 @@ import { SECURITY } from "../data/security";
 import { FACTS } from "../data/facts";
 
 const title = "Security - Built from Scratch with Security in Mind";
-const description = "Comis wasn't patched for security after launch. It was designed around the question: what happens when an AI agent has real power and someone tries to abuse it? Runtime isolation, encrypted secrets, typed boundaries, and tests do the work prompts cannot.";
+const description = "Comis wasn't patched for security after launch. It was designed around the question: what happens when an AI agent has real power and someone tries to abuse it? Security is enforced by the kernel and the compiler, not by prompts.";
 
 const layers = [
   {
@@ -63,7 +63,7 @@ const layers = [
     category: "Secrets",
     color: "teal",
     threat: "API key exposure via agentic CLIs",
-    how: "Works for API-key CLIs - Claude Code included. The real key stays in the daemon's AES-256-GCM encrypted store and is resolved per request by the in-daemon HTTPS broker. The CLI runs with a placeholder; the broker terminates TLS with its own CA, verifies the single-use proxy token, and injects the real credential for allow-listed hosts (`x-api-key`, `Authorization: Bearer`, or query param). On supported Linux hosts, broker-only network mode prevents direct egress from credentialed sandboxes. Broker failures stop before upstream forwarding: bad token -> 407, no binding -> 403, missing secret -> 502. Every inject, deny, and blocked-egress event is audited with `agentId` and `traceId`.",
+    how: "Works for any API-key CLI - Claude Code included. The real key never enters the exec sandbox. It lives in the daemon's AES-256-GCM encrypted store and is resolved per-request by the in-daemon HTTPS MITM broker. The CLI runs with a placeholder; the broker terminates TLS with its own CA, verifies the single-use proxy token, and injects the real credential for allow-listed hosts (`x-api-key`, `Authorization: Bearer`, or query param). On Linux, the credentialed sandbox runs in broker-only network mode (`--unshare-net`) - the broker unix socket is the only reachable destination (kernel-enforced; validated on the Linux production host class). Broker fails closed: bad token → 407, no binding → 403, missing secret → 502, request never forwarded. Every inject/deny/blocked-egress event is audited with `agentId` + `traceId`.",
   },
   {
     name: "Log Sanitizer",
@@ -84,7 +84,7 @@ const layers = [
     category: "Process Isolation",
     color: "red",
     threat: "Filesystem escape & host compromise",
-    how: "Sandboxed filesystem isolation for shell commands where the host supports it. Linux uses bubblewrap (bwrap) with full namespace unsharing (mount, PID, user, cgroup, IPC). macOS uses sandbox-exec with SBPL deny-default profiles where available. Agents can be limited to their own workspace, with package manager caches redirected into that workspace and process tree kill cascades via --die-with-parent.",
+    how: "Kernel-enforced filesystem isolation for every shell command. Linux uses bubblewrap (bwrap) with full namespace unsharing (mount, PID, user, cgroup, IPC). macOS uses sandbox-exec with SBPL deny-default profiles. Agents can only see their own workspace - the host filesystem is invisible. Package manager caches are redirected into the workspace. Process tree kill cascades via --die-with-parent.",
   },
   {
     name: "Tool Policy Engine",
@@ -204,7 +204,7 @@ const categories = [
   { name: "Perimeter", color: "coral", count: 5, desc: "Block threats before they reach the LLM" },
   { name: "Secrets", color: "teal", count: 4, desc: "Encrypt, scope, redact, and broker credentials at every layer" },
   { name: "Network", color: "purple-400", count: 1, desc: "Prevent outbound requests to private networks" },
-  { name: "Process Isolation", color: "red-400", count: 1, desc: "Sandboxed filesystem execution where the host supports it" },
+  { name: "Process Isolation", color: "red-400", count: 1, desc: "Kernel-enforced filesystem sandbox for shell commands" },
   { name: "Access Control", color: "blue-400", count: 3, desc: "Limit what each agent can do and require approval" },
   { name: "Memory", color: "green-400", count: 3, desc: "Partition trust levels to prevent memory poisoning" },
   { name: "Detection", color: "yellow-400", count: 1, desc: "Detect when the LLM leaks system instructions" },
@@ -260,7 +260,7 @@ const colorClass: Record<string, string> = {
           <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
             <div>
               <p class="text-4xl font-bold text-coral font-mono">On</p>
-              <p class="text-muted text-sm mt-2">Exec sandbox <span class="text-muted-light">where supported</span></p>
+              <p class="text-muted text-sm mt-2">Kernel sandbox <span class="text-muted-light">by default</span></p>
             </div>
             <div>
               <p class="text-4xl font-bold text-white font-mono">{SECURITY.contentScannerRules}</p>
@@ -291,10 +291,10 @@ const colorClass: Record<string, string> = {
           <p class="text-coral font-semibold text-sm uppercase tracking-widest">Flagship feature</p>
         </div>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
-          Sandboxed process isolation.
+          Kernel-enforced process isolation.
         </h2>
         <p class="text-muted text-lg mb-10 max-w-2xl">
-          Shell commands are isolated with the strongest sandbox provider the host can supply. On supported Linux and macOS systems, the agent sees its workspace and approved runtime paths, not your whole machine.
+          Every shell command your agent runs is sandboxed at the OS level. The agent sees its workspace. Nothing else. No tricks, no escapes - the kernel enforces it.
         </p>
 
         <div class="grid md:grid-cols-2 gap-6 mb-10">
@@ -353,7 +353,7 @@ const colorClass: Record<string, string> = {
               </li>
               <li class="flex items-start gap-2">
                 <span class="text-teal mt-0.5">&#x2022;</span>
-                <span><span class="text-white">Explicit downgrade</span> - unavailable sandbox providers are detected and surfaced</span>
+                <span><span class="text-white">Graceful degradation</span> - falls back to command denylist if unavailable</span>
               </li>
             </ul>
           </div>
