@@ -3031,8 +3031,8 @@ Clear the LCD durable conversation history for a session. **Destructive and irre
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ session_key: string, memory?: boolean }` — `memory` defaults to `false`; when `true`, also clears RAG memories for this session (the full-forget / GDPR path) |
-| **Returns** | `{ sessionKey: string, lcdRowsDeleted: number, memoriesDeleted?: number }` — `memoriesDeleted` is `0` when `memory` is `false` or absent |
+| **Parameters** | `{ session_key: string, memory?: boolean }` — `memory` defaults to `false`; when `true`, the request is accepted without error but **RAG memory is not yet cleared** (the `--memory` grain is reserved and deferred — see note below). Only LCD history is deleted regardless of this flag. |
+| **Returns** | `{ sessionKey: string, lcdRowsDeleted: number, memoriesDeleted?: number }` — `memoriesDeleted` is **omitted** (`undefined`) in the current implementation, signalling that RAG memory clearing is not yet implemented. When the full RAG clear is wired in a future phase, `memoriesDeleted` will be set to the number of deleted memory entries. |
 
 <CodeGroup>
 ```json Request
@@ -3051,13 +3051,16 @@ Clear the LCD durable conversation history for a session. **Destructive and irre
   "jsonrpc": "2.0",
   "result": {
     "sessionKey": "default:user123:telegram",
-    "lcdRowsDeleted": 42,
-    "memoriesDeleted": 0
+    "lcdRowsDeleted": 42
   },
   "id": 1
 }
 ```
 </CodeGroup>
+
+<Note>
+**`memory: true` is reserved and not yet implemented.** Passing it is accepted without error, but RAG memory is not cleared — only the LCD history is deleted. The response will omit `memoriesDeleted` (`undefined`), signalling the not-implemented state. A future phase will wire the full conversation-scoped RAG-memory delete across all memory stores.
+</Note>
 
 After a reset, the LCD store is empty for the session. The next conversation turn starts with a clean slate — the model no longer has access to the prior history via the LCD read path. For the full durability model (LCD vs. JSONL vs. RAG memory), see [Data Directory](/operations/data-directory).
 

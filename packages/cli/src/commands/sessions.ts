@@ -256,8 +256,16 @@ export function registerSessionsCommand(program: Command): void {
           });
         });
         console.log(`LCD history cleared: ${result.lcdRowsDeleted} rows deleted.`);
-        if (result.memoriesDeleted !== undefined) {
-          console.log(`RAG memories cleared: ${result.memoriesDeleted} memories deleted.`);
+        if (opts.memory) {
+          if (result.memoriesDeleted !== undefined) {
+            // RAG memory clear was implemented and ran — surface the count.
+            console.log(`RAG memories cleared: ${result.memoriesDeleted} memories deleted.`);
+          } else {
+            // Handler omitted memoriesDeleted → not yet implemented (Phase 164 deferred).
+            process.stderr.write(
+              "⚠ --memory is not yet implemented — RAG memory was NOT cleared (only LCD history was cleared).\n",
+            );
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

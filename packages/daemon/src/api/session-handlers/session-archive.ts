@@ -160,10 +160,30 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         "LCD history reset",
       );
 
-      const result = {
+      // DEFERRED (Phase 164 gap): conversation-scoped RAG-memory clear spans ~12 memory
+      // stores — not yet wired. --memory clears LCD only and reports not-implemented.
+      // Follow-up: a dedicated phase to inject deleteMemoriesBySession from the composition
+      // root into SessionHandlerDeps.
+      const requestMemory = (rawParams.memory ?? false) as boolean;
+      if (requestMemory) {
+        deps.logger.warn(
+          {
+            method: ContextResetLcdContract.method,
+            conversationId: scope.conversationId,
+            submodule: "context-reset-lcd",
+            errorKind: "precondition",
+            hint: "RAG-memory clearing (--memory) is not yet implemented; cleared LCD history only — see Phase 164 deferred follow-up",
+          },
+          "--memory requested but RAG-memory clear is not yet implemented — LCD history cleared only",
+        );
+      }
+
+      // memoriesDeleted is intentionally OMITTED (left undefined): returning 0 would falsely
+      // imply an attempted-but-empty RAG clear. Omission signals not-implemented; callers
+      // (CLI, API) surface this as a ⚠ warning rather than a count.
+      const result: { sessionKey: string; lcdRowsDeleted: number; memoriesDeleted?: number } = {
         sessionKey,
         lcdRowsDeleted,
-        memoriesDeleted: 0 as const, // --memory stub: RAG clear is a thin second step
       };
       if (IS_DEV) ContextResetLcdContract.response.parse(result);
       return result;

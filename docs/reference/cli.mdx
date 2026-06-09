@@ -1227,7 +1227,7 @@ Clear the LCD durable conversation history for a session. **This operation is ir
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--memory` | `boolean` | `false` | Also clear RAG memories for this session (the full-forget / GDPR path) |
+| `--memory` | `boolean` | `false` | **Reserved — not yet implemented.** Accepted without error, but RAG memory is NOT cleared; only LCD history is cleared. The CLI prints a `⚠` warning when this flag is passed. A future phase will wire the full conversation-scoped RAG-memory clear. |
 | `--yes` | `boolean` | `false` | Required — skip the confirmation prompt (the command exits with an error if omitted) |
 
 <Warning>
@@ -1247,7 +1247,7 @@ comis sessions delete "default:user123:telegram" --yes
 # Clear LCD history for a session (irreversible, requires --yes)
 comis sessions reset-lcd "default:user123:telegram" --yes
 
-# Clear LCD history AND RAG memories (full-forget path)
+# Pass --memory (reserved, not yet implemented — prints ⚠ warning; only LCD is cleared)
 comis sessions reset-lcd "default:user123:telegram" --memory --yes
 ```
 
