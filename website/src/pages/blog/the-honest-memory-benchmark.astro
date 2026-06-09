@@ -44,7 +44,7 @@ const proveManifest = `${repoTree}/benchmarks/results/2026-06-01-phase104-prove`
           The honest agent-memory benchmark: we built the <span class="text-teal">proving machine</span> first
         </h1>
         <p class="text-lg md:text-xl text-muted leading-relaxed">
-          Agent-memory leaderboards are easy to game, and vendor numbers aren't comparable across protocols &mdash; the judge model alone can swing a memory score from ~49% to ~94%. So instead of racing to publish a number, we built the machine that proves one: an open, in-repo, reproducible harness. Here is what it is, what we measured at $0, what we deliberately did <span class="text-white">not</span> publish, and the one command that lets you reproduce the full head-to-head yourself.
+          Agent-memory leaderboards are easy to game, and vendor numbers aren't comparable across protocols - the judge model alone can swing a memory score from ~49% to ~94%. So instead of racing to publish a number, we built the machine that proves one: an open, in-repo, reproducible harness. Here is what it is, what we measured at $0, what we deliberately did <span class="text-white">not</span> publish, and the one command that lets you reproduce the full head-to-head yourself.
         </p>
       </div>
     </section>
@@ -58,17 +58,17 @@ const proveManifest = `${repoTree}/benchmarks/results/2026-06-01-phase104-prove`
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The problem with memory leaderboards</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            Every few weeks a new agent-memory system posts a leaderboard with itself on top. The trouble is that almost none of those numbers are comparable. They use different datasets, different answer models, different judges, and a different accounting of what counts as "correct." The single biggest swing isn't the memory system at all &mdash; it's the LLM judge. The same set of answers has been reported at <strong class="text-white">~49%</strong> under an independent judge and <strong class="text-white">~94%</strong> when self-judged. A leaderboard that doesn't disclose its judge is a leaderboard you cannot trust.
+            Every few weeks a new agent-memory system posts a leaderboard with itself on top. The trouble is that almost none of those numbers are comparable. They use different datasets, different answer models, different judges, and a different accounting of what counts as "correct." The single biggest swing isn't the memory system at all - it's the LLM judge. The same set of answers has been reported at <strong class="text-white">~49%</strong> under an independent judge and <strong class="text-white">~94%</strong> when self-judged. A leaderboard that doesn't disclose its judge is a leaderboard you cannot trust.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            There's a sharper tell. On the popular LoCoMo dataset, a <em>trivial filesystem baseline</em> &mdash; just dump the conversation to files and let the model grep &mdash; can score <em>higher</em> than a real, vendor-published memory system. We measured exactly that as a control: under one judge the filesystem baseline lands at <strong class="text-white">52.6 / 36.3</strong> against our recall pipeline's <strong class="text-white">71.1 / 73.3</strong> on LongMemEval. The point of the control isn't to dunk on filesystems &mdash; it's the opposite. It proves the baseline isn't weak. If your benchmark can't separate a real memory system from a pile of text files, the benchmark is broken, not the contender.
+            There's a sharper tell. On the popular LoCoMo dataset, a <em>trivial filesystem baseline</em> - just dump the conversation to files and let the model grep - can score <em>higher</em> than a real, vendor-published memory system. We measured exactly that as a control: under one judge the filesystem baseline lands at <strong class="text-white">52.6 / 36.3</strong> against our recall pipeline's <strong class="text-white">71.1 / 73.3</strong> on LongMemEval. The point of the control isn't to dunk on filesystems - it's the opposite. It proves the baseline isn't weak. If your benchmark can't separate a real memory system from a pile of text files, the benchmark is broken, not the contender.
           </p>
 
           <div class="bg-navy-light/80 border border-coral/15 rounded-xl p-6 my-8">
             <p class="text-white font-semibold mb-3">Three ways a memory leaderboard misleads:</p>
             <ul class="text-muted-light text-sm leading-relaxed space-y-2 list-disc pl-5">
-              <li><span class="text-white">Undisclosed judge.</span> A self-judged or single-judge score is unfalsifiable &mdash; you can't tell the system from the grader.</li>
+              <li><span class="text-white">Undisclosed judge.</span> A self-judged or single-judge score is unfalsifiable - you can't tell the system from the grader.</li>
               <li><span class="text-white">Non-comparable protocol.</span> Different datasets, answer models, and "correct/total" accounting make two vendors' numbers apples-to-oranges.</li>
               <li><span class="text-white">Hidden oracle.</span> A per-ability hint or a full-context bypass quietly turns a recall test into a reading-comprehension test.</li>
             </ul>
@@ -80,18 +80,18 @@ const proveManifest = `${repoTree}/benchmarks/results/2026-06-01-phase104-prove`
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">What we built: the proving machine</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            Before chasing a score, we built the thing that makes a score believable: an in-repo, Apache-2.0-licensed, reproducible harness that runs the <em>real</em> Comis recall pipeline &mdash; the same search &rarr; fuse &rarr; rerank &rarr; score &rarr; trust-filter &rarr; dedup path production uses &mdash; over the standard LongMemEval and LoCoMo datasets. No vendored corpus (the datasets are operator-provided out-of-band), no auto-download, nothing that touches your live store.
+            Before chasing a score, we built the thing that makes a score believable: an in-repo, Apache-2.0-licensed, reproducible harness that runs the <em>real</em> Comis recall pipeline - the same search &rarr; fuse &rarr; rerank &rarr; score &rarr; trust-filter &rarr; dedup path production uses - over the standard LongMemEval and LoCoMo datasets. No vendored corpus (the datasets are operator-provided out-of-band), no auto-download, nothing that touches your live store.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            The harness is built around a believability checklist &mdash; the things a memory number needs before it deserves to be quoted:
+            The harness is built around a believability checklist - the things a memory number needs before it deserves to be quoted:
           </p>
 
           <div class="bg-navy rounded-xl p-6 my-8 space-y-3">
-            <p class="text-muted-light text-sm leading-relaxed"><span class="text-teal font-mono">1.</span> <span class="text-white">A single, honest end-to-end mode.</span> One pipeline answers the question. No per-ability oracle, no full-context bypass &mdash; recall has to actually find the evidence.</p>
+            <p class="text-muted-light text-sm leading-relaxed"><span class="text-teal font-mono">1.</span> <span class="text-white">A single, honest end-to-end mode.</span> One pipeline answers the question. No per-ability oracle, no full-context bypass - recall has to actually find the evidence.</p>
             <p class="text-muted-light text-sm leading-relaxed"><span class="text-teal font-mono">2.</span> <span class="text-white">Cross-judge &gt;= 2.</span> No per-category number is trusted until two independent judges agree within tolerance. We grade with <span class="font-mono text-teal">gpt-4o</span> and <span class="font-mono text-teal">gpt-4.1</span> and only headline a cell where the spread is stable.</p>
             <p class="text-muted-light text-sm leading-relaxed"><span class="text-teal font-mono">3.</span> <span class="text-white">Conflict of interest, disclosed.</span> Comis authored this benchmark. We say so, in the methodology and in every manifest. Vendor-reported competitor numbers are non-comparable across protocols, so we don't reprint them as if they were.</p>
-            <p class="text-muted-light text-sm leading-relaxed"><span class="text-teal font-mono">4.</span> <span class="text-white">Raw transcripts releasable, N and significance reported.</span> Every run writes a secret-free manifest that records the config, the dataset hash, the invalid-excluded denominator (<span class="font-mono text-teal">correct / (total - invalid)</span>), and the per-category counts &mdash; so the run conditions are known on both sides.</p>
+            <p class="text-muted-light text-sm leading-relaxed"><span class="text-teal font-mono">4.</span> <span class="text-white">Raw transcripts releasable, N and significance reported.</span> Every run writes a secret-free manifest that records the config, the dataset hash, the invalid-excluded denominator (<span class="font-mono text-teal">correct / (total - invalid)</span>), and the per-category counts - so the run conditions are known on both sides.</p>
           </div>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
@@ -131,32 +131,32 @@ const proveManifest = `${repoTree}/benchmarks/results/2026-06-01-phase104-prove`
               </div>
             </div>
             <p class="text-muted text-xs leading-relaxed">
-              Honest caveats, stated up front: the <span class="font-mono">single-session-preference</span> category does <span class="text-white">not</span> survive the cross-judge spread (30 vs 45 = 15pt) &mdash; we don't read it as a precise figure. LoCoMo is comparability-only and never headlined, because its score is wildly judge-dependent. The accuracy table is a disclosed, category-stratified subset (135 per judge pass); recall@5 is on the full set.
+              Honest caveats, stated up front: the <span class="font-mono">single-session-preference</span> category does <span class="text-white">not</span> survive the cross-judge spread (30 vs 45 = 15pt) - we don't read it as a precise figure. LoCoMo is comparability-only and never headlined, because its score is wildly judge-dependent. The accuracy table is a disclosed, category-stratified subset (135 per judge pass); recall@5 is on the full set.
             </p>
           </div>
 
-          <h3 class="text-xl font-bold text-white mt-10 mb-3">The mechanical gate deltas (sets B&ndash;E) &mdash; keyless, $0</h3>
+          <h3 class="text-xl font-bold text-white mt-10 mb-3">The mechanical gate deltas (sets B-E) - keyless, $0</h3>
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            This release shipped four memory tracks (knowledge-graph spread, reasoning-write correctness, query understanding, and a per-release proving gate). Each ships a <strong class="text-white">mechanical / structural</strong> gate delta &mdash; a lane surfaces a linked doc, a write lands at the right trust tier, a ranking knob reorders a candidate &mdash; measured <strong class="text-white">keyless, with no answer model, no judge, no key, no cost</strong>:
+            This release shipped four memory tracks (knowledge-graph spread, reasoning-write correctness, query understanding, and a per-release proving gate). Each ships a <strong class="text-white">mechanical / structural</strong> gate delta - a lane surfaces a linked doc, a write lands at the right trust tier, a ranking knob reorders a candidate - measured <strong class="text-white">keyless, with no answer model, no judge, no key, no cost</strong>:
           </p>
 
           <div class="bg-navy rounded-xl p-6 my-8 space-y-3 font-mono text-sm">
-            <p class="text-muted-light"><span class="text-teal">KG graph-spread</span> &mdash; linked-doc recall <span class="text-white">delta +1</span> (off: linked doc absent &rarr; on: surfaced purely by the graph edge). <a href={kgManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
-            <p class="text-muted-light"><span class="text-teal">KG trust-first invalidation</span> &mdash; <span class="text-white">100% (2/2)</span> older-high-trust-wins on SUITE-04 via the real <span class="text-white">upsertTriple</span>. <a href={kgManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
-            <p class="text-muted-light"><span class="text-teal">IQ MMR diversity</span> &mdash; diverse-doc rank <span class="text-white">off 3 &rarr; on 2</span>; &lambda;=1.0 byte-identical to off. <a href={iqManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
-            <p class="text-muted-light"><span class="text-teal">IQ intent reweight</span> &mdash; temporal candidate rank <span class="text-white">off 2 &rarr; on 1</span>. <a href={iqManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
-            <p class="text-muted-light"><span class="text-teal">IQ NL temporal-range</span> &mdash; in-window precision <span class="text-white">off 0.5 &rarr; on 1.0</span>; an unparseable query applies no filter (byte-identity). <a href={iqManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
+            <p class="text-muted-light"><span class="text-teal">KG graph-spread</span> - linked-doc recall <span class="text-white">delta +1</span> (off: linked doc absent &rarr; on: surfaced purely by the graph edge). <a href={kgManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
+            <p class="text-muted-light"><span class="text-teal">KG trust-first invalidation</span> - <span class="text-white">100% (2/2)</span> older-high-trust-wins on SUITE-04 via the real <span class="text-white">upsertTriple</span>. <a href={kgManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
+            <p class="text-muted-light"><span class="text-teal">IQ MMR diversity</span> - diverse-doc rank <span class="text-white">off 3 &rarr; on 2</span>; &lambda;=1.0 byte-identical to off. <a href={iqManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
+            <p class="text-muted-light"><span class="text-teal">IQ intent reweight</span> - temporal candidate rank <span class="text-white">off 2 &rarr; on 1</span>. <a href={iqManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
+            <p class="text-muted-light"><span class="text-teal">IQ NL temporal-range</span> - in-window precision <span class="text-white">off 0.5 &rarr; on 1.0</span>; an unparseable query applies no filter (byte-identity). <a href={iqManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
           </div>
 
           <div class="bg-navy-light/80 border border-coral/15 rounded-xl p-6 my-8">
             <p class="text-white font-semibold mb-2">Read these correctly.</p>
             <p class="text-muted-light text-sm leading-relaxed">
-              Each delta above is <span class="text-white">mechanical, keyless, $0 &mdash; not a QA-accuracy lift</span>. A "+1 linked-doc recall delta" is <span class="text-white">not</span> "+1% accuracy." Every one of these factors is default-off and, when off, byte-identical to the prior shipping config &mdash; no silent behaviour change, zero category regression. The end-to-end accuracy lift each track produces is honestly deferred to the operator-costed re-run. Quoting a rank-delta as an accuracy percentage is exactly the fabrication this benchmark forbids.
+              Each delta above is <span class="text-white">mechanical, keyless, $0 - not a QA-accuracy lift</span>. A "+1 linked-doc recall delta" is <span class="text-white">not</span> "+1% accuracy." Every one of these factors is default-off and, when off, byte-identical to the prior shipping config - no silent behaviour change, zero category regression. The end-to-end accuracy lift each track produces is honestly deferred to the operator-costed re-run. Quoting a rank-delta as an accuracy percentage is exactly the fabrication this benchmark forbids.
             </p>
           </div>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            Every one of these numbers, both kinds, is on the <a href={leaderboardUrl} class="text-teal hover:text-teal-dark underline">memory leaderboard at <span class="font-mono">/memory</span></a> &mdash; with the accuracy table and the mechanical deltas kept in clearly separate sections, each row linked to its committed manifest.
+            Every one of these numbers, both kinds, is on the <a href={leaderboardUrl} class="text-teal hover:text-teal-dark underline">memory leaderboard at <span class="font-mono">/memory</span></a> - with the accuracy table and the mechanical deltas kept in clearly separate sections, each row linked to its committed manifest.
           </p>
         </div>
 
@@ -165,15 +165,15 @@ const proveManifest = `${repoTree}/benchmarks/results/2026-06-01-phase104-prove`
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">What we deliberately did not publish</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            There is one number you will not find anywhere on the site: a head-to-head comparison against another named memory system. Not because we're shy &mdash; because we have a binding rule. <strong class="text-white">No comparison ships until the number is (1) measured under the disclosed protocol, (2) survives a cross-judge spread, and (3) the competitor has been re-run under that same protocol.</strong> That competitor number does not exist yet. It is the honestly-deferred, operator-costed re-run.
+            There is one number you will not find anywhere on the site: a head-to-head comparison against another named memory system. Not because we're shy - because we have a binding rule. <strong class="text-white">No comparison ships until the number is (1) measured under the disclosed protocol, (2) survives a cross-judge spread, and (3) the competitor has been re-run under that same protocol.</strong> That competitor number does not exist yet. It is the honestly-deferred, operator-costed re-run.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            So we will not print a number we have not measured, cross-judged, and re-run the competitor against under our own protocol. Vendor-reported figures graded by a different judge are non-comparable, and reprinting one as a "Comis vs X" cell would be a fabricated result. There is no fabricated competitor cell anywhere &mdash; the manifests carry a literal <span class="font-mono text-teal">fabricatedNumber: false</span> assertion (<a href={proveManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a>). Instead of a fake cell, we hand you the gate and invite you to run the comparison yourself.
+            So we will not print a number we have not measured, cross-judged, and re-run the competitor against under our own protocol. Vendor-reported figures graded by a different judge are non-comparable, and reprinting one as a "Comis vs X" cell would be a fabricated result. There is no fabricated competitor cell anywhere - the manifests carry a literal <span class="font-mono text-teal">fabricatedNumber: false</span> assertion (<a href={proveManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a>). Instead of a fake cell, we hand you the gate and invite you to run the comparison yourself.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            For the same reason, this post and the whole site stay strictly inside shipped code. This release shipped recall and knowledge-graph improvements &mdash; it did not ship per-type memory decay, online recall-weight tuning, a multi-party user model, or a natural-language memory Q&amp;A surface. Those are honest roadmap items for a later release, and you won't find them dressed up as shipped capabilities here.
+            For the same reason, this post and the whole site stay strictly inside shipped code. This release shipped recall and knowledge-graph improvements - it did not ship per-type memory decay, online recall-weight tuning, a multi-party user model, or a natural-language memory Q&amp;A surface. Those are honest roadmap items for a later release, and you won't find them dressed up as shipped capabilities here.
           </p>
         </div>
 
@@ -182,7 +182,7 @@ const proveManifest = `${repoTree}/benchmarks/results/2026-06-01-phase104-prove`
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Reproduce it yourself</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            The mechanical part costs nothing. The proving machine runs the cross-judge spread keyless on injected verdicts &mdash; 3 of 4 categories survive the 5pt tolerance; the 15pt preference category does not (disclosed, consistent with the baseline). One command proves the mechanism at $0, no key required:
+            The mechanical part costs nothing. The proving machine runs the cross-judge spread keyless on injected verdicts - 3 of 4 categories survive the 5pt tolerance; the 15pt preference category does not (disclosed, consistent with the baseline). One command proves the mechanism at $0, no key required:
           </p>
 
           <div class="bg-navy rounded-lg p-4 font-mono text-sm my-6">
@@ -191,7 +191,7 @@ const proveManifest = `${repoTree}/benchmarks/results/2026-06-01-phase104-prove`
           </div>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            The full operator-costed head-to-head &mdash; "Comis vs another memory system" accuracy &mdash; needs answer + judge model credentials and the competitor systems installed, none of which is a Comis dependency. The exact steps (which env-var <em>names</em> to populate, which competitor packages to install, how to run the second judge pass for the cross-judge spread) are written up, copy-paste-ready, on the methodology page. We list variable names only &mdash; never an inline key.
+            The full operator-costed head-to-head - "Comis vs another memory system" accuracy - needs answer + judge model credentials and the competitor systems installed, none of which is a Comis dependency. The exact steps (which env-var <em>names</em> to populate, which competitor packages to install, how to run the second judge pass for the cross-judge spread) are written up, copy-paste-ready, on the methodology page. We list variable names only - never an inline key.
           </p>
 
           <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 mt-12 mb-8">
@@ -207,7 +207,7 @@ const proveManifest = `${repoTree}/benchmarks/results/2026-06-01-phase104-prove`
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The thesis: honesty is the moat</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            Anyone can publish a number. What's hard &mdash; and what actually compounds &mdash; is publishing the <em>protocol</em>: the open harness, the disclosed judges, the cross-judge spread, the conflict-of-interest note, the committed manifests, and the one command that lets a skeptic reproduce every claim. The number is downstream of the method. Get the method right, in the open, and the number takes care of itself.
+            Anyone can publish a number. What's hard - and what actually compounds - is publishing the <em>protocol</em>: the open harness, the disclosed judges, the cross-judge spread, the conflict-of-interest note, the committed manifests, and the one command that lets a skeptic reproduce every claim. The number is downstream of the method. Get the method right, in the open, and the number takes care of itself.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
@@ -235,7 +235,7 @@ const proveManifest = `${repoTree}/benchmarks/results/2026-06-01-phase104-prove`
           Measured, reproducible, honest.
         </h2>
         <p class="text-muted text-lg mb-10">
-          An open agent-memory benchmark. Every number linked to a committed manifest. The proving machine runs at $0 &mdash; reproduce it yourself.
+          An open agent-memory benchmark. Every number linked to a committed manifest. The proving machine runs at $0 - reproduce it yourself.
         </p>
         <div class="flex flex-wrap gap-4 justify-center">
           <a href={leaderboardUrl} class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">

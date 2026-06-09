@@ -46,10 +46,10 @@ const baselineManifest = `${repoTree}/benchmarks/results/2026-05-31-j1-baseline`
           <span class="text-teal">Engineering</span>
         </div>
         <h1 class="text-3xl md:text-5xl font-extrabold tracking-tight leading-[1.15] text-white mb-6">
-          The memory that <span class="text-teal">models you</span> &mdash; what we shipped, measured at $0
+          The memory that <span class="text-teal">models you</span> - what we shipped, measured at $0
         </h1>
         <p class="text-lg md:text-xl text-muted leading-relaxed">
-          Last release we shipped the proving machine and refused to publish a number we couldn't reproduce. This release the memory layer grew up: it now keeps a per-user profile, a per-channel relationship model, an opt-in tool that answers a question straight from memory, a loop that learns which memories prove useful, and principled ranking decay of stale ones. Every one of those is shipped code with a committed manifest behind it. So here is the honest accounting &mdash; what each capability is, what we actually <span class="text-white">measured at $0</span>, the one learning signal we can stand behind, and the costed comparison we deliberately did <span class="text-white">not</span> publish.
+          Last release we shipped the proving machine and refused to publish a number we couldn't reproduce. This release the memory layer grew up: it now keeps a per-user profile, a per-channel relationship model, an opt-in tool that answers a question straight from memory, a loop that learns which memories prove useful, and principled ranking decay of stale ones. Every one of those is shipped code with a committed manifest behind it. So here is the honest accounting - what each capability is, what we actually <span class="text-white">measured at $0</span>, the one learning signal we can stand behind, and the costed comparison we deliberately did <span class="text-white">not</span> publish.
         </p>
       </div>
     </section>
@@ -63,7 +63,7 @@ const baselineManifest = `${repoTree}/benchmarks/results/2026-05-31-j1-baseline`
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Capability-backed, not a headline number</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            The honest framing from the last launch still holds: anyone can post a memory score, and almost none of them are comparable across protocols. So we are not claiming a comparative-ranking win here. What changed is the <em>capability surface</em> &mdash; the memory layer now does five concrete things it didn't before, each one TDD-green and each one proven keyless at $0. We describe each capability, cite its committed manifest, and label exactly what kind of number backs it. None of these is an end-to-end QA-accuracy lift &mdash; those stay honestly deferred to the operator-costed re-run.
+            The honest framing from the last launch still holds: anyone can post a memory score, and almost none of them are comparable across protocols. So we are not claiming a comparative-ranking win here. What changed is the <em>capability surface</em> - the memory layer now does five concrete things it didn't before, each one TDD-green and each one proven keyless at $0. We describe each capability, cite its committed manifest, and label exactly what kind of number backs it. None of these is an end-to-end QA-accuracy lift - those stay honestly deferred to the operator-costed re-run.
           </p>
 
           <div class="bg-navy-light/80 border border-teal/15 rounded-xl p-6 my-8">
@@ -74,26 +74,26 @@ const baselineManifest = `${repoTree}/benchmarks/results/2026-05-31-j1-baseline`
                 <a href={userManifest} class="text-teal hover:text-teal-dark underline text-xs font-mono">phase107-user manifest</a>
               </li>
               <li>
-                <span class="text-white">A per-channel relationship model.</span> Directional <span class="font-mono text-teal">A&rarr;B</span> and <span class="font-mono text-teal">B&rarr;A</span> are two distinct edges, isolated per <span class="font-mono text-teal">(tenant, agent, channel)</span>. It ships <span class="text-white">default-off behind a sign-off gate</span>: enabled-but-unsigned yields 0 reads and a null block &mdash; it is dormant until an operator explicitly signs it on, never self-enabling.
+                <span class="text-white">A per-channel relationship model.</span> Directional <span class="font-mono text-teal">A&rarr;B</span> and <span class="font-mono text-teal">B&rarr;A</span> are two distinct edges, isolated per <span class="font-mono text-teal">(tenant, agent, channel)</span>. It ships <span class="text-white">default-off behind a sign-off gate</span>: enabled-but-unsigned yields 0 reads and a null block - it is dormant until an operator explicitly signs it on, never self-enabling.
                 <a href={socialManifest} class="text-teal hover:text-teal-dark underline text-xs font-mono">phase108-social manifest</a>
               </li>
               <li>
-                <span class="text-white">An opt-in tool that answers a question from memory.</span> Default-off; when enabled, it answers grounded strictly in cited recalled records &mdash; the recall path itself stays <span class="text-white">model-free</span>, every citation is a subset of the recalled ids (a bogus id is dropped), and it <span class="text-white">abstains</span> when recall comes back empty rather than inventing an answer.
+                <span class="text-white">An opt-in tool that answers a question from memory.</span> Default-off; when enabled, it answers grounded strictly in cited recalled records - the recall path itself stays <span class="text-white">model-free</span>, every citation is a subset of the recalled ids (a bogus id is dropped), and it <span class="text-white">abstains</span> when recall comes back empty rather than inventing an answer.
                 <a href={reproveManifest} class="text-teal hover:text-teal-dark underline text-xs font-mono">consolidated re-prove manifest</a>
               </li>
               <li>
-                <span class="text-white">A loop that learns which memories prove useful.</span> An opt-in, model-free loop turns "this recalled memory was cited" into a bounded reweighting of recall ranking &mdash; and the trust signal stays <span class="text-white">frozen</span> under that tuning, so a learned weight can never promote an untrusted memory. Default-off is byte-identical to the prior shipping config.
+                <span class="text-white">A loop that learns which memories prove useful.</span> An opt-in, model-free loop turns "this recalled memory was cited" into a bounded reweighting of recall ranking - and the trust signal stays <span class="text-white">frozen</span> under that tuning, so a learned weight can never promote an untrusted memory. Default-off is byte-identical to the prior shipping config.
                 <a href={learnRankManifest} class="text-teal hover:text-teal-dark underline text-xs font-mono">phase111-learn-rank manifest</a>
               </li>
               <li>
-                <span class="text-white">Principled ranking decay of stale memories.</span> Older, low-importance, unused memories <span class="text-white">rank lower over time</span> &mdash; decay reorders, it never gates or deletes a record, and at neutral importance it is byte-identical to no decay at all. A fresh memory is never reordered.
+                <span class="text-white">Principled ranking decay of stale memories.</span> Older, low-importance, unused memories <span class="text-white">rank lower over time</span> - decay reorders, it never gates or deletes a record, and at neutral importance it is byte-identical to no decay at all. A fresh memory is never reordered.
                 <a href={forgetManifest} class="text-teal hover:text-teal-dark underline text-xs font-mono">phase112-forget manifest</a>
               </li>
             </ul>
           </div>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            A sixth piece ties them together: recall is now <em>query-conditional</em>. A memory that proved useful for one kind of question ranks ahead for that question and not for an unrelated one &mdash; a per-intent reorder measured keyless (a used-for-intent memory ranks <span class="font-mono text-teal">1 vs 2</span> across matched and mismatched intents), with the same default-off byte-identity discipline.
+            A sixth piece ties them together: recall is now <em>query-conditional</em>. A memory that proved useful for one kind of question ranks ahead for that question and not for an unrelated one - a per-intent reorder measured keyless (a used-for-intent memory ranks <span class="font-mono text-teal">1 vs 2</span> across matched and mismatched intents), with the same default-off byte-identity discipline.
             <a href={learnIqManifest} class="text-teal hover:text-teal-dark underline text-xs font-mono">phase110-learn-iq manifest</a>
           </p>
         </div>
@@ -103,17 +103,17 @@ const baselineManifest = `${repoTree}/benchmarks/results/2026-05-31-j1-baseline`
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The one learning signal we can stand behind</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            "It learns" is the easiest thing in this space to overclaim, so here is the single learning number we measured, stated exactly. Over <strong class="text-white">5 episodes</strong> of the same query, the model-free loop climbs its tuned usefulness weight <span class="font-mono text-teal">0.125 &rarr; 0.225</span>, and that climb raises the repeatedly-cited gold memory's boosted recall <strong class="text-white">score</strong> monotonically to a <strong class="text-white">+0.1 score lift</strong> (<span class="font-mono text-teal">MEASURED-POSITIVE</span>). On the same keyless lane the gold memory's <strong class="text-white">rank position is flat</strong> (<span class="font-mono text-teal">rankLift = 0</span>, <span class="font-mono text-teal">MEASURED-FLAT</span>) &mdash; on a model-free, FTS-only <span class="font-mono text-teal">1/rank</span> ordering the positional gaps are large, so moving a single rank needs the model-graded fusion lane, recorded honestly rather than fabricated positive.
+            "It learns" is the easiest thing in this space to overclaim, so here is the single learning number we measured, stated exactly. Over <strong class="text-white">5 episodes</strong> of the same query, the model-free loop climbs its tuned usefulness weight <span class="font-mono text-teal">0.125 &rarr; 0.225</span>, and that climb raises the repeatedly-cited gold memory's boosted recall <strong class="text-white">score</strong> monotonically to a <strong class="text-white">+0.1 score lift</strong> (<span class="font-mono text-teal">MEASURED-POSITIVE</span>). On the same keyless lane the gold memory's <strong class="text-white">rank position is flat</strong> (<span class="font-mono text-teal">rankLift = 0</span>, <span class="font-mono text-teal">MEASURED-FLAT</span>) - on a model-free, FTS-only <span class="font-mono text-teal">1/rank</span> ordering the positional gaps are large, so moving a single rank needs the model-graded fusion lane, recorded honestly rather than fabricated positive.
           </p>
 
           <div class="bg-navy rounded-xl p-6 my-8 font-mono text-sm">
-            <p class="text-muted-light"><span class="text-teal">learning signal</span> &mdash; bandit recall-<span class="text-white">score</span> lift <span class="text-white">+0.1</span> over 5 episodes; rank position <span class="text-white">flat</span> on the keyless lane; tuned usefulness weight <span class="text-white">0.125 &rarr; 0.225</span>; trust frozen. <a href={learnRankManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
+            <p class="text-muted-light"><span class="text-teal">learning signal</span> - bandit recall-<span class="text-white">score</span> lift <span class="text-white">+0.1</span> over 5 episodes; rank position <span class="text-white">flat</span> on the keyless lane; tuned usefulness weight <span class="text-white">0.125 &rarr; 0.225</span>; trust frozen. <a href={learnRankManifest} class="text-teal hover:text-teal-dark underline text-xs">manifest</a></p>
           </div>
 
           <div class="bg-navy-light/80 border border-coral/15 rounded-xl p-6 my-8">
             <p class="text-white font-semibold mb-2">Read this correctly.</p>
             <p class="text-muted-light text-sm leading-relaxed">
-              <span class="text-white">+0.1 is a recall-score lift, not an accuracy gain.</span> It is mechanical, keyless, and $0 &mdash; we do not round it into "+0.1% accuracy," and it does not appear anywhere near the cross-judged accuracy table below. The loop is default-off and, when off, byte-identical to the prior shipping config. The end-to-end QA-accuracy impact of this loop is exactly the kind of number we refuse to assert without a costed, cross-judged run &mdash; so it is deferred, not estimated.
+              <span class="text-white">+0.1 is a recall-score lift, not an accuracy gain.</span> It is mechanical, keyless, and $0 - we do not round it into "+0.1% accuracy," and it does not appear anywhere near the cross-judged accuracy table below. The loop is default-off and, when off, byte-identical to the prior shipping config. The end-to-end QA-accuracy impact of this loop is exactly the kind of number we refuse to assert without a costed, cross-judged run - so it is deferred, not estimated.
             </p>
           </div>
         </div>
@@ -123,7 +123,7 @@ const baselineManifest = `${repoTree}/benchmarks/results/2026-05-31-j1-baseline`
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The accuracy baseline (re-stated, kept separate)</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            Our only end-to-end QA-accuracy numbers are the cross-judged baseline from the last release. They are <strong class="text-white">re-stated here, not re-measured</strong> &mdash; a keyless run produces no accuracy number, and inventing a fresh one would be the exact fabrication this whole approach forbids. Each cell was graded by two independent judges (<span class="font-mono text-teal">gpt-4o</span> and <span class="font-mono text-teal">gpt-4.1</span>) and read straight back from the committed <a href={baselineManifest} class="text-teal hover:text-teal-dark underline font-mono text-sm">2026-05-31-j1-baseline</a> manifest:
+            Our only end-to-end QA-accuracy numbers are the cross-judged baseline from the last release. They are <strong class="text-white">re-stated here, not re-measured</strong> - a keyless run produces no accuracy number, and inventing a fresh one would be the exact fabrication this whole approach forbids. Each cell was graded by two independent judges (<span class="font-mono text-teal">gpt-4o</span> and <span class="font-mono text-teal">gpt-4.1</span>) and read straight back from the committed <a href={baselineManifest} class="text-teal hover:text-teal-dark underline font-mono text-sm">2026-05-31-j1-baseline</a> manifest:
           </p>
 
           <div class="bg-navy-light/80 border border-teal/15 rounded-xl p-6 my-8">
@@ -145,7 +145,7 @@ const baselineManifest = `${repoTree}/benchmarks/results/2026-05-31-j1-baseline`
               </div>
             </div>
             <p class="text-muted text-xs leading-relaxed">
-              Same caveats as the baseline, restated honestly: the <span class="font-mono">single-session-preference</span> category does <span class="text-white">not</span> survive the cross-judge spread (30 vs 45 = 15pt) &mdash; we don't read it as a precise figure. The accuracy table is a disclosed, category-stratified subset (135 per judge pass); recall@5 is on the full set. None of the new capabilities above changed these numbers &mdash; they were not re-run this release.
+              Same caveats as the baseline, restated honestly: the <span class="font-mono">single-session-preference</span> category does <span class="text-white">not</span> survive the cross-judge spread (30 vs 45 = 15pt) - we don't read it as a precise figure. The accuracy table is a disclosed, category-stratified subset (135 per judge pass); recall@5 is on the full set. None of the new capabilities above changed these numbers - they were not re-run this release.
             </p>
           </div>
 
@@ -159,11 +159,11 @@ const baselineManifest = `${repoTree}/benchmarks/results/2026-05-31-j1-baseline`
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">What we honestly deferred</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            Two numbers you will not find on this site, by the same binding rule as last time. The first is a head-to-head comparison against another named memory system &mdash; no comparison ships until it is measured under the disclosed protocol, survives a cross-judge spread, and the competitor has been re-run under that same protocol. The second is a per-capability end-to-end QA-accuracy lift: "turning capability X on raised answer accuracy by Y." Both require an operator-costed run &mdash; competitor installs, answer and judge model credentials, and two judge passes for the spread &mdash; none of which is a Comis dependency.
+            Two numbers you will not find on this site, by the same binding rule as last time. The first is a head-to-head comparison against another named memory system - no comparison ships until it is measured under the disclosed protocol, survives a cross-judge spread, and the competitor has been re-run under that same protocol. The second is a per-capability end-to-end QA-accuracy lift: "turning capability X on raised answer accuracy by Y." Both require an operator-costed run - competitor installs, answer and judge model credentials, and two judge passes for the spread - none of which is a Comis dependency.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            So we shipped the capabilities, measured what is keyless at $0, and handed you the gate for the rest. The consolidated <a href={reproveManifest} class="text-teal hover:text-teal-dark underline text-xs font-mono">re-prove manifest</a> records every keyless re-prove outcome, lists each deferred item explicitly as "not measured &mdash; operator-costed re-run," and carries the one-command reproduction. Comis authored this benchmark; we say so in every manifest, and we invite competitors to reproduce the comparison themselves rather than take a vendor cell on faith. The reproduction is one command:
+            So we shipped the capabilities, measured what is keyless at $0, and handed you the gate for the rest. The consolidated <a href={reproveManifest} class="text-teal hover:text-teal-dark underline text-xs font-mono">re-prove manifest</a> records every keyless re-prove outcome, lists each deferred item explicitly as "not measured - operator-costed re-run," and carries the one-command reproduction. Comis authored this benchmark; we say so in every manifest, and we invite competitors to reproduce the comparison themselves rather than take a vendor cell on faith. The reproduction is one command:
           </p>
 
           <div class="bg-navy rounded-lg p-4 font-mono text-sm my-6">
@@ -174,7 +174,7 @@ const baselineManifest = `${repoTree}/benchmarks/results/2026-05-31-j1-baseline`
           <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 mt-12 mb-8">
             <p class="text-white font-semibold mb-2">Run the full reproduction.</p>
             <p class="text-muted text-sm leading-relaxed">
-              The <a href={methodologyUrl} class="text-teal hover:text-teal-dark underline">memory benchmarks methodology page</a> has the datasets, the gated harnesses, the operator env table (variable <em>names</em> only &mdash; never an inline key), and the full operator-costed head-to-head steps. The <a href={leaderboardUrl} class="text-teal hover:text-teal-dark underline">leaderboard at <span class="font-mono">/memory</span></a> links every published number to its committed run manifest under <code class="text-teal text-xs">benchmarks/results/</code>.
+              The <a href={methodologyUrl} class="text-teal hover:text-teal-dark underline">memory benchmarks methodology page</a> has the datasets, the gated harnesses, the operator env table (variable <em>names</em> only - never an inline key), and the full operator-costed head-to-head steps. The <a href={leaderboardUrl} class="text-teal hover:text-teal-dark underline">leaderboard at <span class="font-mono">/memory</span></a> links every published number to its committed run manifest under <code class="text-teal text-xs">benchmarks/results/</code>.
             </p>
           </div>
         </div>
@@ -184,7 +184,7 @@ const baselineManifest = `${repoTree}/benchmarks/results/2026-05-31-j1-baseline`
           <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The bet, unchanged: honesty is the moat</h2>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
-            The memory now models the people it talks to, learns which of its memories earn their place, and lets the stale ones fade in ranking &mdash; and we can show you the committed manifest behind each of those sentences. What we won't do is dress a mechanism up as an accuracy win, or print a competitor comparison we haven't run. The capabilities are real and shipped; the one learning number is small, measured, and honestly +0.1; the accuracy baseline is re-stated and separate; the costed comparison is deferred with the command to reproduce it.
+            The memory now models the people it talks to, learns which of its memories earn their place, and lets the stale ones fade in ranking - and we can show you the committed manifest behind each of those sentences. What we won't do is dress a mechanism up as an accuracy win, or print a competitor comparison we haven't run. The capabilities are real and shipped; the one learning number is small, measured, and honestly +0.1; the accuracy baseline is re-stated and separate; the costed comparison is deferred with the command to reproduce it.
           </p>
 
           <p class="text-muted-light text-base leading-relaxed mb-6">
@@ -212,7 +212,7 @@ const baselineManifest = `${repoTree}/benchmarks/results/2026-05-31-j1-baseline`
           Capability-backed, reproducible, honest.
         </h2>
         <p class="text-muted text-lg mb-10">
-          A memory layer that models you &mdash; every capability linked to a committed manifest. The proving machine runs at $0; reproduce it yourself.
+          A memory layer that models you - every capability linked to a committed manifest. The proving machine runs at $0; reproduce it yourself.
         </p>
         <div class="flex flex-wrap gap-4 justify-center">
           <a href={leaderboardUrl} class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
