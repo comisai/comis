@@ -11,7 +11,7 @@
  *   - the WIRING CHAIN by source-grep regression guards:
  *       setup-agents-runtime.ts: observabilityStore: deps.obsStore
  *       pi-executor-types.ts:    observabilityStore?: ...
- *       executor-tool-assembly.ts ToolAssemblyDeps:
+ *       executor-tool-assembly-types.ts ToolAssemblyDeps:
  *                                observabilityStore?: ...
  *       executor-tool-assembly.ts call site:
  *                                observabilityStore: deps.observabilityStore
@@ -71,11 +71,19 @@ describe("SystemPromptReport — daemon-level E2E wiring", () => {
       path.join(repoRoot, "packages/agent/src/executor/executor-tool-assembly.ts"),
       "utf-8",
     );
+    // ToolAssemblyDeps type contracts were extracted to
+    // executor-tool-assembly-types.ts (Phase 152/153 file-size split); the
+    // `observabilityStore?:` type declaration lives there now, while the
+    // value-forwarding call site stays in executor-tool-assembly.ts.
+    const toolAssemblyTypesSrc = fs.readFileSync(
+      path.join(repoRoot, "packages/agent/src/executor/executor-tool-assembly-types.ts"),
+      "utf-8",
+    );
 
     // Wiring chain checkpoints — each regex MUST match in current source.
     expect(setupAgentsSrc).toMatch(/observabilityStore:\s*deps\.obsStore/);
     expect(piExecTypesSrc).toMatch(/observabilityStore\?:\s*import\("@comis\/observability"\)\.ObservabilityStoreLike/);
-    expect(toolAssemblySrc).toMatch(/observabilityStore\?:\s*import\("@comis\/observability"\)\.ObservabilityStoreLike/);
+    expect(toolAssemblyTypesSrc).toMatch(/observabilityStore\?:\s*import\("@comis\/observability"\)\.ObservabilityStoreLike/);
     expect(toolAssemblySrc).toMatch(/observabilityStore:\s*deps\.observabilityStore/);
 
     // Step 2: Behavioral assertion — run the LIBRARY persist path
