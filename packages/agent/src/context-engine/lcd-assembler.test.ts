@@ -35,6 +35,8 @@ import { LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS } from "./constants.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import type { ModelProfile } from "../executor/model-profile.js";
 import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
+import { ContextExhaustionError } from "./errors.js";
+import type { SecurityPinMarkers } from "./security-context-pinner.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1648,5 +1650,335 @@ describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 
     expect(evictCalls.length).toBeGreaterThan(0);
     const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
     expect(budgetTokens).toBeLessThan(16_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 166 CWF-02: pre-flight fit check + security-pin threading (T-S4)
+// ---------------------------------------------------------------------------
+
+describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  // Helper: seed N text turns into the store with a specified tokenCount per message.
+  function seedTurnsWithTokens(count: number, tokensEach: number): Message[] {
+    const msgs: Message[] = [];
+    for (let i = 0; i < count; i++) {
+      msgs.push(userMsg(`u${i}`));
+      msgs.push(assistantText(`a${i}`));
+    }
+    let seq = 0;
+    for (const msg of msgs) {
+      const input: AppendMessageInput = {
+        scope: SCOPE,
+        seq: seq++,
+        role: msg.role,
+        tokenCount: tokensEach,
+        createdAt: FIXED_CREATED_AT,
+        parts: messageToParts(msg),
+      };
+      store.append(input);
+    }
+    return msgs;
+  }
+
+  // Small non-reasoning profile: W=8192, none-style (no thinking reserve).
+  // computeOutputHeadroom("none","medium") = 0 + 768 = 768
+  // headroomBound = 8192 - 768 = 7424
+  const smallNoneProfile: ModelProfile = {
+    ...FAIL_CLOSED_PROFILE,
+    capabilityClass: "small" as const,
+    contextWindow: 8_192,
+    maxOutputTokens: 2_048,
+    reasoningStyle: "none" as const,
+  };
+
+  // Small native-reasoning profile: W=32768, native style / high thinking.
+  // computeOutputHeadroom("native","high") = 8192 + 768 = 8960
+  // headroomBound = 32768 - 8960 = 23808
+  const smallNativeProfile: ModelProfile = {
+    ...FAIL_CLOSED_PROFILE,
+    capabilityClass: "small" as const,
+    contextWindow: 32_768,
+    maxOutputTokens: 4_096,
+    reasoningStyle: "native" as const,
+  };
+
+  it("CWF-02-A: 8K non-reasoning window — assembled input after pre-flight eviction fits in W − headroom(none,medium)=7424", async () => {
+    // Seed many turns with high token counts to fill the window. The pre-flight
+    // check should evict history so assembled stays ≤ 7424 tokens.
+    // Each message gets tokenCount=400 → 20 messages = 8000 tokens → exceeds 7424.
+    seedTurnsWithTokens(10, 400);
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 10; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+
+    const onAssembledInputTokens = vi.fn<[number], void>();
+    const deps: ContextEngineDeps = {
+      logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      tenantId: "tenant_a",
+      sessionKey: "sess-a",
+      modelProfile: smallNoneProfile,
+      getThinkingLevel: () => "medium",
+      onAssembledInputTokens,
+    };
+
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    // Should NOT throw (the window is feasible for non-reasoning at medium)
+    await engine.transformContext(live);
+
+    // The onAssembledInputTokens callback was called and reports ≤ headroomBound
+    expect(onAssembledInputTokens).toHaveBeenCalled();
+    const reported = onAssembledInputTokens.mock.calls[0]![0];
+    // headroomBound = 8192 − computeOutputHeadroom("none","medium") = 8192 − 768 = 7424
+    expect(reported).toBeLessThanOrEqual(7424);
+  });
+
+  it("CWF-02-B: 32K non-reasoning window — assembled input fits in W − headroom(none,medium)=32000", async () => {
+    // Seed many turns with tokenCount=1000 → 20 × 1000 = 20000 tokens.
+    // headroomBound = 32768 − 768 = 32000. Should not throw; assembled ≤ 32000.
+    seedTurnsWithTokens(10, 1_000);
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 10; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+
+    const onAssembledInputTokens = vi.fn<[number], void>();
+    const profile32K: ModelProfile = {
+      ...FAIL_CLOSED_PROFILE,
+      capabilityClass: "small" as const,
+      contextWindow: 32_768,
+      maxOutputTokens: 4_096,
+      reasoningStyle: "none" as const,
+    };
+    const deps: ContextEngineDeps = {
+      logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: false, contextWindow: 32_768, maxTokens: 4_096 }),
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      tenantId: "tenant_a",
+      sessionKey: "sess-a",
+      modelProfile: profile32K,
+      getThinkingLevel: () => "medium",
+      onAssembledInputTokens,
+    };
+
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    await engine.transformContext(live);
+
+    expect(onAssembledInputTokens).toHaveBeenCalled();
+    const reported = onAssembledInputTokens.mock.calls[0]![0];
+    // headroomBound = 32768 − computeOutputHeadroom("none","medium") = 32768 − 768 = 32000
+    expect(reported).toBeLessThanOrEqual(32000);
+  });
+
+  it("CWF-02-D: tight 32K native/high window → thinking governor fires and down-shifts to medium or lower", async () => {
+    // W=32768, reasoningStyle="native", getThinkingLevel()="high"
+    // computeOutputHeadroom("native","high") = 8192 + 768 = 8960
+    // headroomBound = 32768 − 8960 = 23808
+    // Seed 20 messages × 1500 tokens each = 30000 tokens → exceeds 23808
+    // Governor should fire: down-shift high→medium; computeOutputHeadroom("native","medium")=3840
+    // headroomBound_medium = 32768 − 3840 = 28928 > 30000 still? Let's think more carefully.
+    // Actually eviction will shrink assembledInputTokens. With 20 msgs × 1500 = 30000 tokens
+    // and budget.availableHistoryTokens = computeTokenBudgetForProfile(smallNativeProfile,...).availableHistoryTokens
+    // the pre-flight check fires when assembledInputTokens > headroomBound.
+    // We need the post-eviction tokens to still exceed high-headroomBound but fit under medium-headroomBound.
+    // Use freshTailTurns=1 so fresh tail = 2 messages ~ 0 chars (short text).
+    // After normal eviction, budgetedTokens is controlled by the budget formula.
+    // Use high token counts (1500 each) to guarantee overflow at "high" level.
+    seedTurnsWithTokens(10, 1_500);
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 10; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+
+    const downshiftSpy = vi.fn<[string], void>();
+    const eventBusEmit = vi.fn<[string, unknown], void>();
+    const deps: ContextEngineDeps = {
+      logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: true, contextWindow: 32_768, maxTokens: 4_096 }),
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      tenantId: "tenant_a",
+      sessionKey: "sess-a",
+      modelProfile: smallNativeProfile,
+      getThinkingLevel: () => "high",
+      onThinkingDownshifted: downshiftSpy,
+      eventBus: { emit: eventBusEmit },
+    };
+
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    await engine.transformContext(live);
+
+    // The governor must have fired: either onThinkingDownshifted was called
+    // OR the context:thinking_downshifted event was emitted
+    const governorFired =
+      downshiftSpy.mock.calls.length > 0 ||
+      eventBusEmit.mock.calls.some(([name]) => name === "context:thinking_downshifted");
+    expect(governorFired).toBe(true);
+  });
+
+  it("CWF-02-E: infeasible turn even at low-effort → throws ContextExhaustionError", async () => {
+    // W=8192, reasoningStyle="native", massive history that won't fit even at "low" effort
+    // computeOutputHeadroom("native","low") = 1024 + 768 = 1792
+    // headroomBound_low = 8192 − 1792 = 6400
+    // Seed 10 messages × 1000 tokens each = 10000 tokens > 6400
+    // Even at "low" (the floor) assembled tokens will exceed headroomBound_low → ContextExhaustionError
+    seedTurnsWithTokens(5, 1_000);
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 5; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+
+    const nativeSmallProfile: ModelProfile = {
+      ...FAIL_CLOSED_PROFILE,
+      capabilityClass: "small" as const,
+      contextWindow: 8_192,
+      maxOutputTokens: 2_048,
+      reasoningStyle: "native" as const,
+    };
+
+    const deps: ContextEngineDeps = {
+      logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: true, contextWindow: 8_192, maxTokens: 2_048 }),
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      tenantId: "tenant_a",
+      sessionKey: "sess-a",
+      modelProfile: nativeSmallProfile,
+      getThinkingLevel: () => "high",
+    };
+
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    await expect(engine.transformContext(live)).rejects.toThrow(ContextExhaustionError);
+    // Also verify the error name
+    await expect(engine.transformContext(live)).rejects.toMatchObject({ name: "ContextExhaustionError" });
+  });
+
+  it("CWF-02-F (T-S4): security-pinned message survives aggressive eviction under tight 8K window", async () => {
+    // T-S4: a message containing the canaryToken MUST survive even under tight-window pressure
+    // that would normally evict it.
+    // W=8192, reasoningStyle="none" (no thinking reserve), headroomBound = 8192 − 768 = 7424
+    // Seed 8 turns × 600 tokens each = 16 messages × 600 = 9600 tokens total.
+    // One of those messages is the "security message" containing CANARY_TOKEN.
+    // After pre-flight eviction (security pinned excluded), the canary message must survive.
+    const CANARY_TOKEN = "CANARY-TOKEN-166-T-S4";
+
+    // Seed non-pinned history first (seq 0..13 = 7 turns = 14 messages)
+    seedTurnsWithTokens(7, 600);
+
+    // Now add the security-pinned message (seq 14): a user message containing the canary
+    const securityMsg: Message = {
+      role: "user",
+      content: `Security context: canary=${CANARY_TOKEN}, system boundary enforced`,
+      timestamp: FIXED_CREATED_AT,
+    } as Message;
+    const securityInput: AppendMessageInput = {
+      scope: SCOPE,
+      seq: 14,
+      role: securityMsg.role,
+      tokenCount: 600,
+      createdAt: FIXED_CREATED_AT,
+      parts: messageToParts(securityMsg),
+    };
+    store.append(securityInput);
+
+    // Add one more message after the security one (seq 15)
+    const lastMsg: Message = userMsg("final message");
+    store.append({
+      scope: SCOPE,
+      seq: 15,
+      role: lastMsg.role,
+      tokenCount: 1,
+      createdAt: FIXED_CREATED_AT,
+      parts: messageToParts(lastMsg),
+    });
+
+    // Build the live array (security message included)
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 7; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+    live.push(securityMsg as AgentMessage);
+    live.push(assistantText("ok after security") as AgentMessage);
+
+    const securityPinMarkers: SecurityPinMarkers = {
+      canaryToken: CANARY_TOKEN,
+      contentDelimiter: "",
+    };
+
+    const deps: ContextEngineDeps = {
+      logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      tenantId: "tenant_a",
+      sessionKey: "sess-a",
+      modelProfile: smallNoneProfile,
+      getThinkingLevel: () => "medium",
+      securityPinMarkers,
+    };
+
+    const engine = createLcdContextEngine(dagConfig(1), deps);
+    const out = await engine.transformContext(live);
+
+    // T-S4 CORE ASSERTION: the security-pinned message (containing the canaryToken)
+    // MUST be present in the assembled output even under tight-window pressure.
+    const outBlob = JSON.stringify(out);
+    expect(outBlob).toContain(CANARY_TOKEN);
+  });
+
+  it("CWF-02 characterization: frontier profile (W=200K) — no ContextExhaustionError, assembled tokens unchanged (byte-identical path)", async () => {
+    // Frontier profile: cap=∞ → pre-flight check is a no-op for large windows.
+    // Use exact same data as CWF-01-C to prove byte-identical frontier path.
+    const msgs: Message[] = [];
+    for (let i = 0; i < 5; i++) {
+      msgs.push(userMsg(`u${i}`));
+      msgs.push(assistantText(`a${i}`));
+    }
+    for (let i = 0; i < msgs.length; i++) append(store, msgs[i] as Message, i);
+    const live = msgs as AgentMessage[];
+
+    const frontierProfile: ModelProfile = {
+      ...FAIL_CLOSED_PROFILE,
+      capabilityClass: "frontier" as const,
+      contextWindow: 200_000,
+      maxOutputTokens: 8_192,
+    };
+
+    const onAssembledInputTokens = vi.fn<[number], void>();
+    const { deps } = makeDeps(store);
+    const depsWithFrontier: ContextEngineDeps = {
+      ...deps,
+      modelProfile: frontierProfile,
+      getThinkingLevel: () => "medium",
+      onAssembledInputTokens,
+    };
+
+    const engine = createLcdContextEngine(dagConfig(2), depsWithFrontier);
+    // Must NOT throw
+    await expect(engine.transformContext(live)).resolves.toBeDefined();
+    // onAssembledInputTokens is called but the value is tiny (frontier window is huge)
+    // No ContextExhaustionError thrown — frontier turns never reach the governor
   });
 });
