@@ -341,6 +341,11 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
         // read-time default per AGENTS §2.9; not a migration shim). The A2
         // reducer filters on this.
         source: typeof d.source === "string" ? d.source : "runtime",
+        // QT2/QT3: the named degradation cause. Pre-change rows (and a blank
+        // value) parse-default to "unknown" (additive read-time default) so the
+        // A2 reducer's degradedByCause always has a stable, finite bucket key.
+        endReason:
+          typeof d.endReason === "string" && d.endReason.length > 0 ? d.endReason : "unknown",
       });
     }
     return out;

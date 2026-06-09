@@ -214,6 +214,14 @@ export interface SessionSummaryRollup {
   turnCount: number;
   topErrorKinds: Record<string, number>;
   source: string;
+  /**
+   * The mapped terminal `endReason` (the NAMED degradation cause — QT2/QT3),
+   * parsed from the row's `details` JSON. Pre-change rows lack the field →
+   * parse-default `"unknown"` (additive read-time default, not a migration
+   * shim). The A2 reducer's `degradedByCause` aggregate buckets degraded
+   * sessions on this field.
+   */
+  endReason: string;
 }
 
 /** Delivery status breakdown statistics. */
