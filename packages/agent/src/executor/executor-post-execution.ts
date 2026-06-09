@@ -564,13 +564,27 @@ export function shouldRunLcdStorePasses(config: {
  * NOTE: the endReason union also declares "timeout", but no source finishReason
  * maps to it — it is intentionally unreachable from this writer (asserted by a
  * unit test) rather than re-introduced via a stray mapping.
+ *
+ * QT2/QT3 — NAMED degradation causes (Glass Box degradation detectors). The
+ * taxonomy used to FLATTEN context-exhaustion into the generic "error" bucket,
+ * so obs.explain / obs.fleet.health could not tell a context-exhausted session
+ * from a tool crash. The two related context-exhaustion finish reasons —
+ * `context_exhausted` (the bridge's hard context-window-guard abort,
+ * bridge-safety-controls.ts) and `context_loop` (the loop-on-exhaustion abort) —
+ * now FOLD into ONE named cause `"context_exhausted"`. `output_starved` (the
+ * chokepoint promotes a terminal output-cap truncation, QT3) is its own named
+ * cause `"output_starved"`. Both are degraded by construction (≠ "success", so
+ * session-health-rollup's CLEAN_END_REASONS derives degraded:true unchanged).
  */
 export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["sessionEnd"]>["endReason"]> = {
   stop: "success", end_turn: "success", error: "error",
   budget_exceeded: "budget_exceeded", budget_exhausted: "budget_exhausted",
   circuit_open: "circuit_open",
   provider_degraded: "provider_degraded", max_steps: "error",
-  context_loop: "error", context_exhausted: "error",
+  // QT2: fold the two context-exhaustion reasons into the single named cause.
+  context_loop: "context_exhausted", context_exhausted: "context_exhausted",
+  // QT3: the terminal output-cap truncation promoted at the chokepoint.
+  output_starved: "output_starved",
   completed_with_tool_errors: "completed_with_tool_errors",
   // Known in-union reasons — explicit, not via the catch-all fallthrough (WR-02).
   loop_detected: "error",

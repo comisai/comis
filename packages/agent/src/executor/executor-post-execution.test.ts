@@ -287,7 +287,7 @@ describe("buildSessionEndMetadata", () => {
     const ALL_FINISH_REASONS = [
       "stop", "end_turn", "error", "max_steps",
       "budget_exceeded", "budget_exhausted", "circuit_open", "provider_degraded",
-      "context_loop", "context_exhausted", "session_reset", "loop_detected",
+      "context_loop", "context_exhausted", "output_starved", "session_reset", "loop_detected",
       "completed_with_tool_errors",
     ];
     for (const reason of ALL_FINISH_REASONS) {
