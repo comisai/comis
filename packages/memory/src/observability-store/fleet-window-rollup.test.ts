@@ -262,4 +262,83 @@ describe("reduceFleetWindow", () => {
     const reversed = reduceFleetWindow([...rows].reverse(), { excludeSynthetic: true });
     expect(reversed).toEqual(first);
   });
+
+  // ------------------------------------------------------------------------
+  // QT2/QT3 — degradedByCause: the fleet-level detector ("N sessions degraded
+  // by context_exhausted, M by output_starved" over the window).
+  // ------------------------------------------------------------------------
+
+  it("counts degraded sessions BY endReason cause — only degraded rows contribute", () => {
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "s1", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "s2", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "s3", degraded: true, endReason: "output_starved" }),
+      makeRollup({ sessionKey: "s4", degraded: true, endReason: "error" }),
+      // A NON-degraded session — its endReason (success) must NOT be counted.
+      makeRollup({ sessionKey: "s5", degraded: false, endReason: "success" }),
+    ];
+    const out = reduceFleetWindow(rows, { excludeSynthetic: true });
+
+    expect(out.degradedByCause).toEqual({
+      context_exhausted: 2,
+      output_starved: 1,
+      error: 1,
+    });
+    // The clean session's "success" is never a degradation cause.
+    expect(out.degradedByCause).not.toHaveProperty("success");
+  });
+
+  it("excludes synthetic rows from degradedByCause (the metric-integrity filter)", () => {
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "r", source: "runtime", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "t", source: "test", degraded: true, endReason: "output_starved" }),
+    ];
+    const excluded = reduceFleetWindow(rows, { excludeSynthetic: true });
+    const included = reduceFleetWindow(rows, { excludeSynthetic: false });
+
+    expect(excluded.degradedByCause).toEqual({ context_exhausted: 1 });
+    expect(excluded.degradedByCause).not.toHaveProperty("output_starved");
+    // Counter-assertion: the two branches differ (no no-op trap).
+    expect(included.degradedByCause).toEqual({ context_exhausted: 1, output_starved: 1 });
+  });
+
+  it("a degraded row with a missing/blank endReason folds into an 'unknown' cause (never a crash)", () => {
+    // The reducer is a public export reachable directly by the handler — a row
+    // whose endReason field is absent (pre-change persisted rows) or blank must
+    // still be COUNTED as degraded, bucketed under a stable 'unknown' label.
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "s1", degraded: true }), // endReason omitted
+      makeRollup({ sessionKey: "s2", degraded: true, endReason: "" }),
+      makeRollup({ sessionKey: "s3", degraded: true, endReason: "context_exhausted" }),
+    ];
+    const out = reduceFleetWindow(rows, { excludeSynthetic: true });
+    expect(out.degradedByCause.unknown).toBe(2);
+    expect(out.degradedByCause.context_exhausted).toBe(1);
+  });
+
+  it("is deterministic + bounded: degradedByCause is capped and key-order-stable across input permutations", () => {
+    // More distinct causes than the cap so the bound is exercised; counts differ
+    // so the top-N selection + tie-break are deterministic.
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "a", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "b", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "c", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "d", degraded: true, endReason: "output_starved" }),
+      makeRollup({ sessionKey: "e", degraded: true, endReason: "output_starved" }),
+      makeRollup({ sessionKey: "f", degraded: true, endReason: "error" }),
+      makeRollup({ sessionKey: "g", degraded: true, endReason: "circuit_open" }),
+      makeRollup({ sessionKey: "h", degraded: true, endReason: "budget_exhausted" }),
+    ];
+    const out = reduceFleetWindow(rows, { excludeSynthetic: true });
+    const reversed = reduceFleetWindow([...rows].reverse(), { excludeSynthetic: true });
+
+    // Capped to top-N (same FLEET cap as topErrorKinds) — bounded against DoS.
+    expect(Object.keys(out.degradedByCause).length).toBeLessThanOrEqual(5);
+    // The highest-count cause is always retained.
+    expect(out.degradedByCause.context_exhausted).toBe(3);
+    expect(out.degradedByCause.output_starved).toBe(2);
+    // Key-order-stable across input permutations (cache-key / wire-digest safe).
+    expect(Object.keys(out.degradedByCause)).toEqual(Object.keys(reversed.degradedByCause));
+    expect(JSON.stringify(out.degradedByCause)).toBe(JSON.stringify(reversed.degradedByCause));
+  });
 });
