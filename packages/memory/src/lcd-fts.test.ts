@@ -16,7 +16,7 @@
 import Database from "better-sqlite3";
 import { describe, it, expect } from "vitest";
 import { ensureLcdTables } from "./schema-lcd.js";
-import { renderMessageFtsText, searchLcdImpl } from "./lcd-fts.js";
+import { renderMessageFtsText, searchLcdImpl, hasCjkCodepoints } from "./lcd-fts.js";
 
 /**
  * Create a db with ONLY the base LCD tables (no FTS virtual tables). This is the
@@ -421,6 +421,130 @@ describe("lcd-fts — R4 cross-agent search isolation (WR-02)", () => {
     const aHits = searchLcdImpl(db, "conv-shared", "agent-a", "falcon", { limit: 10, scope: "messages" });
     expect(aHits.map((h) => h.refId)).toContain("m-a");
     expect(aHits.some((h) => h.refId === "m-b")).toBe(false); // agent B's message excluded
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// EFF-03: CJK zero-hit counter in LCD FTS search path
+// ───────────────────────────────────────────────────────────────────────────
+// searchLcdImpl must return an `LcdSearchResult` wrapper `{ hits, cjkZeroHit }`
+// instead of a bare `LcdSearchHit[]`. The `cjkZeroHit` flag is true when the
+// query contains CJK codepoints AND the search returned 0 hits — the §14.4
+// instrumented trigger for the deferred CJK-trigram path. Content-free: the
+// flag never carries the query string, only a boolean signal.
+//
+// Pre-patch: searchLcdImpl returns `LcdSearchHit[]` (no cjkZeroHit field) → RED.
+
+describe("EFF-03 — hasCjkCodepoints detects standard CJK Unicode blocks", () => {
+  it("returns true for CJK Unified Ideographs (Chinese characters)", () => {
+    expect(hasCjkCodepoints("你好")).toBe(true);
+  });
+
+  it("returns true for Hiragana (Japanese kana)", () => {
+    expect(hasCjkCodepoints("こんにちは")).toBe(true);
+  });
+
+  it("returns true for Katakana (Japanese kana)", () => {
+    expect(hasCjkCodepoints("カタカナ")).toBe(true);
+  });
+
+  it("returns true for Hangul Syllables (Korean)", () => {
+    expect(hasCjkCodepoints("안녕하세요")).toBe(true);
+  });
+
+  it("returns false for Latin-only text", () => {
+    expect(hasCjkCodepoints("hello world")).toBe(false);
+  });
+
+  it("returns false for accented Latin characters (not CJK)", () => {
+    expect(hasCjkCodepoints("café")).toBe(false);
+  });
+
+  it("returns false for an empty string", () => {
+    expect(hasCjkCodepoints("")).toBe(false);
+  });
+});
+
+describe("EFF-03-T-1 — CJK query with zero FTS hits returns cjkZeroHit=true", () => {
+  it("searchLcdImpl returns cjkZeroHit=true when query has CJK codepoints and hits is empty", () => {
+    // Seed with English-only messages — no CJK content.
+    const db = baseTablesOnlyDb();
+    db.prepare(`
+      INSERT INTO lcd_summaries
+        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+         earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      VALUES ('s1','conv-a','t','a','s','leaf',0,1,1,1,1,'the quarterly revenue report','[]',0,0,1)
+    `).run();
+    db.prepare(`
+      INSERT INTO lcd_summaries
+        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+         earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      VALUES ('s2','conv-a','t','a','s','leaf',0,1,1,1,1,'another english summary','[]',0,0,2)
+    `).run();
+
+    const result = searchLcdImpl(db, "conv-a", "a", "你好", { limit: 10, scope: "summaries" });
+    // Must return a wrapper, not a bare array.
+    expect(result.hits).toBeDefined();
+    expect(Array.isArray(result.hits)).toBe(true);
+    expect(result.hits).toHaveLength(0);
+    // CJK codepoints present + zero hits → cjkZeroHit must be true.
+    expect(result.cjkZeroHit).toBe(true);
+  });
+});
+
+describe("EFF-03-T-2 — CJK query WITH matching hits returns cjkZeroHit=false", () => {
+  it("searchLcdImpl returns cjkZeroHit=false when hits is non-empty even with CJK query", () => {
+    // Seed with CJK content so the LIKE fallback can match.
+    const db = baseTablesOnlyDb();
+    db.prepare(`
+      INSERT INTO lcd_summaries
+        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+         earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      VALUES ('s1','conv-a','t','a','s','leaf',0,1,1,1,1,'你好 greetings','[]',0,0,1)
+    `).run();
+
+    const result = searchLcdImpl(db, "conv-a", "a", "你好", { limit: 10, scope: "summaries" });
+    // CJK content matched → hits non-empty → cjkZeroHit must be false.
+    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.cjkZeroHit).toBe(false);
+  });
+});
+
+describe("EFF-03-T-3 — Non-CJK query returns cjkZeroHit=false regardless of hit count", () => {
+  it("searchLcdImpl returns cjkZeroHit=false for a Latin-only query with zero hits", () => {
+    // Empty db — no matches expected, but query is Latin-only.
+    const db = baseTablesOnlyDb();
+
+    const result = searchLcdImpl(db, "conv-a", "a", "hello", { limit: 10, scope: "summaries" });
+    expect(result.hits).toHaveLength(0);
+    // No CJK in query → cjkZeroHit must be false even with zero hits.
+    expect(result.cjkZeroHit).toBe(false);
+  });
+
+  it("searchLcdImpl returns cjkZeroHit=false for a Latin query that has hits", () => {
+    const db = baseTablesOnlyDb();
+    db.prepare(`
+      INSERT INTO lcd_summaries
+        (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+         earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      VALUES ('s1','conv-a','t','a','s','leaf',0,1,1,1,1,'hello world','[]',0,0,1)
+    `).run();
+
+    const result = searchLcdImpl(db, "conv-a", "a", "hello", { limit: 10, scope: "summaries" });
+    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.cjkZeroHit).toBe(false);
+  });
+});
+
+describe("EFF-03-T-4 — Mixed CJK+Latin query with zero hits returns cjkZeroHit=true", () => {
+  it("searchLcdImpl returns cjkZeroHit=true for a mixed query with no matches", () => {
+    // Empty db — no matches. Query contains both Latin and CJK codepoints.
+    const db = baseTablesOnlyDb();
+
+    const result = searchLcdImpl(db, "conv-a", "a", "hello 你好", { limit: 10, scope: "summaries" });
+    expect(result.hits).toHaveLength(0);
+    // Query contains CJK codepoints AND hits is empty → cjkZeroHit must be true.
+    expect(result.cjkZeroHit).toBe(true);
   });
 });
 
