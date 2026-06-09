@@ -12,7 +12,7 @@ const repoTree = "https://github.com/comisai/comis/tree/main";
 // The full methodology + reproduction page (docs site, Mintlify).
 const methodologyUrl = "https://docs.comis.ai/agents/memory-benchmarks";
 
-// --- ACCURACY (set A — cross-judged) ----------------------------------------
+// --- ACCURACY (set A - cross-judged) ----------------------------------------
 // Every row sourced from benchmarks/CLAIMS.md -> the j1-baseline manifest.
 // Cross-MODEL (gpt-4o + gpt-4.1), graded by two independent judges.
 const baselineManifest = "benchmarks/results/2026-05-31-j1-baseline";
@@ -48,7 +48,7 @@ const accuracyRows = [
   {
     metric: "retrieval recall@5",
     judgeA: "0.845",
-    judgeB: "—",
+    judgeB: "-",
     note: "full-set · vector lane + on-device rerank",
     manifest: baselineManifest,
   },
@@ -62,27 +62,27 @@ const costLatency = {
   manifest: baselineManifest,
 };
 
-// --- MECHANICAL deltas (sets B/D — keyless, $0) -----------------------------
-// A SEPARATE panel. These are STRUCTURAL gate deltas measured keyless at $0 —
+// --- MECHANICAL deltas (sets B/D - keyless, $0) -----------------------------
+// A SEPARATE panel. These are STRUCTURAL gate deltas measured keyless at $0 -
 // NOT end-to-end QA-accuracy lifts. Never blended into the accuracy table.
 const mechanicalDeltas = [
   {
     name: "Graph-spread lane (KG)",
     delta: "linked-doc recall OFF 0 → ON 1",
-    label: "mechanical, keyless, $0 — not a QA-accuracy lift",
+    label: "mechanical, keyless, $0 - not a QA-accuracy lift",
     manifest:
       "benchmarks/results/2026-06-01-phase100-kg/graph-spread-contribution-report.json",
   },
   {
     name: "MMR diversity (IQ)",
     delta: "diverse-doc rank OFF 3 → ON 2",
-    label: "mechanical, keyless, $0 — not a QA-accuracy lift",
+    label: "mechanical, keyless, $0 - not a QA-accuracy lift",
     manifest:
       "benchmarks/results/2026-06-01-phase102-iq/mmr-diversity-report.json",
   },
 ];
 
-// --- What the new tracks provably do (keyless, $0) — SEPARATE from accuracy --
+// --- What the new tracks provably do (keyless, $0) - SEPARATE from accuracy --
 // Six capabilities shipped + proven keyless at $0. Each row is a STRUCTURAL
 // invariant of the shipped code, NOT an end-to-end QA-accuracy lift, and is kept
 // out of the accuracy table on purpose. The ask-your-memory row cites the
@@ -93,59 +93,59 @@ const v29Capabilities = [
   {
     name: "Learning-to-rank (trust frozen)",
     delta: "bandit recall-SCORE lift +0.1 over 5 episodes (rank position flat on the keyless lane)",
-    label: "mechanical, keyless, $0 — not a QA-accuracy lift",
+    label: "mechanical, keyless, $0 - not a QA-accuracy lift",
     manifest:
       "benchmarks/results/2026-06-01-phase111-learn-rank/claim1-bandit-rank-lift-report.json",
   },
   {
     name: "Principled ranking decay",
     delta: "old/unused memory factor 0.553 < fresh 0.995 (decay ranks, never gates; byte-identical at neutral)",
-    label: "mechanical, keyless, $0 — not a QA-accuracy lift",
+    label: "mechanical, keyless, $0 - not a QA-accuracy lift",
     manifest:
       "benchmarks/results/2026-06-01-phase112-forget/claim2-deterministic-decay-report.json",
   },
   {
     name: "Per-user profile",
     delta: "typed per-user records round-trip 4/4; an external-trust upsert is rejected (0 rows); (tenant, agent, user) isolation; recall stays LLM-free",
-    label: "mechanical, keyless, $0 — not a QA-accuracy lift",
+    label: "mechanical, keyless, $0 - not a QA-accuracy lift",
     manifest:
       "benchmarks/results/2026-06-01-phase107-user/claim1-prefix-typing-report.json",
   },
   {
     name: "Per-channel relationship model (dormant / default-off)",
     delta: "directional A→B and B→A as two distinct edges; the sign-off gate holds (enabled-but-unsigned ⇒ 0 reads)",
-    label: "mechanical, keyless, $0 — not a QA-accuracy lift",
+    label: "mechanical, keyless, $0 - not a QA-accuracy lift",
     manifest:
       "benchmarks/results/2026-06-01-phase108-social/claim4-signoff-gate-report.json",
   },
   {
     name: "Ask-your-memory tool (opt-in / default-off)",
     delta: "recall stays LLM-free (0 model calls on read); citations are a subset of the recalled ids; mandatory abstention on empty recall",
-    label: "mechanical, keyless, $0 — not a QA-accuracy lift",
+    label: "mechanical, keyless, $0 - not a QA-accuracy lift",
     manifest:
       "benchmarks/results/2026-06-01-phase113-reprove/GATE-REPORT.md",
   },
   {
     name: "Query-conditional usefulness reorder",
     delta: "a memory used for intent X ranks 1 vs 2 for an X- vs Y-query (perIntentRankLift 1); citation→FEED accrual",
-    label: "mechanical, keyless, $0 — not a QA-accuracy lift",
+    label: "mechanical, keyless, $0 - not a QA-accuracy lift",
     manifest:
       "benchmarks/results/2026-06-01-phase110-learn-iq/claim1-per-intent-bucket-report.json",
   },
 ];
 
 // --- COMPETITIVE HEAD-TO-HEAD (the costed re-run, finally measured) ---------
-// accuracy, cross-judged — the SECOND real QA-accuracy set after the measured
+// accuracy, cross-judged - the SECOND real QA-accuracy set after the measured
 // baseline. Competitors re-run by US under one protocol (answer claude-sonnet-4-6
 // + judges gpt-4o AND claude, cross-judge spread 0.0 on every cell), best-effort
 // N=8. Every cell read from the phase114-prove2 manifest. Binding framing:
-// Comis TIED mem0 — the framing is "competitive-with mem0 / at-$0-on-device",
+// Comis TIED mem0 - the framing is "competitive-with mem0 / at-$0-on-device",
 // NEVER a superiority claim. The differentiator is cost/latency/locality, not quality.
 const h2hManifest = "benchmarks/results/2026-06-02-phase114-prove2";
 const competitiveHeadToHead = {
   manifest: h2hManifest,
   intro:
-    "On 8 LongMemEval questions, cross-judged by two independent models (gpt-4o + claude, spread 0.0 on every cell), Comis's LLM-free $0 on-device recall scores the same as mem0 — and both clear a full-context-dump control by +37.5 pt. At this best-effort N=8 the two are statistically indistinguishable, so Comis is competitive with mem0 at $0 on-device; the difference is production economics, not answer quality.",
+    "On 8 LongMemEval questions, cross-judged by two independent models (gpt-4o + claude, spread 0.0 on every cell), Comis's LLM-free $0 on-device recall scores the same as mem0 - and both clear a full-context-dump control by +37.5 pt. At this best-effort N=8 the two are statistically indistinguishable, so Comis is competitive with mem0 at $0 on-device; the difference is production economics, not answer quality.",
   rows: [
     {
       system: "Comis (as-shipped recall)",
@@ -166,18 +166,18 @@ const competitiveHeadToHead = {
       note: "the honesty anchor",
     },
   ],
-  // measure-first per-capability QA-lift (N=50 mix) — also from the same manifest.
+  // measure-first per-capability QA-lift (N=50 mix) - also from the same manifest.
   capabilityNote:
-    "Per-capability QA-lift (N=50 mix, cross-judged): Comis baseline 98.0% / 94.0% (spread 4.0, survives); the two recall-config capabilities are byte-identical to baseline on all 50 questions → +0.0 pt measured lift. No recall-config capability showed a measured QA-lift — the measure-first outcome.",
+    "Per-capability QA-lift (N=50 mix, cross-judged): Comis baseline 98.0% / 94.0% (spread 4.0, survives); the two recall-config capabilities are byte-identical to baseline on all 50 questions → +0.0 pt measured lift. No recall-config capability showed a measured QA-lift - the measure-first outcome.",
   scopeNote:
-    "N=8 / N=50 are best-effort operator-costed samples, not the definitive scale. Zep / Hindsight / Mnemosyne were skip-with-disclosure (not wired this run) — never a fabricated cell. Comis TIED mem0: competitive-with, never a superiority claim.",
+    "N=8 / N=50 are best-effort operator-costed samples, not the definitive scale. Zep / Hindsight / Mnemosyne were skip-with-disclosure (not wired this run) - never a fabricated cell. Comis TIED mem0: competitive-with, never a superiority claim.",
 };
 
-// --- HEAD-TO-HEAD (reproduce/extend via the gate — NO fabricated cell) ------
+// --- HEAD-TO-HEAD (reproduce/extend via the gate - NO fabricated cell) ------
 const headToHead = {
   command: "scripts/bench-memory.sh gate",
   copy:
-    "The competitor head-to-head above is the operator-costed re-run, measured best-effort at N=8. The gate is how you extend it — a larger N, or the skip-with-disclosure competitors (Zep / Hindsight / Mnemosyne). We will not print a number we have not measured.",
+    "The competitor head-to-head above is the operator-costed re-run, measured best-effort at N=8. The gate is how you extend it - a larger N, or the skip-with-disclosure competitors (Zep / Hindsight / Mnemosyne). We will not print a number we have not measured.",
   coi:
     "Comis authored this benchmark. Vendor-reported numbers are non-comparable across protocols; competitors are invited to reproduce on their own harness.",
 };
@@ -204,13 +204,13 @@ const headToHead = {
       </div>
     </section>
 
-    <!-- Accuracy (set A — cross-judged) -->
+    <!-- Accuracy (set A - cross-judged) -->
     <section class="px-6 py-16 md:py-24 bg-navy-light/50">
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Accuracy, cross-judged</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-6">The measured baseline</h2>
         <p class="text-muted text-lg mb-10 max-w-2xl leading-relaxed">
-          These are Comis's only end-to-end QA-accuracy numbers — scored by two judges and reported
+          These are Comis's only end-to-end QA-accuracy numbers - scored by two judges and reported
           only where the cross-judge spread is stable.
         </p>
 
@@ -244,7 +244,7 @@ const headToHead = {
         <p class="text-muted text-sm mt-6 leading-relaxed max-w-3xl">
           QA accuracy is on a disclosed 135-item category-stratified subset; retrieval recall@5 is
           full-set. Judges are cross-<strong class="text-muted-light">model</strong> (gpt-4o + gpt-4.1),
-          not cross-provider. single-session-preference is omitted — judge-noisy, 15pt spread;
+          not cross-provider. single-session-preference is omitted - judge-noisy, 15pt spread;
           LoCoMo is comparability-only and is never headlined.
         </p>
       </div>
@@ -277,13 +277,13 @@ const headToHead = {
       </div>
     </section>
 
-    <!-- What the mechanical tracks provably do (keyless, $0) — SEPARATE from accuracy -->
+    <!-- What the mechanical tracks provably do (keyless, $0) - SEPARATE from accuracy -->
     <section class="px-6 py-16 md:py-24 bg-navy-light/50">
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Keyless, at $0</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">What the mechanical tracks provably do</h2>
         <p class="text-muted text-lg mb-10 max-w-2xl leading-relaxed">
-          These are <strong class="text-muted-light">structural</strong> gate deltas — measured with no
+          These are <strong class="text-muted-light">structural</strong> gate deltas - measured with no
           answer model, no judge, no key, at $0. They are <strong class="text-muted-light">not</strong>
           end-to-end QA-accuracy lifts, and they are kept out of the accuracy table above on purpose.
         </p>
@@ -300,13 +300,13 @@ const headToHead = {
       </div>
     </section>
 
-    <!-- What the newer tracks provably do (keyless, $0) — SEPARATE from accuracy -->
+    <!-- What the newer tracks provably do (keyless, $0) - SEPARATE from accuracy -->
     <section class="px-6 py-16 md:py-24">
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Keyless, at $0</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">What the newer tracks provably do</h2>
         <p class="text-muted text-lg mb-10 max-w-2xl leading-relaxed">
-          Six capabilities Comis now ships — each proven with no answer model, no judge, no key, at
+          Six capabilities Comis now ships - each proven with no answer model, no judge, no key, at
           $0. As above, these are <strong class="text-muted-light">structural</strong> invariants,
           <strong class="text-muted-light">not</strong> end-to-end QA-accuracy lifts; the one
           measured learning signal is a recall-<strong class="text-muted-light">score</strong> lift,
@@ -325,11 +325,11 @@ const headToHead = {
       </div>
     </section>
 
-    <!-- competitive head-to-head — the costed re-run, finally measured -->
+    <!-- competitive head-to-head - the costed re-run, finally measured -->
     <section class="px-6 py-16 md:py-24 bg-navy-light/50">
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Competitive head-to-head · cross-judged</p>
-        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">Competitive with mem0 — at $0 on-device</h2>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">Competitive with mem0 - at $0 on-device</h2>
         <p class="text-muted text-lg mb-10 max-w-3xl leading-relaxed">{competitiveHeadToHead.intro}</p>
 
         <div class="overflow-x-auto">
@@ -357,8 +357,8 @@ const headToHead = {
 
         <p class="text-muted text-sm mt-6 leading-relaxed max-w-3xl">
           Cross-judge spread <strong class="text-muted-light">0.0 on every cell</strong> (both judges
-          agreed) — every number survives. Comis and mem0 score <strong class="text-muted-light">the
-          same</strong> (both 7/8): at N=8 a tie, not a win — <strong class="text-muted-light">competitive-with,
+          agreed) - every number survives. Comis and mem0 score <strong class="text-muted-light">the
+          same</strong> (both 7/8): at N=8 a tie, not a win - <strong class="text-muted-light">competitive-with,
           never a superiority claim.</strong> Both clear the full-dump control by +37.5 pt (the bench discriminates).
         </p>
         <p class="text-muted text-sm mt-4 leading-relaxed max-w-3xl">{competitiveHeadToHead.capabilityNote}</p>
@@ -369,7 +369,7 @@ const headToHead = {
       </div>
     </section>
 
-    <!-- Honest head-to-head — reproduce/extend via the gate (NO fabricated cell) -->
+    <!-- Honest head-to-head - reproduce/extend via the gate (NO fabricated cell) -->
     <section class="px-6 py-16 md:py-24">
       <div class="max-w-4xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Head-to-head</p>
