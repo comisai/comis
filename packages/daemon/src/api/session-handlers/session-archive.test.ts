@@ -85,7 +85,7 @@ function makeLcdStore(deleteCount = 5): ContextStorePort {
   } as unknown as ContextStorePort;
 }
 
-/** Build a minimal SessionHandlerDeps for context.reset_lcd tests. */
+/** Build a minimal SessionHandlerDeps for session.reset_conversation tests. */
 function makeDeps(overrides: Partial<SessionHandlerDeps> = {}): SessionHandlerDeps {
   const base: Partial<SessionHandlerDeps> = {
     defaultAgentId: "default",

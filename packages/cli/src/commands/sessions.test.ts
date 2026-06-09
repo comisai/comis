@@ -14,7 +14,7 @@
  *
  *   - Phase 164-03 (RR4): sessions reset-lcd subcommand wiring:
  *     CLI1 — subcommand is registered; accepts sessionKey + --memory + --yes
- *     CLI2 — calls context.reset_lcd with { session_key } when --yes is passed
+ *     CLI2 — calls session.reset_conversation with { session_key } when --yes is passed
  *     CLI3 — --memory flag threads memory: true to the RPC request
  */
 
