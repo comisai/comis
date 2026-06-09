@@ -318,8 +318,16 @@ export async function assembleFleetHealthReport(
   // digest (WR-02): the prior `includeSynthetic` opt-in was unreachable from all
   // four surfaces, so it was removed rather than left as a dead admin capability.
   const fleet = reduceFleetWindow(rows, { excludeSynthetic: true });
-  // A2 exposes degradedRate but NOT the absolute degraded count — derive it.
-  const degraded = rows.filter((r) => r.degraded).length;
+  // WR-01: the absolute degraded count comes from the SAME synthetic-excluded
+  // population the reducer used for `total` (sessionCount) + `degradedRate` —
+  // `fleet.degradedCount`, NOT a re-derivation over the UNFILTERED `rows`. The
+  // old `rows.filter(r => r.degraded).length` counted synthetic/test degraded
+  // rows too, so `sessions.degraded` could exceed `total`, disagree with
+  // `degradedRate`, and contradict `sum(degradedByCause)` (which the reducer
+  // already caps to runtime-only). Reading it back keeps all three `sessions`
+  // fields on one population. (`coverage.sessionSummary.rows` stays unfiltered
+  // below — that is a read-coverage breadcrumb, correct pre-exclusion.)
+  const degraded = fleet.degradedCount;
 
   // A3 — multi-day session-index activity aggregate (daysRead/daysMissing -> coverage).
   // Thread the SAME `nowMs` as the window upper bound so the A3 day-key range

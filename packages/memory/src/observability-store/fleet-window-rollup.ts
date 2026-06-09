@@ -60,6 +60,17 @@ const UNKNOWN_CAUSE = "unknown";
 export interface FleetWindowRollup {
   /** Number of sessions folded into the aggregate (after synthetic exclusion). */
   sessionCount: number;
+  /**
+   * Absolute count of degraded sessions over the KEPT (synthetic-excluded) rows —
+   * the numerator of {@link degradedRate}. Exposed so the fleet handler's
+   * `sessions.degraded` shares ONE synthetic-excluded population with `total`
+   * (`sessionCount`) and `degradedRate`, rather than re-deriving the count from
+   * the unfiltered rows (which would double-count a synthetic degraded row and
+   * make `sessions.degraded` exceed `total` / disagree with `degradedRate` and
+   * `sum(degradedByCause)`) (WR-01). Equals `sum(Object.values(degradedByCause))`
+   * before the cap (the cap only trims the cause SPREAD, not this total).
+   */
+  degradedCount: number;
   /** Degraded sessions / sessionCount in 0..1; `0` when sessionCount is 0. */
   degradedRate: number;
   /** Merged per-kind failure counts, capped to the top-N by summed count. */
@@ -159,6 +170,10 @@ export function reduceFleetWindow(
   const sessionCount = kept.length;
   return {
     sessionCount,
+    // The absolute degraded count over the kept rows — WR-01: the fleet handler
+    // reads this back so `sessions.degraded` shares the synthetic-excluded
+    // population with `total`/`degradedRate` instead of counting unfiltered rows.
+    degradedCount,
     degradedRate: sessionCount === 0 ? 0 : degradedCount / sessionCount,
     topErrorKinds,
     degradedByCause,
