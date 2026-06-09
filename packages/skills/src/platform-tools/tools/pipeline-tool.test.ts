@@ -47,7 +47,7 @@ describe("createPipelineTool", () => {
   // orchestration request ("four analysts in parallel, then a debate…") to this
   // tool instead of researching everything itself in one context. Live, the
   // mechanics-led description ("DAG pipelines") failed to steer qwen3.6.
-  it("description steers multi-agent / parallel / debate intent and delegation", () => {
+  it("description: steers multi-agent / parallel / debate intent and delegation", () => {
     const tool = createPipelineTool(rpcCall);
     const d = tool.description.toLowerCase();
     expect(d).toContain("parallel");
