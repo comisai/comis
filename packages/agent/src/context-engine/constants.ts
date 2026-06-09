@@ -14,6 +14,16 @@
  */
 
 // ---------------------------------------------------------------------------
+// Output Headroom (Layer 0: reasoning-aware output floor — Fix 3 / Phase 166)
+// ---------------------------------------------------------------------------
+
+/** Minimum visible output tokens guaranteed on every LLM dispatch — the
+ *  non-reasoning floor (the answer/tool-call body that must survive after the
+ *  thinking block). Used by: output-headroom.ts + config-resolver.ts clamp.
+ *  Design ref: design/small-model-context-fidelity.md §4 Fix 3 item 1. */
+export const MIN_VISIBLE_OUTPUT_TOKENS = 768;
+
+// ---------------------------------------------------------------------------
 // Token Budget Algebra (Layer 0: budget computation)
 // ---------------------------------------------------------------------------
 
