@@ -728,6 +728,10 @@ export function emitSessionSummary(
     traceId: string;
     turnCount: number;
     rollup: SessionHealthRollup;
+    /** The mapped endReason (named degradation cause) — the SAME value derived
+     *  once at the chokepoint via END_REASON_MAP and co-persisted on sessionEnd.
+     *  Carried so the row feeds the fleet `degradedByCause` aggregate (QT2/QT3). */
+    endReason: string;
     clock: ClockPort;
   },
 ): void {
@@ -744,6 +748,7 @@ export function emitSessionSummary(
       breakerTripCount: args.rollup.breakerTripCount,
       topErrorKinds: args.rollup.topErrorKinds,
       source: "runtime" as const,
+      endReason: args.endReason,
       timestamp: args.clock.now(),
     });
   } catch (err) {
@@ -1177,7 +1182,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // F2: announce session:summary once. Own fire-and-forget guard inside
   // emitSessionSummary — a throwing in-process listener must not abort teardown
   // (OQ3). The event carries ids + counts + topErrorKinds + source:"runtime"
-  // (Phase 159 A1/A2) so the row feeds the fleet aggregate.
+  // (Phase 159 A1/A2) PLUS the mapped endReason (the named degradation cause,
+  // QT2/QT3) so the row feeds the fleet aggregate AND its degradedByCause rollup.
+  // endReason is the SAME value mapped once above and co-persisted on sessionEnd.
   emitSessionSummary(
     { eventBus: deps.eventBus, logger: deps.logger },
     {
@@ -1186,6 +1193,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       traceId: tryGetContext()?.traceId ?? executionId,
       turnCount: bridgeResult.turnCount ?? 0,
       rollup: sessionHealthRollup,
+      endReason,
       clock: deps.clock,
     },
   );

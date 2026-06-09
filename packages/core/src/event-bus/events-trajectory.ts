@@ -88,6 +88,14 @@ export interface TrajectoryEvents {
    * fleet aggregate (`aggregateSessionsInWindow`, Phase 159 A1/A2) can read them
    * without opening per-session `_session-metadata.json` files. Production emits
    * the constant `source: "runtime"`; tests inject `"test"` / `"bench"`.
+   *
+   * `endReason` is the SAME mapped `SessionMetadata.sessionEnd.endReason` the
+   * chokepoint derives ONCE via `END_REASON_MAP` (executor-post-execution.ts) and
+   * co-persists onto `sessionEnd`. Carrying it here threads the NAMED degradation
+   * cause (e.g. `context_exhausted` / `output_starved`, the Glass Box degradation
+   * detectors) into the persisted row so `obs.fleet.health` can aggregate
+   * `degradedByCause` from the rows alone — never opening per-session metadata. It
+   * is a closed-set label (the endReason union), never free text.
    */
   "session:summary": {
     sessionKey: string;
@@ -100,6 +108,8 @@ export interface TrajectoryEvents {
     breakerTripCount: number;
     topErrorKinds: Record<string, number>;
     source: "runtime" | "test" | "bench";
+    /** The mapped endReason (the named degradation cause) — closed-set label. */
+    endReason: string;
     timestamp: number;
   };
 
