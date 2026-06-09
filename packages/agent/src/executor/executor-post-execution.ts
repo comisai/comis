@@ -99,6 +99,8 @@ import type { CapabilityClass } from "./model-profile.js";
 import { createHash, randomUUID } from "node:crypto";
 // R4: critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
+// CWF-05: deterministic user-facing reply for named degraded terminal causes.
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply } from "./degraded-reply.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
@@ -1167,6 +1169,24 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     const failedToolName = bridgeResult.failedTools?.[0] ?? "unknown tool";
     result.response = (result.response ?? "") +
       `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
+  }
+
+  // CWF-05: degrade loudly — deliver an honest user-facing reply for named degraded causes.
+  // APPEND for output_starved (partial text exists); REPLACE for context_exhausted (no usable text).
+  // Gate on effectiveFinishReason (NOT result.finishReason — output_starved is only set here).
+  if (effectiveFinishReason === "output_starved") {
+    result.response = (result.response ?? "") + buildOutputStarvedAnnotation();
+    deps.logger.warn(
+      { step: "degraded-reply", errorKind: "resource" as const, hint: "output_starved annotation appended" },
+      "CWF-05: output_starved — annotated truncated reply",
+    );
+  }
+  if (effectiveFinishReason === "context_exhausted") {
+    result.response = buildContextExhaustedReply();
+    deps.logger.warn(
+      { step: "degraded-reply", errorKind: "resource" as const, hint: "context_exhausted synthesized reply" },
+      "CWF-05: context_exhausted — synthesized honest reply delivered",
+    );
   }
 
   // SD3 (Phase 158): resolve capability-gated verification default before the gate check.
