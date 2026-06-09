@@ -1608,15 +1608,20 @@ describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 
       getFreshTailPreambleTokensEstimate: () => 166,
     };
     const engine = createLcdContextEngine(dagConfig(2), depsUnthreaded);
-    await engine.transformContext([]);
+    // v2.19 OF-01 interaction: with S=25584 counted by the pre-flight and the nano
+    // cap = 16000, the system manifest ALONE overflows the window (25584 > 16000),
+    // so the turn is infeasible even at minimal thinking → transformContext now
+    // correctly degrades LOUDLY (ContextExhaustionError → context_exhausted) instead
+    // of silently dispatching a doomed prompt. The lcd-evict log (budgetTokens) and
+    // the fail-closed nano cap are still emitted BEFORE the throw — asserted below.
+    await expect(engine.transformContext([])).rejects.toThrow(/* ContextExhaustionError */);
 
     const evictCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
       .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
     expect(evictCalls.length).toBeGreaterThan(0);
     const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
-    // RED: pre-patch budgetTokens = 57808 (frontier fallback, no cap) — fails (57808 !== 0)
-    // GREEN: post-patch budgetTokens = 0 (fail-closed nano cap; 16K < 25584 → H<0 → clamped)
-    // H = max(0, 16000 - 25584 - 8192 - 2048 - 4000 - 166) = 0
+    // The fail-closed nano cap fired (visible in the lcd-evict log before the throw):
+    // budgetTokens = max(0, 16000 - 25584 - 8192 - 2048 - 4000 - 166) = 0 (was 57808 uncapped pre-Phase-165).
     expect(budgetTokens).toBe(0);
   });
 
@@ -1633,7 +1638,10 @@ describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 
       getFreshTailPreambleTokensEstimate: () => 166,
     };
     const engine = createLcdContextEngine(dagConfig(2), depsWithoutProfile);
-    await engine.transformContext([]);
+    // v2.19 OF-01: S=25584 > nano cap 16000 → manifest overflows the window → the
+    // turn degrades loudly (ContextExhaustionError). The fail-closed WARN + the
+    // capped lcd-evict log are emitted BEFORE the throw — asserted below.
+    await expect(engine.transformContext([])).rejects.toThrow(/* ContextExhaustionError */);
 
     // RED assertion 1: WARN emitted with errorKind:"config"
     expect(logger.warn).toHaveBeenCalledWith(

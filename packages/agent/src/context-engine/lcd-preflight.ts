@@ -93,10 +93,20 @@ export function runPreflightFitCheck(
     return s;
   }, 0);
   const freshTailTokens = Math.ceil(freshTailChars / CHARS_PER_TOKEN_RATIO);
+  // OF-01 (v2.19): count the FULL SDK prompt, not just history+freshTail. The
+  // dominant term is the system prompt + tool schemas (S = getSystemTokensEstimate)
+  // — the SAME value the eviction budget subtracts (lcd-assembler `S`). The
+  // fit-check previously OMITTED it, so a real ~31.5K prompt (S≈25584 + history +
+  // freshTail) looked like ~6.5K, passed the check, and the model truncated
+  // silently at stopReason:length — the governor / clamp / context-exhausted
+  // ladder never engaged. S is non-evictable (system+tools), so it also enters
+  // the harder-eviction budget below and the reported assembled count.
+  // See design/small-model-orchestration-fidelity.md §6 Fix 1.
+  const systemTokens = deps.getSystemTokensEstimate?.() ?? 0;
   // CR-03: save the ORIGINAL assembled count (what is actually dispatched to the LLM)
   // BEFORE any simulation in step (a). onAssembledInputTokens must always report this
   // value — NOT the simulated undercount from the security-pin harder-eviction pass.
-  const originalAssembledInputTokens = budgetedTokens + freshTailTokens;
+  const originalAssembledInputTokens = systemTokens + budgetedTokens + freshTailTokens;
   let assembledInputTokens = originalAssembledInputTokens;
 
   if (assembledInputTokens > headroomBound) {
@@ -110,14 +120,16 @@ export function runPreflightFitCheck(
         !isSecurityRelevantMessage(item.msg as { content?: unknown; role?: string }, markers),
       );
       const pinnedTokens = pinnedItems.reduce((s, b) => s + b.tokens, 0);
-      const tighterBudget = Math.max(0, headroomBound - pinnedTokens - freshTailTokens);
+      // OF-01: S (system+tools) is non-evictable — reserve it in the harder-eviction
+      // budget so history is evicted against the room that ACTUALLY remains.
+      const tighterBudget = Math.max(0, headroomBound - systemTokens - pinnedTokens - freshTailTokens);
       const hardEvictedMsgs = evictHistoryUnderBudget(nonPinnedItems, tighterBudget);
       // Recompute kept tokens: the hardEvictedMsgs count tells us how many nonPinned items
       // were kept (newest keptNonPinned items from nonPinnedItems).
       const keptNonPinned = hardEvictedMsgs.length;
       const keptNonPinnedStart = Math.max(0, nonPinnedItems.length - keptNonPinned);
       const keptNonPinnedTokens = nonPinnedItems.slice(keptNonPinnedStart).reduce((s, b) => s + b.tokens, 0);
-      assembledInputTokens = keptNonPinnedTokens + pinnedTokens + freshTailTokens;
+      assembledInputTokens = systemTokens + keptNonPinnedTokens + pinnedTokens + freshTailTokens;
     }
 
     // (c) Down-shift thinking level if reasoningStyle === "native" and still over headroomBound.
