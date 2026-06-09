@@ -113,7 +113,7 @@ export function runPreflightFitCheck(
           deps.logger.warn(
             {
               step: "lcd-pre-flight",
-              errorKind: "capacity" as const,
+              errorKind: "resource" as const,
               hint: `thinking down-shifted to fit window: ${thinkingLevelInput} → ${effectiveThinkingLevel}`,
               agentId: deps.agentId,
               sessionKey: deps.sessionKey,
@@ -142,7 +142,7 @@ export function runPreflightFitCheck(
       deps.logger.warn(
         {
           step: "lcd-pre-flight",
-          errorKind: "capacity" as const,
+          errorKind: "resource" as const,
           hint: "context exhausted: assembled input exceeds effective window minus headroom even at minimal thinking",
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,

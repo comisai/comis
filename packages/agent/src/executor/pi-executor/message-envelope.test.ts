@@ -17,6 +17,7 @@ import { applyPromptRunOutcome, handleEnvelopeException, type MessageEnvelopeDep
 import type { ExecutionResult } from "../types.js";
 import type { PromptRunResult } from "../prompt-runner/prompt-runner-types.js";
 import { PromptTimeoutError } from "../prompt-timeout.js";
+import { ContextExhaustionError } from "../../context-engine/errors.js";
 
 function makeResult(): ExecutionResult {
   return {
@@ -112,6 +113,34 @@ describe("handleEnvelopeException", () => {
     const before = result;
     handleEnvelopeException({ result }, makeDeps(), { error: new Error("x"), sessionKey: result.sessionKey, agentId: undefined });
     expect(result).toBe(before);
+    expect(result.finishReason).toBe("error");
+  });
+
+  // CR-01 integration test: ContextExhaustionError → "context_exhausted" finishReason
+  it("CR-01: ContextExhaustionError maps to finishReason 'context_exhausted' (not 'error')", () => {
+    const result = makeResult();
+    const err = new ContextExhaustionError(32_768, 31_500);
+    handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1" });
+    // Must map to context_exhausted so END_REASON_MAP fires the correct degradation cause
+    expect(result.finishReason).toBe("context_exhausted");
+    expect(result.response).toContain("conversation history");
+    // errorContext must NOT be set (context_exhausted is a clean escalation, not an unclassified error)
+    expect(result.errorContext).toBeUndefined();
+  });
+
+  it("CR-01: ContextExhaustionError user-facing message does not expose internal details", () => {
+    const result = makeResult();
+    const err = new ContextExhaustionError(32_768, 31_500);
+    handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1" });
+    // Internal token counts must not leak to user
+    expect(result.response).not.toContain("31500");
+    expect(result.response).not.toContain("32768");
+    expect(result.response.length).toBeGreaterThan(0);
+  });
+
+  it("CR-01: non-ContextExhaustionError still maps to 'error' (regression guard)", () => {
+    const result = makeResult();
+    handleEnvelopeException({ result }, makeDeps(), { error: new Error("generic"), sessionKey: result.sessionKey, agentId: "a1" });
     expect(result.finishReason).toBe("error");
   });
 });
