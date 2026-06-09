@@ -244,6 +244,33 @@ describe("buildSessionEndMetadata", () => {
     expect(Object.values(END_REASON_MAP)).not.toContain("timeout");
   });
 
+  it("QT2: un-flattens the context-exhaustion cause — context_exhausted and context_loop both name it (not generic error)", () => {
+    // The degradation taxonomy previously collapsed BOTH context-exhaustion
+    // finish reasons to the generic "error" bucket, so a context-exhausted
+    // session was indistinguishable from a tool crash in obs.explain /
+    // obs.fleet.health. QT2 folds the two related reasons into ONE named cause:
+    // context_exhausted (the bridge actively sets finishReason:"context_exhausted"
+    // at the block guard) AND context_loop (the related loop-on-exhaustion abort)
+    // both map to the SINGLE "context_exhausted" endReason.
+    expect(END_REASON_MAP.context_exhausted).toBe("context_exhausted");
+    expect(END_REASON_MAP.context_loop).toBe("context_exhausted");
+    // And the value reaches sessionEnd.endReason through the real builder.
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "context_exhausted" }).sessionEnd?.endReason).toBe("context_exhausted");
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "context_loop" }).sessionEnd?.endReason).toBe("context_exhausted");
+    // Still degraded (the named cause is not "success").
+    expect(buildSessionHealthRollup({}, "context_exhausted").degraded).toBe(true);
+  });
+
+  it("QT3: output_starved is a named terminal cause in END_REASON_MAP (not generic error)", () => {
+    // The chokepoint promotes a terminal output-cap truncation to
+    // finishReason:"output_starved"; the map must carry it as its OWN named
+    // endReason so the cause survives into the persisted rollup + both lenses.
+    expect(END_REASON_MAP.output_starved).toBe("output_starved");
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "output_starved" }).sessionEnd?.endReason).toBe("output_starved");
+    // Still degraded (output_starved is not "success").
+    expect(buildSessionHealthRollup({}, "output_starved").degraded).toBe(true);
+  });
+
   it("falls back to 'error' for unmapped finishReasons", () => {
     const result = buildSessionEndMetadata({ ...baseArgs, finishReason: "some_unknown_reason" });
     expect(result.sessionEnd?.endReason).toBe("error");
