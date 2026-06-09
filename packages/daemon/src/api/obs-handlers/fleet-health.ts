@@ -360,6 +360,10 @@ export async function assembleFleetHealthReport(
     windowHours,
     sessions: { total: fleet.sessionCount, degraded, degradedRate: fleet.degradedRate },
     topErrorKinds,
+    // QT2/QT3 — the fleet-level degradation detector: degraded counts by named
+    // endReason cause, computed by reduceFleetWindow from the per-session rows
+    // (bounded + deterministic; synthetic excluded by the reducer above).
+    degradedByCause: fleet.degradedByCause,
     breakerTripTotal: fleet.breakerTripTotal,
     toolStats: fleet.toolStats,
     // WR-03 — cost is CROSS-SOURCE and degrades asymmetrically: `costUsd` is

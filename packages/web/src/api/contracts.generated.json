@@ -7854,6 +7854,15 @@
             "additionalProperties": false
           }
         },
+        "degradedByCause": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
         "breakerTripTotal": {
           "type": "number"
         },
@@ -8081,6 +8090,7 @@
         "windowHours",
         "sessions",
         "topErrorKinds",
+        "degradedByCause",
         "breakerTripTotal",
         "toolStats",
         "cost",

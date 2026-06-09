@@ -7976,6 +7976,15 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "additionalProperties": false
           }
         },
+        "degradedByCause": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
         "breakerTripTotal": {
           "type": "number"
         },
@@ -8203,6 +8212,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "windowHours",
         "sessions",
         "topErrorKinds",
+        "degradedByCause",
         "breakerTripTotal",
         "toolStats",
         "cost",
