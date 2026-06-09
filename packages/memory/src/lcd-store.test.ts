@@ -1911,4 +1911,40 @@ describe("EFF-01: getMessagesByIds / getSummariesByIds", () => {
     const result = store.getMessagesByIds(SCOPE_CROSS_A, agentBIds);
     expect(result).toEqual([]);
   });
+
+  it("EFF-01-S-5: countMessages returns the FULL persisted scope count, distinct from the bounded getMessagesByIds subset", () => {
+    const ids = appendMessages(SCOPE_A, 5);
+    // countMessages reports the full persisted total — the value the dag
+    // assembler's `persistedMsgCount` / fresh-tail-overlap math depends on. It is
+    // NOT the size of any bounded fetch. The EFF-01 regression used the bounded
+    // `rows.length` (below) as persistedMsgCount, undercounting the total once the
+    // oldest message-refs were folded into summary-refs — which silently broke
+    // fresh-tail integrity and condensed-summary placement.
+    expect(store.countMessages(SCOPE_A)).toBe(5);
+    // Contrast: a bounded fetch of 2 ids returns 2 rows (≠ the persisted total).
+    expect(store.getMessagesByIds(SCOPE_A, [ids[0]!, ids[1]!])).toHaveLength(2);
+  });
+
+  it("EFF-01-S-6: countMessages respects R4 scope — a different agentId's messages are not counted", () => {
+    const SCOPE_CNT_A: ContextStoreScope = {
+      conversationId: "conv-cnt",
+      tenantId: "tenant-cnt",
+      agentId: "agentA",
+      sessionKey: "sess-cnt",
+    };
+    const SCOPE_CNT_B: ContextStoreScope = {
+      conversationId: "conv-cnt",
+      tenantId: "tenant-cnt",
+      agentId: "agentB",
+      sessionKey: "sess-cnt",
+    };
+    appendMessages(SCOPE_CNT_A, 3);
+    appendMessages(SCOPE_CNT_B, 7);
+    expect(store.countMessages(SCOPE_CNT_A)).toBe(3);
+    expect(store.countMessages(SCOPE_CNT_B)).toBe(7);
+  });
+
+  it("EFF-01-S-7: countMessages returns 0 for a scope with no persisted messages", () => {
+    expect(store.countMessages({ ...SCOPE_A, conversationId: "conv-none" })).toBe(0);
+  });
 });
