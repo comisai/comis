@@ -203,7 +203,10 @@ describe("lcdHealthCheck", () => {
     // Seed valid data (no corruption)
     seedMessage(db);
     seedSummary(db);
-    seedContextItem(db, { refKind: "message", refId: "msg-001" });
+    // Context item pointing to the message
+    seedContextItem(db, { id: "ci-msg", refKind: "message", refId: "msg-001", ordinal: 0 });
+    // Context item pointing to the summary (so summary is NOT orphaned)
+    seedContextItem(db, { id: "ci-sum", refKind: "summary", refId: "sum-001", ordinal: 1 });
     db.close();
 
     const findings = await lcdHealthCheck.run(makeCtx(dataDir));
