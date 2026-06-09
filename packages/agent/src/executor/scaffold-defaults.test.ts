@@ -453,8 +453,9 @@ describe("CWF-04: resolveScaffoldDefaults→ceiling→applyToolDeferral E2E chai
 
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
 
-    // Ceiling holds
-    expect(result.activeTools.length).toBeLessThanOrEqual(24);
+    // Ceiling holds — exact pin: 15 CORE + 1 pipeline + 8 cold = 24
+    // (83 total − 59 deferred cold tools = 24 active; deterministic — same fixture every run)
+    expect(result.activeTools.length).toBe(24);
     // KEY ASSERTION (RED → GREEN): pipeline must be in the active set for small
     expect(result.activeTools.map(t => t.name)).toContain("pipeline");
   });
