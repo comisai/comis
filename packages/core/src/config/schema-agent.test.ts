@@ -1440,7 +1440,7 @@ describe("BroadcastGroupSchema", () => {
     }
   });
 
-  it("rejects empty id", () => {
+  it("rejects a provider entry with an empty id at schema parse", () => {
     const result = BroadcastGroupSchema.safeParse({ id: "" });
     expect(result.success).toBe(false);
   });

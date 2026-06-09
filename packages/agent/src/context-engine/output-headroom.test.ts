@@ -115,7 +115,7 @@ describe("downshiftThinkingLevel", () => {
 // ---------------------------------------------------------------------------
 
 describe("computeTokenBudgetForProfile — frontier byte-identity characterization", () => {
-  it("W=200000, S=5000 → availableHistoryTokens=126808 (byte-identical)", () => {
+  it("keeps frontier availableHistoryTokens byte-identical at W=200000 S=5000 (126808)", () => {
     // Frontier profile: capabilityClass="frontier" → effectiveWindow=Infinity cap (byte-identical).
     // computeTokenBudget(200000, 5000):
     //   M = max(ceil(200000 * 5 / 100), 2048) = max(10000, 2048) = 10000

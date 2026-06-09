@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: ContextExhaustionError is a control-flow signal caught by handleEnvelopeException and mapped to finishReason:context_exhausted (design Fix 3/5)
 /**
  * Pre-flight fit check for the LCD dag assembler (Phase 166 CWF-02).
  *

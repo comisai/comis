@@ -594,9 +594,5 @@ export async function setupAgents(deps: {
   };
 }
 
-// ---------------------------------------------------------------------------
-// OAuth credential store selection lives in @comis/agent (CLI cannot import
-// from @comis/daemon, so the helper must live where both daemon and CLI
-// consume it).
-// See: packages/agent/src/model/oauth-credential-store-selector.ts
-// ---------------------------------------------------------------------------
+// OAuth credential store selection: @comis/agent/src/model/oauth-credential-store-selector.ts
+// (CLI cannot import from @comis/daemon, so the helper lives where both daemon and CLI consume it)

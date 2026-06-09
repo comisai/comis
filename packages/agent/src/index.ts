@@ -100,16 +100,10 @@ export type { CacheProviderInfo } from "./executor/cache-usage-helpers.js";
 export { createModelScanner } from "./model/model-scanner.js";
 export type { ScanResult, ModelScanner, ModelScannerDeps } from "./model/model-scanner.js";
 
-// Effective context window resolver (CWF-03: reconcile configured vs served vs cap)
-export { resolveEffectiveContextWindow } from "./model/effective-context-window.js";
-export type { EffectiveContextWindowInput, EffectiveContextWindowResult } from "./model/effective-context-window.js";
-
 // Ollama capacity probe (CWF-03: boot-time served num_ctx discovery)
-export { probeOllamaServedWindow, probeAllOllamaProviders, deriveOllamaNativeBase } from "./model/ollama-capacity-probe.js";
-export type { OllamaCapacityProbeDeps, OllamaProbeResult, OllamaProbeError } from "./model/ollama-capacity-probe.js";
-
-// Capability cap table (CWF-03: exported for pi-executor wiring + daemon boot)
-export { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "./context-engine/budget-capacity-cap.js";
+// Only probeAllOllamaProviders is consumed cross-package (daemon boot);
+// the remaining probe symbols are intra-package only.
+export { probeAllOllamaProviders } from "./model/ollama-capacity-probe.js";
 
 // OAuth token manager (runtime stays in agent due to chokidar + pi-ai/oauth deps)
 export { createOAuthTokenManager } from "./model/oauth-token-manager.js";
