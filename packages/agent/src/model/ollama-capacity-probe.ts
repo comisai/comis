@@ -37,6 +37,8 @@ export interface OllamaProbeResult {
   servedWindow: number;
   /** Which Ollama API endpoint provided the value. */
   source: "api/ps" | "api/show";
+  /** Elapsed milliseconds for the full probe (AGENTS.md §2.7 INFO completion). */
+  durationMs: number;
 }
 
 /** Probe failure. */
@@ -164,7 +166,7 @@ export async function probeOllamaServedWindow(
   if (matchingEntry !== undefined) {
     const contextLength = matchingEntry.context_length;
     if (typeof contextLength === "number" && isFinite(contextLength) && contextLength > 0) {
-      return ok({ servedWindow: contextLength, source: "api/ps" });
+      return ok({ servedWindow: contextLength, source: "api/ps", durationMs: systemNowMs() - startMs });
     }
   }
 
@@ -216,7 +218,7 @@ export async function probeOllamaServedWindow(
     isFinite(detailsContextLength) &&
     detailsContextLength > 0
   ) {
-    return ok({ servedWindow: detailsContextLength, source: "api/show" });
+    return ok({ servedWindow: detailsContextLength, source: "api/show", durationMs: systemNowMs() - startMs });
   }
 
   // Both endpoints exhausted — no usable context_length found
@@ -295,6 +297,7 @@ export async function probeAllOllamaProviders(
               providerId,
               servedWindow: result.value.servedWindow,
               source: result.value.source,
+              durationMs: result.value.durationMs,
               submodule: "ollama-capacity-probe",
             },
             "Ollama served context window discovered",
