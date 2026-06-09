@@ -181,8 +181,13 @@ export function createLcdContextEngine(
       // EFF-01: collect the refId sets from contextItems FIRST so we can issue
       // bounded IN-clause reads instead of fetching ALL rows for the scope.
       // An empty set short-circuits to [] without any DB query (zero wasted I/O).
-      // Assembly output is byte-identical because the map-lookup logic is unchanged;
-      // only the pre-populate step is bounded. T-170-01-01/02: R4 scope triple is
+      // These bounded `rows`/summaries are used ONLY as the resolve-time lookup
+      // maps (rowById/summaryById) — every message-ref/summary-ref in contextItems
+      // is in the collected id set by construction, so the maps are complete for
+      // resolution. The TOTAL persisted-message count (persistedMsgCount, used by
+      // the fresh-tail/eviction overlap math) is read SEPARATELY via the bounded
+      // `countMessages` COUNT below — it must NOT be derived from rows.length, which
+      // counts only the still-referenced subset. T-170-01-01/02: R4 scope triple is
       // always passed through to getMessagesByIds / getSummariesByIds.
       const messageRefIds = contextItems
         .filter((ci) => ci.refKind === "message")
@@ -325,9 +330,11 @@ export function createLcdContextEngine(
       //    those map to RAW message-refs at the END of `context_items` (summaries
       //    collapse the OLDEST run, so the tail of the view is raw).
       //
-      //    WR-01 robustness: `rawOverlap` is a RAW-message count (`rows.length`),
-      //    while the slice indexes into the COLLAPSED `resolved` view
-      //    (`resolved.length ≤ rows.length` once any leaf/condense pass has run).
+      //    WR-01 robustness: `rawOverlap` is a RAW-message count (`persistedMsgCount`,
+      //    the bounded COUNT(*) total — NOT `rows.length`, which is the referenced
+      //    working-set subset post EFF-01), while the slice indexes into the COLLAPSED
+      //    `resolved` view (`resolved.length ≤ persistedMsgCount` once any leaf/condense
+      //    pass has run).
       //    Subtracting `rawOverlap` from `resolved.length` directly is correct ONLY
       //    under the oldest-run-collapse invariant; if the fresh-tail window reaches
       //    back further than the trailing raw run (a large `freshTailTurns`, or a
@@ -344,7 +351,16 @@ export function createLcdContextEngine(
       //    Drop-free + double-free for BOTH L>H (mid-turn: the store lags the live
       //    array by the in-flight delta, so the in-flight tail rides only via
       //    `freshTail` — CR-01) and L<=H (a heal shrank the live array — WR-01).
-      const persistedMsgCount = rows.length;
+      // EFF-01 (regression fix): persistedMsgCount is the TOTAL count of persisted
+      // messages in scope — NOT `rows.length`. `rows` is now the BOUNDED working
+      // set (message-refs only); once the oldest messages fold into summary-refs,
+      // `rows.length` undercounts the total and corrupts the fresh-tail/eviction
+      // overlap below (this was the lcd-synthetic-session gate failure: a broken
+      // fresh tail + a mis-placed condensed summary). `countMessages` is a bounded
+      // COUNT(*) — one integer, NO O(total-history) row fetch — so assembly is
+      // byte-identical to the pre-EFF-01 `getMessages(readScope).length` while the
+      // row fetch stays O(referenced-ids). Fail-closed: no read scope ⇒ 0.
+      const persistedMsgCount = readScope ? store.countMessages(readScope) : 0;
       const rawOverlap = Math.max(0, persistedMsgCount - tailStart);
       let trailingMessageRefs = 0;
       for (let i = resolvedKinds.length - 1; i >= 0 && resolvedKinds[i] === "message"; i--) {

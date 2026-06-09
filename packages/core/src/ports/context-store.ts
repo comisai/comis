@@ -107,6 +107,21 @@ export interface ContextStorePort {
   getSummariesByIds(scope: ContextStoreScope, ids: string[]): LcdSummary[];
 
   /**
+   * EFF-01: the TOTAL count of persisted messages in the scope — a bounded
+   * `COUNT(*)` that returns a single integer WITHOUT materializing any rows, so
+   * it preserves the O(referenced-ids) read budget (no O(total-history) fetch).
+   *
+   * This is the authoritative `persistedMsgCount` the dag assembler needs for its
+   * fresh-tail / eviction overlap math: messages are never deleted by
+   * summarization (losslessness), so this total stays correct even after the
+   * oldest message-refs collapse into summary-refs — unlike `getMessagesByIds`,
+   * whose bounded result counts only the still-referenced subset. Scoped by
+   * (conversationId, agentId, tenantId) — full isolation (R4): a different agent
+   * sharing the conversation is never counted (WR-02). Returns 0 for an empty scope.
+   */
+  countMessages(scope: ContextStoreScope): number;
+
+  /**
    * E1 region walk: the immediate CHILD summaries of a condensed summary
    * (the lcd_summary_parents condensed→child edge). Returns [] when the
    * summary has no children (a leaf) or does not exist. Scoped by

@@ -248,6 +248,15 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
   );
 
+  // EFF-01: bounded total-message COUNT for the assembler's `persistedMsgCount` —
+  // a single integer, NO row materialization, so it keeps the O(referenced-ids)
+  // read budget (never an O(total-history) row fetch). R4: scoped by agent_id +
+  // tenant_id (WR-02). The count read goes through ctxCountRowMapper, not a raw
+  // count cast (§6.8 untyped-sqlite) — same { c } shape as countCtxItems.
+  const countMsgs = db.prepare(
+    "SELECT COUNT(*) AS c FROM lcd_messages WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
+  );
+
   // CRIT-2: the highest ordinal currently in the (conversation, agent, tenant)
   // view — the per-append insert lands at MAX(ordinal)+1 (0 for the first row).
   // `MAX` over zero rows is SQL NULL (the nullable mapper handles it). R4: scoped
@@ -711,6 +720,19 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
         });
       }
       return out;
+    },
+
+    countMessages(scope: ContextStoreScope): number {
+      // EFF-01: single-integer COUNT — no row materialization, so it preserves the
+      // O(referenced-ids) read budget (the assembler's persistedMsgCount no longer
+      // forces an O(total-history) getMessages fetch). Routed through
+      // ctxCountRowMapper, not a raw count cast (§6.8 untyped-sqlite). A scope with
+      // no rows yields { c: 0 }; a parse failure (corruption/drift) degrades to 0
+      // rather than throwing — a missing count must never break live assembly.
+      const countRow = ctxCountRowMapper.parseOptionalRow(
+        countMsgs.get(scope.conversationId, scope.agentId, scope.tenantId),
+      );
+      return countRow.ok && countRow.value ? countRow.value.c : 0;
     },
 
     getSummariesByIds(scope: ContextStoreScope, ids: string[]): LcdSummary[] {
