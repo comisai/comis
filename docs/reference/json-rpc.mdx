@@ -2990,16 +2990,19 @@ Updates are deep-merged with existing configuration and persisted to the YAML co
 
 </Accordion>
 
-<Accordion title="context (2 methods)">
+<Accordion title="context (3 methods)">
 
-LCD lossless-store **operator-browse** RPCs that back the dashboard's Context DAG browser. Both are `rpc`-scoped and AGENT+TENANT scoped: the calling agent comes from the request context and the tenant from the daemon — neither is a caller-supplied parameter, so a browse can never read another agent's (or tenant's) conversations.
+LCD lossless-store RPCs. The two `rpc`-scoped browse methods back the dashboard's Context DAG browser; the `admin`-scoped `context.reset_lcd` is the explicit forget command for operators.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
 | `context.conversations` | `rpc` | List the calling agent's distinct LCD conversations (paginated) |
 | `context.tree` | `rpc` | Get a conversation's resolved DAG (summary nodes + raw-message count) |
+| `context.reset_lcd` | `admin` | Clear the LCD durable history for a session (explicit forget) |
 
 <Note>
+The `rpc`-scoped browse methods are AGENT+TENANT scoped: the calling agent comes from the request context and the tenant from the daemon — neither is a caller-supplied parameter, so a browse can never read another agent's (or tenant's) conversations.
+
 The in-session context **tools** an agent uses while running — `ctx_search`, `ctx_inspect`, `ctx_expand` (deep recall via `ctx_recall`) — are agent tools invoked through the executor, **not** gateway RPC methods, and are documented under the agent tool reference rather than here.
 
 Two further operator-browse RPCs the Context DAG browser will use — `context.inspect` (per-node metadata + taint-wrapped content recovery) and `context.searchByConversation` (full-text search within one conversation) — are **not yet registered**; calling them returns JSON-RPC `-32601` (method not found). The browser degrades to loading and rendering the DAG structure without per-node deep-inspect or in-conversation search until they ship.
@@ -3020,6 +3023,43 @@ Two further operator-browse RPCs the Context DAG browser will use — `context.i
 | **Scope** | `rpc` |
 | **Parameters** | `{ conversation_id: string }` (the agent + tenant are resolved from the request context) |
 | **Returns** | `{ conversationId, nodes: Array<{ summaryId, kind, depth, tokenCount, contentPreview, childIds, parentIds, taint, createdAt }>, messageCount }` — `messageCount` counts raw turns not yet collapsed into a summary; `contentPreview` is a bounded, untrusted-origin slice surfaced for the human operator view (never re-fed to a model) and `taint` flags untrusted nodes |
+
+### `context.reset_lcd`
+
+Clear the LCD durable conversation history for a session. **Destructive and irreversible.** Admin-scoped — requires an admin token. The operation is serialized against live ingest (safe to call while the daemon is running). Returns row counts only — no message content is returned or logged.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ session_key: string, memory?: boolean }` — `memory` defaults to `false`; when `true`, also clears RAG memories for this session (the full-forget / GDPR path) |
+| **Returns** | `{ sessionKey: string, lcdRowsDeleted: number, memoriesDeleted?: number }` — `memoriesDeleted` is `0` when `memory` is `false` or absent |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "context.reset_lcd",
+  "params": {
+    "session_key": "default:user123:telegram",
+    "memory": false
+  },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "sessionKey": "default:user123:telegram",
+    "lcdRowsDeleted": 42,
+    "memoriesDeleted": 0
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+After a reset, the LCD store is empty for the session. The next conversation turn starts with a clean slate — the model no longer has access to the prior history via the LCD read path. For the full durability model (LCD vs. JSONL vs. RAG memory), see [Data Directory](/operations/data-directory).
 
 </Accordion>
 

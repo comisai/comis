@@ -1200,6 +1200,7 @@ Session management commands for listing, inspecting, and deleting conversation s
 | `sessions list` | List all sessions |
 | `sessions inspect <key>` | Display full details of a session |
 | `sessions delete <key>` | Delete a session |
+| `sessions reset-lcd <sessionKey>` | Clear the LCD durable conversation history for a session |
 
 #### `sessions list`
 
@@ -1220,6 +1221,19 @@ Session management commands for listing, inspecting, and deleting conversation s
 |------|------|---------|-------------|
 | `--yes` | `boolean` | `false` | Skip confirmation prompt |
 
+#### `sessions reset-lcd <sessionKey>`
+
+Clear the LCD durable conversation history for a session. **This operation is irreversible.** Admin-gated — requires an admin token. After a reset, the model starts with a clean slate for this session.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--memory` | `boolean` | `false` | Also clear RAG memories for this session (the full-forget / GDPR path) |
+| `--yes` | `boolean` | `false` | Required — skip the confirmation prompt (the command exits with an error if omitted) |
+
+<Warning>
+The LCD store holds the durable conversation history — deleting the session JSONL file does **not** clear it. Use `sessions reset-lcd` when you want the model to explicitly forget this conversation. See [Data Directory](/operations/data-directory) for the full durability model.
+</Warning>
+
 ```bash
 # List all sessions
 comis sessions list
@@ -1229,6 +1243,12 @@ comis sessions inspect "default:user123:telegram"
 
 # Delete a session
 comis sessions delete "default:user123:telegram" --yes
+
+# Clear LCD history for a session (irreversible, requires --yes)
+comis sessions reset-lcd "default:user123:telegram" --yes
+
+# Clear LCD history AND RAG memories (full-forget path)
+comis sessions reset-lcd "default:user123:telegram" --memory --yes
 ```
 
 ---
