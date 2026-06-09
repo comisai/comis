@@ -131,6 +131,10 @@ export interface ContextEngineSetupParams {
   onAnchorReset: () => void;
   /** Current discovery tracker (if active) */
   currentDiscoveryTracker?: DiscoveryTracker;
+  /** C1 (Phase 165): the resolved ModelProfile for the current turn.
+   *  Absent ⇒ lcd-assembler applies the fail-closed nano cap + WARN.
+   *  Pass params.modelProfile (already in scope at the pi-executor call site). */
+  modelProfile?: import("./model-profile.js").ModelProfile;
 }
 
 /** Result of context engine setup. */
@@ -250,6 +254,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     contextEngineRef,
     getCachedSystemTokensEstimate, getCachedFreshTailPreambleTokens, getTokenAnchor, onAnchorReset,
     currentDiscoveryTracker,
+    modelProfile,
   } = params;
 
   // DAG-CRIT-1: prefer the caller-supplied turn agentId (the positional
@@ -619,6 +624,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // The dag assembler stamps assembly duration + synthesized-tool-result
     // timestamps via this injected clock (production never calls Date.now()).
     clock: deps.clock,
+    // C1 (Phase 165): the resolved ModelProfile for budget-aware eviction cap.
+    // Absent ⇒ lcd-assembler applies the fail-closed nano cap + WARN.
+    modelProfile,
   });
 
   // Wire context engine to the mutable holder so requestBodyInjector

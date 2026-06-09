@@ -910,6 +910,7 @@ async function runSessionLocked(
     getTokenAnchor: () => tokenAnchor,
     onAnchorReset: () => { tokenAnchor = null; },
     currentDiscoveryTracker,
+    modelProfile,  // already in scope: resolveModelProfile() at line 328; used by assembleTools at :502
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK internal: no public type for agent.transformContext
   (session.agent as any).transformContext = ceSetup.contextEngine.transformContext;

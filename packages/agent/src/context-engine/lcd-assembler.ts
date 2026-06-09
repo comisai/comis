@@ -350,23 +350,31 @@ export function createLcdContextEngine(
       const W = model.contextWindow;
       const S = deps.getSystemTokensEstimate?.() ?? 0;
       const freshTailPreambleTokens = deps.getFreshTailPreambleTokensEstimate?.() ?? 0;
-      // C1 (Phase 152): profile-aware budget — 8K-starvation fix (effectiveO = min(O, maxOutputTokens))
+      // C1 (Phase 152/165): profile-aware budget — 8K-starvation fix (effectiveO = min(O, maxOutputTokens))
       // and 256K-overfill cap for small/nano models. Frontier/mid: byte-identical to computeTokenBudget.
       // When deps.modelProfile is present: use it for both fixes (the standard C1 path).
-      // When deps.modelProfile is absent (pre-Phase-152 callers / tests without a wired profile):
-      //   synthesize a "transparent" profile that preserves the pre-C1 byte-identical behavior:
-      //   - contextWindow = W (actual, from getModel()) — respects the real window
-      //   - maxOutputTokens = OUTPUT_RESERVE_TOKENS (8192) — the 8K-starvation fix is a NO-OP
-      //     because effectiveO = min(OUTPUT_RESERVE_TOKENS, 8192) = 8192 = no change
-      //   - capabilityClass = "frontier" — the 256K-overfill cap is disabled (frontier = no cap)
-      //     so the window cap never fires; behavior is identical to pre-C1 computeTokenBudget.
-      // This ensures pre-C1 callers see zero behavior change while profiled callers get the C1 fixes.
-      const profile = deps.modelProfile ?? {
-        ...FAIL_CLOSED_PROFILE,
-        contextWindow: W,
-        maxOutputTokens: 8_192, // 8K-starvation fix neutral: min(8192, 8192) = 8192 = no change
-        capabilityClass: "frontier" as const, // overfill cap neutral: frontier = Infinity cap = no cap
-      };
+      // When deps.modelProfile is absent: fail-closed to nano (K2) — an unthreaded profile must NOT
+      // silently fall open to frontier (no cap). Apply the most-locked (nano, 16K) cap as
+      // defense-in-depth and emit a loud WARN so any future missed wire is auditable — never silent.
+      // Threading (Phase 165) makes this path dead code on the live dag path.
+      let profile = deps.modelProfile;
+      if (profile === undefined) {
+        deps.logger.warn(
+          {
+            step: "lcd-evict",
+            agentId: deps.agentId,
+            sessionKey: deps.sessionKey,
+            errorKind: "config" as const,
+            hint: "modelProfile unthreaded — applied locked (nano) capacity cap; wire modelProfile through setupContextEngine",
+          },
+          "lcd assembler: modelProfile absent — failing closed to nano cap",
+        );
+        profile = {
+          ...FAIL_CLOSED_PROFILE,
+          contextWindow: W,         // use the actual model window, not the 8K sentinel
+          maxOutputTokens: 8_192,   // 8K-starvation fix neutral (min(8192,8192)=8192)
+        };
+      }
       const budget = computeTokenBudgetForProfile(
         profile,
         S,
