@@ -347,7 +347,6 @@ export function createPiExecutor(
           configured: resolvedModel?.contextWindow,
           served: deps.servedContextWindow,
           capabilityCap,
-          module: "pi-executor",
           submodule: "context-window-reconcile",
         }, "Context window reconciled (served or capability cap bound)");
       }

@@ -289,7 +289,7 @@ export async function probeAllOllamaProviders(
               providerId,
               servedWindow: result.value.servedWindow,
               source: result.value.source,
-              module: "ollama-capacity-probe",
+              submodule: "ollama-capacity-probe",
             },
             "Ollama served context window discovered",
           );
@@ -300,7 +300,7 @@ export async function probeAllOllamaProviders(
               err: result.error.message,
               errorKind: result.error.errorKind,
               hint: "Falling back to configured contextWindow; start Ollama or set capabilities.probeServedWindow: false to suppress",
-              module: "ollama-capacity-probe",
+              submodule: "ollama-capacity-probe",
             },
             "Ollama capacity probe failed — using configured contextWindow",
           );
