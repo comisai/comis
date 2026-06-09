@@ -74,8 +74,7 @@ const PipelineNode = Type.Object({
     description: `Built-in node type for MULTI-agent orchestration. OMIT this for a regular single-agent node (just set "agent" + "task" — that already runs one sub-agent). Only set type_id when you need: debate (multi-round adversarial, ~N*R calls), vote (parallel independent voting, ~N calls), refine (sequential review chain, ~N calls), collaborate (sequential building, ~N*R calls), approval-gate (pause for human approval, 0 calls), map-reduce (parallel map then reduce, ~N+1 calls). Each of these REQUIRES a matching type_config. ("agent" is accepted but redundant — a node with "agent"+"task" already runs one sub-agent, so omit type_id instead.)`
   })),
   type_config: Type.Optional(Type.Record(Type.String(), Type.Unknown(), {
-    description: `Configuration for the node type. MUST be set whenever type_id is set, and MUST be omitted when type_id is omitted (both-or-neither). Examples:
-  agent:         { "agent": "ta-analyst" }
+    description: `Configuration for a MULTI-agent node type. MUST be set whenever type_id is set, and MUST be omitted when type_id is omitted (both-or-neither). For a single-agent node, set the node's "agent" field and OMIT both type_id and type_config. Examples (by type_id):
   debate:        { "agents": ["ta-bull", "ta-bear"], "rounds": 2, "synthesizer": "ta-judge" }
   vote:          { "voters": ["analyst-1", "analyst-2", "analyst-3"] }
   refine:        { "reviewers": ["drafter", "editor", "pm"] }
