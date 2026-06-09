@@ -36,6 +36,26 @@ import type { SessionSummaryRollup } from "./observability-store-types.js";
 const FLEET_TOP_ERROR_KINDS_CAP = 3;
 
 /**
+ * How many distinct degradation CAUSES (`endReason` buckets) the fleet rollup's
+ * `degradedByCause` keeps — hard cap, DoS-bounded. Sized to cover the FULL closed
+ * degraded-cause union so a real cause can NEVER be silently dropped (IN-02): the
+ * reachable causes are the 9 non-`"success"` members of the `sessionEnd.endReason`
+ * union (error, timeout, budget_exceeded, budget_exhausted, circuit_open,
+ * provider_degraded, completed_with_tool_errors, context_exhausted,
+ * output_starved) PLUS the defensive {@link UNKNOWN_CAUSE} fold = 10. Because the
+ * union is CLOSED, covering it fully preserves the DoS bound while removing the
+ * silent-drop hole the prior cap of 5 left (a 6+-cause window would shed the
+ * lowest-count tail with no `truncations[]` breadcrumb, understating
+ * `sum(degradedByCause)` vs `sessions.degraded`). Higher than the errorKinds cap
+ * because the named causes are the headline of the fleet detector ("N degraded by
+ * context_exhausted, M by output_starved") and an operator wants the full spread.
+ */
+const FLEET_DEGRADED_BY_CAUSE_CAP = 10;
+
+/** The stable bucket for a degraded row whose endReason is missing/blank. */
+const UNKNOWN_CAUSE = "unknown";
+
+/**
  * The cross-session fleet aggregate produced by {@link reduceFleetWindow}.
  *
  * All fields are reduced over the KEPT sessions (synthetic rows excluded when
@@ -47,10 +67,29 @@ const FLEET_TOP_ERROR_KINDS_CAP = 3;
 export interface FleetWindowRollup {
   /** Number of sessions folded into the aggregate (after synthetic exclusion). */
   sessionCount: number;
+  /**
+   * Absolute count of degraded sessions over the KEPT (synthetic-excluded) rows —
+   * the numerator of {@link degradedRate}. Exposed so the fleet handler's
+   * `sessions.degraded` shares ONE synthetic-excluded population with `total`
+   * (`sessionCount`) and `degradedRate`, rather than re-deriving the count from
+   * the unfiltered rows (which would double-count a synthetic degraded row and
+   * make `sessions.degraded` exceed `total` / disagree with `degradedRate` and
+   * `sum(degradedByCause)`) (WR-01). Equals `sum(Object.values(degradedByCause))`
+   * before the cap (the cap only trims the cause SPREAD, not this total).
+   */
+  degradedCount: number;
   /** Degraded sessions / sessionCount in 0..1; `0` when sessionCount is 0. */
   degradedRate: number;
   /** Merged per-kind failure counts, capped to the top-N by summed count. */
   topErrorKinds: Record<string, number>;
+  /**
+   * QT2/QT3 — degraded session COUNTS bucketed by the named `endReason` cause
+   * (the fleet-level degradation detector: "N degraded by context_exhausted, M
+   * by output_starved"). ONLY degraded rows contribute; a missing/blank cause
+   * folds into `"unknown"`. Capped at {@link FLEET_DEGRADED_BY_CAUSE_CAP},
+   * top-count-first with name-asc tie-break (deterministic, DoS-bounded).
+   */
+  degradedByCause: Record<string, number>;
   /** Sum of per-session breaker-trip counts. */
   breakerTripTotal: number;
   /** Per-tool {ok, failed} summed across sessions; keys bounded by the tool set. */
@@ -81,9 +120,20 @@ export function reduceFleetWindow(
   let costUsd = 0;
   const mergedKinds = new Map<string, number>();
   const mergedTools = new Map<string, { ok: number; failed: number }>();
+  // QT2/QT3 — degraded-session counts bucketed by named endReason cause.
+  const causeCounts = new Map<string, number>();
 
   for (const r of kept) {
-    if (r.degraded) degradedCount += 1;
+    if (r.degraded) {
+      degradedCount += 1;
+      // Bucket the named degradation cause. A missing/blank endReason (a row
+      // that bypassed the query-layer default, or a malformed value) folds into
+      // the stable UNKNOWN_CAUSE — the reducer is a public export and must not
+      // trust its caller, so a degraded row is ALWAYS counted somewhere.
+      const cause =
+        typeof r.endReason === "string" && r.endReason.length > 0 ? r.endReason : UNKNOWN_CAUSE;
+      causeCounts.set(cause, (causeCounts.get(cause) ?? 0) + 1);
+    }
     breakerTripTotal += r.breakerTripCount;
     costUsd += r.costUsd;
     for (const [kind, n] of Object.entries(r.topErrorKinds)) {
@@ -115,11 +165,25 @@ export function reduceFleetWindow(
       .slice(0, FLEET_TOP_ERROR_KINDS_CAP),
   );
 
+  // Same deterministic top-N discipline as topErrorKinds: count desc, then cause
+  // name asc tie-break, capped — so degradedByCause is byte-stable across input
+  // permutations and DoS-bounded.
+  const degradedByCause: Record<string, number> = Object.fromEntries(
+    [...causeCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, FLEET_DEGRADED_BY_CAUSE_CAP),
+  );
+
   const sessionCount = kept.length;
   return {
     sessionCount,
+    // The absolute degraded count over the kept rows — WR-01: the fleet handler
+    // reads this back so `sessions.degraded` shares the synthetic-excluded
+    // population with `total`/`degradedRate` instead of counting unfiltered rows.
+    degradedCount,
     degradedRate: sessionCount === 0 ? 0 : degradedCount / sessionCount,
     topErrorKinds,
+    degradedByCause,
     breakerTripTotal,
     // Deterministic key enumeration: sort merged tool names ASC before
     // re-objectifying so the output is byte-stable across input permutations

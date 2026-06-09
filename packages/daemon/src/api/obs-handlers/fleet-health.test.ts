@@ -69,6 +69,7 @@ function summaryDetails(
     turnCount: number;
     topErrorKinds: Record<string, number>;
     source: string;
+    endReason: string;
   }> = {},
 ): string {
   return JSON.stringify({
@@ -79,6 +80,7 @@ function summaryDetails(
     turnCount: 0,
     topErrorKinds: {},
     source: "runtime",
+    endReason: "success",
     ...overrides,
   });
 }
@@ -174,6 +176,7 @@ function seedStore(store: ObservabilityStore, now: number): void {
       breakerTripCount: 2,
       topErrorKinds: { tool_timeout: 3 },
       toolStats: { web_search: { ok: 1, failed: 4 } },
+      endReason: "context_exhausted",
     }),
   });
   store.insertDiagnostic({
@@ -220,6 +223,9 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.sessions.total).toBe(2);
     expect(report.sessions.degraded).toBe(1);
     expect(report.sessions.degradedRate).toBeCloseTo(0.5);
+    // QT2/QT3: the degraded session is bucketed by its named endReason cause.
+    // The clean session (endReason:success) does NOT appear here.
+    expect(report.degradedByCause).toEqual({ context_exhausted: 1 });
     // Merged errorKinds (capped) + breaker total + per-tool ok/failed from the reducer.
     expect(report.topErrorKinds).toEqual([{ kind: "tool_timeout", count: 3 }]);
     expect(report.breakerTripTotal).toBe(2);
@@ -247,6 +253,73 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.coverage?.sessionIndex.daysRead).toBe(2);
     expect(report.coverage?.sessionIndex.daysMissing).toBe(0);
     expect(report.coverage?.billing).toEqual({ present: true });
+  });
+
+  it("EXCLUDES a synthetic degraded row from sessions.degraded — reconciling with total/degradedRate/degradedByCause (WR-01)", async () => {
+    // WR-01: `total` and `degradedRate` are synthetic-excluded (the reducer
+    // drops source!=="runtime"), but the absolute `sessions.degraded` was
+    // derived from the UNFILTERED store rows — so a `{degraded:true,
+    // source:"test"}` row inflated `degraded` (could exceed `total`, disagree
+    // with `degradedRate`, and contradict `sum(degradedByCause)`). After the fix
+    // all three `sessions` fields share the synthetic-excluded population.
+    const now = systemNowMs();
+    const clock = createFakeClock(now);
+    const store = makeStore();
+    // 3 runtime sessions, exactly ONE degraded (context_exhausted).
+    store.insertDiagnostic({
+      timestamp: now - 100,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "r1",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, costUsd: 0.2, endReason: "context_exhausted" }),
+    });
+    store.insertDiagnostic({
+      timestamp: now - 200,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "r2",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false }),
+    });
+    store.insertDiagnostic({
+      timestamp: now - 300,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "r3",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false }),
+    });
+    // A SYNTHETIC degraded row (source:"test") — must NOT inflate sessions.degraded.
+    store.insertDiagnostic({
+      timestamp: now - 400,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "t1",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, source: "test", endReason: "output_starved" }),
+    });
+    const dataDir = makeDataDirWithActivity();
+
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir, clock }, 24);
+
+    // Synthetic-excluded population: 3 runtime sessions, 1 degraded.
+    expect(report.sessions.total).toBe(3);
+    expect(report.sessions.degraded).toBe(1); // NOT 2 — the synthetic row is excluded.
+    expect(report.sessions.degradedRate).toBeCloseTo(1 / 3);
+    // sessions.degraded never exceeds total.
+    expect(report.sessions.degraded).toBeLessThanOrEqual(report.sessions.total);
+    // degraded reconciles with degradedRate exactly.
+    expect(report.sessions.degraded / report.sessions.total).toBeCloseTo(report.sessions.degradedRate);
+    // And with sum(degradedByCause) (the reducer caps the cause spread but the
+    // synthetic row's cause is excluded entirely).
+    const sumByCause = Object.values(report.degradedByCause).reduce((a, b) => a + b, 0);
+    expect(report.sessions.degraded).toBe(sumByCause);
+    expect(report.degradedByCause).not.toHaveProperty("output_starved");
+    expect(report.degradedByCause).toEqual({ context_exhausted: 1 });
+    // coverage.sessionSummary.rows stays UNFILTERED (read-coverage breadcrumb) —
+    // it counts every row read (4), pre-exclusion. This must NOT be reconciled.
+    expect(report.coverage?.sessionSummary.rows).toBe(4);
   });
 
   it("is DETERMINISTIC: same data + same fakeClock -> byte-identical reports", async () => {

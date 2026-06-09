@@ -25,6 +25,12 @@
  *      "insurance" codes that broaden 156/G1 corpus coverage. They never fire on
  *      the two X3 fixtures (the two above match first), so they cannot regress
  *      the phase-done gate.
+ *   4. context_exhausted / output_starved (QT2/QT3 — the Glass Box degradation
+ *      detectors) — the two NAMED terminal-state causes. They key on the
+ *      metadata-derived `endReason` (threaded onto the signals by the handler),
+ *      NOT a tool failure, so they sit LAST: a tool-failure cause is upstream of
+ *      the terminal state and out-ranks them. They fire only when the run's
+ *      mapped endReason IS the cause, and never on a clean session.
  *
  * The two X3-mandated codes are #1 and #2; phase-done gates ONLY on X1/X2/X3.
  *
@@ -215,6 +221,44 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       suggestedNextSteps: [
         "raise the per-call timeout or reduce the request size for " + failure.toolName,
         "check provider latency / rate-limit headroom",
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // 6) context_exhausted (QT2 — the NAMED terminal degradation cause). Keyed on
+  //    the metadata-derived endReason, NOT a tool failure — so it sits BELOW the
+  //    tool-failure rules above (a misclassification/breaker/dependency/timeout
+  //    cause is upstream of, and out-ranks, the terminal state). Fires only when
+  //    the run's mapped endReason IS the context-exhaustion cause.
+  (s) => {
+    if (s.endReason !== "context_exhausted") return null;
+    return {
+      code: "context_exhausted",
+      detail:
+        "context exhausted — the context-window guard aborted the run (the summarizer hit its token cap, or compaction floored to truncation-only), so the model could not continue",
+      suggestedNextSteps: [
+        "raise contextEngine.summarizerSpend so compaction can summarize instead of flooring to truncation",
+        "check the agent's context window vs. its working-set size (long tool outputs / large history)",
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // 7) output_starved (QT3 — the NAMED terminal output-truncation cause). Same
+  //    lowest-priority placement as context_exhausted: it explains the terminal
+  //    state, so any tool-failure cause out-ranks it. Fires only when the mapped
+  //    endReason IS the output-starvation cause (a terminal output-cap truncation
+  //    on an otherwise-clean run — see promoteOutputStarved in the agent).
+  (s) => {
+    if (s.endReason !== "output_starved") return null;
+    return {
+      code: "output_starved",
+      detail:
+        "output starved — the final response was truncated at the model's max output tokens (the terminal turn stopped at the output cap with nothing after it)",
+      suggestedNextSteps: [
+        "raise the agent's maxTokens, or enable contextEngine.outputEscalation so a capped turn retries with a larger output budget",
+        "if the answer is legitimately long, split the request or ask the agent to continue",
         "obs.explain depth=full",
       ],
     };

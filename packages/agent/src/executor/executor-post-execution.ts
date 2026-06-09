@@ -128,6 +128,17 @@ export interface PostExecutionBridgeResult {
   breakerTripCount?: number;
   /** Turn count for the session:summary event (Plan 02/F2). */
   turnCount?: number;
+  /**
+   * The SDK-normalized stop reason of the session's FINAL turn (QT3). The bridge
+   * captures `AssistantMessage.stopReason` at EVERY `turn_end`
+   * (pi-event-bridge.ts), so the value carried here is the TERMINAL one. Its
+   * union is `"stop" | "length" | "toolUse" | "error" | "aborted"` (pi-ai) — a
+   * terminal `"length"` is the output-cap truncation the chokepoint promotes to
+   * `finishReason:"output_starved"` (see {@link promoteOutputStarved}). Already
+   * returned by `buildBridgeResult`; surfaced on this interface so the chokepoint
+   * can read it without a second source.
+   */
+  lastStopReason?: string;
   /** Session-cumulative cache savings across all turns (USD). */
   sessionCacheSavedUsd?: number;
   /** Thinking tokens from SDK reasoningTokens field. */
@@ -564,18 +575,88 @@ export function shouldRunLcdStorePasses(config: {
  * NOTE: the endReason union also declares "timeout", but no source finishReason
  * maps to it — it is intentionally unreachable from this writer (asserted by a
  * unit test) rather than re-introduced via a stray mapping.
+ *
+ * QT2/QT3 — NAMED degradation causes (Glass Box degradation detectors). The
+ * taxonomy used to FLATTEN context-exhaustion into the generic "error" bucket,
+ * so obs.explain / obs.fleet.health could not tell a context-exhausted session
+ * from a tool crash. The two related context-exhaustion finish reasons —
+ * `context_exhausted` (the bridge's hard context-window-guard abort,
+ * bridge-safety-controls.ts) and `context_loop` (the loop-on-exhaustion abort) —
+ * now FOLD into ONE named cause `"context_exhausted"`. `output_starved` (the
+ * chokepoint promotes a terminal output-cap truncation, QT3) is its own named
+ * cause `"output_starved"`. Both are degraded by construction (≠ "success", so
+ * session-health-rollup's CLEAN_END_REASONS derives degraded:true unchanged).
  */
 export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["sessionEnd"]>["endReason"]> = {
   stop: "success", end_turn: "success", error: "error",
   budget_exceeded: "budget_exceeded", budget_exhausted: "budget_exhausted",
   circuit_open: "circuit_open",
   provider_degraded: "provider_degraded", max_steps: "error",
-  context_loop: "error", context_exhausted: "error",
+  // QT2: fold the two context-exhaustion reasons into the single named cause.
+  context_loop: "context_exhausted", context_exhausted: "context_exhausted",
+  // QT3: the terminal output-cap truncation promoted at the chokepoint.
+  output_starved: "output_starved",
   completed_with_tool_errors: "completed_with_tool_errors",
   // Known in-union reasons — explicit, not via the catch-all fallthrough (WR-02).
   loop_detected: "error",
   session_reset: "error",
 };
+
+/**
+ * The SDK-normalized terminal stop reasons that mark an output-cap truncation
+ * (QT3). The pi-ai `StopReason` union normalizes the output cap to `"length"`
+ * (pi-ai/types.d.ts) — that is the authoritative value. `"max_tokens"` /
+ * `"maxTokens"` are accepted defensively in case a future/non-Anthropic provider
+ * surfaces a provider-raw variant; the conservative terminal-only gate below
+ * keeps that breadth from ever flagging a healthy session. Module-level so the
+ * post-execution path does not reallocate it per turn.
+ */
+const TERMINAL_OUTPUT_STARVED_STOP_REASONS: ReadonlySet<string> = new Set([
+  "length",
+  "max_tokens",
+  "maxTokens",
+]);
+
+/**
+ * QT3 — promote a PATHOLOGICAL terminal output truncation to the named cause.
+ *
+ * Returns `"output_starved"` IFF the run would OTHERWISE end clean
+ * (`stop`/`end_turn` → `success`) AND the session's FINAL turn stopped at the
+ * model output cap (`lastStopReason ∈ {length, max_tokens}`). Otherwise it
+ * returns `effectiveFinishReason` UNCHANGED.
+ *
+ * This is deliberately conservative — the hard rule is "do not flag healthy
+ * sessions" (the spike's load-bearing guard):
+ *   - It fires ONLY on a CLEAN would-be terminal. A run that already settled on
+ *     a non-clean cause (tool errors, budget, breaker, context_exhausted, error)
+ *     keeps that upstream cause — the truncation is not the headline there.
+ *   - It keys on the TERMINAL stop reason. `m.lastStopReason` is overwritten at
+ *     every `turn_end` (pi-event-bridge.ts), so a mid-run length-stop the agent
+ *     CONTINUED past (output escalation re-ran, or another turn followed) carries
+ *     a NON-length terminal value (`stop`/`end`/`toolUse`) by the time it reaches
+ *     here and is correctly NOT flagged. Only a run whose LAST turn was cut off
+ *     at the cap — with nothing after it — qualifies.
+ *
+ * Pure: no I/O, no side effects. Exported for unit tests (both directions pinned).
+ *
+ * @param effectiveFinishReason - the settled finish reason at the chokepoint
+ *   (already reconciled for tool failures → completed_with_tool_errors).
+ * @param lastStopReason - the bridge's terminal `AssistantMessage.stopReason`.
+ */
+export function promoteOutputStarved(
+  effectiveFinishReason: string,
+  lastStopReason: string | undefined,
+): string {
+  // Gate 1: only a CLEAN would-be terminal is eligible (the conservative guard).
+  if (effectiveFinishReason !== "stop" && effectiveFinishReason !== "end_turn") {
+    return effectiveFinishReason;
+  }
+  // Gate 2: the terminal model stop must be the output cap.
+  if (lastStopReason !== undefined && TERMINAL_OUTPUT_STARVED_STOP_REASONS.has(lastStopReason)) {
+    return "output_starved";
+  }
+  return effectiveFinishReason;
+}
 
 /**
  * Build the SessionMetadata payload written to `_session-metadata.json` at the
@@ -647,6 +728,10 @@ export function emitSessionSummary(
     traceId: string;
     turnCount: number;
     rollup: SessionHealthRollup;
+    /** The mapped endReason (named degradation cause) — the SAME value derived
+     *  once at the chokepoint via END_REASON_MAP and co-persisted on sessionEnd.
+     *  Carried so the row feeds the fleet `degradedByCause` aggregate (QT2/QT3). */
+    endReason: string;
     clock: ClockPort;
   },
 ): void {
@@ -663,6 +748,7 @@ export function emitSessionSummary(
       breakerTripCount: args.rollup.breakerTripCount,
       topErrorKinds: args.rollup.topErrorKinds,
       source: "runtime" as const,
+      endReason: args.endReason,
       timestamp: args.clock.now(),
     });
   } catch (err) {
@@ -1032,10 +1118,22 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const hasToolFailures = (bridgeResult.failedTools?.length ?? 0) > 0;
   const finishReasonStr = result.finishReason as string;
   const isStopTurn = finishReasonStr === "stop" || finishReasonStr === "end_turn";
-  const effectiveFinishReason =
+  // Stage 1: tool-failure reconciliation (a clean stop turn with failed tools
+  // becomes completed_with_tool_errors).
+  const toolReconciledFinishReason =
     hasToolFailures && isStopTurn
       ? "completed_with_tool_errors"
       : result.finishReason;
+  // Stage 2 (QT3): promote a PATHOLOGICAL terminal output truncation. Fires ONLY
+  // when stage 1 left a CLEAN would-be terminal (stop/end_turn) AND the session's
+  // FINAL turn stopped at the output cap (bridge's terminal lastStopReason). A
+  // tool-error / budget / breaker / context_exhausted terminal is untouched (the
+  // upstream cause wins), and a continued/mid-run length-stop is not flagged
+  // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
+  const effectiveFinishReason = promoteOutputStarved(
+    toolReconciledFinishReason,
+    bridgeResult.lastStopReason,
+  );
   // Notice append is gated: only when the model did NOT acknowledge the failure
   // AND the response is not a silent sentinel.
   if (
@@ -1084,7 +1182,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // F2: announce session:summary once. Own fire-and-forget guard inside
   // emitSessionSummary — a throwing in-process listener must not abort teardown
   // (OQ3). The event carries ids + counts + topErrorKinds + source:"runtime"
-  // (Phase 159 A1/A2) so the row feeds the fleet aggregate.
+  // (Phase 159 A1/A2) PLUS the mapped endReason (the named degradation cause,
+  // QT2/QT3) so the row feeds the fleet aggregate AND its degradedByCause rollup.
+  // endReason is the SAME value mapped once above and co-persisted on sessionEnd.
   emitSessionSummary(
     { eventBus: deps.eventBus, logger: deps.logger },
     {
@@ -1093,6 +1193,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       traceId: tryGetContext()?.traceId ?? executionId,
       turnCount: bridgeResult.turnCount ?? 0,
       rollup: sessionHealthRollup,
+      endReason,
       clock: deps.clock,
     },
   );

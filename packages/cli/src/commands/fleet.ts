@@ -67,6 +67,21 @@ export function registerFleetCommand(program: Command): void {
         info(
           `Sessions:   ${report.sessions.total} (${report.sessions.degraded} degraded, ${(report.sessions.degradedRate * 100).toFixed(0)}%)`,
         );
+        // QT2/QT3 — the fleet-level degradation detector: degraded counts by
+        // named endReason cause. Surface it in the TABLE view (not only via
+        // --format json) so an operator running `comis fleet` SEES the spread.
+        // Sorted deterministically (count desc, then cause name asc) to match the
+        // reducer's bounded ordering; omitted entirely when the map is empty (no
+        // degraded sessions, or none with a named cause). Bounded: capped counts
+        // + closed-set labels only — no raw bodies.
+        const degradedByCause = Object.entries(report.degradedByCause).sort(
+          (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+        );
+        if (degradedByCause.length > 0) {
+          info(
+            `Degraded by cause: ${degradedByCause.map(([cause, count]) => `${cause}=${count}`).join(", ")}`,
+          );
+        }
         info(`Breaker:    ${report.breakerTripTotal} trips`);
         // WR-03: cost.costUsd is A1-sourced (session-summary store); the token
         // total is A3-sourced (session-index files) and degrades independently.

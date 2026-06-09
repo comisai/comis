@@ -7813,6 +7813,73 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
                 "pointersTotal"
               ],
               "additionalProperties": false
+            },
+            "toolStats": {
+              "type": "object",
+              "properties": {
+                "reconciled": {
+                  "type": "boolean"
+                },
+                "rollupSource": {
+                  "type": "string",
+                  "const": "last-execution"
+                },
+                "divergentTools": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "tool": {
+                        "type": "string"
+                      },
+                      "rollup": {
+                        "type": "object",
+                        "properties": {
+                          "ok": {
+                            "type": "number"
+                          },
+                          "failed": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "ok",
+                          "failed"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "trajectory": {
+                        "type": "object",
+                        "properties": {
+                          "ok": {
+                            "type": "number"
+                          },
+                          "failed": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "ok",
+                          "failed"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "tool",
+                      "rollup",
+                      "trajectory"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "reconciled",
+                "rollupSource",
+                "divergentTools"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -7907,6 +7974,15 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "count"
             ],
             "additionalProperties": false
+          }
+        },
+        "degradedByCause": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "number"
           }
         },
         "breakerTripTotal": {
@@ -8136,6 +8212,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "windowHours",
         "sessions",
         "topErrorKinds",
+        "degradedByCause",
         "breakerTripTotal",
         "toolStats",
         "cost",

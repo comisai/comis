@@ -761,11 +761,15 @@ Synthetic/test-harness session rows are excluded by default; pass `includeSynthe
 
 Assemble a self-contained, redaction-safe post-mortem (an `IncidentReport`) for a single agent session: outcome, cost, timing, per-tool stats, the normalized failures (newest-first), the circuit-breaker timeline, large-result offloads, a one-line summary, and a deterministic `likelyRootCause`. The report is derived from log evidence only -- no LLM is invoked -- so it reproduces the same verdict from the same session forever.
 
+`outcome.endReason` names the terminal cause. Two degradation causes that previously collapsed into a generic `error` are now named here (and drive `likelyRootCause`): **`context_exhausted`** (the context-window guard aborted the run -- the summarizer hit its token cap, or compaction floored to truncation-only; the fix is to raise `contextEngine.summarizerSpend`) and **`output_starved`** (the final response was truncated at the model's max output tokens; the fix is to raise the agent's `maxTokens` or enable `contextEngine.outputEscalation`). A tool-failure root cause still out-ranks them -- they explain the terminal state, not a tool crash. The same causes are aggregated fleet-wide by [`obs.fleet.health`](#obs-fleet-health)'s `degradedByCause`.
+
 Accepts EITHER `sessionKey` OR `traceId` (at least one is required). A `traceId` is canonicalized to its `sessionKey` first, so by-trace and by-session produce the identical report.
 
 `depth: "summary"` (the default) bounds the serialized report to roughly 6 KB (about 1,500 tokens) and caps the failure list; `depth: "full"` relaxes the array caps. At BOTH depths the report is digest-only: no raw tool-output body is ever inlined (oversized previews and untrusted external content collapse to a `resultDigest` fingerprint), and an honest `truncations[]` ledger records anything the bounding pass dropped.
 
 An optional `coverage` block reports READ-coverage -- whether the trajectory, rollup, and each offload pointer were actually located and resolved (`{ trajectory: { found, records }, rollup: { present }, offloads: { pointersResolved, pointersTotal } }`) -- distinct from `truncations[]`, which records what the size-bounding pass dropped. A degraded report is self-evident from it (e.g. `records: 0` or `pointersResolved < pointersTotal`) rather than masquerading as a clean session.
+
+`coverage.toolStats` reconciles this report's per-tool `toolStats` (the **whole-session** trajectory union) against the persisted per-session rollup that [`obs.fleet.health`](#obs-fleet-health) reads (the **latest-execution** rollup -- it is built per execution and the session metadata is overwritten each turn). The two lenses read structurally-different sources, so they CAN differ for the same session -- but only in one direction: the rollup is a subset of the trajectory (`rollup.{ok,failed} <= trajectory.{ok,failed}` per tool). The block (`{ reconciled, rollupSource: "last-execution", divergentTools: [{ tool, rollup: { ok, failed }, trajectory: { ok, failed } }] }`) makes that gap transparent so `comis explain` and `comis fleet` can never silently contradict: `divergentTools[]` names each tool whose persisted rollup differs from the trajectory with both count pairs, and `reconciled` is the directional invariant (a rollup that OVER-counts the trajectory -- the forbidden direction, including a tool present in the rollup but absent from the trajectory -- flips it to `false` and surfaces the offending tool instead of hiding it).
 
 | Property | Value |
 |----------|-------|
@@ -803,7 +807,12 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
       "suggestedNextSteps": ["audit the web_fetch failureDetector rule for the matched token 'status'", "obs.explain depth=full"]
     },
     "truncations": [],
-    "coverage": { "trajectory": { "found": true, "records": 25 }, "rollup": { "present": true }, "offloads": { "pointersResolved": 1, "pointersTotal": 1 } }
+    "coverage": {
+      "trajectory": { "found": true, "records": 25 },
+      "rollup": { "present": true },
+      "offloads": { "pointersResolved": 1, "pointersTotal": 1 },
+      "toolStats": { "reconciled": true, "rollupSource": "last-execution", "divergentTools": [ { "tool": "web_fetch", "rollup": { "ok": 2, "failed": 3 }, "trajectory": { "ok": 2, "failed": 8 } } ] }
+    }
   },
   "id": 1
 }
@@ -816,7 +825,9 @@ The `comis explain` CLI command (see the [CLI reference](/reference/cli)) and th
 
 ### `obs.fleet.health`
 
-Assemble a bounded, redaction-safe **cross-session** fleet-health triage (a `FleetHealthReport`) over a recent time window: how many sessions ran and how many degraded, the merged top error kinds, the total circuit-breaker trips, a per-tool ok/failed rollup, the window cost, the recent activity (agents, channels, exit reasons), the recurring `findings[]` (counts + short codes + hints only -- no raw WARN bodies), and a deterministic `likelyRootCause`. Like `obs.explain`, the report is derived from log + diagnostics evidence only -- no LLM is invoked -- so the same window reproduces the same verdict.
+Assemble a bounded, redaction-safe **cross-session** fleet-health triage (a `FleetHealthReport`) over a recent time window: how many sessions ran and how many degraded, the degraded sessions bucketed by named cause (`degradedByCause`), the merged top error kinds, the total circuit-breaker trips, a per-tool ok/failed rollup, the window cost, the recent activity (agents, channels, exit reasons), the recurring `findings[]` (counts + short codes + hints only -- no raw WARN bodies), and a deterministic `likelyRootCause`. Like `obs.explain`, the report is derived from log + diagnostics evidence only -- no LLM is invoked -- so the same window reproduces the same verdict.
+
+`degradedByCause` is the fleet-level **degradation detector**: a bounded `{ <endReason>: count }` map (counts only) over the degraded sessions in the window, keyed by the named terminal cause -- e.g. `{ "context_exhausted": 5, "output_starved": 2 }` answers "how many sessions degraded, and *why*" at a glance. Only degraded sessions contribute; a session whose cause is missing folds into `"unknown"`. The two Glass Box causes worth calling out -- `context_exhausted` (the context-window guard aborted the run: summarizer hit its token cap or compaction floored to truncation-only) and `output_starved` (the final response was truncated at the model's max output tokens) -- are named here and in [`obs.explain`](#obs-explain)'s `outcome.endReason` + `likelyRootCause`, where previously both collapsed into a generic `error`.
 
 This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.explain` post-mortems ONE session; `obs.fleet.health` rolls up a WINDOW of sessions.
 
@@ -826,7 +837,7 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ sinceHours?: number }` -- the aggregation window in hours (positive). Optional; defaults to `24` in the handler. |
-| **Returns** | A `FleetHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | A `FleetHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, degradedByCause, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -844,6 +855,7 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
     "schemaVersion": 1,
     "windowHours": 24,
     "sessions": { "total": 40, "degraded": 22, "degradedRate": 0.55 },
+    "degradedByCause": { "context_exhausted": 12, "completed_with_tool_errors": 7, "output_starved": 3 },
     "topErrorKinds": [ { "kind": "dependency", "count": 18 } ],
     "breakerTripTotal": 3,
     "toolStats": { "web_fetch": { "ok": 2, "failed": 8 } },
