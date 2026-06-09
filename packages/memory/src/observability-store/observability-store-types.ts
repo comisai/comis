@@ -198,11 +198,9 @@ export interface HourlyBucket {
 }
 
 /**
- * Per-session health rollup over `obs_diagnostics` `category='session_summary'`
- * (A1 `aggregateSessionsInWindow`). One per `session_key`, reflecting the latest
- * (`MAX(id)`) summary row in the window. The fields below are parsed from that
- * row's `details` JSON. `source` (provenance enum) is the field the A2 reducer
- * (Phase 159 plan 02) filters on for synthetic exclusion.
+ * Per-session health rollup (A1 `aggregateSessionsInWindow`) over the latest
+ * (`MAX(id)`) `session_summary` row per `session_key`; fields parsed from its
+ * `details` JSON. `source` is the provenance enum the A2 reducer filters on.
  */
 export interface SessionSummaryRollup {
   sessionKey: string;
@@ -214,6 +212,8 @@ export interface SessionSummaryRollup {
   turnCount: number;
   topErrorKinds: Record<string, number>;
   source: string;
+  /** Mapped terminal `endReason` (NAMED cause, QT2/QT3); missing/blank → `"unknown"`. A2 `degradedByCause` buckets on it. */
+  endReason: string;
 }
 
 /** Delivery status breakdown statistics. */

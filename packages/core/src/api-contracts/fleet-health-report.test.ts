@@ -32,6 +32,7 @@ function validReport(): FleetHealthReport {
       { kind: "tool_timeout", count: 9 },
       { kind: "rate_limit", count: 4 },
     ],
+    degradedByCause: { context_exhausted: 4, output_starved: 2, error: 1 },
     breakerTripTotal: 3,
     toolStats: {
       web_search: { ok: 30, failed: 5 },
@@ -116,6 +117,24 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
     const noVerdict = { ...validReport(), likelyRootCause: null };
     const parsed = FleetHealthReportSchema.parse(noVerdict);
     expect(parsed.likelyRootCause).toBeNull();
+  });
+
+  it("QT2/QT3: carries degradedByCause — a required bounded Record<cause, count> of named causes", () => {
+    // The fleet-level degradation detector. Required (the assembler always emits
+    // it, possibly {}). Each value is a count (bounded, no raw bodies).
+    const parsed = FleetHealthReportSchema.parse(validReport());
+    expect(parsed.degradedByCause).toEqual({ context_exhausted: 4, output_starved: 2, error: 1 });
+    for (const count of Object.values(parsed.degradedByCause)) {
+      expect(typeof count).toBe("number");
+    }
+    // Missing degradedByCause is rejected on its own path (required field).
+    const fixture = validReport() as Record<string, unknown>;
+    delete fixture.degradedByCause;
+    const result = FleetHealthReportSchema.safeParse(fixture);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path[0] === "degradedByCause")).toBe(true);
+    }
   });
 
   it("is DISTINCT from IncidentReport (mirror, not extend): a per-session shape is rejected", () => {

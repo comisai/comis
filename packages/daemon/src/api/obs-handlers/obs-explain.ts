@@ -156,7 +156,13 @@ export async function assembleIncidentReportFromSources(
       reason: "traceId not found in session index (today/yesterday) — empty report is unresolved, not a clean session",
     });
   } else {
-    report.likelyRootCause = rootCause(signals);
+    // QT2/QT3: thread the mapped terminal endReason (the NAMED degradation cause)
+    // onto the signals so the two lowest-priority heuristics (context_exhausted /
+    // output_starved) can fire. endReason is metadata-derived — toIncidentSignals
+    // reads the trajectory record stream and never sees it — so the assembler's
+    // resolved `report.outcome.endReason` is the single source threaded here. A
+    // tool-failure cause still out-ranks it (the named-cause rules sit LAST).
+    report.likelyRootCause = rootCause({ ...signals, endReason: report.outcome.endReason });
   }
   const bounded = boundIncidentReport(report, params.depth ?? "summary");
 

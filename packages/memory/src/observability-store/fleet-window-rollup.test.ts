@@ -160,6 +160,39 @@ describe("reduceFleetWindow", () => {
     expect(out.degradedRate).toBe(0.5); // 2 of 4
   });
 
+  it("exposes the ABSOLUTE degradedCount over the KEPT (synthetic-excluded) rows, reconciling with degradedRate (WR-01)", () => {
+    // WR-01: the reducer already excludes synthetic rows from every metric and
+    // computes the absolute degraded count internally; it must EXPOSE that count
+    // so the fleet handler's `sessions.degraded` shares the synthetic-excluded
+    // population with `total` (sessionCount) and `degradedRate` — instead of
+    // re-deriving degraded from the UNFILTERED rows (which double-counts a
+    // synthetic degraded row). A `{degraded:true, source:"test"}` row must NOT
+    // inflate degradedCount, and degradedCount/sessionCount must equal
+    // degradedRate exactly. Pre-patch the rollup has no `degradedCount` field at
+    // all, so this FAILS to type-check / is undefined (RED).
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "r1", source: "runtime", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "r2", source: "runtime", degraded: false }),
+      makeRollup({ sessionKey: "r3", source: "runtime", degraded: false }),
+      // A SYNTHETIC degraded row — must be excluded from the absolute count.
+      makeRollup({ sessionKey: "t1", source: "test", degraded: true, endReason: "output_starved" }),
+    ];
+    const out = reduceFleetWindow(rows, { excludeSynthetic: true });
+
+    // Only the runtime degraded row counts: 1, not 2.
+    expect(out.degradedCount).toBe(1);
+    // degradedCount is over the SAME kept population as sessionCount/degradedRate.
+    expect(out.sessionCount).toBe(3);
+    expect(out.degradedCount / out.sessionCount).toBeCloseTo(out.degradedRate);
+    // The absolute count never exceeds the kept session total.
+    expect(out.degradedCount).toBeLessThanOrEqual(out.sessionCount);
+    // And it reconciles with sum(degradedByCause) (also synthetic-excluded).
+    const sumByCause = Object.values(out.degradedByCause).reduce((a, b) => a + b, 0);
+    expect(out.degradedCount).toBe(sumByCause);
+    // The synthetic row's cause is absent from degradedByCause.
+    expect(out.degradedByCause).not.toHaveProperty("output_starved");
+  });
+
   it("returns degradedRate 0 (no divide-by-zero) when sessionCount is 0", () => {
     // All-synthetic input under excludeSynthetic:true → zero kept sessions.
     const rows: SessionSummaryRollup[] = [
@@ -261,5 +294,132 @@ describe("reduceFleetWindow", () => {
     // iteration-order dependence).
     const reversed = reduceFleetWindow([...rows].reverse(), { excludeSynthetic: true });
     expect(reversed).toEqual(first);
+  });
+
+  // ------------------------------------------------------------------------
+  // QT2/QT3 — degradedByCause: the fleet-level detector ("N sessions degraded
+  // by context_exhausted, M by output_starved" over the window).
+  // ------------------------------------------------------------------------
+
+  it("counts degraded sessions BY endReason cause — only degraded rows contribute", () => {
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "s1", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "s2", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "s3", degraded: true, endReason: "output_starved" }),
+      makeRollup({ sessionKey: "s4", degraded: true, endReason: "error" }),
+      // A NON-degraded session — its endReason (success) must NOT be counted.
+      makeRollup({ sessionKey: "s5", degraded: false, endReason: "success" }),
+    ];
+    const out = reduceFleetWindow(rows, { excludeSynthetic: true });
+
+    expect(out.degradedByCause).toEqual({
+      context_exhausted: 2,
+      output_starved: 1,
+      error: 1,
+    });
+    // The clean session's "success" is never a degradation cause.
+    expect(out.degradedByCause).not.toHaveProperty("success");
+  });
+
+  it("excludes synthetic rows from degradedByCause (the metric-integrity filter)", () => {
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "r", source: "runtime", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "t", source: "test", degraded: true, endReason: "output_starved" }),
+    ];
+    const excluded = reduceFleetWindow(rows, { excludeSynthetic: true });
+    const included = reduceFleetWindow(rows, { excludeSynthetic: false });
+
+    expect(excluded.degradedByCause).toEqual({ context_exhausted: 1 });
+    expect(excluded.degradedByCause).not.toHaveProperty("output_starved");
+    // Counter-assertion: the two branches differ (no no-op trap).
+    expect(included.degradedByCause).toEqual({ context_exhausted: 1, output_starved: 1 });
+  });
+
+  it("a degraded row with a missing/blank endReason folds into an 'unknown' cause (never a crash)", () => {
+    // The reducer is a public export reachable directly by the handler — a row
+    // whose endReason field is absent (pre-change persisted rows) or blank must
+    // still be COUNTED as degraded, bucketed under a stable 'unknown' label.
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "s1", degraded: true }), // endReason omitted
+      makeRollup({ sessionKey: "s2", degraded: true, endReason: "" }),
+      makeRollup({ sessionKey: "s3", degraded: true, endReason: "context_exhausted" }),
+    ];
+    const out = reduceFleetWindow(rows, { excludeSynthetic: true });
+    expect(out.degradedByCause.unknown).toBe(2);
+    expect(out.degradedByCause.context_exhausted).toBe(1);
+  });
+
+  it("keeps EVERY distinct degraded cause in a window — the cap covers the full closed endReason union, so no real cause is silently dropped (IN-02)", () => {
+    // IN-02: the cap must cover the FULL closed degraded-cause union so a
+    // pathological window that touches every cause cannot silently drop the
+    // lowest-count tail (which would understate sum(degradedByCause) vs
+    // sessions.degraded with no truncations[] breadcrumb). The reachable
+    // degraded causes are the 9 non-"success" members of the sessionEnd.endReason
+    // union (error, timeout, budget_exceeded, budget_exhausted, circuit_open,
+    // provider_degraded, completed_with_tool_errors, context_exhausted,
+    // output_starved) PLUS the defensive "unknown" bucket = 10 distinct causes.
+    // Pre-patch the cap is 5, so 5 of these 10 are silently dropped (RED).
+    const degradedCauses = [
+      "error",
+      "timeout",
+      "budget_exceeded",
+      "budget_exhausted",
+      "circuit_open",
+      "provider_degraded",
+      "completed_with_tool_errors",
+      "context_exhausted",
+      "output_starved",
+      "unknown",
+    ] as const;
+    // One degraded session per distinct cause (each count == 1) — the worst case
+    // for a cap (no cause is "more important" by count, so any drop is arbitrary).
+    const rows: SessionSummaryRollup[] = degradedCauses.map((cause, i) =>
+      makeRollup({
+        sessionKey: `s${i}`,
+        degraded: true,
+        // The "unknown" cause is produced by a blank endReason (the reducer's
+        // UNKNOWN_CAUSE fold), exactly as a real missing-endReason row would be.
+        endReason: cause === "unknown" ? "" : cause,
+      }),
+    );
+    const out = reduceFleetWindow(rows, { excludeSynthetic: true });
+
+    // Every distinct degraded cause is present — none silently dropped.
+    expect(Object.keys(out.degradedByCause).length).toBe(degradedCauses.length);
+    for (const cause of degradedCauses) {
+      expect(out.degradedByCause[cause]).toBe(1);
+    }
+    // sum(degradedByCause) reconciles with the absolute degraded count (no drop).
+    const sumByCause = Object.values(out.degradedByCause).reduce((a, b) => a + b, 0);
+    expect(sumByCause).toBe(out.degradedCount);
+    expect(out.degradedCount).toBe(degradedCauses.length);
+  });
+
+  it("is deterministic + bounded: degradedByCause is capped and key-order-stable across input permutations", () => {
+    // Distinct causes with differing counts so the top-N selection + tie-break
+    // are deterministic. The cap covers the full closed degraded-cause union
+    // (10, IN-02), so these 5 distinct causes are within bound — the bound is
+    // asserted explicitly below; the determinism/key-order pins are the focus.
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "a", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "b", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "c", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "d", degraded: true, endReason: "output_starved" }),
+      makeRollup({ sessionKey: "e", degraded: true, endReason: "output_starved" }),
+      makeRollup({ sessionKey: "f", degraded: true, endReason: "error" }),
+      makeRollup({ sessionKey: "g", degraded: true, endReason: "circuit_open" }),
+      makeRollup({ sessionKey: "h", degraded: true, endReason: "budget_exhausted" }),
+    ];
+    const out = reduceFleetWindow(rows, { excludeSynthetic: true });
+    const reversed = reduceFleetWindow([...rows].reverse(), { excludeSynthetic: true });
+
+    // Bounded against DoS — the cap covers the closed degraded-cause union (10).
+    expect(Object.keys(out.degradedByCause).length).toBeLessThanOrEqual(10);
+    // The highest-count cause is always retained.
+    expect(out.degradedByCause.context_exhausted).toBe(3);
+    expect(out.degradedByCause.output_starved).toBe(2);
+    // Key-order-stable across input permutations (cache-key / wire-digest safe).
+    expect(Object.keys(out.degradedByCause)).toEqual(Object.keys(reversed.degradedByCause));
+    expect(JSON.stringify(out.degradedByCause)).toBe(JSON.stringify(reversed.degradedByCause));
   });
 });

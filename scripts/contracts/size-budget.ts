@@ -23,8 +23,16 @@
 import { transformSync } from "esbuild";
 import { gzipSync } from "node:zlib";
 
-/** Budget: 120 KB minified. */
-export const BUDGET_MINIFIED_BYTES = 120_000;
+/**
+ * Budget: 121 KB minified. Raised from 120 KB for the QT1 `obs.explain`
+ * `coverage.toolStats` reconciliation block (the transparent rollup-vs-trajectory
+ * note that stops `comis explain` and `comis fleet` silently contradicting). The
+ * addition is bounded (counts + tool names) and gzip-friendly — the gzipped total
+ * (the real wire cost) sits at ~11.6 KB against the 38 KB gzipped budget, so this
+ * tracks the legitimate contract growth on the flagship report rather than
+ * loosening the wire constraint.
+ */
+export const BUDGET_MINIFIED_BYTES = 121_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;

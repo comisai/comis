@@ -37,7 +37,7 @@ export interface ExecutionResult {
   };
   stepsExecuted: number;
   llmCalls: number;
-  finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "session_reset" | "loop_detected" | "error";
+  finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "error";
   /** Ordered list of tool names invoked during execution (for post-mortem analysis). */
   toolCallHistory?: string[];
   /** Structured error classification for non-successful executions (operator-only, never user-facing). */

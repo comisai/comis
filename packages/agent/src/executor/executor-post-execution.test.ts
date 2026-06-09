@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved } from "./executor-post-execution.js";
 import { buildSessionHealthRollup, type SessionHealthRollup } from "./session-health-rollup.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Learned-recall write side: the turn-end emit threads classifyIntent(msg.text).
@@ -244,6 +244,33 @@ describe("buildSessionEndMetadata", () => {
     expect(Object.values(END_REASON_MAP)).not.toContain("timeout");
   });
 
+  it("QT2: un-flattens the context-exhaustion cause — context_exhausted and context_loop both name it (not generic error)", () => {
+    // The degradation taxonomy previously collapsed BOTH context-exhaustion
+    // finish reasons to the generic "error" bucket, so a context-exhausted
+    // session was indistinguishable from a tool crash in obs.explain /
+    // obs.fleet.health. QT2 folds the two related reasons into ONE named cause:
+    // context_exhausted (the bridge actively sets finishReason:"context_exhausted"
+    // at the block guard) AND context_loop (the related loop-on-exhaustion abort)
+    // both map to the SINGLE "context_exhausted" endReason.
+    expect(END_REASON_MAP.context_exhausted).toBe("context_exhausted");
+    expect(END_REASON_MAP.context_loop).toBe("context_exhausted");
+    // And the value reaches sessionEnd.endReason through the real builder.
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "context_exhausted" }).sessionEnd?.endReason).toBe("context_exhausted");
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "context_loop" }).sessionEnd?.endReason).toBe("context_exhausted");
+    // Still degraded (the named cause is not "success").
+    expect(buildSessionHealthRollup({}, "context_exhausted").degraded).toBe(true);
+  });
+
+  it("QT3: output_starved is a named terminal cause in END_REASON_MAP (not generic error)", () => {
+    // The chokepoint promotes a terminal output-cap truncation to
+    // finishReason:"output_starved"; the map must carry it as its OWN named
+    // endReason so the cause survives into the persisted rollup + both lenses.
+    expect(END_REASON_MAP.output_starved).toBe("output_starved");
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "output_starved" }).sessionEnd?.endReason).toBe("output_starved");
+    // Still degraded (output_starved is not "success").
+    expect(buildSessionHealthRollup({}, "output_starved").degraded).toBe(true);
+  });
+
   it("falls back to 'error' for unmapped finishReasons", () => {
     const result = buildSessionEndMetadata({ ...baseArgs, finishReason: "some_unknown_reason" });
     expect(result.sessionEnd?.endReason).toBe("error");
@@ -260,7 +287,7 @@ describe("buildSessionEndMetadata", () => {
     const ALL_FINISH_REASONS = [
       "stop", "end_turn", "error", "max_steps",
       "budget_exceeded", "budget_exhausted", "circuit_open", "provider_degraded",
-      "context_loop", "context_exhausted", "session_reset", "loop_detected",
+      "context_loop", "context_exhausted", "output_starved", "session_reset", "loop_detected",
       "completed_with_tool_errors",
     ];
     for (const reason of ALL_FINISH_REASONS) {
@@ -309,6 +336,69 @@ describe("buildSessionEndMetadata", () => {
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
     expect(stripped).toMatch(/buildSessionEndMetadata\([\s\S]*?traceId:\s*tryGetContext\(\)\?\.traceId/);
+  });
+});
+
+describe("promoteOutputStarved (QT3 — conservative terminal-truncation promotion)", () => {
+  // The SDK-normalized AssistantMessage.stopReason union is
+  // "stop" | "length" | "toolUse" | "error" | "aborted" (pi-ai types.d.ts), so
+  // "length" is the output-cap truncation signal. m.lastStopReason is captured at
+  // EVERY turn_end (pi-event-bridge.ts), so the FINAL value is the terminal stop.
+
+  it("PROMOTES a terminal length-stop on an otherwise-clean run to output_starved", () => {
+    // The model got cut off at the output cap as the terminal state, and the run
+    // would OTHERWISE map to a clean reason (stop → success). THIS is the
+    // pathological terminal the detector must name.
+    expect(promoteOutputStarved("stop", "length")).toBe("output_starved");
+    expect(promoteOutputStarved("end_turn", "length")).toBe("output_starved");
+    // Defensive provider-raw variants are also accepted as the terminal cap stop.
+    expect(promoteOutputStarved("stop", "max_tokens")).toBe("output_starved");
+    expect(promoteOutputStarved("stop", "maxTokens")).toBe("output_starved");
+    // And the promoted reason maps to the named cause end-to-end.
+    expect(END_REASON_MAP[promoteOutputStarved("stop", "length")]).toBe("output_starved");
+  });
+
+  it("does NOT flag a benign continued/non-terminal length-stop — a clean terminal stays success", () => {
+    // The load-bearing guard against flagging healthy sessions. A long answer that
+    // hit the cap mid-run but the agent CONTINUED past (output escalation re-ran,
+    // or another turn followed) ends with a NON-length terminal stopReason
+    // ("stop"/"end"/"toolUse") — m.lastStopReason was overwritten at the later
+    // turn_end. Such a run must stay clean (success), never output_starved.
+    expect(promoteOutputStarved("stop", "stop")).toBe("stop");
+    expect(promoteOutputStarved("stop", "end")).toBe("stop");
+    expect(promoteOutputStarved("end_turn", "toolUse")).toBe("end_turn");
+    // No terminal stop reason captured at all ⇒ no promotion.
+    expect(promoteOutputStarved("stop", undefined)).toBe("stop");
+    // Sanity: a clean run with a clean terminal stays mapped to success.
+    expect(END_REASON_MAP[promoteOutputStarved("stop", "stop")]).toBe("success");
+  });
+
+  it("does NOT override a NON-clean terminal cause even with a terminal length-stop", () => {
+    // If the run already settled on a non-clean cause (tool errors, budget,
+    // breaker, error), the output-cap truncation is NOT the headline — the
+    // upstream cause wins. The promotion fires ONLY when the would-be endReason
+    // is clean, so these pass through untouched.
+    expect(promoteOutputStarved("completed_with_tool_errors", "length")).toBe("completed_with_tool_errors");
+    expect(promoteOutputStarved("budget_exhausted", "length")).toBe("budget_exhausted");
+    expect(promoteOutputStarved("circuit_open", "length")).toBe("circuit_open");
+    expect(promoteOutputStarved("error", "length")).toBe("error");
+    expect(promoteOutputStarved("context_exhausted", "length")).toBe("context_exhausted");
+  });
+
+  it("source-grep — the chokepoint threads lastStopReason through promoteOutputStarved into the mapped endReason", () => {
+    // Pin that the production chokepoint actually CALLS the promotion (so the
+    // pure helper is not dead code) and feeds its result into END_REASON_MAP —
+    // the single mapped endReason that drives BOTH the persisted sessionEnd and
+    // the session:summary emit.
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    expect(stripped).toMatch(/promoteOutputStarved\(/);
+    // lastStopReason must be read off the bridge result and threaded in.
+    expect(stripped).toMatch(/lastStopReason/);
   });
 });
 
@@ -363,8 +453,21 @@ describe("F2 emit — emitSessionSummary emits session:summary, fire-and-forget"
     traceId: "trace-Z",
     turnCount: 3,
     rollup,
+    endReason: "context_exhausted",
     clock: { now: () => 4242, nowDate: () => new Date(4242) },
   };
+
+  it("CARRIES the named endReason cause on the emitted event payload (QT2/QT3 — fleet aggregates by cause)", () => {
+    // The mapped endReason (e.g. context_exhausted / output_starved) is the
+    // headline cause. It must ride the session:summary event so the daemon row
+    // (sessionSummaryEventToRow) persists it and obs.fleet.health can aggregate
+    // degradedByCause WITHOUT opening per-session _session-metadata.json.
+    const emit = vi.fn();
+    const eventBus = { emit, on: vi.fn(), off: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
+    emitSessionSummary({ eventBus, logger: undefined }, baseArgs);
+    const payload = emit.mock.calls.find((c) => c[0] === "session:summary")![1] as Record<string, unknown>;
+    expect(payload.endReason).toBe("context_exhausted");
+  });
 
   it("emits exactly one session:summary carrying degraded/costUsd/toolStats/breakerTripCount + ids", () => {
     const emit = vi.fn();

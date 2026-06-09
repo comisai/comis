@@ -46,6 +46,15 @@ export const FleetHealthReportSchema = z.object({
   }),
   /** Merged across the window + capped top-N (counts only — no raw bodies). */
   topErrorKinds: z.array(z.object({ kind: z.string(), count: z.number() })),
+  /**
+   * QT2/QT3 — the fleet-level degradation detector: degraded session COUNTS
+   * bucketed by the named `endReason` cause ("N degraded by context_exhausted, M
+   * by output_starved"). ONLY degraded sessions contribute; a missing/blank cause
+   * folds into `"unknown"`. Bounded (capped top-N, counts only — no raw bodies)
+   * and deterministic, computed by `reduceFleetWindow` from the per-session row's
+   * `endReason`. Required (the assembler always emits it, possibly `{}`).
+   */
+  degradedByCause: z.record(z.string(), z.number()),
   breakerTripTotal: z.number(),
   /** Bounded key set (per-tool ok/failed rollup) — mirrors `IncidentReport.toolStats`. */
   toolStats: z.record(z.string(), z.object({ ok: z.number(), failed: z.number() })),

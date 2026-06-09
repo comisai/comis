@@ -1339,7 +1339,9 @@ Requires an admin-scoped gateway token (same as `comis trace`).
 
 ### `comis fleet`
 
-Assemble a `FleetHealthReport` — a bounded, **cross-session** triage over a recent window: the session count and degradation rate, the recurring `WARN` findings (recurring `lcd_divergence` / model / config-posture signals, counts + hints only), the total circuit-breaker trips, the window cost, and a deterministic likely root cause. Like `comis explain`, the report is derived from log + diagnostics evidence only; no LLM is invoked, so the same window yields the same verdict. Backed by `ObsFleetHealthContract` (`obs.fleet.health`).
+Assemble a `FleetHealthReport` — a bounded, **cross-session** triage over a recent window: the session count and degradation rate, the **degraded-by-cause breakdown** (degraded sessions bucketed by named `endReason` cause, e.g. `context_exhausted` / `output_starved`), the recurring `WARN` findings (recurring `lcd_divergence` / model / config-posture signals, counts + hints only), the total circuit-breaker trips, the window cost, and a deterministic likely root cause. Like `comis explain`, the report is derived from log + diagnostics evidence only; no LLM is invoked, so the same window yields the same verdict. Backed by `ObsFleetHealthContract` (`obs.fleet.health`).
+
+The table view prints the degraded-by-cause spread as a `Degraded by cause: context_exhausted=13, output_starved=9` line (sorted highest-count first; counts + closed-set labels only, no raw bodies) — omitted when no degraded session carried a named cause. The full per-cause map is also on the `--format json` output (`degradedByCause`).
 
 This is the cross-session **sibling** of `comis explain` (single-session). It is a **remote admin RPC** over the operator's gateway token — DISTINCT from `comis health`, the **local daemon doctor** that runs offline checks with no RPC. (`comis health` is unaffected; this is a separate command.)
 

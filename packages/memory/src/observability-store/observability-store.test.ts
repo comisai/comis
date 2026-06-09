@@ -137,6 +137,7 @@ function summaryDetails(
     turnCount: number;
     topErrorKinds: Record<string, number>;
     source: string;
+    endReason: string;
   }> = {},
 ): string {
   return JSON.stringify({
@@ -147,6 +148,7 @@ function summaryDetails(
     turnCount: 0,
     topErrorKinds: {},
     source: "runtime",
+    endReason: "success",
     ...overrides,
   });
 }
@@ -286,6 +288,33 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     const rollups = store.aggregateSessionsInWindow(0);
     expect(rollups).toHaveLength(1);
     expect(rollups[0]!.source).toBe("test");
+  });
+
+  it("QT2/QT3: parses endReason from details and exposes it on the rollup (the field degradedByCause aggregates on)", () => {
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "ctx-exhausted-1",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, endReason: "context_exhausted" }),
+    });
+    // A pre-change row whose details JSON has NO endReason field — parse-default
+    // to "unknown" (additive read-time default, not a migration shim).
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "legacy-1",
+      message: "session:summary",
+      details: JSON.stringify({ degraded: true, costUsd: 0, toolStats: {}, breakerTripCount: 0, turnCount: 0, topErrorKinds: {}, source: "runtime" }),
+    });
+
+    const rollups = store.aggregateSessionsInWindow(0);
+    const byKey = Object.fromEntries(rollups.map((r) => [r.sessionKey, r]));
+    expect(byKey["ctx-exhausted-1"]!.endReason).toBe("context_exhausted");
+    // Missing endReason ⇒ stable "unknown" default (never undefined / a crash).
+    expect(byKey["legacy-1"]!.endReason).toBe("unknown");
   });
 
   it("does not abort the scan on a non-object `details` (WR-01: \"null\"/primitive JSON degrade-on-error)", () => {

@@ -190,6 +190,52 @@ describe("obs-explain-heuristics", () => {
   });
 
   // ------------------------------------------------------------------------
+  // QT2/QT3 — the two NAMED degradation causes surface as likelyRootCause.
+  // Keyed on the (metadata-derived) endReason, lowest priority (a tool-failure
+  // cause out-ranks them — they explain the terminal state, not a tool crash).
+  // ------------------------------------------------------------------------
+
+  it("QT2: endReason=context_exhausted (no tool-failure signal) → context_exhausted root cause", () => {
+    const r = rootCause(makeSignals({ endReason: "context_exhausted" }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("context_exhausted");
+    // The hint names the actionable lever (summarizer spend / compaction floor).
+    expect(r!.detail).toMatch(/context/i);
+    expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
+    expect(r!.suggestedNextSteps.some((s) => /summariz|compact|context/i.test(s))).toBe(true);
+  });
+
+  it("QT3: endReason=output_starved (no tool-failure signal) → output_starved root cause", () => {
+    const r = rootCause(makeSignals({ endReason: "output_starved" }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("output_starved");
+    expect(r!.detail).toMatch(/output|truncat/i);
+    expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
+    expect(r!.suggestedNextSteps.some((s) => /maxTokens|output|truncat/i.test(s))).toBe(true);
+  });
+
+  it("a tool-failure cause OUT-RANKS the endReason cause (the new heuristics are lowest priority)", () => {
+    // A misclassified-tool session that ALSO ended context_exhausted must still
+    // report the upstream tool cause — the endReason heuristic is the fallback.
+    const r = rootCause(
+      makeSignals({
+        endReason: "context_exhausted",
+        hasMisclassificationSignal: true,
+        misclassifiedTool: "web_fetch",
+        misclassifiedToken: "403",
+      }),
+    );
+    expect(r!.code).toBe("content_heuristic_misclassification");
+  });
+
+  it("a clean endReason (success) does NOT trip the named-cause heuristics", () => {
+    // success / end_turn / a non-cause endReason must NOT produce a verdict from
+    // the QT2/QT3 rules (no false degradation cause on a healthy session).
+    expect(rootCause(makeSignals({ endReason: "success" }))).toBeNull();
+    expect(rootCause(makeSignals({ endReason: "completed_with_tool_errors" }))).toBeNull();
+  });
+
+  // ------------------------------------------------------------------------
   // No-match + populated-shape invariants.
   // ------------------------------------------------------------------------
 

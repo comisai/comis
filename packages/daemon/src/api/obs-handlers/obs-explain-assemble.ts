@@ -133,6 +133,90 @@ function readRollupNumber(
 }
 
 // ---------------------------------------------------------------------------
+// QT1 — toolStats reconciliation (obs.explain ↔ obs.fleet.health).
+// ---------------------------------------------------------------------------
+
+/** A {ok, failed} count pair (defensively coerced from an untrusted source). */
+interface CountPair {
+  ok: number;
+  failed: number;
+}
+
+/** One tool whose persisted rollup count differs from the trajectory count. */
+interface ToolStatsDivergence {
+  tool: string;
+  rollup: CountPair;
+  trajectory: CountPair;
+}
+
+/** The QT1 reconciliation block attached to `coverage.toolStats`. */
+interface ToolStatsReconciliation {
+  reconciled: boolean;
+  rollupSource: "last-execution";
+  divergentTools: ToolStatsDivergence[];
+}
+
+/** Read a `{ok, failed}` pair from an untrusted record (missing → finite zeros). */
+function countPairOf(raw: unknown): CountPair {
+  const entry = asRecord(raw);
+  if (entry === undefined) return { ok: 0, failed: 0 };
+  return { ok: asNumber(entry.ok) ?? 0, failed: asNumber(entry.failed) ?? 0 };
+}
+
+/**
+ * Reconcile the WHOLE-session trajectory toolStats (`obs.explain`'s headline,
+ * complete) against the persisted per-session rollup toolStats (`obs.fleet.health`'s
+ * source, latest-execution-wins).
+ *
+ * The two lenses read structurally-different sources and so CAN differ — but only
+ * in ONE direction: the rollup is built per-execution and the `_session-metadata`
+ * `sessionEnd` is overwritten each execution, while the trajectory `.jsonl` is
+ * APPENDED across every execution. So the rollup is a SUBSET of the trajectory:
+ * `rollup.{ok,failed} ≤ trajectory.{ok,failed}` per tool. That is the documented,
+ * bounded reason `comis explain` and `comis fleet` can show different per-tool
+ * numbers for the same session — they MUST NOT contradict beyond it.
+ *
+ * - `divergentTools` lists every tool whose persisted rollup count differs from
+ *   the trajectory count (in EITHER direction), with both pairs — so an operator
+ *   cross-referencing the two commands sees exactly the gap. Deterministically
+ *   sorted by tool name (no clock/order dependence).
+ * - `reconciled` is the directional invariant: `true` iff every rollup count is
+ *   `≤` its trajectory count. A rollup OVERcount — including a tool present in the
+ *   rollup but ABSENT from the trajectory (trajectory pair is 0/0) — is the
+ *   FORBIDDEN direction (the rollup counted something the trajectory never
+ *   recorded, a genuine accounting bug) and flips `reconciled` to `false`, so the
+ *   contradiction is surfaced here rather than hidden behind the headline.
+ *
+ * Pure, bounded (counts + tool names only, capped by the union of the two tool
+ * sets — the same bound as `toolStats`).
+ */
+function reconcileToolStats(
+  trajectory: IncidentSignals["toolStats"],
+  rollupToolStats: Record<string, unknown> | undefined,
+): ToolStatsReconciliation {
+  const divergentTools: ToolStatsDivergence[] = [];
+  let reconciled = true;
+
+  // Only the rollup's tools can produce a fleet/explain divergence: a
+  // trajectory-only tool (not in the rollup) is expected (the rollup is the last
+  // execution) and is NOT a contradiction — fleet simply has not persisted it.
+  // A rollup tool whose count exceeds the trajectory IS a contradiction.
+  for (const tool of Object.keys(rollupToolStats ?? {}).sort()) {
+    const rollup = countPairOf((rollupToolStats ?? {})[tool]);
+    const trajStat = trajectory[tool];
+    const traj: CountPair = trajStat === undefined
+      ? { ok: 0, failed: 0 }
+      : { ok: trajStat.ok, failed: trajStat.failed };
+    if (rollup.ok === traj.ok && rollup.failed === traj.failed) continue;
+    divergentTools.push({ tool, rollup, trajectory: traj });
+    // The forbidden direction: rollup must never OVERcount the trajectory.
+    if (rollup.ok > traj.ok || rollup.failed > traj.failed) reconciled = false;
+  }
+
+  return { reconciled, rollupSource: "last-execution", divergentTools };
+}
+
+// ---------------------------------------------------------------------------
 // Public assembler.
 // ---------------------------------------------------------------------------
 
@@ -256,10 +340,16 @@ export function assembleIncidentReport(
   // did not). A silently-empty read is now self-evident here instead of
   // masquerading as a clean session.
   const offloadsResolved = offloads.filter((o) => o.pointer !== "<offloaded>").length;
+  // QT1 — reconcile the headline (whole-session trajectory) toolStats against the
+  // persisted per-session rollup that obs.fleet.health reads (latest-execution).
+  // Makes the structural divergence TRANSPARENT (rollup ⊆ trajectory) so the two
+  // commands can never silently contradict for the same session.
+  const toolStatsReconciliation = reconcileToolStats(signals.toolStats, rollupToolStats);
   const coverage = {
     trajectory: { found: recordCount > 0, records: recordCount },
     rollup: { present: sessionEnd !== undefined },
     offloads: { pointersResolved: offloadsResolved, pointersTotal: offloads.length },
+    toolStats: toolStatsReconciliation,
   };
 
   return {

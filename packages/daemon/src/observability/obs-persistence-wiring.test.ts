@@ -211,6 +211,7 @@ describe("sessionSummaryEventToRow", () => {
       timestamp: 1000,
       topErrorKinds: { dependency: 8 },
       source: "runtime",
+      endReason: "context_exhausted",
     });
 
     expect(row.timestamp).toBe(1000);
@@ -233,6 +234,9 @@ describe("sessionSummaryEventToRow", () => {
     // by the fleet aggregate without opening per-session _session-metadata.json.
     expect(details.topErrorKinds).toEqual({ dependency: 8 });
     expect(details.source).toBe("runtime");
+    // QT2/QT3: the named endReason cause is persisted into the row details so
+    // obs.fleet.health can build degradedByCause from the rows alone.
+    expect(details.endReason).toBe("context_exhausted");
   });
 
   it("maps a non-degraded session:summary payload to severity:info", () => {
