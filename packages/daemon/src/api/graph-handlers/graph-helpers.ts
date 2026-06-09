@@ -74,6 +74,20 @@ export interface ValidationIssue {
 export function transformNodes(rawNodes: unknown[]): unknown[] {
   return rawNodes.map((raw) => {
     const node = raw as Record<string, unknown>;
+    const rawTypeId = node.type_id ?? node.typeId;
+    const rawTypeConfig = node.type_config ?? node.typeConfig;
+    // Bug-1 (OR-01) — normalize a lone `type_id:"agent"` with no type_config.
+    // `agent` is a redundant node type: its driver config (`{agent}`) just
+    // duplicates the node's own `agent`/`agentId` field, so a node with
+    // {agent, task} ALREADY runs one sub-agent. Weak models commonly emit
+    // `type_id:"agent"` for a single-agent node WITHOUT a type_config; the
+    // ExecutionGraph validator's both-or-neither refine then hard-rejects it.
+    // Drop the redundant lone `agent` typeId so it runs as a regular
+    // single-agent node. An explicit `type_id:"agent"` WITH a type_config
+    // (deliberate driver use) and every other typed node (debate/vote/refine/
+    // collaborate/approval-gate/map-reduce) are preserved untouched — they
+    // always carry a type_config. See design/small-model-orchestration-fidelity.md §4.
+    const isBareAgentType = rawTypeId === "agent" && rawTypeConfig === undefined;
     return {
       nodeId: node.node_id ?? node.nodeId,
       task: node.task,
@@ -89,10 +103,8 @@ export function transformNodes(rawNodes: unknown[]): unknown[] {
       ...(node.retries !== undefined ? { retries: node.retries } : {}),
       ...(node.context_mode ?? node.contextMode
         ? { contextMode: node.context_mode ?? node.contextMode } : {}),
-      ...(node.type_id ?? node.typeId
-        ? { typeId: node.type_id ?? node.typeId } : {}),
-      ...(node.type_config ?? node.typeConfig
-        ? { typeConfig: node.type_config ?? node.typeConfig } : {}),
+      ...(rawTypeId !== undefined && !isBareAgentType ? { typeId: rawTypeId } : {}),
+      ...(rawTypeConfig !== undefined ? { typeConfig: rawTypeConfig } : {}),
     };
   });
 }
