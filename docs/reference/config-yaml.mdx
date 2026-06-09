@@ -250,7 +250,7 @@ Multi-agent configuration map. Each key is an agent ID, and the value is a `PerA
 | `temperature` | `number` | _(unset)_ | SDK temperature override (0-2) |
 | `cacheRetention` | `enum` | `"long"` | Anthropic prompt cache retention: `none`, `short`, `long` |
 | `maxContextChars` | `number` | `100000` | Maximum total characters for context window (~25k tokens) |
-| `maxToolResultChars` | `number` | `50000` | Maximum characters per tool result before truncation |
+| `maxToolResultChars` | `number` | `50000` | Maximum characters per tool result before truncation. Small/nano-class models default lower (small `12000`, nano `8000`) so a single large result can't fill the window; set this explicitly (or use `capabilityClassOverride: frontier`) to keep the full `50000`. |
 | `preserveRecent` | `number` | `4` | Minimum recent messages to always preserve during compaction |
 | `workspacePath` | `string` | _(unset)_ | Path to agent workspace directory containing identity files |
 | `reactionLevel` | `enum` | _(unset)_ | Reaction frequency: `minimal` (1 per 5-10 exchanges) or `extensive` (react freely) |
