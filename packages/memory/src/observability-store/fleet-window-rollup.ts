@@ -37,13 +37,20 @@ const FLEET_TOP_ERROR_KINDS_CAP = 3;
 
 /**
  * How many distinct degradation CAUSES (`endReason` buckets) the fleet rollup's
- * `degradedByCause` keeps — hard cap, DoS-bounded (the endReason union is small,
- * ~10 members, but the reducer must not trust its caller). Slightly higher than
- * the errorKinds cap because the named causes are the headline of the fleet
- * detector ("N degraded by context_exhausted, M by output_starved") and an
- * operator wants the spread, not just the top 3.
+ * `degradedByCause` keeps — hard cap, DoS-bounded. Sized to cover the FULL closed
+ * degraded-cause union so a real cause can NEVER be silently dropped (IN-02): the
+ * reachable causes are the 9 non-`"success"` members of the `sessionEnd.endReason`
+ * union (error, timeout, budget_exceeded, budget_exhausted, circuit_open,
+ * provider_degraded, completed_with_tool_errors, context_exhausted,
+ * output_starved) PLUS the defensive {@link UNKNOWN_CAUSE} fold = 10. Because the
+ * union is CLOSED, covering it fully preserves the DoS bound while removing the
+ * silent-drop hole the prior cap of 5 left (a 6+-cause window would shed the
+ * lowest-count tail with no `truncations[]` breadcrumb, understating
+ * `sum(degradedByCause)` vs `sessions.degraded`). Higher than the errorKinds cap
+ * because the named causes are the headline of the fleet detector ("N degraded by
+ * context_exhausted, M by output_starved") and an operator wants the full spread.
  */
-const FLEET_DEGRADED_BY_CAUSE_CAP = 5;
+const FLEET_DEGRADED_BY_CAUSE_CAP = 10;
 
 /** The stable bucket for a degraded row whose endReason is missing/blank. */
 const UNKNOWN_CAUSE = "unknown";

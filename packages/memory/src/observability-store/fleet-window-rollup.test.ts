@@ -396,8 +396,10 @@ describe("reduceFleetWindow", () => {
   });
 
   it("is deterministic + bounded: degradedByCause is capped and key-order-stable across input permutations", () => {
-    // More distinct causes than the cap so the bound is exercised; counts differ
-    // so the top-N selection + tie-break are deterministic.
+    // Distinct causes with differing counts so the top-N selection + tie-break
+    // are deterministic. The cap covers the full closed degraded-cause union
+    // (10, IN-02), so these 5 distinct causes are within bound — the bound is
+    // asserted explicitly below; the determinism/key-order pins are the focus.
     const rows: SessionSummaryRollup[] = [
       makeRollup({ sessionKey: "a", degraded: true, endReason: "context_exhausted" }),
       makeRollup({ sessionKey: "b", degraded: true, endReason: "context_exhausted" }),
@@ -411,8 +413,8 @@ describe("reduceFleetWindow", () => {
     const out = reduceFleetWindow(rows, { excludeSynthetic: true });
     const reversed = reduceFleetWindow([...rows].reverse(), { excludeSynthetic: true });
 
-    // Capped to top-N (same FLEET cap as topErrorKinds) — bounded against DoS.
-    expect(Object.keys(out.degradedByCause).length).toBeLessThanOrEqual(5);
+    // Bounded against DoS — the cap covers the closed degraded-cause union (10).
+    expect(Object.keys(out.degradedByCause).length).toBeLessThanOrEqual(10);
     // The highest-count cause is always retained.
     expect(out.degradedByCause.context_exhausted).toBe(3);
     expect(out.degradedByCause.output_starved).toBe(2);
