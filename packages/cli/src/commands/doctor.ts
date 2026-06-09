@@ -24,6 +24,7 @@ import { gatewayHealthCheck } from "../doctor/checks/gateway-health.js";
 import { channelHealthCheck } from "../doctor/checks/channel-health.js";
 import { workspaceHealthCheck } from "../doctor/checks/workspace-health.js";
 import { oauthHealthCheck } from "../doctor/checks/oauth-health.js";
+import { lcdHealthCheck } from "../doctor/checks/lcd-health.js";
 import { secretsAuditHealthCheck } from "../doctor/checks/secrets-audit-health.js";
 import { repairConfig } from "../doctor/repairs/repair-config.js";
 import { repairDaemon } from "../doctor/repairs/repair-daemon.js";
@@ -31,7 +32,7 @@ import { repairWorkspace } from "../doctor/repairs/repair-workspace.js";
 import { repairConfigAudit } from "../doctor/repairs/repair-config-audit.js";
 import type { DoctorContext } from "../doctor/types.js";
 
-/** All doctor checks in execution order (7 categories). */
+/** All doctor checks in execution order (8 categories). */
 const ALL_CHECKS = [
   configHealthCheck,
   daemonHealthCheck,
@@ -40,6 +41,7 @@ const ALL_CHECKS = [
   workspaceHealthCheck,
   oauthHealthCheck,
   secretsAuditHealthCheck,
+  lcdHealthCheck,
 ];
 
 /**
