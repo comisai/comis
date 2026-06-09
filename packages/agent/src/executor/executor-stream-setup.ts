@@ -178,6 +178,12 @@ export interface StreamSetupResult {
   /** Phase 166: mutable ref for effective window (set by lcd-assembler via onEffectiveWindow).
    *  Exposed so pi-executor.ts can wire the callback into setupContextEngine. */
   effectiveWindowRef: { current: number };
+  /** Phase 166 CR-02: mutable ref for reasoning-aware output headroom.
+   *  Initialised to MIN_VISIBLE_OUTPUT_TOKENS (768). pi-executor.ts updates it via
+   *  computeOutputHeadroom(reasoningStyle, thinkingLevel) in the onEffectiveWindow
+   *  and onThinkingDownshifted callbacks so config-resolver always uses the REAL
+   *  floor for the current dispatch (8960 for native/high, not 768). */
+  outputHeadroomRef: { current: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -599,5 +605,6 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     ttlSplit,
     assembledInputTokensRef,
     effectiveWindowRef,
+    outputHeadroomRef,
   };
 }

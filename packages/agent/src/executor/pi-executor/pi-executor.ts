@@ -126,6 +126,7 @@ import { createTurnLoopDetector } from "../turn-loop-detector.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import type { PiExecutorDeps } from "./pi-executor-types.js";
 export type { PiExecutorDeps } from "./pi-executor-types.js";
+import { computeOutputHeadroom } from "../../context-engine/output-headroom.js";
 
 /** Number of turns to restrict breakpoints after server eviction. */
 const EVICTION_COOLDOWN_TURNS = 2;
@@ -924,6 +925,13 @@ async function runSessionLocked(
     },
     onEffectiveWindow: (windowTokens: number) => {
       streamSetup.effectiveWindowRef.current = windowTokens;
+      // CR-02 (Phase 166): also update outputHeadroomRef so config-resolver uses the
+      // REAL floor for this dispatch (not the stale MIN_VISIBLE_OUTPUT_TOKENS=768).
+      // Re-derive from the current thinking level + model reasoning style so the
+      // headroom always tracks the live values at the moment the pre-flight fires.
+      const rsStyle = (modelProfile?.reasoningStyle ?? "none") as "none" | "native";
+      const tLevel = (config.thinkingLevel ?? "medium") as "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+      streamSetup.outputHeadroomRef.current = computeOutputHeadroom(rsStyle, tLevel);
     },
     getThinkingLevel: () => config.thinkingLevel ?? undefined,
     // Phase 166 Fix 3: thinking-effort governor — down-shifts session.setThinkingLevel
@@ -934,6 +942,13 @@ async function runSessionLocked(
     // is never reduced — the exact failure mode the governor must prevent.
     onThinkingDownshifted: config.thinking?.downshiftOnTightWindow !== false
       ? (level: string) => {
+          // CR-02 (Phase 166): update outputHeadroomRef with the POST-DOWNSHIFT headroom
+          // so config-resolver clamps max_tokens to the REDUCED thinking reserve after
+          // the governor fires. This must happen BEFORE session.setThinkingLevel so the
+          // headroom tracks the final level that will be used for this dispatch.
+          const rsStyle = (modelProfile?.reasoningStyle ?? "none") as "none" | "native";
+          const downshiftedLevel = level as "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+          streamSetup.outputHeadroomRef.current = computeOutputHeadroom(rsStyle, downshiftedLevel);
           try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK internal API not typed
             (session as any).setThinkingLevel(level);

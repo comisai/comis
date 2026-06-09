@@ -19,6 +19,7 @@ import { describe, it, expect, vi } from "vitest";
 import { resolveMainPathMaxOutputTokens } from "./verification-gate.js";
 import type { ModelProfile } from "./model-profile.js";
 import { buildOffloadCallback } from "./executor-stream-setup.js";
+import { computeOutputHeadroom, MIN_VISIBLE_OUTPUT_TOKENS } from "../context-engine/output-headroom.js";
 
 // ---------------------------------------------------------------------------
 // Extracted derivation under test
@@ -207,5 +208,114 @@ describe("diagnostics_cache_trace_returned -- params.cacheTrace surfaces the cac
     expect(typeof obs.buildCacheTraceWrapper).toBe("function");
     expect(typeof obs.createCacheTrace).toBe("function");
     expect(typeof obs.attachCacheTraceToEventBus).toBe("function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CR-02: outputHeadroomRef wiring — native/high must yield 8960 (not 768)
+//
+// The bug: outputHeadroomRef is created at MIN_VISIBLE_OUTPUT_TOKENS (768) and
+// never updated, so config-resolver always clamps with headroom=768 regardless
+// of the model's reasoningStyle/thinkingLevel.
+//
+// The fix: pi-executor updates outputHeadroomRef.current via a callback when
+// the context engine callbacks fire. We test the EXACT wiring pattern the
+// pi-executor uses: a mutable ref object, updated via callback, read by
+// getOutputHeadroom() closure.
+// ---------------------------------------------------------------------------
+
+describe("CR-02: outputHeadroomRef wiring — native/high model uses 8960 floor (not 768)", () => {
+  it("computeOutputHeadroom('native','high') === 8960 (the pinned value config-resolver must use)", () => {
+    // This is the EXACT value the pre-flight computed; the ref must carry it.
+    expect(computeOutputHeadroom("native", "high")).toBe(8_960);
+    // MIN_VISIBLE_OUTPUT_TOKENS is the stale default (the bug value):
+    expect(MIN_VISIBLE_OUTPUT_TOKENS).toBe(768);
+    expect(computeOutputHeadroom("native", "high")).not.toBe(MIN_VISIBLE_OUTPUT_TOKENS);
+  });
+
+  it("mutable-ref pattern: outputHeadroomRef.current updated by callback reflects in getOutputHeadroom getter", () => {
+    // Mirror the exact pattern pi-executor uses: create ref, make getter closure,
+    // update via callback, read back via getter.
+    const outputHeadroomRef = { current: MIN_VISIBLE_OUTPUT_TOKENS };
+    const getOutputHeadroom = () => outputHeadroomRef.current;
+
+    // Before callback fires: getter returns the stale default (768)
+    expect(getOutputHeadroom()).toBe(768);
+
+    // Simulate the onEffectiveWindow/onThinkingDownshifted callback updating the ref
+    // for a native/high model profile (the exact pattern in the fix):
+    const reasoningStyle = "native" as const;
+    const thinkingLevel = "high" as const;
+    outputHeadroomRef.current = computeOutputHeadroom(reasoningStyle, thinkingLevel);
+
+    // After callback: getter returns 8960 (not 768)
+    expect(getOutputHeadroom()).toBe(8_960);
+  });
+
+  it("config-resolver uses getOutputHeadroom() lazily — clamps with 8960 for native/high", async () => {
+    // Reproduce the full config-resolver lazy-evaluation path:
+    // getOutputHeadroom() closure over a mutable ref, updated before dispatch.
+    const outputHeadroomRef = { current: MIN_VISIBLE_OUTPUT_TOKENS }; // initial stale
+    // Simulate pre-flight firing and updating the ref (the CR-02 fix wires this)
+    outputHeadroomRef.current = computeOutputHeadroom("native", "high"); // = 8960
+
+    const { createConfigResolver } = await import("./stream-wrappers/config-resolver.js");
+    const { createMockLogger } = await import("./stream-wrappers/__test-helpers/index.js");
+
+    const resolver = createConfigResolver({
+      maxTokens: 16_384,
+      getAssembledInputTokens: () => 23_000,
+      getEffectiveWindow: () => 32_768,
+      // This is the fixed getter — reads from the updated ref (8960), not the stale 768
+      getOutputHeadroom: () => outputHeadroomRef.current,
+    }, createMockLogger());
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stubModel = { provider: "openai", reasoning: false } as any;
+    let capturedOptions: Record<string, unknown> = {};
+    const wrappedFn = resolver((_m, _c, opts) => {
+      capturedOptions = opts as Record<string, unknown>;
+      return Promise.resolve(undefined as unknown as never);
+    });
+    await wrappedFn(stubModel, {} as never, {});
+
+    // remainingRoom = max(8960, 32768 - 23000) = max(8960, 9768) = 9768
+    // dynamicMax = min(16384, 9768) = 9768
+    expect(capturedOptions.maxTokens).toBe(9_768);
+
+    // CONTRAST: with the stale 768 headroom (the BUG):
+    // remainingRoom = max(768, 32768 - 23000) = max(768, 9768) = 9768 → same here
+    // But if remaining < 8960: the floor makes the difference:
+    const resolverBug = createConfigResolver({
+      maxTokens: 16_384,
+      getAssembledInputTokens: () => 30_000,  // tight window: 32768-30000=2768 < 8960
+      getEffectiveWindow: () => 32_768,
+      getOutputHeadroom: () => 768,  // BUG: stale value
+    }, createMockLogger());
+    let capturedBug: Record<string, unknown> = {};
+    const wrappedBug = resolverBug((_m, _c, opts) => {
+      capturedBug = opts as Record<string, unknown>;
+      return Promise.resolve(undefined as unknown as never);
+    });
+    await wrappedBug(stubModel, {} as never, {});
+    // With stale 768: floor=768 < remaining=2768 → dynamicMax=min(16384,2768)=2768
+    expect(capturedBug.maxTokens).toBe(2_768);  // too high — doesn't account for 8192 thinking reserve
+
+    const resolverFixed = createConfigResolver({
+      maxTokens: 16_384,
+      getAssembledInputTokens: () => 30_000,
+      getEffectiveWindow: () => 32_768,
+      getOutputHeadroom: () => 8_960,  // FIXED: native/high headroom
+    }, createMockLogger());
+    let capturedFixed: Record<string, unknown> = {};
+    const wrappedFixed = resolverFixed((_m, _c, opts) => {
+      capturedFixed = opts as Record<string, unknown>;
+      return Promise.resolve(undefined as unknown as never);
+    });
+    await wrappedFixed(stubModel, {} as never, {});
+    // With correct 8960: floor=8960 > remaining=2768 → dynamicMax=min(16384,8960)=8960
+    expect(capturedFixed.maxTokens).toBe(8_960);  // correct: the floor applies
+    // The two paths diverge: 2768 (bug, too high) vs 8960 (fix, correct floor)
+    expect(capturedFixed.maxTokens).toBeGreaterThan(capturedBug.maxTokens as number);
   });
 });
