@@ -917,8 +917,43 @@ async function runSessionLocked(
     securityPinMarkers: frozenDeps.canaryToken
       ? { canaryToken: frozenDeps.canaryToken, contentDelimiter: "" }
       : undefined,
-    // onAssembledInputTokens, onEffectiveWindow, onThinkingDownshifted, getThinkingLevel
-    // are wired by Plan 04 at this same call site.
+    // Phase 166 Fix 3 (Plan 04): thread assembled-input + effective-window tokens so
+    // config-resolver can clamp max_tokens per-dispatch (CWF-02).
+    onAssembledInputTokens: (tokens: number) => {
+      streamSetup.assembledInputTokensRef.current = tokens;
+    },
+    onEffectiveWindow: (windowTokens: number) => {
+      streamSetup.effectiveWindowRef.current = windowTokens;
+    },
+    getThinkingLevel: () => config.thinkingLevel ?? undefined,
+    // Phase 166 Fix 3: thinking-effort governor — down-shifts session.setThinkingLevel
+    // before the LLM call when the context engine detects the window is too tight.
+    // Gated by config.thinking.downshiftOnTightWindow (D-05 discretion).
+    // Pattern from executor-command-handlers.ts:98 — try/catch with WARN + errorKind.
+    // A bare empty catch is PROHIBITED (AGENTS.md §2.2): silent swallow means thinking
+    // is never reduced — the exact failure mode the governor must prevent.
+    onThinkingDownshifted: config.thinking?.downshiftOnTightWindow !== false
+      ? (level: string) => {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK internal API not typed
+            (session as any).setThinkingLevel(level);
+            frozenDeps.logger.debug(
+              { thinkingLevel: level },
+              "thinking-effort governor: session.setThinkingLevel applied",
+            );
+          } catch (govErr) {
+            frozenDeps.logger.warn(
+              {
+                err: govErr,
+                thinkingLevel: level,
+                hint: "session.setThinkingLevel() failed in thinking-effort governor; thinking reserve not reduced — dispatch continues at original level",
+                errorKind: "config" as const,
+              },
+              "thinking-effort governor: setThinkingLevel failed",
+            );
+          }
+        }
+      : undefined,
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK internal: no public type for agent.transformContext
   (session.agent as any).transformContext = ceSetup.contextEngine.transformContext;

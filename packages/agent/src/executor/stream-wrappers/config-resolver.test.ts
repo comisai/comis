@@ -226,6 +226,11 @@ describe("createConfigResolver", () => {
 
 
 describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
+  // Minimal non-Anthropic model stub for dynamic-clamp tests.
+  // provider must be a valid string so isAnthropicFamily() does not throw.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- minimal test stub
+  const stubModel = { provider: "openai", reasoning: false } as any;
+
   it("CWF-02-G: clamps max_tokens to remaining room when assembled tokens provided", async () => {
     // assembledInputTokens=30000, effectiveWindow=32768, configuredMax=8192
     // remainingRoom = max(768, 32768 - 30000) = max(768, 2768) = 2768
@@ -238,7 +243,7 @@ describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
     }, createMockLogger());
     let capturedOptions: Record<string, unknown> = {};
     const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
-    await wrappedFn({} as never, {} as never, {});
+    await wrappedFn(stubModel, {} as never, {});
     expect(capturedOptions.maxTokens).toBe(2_768);  // EXACT pin
   });
 
@@ -252,7 +257,7 @@ describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
     }, createMockLogger());
     let capturedOptions: Record<string, unknown> = {};
     const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
-    await wrappedFn({} as never, {} as never, {});
+    await wrappedFn(stubModel, {} as never, {});
     expect(capturedOptions.maxTokens).toBe(2_768);
   });
 
@@ -267,7 +272,7 @@ describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
     }, createMockLogger());
     let capturedOptions: Record<string, unknown> = {};
     const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
-    await wrappedFn({} as never, {} as never, {});
+    await wrappedFn(stubModel, {} as never, {});
     expect(capturedOptions.maxTokens).toBe(8_192);
   });
 
@@ -277,7 +282,7 @@ describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
     const resolver = createConfigResolver({ maxTokens: 8_192 }, createMockLogger());
     let capturedOptions: Record<string, unknown> = {};
     const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
-    await wrappedFn({} as never, {} as never, {});
+    await wrappedFn(stubModel, {} as never, {});
     expect(capturedOptions.maxTokens).toBe(8_192);  // EXACT pin — byte-identical
   });
 
@@ -290,7 +295,7 @@ describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
     }, createMockLogger());
     let capturedOptions: Record<string, unknown> = {};
     const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
-    await wrappedFn({} as never, {} as never, {});
+    await wrappedFn(stubModel, {} as never, {});
     expect(capturedOptions.maxTokens).toBe(768);  // floor applied
   });
 
@@ -304,7 +309,7 @@ describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
     }, createMockLogger());
     let capturedOptions: Record<string, unknown> = {};
     const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
-    await wrappedFn({} as never, {} as never, {});
+    await wrappedFn(stubModel, {} as never, {});
     expect(capturedOptions.maxTokens).toBe(8_192);  // static path taken
   });
 
@@ -318,7 +323,7 @@ describe("Phase 166 CWF-02: dynamic max_tokens clamp", () => {
     }, createMockLogger());
     let capturedOptions: Record<string, unknown> = {};
     const wrappedFn = resolver((_m, _c, opts) => { capturedOptions = opts as Record<string, unknown>; return Promise.resolve(undefined as unknown as never); });
-    await wrappedFn({} as never, {} as never, {});
+    await wrappedFn(stubModel, {} as never, {});
     expect(capturedOptions.maxTokens).toBe(8_192);  // static path taken (guard: assembled > 0 fails)
   });
 });

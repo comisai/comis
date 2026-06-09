@@ -14,6 +14,7 @@ import type { ComisLogger } from "@comis/core";
 
 import { isAnthropicFamily } from "../../provider/capabilities.js";
 import type { StreamFnWrapper } from "./types.js";
+import { MIN_VISIBLE_OUTPUT_TOKENS } from "../../context-engine/output-headroom.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -31,6 +32,18 @@ export interface ConfigResolverConfig {
   /** Cache retention for Anthropic provider. Default: "long".
    *  Accepts a getter function for per-execution dynamic resolution. */
   cacheRetention?: CacheRetention | (() => CacheRetention | undefined);
+  /** Phase 166 Fix 3: getter returning the assembled input token count for the current dispatch.
+   *  Set by lcd-assembler.transformContext via the onAssembledInputTokens callback.
+   *  When provided and > 0, max_tokens is clamped to effectiveWindow − assembledInputTokens.
+   *  When absent or returns 0 (frontier/mid or pre-assembler call), falls back to static config.maxTokens. */
+  getAssembledInputTokens?: () => number | undefined;
+  /** Phase 166 Fix 3: getter for the effective context window.
+   *  Source: effectiveWindowRef.current set by the onEffectiveWindow callback from lcd-assembler.
+   *  When absent or returns Infinity, the dynamic clamp is skipped (frontier/mid byte-identical). */
+  getEffectiveWindow?: () => number | undefined;
+  /** Phase 166 Fix 3: reasoning-aware output headroom floor for dynamic max_tokens clamp.
+   *  Computed from computeOutputHeadroom(reasoningStyle, thinkingLevel) before the dispatch. */
+  getOutputHeadroom?: () => number;
 }
 
 // ---------------------------------------------------------------------------
@@ -90,8 +103,31 @@ export function createConfigResolver(
       // Inject maxTokens and temperature for all providers when configured.
       // Skip temperature for reasoning models (e.g. OpenAI o-series, gpt-5.4-mini)
       // -- they don't support the parameter and the API returns 400.
-      if (config.maxTokens !== undefined) {
-        injected.maxTokens = config.maxTokens;
+
+      // Phase 166 Fix 3: dynamic max_tokens clamp.
+      // clamp(configuredMax, MIN_VISIBLE_OUTPUT_TOKENS, effectiveWindow − assembledInputTokens)
+      // Guard: both assembled > 0 AND effectiveWindow < Infinity must hold;
+      // otherwise fall back to static config.maxTokens (frontier/mid byte-identical path).
+      const assembledInputTokens = config.getAssembledInputTokens?.();
+      const effectiveWindow = config.getEffectiveWindow?.();
+      if (
+        assembledInputTokens !== undefined &&
+        assembledInputTokens > 0 &&
+        effectiveWindow !== undefined &&
+        effectiveWindow < Infinity
+      ) {
+        const headroom = config.getOutputHeadroom?.() ?? MIN_VISIBLE_OUTPUT_TOKENS;
+        const remainingRoom = Math.max(headroom, effectiveWindow - assembledInputTokens);
+        const dynamicMax = config.maxTokens !== undefined
+          ? Math.min(config.maxTokens, remainingRoom)
+          : remainingRoom;
+        injected.maxTokens = dynamicMax;
+        logger.debug(
+          { wrapperName: "configResolver", dynamicMax, remainingRoom, assembledInputTokens, effectiveWindow },
+          "Config params injected (dynamic max_tokens)",
+        );
+      } else if (config.maxTokens !== undefined) {
+        injected.maxTokens = config.maxTokens;  // static fallback: frontier/mid byte-identical
       }
       if (config.temperature !== undefined && !model.reasoning) {
         injected.temperature = config.temperature;
