@@ -1554,10 +1554,11 @@ describe("CWF-01 characterization — frontier/mid byte-identity (no-regression)
       .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
     expect(evictCalls.length).toBeGreaterThan(0);
     const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
-    // Frontier cap = ∞ → effectiveWindow = 200000 → budget is deterministic from W=200000, S, P
-    // The exact value is pinned by this test — any change to the frontier path will break it
-    expect(typeof budgetTokens).toBe("number");
-    expect(budgetTokens).toBeGreaterThan(0); // frontier has room
+    // Frontier cap = ∞ → effectiveWindow = 200000 → budget is deterministic from W=200000, S=0, P=0
+    // H = max(0, 200000 - 0 - 8192 - max(ceil(200000*5/100),2048) - ceil(200000*25/100) - 0)
+    //   = max(0, 200000 - 8192 - 10000 - 50000) = 131808
+    // Pinned: any change to the frontier/mid path MUST break this test.
+    expect(budgetTokens).toBe(131808);
   });
 
   it("CWF-01-D: mid profile → budgetTokens byte-identical to frontier (no-regression)", async () => {
@@ -1576,9 +1577,9 @@ describe("CWF-01 characterization — frontier/mid byte-identity (no-regression)
       .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
     expect(evictCalls.length).toBeGreaterThan(0);
     const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
-    // Mid cap = ∞ (same as frontier) — same window → same budget
-    expect(typeof budgetTokens).toBe("number");
-    expect(budgetTokens).toBeGreaterThan(0);
+    // Mid cap = ∞ (same as frontier) — same W=200000, S=0, P=0 → same budget = 131808
+    // Byte-identical to frontier: any cap applied to mid would break this test.
+    expect(budgetTokens).toBe(131808);
   });
 });
 
@@ -1611,9 +1612,10 @@ describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 
       .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
     expect(evictCalls.length).toBeGreaterThan(0);
     const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
-    // RED: pre-patch budgetTokens = 57808 (frontier fallback, no cap) — fails (57808 >= 32000)
+    // RED: pre-patch budgetTokens = 57808 (frontier fallback, no cap) — fails (57808 !== 0)
     // GREEN: post-patch budgetTokens = 0 (fail-closed nano cap; 16K < 25584 → H<0 → clamped)
-    expect(budgetTokens).toBeLessThan(32_000);
+    // H = max(0, 16000 - 25584 - 8192 - 2048 - 4000 - 166) = 0
+    expect(budgetTokens).toBe(0);
   });
 
   it("CWF-01-B RED: undefined modelProfile → WARN(errorKind:config) + nano cap applied", async () => {
