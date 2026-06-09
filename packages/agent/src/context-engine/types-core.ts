@@ -228,6 +228,11 @@ export interface ContextEngineDeps {
    *  daemon threads its `ClockPort` here via setupContextEngine. Falls back to
    *  `Date.now()` only when absent (a unit context with no injected clock). */
   clock?: import("@comis/core").ClockPort;
+  /** C1 (Phase 152): the resolved ModelProfile for the current turn.
+   *  Used by the dag assembler to call computeTokenBudgetForProfile (profile-aware
+   *  budget with 8K-starvation fix and 256K-overfill cap for small/nano).
+   *  Absent ⇒ falls back to FAIL_CLOSED_PROFILE (fail-closed, most conservative). */
+  modelProfile?: import("../executor/model-profile.js").ModelProfile;
 }
 
 // ---------------------------------------------------------------------------

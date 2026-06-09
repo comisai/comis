@@ -313,7 +313,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     return svc;
   }
 
-  /** Create an agent-scoped rpcCall that injects _agentId, _callerSessionKey, and _deliveryTarget into every call. */
+  /** Create an agent-scoped rpcCall that injects _agentId, _callerSessionKey, and _deliveryTarget into every call. (O3/WR-01 Phase-157 producer hook: inject resolved capabilityClass on graph.* params here — see graph-helpers.ts.) */
   function createAgentRpcCall(agentId: string): RpcCall {
     return async (method, params) => {
       const ctx = tryGetContext();

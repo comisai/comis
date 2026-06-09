@@ -23,6 +23,10 @@ import type { RequestBodyInjectorConfig } from "./index.js";
 import { createSessionLatch } from "../../session-latch.js";
 import type { SessionLatch } from "../../session-latch.js";
 import { createMockLogger, createMockStreamFn, makeAssistantMessage, makeContext } from "../__test-helpers/index.js";
+import { injectToolDeferral } from "./tool-deferral-injection.js";
+import type { ModelProfile } from "../../model-profile.js";
+import { FAIL_CLOSED_PROFILE } from "../../model-profile.js";
+import { buildSafetySection } from "../../../bootstrap/sections/core-sections.js";
 
 describe("createRequestBodyInjector", () => {
   let logger: ReturnType<typeof createMockLogger>;
@@ -6624,5 +6628,246 @@ describe("fence-aware microcompaction", () => {
       // Changes: turn 2 (#1), turn 3 (#2), turn 4 (#3 triggers warn), turn 5 (#4 triggers warn)
       expect(countUnstableWarns(testLogger)).toBeGreaterThanOrEqual(1);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// L1/L2/L7 — ModelProfile flag-based capability routing (Phase 155-01)
+//
+// RED failures before implementation:
+//   Tests 1 & 2 (L2): factory reads isAnthropicFamily("anthropic")=true →
+//     onPayload IS installed → breakpoints ARE placed for large-enough payload →
+//     cache_control IS present → assertion "expect(count).toBe(0)" FAILS.
+//   Test 3 (L7): already passes pre-fix (Ollama passthrough) but pins the
+//     invariant against future regression.
+//   Test 4 (L1): injectToolDeferral reads supportsToolSearch(sonnetId)=true →
+//     swap occurs → assertion FAILS.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a minimal RequestBodyInjectorConfig for flag-routing tests.
+ * Only wires the fields the factory and tool-deferral-injection read.
+ */
+function makeModelProfileConfig(opts: {
+  modelProfile?: Partial<ModelProfile>;
+  getDeferredToolNames?: () => Set<string>;
+}): RequestBodyInjectorConfig {
+  const modelProfile: ModelProfile | undefined = opts.modelProfile
+    ? ({ ...FAIL_CLOSED_PROFILE, ...opts.modelProfile } as ModelProfile)
+    : undefined;
+  return {
+    clock: { now: () => 0, monotonicMs: () => 0 },
+    getCacheRetention: () => "long",
+    ...(modelProfile !== undefined && { modelProfile }),
+    ...(opts.getDeferredToolNames && { getDeferredToolNames: opts.getDeferredToolNames }),
+  } as unknown as RequestBodyInjectorConfig;
+}
+
+/** Deep-walk and count cache_control keys at any nesting depth. */
+function countCacheControlsDeep(val: unknown): number {
+  if (val === null || typeof val !== "object") return 0;
+  let count = 0;
+  for (const [key, child] of Object.entries(val as Record<string, unknown>)) {
+    if (key === "cache_control") count++;
+    count += countCacheControlsDeep(child);
+  }
+  return count;
+}
+
+/**
+ * Build an API payload large enough (> 1024 tokens) to trigger Anthropic
+ * cache-breakpoint placement when needsCacheBreakpoints=true.
+ * Uses 300 chars-per-token ratio (CHARS_PER_TOKEN_RATIO=4, so 300 tokens = 1200 chars).
+ */
+function buildLargePayload(safetyText: string): Record<string, unknown> {
+  const longText = "x".repeat(300 * 4); // 300 tokens per message
+  const messages: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < 10; i++) {
+    messages.push({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: [{ type: "text", text: longText }],
+    });
+  }
+  return {
+    system: [{ type: "text", text: safetyText }],
+    messages,
+    tools: [],
+    model: "claude-sonnet-4-5-20250929",
+  };
+}
+
+/**
+ * Invoke the injector wrapper and call onPayload with the given payload.
+ * Returns the transformed payload.
+ */
+async function runInjectorOnPayload(
+  config: RequestBodyInjectorConfig,
+  model: { id: string; provider: string },
+  initialPayload: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const testLogger = createMockLogger();
+  const wrapper = createRequestBodyInjector(config, testLogger);
+  const next = createMockStreamFn();
+
+  const wrappedFn = wrapper(next);
+  wrappedFn(model as any, makeContext([]), {} as any);
+
+  const receivedOptions = next.mock.calls[0][2] as Record<string, unknown>;
+  const onPayload = receivedOptions.onPayload as
+    | ((payload: unknown, m: unknown) => Promise<unknown> | unknown)
+    | undefined;
+
+  if (!onPayload) {
+    // Factory short-circuited (non-caching provider) — payload unchanged.
+    return initialPayload;
+  }
+
+  const transformed = await onPayload(initialPayload, model);
+  return (transformed ?? initialPayload) as Record<string, unknown>;
+}
+
+describe("L2 — supportsPromptCache flag controls cache_control placement", () => {
+  /**
+   * Test 1 (L2): modelProfile.supportsPromptCache=false AND Anthropic provider
+   * with a large-enough payload to trigger breakpoints.
+   *
+   * RED: isAnthropicFamily("anthropic")=true → needsCacheBreakpoints=true →
+   *      onPayload installed → cache_control markers injected → count > 0 → FAILS.
+   * GREEN: config.modelProfile?.supportsPromptCache=false → needsCacheBreakpoints=false
+   *        → factory returns next() unchanged → count=0 → PASSES.
+   */
+  it("L2: supportsPromptCache=false suppresses cache_control even for Anthropic provider (large payload)", async () => {
+    const config = makeModelProfileConfig({ modelProfile: { supportsPromptCache: false } });
+    const safetyLines = buildSafetySection(false);
+    const payload = buildLargePayload(safetyLines.join("\n"));
+
+    const result = await runInjectorOnPayload(
+      config,
+      { id: "claude-sonnet-4-5-20250929", provider: "anthropic" },
+      payload,
+    );
+
+    expect(countCacheControlsDeep(result)).toBe(0);
+  });
+
+  /**
+   * Test 2 (L2 + L7): supportsPromptCache=false → zero cache_control AND
+   *                     safety sections still present in the assembled block.
+   *
+   * RED: cache_control injected (isAnthropicFamily=true) → FAILS on count=0.
+   * GREEN: flag=false → no injection, safety text retained → PASSES.
+   */
+  it("L2+L7: supportsPromptCache=false → zero cache_control AND safety text preserved", async () => {
+    const config = makeModelProfileConfig({ modelProfile: { supportsPromptCache: false } });
+    const safetyLines = buildSafetySection(false);
+    const payload = buildLargePayload(safetyLines.join("\n"));
+
+    const result = await runInjectorOnPayload(
+      config,
+      { id: "claude-sonnet-4-5-20250929", provider: "anthropic" },
+      payload,
+    );
+
+    // Zero cache_control fields anywhere in the output (L2 invariant)
+    expect(countCacheControlsDeep(result)).toBe(0);
+
+    // Safety content is preserved in the system block (L7 invariant)
+    const systemBlocks = result.system as Array<{ type: string; text?: string }>;
+    const allText = systemBlocks.map(b => b.text ?? "").join("\n");
+    expect(allText).toContain("## Safety");
+    expect(allText).toContain("Constitutional Principles");
+  });
+
+  /**
+   * CR-02 (positive direction): modelProfile.supportsPromptCache=true AND
+   * Anthropic provider with a large-enough payload → cache_control markers ARE
+   * placed. No prior test covered this direction because resolveModelProfile
+   * hardcoded supportsPromptCache=false, so no code path ever produced a `true`
+   * and Anthropic caching was silently off. After CR-02 the flag is derived
+   * honestly (anthropic family → true) so prompt caching actually engages.
+   *
+   * GREEN: flag=true → needsCacheBreakpoints=true → cache_control injected.
+   */
+  it("CR-02: supportsPromptCache=true → cache_control IS placed for Anthropic (large payload)", async () => {
+    const config = makeModelProfileConfig({ modelProfile: { supportsPromptCache: true } });
+    const safetyLines = buildSafetySection(false);
+    const payload = buildLargePayload(safetyLines.join("\n"));
+
+    const result = await runInjectorOnPayload(
+      config,
+      { id: "claude-sonnet-4-5-20250929", provider: "anthropic" },
+      payload,
+    );
+
+    // Anthropic caching is ON — at least one cache_control marker is present.
+    expect(countCacheControlsDeep(result)).toBeGreaterThan(0);
+  });
+});
+
+describe("L7 — Ollama provider single-block invariant", () => {
+  /**
+   * Test 3 (L7): Ollama provider with supportsPromptCache=false.
+   *
+   * Pins the L7 invariant: Ollama always gets a single block with zero
+   * cache_control overhead AND all security sections remain present.
+   *
+   * Today isAnthropicFamily("ollama")=false → factory passes through.
+   * This test guards against regression where a future change might
+   * accidentally inject cache_control for Ollama.
+   */
+  it("L7: Ollama provider → zero cache_control AND safety sections present", async () => {
+    const config = makeModelProfileConfig({ modelProfile: { supportsPromptCache: false } });
+    const safetyLines = buildSafetySection(false);
+    const payload: Record<string, unknown> = {
+      system: [{ type: "text", text: safetyLines.join("\n") }],
+      messages: [],
+      tools: [],
+      model: "qwen3.6:35b",
+    };
+
+    const result = await runInjectorOnPayload(
+      config,
+      { id: "qwen3.6:35b", provider: "ollama" },
+      payload,
+    );
+
+    // Zero cache_control overhead for Ollama (L7 invariant)
+    expect(countCacheControlsDeep(result)).toBe(0);
+
+    // Security sections retained in the single block
+    const systemBlocks = result.system as Array<{ type: string; text?: string }>;
+    const allText = systemBlocks.map(b => b.text ?? "").join("\n");
+    expect(allText).toContain("## Safety");
+    expect(allText).toContain("Do not pursue self-preservation");
+  });
+});
+
+describe("L1 — supportsServerToolSearch flag controls tool_search injection", () => {
+  /**
+   * Test 4 (L1 tool_search): modelProfile.supportsServerToolSearch=false →
+   * injectToolDeferral exits early even when getDeferredToolNames returns a
+   * non-empty set AND the model ID normally enables tool_search (Sonnet).
+   *
+   * RED: injectToolDeferral reads supportsToolSearch(modelId) — Sonnet ID
+   *      returns true → swap occurs → payload changes → FAILS.
+   * GREEN: flag=false used as gate → exits early → payload byte-identical → PASSES.
+   */
+  it("L1: supportsServerToolSearch=false suppresses tool_search even for Sonnet model ID", () => {
+    const tools: Array<Record<string, unknown>> = [
+      { name: "file_ops" },
+      { name: "discover_tools" },
+    ];
+    const payload: Record<string, unknown> = { tools };
+    const before = JSON.stringify(tools);
+
+    const config = makeModelProfileConfig({
+      modelProfile: { supportsServerToolSearch: false },
+      getDeferredToolNames: () => new Set(["file_ops"]),
+    });
+
+    injectToolDeferral(payload, "claude-sonnet-4-5-20250929", config, createMockLogger());
+
+    // Payload MUST be byte-identical — no defer_loading flag, no discover_tools swap.
+    expect(JSON.stringify(tools)).toBe(before);
   });
 });

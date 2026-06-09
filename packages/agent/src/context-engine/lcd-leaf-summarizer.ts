@@ -45,6 +45,8 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
 import type { ComisLogger } from "@comis/core";
+import type { CapabilityClass } from "../executor/model-profile.js";
+import type { SecurityPinMarkers } from "./security-context-pinner.js";
 import {
   COMPACTION_MAX_RETRIES,
   OVERSIZED_MESSAGE_CHARS_THRESHOLD,
@@ -236,6 +238,20 @@ export interface LeafSummarizerDeps {
   getApiKey: () => Promise<string>;
   /** Optional cheaper override model + key for the leaf pass. */
   overrideModel?: { model: unknown; getApiKey: () => Promise<string> };
+  // C4/C5: capability-routed compaction
+  /** The agent's capability class. Defaults to "frontier" (unchanged behavior). */
+  capabilityClass?: CapabilityClass;
+  /** Route small/nano to eviction instead of LLM summarization. Defaults to true. */
+  preferEvictionByCapability?: boolean;
+  /** If set, small/nano use this stronger model for summarization instead of eviction. */
+  strongerSummarizerModel?: string;
+  // S4: security context pinning
+  /** Security pin markers — messages containing these are excluded from chunk selection. */
+  securityMarkers?: SecurityPinMarkers;
+  /** For context:compaction_routed event (optional). */
+  agentId?: string;
+  /** For context:compaction_routed event (optional). */
+  sessionKey?: string;
 }
 
 /**
@@ -276,22 +292,35 @@ export interface LeafSummaryResult {
  * messages up to the cap, then walks forward past a trailing assistant
  * `tool_use` and its `toolResult`s (never crossing the fresh-tail boundary).
  *
+ * S4: if `pinnedMessageIds` is provided, chunks containing ANY pinned message
+ * are skipped entirely — pinned messages are NEVER selected as eviction candidates.
+ *
  * @param history - the evictable history items (seq order, oldest first)
  * @param freshTailSteps - the number of trailing STEPS protected from eviction
  * @param leafChunkTokens - the chunk token cap
+ * @param pinnedMessageIds - S4: message ids that must never be selected for eviction
  * @returns the selected chunk, or `undefined` when nothing is evictable
  */
 export function selectLeafChunk(
   history: LeafChunkItem[],
   freshTailSteps: number,
   leafChunkTokens: number,
+  pinnedMessageIds?: Set<string>,
 ): LeafChunk | undefined {
   if (history.length === 0) return undefined;
 
-  // The fresh-tail boundary within `history`: everything at index >= this is
+  // S4: build a version of history that excludes pinned messages from the selectable set.
+  // Pinned messages are moved to "protected" — they remain in the store but cannot be
+  // selected as eviction candidates. If ALL messages are pinned, return undefined.
+  const evictableHistory = pinnedMessageIds && pinnedMessageIds.size > 0
+    ? history.filter((it) => !pinnedMessageIds.has(it.id))
+    : history;
+  if (evictableHistory.length === 0) return undefined;
+
+  // The fresh-tail boundary within `evictableHistory`: everything at index >= this is
   // protected. Counting assistant messages from the end mirrors
   // freshTailBoundaryIndex (a STEP = an assistant + its trailing results).
-  const tailStart = freshTailBoundaryIndexOf(history, freshTailSteps);
+  const tailStart = freshTailBoundaryIndexOf(evictableHistory, freshTailSteps);
   if (tailStart <= 0) return undefined; // nothing outside the fresh tail — no-op.
 
   // Greedily take the oldest contiguous prefix up to the cap. Always include at
@@ -299,7 +328,7 @@ export function selectLeafChunk(
   let endIndex = 0;
   let tokens = 0;
   while (endIndex < tailStart) {
-    const next = history[endIndex]!.tokens;
+    const next = evictableHistory[endIndex]!.tokens;
     if (endIndex > 0 && tokens + next > leafChunkTokens) break;
     tokens += next;
     endIndex++;
@@ -307,9 +336,9 @@ export function selectLeafChunk(
 
   // Extend forward past a trailing assistant `tool_use` to its `toolResult`s so
   // the boundary never lands mid-pair — but never cross the fresh-tail boundary.
-  endIndex = extendForPairSafety(history, endIndex, tailStart);
+  endIndex = extendForPairSafety(evictableHistory, endIndex, tailStart);
 
-  const slice = history.slice(0, endIndex);
+  const slice = evictableHistory.slice(0, endIndex);
   const messages = slice.map((it) => it.msg);
   const messageIds = slice.map((it) => it.id);
   const createdAts = slice.map((it) => it.createdAt);

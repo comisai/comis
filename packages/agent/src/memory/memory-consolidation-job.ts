@@ -44,6 +44,8 @@ import type {
   ClockPort,
 } from "@comis/core";
 import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { resolveMemoryOpsStrategy } from "./memory-capability-router.js";
+import type { CapabilityClass } from "../executor/model-profile.js";
 import { randomUUID } from "node:crypto";
 import {
   clusterByEntityThenEmbedding,
@@ -82,6 +84,19 @@ export interface MemoryConsolidationDeps {
     warn(obj: Record<string, unknown>, msg: string): void;
     error(obj: Record<string, unknown>, msg: string): void;
   };
+  /**
+   * R6: the capability class of the agent's model (from ModelProfile.capabilityClass).
+   * When small/nano without a capable override, consolidation LLM calls are skipped
+   * (T-153-fabricate mitigation: prevent fabricated triples from entering trusted storage).
+   * Optional: defaults to "frontier" behavior (capable) when absent.
+   */
+  capabilityClass?: CapabilityClass;
+  /**
+   * R6: operator override — a stronger cheap model is configured for the memory
+   * pipeline. When true, small/nano are treated as capable for consolidation.
+   * Optional; defaults to false.
+   */
+  hasCapableModelOverride?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +204,35 @@ export async function runMemoryConsolidation(
 ): Promise<Result<void, Error>> {
   const { config, agentId, tenantId, consolidationStore, eventBus, logger, clock } = deps;
   const startMs = clock.now();
+
+  // R6 capability routing: skip consolidation LLM calls for small/nano without a
+  // capable-model override (T-153-fabricate mitigation: prevent fabricated triples
+  // from entering trusted storage via the merge LLM call). The 0-observation event
+  // is emitted to maintain the heartbeat; the run is non-fatal.
+  const capabilityClass = deps.capabilityClass ?? "frontier";
+  const hasCapableModelOverride = deps.hasCapableModelOverride ?? false;
+  const memStrategy = resolveMemoryOpsStrategy(capabilityClass, hasCapableModelOverride);
+  if (memStrategy === "abstain") {
+    logger.warn(
+      {
+        agentId,
+        submodule: "memory-consolidation-job",
+        errorKind: "precondition" as const,
+        hint: "extraction skipped: capabilityClass requires a capableModel override",
+      },
+      "memory extraction skipped",
+    );
+    eventBus.emit("memory:consolidated", {
+      agentId,
+      clustersProcessed: 0,
+      observationsCreated: 0,
+      dedupHits: 0,
+      foldsApplied: 0,
+      durationMs: clock.now() - startMs,
+      timestamp: clock.now(),
+    });
+    return ok(undefined);
+  }
 
   // 1. Candidates — a READ failure is fatal (we cannot safely proceed).
   const candidatesResult = await fromPromise(

@@ -1,0 +1,66 @@
+[
+  {
+    "id": "hn-01",
+    "title": "exhaustion after 2 retries — single unmet requirement",
+    "turns": [
+      {
+        "response": "The game is complete! I have implemented the movement controls and collision detection. The snake moves smoothly.",
+        "criticVerdict": "not-verified",
+        "unmet": ["REQ-1"]
+      },
+      {
+        "response": "I've also added collision detection now. The game should be fully playable and all features are in place.",
+        "criticVerdict": "not-verified",
+        "unmet": ["REQ-1"]
+      }
+    ],
+    "maxCriticRetries": 2,
+    "expect": {
+      "deliveredContains": ["REQ-1"],
+      "deliveredNotMatchesCompletionClaim": true,
+      "honestUnmetList": true
+    },
+    "notes": "After 2 retries, the honest unmet-list is delivered; REQ-1 must appear in the text and no unqualified 'done'"
+  },
+  {
+    "id": "hn-02",
+    "title": "exhaustion after 2 retries — two unmet requirements",
+    "turns": [
+      {
+        "response": "I've set up the ingestion layer and the pipeline is ready. All data will be ingested correctly.",
+        "criticVerdict": "not-verified",
+        "unmet": ["REQ-1", "REQ-2"]
+      },
+      {
+        "response": "I've also added the transformation step. Everything is in place now and ready to process data.",
+        "criticVerdict": "not-verified",
+        "unmet": ["REQ-2"]
+      }
+    ],
+    "maxCriticRetries": 2,
+    "expect": {
+      "deliveredContains": ["REQ-2"],
+      "deliveredNotMatchesCompletionClaim": true,
+      "honestUnmetList": true
+    },
+    "notes": "Second retry still fails; the final delivery must name at least the still-unmet REQ-2"
+  },
+  {
+    "id": "hn-03",
+    "title": "immediate exhaustion — maxCriticRetries=0",
+    "turns": [
+      {
+        "response": "All done! I have finished the implementation and everything is complete and ready to use.",
+        "criticVerdict": "not-verified",
+        "unmet": ["REQ-0", "REQ-1", "REQ-2"]
+      }
+    ],
+    "maxCriticRetries": 0,
+    "expect": {
+      "deliveredContains": ["REQ-0"],
+      "deliveredNotMatchesCompletionClaim": true,
+      "honestUnmetList": true
+    },
+    "notes": "With maxCriticRetries=0, the first not-verified verdict goes directly to honest-exhaustion; all three unmet IDs in the delivered text"
+  }
+]

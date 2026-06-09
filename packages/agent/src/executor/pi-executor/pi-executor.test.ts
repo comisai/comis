@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { ok, err } from "@comis/shared";
+import { resolveModelProfile } from "../model-profile.js";
 import type { PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
 import { formatSessionKey, runWithContext, tryGetContext } from "@comis/core";
 import type { ExecutionResult } from "../types.js";
@@ -1812,11 +1813,10 @@ describe("PiExecutor", () => {
 
       expect(mockLoadWorkspaceBootstrapFiles).toHaveBeenCalledWith(
         "/tmp/test-workspace",
-        20_000,
       );
       expect(mockBuildBootstrapContextFiles).toHaveBeenCalledWith(
         mockBootstrapFiles,
-        { maxChars: 20_000 },
+        expect.objectContaining({ maxChars: 20_000 }),
       );
       expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -3241,8 +3241,8 @@ describe("PiExecutor", () => {
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      // +1 for ttlGuard wrapper (was 5, now 6), +1 for stubFilterInjector (now 7)
-      expect(composedLog![0].wrapperCount).toBe(7);
+      // +1 for ttlGuard, +1 for toolCallRepairWrapper (L3 Phase 155-02), +1 for stubFilterInjector (now 8)
+      expect(composedLog![0].wrapperCount).toBe(8);
     });
 
     it("adds the api-payload trace wrapper when tracing.enabled is true", async () => {
@@ -3273,13 +3273,13 @@ describe("PiExecutor", () => {
       expect(traceLog![0].apiPayloadPath).toContain("/tmp/test-traces/");
       expect(traceLog![0].apiPayloadPath).toContain(".api-payload.jsonl");
 
-      // Should have 8 wrappers applied (7 base + 1 api-payload trace)
+      // Should have 9 wrappers applied (8 base + 1 api-payload trace, L3 Phase 155-02 added toolCallRepairWrapper)
       const debugCalls = (deps.logger.debug as Mock).mock.calls;
       const composedLog = debugCalls.find(
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      expect(composedLog![0].wrapperCount).toBe(8);
+      expect(composedLog![0].wrapperCount).toBe(9);
     });
 
     it("trace wrappers are positioned after requestBodyInjector in chain", async () => {
@@ -3295,11 +3295,10 @@ describe("PiExecutor", () => {
 
       // Verify wrapper names from the summary log.
       // wrapperNames array order matches the wrappers array (outermost first):
-      // ttlGuard, validationErrorFormatter, toolResultSizeBouncer, turnResultBudget, configResolver, requestBodyInjector, cacheTraceWriter, apiPayloadTraceWriter
-      // (renamed providerParamInjector -> configResolver, cacheBreakpointInjector -> requestBodyInjector)
-      // (added validationErrorFormatter as outermost wrapper)
-      // (added turnResultBudget after toolResultSizeBouncer)
-      // (added ttlGuard as outermost wrapper before validationErrorFormatter)
+      // ttlGuard, toolCallRepairWrapper (L3 Phase 155-02), validationErrorFormatter,
+      //   toolResultSizeBouncer, turnResultBudget, configResolver, requestBodyInjector,
+      //   cacheTraceWriter, apiPayloadTraceWriter
+      // (added toolCallRepairWrapper between ttlGuard and validationErrorFormatter)
       const debugCalls = (deps.logger.debug as Mock).mock.calls;
       const composedLog = debugCalls.find(
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
@@ -3312,6 +3311,7 @@ describe("PiExecutor", () => {
       // `diagnostics.cacheTrace.enabled` (not set in this test).
       expect(wrapperNames).toEqual([
         "ttlGuard",
+        "toolCallRepairWrapper",
         "validationErrorFormatter",
         "toolResultSizeBouncer",
         "turnResultBudget",
@@ -3346,8 +3346,8 @@ describe("PiExecutor", () => {
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      // +1 for ttlGuard wrapper (was 5, now 6), +1 for stubFilterInjector (now 7)
-      expect(composedLog![0].wrapperCount).toBe(7);
+      // +1 for ttlGuard, +1 for toolCallRepairWrapper (L3 Phase 155-02), +1 for stubFilterInjector (now 8)
+      expect(composedLog![0].wrapperCount).toBe(8);
     });
 
     it("passes sessionId (formattedKey) to the api-payload trace wrapper", async () => {
@@ -6465,5 +6465,47 @@ describe("buildPromptingSnapshot redaction scaffold", () => {
     expect(result.systemPromptByteLen).toBe(1234);
     // No userPromptPrefixText when not provided
     expect(result.userPromptPrefixText).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// capabilityClassOverride from providerCapabilities (Q3)
+// ---------------------------------------------------------------------------
+// Tests that the resolveModelProfile call in pi-executor correctly threads the
+// operator-supplied capabilityClassOverride from deps.providerCapabilities?.capabilityClass.
+// Validates the wiring contract: when override is present it wins; absent → heuristic.
+
+describe("capabilityClassOverride from providerCapabilities (Q3)", () => {
+  it("providerCapabilities.capabilityClass overrides provider-family heuristic", () => {
+    // resolveModelProfile with an ollama provider (→ "small" by default)
+    // but an explicit override forces "frontier"
+    const profile = resolveModelProfile(
+      { id: "qwen3.6:4b", provider: "ollama", contextWindow: 256_000, maxTokens: 8_192 },
+      "frontier",  // capabilityClassOverride — as supplied by deps.providerCapabilities?.capabilityClass
+    );
+    expect(profile.capabilityClass).toBe("frontier");
+    // frontier → securityLevel="standard", scaffoldLevel="light"
+    expect(profile.securityLevel).toBe("standard");
+    expect(profile.scaffoldLevel).toBe("light");
+  });
+
+  it("undefined providerCapabilities → normal heuristic (ollama → small)", () => {
+    const profile = resolveModelProfile(
+      { id: "qwen3.6:4b", provider: "ollama", contextWindow: 256_000, maxTokens: 8_192 },
+      undefined,  // no override → provider-family heuristic applies
+    );
+    expect(profile.capabilityClass).toBe("small");
+    expect(profile.securityLevel).toBe("locked");
+  });
+
+  it("mid override on an anthropic provider → mid class (not frontier)", () => {
+    // Override wins over the anthropic → frontier heuristic
+    const profile = resolveModelProfile(
+      { id: "claude-3-opus", provider: "anthropic", contextWindow: 200_000, maxTokens: 4_096 },
+      "mid",
+    );
+    expect(profile.capabilityClass).toBe("mid");
+    expect(profile.securityLevel).toBe("hardened");
+    expect(profile.scaffoldLevel).toBe("standard");
   });
 });

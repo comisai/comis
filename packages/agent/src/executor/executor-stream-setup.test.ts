@@ -16,6 +16,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { resolveMainPathMaxOutputTokens } from "./verification-gate.js";
+import type { ModelProfile } from "./model-profile.js";
 import { buildOffloadCallback } from "./executor-stream-setup.js";
 
 // ---------------------------------------------------------------------------
@@ -75,6 +77,70 @@ describe("skipCacheWrite derivation", () => {
   it("skipCacheWrite is false for null spawnPacket", () => {
     // null is falsy
     expect(deriveSkipCacheWrite({ spawnPacket: null })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CR-01 — main-path maxTokens resolution wiring
+//
+// Reproduces the exact ConfigResolver maxTokens expression from
+// executor-stream-setup.ts:
+//   maxTokens: config.maxTokens ?? (modelProfile
+//     ? resolveMainPathMaxOutputTokens(modelProfile) : undefined)
+//
+// The regression: this previously used resolveMaxOutputTokens (verdict
+// reserve = 512 for non-reasoning), clamping every visible answer at 512.
+// ---------------------------------------------------------------------------
+
+function makeProfile(overrides: Partial<ModelProfile> = {}): ModelProfile {
+  return {
+    contextWindow: 32_768,
+    maxOutputTokens: 4_096,
+    capabilityClass: "small",
+    scaffoldLevel: "max",
+    securityLevel: "locked",
+    supportsVision: false,
+    supportsTools: true,
+    supportsPromptCache: false,
+    supportsServerToolSearch: false,
+    supportsStructuredOutput: false,
+    reasoningStyle: "none",
+    ...overrides,
+  };
+}
+
+/** Exact maxTokens resolution from executor-stream-setup.ts (mirrored). */
+function resolveConfigMaxTokens(
+  configMaxTokens: number | undefined,
+  modelProfile: ModelProfile | undefined,
+): number | undefined {
+  return configMaxTokens ?? (modelProfile
+    ? resolveMainPathMaxOutputTokens(modelProfile)
+    : undefined);
+}
+
+describe("CR-01 main-path maxTokens wiring — non-reasoning answer is never clamped to 512", () => {
+  it("non-reasoning profile, no operator maxTokens → resolves to the full profile budget (NOT 512)", () => {
+    const profile = makeProfile({ reasoningStyle: "none", maxOutputTokens: 4096 });
+    const resolved = resolveConfigMaxTokens(undefined, profile);
+    expect(resolved).toBe(4096);
+    expect(resolved).not.toBe(512);
+  });
+
+  it("operator config.maxTokens always wins over the profile fallback", () => {
+    const profile = makeProfile({ reasoningStyle: "none", maxOutputTokens: 4096 });
+    expect(resolveConfigMaxTokens(1234, profile)).toBe(1234);
+  });
+
+  it("native-reasoning profile, no operator maxTokens → sized UP (>= 4096), never 512", () => {
+    const profile = makeProfile({ reasoningStyle: "native", maxOutputTokens: 1024 });
+    const resolved = resolveConfigMaxTokens(undefined, profile);
+    expect(resolved).toBeGreaterThanOrEqual(4096);
+    expect(resolved).not.toBe(512);
+  });
+
+  it("no modelProfile and no config.maxTokens → undefined (provider default preserved)", () => {
+    expect(resolveConfigMaxTokens(undefined, undefined)).toBeUndefined();
   });
 });
 

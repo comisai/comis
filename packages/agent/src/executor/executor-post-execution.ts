@@ -93,7 +93,15 @@ import type { ExecutionResult, ExecutionOverrides } from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { ContextEngine } from "../context-engine/index.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
+// WR-02: import the precise type so PostExecutionParams.capabilityClass
+// is CapabilityClass | undefined, not string | undefined.
+import type { CapabilityClass } from "./model-profile.js";
 import { createHash, randomUUID } from "node:crypto";
+// R4: critic hook (no inline logic — all logic in verification-gate.ts)
+import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
+import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
+import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
+import { generateCanaryToken } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -163,6 +171,12 @@ export interface PostExecutionBridgeResult {
    *  Conditionally emitted on the Execution-complete log when > 0 — mirrors
    *  the per-event `costCorrection` breadcrumb gate in pi-event-bridge.ts. */
   totalCostCorrectionDeltaUsd?: number;
+  /** R2 (Phase 153): abort-redirect message set at bridge abort sites
+   *  (max_steps, budget_exceeded, loop_detected, …). When present and the
+   *  turn did not finish with "stop", post-execution replaces the response
+   *  so a weak executive never free-associates after an abort. Mirrors
+   *  bridge-metrics.ts BridgeResult.abortResponse. */
+  abortResponse?: string;
 }
 
 /** Bridge interface used by post-execution. */
@@ -228,7 +242,7 @@ export interface PostExecutionParams {
   isOnboarding: boolean;
   geminiCacheHit: boolean;
   geminiCachedTokens: number;
-  modelTier: string | undefined;
+  capabilityClass: CapabilityClass | undefined;
   /**
    * Provider used for this execution. Sourced from `resolvedModel.provider` in
    * pi-executor when available; falls back to `config.provider` when the
@@ -359,6 +373,7 @@ const MEMORY_SKIP_OPERATIONS: ReadonlySet<string> = new Set([
   "compaction",
   "taskExtraction",
   "condensation",
+  "verification",
 ]);
 
 /**
@@ -872,7 +887,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     contextEngineRef, ceSetup, streamSetup,
     getTruncationSummary, getTurnBudgetSummary,
     executionPlanRef, isOnboarding,
-    geminiCacheHit, geminiCachedTokens, modelTier,
+    geminiCacheHit, geminiCachedTokens, capabilityClass,
     provider, providerFamily,
     deferralResult, mergedCustomTools, deliveredGuides,
     deps, sessionAdapter,
@@ -912,6 +927,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   result.toolCallHistory = bridgeResult.toolCallHistory;
   if (bridgeResult.finishReason && bridgeResult.finishReason !== "stop") {
     result.finishReason = bridgeResult.finishReason;
+  }
+  // R2: Abort redirect — when bridge set an abortResponse (max_steps, budget_exceeded, etc.),
+  // override result.response so the user sees the re-assertion message instead of the
+  // partial LLM text emitted before the abort. Only applied when finishReason is non-stop
+  // (belt-and-braces: abortResponse is only set at abort sites, so finishReason will be non-stop).
+  if (bridgeResult.abortResponse && result.finishReason !== "stop") {
+    result.response = bridgeResult.abortResponse;
   }
   // Enrich errorContext with the tool that was in-flight when failure occurred
   if (result.errorContext && bridgeResult.lastActiveToolName) {
@@ -1040,13 +1062,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       totalBilledUsd: (result.cost.total ?? 0) + (result.cost.ghostCostUsd ?? 0),
       geminiCacheHit,
       geminiCachedTokens,
-      modelTier,
+      capabilityClass,
       provider,
       providerFamily,
       deferredCount: deferralResult.deferredCount,
       activeToolCount: mergedCustomTools.length,
       guidesDelivered: deliveredGuides.size,
-      schemaPruned: modelTier === "small",
+      schemaPruned: capabilityClass === "nano",
       failedToolCalls: bridgeResult.failedToolCalls ?? 0,
       toolFailureRate: (result.stepsExecuted ?? 0) > 0
         ? Math.round(((bridgeResult.failedToolCalls ?? 0) / (result.stepsExecuted ?? 0)) * 100)
@@ -1145,6 +1167,52 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     const failedToolName = bridgeResult.failedTools?.[0] ?? "unknown tool";
     result.response = (result.response ?? "") +
       `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
+  }
+
+  // SD3 (Phase 158): resolve capability-gated verification default before the gate check.
+  // modelProfile is not in scope at this layer — use a synthetic profile derived from
+  // capabilityClass (same approach as buildSyntheticCriticDeps; capabilityClass is threaded
+  // since Phase 155 via PostExecutionParams). Only the isSmallNano distinction
+  // (scaffoldLevel === "max") is load-bearing for resolveScaffoldDefaults' SD3 decision —
+  // the non-max value is deliberately collapsed to "light" (nothing here reads scaffoldLevel
+  // beyond the isSmallNano check; a real mid profile would be "standard"). small/nano → "max";
+  // frontier/mid/unknown → "light" (fail-closed: undefined capabilityClass → frontier).
+  // operationModels defaults to {} when not set (no distinct critic → cost-gate returns false).
+  const resolvedCapabilityClass = capabilityClass ?? "frontier";
+  const syntheticProfileForDefaults = {
+    scaffoldLevel: (resolvedCapabilityClass === "small" || resolvedCapabilityClass === "nano") ? "max" as const : "light" as const,
+    reasoningStyle: "none" as const,
+    maxOutputTokens: 4096, contextWindow: 8192,
+    capabilityClass: resolvedCapabilityClass,
+    securityLevel: "standard" as const,
+    supportsVision: false, supportsTools: true, supportsPromptCache: false,
+    supportsServerToolSearch: false, supportsStructuredOutput: false,
+  };
+  // WR-01: criticModel is the DISTINCT CHEAP verification model the cost-gate gated
+  // on (keyless-guarded). The critic must run on it, NOT the agent primary — running
+  // the primary would invert the cost-gate's "never doubles local-CPU latency" rationale.
+  // Falls back to the agent's (already-keyless, per shouldRunCritic) primary when undefined.
+  const { verificationEnabled: effectiveVerification, criticModel } = resolveScaffoldDefaults(
+    syntheticProfileForDefaults,
+    config,
+    { provider, agentModel: config.model, operationModels: config.operationModels ?? {} },
+  );
+  if (shouldRunCritic({ // R4: critic hook (WR-02: keyless-only gate)
+    capabilityClass, config, executionPlanRef, provider,
+    logger: deps.logger,
+    effectiveEnabled: effectiveVerification, // SD3: pre-resolved via cost-gate
+  })) {
+    const { deps: cd, maxRetries: mr } = buildSyntheticCriticDeps({
+      capabilityClass,
+      provider: criticModel?.provider ?? provider, // WR-01: resolved cheap critic, not agent primary
+      modelId: criticModel?.modelId ?? config.model,
+      agentId: effectiveAgentId,
+      canaryToken: generateCanaryToken(formattedKey, executionId), // WR-03: formatted key, not String(obj)
+      minResponseChars: config.verification?.minResponseChars ?? 200, maxRetries: config.honesty?.maxCriticRetries ?? 2,
+      clock: deps.clock, logger: deps.logger, eventBus: deps.eventBus,
+    });
+    const cr = await runVerificationCritic({ response: result.response ?? "", plan: executionPlanRef.current, deps: cd, maxRetries: mr });
+    if (cr.verdict !== "verified" && cr.verdict !== "skipped") { result.response = cr.response; }
   }
 
   // Map the settled finishReason to the terminal endReason ONCE via the single
@@ -1362,6 +1430,20 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
             agentId: scope.agentId,
             sessionKey: scope.sessionKey,
             reason: "live_store_divergence",
+            durationMs: Math.max(0, deps.clock.now() - ingestStart),
+            timestamp: deps.clock.now(),
+          });
+        },
+        // RR6 (Phase 164): a detected epoch re-base that continues emits a distinct
+        // content-free context:dag_degraded reason:"session_rebase" (INFO — a correct
+        // continuation, not degradation) so operators can tell "continued after
+        // restart/JSONL-housekeeping" from "skipped due to corruption".
+        () => {
+          deps.eventBus.emit("context:dag_degraded", {
+            conversationId: scope.conversationId,
+            agentId: scope.agentId,
+            sessionKey: scope.sessionKey,
+            reason: "session_rebase",
             durationMs: Math.max(0, deps.clock.now() - ingestStart),
             timestamp: deps.clock.now(),
           });

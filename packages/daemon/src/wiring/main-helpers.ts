@@ -7,8 +7,9 @@
  * @module
  */
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { safePath, createApprovalGate } from "@comis/core";
+import { safePath, createApprovalGate, generateStrongToken } from "@comis/core";
 import type { LoggingResult } from "./setup-logging.js";
+import type { BootContext } from "../daemon-types.js";
 
 /**
  * Restore approval pending requests and cache from disk at startup.
@@ -64,4 +65,84 @@ export function restoreApprovalState(deps: {
       try { unlinkSync(approvalCacheRestorePath); } catch { /* ignore */ }
     }
   }
+}
+
+/**
+ * Per-token MCP-client config block. Surface to the gateway TokenStore via
+ * `TokenEntry.mcpClient` so the verified TokenClient carries the allowlist +
+ * sessionAllowlist + per-tool rate-limit overrides.
+ */
+export interface ResolvedGatewayToken {
+  id: string;
+  secret: string;
+  scopes: string[];
+  mcpClient?: {
+    allowlist: string[];
+    sessionAllowlist: string[];
+    toolRateLimit: Record<string, number>;
+  };
+}
+
+/**
+ * Resolve gateway tokens from config (config -> env -> auto-generated).
+ *
+ * Extracted from `daemon.ts` to keep the composition root under its
+ * architecture line cap (runs during `bootGateway`).
+ */
+export function resolveGatewayTokens(deps: {
+  container: BootContext["container"];
+  daemonLogger: BootContext["daemonLogger"];
+}): Array<ResolvedGatewayToken> {
+  const { container, daemonLogger } = deps;
+  const resolved: Array<ResolvedGatewayToken> = [];
+  for (const t of container.config.gateway?.tokens ?? []) {
+    const tokenId = t.id ?? "unknown";
+    const tokenScopes = [...(t.scopes ?? [])];
+    // Preserve the per-MCP-client config block so the TokenStore can surface
+    // it on verified TokenClient instances. Schema defaults guarantee the
+    // fields are populated when the block is present.
+    const mcpClient = t.mcpClient
+      ? {
+          allowlist: [...t.mcpClient.allowlist],
+          sessionAllowlist: [...t.mcpClient.sessionAllowlist],
+          toolRateLimit: { ...t.mcpClient.toolRateLimit },
+        }
+      : undefined;
+
+    if (typeof t.secret === "string" && t.secret.length >= 32) {
+      // Source: config (explicit secret present and valid)
+      resolved.push({
+        id: tokenId,
+        secret: t.secret,
+        scopes: tokenScopes,
+        ...(mcpClient && { mcpClient }),
+      });
+    } else {
+      const envKey = `GATEWAY_TOKEN_${tokenId.toUpperCase().replace(/-/g, "_")}`;
+      const envSecret = container.secretManager.get(envKey);
+      if (envSecret) {
+        // Source: env / SecretManager
+        resolved.push({
+          id: tokenId,
+          secret: envSecret,
+          scopes: tokenScopes,
+          ...(mcpClient && { mcpClient }),
+        });
+      } else {
+        // Source: auto-generated (ephemeral)
+        const generated = generateStrongToken();
+        resolved.push({
+          id: tokenId,
+          secret: generated,
+          scopes: tokenScopes,
+          ...(mcpClient && { mcpClient }),
+        });
+        daemonLogger.warn(
+          { tokenId, envVar: envKey, hint: `Set ${envKey} in environment or secrets store for persistence`, errorKind: "config" as const },
+          "Gateway token auto-generated (ephemeral -- will be lost on restart)",
+        );
+      }
+    }
+  }
+  return resolved;
 }

@@ -108,6 +108,33 @@ The observability rows live in the `obs_diagnostics` table, grouped by a `catego
 
 `config_posture` is likewise a one-shot snapshot recorded once per boot, capturing the daemon's security posture — whether the gateway is running without TLS, the per-family **counts** of stranded secrets (credentials left in the inactive store that the active `security.storage` mode cannot reach), and a canary-fallback aggregate (how many agents fall back to deterministic canary tokens because `CANARY_SECRET` is unset). It records counts and closed labels only — **never a secret value** — so the fleet health lens can surface a TLS-off / stranded-secret / canary posture without opening the log.
 
+#### LCD Store — Durable Conversation History
+
+`memory.db` also contains the **LCD store**: the durable, lossless conversation history. Three layers work together, each with a distinct durability contract:
+
+| Layer | Tables | Durability |
+|-------|--------|------------|
+| **LCD store** | `lcd_messages`, `lcd_message_parts`, `lcd_context_items`, `lcd_summaries` | **Durable — the truth.** Every turn is persisted verbatim (auto-condensed past 75%). Survives daemon restarts, redeploys, and JSONL deletions. |
+| **RAG memory** | `memory_*` | **Durable.** Distilled facts learned from conversations. Cleared separately via `comis sessions reset --memory` (reserved — not yet implemented). |
+| **SDK session JSONL** | `~/.comis/workspace/sessions/.../<key>.jsonl` | **Disposable** — the SDK's per-session working transcript. Routinely deleted by the operator (housekeeping) and wiped by `comis sessions reset`. |
+
+<Note>
+The SDK session JSONL is **disposable**. Deleting it directly (for any reason — operator housekeeping, `rm`, daemon restart) is always treated as "continue": the LCD store keeps its full history and appends the fresh transcript as a continuation. The daemon cannot distinguish disk-space housekeeping from a deliberate reset, so it never infers forget from a file deletion — it always continues. To perform an explicit reset, use `comis sessions reset` which clears both layers atomically.
+</Note>
+
+**Forgetting is explicit.** To clear a conversation so the model starts with a clean slate in **both dag and pipeline modes**, use the complete reset command:
+
+```bash
+# Reset a conversation (clears LCD history + session transcript — irreversible):
+comis sessions reset <sessionKey> --yes
+# Also clear RAG memories (full-forget path — reserved, not yet implemented):
+comis sessions reset <sessionKey> --memory --yes
+```
+
+`sessions reset` clears two layers atomically: the LCD lossless-store history (dag mode) and the daemon sessionStore working transcript (both modes). A follow-up turn has no prior context regardless of which context engine the session uses.
+
+See [CLI Reference](/reference/cli#comis-sessions) for the full command reference.
+
 **Written by:** the daemon continuously during operation.
 **Safe to delete?** Deleting it erases all conversation history, stored memories, pending deliveries, and cached embeddings. The daemon will recreate an empty database on next start, but you lose all data permanently.
 

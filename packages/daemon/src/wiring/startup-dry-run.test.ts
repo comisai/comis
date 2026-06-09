@@ -19,8 +19,8 @@ describe("logOperationModelDryRun", () => {
     mockSecretManager = { has: vi.fn().mockReturnValue(true) };
   });
 
-  // Given 1 agent with anthropic provider, logs 1 INFO line containing all 7 operation types
-  it("logs one INFO line per agent with all 7 operation types", () => {
+  // Given 1 agent with anthropic provider, logs 1 INFO line containing all 9 operation types
+  it("logs one INFO line per agent with all 9 operation types", () => {
     logOperationModelDryRun({
       agents: {
         myAgent: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
@@ -36,11 +36,12 @@ describe("logOperationModelDryRun", () => {
     expect(logObj.agentId).toBe("myAgent");
 
     const ops = logObj.operationModels as Array<{ op: string }>;
-    expect(ops).toHaveLength(7);
+    expect(ops).toHaveLength(9);
 
     const opNames = ops.map((o) => o.op).sort();
     expect(opNames).toEqual(
-      ["compaction", "condensation", "cron", "heartbeat", "interactive", "subagent", "taskExtraction"].sort(),
+      // Phase 154 (R4/R5) added "verification" + "planning" operation types.
+      ["compaction", "condensation", "cron", "heartbeat", "interactive", "planning", "subagent", "taskExtraction", "verification"].sort(),
     );
   });
 

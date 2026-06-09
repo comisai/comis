@@ -538,6 +538,49 @@ Use `$${VAR_NAME}` (double dollar sign) to produce a literal `${VAR_NAME}` in th
 
 <Info>The `COMIS_*` prefix is reserved for operational variables. During `comis secrets import`, variables starting with `COMIS_` are skipped (treated as infrastructure, not secrets).</Info>
 
+## Local Model Runtime Selection (MLX vs GGUF)
+
+When running qwen3.6 or other local models via Ollama, the runtime format affects
+inference latency:
+
+| Platform | Recommended Runtime | Ollama Tag Example |
+|----------|--------------------|--------------------|
+| Apple Silicon (M1/M2/M3/M4) | MLX | `qwen3.6:35b-mlx` |
+| Linux / x86-64 | GGUF (llama.cpp) | `qwen3.6:35b` |
+
+**Why:** MLX is optimized for the Apple Neural Engine and achieves significantly lower
+inference latency on Apple Silicon. GGUF via llama.cpp is the standard format for
+Linux deployments and cloud VPS instances.
+
+**Comis does not distinguish between MLX and GGUF tags** — both are treated as opaque
+Ollama model IDs. Set the model ID in your `config.yaml` to the tag that matches
+your hardware:
+
+```yaml
+providers:
+  entries:
+    local:
+      type: ollama
+      models:
+        - id: qwen3.6:35b-mlx  # Apple Silicon (MLX runtime)
+        # - id: qwen3.6:35b    # Linux / x86-64 (GGUF / llama.cpp)
+```
+
+<Tip>
+To measure the latency difference between runtimes on your hardware, run the bench
+harness with both tags:
+
+```bash
+BENCH_MODELS=qwen3.6:35b-mlx,qwen3.6:35b \
+  node scripts/bench-small-model/comprehension.mjs
+```
+
+The report shows average latency per model section. MLX should be faster on Apple
+Silicon; GGUF should be faster or equivalent on Linux. Performance numbers for the
+full qwen3.6 matrix are recorded in `.planning/phases/157-re-prove-ga/` after the
+Phase 157 live re-prove.
+</Tip>
+
 ## Related
 
 <CardGroup cols={2}>

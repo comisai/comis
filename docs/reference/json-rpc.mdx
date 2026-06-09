@@ -974,6 +974,7 @@ Session management for agent conversations. Client-facing methods use `rpc` scop
 | `session.reset` | `admin` | Reset all sessions |
 | `session.export` | `admin` | Export session data |
 | `session.compact` | `admin` | Compact session history |
+| `session.reset_conversation` | `admin` | Complete cross-mode conversation reset (LCD history + working session transcript) |
 
 ### `session.status`
 
@@ -1200,6 +1201,51 @@ Get the live status of a specific sub-agent run by its run ID. Returns timing, t
 | **Scope** | `admin` |
 | **Parameters** | `{ key: string }` |
 | **Returns** | Compaction result |
+
+### `session.reset_conversation`
+
+Complete cross-mode conversation reset. Clears **both** the LCD durable history **and** the daemon sessionStore working transcript. **Destructive and irreversible.** Admin-scoped — requires an admin token.
+
+This is the correct explicit forget command. Unlike `session.delete` (which only removes the session record), this operation ensures the model starts with a clean slate in **both engine modes**: the LCD store is empty (dag mode) and the sessionStore messages are empty (both modes — the JSONL-backed transcript that feeds `state.messages` on the next turn is wiped).
+
+The operation is serialized against live LCD ingest (safe to call while the daemon is running). Returns count-only — no message content is returned or logged. Best-effort on each layer: absent sessionStore entry or zero LCD rows is not an error.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ session_key: string, memory?: boolean }` — `memory` defaults to `false`; when `true`, the request is accepted without error but **RAG memory is not yet cleared** (reserved and deferred). Only LCD history and session transcript are cleared regardless of this flag. |
+| **Returns** | `{ sessionKey: string, lcdRowsDeleted: number, sessionMessagesCleared: number, memoriesDeleted?: number }` — `memoriesDeleted` is **omitted** (`undefined`) in the current implementation, signalling that RAG memory clearing is not yet implemented. |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "session.reset_conversation",
+  "params": {
+    "session_key": "default:user123:telegram",
+    "memory": false
+  },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "sessionKey": "default:user123:telegram",
+    "lcdRowsDeleted": 42,
+    "sessionMessagesCleared": 18
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+<Note>
+**`memory: true` is reserved and not yet implemented.** Passing it is accepted without error, but RAG memory is not cleared — only the LCD history and session transcript are deleted. The response will omit `memoriesDeleted` (`undefined`), signalling the not-implemented state. A future phase will wire the full conversation-scoped RAG-memory delete across all memory stores.
+</Note>
+
+After a reset, the next conversation turn starts with a complete clean slate in both dag and pipeline modes. For the full durability model (LCD vs. JSONL vs. RAG memory), see [Data Directory](/operations/data-directory).
 
 </Accordion>
 
@@ -3004,7 +3050,7 @@ Updates are deep-merged with existing configuration and persisted to the YAML co
 
 <Accordion title="context (2 methods)">
 
-LCD lossless-store **operator-browse** RPCs that back the dashboard's Context DAG browser. Both are `rpc`-scoped and AGENT+TENANT scoped: the calling agent comes from the request context and the tenant from the daemon — neither is a caller-supplied parameter, so a browse can never read another agent's (or tenant's) conversations.
+LCD lossless-store RPCs. Both methods are `rpc`-scoped and back the dashboard's Context DAG browser.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
@@ -3012,9 +3058,13 @@ LCD lossless-store **operator-browse** RPCs that back the dashboard's Context DA
 | `context.tree` | `rpc` | Get a conversation's resolved DAG (summary nodes + raw-message count) |
 
 <Note>
+The `rpc`-scoped browse methods are AGENT+TENANT scoped: the calling agent comes from the request context and the tenant from the daemon — neither is a caller-supplied parameter, so a browse can never read another agent's (or tenant's) conversations.
+
 The in-session context **tools** an agent uses while running — `ctx_search`, `ctx_inspect`, `ctx_expand` (deep recall via `ctx_recall`) — are agent tools invoked through the executor, **not** gateway RPC methods, and are documented under the agent tool reference rather than here.
 
 Two further operator-browse RPCs the Context DAG browser will use — `context.inspect` (per-node metadata + taint-wrapped content recovery) and `context.searchByConversation` (full-text search within one conversation) — are **not yet registered**; calling them returns JSON-RPC `-32601` (method not found). The browser degrades to loading and rendering the DAG structure without per-node deep-inspect or in-conversation search until they ship.
+
+The explicit conversation reset command is `session.reset_conversation` (admin-scoped), documented in the `sessions` accordion below.
 </Note>
 
 ### `context.conversations`

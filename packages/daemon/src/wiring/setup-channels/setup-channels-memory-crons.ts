@@ -21,6 +21,7 @@ import { parseFormattedSessionKey } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
 import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, runOnlineTuning, type UserRepresentationSourceMemory, type RelationshipSourceMemory, type OnlineTuningFeedEntry } from "@comis/agent";
+import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
 
 /** The minimal `scheduler:job_result` payload shape the sentinel handlers read. */
 interface MemoryCronPayload {
@@ -93,8 +94,7 @@ export async function handleMemoryCronSentinel(
       return true;
     }
 
-    // Resolve the cheap "cron" model (never the agent's primary) + the API key (by NAME,
-    // never by value; Pino also auto-redacts).
+    // Resolve the cheap "cron" model (never the agent's primary) + API key by NAME (Pino auto-redacts).
     const resolved = resolveOperationModel({
       operationType: "cron",
       agentProvider: agentConfig.provider ?? "anthropic",
@@ -111,7 +111,6 @@ export async function handleMemoryCronSentinel(
       payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
       return true;
     }
-
     const consolidationResult = await runMemoryConsolidation({
       agentId,
       tenantId: tenantId ?? container.config.tenantId ?? "default",
@@ -124,6 +123,8 @@ export async function handleMemoryCronSentinel(
       apiKey,
       clock,
       logger: logger.child({ agentId, submodule: "memory-consolidation" }),
+      // R6 (CR-01): small/nano cron model abstains via resolve-memory-ops-capability.ts (never fabricates into trusted storage).
+      ...resolveMemoryOpsCapability(resolved, providerEntry?.capabilities),
     });
 
     if (!consolidationResult.ok) {
@@ -153,8 +154,7 @@ export async function handleMemoryCronSentinel(
       return true;
     }
 
-    // Resolve the cheap "cron" model (never the agent's primary) + the API key (by NAME,
-    // never by value; Pino also auto-redacts).
+    // Resolve the cheap "cron" model (never the agent's primary) + API key by NAME (Pino auto-redacts).
     const resolved = resolveOperationModel({
       operationType: "cron",
       agentProvider: agentConfig.provider ?? "anthropic",

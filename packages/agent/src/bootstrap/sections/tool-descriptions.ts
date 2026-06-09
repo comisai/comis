@@ -19,7 +19,6 @@
  * @module
  */
 
-import type { ModelTier } from "./tooling-sections.js";
 import { getToolMetadata } from "@comis/core";
 import { getProviders } from "@earendil-works/pi-ai";
 
@@ -41,7 +40,7 @@ const _builtInProvidersList = [...getProviders()].sort().join(", ");
 export interface ToolDescriptionContext {
   channelType?: string;
   trustLevel?: string;
-  modelTier: ModelTier;
+  modelTier: "small" | "medium" | "large";
 }
 
 // ---------------------------------------------------------------------------

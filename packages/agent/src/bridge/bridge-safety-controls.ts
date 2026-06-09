@@ -22,6 +22,7 @@ import type { StepCounter } from "../executor/step-counter.js";
 import type { CircuitBreaker } from "../safety/circuit-breaker.js";
 import type { ContextWindowGuard, ContextUsageData } from "../safety/context-window-guard.js";
 import type { ExecutionResult } from "../executor/types.js";
+import type { ExecutionPlan } from "../planner/types.js";
 
 // ---------------------------------------------------------------------------
 // Safety check result types
@@ -322,6 +323,51 @@ export function checkCircuitBreaker(
     };
   }
   return { shouldAbort: false };
+}
+
+// ---------------------------------------------------------------------------
+// Abort redirect message builder (R2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a re-assertion response for an abort site.
+ *
+ * Two overloads:
+ *
+ * 1. In-bridge (plan available):
+ *    buildAbortRedirectMessage(plan: ExecutionPlan, finishReason: string): string
+ *    → "[Stopped: {finishReason}]\n\nYour request was: \"{plan.request}\"\n\nUnmet requirements:\n- {unmet steps}\n\nPlease continue from where I stopped."
+ *
+ * 2. Pre-lock (no plan, fallback to msg.text):
+ *    buildAbortRedirectMessage(plan: undefined, finishReason: string, msgTextFallback: string): string
+ *    → "[Stopped: {finishReason}] Your request was: '{msgTextFallback}'. Please try again."
+ *
+ * The response is shown to the user in place of the normal LLM response.
+ * Content is sourced from the operator-side ExecutionPlan or the user's own
+ * message text — no external or model-generated data (T-153-02b).
+ */
+export function buildAbortRedirectMessage(
+  plan: ExecutionPlan | undefined,
+  finishReason: string,
+  msgTextFallback?: string,
+): string {
+  if (plan === undefined) {
+    const fallback = msgTextFallback ?? "";
+    return `[Stopped: ${finishReason}] Your request was: '${fallback}'. Please try again.`;
+  }
+
+  const unmetSteps = plan.steps.filter(
+    (s) => s.status === "pending" || s.status === "in_progress",
+  );
+
+  const header = `[Stopped: ${finishReason}]\n\nYour request was: "${plan.request}"`;
+
+  if (unmetSteps.length === 0) {
+    return `${header}\n\nPlease continue from where I stopped.`;
+  }
+
+  const stepLines = unmetSteps.map((s) => `- ${s.description}`).join("\n");
+  return `${header}\n\nUnmet requirements:\n${stepLines}\n\nPlease continue from where I stopped.`;
 }
 
 /**

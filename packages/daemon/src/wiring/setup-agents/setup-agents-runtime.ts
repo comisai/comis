@@ -349,7 +349,7 @@ export async function setupSingleAgent(
   const descriptionContext: ToolDescriptionContext = {
     channelType: undefined,
     trustLevel: "default", // Trust comes from token/context at message time, not config
-    // Deferral uses resolveModelTier(contextWindow) per-execution in pi-executor.
+    // Capability class is resolved per-execution in pi-executor via resolveModelProfile().
     // This setup-time modelTier only affects lean description text (e.g., admin suffix).
     modelTier: agentConfig.bootstrap?.promptMode === "minimal" ? "small" : "large",
   };

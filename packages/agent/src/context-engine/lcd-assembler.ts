@@ -25,8 +25,10 @@
  *  3.   FRESH TAIL — the last N STEPS of the LIVE array (an assistant message
  *       plus the tool results it triggered), sliced VERBATIM as the ORIGINAL
  *       structured blocks (never reconstructed-from-text). Never evicted (A1).
- *  4.   BUDGET + EVICTION (A3) — compute H = W − S − O − M − R via the centralized
- *       `computeTokenBudget`, then `evictHistoryUnderBudget` trims ONLY the
+ *  4.   BUDGET + EVICTION (A3) — compute H = W − S − O − M − R via the profile-aware
+ *       `computeTokenBudgetForProfile` (C1: 8K-starvation fix + 256K-overfill cap for
+ *       small/nano; byte-identical to `computeTokenBudget` for frontier/mid), then
+ *       `evictHistoryUnderBudget` trims ONLY the
  *       evictable prefix (resolved history minus the items the fresh tail covers)
  *       to fit H; the fresh tail is concatenated UNCONDITIONALLY (A1/A3 — always
  *       included, even when it alone exceeds H). The prefix/fresh-tail boundary is
@@ -64,7 +66,8 @@ import type {
 import type { ContextEngineConfig } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
-import { computeTokenBudget } from "./token-budget.js";
+import { computeTokenBudgetForProfile } from "./budget-capacity-cap.js";
+import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import {
   CHARS_PER_TOKEN_RATIO,
   LCD_FALLBACK_HEADER_MARKER,
@@ -288,8 +291,10 @@ export function createLcdContextEngine(
       }
 
       // 4. BUDGET + EVICTION (A3) at the documented seam. Compute H from the model
-      //    window (W) and the system-tokens estimate (S) via the centralized
-      //    `computeTokenBudget` (Pitfall 1 — never recompute W−S−O−M−R by hand),
+      //    window (W) and the system-tokens estimate (S) via the profile-aware
+      //    `computeTokenBudgetForProfile` (C1: 8K-starvation + 256K-overfill cap;
+      //    byte-identical to `computeTokenBudget` for frontier/mid — Pitfall 1:
+      //    never recompute W−S−O−M−R by hand),
       //    then evict the EVICTABLE PREFIX under H while the fresh tail ships
       //    UNCONDITIONALLY (A1/A3 — always included, even when the fresh tail alone
       //    exceeds H).
@@ -341,10 +346,35 @@ export function createLcdContextEngine(
       // (measuring only recall would under-reserve H and risk a fresh-tail overflow).
       // Pass `-1` for the (defaulted) cacheFenceIndex to reach the 4th positional
       // `freshTailPreambleTokensEstimate` slot.
-      const W = deps.getModel().contextWindow;
+      const model = deps.getModel();
+      const W = model.contextWindow;
       const S = deps.getSystemTokensEstimate?.() ?? 0;
       const freshTailPreambleTokens = deps.getFreshTailPreambleTokensEstimate?.() ?? 0;
-      const budget = computeTokenBudget(W, S, -1, freshTailPreambleTokens);
+      // C1 (Phase 152): profile-aware budget — 8K-starvation fix (effectiveO = min(O, maxOutputTokens))
+      // and 256K-overfill cap for small/nano models. Frontier/mid: byte-identical to computeTokenBudget.
+      // When deps.modelProfile is present: use it for both fixes (the standard C1 path).
+      // When deps.modelProfile is absent (pre-Phase-152 callers / tests without a wired profile):
+      //   synthesize a "transparent" profile that preserves the pre-C1 byte-identical behavior:
+      //   - contextWindow = W (actual, from getModel()) — respects the real window
+      //   - maxOutputTokens = OUTPUT_RESERVE_TOKENS (8192) — the 8K-starvation fix is a NO-OP
+      //     because effectiveO = min(OUTPUT_RESERVE_TOKENS, 8192) = 8192 = no change
+      //   - capabilityClass = "frontier" — the 256K-overfill cap is disabled (frontier = no cap)
+      //     so the window cap never fires; behavior is identical to pre-C1 computeTokenBudget.
+      // This ensures pre-C1 callers see zero behavior change while profiled callers get the C1 fixes.
+      const profile = deps.modelProfile ?? {
+        ...FAIL_CLOSED_PROFILE,
+        contextWindow: W,
+        maxOutputTokens: 8_192, // 8K-starvation fix neutral: min(8192, 8192) = 8192 = no change
+        capabilityClass: "frontier" as const, // overfill cap neutral: frontier = Infinity cap = no cap
+      };
+      const budget = computeTokenBudgetForProfile(
+        profile,
+        S,
+        freshTailPreambleTokens,
+        -1,
+        config.budget?.effectiveContextCapSmall,
+        config.budget?.effectiveContextCapNano,
+      );
       const budgeted = evictHistoryUnderBudget(evictable, budget.availableHistoryTokens);
       const droppedCount = evictable.length - budgeted.length;
       deps.logger.debug(

@@ -4,8 +4,6 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   applyToolDeferral,
   extractRecentlyUsedToolNames,
-  resolveModelTier,
-  resolveToolCallingTemperature,
   buildDeferredToolsContext,
   createDiscoverTool,
   createAutoDiscoveryStubs,
@@ -52,7 +50,7 @@ function makeContext(overrides: Partial<DeferralContext> = {}): DeferralContext 
   return {
     trustLevel: "default",
     channelType: undefined,
-    modelTier: "large",
+    capabilityClass: "frontier",
     recentlyUsedToolNames: new Set(),
     toolNames: [],
     discoveryTracker: createDiscoveryTracker(),
@@ -64,44 +62,8 @@ function makeContext(overrides: Partial<DeferralContext> = {}): DeferralContext 
   };
 }
 
-// ---------------------------------------------------------------------------
-// Suite 1: resolveModelTier
-// ---------------------------------------------------------------------------
-
-describe("resolveModelTier", () => {
-  it("returns 'small' for contextWindow <= 32000", () => {
-    expect(resolveModelTier(32_000)).toBe("small");
-    expect(resolveModelTier(16_000)).toBe("small");
-  });
-
-  it("returns 'medium' for contextWindow 32001-64000", () => {
-    expect(resolveModelTier(64_000)).toBe("medium");
-    expect(resolveModelTier(48_000)).toBe("medium");
-  });
-
-  it("returns 'large' for contextWindow > 64000", () => {
-    expect(resolveModelTier(128_000)).toBe("large");
-    expect(resolveModelTier(200_000)).toBe("large");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Suite 2: resolveToolCallingTemperature
-// ---------------------------------------------------------------------------
-
-describe("resolveToolCallingTemperature", () => {
-  it("returns 0.0 for 'small'", () => {
-    expect(resolveToolCallingTemperature("small")).toBe(0.0);
-  });
-
-  it("returns 0.1 for 'medium'", () => {
-    expect(resolveToolCallingTemperature("medium")).toBe(0.1);
-  });
-
-  it("returns 0.1 for 'large'", () => {
-    expect(resolveToolCallingTemperature("large")).toBe(0.1);
-  });
-});
+// resolveModelTier and resolveToolCallingTemperature have been deleted (Phase 151 K1).
+// Temperature and deferral behavior is now driven by capabilityClass from ModelProfile.
 
 // ---------------------------------------------------------------------------
 // Suite 3: applyToolDeferral - rule-based deferral
@@ -216,8 +178,8 @@ describe("applyToolDeferral - rule-based deferral", () => {
 // `google`). Empirically the model rarely invokes the server-side
 // discovery tool and falls back to `exec`/`web_fetch`, so deferral pays a
 // 0-discovery cost for no benefit. Operators who DO want MCP deferral opt
-// in via `config.deferredTools.alwaysDefer`. The small-model rule
-// (modelTier === "small") continues to defer MCP tools.
+// in via `config.deferredTools.alwaysDefer`. The nano-class rule
+// (capabilityClass === "nano") continues to defer MCP tools.
 // ---------------------------------------------------------------------------
 
 describe("applyToolDeferral -- MCP active by default for Anthropic/Google", () => {
@@ -361,15 +323,15 @@ describe("applyToolDeferral -- MCP active by default for Anthropic/Google", () =
 // Suite 4b: applyToolDeferral -- MCP active by default (new contract details)
 //
 // Covers:
-//   1. anthropic + large + no alwaysDefer -> MCP active
-//   2. google   + large + no alwaysDefer -> MCP active
+//   1. anthropic + frontier + no alwaysDefer -> MCP active
+//   2. google   + frontier + no alwaysDefer -> MCP active
 //   3. alwaysDefer is the operator opt-in for selective deferral
-//   4. modelTier "small" still defers MCP (small-model rule unchanged)
-//   5. recently-used MCP tool exemption survives under the small-model rule
+//   4. capabilityClass "nano" still defers MCP (behavior-neutral: old modelTier="small")
+//   5. recently-used MCP tool exemption survives under the nano-class rule
 // ---------------------------------------------------------------------------
 
 describe("applyToolDeferral -- MCP active by default", () => {
-  it("keeps every mcp__yfinance--* tool active for Anthropic / large / no alwaysDefer", () => {
+  it("keeps every mcp__yfinance--* tool active for Anthropic / frontier / no alwaysDefer", () => {
     // Item (1): the canonical happy path the plan flips.
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
@@ -380,7 +342,7 @@ describe("applyToolDeferral -- MCP active by default", () => {
     ];
     const ctx = makeContext({
       providerFamily: "anthropic",
-      modelTier: "large",
+      capabilityClass: "frontier",
       toolNames: tools.map(t => t.name),
     });
 
@@ -393,7 +355,7 @@ describe("applyToolDeferral -- MCP active by default", () => {
     }
   });
 
-  it("keeps every mcp__yfinance--* tool active for Google / large / no alwaysDefer", () => {
+  it("keeps every mcp__yfinance--* tool active for Google / frontier / no alwaysDefer", () => {
     // Item (2): same contract, providerFamily === "google".
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
@@ -404,7 +366,7 @@ describe("applyToolDeferral -- MCP active by default", () => {
     ];
     const ctx = makeContext({
       providerFamily: "google",
-      modelTier: "large",
+      capabilityClass: "frontier",
       toolNames: tools.map(t => t.name),
     });
 
@@ -428,7 +390,7 @@ describe("applyToolDeferral -- MCP active by default", () => {
     ];
     const ctx = makeContext({
       providerFamily: "anthropic",
-      modelTier: "large",
+      capabilityClass: "frontier",
       toolNames: tools.map(t => t.name),
       alwaysDefer: ["mcp__yfinance--get_stock_price"],
     });
@@ -445,18 +407,18 @@ describe("applyToolDeferral -- MCP active by default", () => {
     expect(activeNames).not.toContain("mcp__yfinance--get_stock_price");
   });
 
-  it("modelTier 'small' still defers MCP tools (small-model rule survives the flip)", () => {
-    // Item (4): the small-model rule is the SECOND deferral source for MCP
-    // tools (after alwaysDefer). It pins the rule order: small-model runs
-    // after the now-no-op MCP block.
+  it("capabilityClass 'nano' still defers MCP tools (behavior-neutral: nano = old modelTier='small')", () => {
+    // Item (4): the nano-class rule is the SECOND deferral source for MCP
+    // tools (after alwaysDefer). It pins the rule order: nano-class runs
+    // after the now-no-op MCP block. Behavior-neutral Phase 151 mapping.
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),                              // CORE -- stays active
-      makeTool("mcp__yfinance--get_stock_price"),    // not core -- deferred by small-model rule
+      makeTool("mcp__yfinance--get_stock_price"),    // not core -- deferred by nano-class rule
     ];
     const ctx = makeContext({
       providerFamily: "anthropic",
-      modelTier: "small",
+      capabilityClass: "nano",
       toolNames: tools.map(t => t.name),
     });
 
@@ -467,10 +429,10 @@ describe("applyToolDeferral -- MCP active by default", () => {
     expect(result.activeTools.map(t => t.name)).toContain("read");
   });
 
-  it("recently-used MCP tool exemption still applies under the small-model rule", () => {
-    // Item (5): with modelTier "small" + recentlyUsedToolNames containing
+  it("recently-used MCP tool exemption still applies under the nano-class rule", () => {
+    // Item (5): with capabilityClass "nano" + recentlyUsedToolNames containing
     // an MCP tool, that tool stays active. The recently-used exemption is
-    // meaningful here -- without it, small-model would defer.
+    // meaningful here -- without it, nano-class would defer.
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
@@ -479,7 +441,7 @@ describe("applyToolDeferral -- MCP active by default", () => {
     ];
     const ctx = makeContext({
       providerFamily: "anthropic",
-      modelTier: "small",
+      capabilityClass: "nano",
       recentlyUsedToolNames: new Set(["mcp__yfinance--get_stock_price"]),
       toolNames: tools.map(t => t.name),
     });
@@ -496,11 +458,11 @@ describe("applyToolDeferral -- MCP active by default", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 5: applyToolDeferral - small model aggressive deferral
+// Suite 5: applyToolDeferral - nano-class aggressive deferral (behavior-neutral: old modelTier="small")
 // ---------------------------------------------------------------------------
 
-describe("applyToolDeferral - small model aggressive deferral", () => {
-  it("defers all non-CORE_TOOLS when modelTier is 'small'", () => {
+describe("applyToolDeferral - nano-class aggressive deferral", () => {
+  it("defers all non-CORE_TOOLS when capabilityClass is 'nano' (behavior-neutral: old modelTier='small')", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),       // CORE
@@ -512,7 +474,7 @@ describe("applyToolDeferral - small model aggressive deferral", () => {
     ];
     const ctx = makeContext({
       trustLevel: "admin",
-      modelTier: "small",
+      capabilityClass: "nano",
       toolNames: tools.map(t => t.name),
     });
 
@@ -526,7 +488,9 @@ describe("applyToolDeferral - small model aggressive deferral", () => {
     expect(result.deferredNames).not.toContain("message");
   });
 
-  it("does not trigger aggressive deferral for modelTier 'medium'", () => {
+  it("does not trigger aggressive deferral for capabilityClass 'small' (Phase 151: small-class policy deferred to Phase 152)", () => {
+    // Phase 151 behavior-neutral: capabilityClass="small" (qwen3.6 27B/256K) does NOT trigger
+    // aggressive deferral at this phase. Only "nano" triggers it. Small-class policy lands in Phase 152.
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
@@ -535,7 +499,7 @@ describe("applyToolDeferral - small model aggressive deferral", () => {
     ];
     const ctx = makeContext({
       trustLevel: "admin",
-      modelTier: "medium",
+      capabilityClass: "small",
       toolNames: tools.map(t => t.name),
     });
 
@@ -554,7 +518,7 @@ describe("applyToolDeferral - small model aggressive deferral", () => {
     ];
     const ctx = makeContext({
       trustLevel: "admin",
-      modelTier: "small",
+      capabilityClass: "nano",
       recentlyUsedToolNames: new Set(["cron"]),
       toolNames: tools.map(t => t.name),
     });
@@ -1281,8 +1245,8 @@ describe("discover_tools -- searchHint BM25 enrichment", () => {
     registerToolMetadata("cron", { searchHint: "schedule timer reminder recurring job automation crontab" });
     registerToolMetadata("gateway", { searchHint: "config restart patch status settings yaml" });
 
-    // cron and gateway are not privileged, so use small modelTier to defer non-core tools
-    const ctx = makeContext({ trustLevel: "external", modelTier: "small", toolNames: tools.map(t => t.name) });
+    // cron and gateway are not privileged, so use nano capabilityClass to trigger aggressive deferral
+    const ctx = makeContext({ trustLevel: "external", capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
 
     expect(result.discoverTool).not.toBeNull();
@@ -1398,7 +1362,7 @@ describe("discover_tools -- structured search", () => {
 
   /**
    * Helper: set up deferred MCP tools and return the discover_tools tool.
-   * Uses small modelTier to force non-core tools into deferral.
+   * Uses nano capabilityClass to force non-core tools into aggressive deferral.
    */
   function setupMcpDiscovery(toolNames: string[]) {
     const logger = createMockLogger();
@@ -1408,7 +1372,7 @@ describe("discover_tools -- structured search", () => {
     ];
     const ctx = makeContext({
       trustLevel: "admin",
-      modelTier: "small",
+      capabilityClass: "nano",
       toolNames: tools.map(t => t.name),
     });
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
@@ -1515,7 +1479,7 @@ describe("discover_tools -- structured search", () => {
     ];
     const ctx = makeContext({
       trustLevel: "admin",
-      modelTier: "small",
+      capabilityClass: "nano",
       toolNames: tools.map(t => t.name),
     });
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
@@ -1537,7 +1501,7 @@ describe("discover_tools -- structured search", () => {
       makeTool("mcp__yfinance--get_history"),
       makeTool("mcp__context7--resolve"),
     ];
-    const ctx = makeContext({ modelTier: "small", toolNames: tools.map(t => t.name) });
+    const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
     expect(result.discoverTool).not.toBeNull();
 
@@ -1555,7 +1519,7 @@ describe("discover_tools -- structured search", () => {
       makeTool("mcp__MyServer--tool_a"),
       makeTool("mcp__MyServer--tool_b"),
     ];
-    const ctx = makeContext({ modelTier: "small", toolNames: tools.map(t => t.name) });
+    const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
     const execResult = await (result.discoverTool as any).execute("call-1", { query: "myserver" });
@@ -1721,7 +1685,7 @@ describe("discover_tools -- server-level activation", () => {
       makeTool("mcp__yfinance--get_history"),
       makeTool("mcp__context7--resolve"),
     ];
-    const ctx = makeContext({ modelTier: "small", toolNames: tools.map(t => t.name) });
+    const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
     // Search for one specific yfinance tool
@@ -1743,7 +1707,7 @@ describe("discover_tools -- server-level activation", () => {
       makeTool("mcp__srv2--tool_c"),
       makeTool("mcp__srv2--tool_d"),
     ];
-    const ctx = makeContext({ modelTier: "small", toolNames: tools.map(t => t.name) });
+    const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
     // select: both servers' tools
@@ -1781,7 +1745,7 @@ describe("discover_tools -- server-level activation", () => {
       makeTool("mcp__yfinance--get_stock_info"),
       makeTool("mcp__yfinance--get_chart"),
     ];
-    const ctx = makeContext({ modelTier: "small", toolNames: tools.map(t => t.name) });
+    const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
     // Exact match for one tool
@@ -2267,7 +2231,7 @@ describe("discover_tools -- mid-turn injection support", () => {
       makeTool("mcp__yfinance--get_chart"),
       makeTool("mcp__yfinance--get_history"),
     ];
-    const ctx = makeContext({ modelTier: "small", toolNames: tools.map(t => t.name) });
+    const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
     // Search for one specific yfinance tool
@@ -2307,7 +2271,7 @@ describe("discover_tools -- mid-turn injection support", () => {
     } as unknown as ToolDefinition;
 
     const tools = [makeTool("read"), customTool];
-    const ctx = makeContext({ modelTier: "small", toolNames: tools.map(t => t.name) });
+    const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
     // Discover the tool
@@ -2858,5 +2822,160 @@ describe("createAutoDiscoveryStubs", () => {
 
     await expect(stubs[0].execute("call-3", {})).rejects.toThrow("MCP tool crashed");
     expect(tracker.markDiscovered).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite C3: buildDeferredToolsContext — maxEntries truncation (Plan 152-04)
+// ---------------------------------------------------------------------------
+
+describe("buildDeferredToolsContext — C3 maxEntries truncation", () => {
+  function makeEntry(name: string, isMcp = false): DeferredToolEntry {
+    const toolName = isMcp ? `mcp__server--${name}` : name;
+    return {
+      name: toolName,
+      description: `Description for ${toolName}`,
+      original: makeTool(toolName),
+    };
+  }
+
+  it("C3: truncates list to maxEntries and appends [+N more] suffix when entries exceed cap", () => {
+    // 20 entries with maxEntries=5 → output contains "[+15 more" suffix
+    const entries: DeferredToolEntry[] = Array.from({ length: 20 }, (_, i) =>
+      makeEntry(`tool_${i}`),
+    );
+    const result = buildDeferredToolsContext(entries, { maxEntries: 5 });
+    expect(result).toContain("[+15 more");
+    expect(result).toContain("discover_tools");
+  });
+
+  it("C3: does NOT truncate when entries count is exactly at the cap", () => {
+    const entries: DeferredToolEntry[] = Array.from({ length: 5 }, (_, i) =>
+      makeEntry(`tool_${i}`),
+    );
+    const result = buildDeferredToolsContext(entries, { maxEntries: 5 });
+    expect(result).not.toContain("[+");
+    // All 5 tools should be listed
+    for (const e of entries) {
+      expect(result).toContain(e.name);
+    }
+  });
+
+  it("C3: returns all entries unchanged when no options are passed (backward-compatible)", () => {
+    const entries: DeferredToolEntry[] = Array.from({ length: 20 }, (_, i) =>
+      makeEntry(`tool_${i}`),
+    );
+    const withoutOptions = buildDeferredToolsContext(entries);
+    const withEmptyOptions = buildDeferredToolsContext(entries, {});
+    // Neither should truncate
+    expect(withoutOptions).not.toContain("[+");
+    expect(withEmptyOptions).not.toContain("[+");
+  });
+
+  it("C3: truncation suffix mentions discover_tools for navigation", () => {
+    const entries: DeferredToolEntry[] = Array.from({ length: 10 }, (_, i) =>
+      makeEntry(`tool_${i}`),
+    );
+    const result = buildDeferredToolsContext(entries, { maxEntries: 3 });
+    expect(result).toContain("[+7 more");
+    expect(result).toContain("discover_tools");
+  });
+
+  it("C3: MCP tools are grouped before truncation count; suffix is appended after all formatted lines", () => {
+    // Mix of non-MCP (individual) + MCP (grouped) entries
+    const entries: DeferredToolEntry[] = [
+      makeEntry("regular_tool_a"),
+      makeEntry("regular_tool_b"),
+      makeEntry("alpha", true), // mcp__server--alpha
+      makeEntry("beta", true),  // mcp__server--beta
+    ];
+    // Only 2 entries allowed — first 2 lines emitted, rest in suffix
+    const result = buildDeferredToolsContext(entries, { maxEntries: 2 });
+    expect(result).toContain("[+2 more");
+    expect(result).toContain("discover_tools");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 5b: applyToolDeferral — SD7 active-tool ceiling for small class
+// ---------------------------------------------------------------------------
+
+describe("applyToolDeferral - SD7 active-tool ceiling", () => {
+  it("small class with activeToolCeiling=3: only ≤3 active tools, cold long-tail deferred", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),      // CORE — always active
+      makeTool("exec"),      // CORE — always active
+      makeTool("message"),   // CORE — always active
+      makeTool("cron"),      // cold long-tail → deferred by ceiling
+      makeTool("browser"),   // cold long-tail → deferred by ceiling
+      makeTool("pipeline"),  // cold long-tail → deferred by ceiling
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "small",
+      toolNames: tools.map(t => t.name),
+      activeToolCeiling: 3,
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+    expect(result.activeTools.map(t => t.name)).toContain("read");
+    expect(result.activeTools.map(t => t.name)).toContain("exec");
+    expect(result.activeTools.map(t => t.name)).toContain("message");
+    expect(result.activeTools.length).toBeLessThanOrEqual(3);
+    expect(result.discoverTool).not.toBeNull();
+  });
+
+  it("recently-used tool is never deferred by ceiling", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),     // CORE
+      makeTool("cron"),     // recently-used → preserved even under ceiling
+      makeTool("browser"),  // cold → deferred
+      makeTool("pipeline"), // cold → deferred
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "small",
+      toolNames: tools.map(t => t.name),
+      recentlyUsedToolNames: new Set(["cron"]),
+      activeToolCeiling: 2,
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+    expect(result.activeTools.map(t => t.name)).toContain("cron");
+    expect(result.activeTools.length).toBeLessThanOrEqual(2);
+  });
+
+  it("deferred tools are reachable via discover_tools (no capability removed)", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),     // CORE
+      makeTool("cron"),     // cold → deferred
+      makeTool("browser"),  // cold → deferred
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "small",
+      toolNames: tools.map(t => t.name),
+      activeToolCeiling: 1,
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+    expect(result.discoverTool).not.toBeNull();
+    expect(result.discoverTool!.name).toBe("discover_tools");
+    const deferredNames = result.deferredEntries.map(e => e.name);
+    expect(deferredNames).toContain("cron");
+    expect(deferredNames).toContain("browser");
+  });
+
+  it("ceiling=undefined (no activeToolCeiling set) never fires ceiling logic", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [makeTool("read"), makeTool("cron"), makeTool("browser")];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "frontier",
+      toolNames: tools.map(t => t.name),
+      // activeToolCeiling not set → undefined
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+    expect(result.deferredCount).toBe(0);
   });
 });

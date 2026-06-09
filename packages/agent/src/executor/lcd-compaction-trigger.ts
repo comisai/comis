@@ -70,6 +70,9 @@ import {
   type LeafChunkItem,
   type LeafSummarizerDeps,
 } from "../context-engine/lcd-leaf-summarizer.js";
+import { resolveCompactionStrategy } from "../context-engine/compaction-capability-router.js";
+import { isSecurityRelevantMessage } from "../context-engine/security-context-pinner.js";
+import { LEAF_FALLBACK_SUMMARY_MARKER } from "../context-engine/constants.js";
 import { LCD_MAX_LEAF_PASSES_PER_TURN } from "../context-engine/constants.js";
 import type {
   CondenseChildSummary,
@@ -365,10 +368,34 @@ async function runOneLeafPass(
   logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", historyLength: history.length, resolvedTokens, windowTokens: opts.windowTokens, utilization: Math.round(utilization * 1000) / 1000, contextThreshold: opts.contextThreshold }, "lcd leaf pass evaluated");
   if (utilization <= opts.contextThreshold) return { made: false, reason: "below-threshold" }; // drained.
 
+  // S4: build the set of security-pinned message ids (from markers on summarizerDeps).
+  // These messages are never selected as eviction candidates (S4 invariant).
+  let pinnedMessageIds: Set<string> | undefined;
+  if (summarizerDeps.securityMarkers) {
+    const pinned = history.filter((it) =>
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      isSecurityRelevantMessage(it.msg as any, summarizerDeps.securityMarkers!)
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+    );
+    if (pinned.length > 0) {
+      pinnedMessageIds = new Set(pinned.map((it) => it.id));
+      logger.debug(
+        {
+          conversationId,
+          agentId: scope.agentId,
+          step: "lcd-leaf-gate",
+          securityPinnedCount: pinned.length,
+        },
+        "S4: security-relevant messages excluded from LCD leaf eviction",
+      );
+    }
+  }
+
   // Select the oldest out-of-tail chunk (pair-safe, capped at leafChunkTokens)
   // from the RESOLVED message-ref run — so the selected ids always map back to a
   // context_items ordinal (the second-pass divergence is structurally gone).
-  const chunk = selectLeafChunk(history, opts.freshTailTurns, opts.leafChunkTokens);
+  // S4: pass pinnedMessageIds so pinned messages are excluded from chunk selection.
+  const chunk = selectLeafChunk(history, opts.freshTailTurns, opts.leafChunkTokens, pinnedMessageIds);
   if (chunk === undefined) return { made: false, reason: "no-chunk" }; // no evictable out-of-tail history.
 
   // Skip a trivially-tiny chunk (WR-01): a chunk below the minimum shrinkable size
@@ -422,6 +449,97 @@ async function runOneLeafPass(
   const chunkItems: LeafChunkItem[] = chunk.messageIds
     .map((id) => idToItem.get(id))
     .filter((it): it is LeafChunkItem => it !== undefined);
+
+  // C4/C5: resolve compaction strategy based on capability class.
+  const compactionStrategy = resolveCompactionStrategy(
+    summarizerDeps.capabilityClass ?? "frontier",
+    summarizerDeps.preferEvictionByCapability ?? true,
+    summarizerDeps.strongerSummarizerModel ?? "",
+  );
+  const securityPinnedCount = pinnedMessageIds?.size ?? 0;
+
+  if (compactionStrategy === "eviction" || compactionStrategy === "deterministic") {
+    // Small/nano: skip LLM summarization — use deterministic fallback.
+    logger.warn(
+      {
+        conversationId,
+        agentId: scope.agentId,
+        hint: `C5: capabilityClass=${summarizerDeps.capabilityClass ?? "frontier"} prefers eviction — using deterministic fallback for LCD leaf pass`,
+        errorKind: "config" as ErrorKind,
+        capabilityClass: summarizerDeps.capabilityClass ?? "frontier",
+        strategy: compactionStrategy,
+      },
+      "C5: LCD leaf compaction capability gate — eviction selected",
+    );
+
+    // Emit context:compaction_routed event
+    eventBus?.emit("context:compaction_routed", {
+      agentId: summarizerDeps.agentId ?? scope.agentId,
+      sessionKey: summarizerDeps.sessionKey ?? scope.sessionKey,
+      capabilityClass: summarizerDeps.capabilityClass ?? "frontier",
+      strategy: compactionStrategy,
+      layer: "lcd",
+      securityPinnedCount,
+      timestamp: now,
+    });
+
+    // Deterministic Level-3 fallback (bounded, guaranteed to reduce tokens).
+    const fallbackContent = `${LEAF_FALLBACK_SUMMARY_MARKER} [C5: eviction, ${chunkItems.length} messages summarized deterministically — model capabilityClass=${summarizerDeps.capabilityClass ?? "frontier"} not suitable for self-summarization]`;
+    const fallbackTokenCount = Math.max(1, Math.floor(chunkItems.reduce((acc, it) => acc + it.tokens, 0) / 4));
+    store.appendLeafSummary({
+      scope,
+      content: fallbackContent,
+      descendantCount: chunkItems.length,
+      earliestAt: chunkItems.length > 0 ? Math.min(...chunkItems.map((it) => it.createdAt)) : now,
+      latestAt: chunkItems.length > 0 ? Math.max(...chunkItems.map((it) => it.createdAt)) : now,
+      tokenCount: fallbackTokenCount,
+      fileIds: [],
+      fallback: true,
+      taint: false,
+      createdAt: now,
+      startOrdinal: window.startOrdinal,
+      endOrdinal: window.endOrdinal,
+    });
+
+    // O1 timing + dag_compacted event
+    const durationMs = Math.max(0, (nowFn?.() ?? now) - passStart);
+    eventBus?.emit("context:dag_compacted", {
+      conversationId,
+      agentId: scope.agentId,
+      sessionKey: scope.sessionKey,
+      leafSummariesCreated: 1,
+      condensedSummariesCreated: 0,
+      maxDepthReached: 0,
+      totalSummariesCreated: 1,
+      durationMs,
+      timestamp: now,
+    });
+    logger.info(
+      {
+        step: "lcd-leaf",
+        conversationId,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        descendantCount: chunkItems.length,
+        escalationLevel: 3,
+        fallback: true,
+        durationMs,
+      },
+      "LCD leaf summary persisted (C5: deterministic eviction)",
+    );
+    return { made: true, reason: "compacted" };
+  }
+
+  // Emit context:compaction_routed for llm/strong-summarizer paths (observability)
+  eventBus?.emit("context:compaction_routed", {
+    agentId: summarizerDeps.agentId ?? scope.agentId,
+    sessionKey: summarizerDeps.sessionKey ?? scope.sessionKey,
+    capabilityClass: summarizerDeps.capabilityClass ?? "frontier",
+    strategy: compactionStrategy,
+    layer: "lcd",
+    securityPinnedCount,
+    timestamp: now,
+  });
 
   // Summarize (3-level escalation; non-fatal inside — always returns a result).
   const previousSummary = previousSummaryContent(store, scope);

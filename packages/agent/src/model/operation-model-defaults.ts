@@ -122,9 +122,14 @@ export function resolveOperationDefaults(provider: string): { fast?: string; mid
 /**
  * Maps each operation type to its cost tier.
  *
- * - "primary": always uses the agent's primary model (interactive, subagent)
+ * - "primary": always uses the agent's primary model (interactive, subagent, verification, planning)
  * - "mid": moderate complexity, tool-using operations (cron)
  * - "fast": simple classification/summarization (heartbeat, taskExtraction, condensation, compaction)
+ *
+ * verification + planning map to "primary" so that on a local-only Ollama deploy
+ * (where resolveOperationDefaults returns {}) the resolver falls through to Level 5
+ * (agent primary) — self-check by design, with no new dependency. A configured cheap
+ * model via operationModels.verification.model overrides this at Level 2.
  */
 export const OPERATION_TIER_MAP: Record<ModelOperationType, "primary" | "mid" | "fast"> = {
   interactive: "primary",
@@ -134,6 +139,8 @@ export const OPERATION_TIER_MAP: Record<ModelOperationType, "primary" | "mid" | 
   compaction: "fast",
   taskExtraction: "fast",
   condensation: "fast",
+  verification: "primary",  // R4: local-only self-check; configured: cheap model via Level 2
+  planning: "primary",       // R5: same resolution path; deferrable on M2
 };
 
 /**
@@ -150,6 +157,7 @@ export const OPERATION_TIMEOUT_DEFAULTS: Partial<Record<ModelOperationType, numb
   compaction: 60_000,
   taskExtraction: 30_000,
   condensation: 30_000,
+  verification: 120_000,  // R4: same ceiling as the critic LLM_TIMEOUT_MS (Phase 154)
 };
 
 /**
@@ -164,4 +172,6 @@ export const OPERATION_CACHE_DEFAULTS: Partial<Record<ModelOperationType, "none"
   taskExtraction: "none",
   condensation: "short",
   cron: "short", // 5m TTL: covers within-execution multi-step reuse, avoids 1h write premium across hourly runs.
+  verification: "none",  // R4: critic responses consume the reviewed response and must not be cached (Phase 154)
+  planning: "none",       // R5: planner responses are request-specific; caching wastes storage (Phase 154)
 };

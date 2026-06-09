@@ -129,7 +129,7 @@ export interface AgentExecutor {
     msg: NormalizedMessage,
     sessionKey: SessionKey,
     tools?: AgentTool[],
-    onDelta?: (delta: string) => void,
+    onDelta?: (delta: string, kind: "text" | "thinking") => void,
     agentId?: string,
     directives?: CommandDirectives,
     prevTimestamp?: number,

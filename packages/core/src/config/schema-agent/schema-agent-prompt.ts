@@ -58,6 +58,17 @@ export const RagConfigSchema = z.strictObject({
     maxContextChars: z.number().int().positive().default(4000),
     /** Minimum RRF score threshold (0-1) to include a memory result */
     minScore: z.number().min(0).max(1).default(0.1),
+    /** Minimum BASE relevance score (pre-boost) for memory injection.
+     *  Boosts cannot resurrect a memory whose base score is below this threshold.
+     *  Gates on ScoreBreakdown.base (the un-boosted cosine/RRF score), applied AFTER
+     *  scoreWithBreakdown() and BEFORE the trust-filter (T-153-poison mitigation).
+     *  Default=0 means no floor — all memories pass, preserving exact prior behavior.
+     *  S6: a weaker ModelProfile cannot lower this below the operator-set value. */
+    baseFloor: z.number().min(0).max(1).default(0).describe(
+      "Minimum BASE relevance score (pre-boost) for memory injection. " +
+      "Boosts cannot resurrect a memory whose base score is below this threshold. " +
+      "Frozen: a weaker ModelProfile cannot lower this below the operator-set value (S6).",
+    ),
     /** Trust levels to include in retrieval (external excluded by default for security) */
     includeTrustLevels: z.array(TrustLevelSchema).default(["system", "learned"]),
     /** Cross-encoder reranking. Opt-out posture: default-ON as a
@@ -410,3 +421,67 @@ export const SepConfigSchema = z.strictObject({
 });
 
 export type SepConfig = z.infer<typeof SepConfigSchema>;
+
+/**
+ * GoalAnchor configuration: tail-injects the current execution objective +
+ * uncompleted steps into the system prompt. Gated on scaffoldLevel==="max"
+ * (small + nano models only) in the prompt assembly layer (Plan 02).
+ *
+ * Default enabled=false ensures frontier/mid receive no injection until
+ * explicitly configured (behavior-neutral for all existing agents).
+ * Output is bounded by maxChars (default 500) to cap tail injection size.
+ */
+export const GoalAnchorConfigSchema = z.strictObject({
+  /** Enable GoalAnchor tail injection. Default: false (opt-in). */
+  enabled: z.boolean().default(false),
+  /**
+   * Maximum characters for the injected GoalAnchor block.
+   * Bounded [100, 2000] to prevent starvation (< 100) or context waste (> 2000).
+   * Default: 500 (~5–10 steps at ~50 chars/step).
+   */
+  maxChars: z.number().int().min(100).max(2000).default(500),
+});
+
+export type GoalAnchorConfig = z.infer<typeof GoalAnchorConfigSchema>;
+
+/**
+ * Pre-delivery verification critic configuration (R4, Phase 154).
+ *
+ * The critic scores a completion-claiming response against the GoalAnchor
+ * checklist and returns verified / not-verified / skipped. Gated on
+ * scaffoldLevel==="max" (small + nano models only) when enabled.
+ *
+ * Default enabled=false ensures the critic does not fire until explicitly
+ * configured by the operator. Behavior-neutral for all existing agents.
+ */
+export const VerificationConfigSchema = z.strictObject({
+  /** Enable pre-delivery verification critic. Default: false (opt-in; meaningful only for scaffoldLevel=max). */
+  enabled: z.boolean().default(false),
+  /**
+   * Minimum response length in characters before the critic is invoked.
+   * Prevents firing on clarifying questions, short acks, and non-claim replies.
+   * Bounded [50, 2000]. Default: 200.
+   */
+  minResponseChars: z.number().int().min(50).max(2000).default(200),
+});
+
+export type VerificationConfig = z.infer<typeof VerificationConfigSchema>;
+
+/**
+ * Honesty guardrail configuration (R4/S2, Phase 154).
+ *
+ * Bounds critic retry redirects and enforces an honest unmet-list when
+ * the redirect budget is exhausted. Prevents the executor from looping
+ * indefinitely while still requiring the agent to deliver a qualified
+ * response when it cannot satisfy all requirements.
+ */
+export const HonestyConfigSchema = z.strictObject({
+  /**
+   * Maximum critic retry redirects before delivering an honest unmet-list.
+   * After this many not-verified verdicts, the executor delivers an honest
+   * unmet-list instead of an unqualified "done". Default: 2.
+   */
+  maxCriticRetries: z.number().int().min(0).max(5).default(2),
+});
+
+export type HonestyConfig = z.infer<typeof HonestyConfigSchema>;

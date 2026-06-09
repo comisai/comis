@@ -74,7 +74,7 @@ import * as pathModule from "node:path";
 import { appendSessionIndexEntry } from "@comis/observability";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
-import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
+import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage } from "./bridge-safety-controls.js";
 import type { LoopStateReporter } from "./bridge-safety-controls.js";
 import {
   computeThinkingBlockHashes,
@@ -176,8 +176,10 @@ export interface PiEventBridgeDeps {
   logger: ComisLogger;
   /** Optional memory port for flushing compaction summaries to long-term memory. */
   memoryPort?: MemoryPort;
-  /** Called with streaming text deltas for real-time response forwarding. */
-  onDelta?: (delta: string) => void;
+  /** Called with streaming text deltas for real-time response forwarding.
+   *  kind='text' for visible text_delta events; kind='thinking' for thinking_delta events.
+   *  Consumers must only accumulate kind==='text' — thinking deltas must never reach the channel. */
+  onDelta?: (delta: string, kind: "text" | "thinking") => void;
   /** Called when a safety control triggers -- PiExecutor uses this to call session.abort(). */
   onAbort?: () => void;
   /** Called when a `rate_limited` error fires inside the SDK's auto-retry loop --
@@ -404,7 +406,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
             if (deps.onDelta && typeof ame.delta === "string") {
               try {
-                deps.onDelta(ame.delta);
+                // SA1: forward the SDK's typed delta kind so the consumer can gate
+                // accumulation to kind==='text' only. thinking_delta is forwarded
+                // with kind='thinking' so the consumer can still refresh the typing
+                // TTL (proves the agent is alive during extended reasoning phases)
+                // without the chain-of-thought reaching the channel.
+                deps.onDelta(ame.delta, ame.type === "text_delta" ? "text" : "thinking");
               } catch {
                 // Never abort agent due to streaming callback error
               }
@@ -1011,6 +1018,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             const stepCheck = checkStepLimit(deps.stepCounter, m.aborted);
             if (stepCheck.shouldAbort) {
               m.finishReason = stepCheck.finishReason!;
+              m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
               m.aborted = true;
               emitStepLimitAbort(deps);
             }
@@ -1024,6 +1032,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             const loopCheck = checkLoopLimit(deps.turnLoopDetector, m.aborted);
             if (loopCheck.shouldAbort) {
               m.finishReason = loopCheck.finishReason!;
+              m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
               m.aborted = true;
               emitLoopAbort(deps);
             }
@@ -1647,6 +1656,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               const budgetCheck = checkBudgetLimit(deps.budgetGuard, m.aborted);
               if (budgetCheck.shouldAbort) {
                 m.finishReason = budgetCheck.finishReason!;
+                m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
                 m.aborted = true;
                 emitBudgetAbort(deps, m.totalTokens);
               }
@@ -1694,6 +1704,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               const contextCheck = checkContextWindow(deps.contextGuard, contextUsage, m.aborted, deps.logger);
               if (contextCheck.shouldAbort) {
                 m.finishReason = contextCheck.finishReason!;
+                m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
                 m.aborted = true;
                 emitContextAbort(deps, contextUsage);
               }
@@ -2135,6 +2146,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             const cbCheck = checkCircuitBreaker(deps.circuitBreaker, m.aborted);
             if (cbCheck.shouldAbort) {
               m.finishReason = cbCheck.finishReason!;
+              m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
               m.aborted = true;
               emitCircuitBreakerAbort(deps);
             }

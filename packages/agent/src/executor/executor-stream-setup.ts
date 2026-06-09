@@ -47,8 +47,11 @@ import { buildCacheTraceWrapper } from "@comis/observability";
 import type { CacheTrace } from "@comis/observability";
 import type { TruncationSummary } from "./stream-wrappers/tool-result-size-bouncer.js";
 import type { TurnBudgetSummary } from "./stream-wrappers/turn-result-budget-wrapper.js";
-import { resolveToolCallingTemperature } from "./tool-deferral.js";
+import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
+import type { CapabilityClass, ModelProfile } from "./model-profile.js";
+import { resolveMainPathMaxOutputTokens } from "./verification-gate.js";
 import { createStubFilterInjector } from "./stream-wrappers/stub-filter-injector.js";
+import { createToolCallRepairWrapper } from "./stream-wrappers/tool-call-repair-wrapper.js";
 import { computeFeatureFlagHash } from "./prompt-assembly.js";
 import { createTtlGuard, getElapsedSinceLastResponse, getLastResponseTs } from "./ttl-guard.js";
 import { isAnthropicFamily, isGoogleFamily } from "../provider/capabilities.js";
@@ -111,7 +114,14 @@ export interface StreamSetupParams {
   sm: SessionManager;
   resolvedModel?: { id: string; provider: string };
   modelCompat?: { supportsTools?: boolean };
-  modelTier: "small" | "medium" | "large";
+  capabilityClass: CapabilityClass;
+  /**
+   * ModelProfile resolved once per execution in pi-executor.ts.
+   * Threaded into RequestBodyInjectorConfig so the factory and
+   * tool-deferral-injection use capability flags (L1/L2 — Phase 155-01)
+   * instead of provider-string predicates.
+   */
+  modelProfile?: ModelProfile;
   executionOverrides?: ExecutionOverrides;
   deferralResult?: ExcludeDeferralResult;
   systemPromptBlocks?: SystemPromptBlocks;
@@ -219,8 +229,8 @@ export function buildOffloadCallback(
 export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResult {
   const {
     config, deps, formattedKey, sm,
-    modelTier, executionOverrides, deferralResult, systemPromptBlocks, agentId,
-    cacheTrace,
+    capabilityClass, executionOverrides, deferralResult, systemPromptBlocks, agentId,
+    cacheTrace, modelProfile,
     getAdaptiveRetention, getExecutionCacheRetention, getExecutionMinTokensOverride,
     onBreakpointsPlaced, onGeminiCacheHit,
   } = params;
@@ -297,8 +307,9 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
   const capturedCacheRetention = getExecutionCacheRetention();
 
   // Wrapper chain order (outermost first):
-  // ttlGuard -> validationErrorFormatter -> toolResultSizeBouncer -> turnResultBudget ->
-  //   configResolver -> requestBodyInjector (Anthropic) -> geminiCacheInjector (Google) -> [traceWriters]
+  // ttlGuard -> [L3] toolCallRepairWrapper -> validationErrorFormatter -> toolResultSizeBouncer ->
+  //   turnResultBudget -> configResolver -> requestBodyInjector (Anthropic) ->
+  //   geminiCacheInjector (Google) -> [traceWriters]
 
   // TTL guard is outermost wrapper
   const onTtlExpiry = () => {
@@ -324,13 +335,29 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
       logger: deps.logger,
       clock: deps.clock,
     }),
+    // L3/S3 (Phase 155-02): shape-only tool-call JSON repair inserted BEFORE
+    // validationErrorFormatter so near-miss args are repaired then re-validated
+    // by the existing downstream gates (validateExecCommand for exec tools).
+    // Irreparable args produce "Validation failed" prefix → PARAMETER_VALIDATION_TAGS
+    // carve-out → no breaker trip. Uses modelProfile for supportsStructuredOutput gate.
+    createToolCallRepairWrapper(modelProfile ?? FAIL_CLOSED_PROFILE, deps.logger),
     validationErrorFormatter,
     bouncerWrapper,
     turnBudgetWrapper,
     createConfigResolver(
       {
-        maxTokens: config.maxTokens,
-        temperature: config.temperature ?? resolveToolCallingTemperature(modelTier),
+        // L5/CR-01: when the operator has not set an explicit maxTokens override,
+        // size the MAIN-path budget from the model profile's REAL maxOutputTokens.
+        // resolveMainPathMaxOutputTokens returns the full profile budget for
+        // non-reasoning models (NEVER the 512-token verdict reserve, which would
+        // truncate every visible answer — CR-01) and sizes UP for native-reasoning
+        // profiles so reasoning_content cannot starve the answer. The critic path
+        // keeps its own resolveMaxOutputTokens(verdict reserve) — do not reuse it
+        // here. The operator's explicit config.maxTokens always takes precedence.
+        maxTokens: config.maxTokens ?? (modelProfile
+          ? resolveMainPathMaxOutputTokens(modelProfile)
+          : undefined),
+        temperature: config.temperature ?? (capabilityClass === "nano" ? 0.0 : 0.1),
         // SDK breakpoint on last message must always use "short" (5m).
         // getMessageRetention() now returns "long" after escalation, but the SDK's
         // own last-message breakpoint is the most volatile position.
@@ -374,7 +401,9 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
           ? (highestIdx: number) => onBreakpointsPlaced(highestIdx)
           : undefined,
         onPayloadForCacheDetection: (apiParams, model, headers) => {
-          if (isAnthropicFamily(model.provider)) {
+          // L1/L2: read supportsPromptCache flag from ModelProfile when present.
+          // Falls back to isAnthropicFamily for callers that do not yet thread modelProfile.
+          if (modelProfile?.supportsPromptCache ?? isAnthropicFamily(model.provider)) {
             const stateInput = extractAnthropicPromptState(
               apiParams,
               model.id,
@@ -419,6 +448,11 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
         // The getter runs AFTER `onPayloadForCacheDetection` increments
         // the counter for this turn, so the gate sees the correct value.
         getCallCount: () => cacheBreakDetector.getCallCount(formattedKey),
+        // L1/L2 (Phase 155-01): thread ModelProfile flags so factory.ts and
+        // tool-deferral-injection.ts use capability flags instead of
+        // provider-string predicates. Optional so callers without a resolved
+        // modelProfile (tests, secondary injectors) keep the existing fallback.
+        ...(modelProfile !== undefined && { modelProfile }),
       },
       deps.logger,
     ),

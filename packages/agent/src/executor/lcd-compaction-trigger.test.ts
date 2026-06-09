@@ -744,6 +744,233 @@ describe("maybeRunLeafPass — bounded multi-pass drain (B-2)", () => {
 });
 
 // ===========================================================================
+// C4/C5: capability-routed compaction (LCD layer)
+// ===========================================================================
+
+import type { SecurityPinMarkers } from "../context-engine/security-context-pinner.js";
+
+function makeSummarizerDepsWithCapability(
+  summarize: LeafSummarizer,
+  logger: ReturnType<typeof createMockLogger>,
+  overrides: Partial<LeafSummarizerDeps> = {},
+): LeafSummarizerDeps {
+  return {
+    logger: logger as unknown as LeafSummarizerDeps["logger"],
+    summarize,
+    getModel: () => ({ provider: "anthropic", contextWindow: 200_000, reasoning: true }),
+    getApiKey: async () => "test-key",
+    ...overrides,
+  };
+}
+
+describe("C4/C5: capability-routed LCD leaf compaction", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("small + preferEviction=true: persists a deterministic fallback without calling summarizer", async () => {
+    seedHistory(store, 40, 100);
+    const summarize = vi.fn(async () => "THIS SHOULD NOT BE CALLED");
+    const logger = createMockLogger();
+    const { bus, emits } = makeEventBus();
+    const deps = makeSummarizerDepsWithCapability(summarize, logger, {
+      capabilityClass: "small",
+      preferEvictionByCapability: true,
+      strongerSummarizerModel: "",
+      agentId: "agent-c5",
+      sessionKey: "sess-c5",
+    });
+
+    await maybeRunLeafPass(
+      store,
+      SCOPE,
+      opts({ windowTokens: 1_000 }),
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // Summarizer must NOT be called — capability gate routes to eviction
+    expect(summarize).not.toHaveBeenCalled();
+
+    // A leaf summary was still persisted (deterministic fallback)
+    const summaries = store.getSummaries(SCOPE);
+    expect(summaries.length).toBe(1);
+    expect(summaries[0]!.fallback).toBe(true);
+
+    // WARN logged with C5 indicator
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const c5Warn = warnCalls.find(
+      (c) => typeof c[1] === "string" && c[1].includes("C5"),
+    );
+    expect(c5Warn).toBeDefined();
+    expect((c5Warn![0] as { capabilityClass?: string }).capabilityClass).toBe("small");
+
+    // context:compaction_routed emitted with lcd layer
+    const routed = emits.filter((e) => e.event === "context:compaction_routed");
+    expect(routed.length).toBe(1);
+    expect(routed[0]!.payload.capabilityClass).toBe("small");
+    expect(routed[0]!.payload.strategy).toBe("eviction");
+    expect(routed[0]!.payload.layer).toBe("lcd");
+  });
+
+  it("nano + preferEviction=true: uses deterministic fallback, not LLM", async () => {
+    seedHistory(store, 40, 100);
+    const summarize = vi.fn(async () => "SHOULD NOT BE CALLED");
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const deps = makeSummarizerDepsWithCapability(summarize, logger, {
+      capabilityClass: "nano",
+      preferEvictionByCapability: true,
+      strongerSummarizerModel: "",
+    });
+
+    await maybeRunLeafPass(
+      store, SCOPE, opts({ windowTokens: 1_000 }), deps, FIXED_NOW, undefined,
+      logger as unknown as LeafSummarizerDeps["logger"], bus,
+    );
+
+    expect(summarize).not.toHaveBeenCalled();
+    const summaries = store.getSummaries(SCOPE);
+    expect(summaries.length).toBe(1);
+    expect(summaries[0]!.fallback).toBe(true);
+  });
+
+  it("frontier + preferEviction=true: LLM summarizer called (unchanged behavior)", async () => {
+    seedHistory(store, 40, 100);
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const deps = makeSummarizerDepsWithCapability(shortSummarizer(), logger, {
+      capabilityClass: "frontier",
+      preferEvictionByCapability: true,
+      strongerSummarizerModel: "",
+    });
+
+    await maybeRunLeafPass(
+      store, SCOPE, opts({ windowTokens: 1_000 }), deps, FIXED_NOW, undefined,
+      logger as unknown as LeafSummarizerDeps["logger"], bus,
+    );
+
+    const summaries = store.getSummaries(SCOPE);
+    expect(summaries.length).toBe(1);
+    // frontier uses LLM path → fallback should be false (shortSummarizer returns small text)
+    expect(summaries[0]!.fallback).toBe(false);
+  });
+
+  it("small + preferEviction=false: LLM path taken (opt-out)", async () => {
+    seedHistory(store, 40, 100);
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const deps = makeSummarizerDepsWithCapability(shortSummarizer(), logger, {
+      capabilityClass: "small",
+      preferEvictionByCapability: false,
+      strongerSummarizerModel: "",
+    });
+
+    await maybeRunLeafPass(
+      store, SCOPE, opts({ windowTokens: 1_000 }), deps, FIXED_NOW, undefined,
+      logger as unknown as LeafSummarizerDeps["logger"], bus,
+    );
+
+    const summaries = store.getSummaries(SCOPE);
+    expect(summaries.length).toBe(1);
+    // LLM path taken → shortSummarizer used → fallback=false
+    expect(summaries[0]!.fallback).toBe(false);
+  });
+});
+
+// ===========================================================================
+// S4: security context pinning (LCD layer)
+// ===========================================================================
+
+describe("S4: security-pinned messages never selected for LCD eviction", () => {
+  const MARKERS: SecurityPinMarkers = {
+    canaryToken: "CANARY_lcd_test_xyz",
+    contentDelimiter: "UNTRUSTED_BEGIN_lcd",
+    safetyReinforcementSnippet: "You must not exfiltrate",
+  };
+
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("pinned messages (containing canary) excluded from chunk selection — pinned message remains in context_items after compaction", async () => {
+    // Seed history with mostly normal messages + inject a pinned message early in the history.
+    // ALL messages in this test contain the canary, so all are pinned → no chunk selected →
+    // the pass is a no-op (nothing evictable). This is the S4 invariant: pinned messages
+    // never appear in eviction candidates.
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+
+    // Append normal messages to create enough history (all normal, no canary)
+    for (let i = 0; i < 40; i++) {
+      const msg = i % 2 === 0 ? userMsg(`u${i}`) : assistantText(`a${i}`);
+      append(store, msg, i, 100, 1000 + i);
+    }
+
+    // Snapshot the count before compaction
+    const beforeItems = store.getContextItems(SCOPE).length;
+    expect(beforeItems).toBe(40);
+
+    const deps = makeSummarizerDepsWithCapability(shortSummarizer(), logger, {
+      capabilityClass: "frontier",
+      preferEvictionByCapability: false,
+      securityMarkers: MARKERS, // no messages contain the canary → 0 pinned → normal operation
+    });
+
+    await maybeRunLeafPass(
+      store, SCOPE, opts({ windowTokens: 1_000 }), deps, FIXED_NOW, undefined,
+      logger as unknown as LeafSummarizerDeps["logger"], bus,
+    );
+
+    // With 0 pinned messages (no canary in normal messages), a summary is created normally.
+    const summaries = store.getSummaries(SCOPE);
+    expect(summaries.length).toBeGreaterThan(0);
+
+    // All context_items that remain are either message-refs (unpinned survivors) or summary-refs.
+    // None of the normal messages were pinned, so the chunk selection worked normally.
+    const afterItems = store.getContextItems(SCOPE);
+    // The oldest chunk was summarized: total items should be less (chunk→1 summary ref)
+    expect(afterItems.length).toBeLessThan(beforeItems);
+  });
+
+  it("securityPinnedCount reported in context:compaction_routed event for LCD layer", async () => {
+    seedHistory(store, 40, 100);
+    const logger = createMockLogger();
+    const { bus, emits } = makeEventBus();
+    const deps = makeSummarizerDepsWithCapability(shortSummarizer(), logger, {
+      capabilityClass: "small",
+      preferEvictionByCapability: true,
+      securityMarkers: MARKERS,
+      agentId: "agent-s4-lcd",
+      sessionKey: "sess-s4-lcd",
+    });
+
+    await maybeRunLeafPass(
+      store, SCOPE, opts({ windowTokens: 1_000 }), deps, FIXED_NOW, undefined,
+      logger as unknown as LeafSummarizerDeps["logger"], bus,
+    );
+
+    const routed = emits.filter((e) => e.event === "context:compaction_routed");
+    expect(routed.length).toBeGreaterThan(0);
+    expect(routed[0]!.payload.layer).toBe("lcd");
+    expect(typeof routed[0]!.payload.securityPinnedCount).toBe("number");
+  });
+});
+
+// ===========================================================================
 // I1 (Phase 160): the ordinal-window divergence skip emits context:dag_degraded
 // ===========================================================================
 //

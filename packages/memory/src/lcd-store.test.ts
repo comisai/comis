@@ -1625,3 +1625,158 @@ describe("createLcdStore — R4 cross-agent read isolation (WR-02)", () => {
     expect(store.getMessages(crossTenant)).toHaveLength(0);
   });
 });
+
+// =====================================================================
+// Phase 164 — cursor (RR1) + deleteConversationLcd (RR4)
+//
+// Task 1 (RED): tests are written against methods that do NOT exist yet on
+// ContextStorePort or createLcdStore. They use type-casts to compile while
+// failing at runtime (the method is undefined → TypeError). Task 2 (GREEN)
+// adds the DDL + implementations; the casts remain valid after the real
+// methods land (no cleanup needed).
+// =====================================================================
+
+describe("Phase 164 — cursor + deleteConversationLcd", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createLcdStore>;
+
+  /** Typed helpers via unknown cast — compile without the methods; fail at runtime until GREEN. */
+  type CursorMethods = {
+    getIngestCursor(scope: ContextStoreScope): { epochAnchor: string; ingestedLiveLen: number } | null;
+    upsertIngestCursor(
+      scope: ContextStoreScope,
+      cursor: { epochAnchor: string; ingestedLiveLen: number },
+      updatedAt: number,
+    ): void;
+    deleteConversationLcd(scope: ContextStoreScope): number;
+  };
+
+  function storeWithCursor(): ReturnType<typeof createLcdStore> & CursorMethods {
+    return store as unknown as ReturnType<typeof createLcdStore> & CursorMethods;
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  // ── Cursor tests (C1–C3) ──────────────────────────────────────────────
+
+  it("Test C1: getIngestCursor returns null for a fresh scope with no cursor row", () => {
+    const s = storeWithCursor();
+    const result = s.getIngestCursor(SCOPE_A);
+    expect(result).toBeNull();
+  });
+
+  it("Test C2: upsertIngestCursor then getIngestCursor returns the saved values", () => {
+    const s = storeWithCursor();
+    const cursor = { epochAnchor: "user:1000:hello", ingestedLiveLen: 5 };
+    s.upsertIngestCursor(SCOPE_A, cursor, 999_000);
+    const result = s.getIngestCursor(SCOPE_A);
+    expect(result).not.toBeNull();
+    expect(result!.epochAnchor).toBe("user:1000:hello");
+    expect(result!.ingestedLiveLen).toBe(5);
+  });
+
+  it("Test C3: second upsertIngestCursor overwrites — getIngestCursor returns the newer values", () => {
+    const s = storeWithCursor();
+    s.upsertIngestCursor(SCOPE_A, { epochAnchor: "user:1000:hello", ingestedLiveLen: 5 }, 999_000);
+    s.upsertIngestCursor(SCOPE_A, { epochAnchor: "user:2000:world", ingestedLiveLen: 9 }, 999_001);
+    const result = s.getIngestCursor(SCOPE_A);
+    expect(result!.epochAnchor).toBe("user:2000:world");
+    expect(result!.ingestedLiveLen).toBe(9);
+  });
+
+  // ── deleteConversationLcd tests (D1–D3) ──────────────────────────────
+
+  it("Test D1: deleteConversationLcd returns message count, getMessages/getContextItems return [] and cursor becomes null", () => {
+    const s = storeWithCursor();
+    // Append 3 messages.
+    for (let i = 0; i < 3; i++) {
+      store.append({
+        scope: SCOPE_A,
+        seq: i,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 1000 + i * 10,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `m${i}` }, rawType: "text" } }],
+      });
+    }
+    // Seed a cursor so D1 also verifies cursor deletion.
+    s.upsertIngestCursor(SCOPE_A, { epochAnchor: "user:1000:m0", ingestedLiveLen: 3 }, 9000);
+
+    const deleted = s.deleteConversationLcd(SCOPE_A);
+    expect(deleted).toBe(3);
+    expect(store.getMessages(SCOPE_A)).toHaveLength(0);
+    expect(store.getContextItems(SCOPE_A)).toHaveLength(0);
+    expect(s.getIngestCursor(SCOPE_A)).toBeNull();
+  });
+
+  it("Test D2: deleteConversationLcd does not touch a DIFFERENT conversation's rows", () => {
+    const s = storeWithCursor();
+    // Populate both SCOPE_A and SCOPE_B.
+    for (let i = 0; i < 2; i++) {
+      store.append({
+        scope: SCOPE_A,
+        seq: i,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 1000 + i,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `ma${i}` }, rawType: "text" } }],
+      });
+      store.append({
+        scope: SCOPE_B,
+        seq: i,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 2000 + i,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `mb${i}` }, rawType: "text" } }],
+      });
+    }
+
+    // Delete only SCOPE_A.
+    s.deleteConversationLcd(SCOPE_A);
+
+    // SCOPE_A is gone.
+    expect(store.getMessages(SCOPE_A)).toHaveLength(0);
+    // SCOPE_B is intact.
+    expect(store.getMessages(SCOPE_B)).toHaveLength(2);
+  });
+
+  it("Test D3: deleteConversationLcd with a leaf summary (lcd_summary_messages rows) clears without an FK constraint error", () => {
+    const s = storeWithCursor();
+    // Append 2 messages and create a leaf summary linking them (creates lcd_summary_messages rows).
+    for (let i = 0; i < 2; i++) {
+      store.append({
+        scope: SCOPE_A,
+        seq: i,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 1000 + i * 10,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `m${i}` }, rawType: "text" } }],
+      });
+    }
+    store.getContextItems(SCOPE_A); // seed context_items
+    store.appendLeafSummary({
+      scope: SCOPE_A,
+      tokenCount: 5,
+      content: "summary",
+      descendantCount: 0,
+      earliestAt: 1000,
+      latestAt: 1010,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9999,
+      startOrdinal: 0,
+      endOrdinal: 1,
+    });
+
+    // Must NOT throw (the FK RESTRICT on lcd_summary_messages requires deleting
+    // lcd_summary_messages rows BEFORE lcd_messages rows).
+    expect(() => s.deleteConversationLcd(SCOPE_A)).not.toThrow();
+    expect(store.getMessages(SCOPE_A)).toHaveLength(0);
+  });
+});

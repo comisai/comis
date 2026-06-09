@@ -42,7 +42,6 @@
 
 import type Database from "better-sqlite3";
 import {
-  partsToMessage,
   type AppendCondensedSummaryInput,
   type AppendMessageInput,
   type AppendSummaryInput,
@@ -51,7 +50,6 @@ import {
   type LcdContextItem,
   type LcdMessage,
   type LcdMessagePart,
-  type LcdPartMetadata,
   type LcdPartKind,
   type LcdRefKind,
   type LcdRole,
@@ -59,122 +57,37 @@ import {
   type LcdSummaryKind,
 } from "@comis/core";
 import type { LcdSearchHit } from "@comis/core";
-import type { Message } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import { renderMessageFtsText, searchLcdImpl, isFtsAvailable } from "./lcd-fts.js";
 import { createIngestSerializer } from "./lcd-ingest-serializer.js";
 import {
   buildAppendCondensedSummaryTxn,
   buildAppendLeafSummaryTxn,
 } from "./lcd-store-writes.js";
-import { createRowMapper } from "./row-mapper.js";
 import {
-  LcdContextItemRowSchema,
-  LcdMessageRowSchema,
-  LcdMessagePartRowSchema,
-  LcdSummaryRowSchema,
-} from "./row-schemas.js";
+  messageRowMapper,
+  partRowMapper,
+  ctxItemRowMapper,
+  summaryRowMapper,
+  messageSeedRowMapper,
+  ctxOrdinalRowMapper,
+  ctxCountRowMapper,
+  ctxMaxOrdinalRowMapper,
+  summaryMessageIdRowMapper,
+  messageRowidRowMapper,
+  cursorRowMapper,
+  parseMetadata,
+  parseJsonColumn,
+  intToBool,
+  boolToInt,
+  parseFileIds,
+} from "./lcd-store-mappers.js";
 
-/**
- * The named pi-ai reconstruction entry point for the LCD store (F2/F3).
- *
- * `getMessages` returns the faithful `LcdMessage` DTO rows; turning one back
- * into a canonical pi-ai `Message` is the consumer's step — Phase-128 assembly
- * calls this. It delegates to the core `partsToMessage` codec (the single
- * pi-ai-typed seam) rather than duplicating the per-block reconstruction in the
- * store; it is exposed here so consumers reconstruct via one named function
- * co-located with the store that produced the rows.
- */
-export function reconstructLcdMessage(message: LcdMessage): Message {
-  return partsToMessage(message);
-}
-
-// Row mappers (createRowMapper(z.strictObject) — degrade to [] on validation
-// failure, never throw; strictObject rejects extra columns = drift detection).
-const messageRowMapper = createRowMapper(LcdMessageRowSchema);
-const partRowMapper = createRowMapper(LcdMessagePartRowSchema);
-const ctxItemRowMapper = createRowMapper(LcdContextItemRowSchema);
-const summaryRowMapper = createRowMapper(LcdSummaryRowSchema);
-
-/** Projection for the lazy-seed / range-coverage read: message id + createdAt, seq-ordered. */
-const MessageSeedRowSchema = z.strictObject({ id: z.string(), created_at: z.number() });
-const messageSeedRowMapper = createRowMapper(MessageSeedRowSchema);
-
-/** Single-column ordinal projection for the dense-shift pass (no `as` cast — untyped-sqlite rule). */
-const CtxOrdinalRowSchema = z.strictObject({ ordinal: z.number() });
-const ctxOrdinalRowMapper = createRowMapper(CtxOrdinalRowSchema);
-
-/**
- * Single-column COUNT projection — the sanctioned createRowMapper read replacing
- * the raw count cast the §6.8 untyped-sqlite rule forbids. Used for the
- * context_items seed gate (the legacy-conversation backfill trigger).
- */
-const CtxCountRowSchema = z.strictObject({ c: z.number() });
-const ctxCountRowMapper = createRowMapper(CtxCountRowSchema);
-
-/**
- * `MAX(ordinal)` projection for the per-append dense-view maintenance (CRIT-2).
- * `MAX` over zero rows returns SQL NULL → `maxOrdinal` is nullable; the next
- * ordinal is `(maxOrdinal ?? -1) + 1` (0 for the first row). No `as` cast.
- */
-const CtxMaxOrdinalRowSchema = z.strictObject({ maxOrdinal: z.number().nullable() });
-const ctxMaxOrdinalRowMapper = createRowMapper(CtxMaxOrdinalRowSchema);
-
-/** Single-column message-id projection for the E1 leaf→message walk (no `as` cast). */
-const SummaryMessageIdRowSchema = z.strictObject({ message_id: z.string() });
-const summaryMessageIdRowMapper = createRowMapper(SummaryMessageIdRowSchema);
-
-/**
- * Single-column rowid projection for the contentless-FTS populate (WR-03 — the
- * sanctioned `createRowMapper(z.strictObject)` read replacing the raw
- * `as { rowid: number } | undefined` cast the §6.8 untyped-sqlite rule forbids).
- */
-const MessageRowidRowSchema = z.strictObject({ rowid: z.number() });
-const messageRowidRowMapper = createRowMapper(MessageRowidRowSchema);
-
-/** The verbatim canonical block is opaque at the row layer (F1). */
-const LcdPartMetadataSchema = z.looseObject({
-  raw: z.unknown(),
-  rawType: z.string().optional(),
-  topLevelReasoningOnly: z.boolean().optional(),
-  messageEnvelope: z.unknown().optional(),
-  envelopeCarrier: z.boolean().optional(),
-});
-
-/**
- * Parse the JSON `metadata` column with graceful degradation (T-127-10 /
- * ASVS V5): a corrupt/poisoned persisted block degrades `raw` to undefined and
- * NEVER throws — a malformed row can not crash reconstruction.
- */
-function parseMetadata(raw: string): LcdPartMetadata {
-  try {
-    const result = LcdPartMetadataSchema.safeParse(JSON.parse(raw));
-    return result.success ? (result.data as LcdPartMetadata) : { raw: undefined };
-  } catch {
-    return { raw: undefined };
-  }
-}
-
-/** Parse a nullable JSON column (tool_input / tool_output) — degrade to undefined. */
-function parseJsonColumn(raw: string | null): unknown {
-  if (raw === null) return undefined;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-}
-
-/** SQLite NULL/0/1 INTEGER -> boolean | undefined (NULL for non-tool_result parts). */
-function intToBool(value: number | null): boolean | undefined {
-  return value === null ? undefined : value !== 0;
-}
-
-/** boolean | undefined -> SQLite NULL/0/1 INTEGER for the is_error column. */
-function boolToInt(value: boolean | undefined): number | null {
-  return value === undefined ? null : value ? 1 : 0;
-}
+// Pure row-mapper + column-parse helpers live in ./lcd-store-mappers.ts
+// (extracted to keep this factory under the architecture line cap).
+// `reconstructLcdMessage` is re-exported so consumers keep importing it from the
+// store module that produces the rows.
+export { reconstructLcdMessage } from "./lcd-store-mappers.js";
 
 /**
  * Create a ContextStorePort bound to the given database.
@@ -368,6 +281,62 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       )
     ORDER BY m.seq
   `);
+
+  // ── Phase 164 (RR1): durable ingest cursor ──────────────────────────────────
+  // Two prepared statements: an upsert (INSERT … ON CONFLICT DO UPDATE) and a
+  // point-select for the two cursor fields. Static SQL, bound params, no
+  // interpolated identifiers (T-127-09). The primary key is the three-column R4
+  // isolation scope (conversation_id, agent_id, tenant_id) — identical to every
+  // other lcd_* table so a cross-tenant/cross-agent wipe is impossible (T-164-01).
+  const upsertCursorStmt = db.prepare(
+    "INSERT INTO lcd_ingest_cursor (conversation_id, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)" +
+    " VALUES (?,?,?,?,?,?)" +
+    " ON CONFLICT(conversation_id,agent_id,tenant_id)" +
+    " DO UPDATE SET epoch_anchor=excluded.epoch_anchor, ingested_live_len=excluded.ingested_live_len, updated_at=excluded.updated_at",
+  );
+
+  const selectCursorStmt = db.prepare(
+    "SELECT epoch_anchor, ingested_live_len FROM lcd_ingest_cursor WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
+  );
+
+  // ── Phase 164 (RR4): deleteConversationLcd transaction ──────────────────────
+  // Deletes ALL lcd_* rows for a (conversation, agent, tenant) scope in FK-safe
+  // dependency order. The RESTRICT FK on lcd_summary_messages.message_id →
+  // lcd_messages.id REQUIRES deleting lcd_summary_messages rows BEFORE
+  // lcd_messages rows (verified: schema-lcd.ts:138). lcd_message_parts rows are
+  // removed automatically by the ON DELETE CASCADE on message_id. The
+  // lcd_messages_fts contentless shadow rows are orphaned (FTS5 contentless tables
+  // degrade gracefully — no FK; documented tradeoff). Never throws; returns the
+  // count of lcd_messages rows deleted (0 for an empty/nonexistent conversation).
+  const deleteConversationLcdTxn = db.transaction((scope: ContextStoreScope): number => {
+    // 1. lcd_summary_messages: RESTRICT FK on message_id — must delete BEFORE lcd_messages.
+    db.prepare(
+      "DELETE FROM lcd_summary_messages WHERE summary_id IN" +
+      " (SELECT summary_id FROM lcd_summaries WHERE conversation_id=? AND agent_id=? AND tenant_id=?)",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    // 2. lcd_summary_parents: CASCADE FK on parent_summary_id — safe to delete before/after lcd_summaries.
+    db.prepare(
+      "DELETE FROM lcd_summary_parents WHERE parent_summary_id IN" +
+      " (SELECT summary_id FROM lcd_summaries WHERE conversation_id=? AND agent_id=? AND tenant_id=?)",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    // 3. lcd_context_items (no FK dependency on messages/summaries order).
+    db.prepare(
+      "DELETE FROM lcd_context_items WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    // 4. lcd_summaries: after lcd_summary_messages + lcd_summary_parents rows are gone.
+    db.prepare(
+      "DELETE FROM lcd_summaries WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    // 5. lcd_messages: CASCADE deletes lcd_message_parts rows (ON DELETE CASCADE on message_id).
+    const info = db.prepare(
+      "DELETE FROM lcd_messages WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    // 6. lcd_ingest_cursor: clear the durable epoch cursor for this scope.
+    db.prepare(
+      "DELETE FROM lcd_ingest_cursor WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+    return info.changes as number;
+  });
 
   /**
    * Idempotent INCREMENTAL backfill of the model-facing view from lcd_messages
@@ -758,15 +727,44 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // is agent-side (Plan 132-04 Task 3).
       return ingestSerializer.runOnConversation(conversationId, fn);
     },
-  };
-}
 
-/** Parse the JSON `file_ids` column to a string[] — degrade to [] on corruption. */
-function parseFileIds(raw: string): string[] {
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
+    // ── Phase 164 (RR1): durable ingest cursor ──────────────────────────────
+
+    getIngestCursor(scope: ContextStoreScope): { epochAnchor: string; ingestedLiveLen: number } | null {
+      // Point-select the cursor row for this (conversation, agent, tenant) scope.
+      // Returns null when no row exists (new conversation or first run after upgrade).
+      // Per-row parseOptionalRow + skip on validation failure (never throws — WR-02).
+      const row = selectCursorStmt.get(scope.conversationId, scope.agentId, scope.tenantId);
+      if (!row) return null;
+      const parsed = cursorRowMapper.parseOptionalRow(row);
+      if (!parsed.ok || !parsed.value) return null;
+      return { epochAnchor: parsed.value.epoch_anchor, ingestedLiveLen: parsed.value.ingested_live_len };
+    },
+
+    upsertIngestCursor(
+      scope: ContextStoreScope,
+      cursor: { epochAnchor: string; ingestedLiveLen: number },
+      updatedAt: number,
+    ): void {
+      // Atomically upsert — INSERT on first use, UPDATE on subsequent writes.
+      // Must be called inside runOnConversation by the caller.
+      upsertCursorStmt.run(
+        scope.conversationId,
+        scope.agentId,
+        scope.tenantId,
+        cursor.epochAnchor,
+        cursor.ingestedLiveLen,
+        updatedAt,
+      );
+    },
+
+    // ── Phase 164 (RR4): explicit LCD reset ─────────────────────────────────
+
+    deleteConversationLcd(scope: ContextStoreScope): number {
+      // Delegate to the db.transaction that deletes in FK-safe dependency order.
+      // Must be called inside runOnConversation so it serializes against live ingest.
+      // Returns the count of lcd_messages rows deleted (0 for an empty scope).
+      return deleteConversationLcdTxn(scope);
+    },
+  };
 }

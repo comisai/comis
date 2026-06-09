@@ -121,6 +121,11 @@ export const ContextTreeContract = defineContract({
  * absent — they are the deferred content-recovery / FTS methods and remain
  * unregistered until implemented (the view degrades to load + render the DAG
  * structure without per-node deep-inspect / in-conversation search).
+ *
+ * Phase 164-06: `context.reset_lcd` (LCD-only forget) has been superseded by
+ * `session.reset_conversation` (complete cross-mode forget: LCD + sessionStore).
+ * The new contract lives in `sessions.ts` under `SESSIONS_CONTRACTS`; the
+ * handler is in `session-archive.ts`.
  */
 export const CONTEXT_CONTRACTS = [
   ContextConversationsContract,

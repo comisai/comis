@@ -79,6 +79,10 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "security:injection_rate_exceeded",
   "sender:trust_resolved",
   "tool:install_detour_detected",
+  // Critic isolation events (Phase 154 S2): security incidents fed to alerting,
+  // not trajectory steps. 100% capture via structured Pino log (AI-SPEC §7).
+  "critic.isolation.canary_leak",
+  "critic.isolation.implied_tool_call",
 
   // -------------------------------------------------------------------
   // Provider-level aggregates — daemon-level rollup, not per-session.
@@ -223,8 +227,13 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   //   spend-cap degrade, carrying ids + a closed reason + durationMs ONLY (never
   //   content). A health/safety signal fed to observability snapshots, NOT a
   //   turn-level trajectory step (same class as provider:degraded above).
+  // context:compaction_routed: capability-routing health signal (Phase 152
+  //   C4/S4) — records which compaction strategy (eviction / strong-summarizer
+  //   / llm) was selected per capabilityClass, ids + counts only. Same
+  //   internal-health class as context:compacted above.
   // -------------------------------------------------------------------
   "context:compacted",
+  "context:compaction_routed",
   "context:pipeline:cache",
   "context:dag_degraded",
 

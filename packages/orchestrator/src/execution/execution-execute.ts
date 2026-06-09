@@ -139,16 +139,29 @@ export async function executeLlm(
   }
 
   // Accumulate full response via onDelta -- NO placeholder message sent
+  // Only text deltas contribute to accumulated; thinking deltas (native-reasoning
+  // models) still refresh the typing TTL so the indicator stays alive during
+  // extended LLM reasoning, but never reach the channel.
   let accumulated = "";
-  const thinkFilter = createThinkingTagFilter({ enforceFinalTag: deps.enforceFinalTag });
-  const onDelta = (delta: string): void => {
-    const filtered = thinkFilter.feed(delta);
-    if (filtered) {
-      accumulated += filtered;
+  // SA2: createThinkingTagFilter is only constructed when enforceFinalTag is true
+  // (Comis's own <think>/<final> coaching path). Native-reasoning models (qwen3.6,
+  // deepseek-r1) set enforceFinalTag=false and take a pure SDK path -- no regex
+  // over a tagless stream.
+  const thinkFilter = deps.enforceFinalTag
+    ? createThinkingTagFilter({ enforceFinalTag: true })
+    : null;
+  const onDelta = (delta: string, kind: "text" | "thinking"): void => {
+    if (kind === "text") {
+      // SA1: only text deltas accumulate. thinking deltas are forwarded by the
+      // bridge with kind='thinking' so we still refresh TTL below, but they
+      // must not reach the channel.
+      const filtered = thinkFilter ? thinkFilter.feed(delta) : delta;
+      if (filtered) {
+        accumulated += filtered;
+      }
     }
-    // Refresh TTL unconditionally — any delta (thinking or visible) proves
-    // the agent is alive. Prevents typing indicator expiry during extended
-    // LLM reasoning phases where thinkFilter strips all content.
+    // Refresh TTL on BOTH kinds — any delta proves the agent is alive.
+    // Prevents typing indicator expiry during extended reasoning phases.
     typingLifecycle?.controller.refreshTtl();
   };
 
@@ -220,9 +233,12 @@ export async function executeLlm(
     throw err;
   }
 
-  // Flush any buffered partial text from the thinking filter
-  const flushed = thinkFilter.flush();
-  if (flushed) accumulated += flushed;
+  // Flush any buffered partial text from the thinking filter (coaching path only).
+  // SA2: thinkFilter is null for native-reasoning models — guard required to prevent crash.
+  if (thinkFilter) {
+    const flushed = thinkFilter.flush();
+    if (flushed) accumulated += flushed;
+  }
 
   // Sanitize accumulated text
   if (accumulated) {

@@ -54,6 +54,18 @@ export const ProviderCapabilitiesSchema = z.strictObject({
   /** Model name substrings that should use strict9 tool_call_id mode.
    *  Empty array = no special handling. */
   transcriptToolCallIdModelHints: z.array(z.string()).default([]),
+  /** Whether models on this provider support vision (image) input. Undefined = false. */
+  supportsVision: z.boolean().optional(),
+  /** Whether models on this provider support prompt caching. Undefined = auto-detect from providerFamily. */
+  supportsPromptCache: z.boolean().optional(),
+  /** Whether models on this provider support constrained decoding / structured output. Undefined = false. */
+  supportsStructuredOutput: z.boolean().optional(),
+  /**
+   * Explicit capability-class override for all models on this provider.
+   * Undefined = resolver heuristic. Values: "frontier" | "mid" | "small" | "nano".
+   * Used by resolveModelProfile() in packages/agent.
+   */
+  capabilityClass: z.enum(["frontier", "mid", "small", "nano"]).optional(),
 });
 
 export type ProviderCapabilities = z.infer<typeof ProviderCapabilitiesSchema>;

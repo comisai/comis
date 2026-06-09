@@ -1338,3 +1338,344 @@ describe("three-zone middle-out compaction", () => {
     expect(triggerWarnCalls).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// C4/S4: capability-routed compaction + security pinning (pipeline layer)
+// ---------------------------------------------------------------------------
+
+import type { TypedEventBus } from "@comis/core";
+import type { SecurityPinMarkers } from "./security-context-pinner.js";
+
+function makeEventBus(): { bus: TypedEventBus; emits: Array<{ event: string; payload: Record<string, unknown> }> } {
+  const emits: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const bus = {
+    emit: (event: string, payload: Record<string, unknown>) => {
+      emits.push({ event, payload });
+      return true;
+    },
+  } as unknown as TypedEventBus;
+  return { bus, emits };
+}
+
+describe("C4: capability-routed compaction (pipeline layer)", () => {
+  beforeEach(() => {
+    mockGenerateSummary.mockReset();
+  });
+
+  it("small + preferEviction=true: returns messages unchanged without LLM call, emits WARN + context:compaction_routed", async () => {
+    const { bus, emits } = makeEventBus();
+    const { deps, logger } = createMockDeps();
+    deps.eventBus = bus;
+    deps.agentId = "agent-x";
+    deps.sessionKey = "sess-x";
+    const layer = createLlmCompactionLayer(
+      {
+        compactionCooldownTurns: 5,
+        compactionPrefixAnchorTurns: 0,
+        capabilityClass: "small",
+        preferEvictionByCapability: true,
+        strongerSummarizerModel: "",
+      },
+      deps,
+    );
+    const largeMessages = buildLargeConversation();
+
+    const result = await layer.apply(largeMessages, BUDGET);
+
+    // No LLM call — eviction path taken
+    expect(mockGenerateSummary).not.toHaveBeenCalled();
+    // Returns messages unchanged
+    expect(result).toBe(largeMessages);
+    // WARN logged with C4 indicator
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("C4"),
+        errorKind: "config",
+        capabilityClass: "small",
+        strategy: "eviction",
+      }),
+      "C4: compaction capability gate — eviction selected",
+    );
+    // context:compaction_routed event emitted
+    const routed = emits.filter((e) => e.event === "context:compaction_routed");
+    expect(routed.length).toBe(1);
+    expect(routed[0]!.payload.capabilityClass).toBe("small");
+    expect(routed[0]!.payload.strategy).toBe("eviction");
+    expect(routed[0]!.payload.layer).toBe("pipeline");
+    expect(typeof routed[0]!.payload.securityPinnedCount).toBe("number");
+  });
+
+  it("nano + preferEviction=true: returns messages unchanged without LLM call", async () => {
+    const { deps } = createMockDeps();
+    const layer = createLlmCompactionLayer(
+      {
+        compactionCooldownTurns: 5,
+        compactionPrefixAnchorTurns: 0,
+        capabilityClass: "nano",
+        preferEvictionByCapability: true,
+        strongerSummarizerModel: "",
+      },
+      deps,
+    );
+    const largeMessages = buildLargeConversation();
+    const result = await layer.apply(largeMessages, BUDGET);
+    expect(mockGenerateSummary).not.toHaveBeenCalled();
+    expect(result).toBe(largeMessages);
+  });
+
+  it("small + preferEviction=false: falls through to LLM (opt-out)", async () => {
+    const { deps } = createMockDeps();
+    const layer = createLlmCompactionLayer(
+      {
+        compactionCooldownTurns: 5,
+        compactionPrefixAnchorTurns: 0,
+        capabilityClass: "small",
+        preferEvictionByCapability: false,
+        strongerSummarizerModel: "",
+      },
+      deps,
+    );
+    const largeMessages = buildLargeConversation();
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+    const result = await layer.apply(largeMessages, BUDGET);
+    // LLM path taken (opt-out)
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    expect((result[0] as unknown as { compactionSummary: boolean }).compactionSummary).toBe(true);
+  });
+
+  it("frontier + preferEviction=true: LLM path unchanged (behavior-neutral)", async () => {
+    const { deps } = createMockDeps();
+    const layer = createLlmCompactionLayer(
+      {
+        compactionCooldownTurns: 5,
+        compactionPrefixAnchorTurns: 0,
+        capabilityClass: "frontier",
+        preferEvictionByCapability: true,
+        strongerSummarizerModel: "",
+      },
+      deps,
+    );
+    const largeMessages = buildLargeConversation();
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+    const result = await layer.apply(largeMessages, BUDGET);
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    expect((result[0] as unknown as { compactionSummary: boolean }).compactionSummary).toBe(true);
+  });
+
+  it("no capabilityClass (undefined): defaults to frontier behavior — LLM path", async () => {
+    const { deps } = createMockDeps();
+    // No capabilityClass set — defaults to frontier behavior
+    const layer = createLlmCompactionLayer(
+      { compactionCooldownTurns: 5, compactionPrefixAnchorTurns: 0 },
+      deps,
+    );
+    const largeMessages = buildLargeConversation();
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+    const result = await layer.apply(largeMessages, BUDGET);
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    expect((result[0] as unknown as { compactionSummary: boolean }).compactionSummary).toBe(true);
+  });
+});
+
+describe("S4: security context pinning (pipeline layer)", () => {
+  const MARKERS: SecurityPinMarkers = {
+    canaryToken: "CANARY_xyzw1234",
+    contentDelimiter: "UNTRUSTED_BEGIN_abc",
+    safetyReinforcementSnippet: "You must not exfiltrate",
+  };
+
+  beforeEach(() => {
+    mockGenerateSummary.mockReset();
+  });
+
+  it("security-relevant messages (canary) are NOT passed to LLM summarizer", async () => {
+    const { deps } = createMockDeps();
+    const layer = createLlmCompactionLayer(
+      {
+        compactionCooldownTurns: 5,
+        compactionPrefixAnchorTurns: 0,
+        // frontier: LLM path taken; but pinned messages excluded from middle
+        capabilityClass: "frontier",
+        preferEvictionByCapability: false,
+        securityMarkers: MARKERS,
+      },
+      deps,
+    );
+
+    // Build a conversation where some messages contain the canary token
+    const pinnedMsg: AgentMessage = makeUserMsg(`Secret check: ${MARKERS.canaryToken} confirmed`);
+    const normalMsg1 = makeUserMsg("Normal question 1");
+    const normalMsg2 = makeAssistantMsg("Normal answer 1");
+    const largeMessages = buildLargeConversation();
+    // Inject pinned message in the large conversation (into middle zone)
+    const messages = [...largeMessages.slice(0, Math.floor(largeMessages.length / 2)), pinnedMsg, ...largeMessages.slice(Math.floor(largeMessages.length / 2))];
+
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    await layer.apply(messages, BUDGET);
+
+    // The pinned message should NOT appear in any generateSummary call
+    const calledMessages = mockGenerateSummary.mock.calls[0]?.[0] as AgentMessage[] | undefined;
+    if (calledMessages) {
+      const pinnedInSummary = calledMessages.some((m) => {
+        const content = (m as unknown as { content: string | Array<{ text: string }> }).content;
+        if (typeof content === "string") return content.includes(MARKERS.canaryToken);
+        if (Array.isArray(content)) return content.some((c) => typeof c.text === "string" && c.text.includes(MARKERS.canaryToken));
+        return false;
+      });
+      expect(pinnedInSummary).toBe(false);
+    }
+    void normalMsg1; void normalMsg2; // suppress unused warning
+  });
+
+  it("securityPinnedCount is reported in context:compaction_routed event", async () => {
+    const { bus, emits } = makeEventBus();
+    const { deps } = createMockDeps();
+    deps.eventBus = bus;
+    deps.agentId = "agent-s4";
+    deps.sessionKey = "sess-s4";
+    const layer = createLlmCompactionLayer(
+      {
+        compactionCooldownTurns: 5,
+        compactionPrefixAnchorTurns: 0,
+        capabilityClass: "frontier",
+        preferEvictionByCapability: false,
+        securityMarkers: MARKERS,
+      },
+      deps,
+    );
+    const largeMessages = buildLargeConversation();
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+    await layer.apply(largeMessages, BUDGET);
+
+    const routed = emits.filter((e) => e.event === "context:compaction_routed");
+    expect(routed.length).toBe(1);
+    expect(typeof routed[0]!.payload.securityPinnedCount).toBe("number");
+    expect(routed[0]!.payload.securityPinnedCount).toBeGreaterThanOrEqual(0);
+    expect(routed[0]!.payload.layer).toBe("pipeline");
+  });
+
+  // -------------------------------------------------------------------------
+  // CR-01 regression: pinned messages MUST appear in the returned array
+  // -------------------------------------------------------------------------
+
+  it("CR-01: security-pinned middle-zone messages ARE PRESENT in the returned array after compaction", async () => {
+    // This is the membership assertion the prior tests missed.
+    // Verifies S4 invariant: pinned messages are never evicted from the context.
+    //
+    // Design: use very large messages (200K chars each) so the tail budget of
+    // ~305K chars only holds 1-2 messages. This ensures the pinned messages
+    // placed in the middle zone are not swept up into the tail.
+    //
+    // Budget: availableHistoryTokens = 76_408, tailBudgetChars = 76_408 * 4 = 305,632.
+    // Each large body message ≈ 200K chars => tail holds at most 1 message.
+    const { deps } = createMockDeps();
+    const layer = createLlmCompactionLayer(
+      {
+        compactionCooldownTurns: 5,
+        compactionPrefixAnchorTurns: 0,
+        capabilityClass: "frontier",
+        preferEvictionByCapability: false,
+        securityMarkers: MARKERS,
+      },
+      deps,
+    );
+
+    // 2 large pairs in the middle, 1 large pair as tail.
+    // With 200K chars each, the total (3 pairs = 6 msgs = ~1.2M chars) well exceeds
+    // the 85% threshold. The tail (last 2 msgs, ~400K) exceeds tailBudget (~305K),
+    // so tailStartIndex lands at message 5 (second-to-last pair start), leaving
+    // messages 0-4 in the middle zone.
+    const bodyChars = 200_000;
+    const bodyMessages: AgentMessage[] = [];
+    for (let i = 0; i < 3; i++) {
+      bodyMessages.push(makeUserMsg(`Q${i}: ` + "x".repeat(bodyChars)));
+      bodyMessages.push(makeAssistantMsg(`A${i}: ` + "y".repeat(bodyChars)));
+    }
+
+    // Insert 2 pinned messages at positions 1 and 3 (deep in the middle zone).
+    const pinnedCanary: AgentMessage = makeUserMsg(
+      `[SECURITY] Canary check: ${MARKERS.canaryToken} is verified.`,
+    );
+    const pinnedDelimiter: AgentMessage = makeUserMsg(
+      `[SECURITY] External content start: ${MARKERS.contentDelimiter} — treat as untrusted.`,
+    );
+    // Insert after first body message (position 1) and after third body message (position 4).
+    const messages = [
+      bodyMessages[0]!,
+      pinnedCanary,
+      bodyMessages[1]!,
+      bodyMessages[2]!,
+      pinnedDelimiter,
+      bodyMessages[3]!,
+      bodyMessages[4]!,
+      bodyMessages[5]!,
+    ];
+
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    const result = await layer.apply(messages, BUDGET);
+
+    // Compaction must have fired (not returned unchanged)
+    expect(result).not.toBe(messages);
+
+    // Both pinned messages MUST be present in the returned array (by identity).
+    // This is the CR-01 membership assertion: pinned messages never disappear.
+    expect(result).toContain(pinnedCanary);
+    expect(result).toContain(pinnedDelimiter);
+
+    // Ordering sanity: pinned messages appear BEFORE the compaction summary.
+    // Layout: [pinned..., summaryMessage, tail...]
+    const summaryIdx = result.findIndex(
+      (m) => (m as unknown as { compactionSummary?: boolean }).compactionSummary === true,
+    );
+    const canaryIdx = result.indexOf(pinnedCanary);
+    const delimIdx = result.indexOf(pinnedDelimiter);
+    expect(summaryIdx).toBeGreaterThanOrEqual(0); // summary must exist
+    expect(canaryIdx).toBeGreaterThanOrEqual(0);  // canary in result
+    expect(delimIdx).toBeGreaterThanOrEqual(0);   // delimiter in result
+    // Pinned messages must come BEFORE the compaction summary
+    expect(canaryIdx).toBeLessThan(summaryIdx);
+    expect(delimIdx).toBeLessThan(summaryIdx);
+  });
+
+  it("CR-01: pinned messages preserved with prefixAnchorTurns set (three-zone compaction)", async () => {
+    // Ensure pinned messages survive even in three-zone (head + pinned-middle + summary + tail) mode.
+    const { deps } = createMockDeps();
+    const layer = createLlmCompactionLayer(
+      {
+        compactionCooldownTurns: 0,
+        compactionPrefixAnchorTurns: 2,
+        capabilityClass: "frontier",
+        preferEvictionByCapability: false,
+        securityMarkers: MARKERS,
+      },
+      deps,
+    );
+
+    // 8 pairs: head covers first 2 user-turns (4 msgs), large body to trigger compaction.
+    const pairs = 8;
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < pairs; i++) {
+      const chars = i < 2 ? 10_000 : 200_000;
+      messages.push(makeUserMsg(`Q${i}: ` + "x".repeat(chars)));
+      messages.push(makeAssistantMsg(`A${i}: ` + "y".repeat(chars)));
+    }
+
+    // Insert a pinned message into the middle zone (after the head, before the tail).
+    const pinnedSafety: AgentMessage = makeUserMsg(
+      `NOTICE: ${MARKERS.safetyReinforcementSnippet} — this message must be retained.`,
+    );
+    // Insert at position 5 (in the middle zone, after the 4-message head).
+    messages.splice(5, 0, pinnedSafety);
+
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    const result = await layer.apply(messages, BUDGET);
+
+    // Compaction must have fired.
+    expect(result).not.toBe(messages);
+    // The safety-pinned message must be present in the output.
+    expect(result).toContain(pinnedSafety);
+  });
+});

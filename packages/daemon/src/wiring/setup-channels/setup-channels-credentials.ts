@@ -24,6 +24,7 @@ import { applyToolPolicy } from "@comis/skills";
 import { filterResponse } from "@comis/channels";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 import { handleMemoryCronSentinel } from "./setup-channels-memory-crons.js";
+import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
 
 /**
  * Closure-captured dependencies for the cron delivery listeners.
@@ -173,7 +174,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         return;
       }
 
-      // Resolve cheap model for review via "cron" operation type
+      // Resolve cheap "cron" model for review + the provider API key (by name).
       const resolved = resolveOperationModel({
         operationType: "cron",
         agentProvider: agentConfig.provider ?? "anthropic",
@@ -181,8 +182,6 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         operationModels: agentConfig.operationModels ?? {},
         providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
       });
-
-      // Resolve API key for the provider
       const providerEntry = container.config.providers?.entries?.[resolved.provider];
       const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
       const apiKey = container.secretManager.get(apiKeyName) ?? "";
@@ -193,7 +192,6 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       }
 
       const workspacePath = deps.workspaceDirs?.get(agentId) ?? "";
-
       const reviewLogger = logger.child({ agentId, submodule: "memory-review" });
       const reviewResult = await runMemoryReview({
         agentId,
@@ -201,6 +199,8 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         agentName: agentConfig.name ?? agentId,
         config: memReviewConfig,
         memoryPort: deps.memoryAdapter!,
+        // R6 (CR-01): small/nano cron model abstains via resolve-memory-ops-capability.ts (never fabricates into trusted storage).
+        ...resolveMemoryOpsCapability(resolved, providerEntry?.capabilities),
         sessionStore: deps.sessionStore as unknown as {
           listDetailed(tenantId?: string): Array<{ sessionKey: string; tenantId: string; userId: string; channelId: string; metadata: Record<string, unknown> | null; createdAt: number; updatedAt: number; messageCount: number }>;
           loadByFormattedKey(sessionKey: string): { messages: unknown[]; metadata: Record<string, unknown>; createdAt: number; updatedAt: number } | undefined;

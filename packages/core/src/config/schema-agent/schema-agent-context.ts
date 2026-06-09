@@ -337,6 +337,41 @@ export const ContextEngineConfigSchema = z.strictObject({
      *  synthesis. 0 = disabled. */
     maxRetries: z.number().int().min(0).max(5).default(2),
   }).default({ enabled: true, maxRetries: 2 }),
+
+  // --- Phase 152: Capacity + Prompt-Security (C1, C2/S1, C4/S4) ---
+
+  /** C1: Effective-context cap by capability class. For small/nano models with a large
+   *  contextWindow, caps effective context before computing H to prevent 256K overfill.
+   *  frontier/mid always receive the full contextWindow. Config-driven so operators can
+   *  tune per their model's measured comprehension limit. */
+  budget: z.strictObject({
+    /** Max effective context tokens for capabilityClass="small". 0 = no cap (use raw contextWindow). */
+    effectiveContextCapSmall: z.number().int().nonnegative().default(32_000),
+    /** Max effective context tokens for capabilityClass="nano". 0 = no cap. */
+    effectiveContextCapNano: z.number().int().nonnegative().default(16_000),
+    // Fully-populated default object (NOT `.default({})`) — see summarizerSpend pattern above.
+    // Zod does NOT re-parse inner field defaults from `.default({})`.
+  }).default({ effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000 }),
+
+  /** C4: Capability-routed compaction. For small/nano capabilityClass, prefer eviction
+   *  or a configured stronger summarizer over same-model LLM summarization (which degrades). */
+  compaction: z.strictObject({
+    /** When true (default): small/nano → eviction-first (or strongerSummarizerModel if set).
+     *  When false: operator opt-out — small/nano keep same-model LLM summarization. */
+    preferEvictionByCapability: z.boolean().default(true),
+    /** Optional "provider:modelId" string for a stronger summarizer for small/nano.
+     *  Empty string (default) = pure eviction/deterministic fallback. */
+    strongerSummarizerModel: z.string().default(""),
+  }).default({ preferEvictionByCapability: true, strongerSummarizerModel: "" }),
+
+  /** C2/S1: Compact-secure prompt for small/nano. Retains safety core + sender-trust +
+   *  config-secret; drops interactive-only sections. NEVER uses buildSafetySection(true). */
+  compactPrompt: z.strictObject({
+    /** Enable compact-secure promptMode for small/nano capabilityClass. Default: true. */
+    enabled: z.boolean().default(true),
+    /** Soft token target for the compact prompt (chars/3.5). Default 3000 tokens ≈ 10500 chars. */
+    targetTokens: z.number().int().min(500).max(8_000).default(3_000),
+  }).default({ enabled: true, targetTokens: 3_000 }),
 });
 
 export type ContextEngineConfig = z.infer<typeof ContextEngineConfigSchema>;

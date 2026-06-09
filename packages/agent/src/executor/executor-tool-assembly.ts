@@ -16,36 +16,22 @@ import {
   SettingsManager,
   DefaultResourceLoader,
 } from "@earendil-works/pi-coding-agent";
-import type {
-  ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
 
 /** Partial<Settings> extracted from SettingsManager.applyOverrides() parameter type.
  *  Settings is not re-exported from the SDK's index -- extract from the class method. */
 type SettingsOverrides = Parameters<SettingsManager['applyOverrides']>[0];
-import type { AgentTool } from "@earendil-works/pi-agent-core";
-import {
-  formatSessionKey,
-  type SessionKey,
-  type NormalizedMessage,
-  type PerAgentConfig,
-  type TypedEventBus,
-  type MemoryPort,
-  type HookRunner,
-  type SecretManager,
-  type EnvelopeConfig,
-  type SenderTrustDisplayConfig,
-  type ToolCapabilityPort,
-} from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/core";
-import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, resolveModelTier, CORE_TOOLS } from "./tool-deferral.js";
-import type { DeferralContext, ExcludeDeferralResult } from "./tool-deferral.js";
+import { formatSessionKey } from "@comis/core";
+import type { ErrorKind } from "@comis/core";
+import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, CORE_TOOLS } from "./tool-deferral.js";
+import type { DeferralContext } from "./tool-deferral.js";
+import type { CapabilityClass } from "./model-profile.js";
+import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
+import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { buildCapabilityIndexContext } from "./capability-index-context.js";
-import type { CapabilityIndexRenderResult } from "./capability-index-context.js";
 import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import { getOrCreateTracker, DEFAULT_LIFECYCLE_CONFIG } from "./tool-lifecycle.js";
-import { isAnthropicFamily, isGoogleFamily } from "../provider/capabilities.js";
+import { resolveProviderCapabilities } from "../provider/capabilities.js";
 import type { ToolLifecycleConfig } from "./tool-lifecycle.js";
 import { createJitGuideWrapper } from "./jit-guide-injector.js";
 import {
@@ -55,207 +41,50 @@ import {
   applyMutationSerializer,
 } from "./executor-tool-pipeline.js";
 import { assembleExecutionPrompt } from "./prompt-assembly.js";
-import type { ExecutionPromptResult } from "./prompt-assembly.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
-import type { ExecutionOverrides } from "./types.js";
-import type { EmbeddingPort } from "@comis/core";
+import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
+import type {
+  ToolAssemblyParams,
+  ToolAssemblyResult,
+} from "./executor-tool-assembly-types.js";
 
 // ---------------------------------------------------------------------------
-// Types
+// C3 (Plan 152-04): per-capability-class preamble WARN thresholds + deferred-tools caps
 // ---------------------------------------------------------------------------
 
-/** Subset of PiExecutorDeps used by the tool assembly pipeline. */
-export interface ToolAssemblyDeps {
-  customTools: ToolDefinition[];
-  convertTools?: (tools: AgentTool[]) => ToolDefinition[];
-  workspaceDir: string;
-  agentDir: string;
-  logger: ComisLogger;
-  eventBus: TypedEventBus;
-  memoryPort?: MemoryPort;
-  /** Optional cross-encoder reranker, threaded into prompt-assembly's createMemoryRecall. */
-  reranker?: import("@comis/core").RerankerPort;
-  /** Optional entity-associative store, threaded into prompt-assembly's
-   *  createMemoryRecall. TYPE-only from @comis/core (the agent↛memory build cut). */
-  entityStore?: import("@comis/core").MemoryEntityStore;
-  /** Optional temporal-spread store, threaded into prompt-assembly's
-   *  createMemoryRecall (the 4th temporal lane). TYPE-only from @comis/core (the agent↛memory cut). */
-  temporalStore?: import("@comis/core").MemoryTemporalStore;
-  /** Optional causal store, threaded into prompt-assembly's createMemoryRecall
-   *  (the 5th causal lane). TYPE-only from @comis/core (the agent↛memory build cut). */
-  causalStore?: import("@comis/core").MemoryCausalStore;
-  /** Optional triple store, threaded into prompt-assembly's createMemoryRecall
-   *  (the 6th graph-spread lane). TYPE-only from @comis/core (the agent↛memory build cut). */
-  tripleStore?: import("@comis/core").TripleStorePort;
-  /** Optional embedding read store, threaded into prompt-assembly's createMemoryRecall
-   *  (the MMR diversity re-rank's scoped embedding read). TYPE-only from @comis/core (the
-   *  agent↛memory build cut). */
-  embeddingStore?: import("@comis/core").MemoryEmbeddingStore;
-  /** Optional usefulness store, threaded into prompt-assembly's createMemoryRecall.
-   *  TYPE-only from @comis/core (the agent↛memory build cut). */
-  usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
-  /** Optional pinned-memory store. Forwarded into prompt-assembly's createMemoryRecall
-   *  Step-0 pinned-first lane (the `deps.pinnedStore !== undefined` half of the gate).
-   *  A missing forward here is a silent no-op: pinned memories never appear in
-   *  agent recall even when the store is wired in the daemon and `rag.pinned.enabled`
-   *  is true (the R6 blocker). TYPE-only from @comis/core (the agent↛memory build cut). */
-  pinnedStore?: import("@comis/core").MemoryPinnedStore;
-  /** Optional learned-alpha store, threaded into prompt-assembly's deterministic
-   *  apply overlay (the gated buildScoringAlphas read on the recall scoring arg). Absent /
-   *  off / no-row -> no read, the static config.rag.scoring alphas pass unchanged (byte-identical
-   *  recall). A missing forward of the daemon construction + the createPiExecutor forward leaves
-   *  the overlay a silent no-op (the field-plumbing hazard). TYPE-only from
-   *  @comis/core (the agent↛memory build cut). */
-  tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
-  /** Optional per-user representation store, threaded into prompt-assembly's LLM-free
-   *  `<user_profile>` standing-block injection (a deterministic scoped read + pure formatter, NO
-   *  model call). Absent -> no read, no push, byte-identical prompt. TYPE-only from @comis/core
-   *  (the agent↛memory build cut). A missing forward here leaves the profile injection a silent
-   *  no-op even when the store is wired in the daemon (the documented latent field-plumbing drop —
-   *  Pitfall 1). */
-  userRepresentationStore?: import("@comis/core").UserRepresentationStore;
-  /** Optional directional relationship store. Forwarded into
-   *  prompt-assembly's LLM-free `<channel_relationships>` standing-block injection (a deterministic
-   *  channel-scoped read + pure formatter, NO model call). Absent -> no read, no push, byte-identical
-   *  prompt. TYPE-only from @comis/core (the agent↛memory build cut). A missing forward here leaves the
-   *  relationship injection a silent no-op even when the store is wired in the daemon (Pitfall 6). */
-  relationshipStore?: import("@comis/core").RelationshipStore;
-  /** Timer port for the rerank wall-clock deadline (createMemoryRecall). */
-  timers?: import("@comis/core").TimerPort;
-  hookRunner?: HookRunner;
-  secretManager?: SecretManager;
-  envelopeConfig?: EnvelopeConfig;
-  outboundMediaEnabled?: boolean;
-  mediaPersistenceEnabled?: boolean;
-  autonomousMediaEnabled?: boolean;
-  getPromptSkillsXml?: () => string;
-  subAgentToolNames?: string[];
-  mcpToolsInherited?: boolean;
-  senderTrustDisplayConfig?: SenderTrustDisplayConfig;
-  documentationConfig?: import("@comis/core").DocumentationConfig;
-  deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
-  deliveryMirrorConfig?: { maxEntriesPerInjection: number; maxCharsPerInjection: number };
-  embeddingPort?: EmbeddingPort;
-  /**
-   * Tool-capability port for the per-turn capability-index renderer.
-   * Daemon wiring injects createNoOpCapabilityPort() from @comis/core; the
-   * live adapter is swapped in elsewhere. The no-op is a real production
-   * code path — NOT a transitional shim.
-   */
-  toolCapabilityPort: ToolCapabilityPort;
-  skillRegistry?: {
-    getEligibleSkillNames(): Set<string>;
-    initFromSdkSkills(sdkSkills: Array<{ name: string; description: string; filePath: string; baseDir: string; source: string; disableModelInvocation: boolean }>): void;
-  };
-  /** Resolve platform message character limit for a channel type. */
-  getChannelMaxChars?: (channelType: string) => number | undefined;
-  /** Wall-clock + monotonic time reads. */
-  clock: import("@comis/core").ClockPort;
-  /**
-   * ObservabilityStore for SystemPromptReport SQLite persistence.
-   * Forwarded from PiExecutorDeps via frozenDeps spread in
-   * pi-executor.ts. Threaded through to prompt-assembly.ts deps for
-   * the build+persist hook.
-   */
-  observabilityStore?: import("@comis/observability").ObservabilityStoreLike;
-  /**
-   * Set of tool names registered in the prompt but filtered out by
-   * policy (toolPolicy.deny / capability gate). The
-   * SystemPromptReport's tools.entries[].callable reflects this.
-   */
-  policyFilteredToolNames?: ReadonlySet<string>;
-  /**
-   * Run-scoped identifier (per pi-mono turn). Becomes the report's
-   * `runId` field for cross-correlation with trajectory events.
-   */
-  runId?: string;
-  /** Tenant ID for multi-tenant deployments. */
-  tenantId?: string;
-  /** Daemon data dir (COMIS_DATA_DIR / config.dataDir). Forwarded to
-   *  prompt-assembly so the recall-trace recorder resolves its containment base
-   *  from the SAME source the memory.recall_trace reader uses. */
-  dataDir?: string;
-  /** Recall-trace writer configuration. Forwarded from
-   *  PiExecutorDeps.recallTraceConfig (sourced from AppConfig.diagnostics.recallTrace
-   *  by daemon wiring) into PromptAssemblyParams.deps.recallTraceConfig, where
-   *  buildRecallTrace reads the `enabled` gate. Mirrors the dataDir thread above.
-   *  When omitted or `enabled: false`, the recorder is null (default-off, opt-in). */
-  recallTraceConfig?: {
-    readonly enabled?: boolean;
-    readonly filePath?: string;
-    readonly maxFileBytes?: number;
-  };
-}
+/**
+ * C3: Preamble WARN threshold (tokens) per capability class.
+ * Warn when cachedFreshTailPreambleTokens exceeds this fraction of the
+ * effective context window. frontier: Infinity (never warn). small/nano:
+ * tight budget (~10% of effective window is a notable preamble spend).
+ */
+const PREAMBLE_WARN_THRESHOLD_BY_CLASS: Readonly<Record<CapabilityClass, number>> = {
+  frontier: Infinity,
+  mid: 8_000,
+  small: 3_200,   // ~10% of 32K effective window
+  nano: 1_600,    // ~10% of 16K effective window
+} as const;
 
-/** Result of the tool assembly pipeline. */
-export interface ToolAssemblyResult {
-  /** Final processed tools ready for session creation. */
-  mergedCustomTools: ToolDefinition[];
-  /** Tool deferral result with active, deferred, and discover tool. */
-  deferralResult: ExcludeDeferralResult;
-  /** Formatted deferred tools context for dynamic preamble injection. */
-  deferredContext: string;
-  /**
-   * Per-turn capability-index render result.
-   * `text` is concatenated into the dynamic preamble; the count fields feed
-   * the Pino debug log emitted in `executor-prompt-runner.ts`.
-   * When the port returns gate-disabled or all counts are zero, the renderer
-   * returns the EMPTY sentinel and `text === ""` filters out via
-   * `[...].filter(Boolean)` in the runner.
-   */
-  capabilityIndexResult: CapabilityIndexRenderResult;
-  /** Session-scoped guide delivery tracking set. */
-  deliveredGuides: Set<string>;
-  /** Model tier derived from context window: "small" | "medium" | "large". */
-  modelTier: "small" | "medium" | "large";
-  /** Discovery tracker for deferred tool discovery state. */
-  discoveryTracker: DiscoveryTracker;
-  /** Mutable ref for compaction deps to serialize discovered tools. */
-  currentDiscoveryTracker: DiscoveryTracker;
-  /** Tool names demoted by lifecycle management (optional). */
-  lifecycleDemotedNames?: Set<string>;
-  /** SDK SettingsManager (file-based or in-memory). */
-  settingsManager: ReturnType<typeof SettingsManager.create>;
-  /** Whether SettingsManager uses persistent file storage. */
-  persistentSettings: boolean;
-  /** Resource loader options for DefaultResourceLoader construction. */
-  resourceLoaderOptions: ConstructorParameters<typeof DefaultResourceLoader>[0];
-  /** Assembled execution prompt (system prompt, dynamic preamble, inline memory). */
-  promptResult: ExecutionPromptResult;
-  /** Estimated system token count (system prompt + tool definition overhead). */
-  cachedSystemTokensEstimate: number;
-  /** I1 / WR-01: estimated WHOLE fresh-tail preamble token count (the entire
-   *  `dynamicPreamble` + `inlineMemory` blob envelope-wrapper prepends into the
-   *  latest user message — skills XML, MCP instructions, deferred-tools context,
-   *  date/channel lines, recalled memory, …, NOT just recall) — a SEPARATE budget
-   *  subtrahend, never folded into the system estimate above. The whole preamble is
-   *  counted on purpose (it rides the unconditionally-shipped fresh tail and is
-   *  reserved nowhere else); see token-budget.ts WR-01. */
-  cachedFreshTailPreambleTokens: number;
-}
+/**
+ * C3: Max deferred-tools entries emitted in the preamble per capability class.
+ * frontier: unlimited (Infinity). small/nano: cap to avoid bloating preamble.
+ */
+const DEFERRED_TOOLS_MAX_BY_CLASS: Readonly<Record<CapabilityClass, number>> = {
+  frontier: Infinity,
+  mid: 60,
+  small: 20,
+  nano: 10,
+} as const;
 
-/** Parameters for the assembleTools function. */
-export interface ToolAssemblyParams {
-  config: PerAgentConfig;
-  deps: ToolAssemblyDeps;
-  sessionKey: SessionKey;
-  msg: NormalizedMessage;
-  tools?: AgentTool[];
-  executionOverrides?: ExecutionOverrides;
-  isFirstMessageInSession: boolean;
-  /** Session manager instance for session context and messages. */
-  sm: {
-    buildSessionContext(): { messages: unknown[] };
-    getSessionDir(): string;
-  };
-  formattedKeyForGuides: string;
-  deliveredGuides: Set<string>;
-  resolvedModel?: { id: string; provider: string; contextWindow?: number; reasoning?: boolean };
-  modelCompat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
-  agentId?: string;
-  safetyReinforcement?: string;
-  _directives?: { thinkingLevel?: string; compact?: unknown };
-}
+// ---------------------------------------------------------------------------
+// Types — extracted to executor-tool-assembly-types.ts (file-size cap, Phase 153)
+// ---------------------------------------------------------------------------
+
+export type {
+  ToolAssemblyDeps,
+  ToolAssemblyResult,
+  ToolAssemblyParams,
+} from "./executor-tool-assembly-types.js";
 
 // ---------------------------------------------------------------------------
 // Assembly function
@@ -278,7 +107,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const {
     config, deps, sessionKey, msg, tools, executionOverrides,
     isFirstMessageInSession, sm, deliveredGuides,
-    resolvedModel, modelCompat, agentId, safetyReinforcement, _directives,
+    resolvedModel, modelCompat, modelProfile: modelProfileParam, agentId, safetyReinforcement, _directives,
   } = params;
 
   // -------------------------------------------------------------------
@@ -422,15 +251,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       memoryPort: deps.memoryPort,
       reranker: deps.reranker,
       entityStore: deps.entityStore,
-      // The lane stores ride the SAME forwarded subset as entityStore/usefulnessStore.
-      // temporalStore + causalStore were previously DROPPED here
-      // (a latent field-plumbing no-op: ToolAssemblyDeps carried them and
-      // prompt-assembly's createMemoryRecall reads them, but this enumeration omitted
-      // them, so both lanes were dead via the real pi-executor path). tripleStore
-      // (the 6th graph-spread lane) is forwarded the same way — a missing
-      // forward leaves the lane dormant even when its config flag is on. embeddingStore
-      // (the MMR diversity re-rank's scoped embedding read) is forwarded the same
-      // way — a missing forward leaves MMR a silent no-op even when rag.mmr.enabled is on.
+      // Lane stores (temporal/causal/triple/embedding): forwarded to prompt-assembly;
+      // a missing forward silently disables the corresponding RAG lane.
       temporalStore: deps.temporalStore,
       causalStore: deps.causalStore,
       tripleStore: deps.tripleStore,
@@ -505,6 +327,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     resolvedModelReasoning: resolvedModel?.reasoning,
     // "interactive" default guards the optional overrides; mirrors pi-executor.ts:1077.
     operationType: executionOverrides?.operationType ?? "interactive",
+    // C2/S1: Forward ModelProfile to prompt-assembly.ts for compact-secure mode selection.
+    // modelProfileParam is the validated ModelProfile resolved at pi-executor.ts:323;
+    // it is undefined when the executor has no profile resolution (rare legacy path).
+    modelProfile: modelProfileParam,
   });
 
   // -------------------------------------------------------------------
@@ -569,8 +395,40 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const recentlyUsedTools = extractRecentlyUsedToolNames(
     sessionMessages as unknown as Array<Record<string, unknown>>,
   );
-  const contextWindow = resolvedModel?.contextWindow ?? 128_000;
-  const modelTier = resolveModelTier(contextWindow);
+  const modelProfile = modelProfileParam ?? FAIL_CLOSED_PROFILE;
+  const capabilityClass = modelProfile.capabilityClass;
+  // SD7 (Phase 159): resolve capacity defaults (bootstrapMaxChars + activeToolCeiling).
+  const capacityDefaults = resolveScaffoldDefaults(modelProfile, config);
+
+  // C3: preamble size guard — warn when preamble tokens exceed the profile cap.
+  // This is a soft operator signal: the preamble is already assembled, but the
+  // warn lets operators know they may want to reduce MCP tools or deferred-tools
+  // list size for this capability class.
+  const preambleWarnThreshold = PREAMBLE_WARN_THRESHOLD_BY_CLASS[capabilityClass];
+  if (cachedFreshTailPreambleTokens > preambleWarnThreshold) {
+    deps.logger.warn({
+      hint: `Per-turn preamble (${cachedFreshTailPreambleTokens} tokens) exceeds the ${capabilityClass} profile cap (${preambleWarnThreshold}); consider reducing MCP tools or deferred-tools list`,
+      errorKind: "resource" as const,
+      cachedFreshTailPreambleTokens,
+      preambleWarnThreshold,
+      capabilityClass,
+    }, "C3: preamble size exceeds profile cap");
+  }
+
+  // C1 (Phase 152): profile-aware budget — 8K-starvation fix + 256K-overfill cap for small/nano.
+  // B-1 deliberate: cachedSystemTokensEstimate and cachedFreshTailPreambleTokens were computed at ÷3.5
+  // above (lines 515-528) — this is the intended over-reservation (conservative direction). DO NOT change.
+  const profileBudget = computeTokenBudgetForProfile(
+    modelProfile,
+    cachedSystemTokensEstimate,
+    cachedFreshTailPreambleTokens,
+    -1,
+    config.contextEngine?.budget?.effectiveContextCapSmall,
+    config.contextEngine?.budget?.effectiveContextCapNano,
+  );
+  // contextWindow: use profile-aware effective window (capped for small/nano) for BM25 re-rank budget
+  // control. For frontier/mid this is byte-identical to resolvedModel.contextWindow.
+  const contextWindow = profileBudget.windowTokens;
 
   // Tool lifecycle management
   const lifecycleConfig: ToolLifecycleConfig = config.toolLifecycle ?? DEFAULT_LIFECYCLE_CONFIG;
@@ -662,7 +520,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       ?? config.elevatedReply?.defaultTrustLevel
       ?? "external",
     channelType: msg.channelType,
-    modelTier,
+    capabilityClass,
     recentlyUsedToolNames: recentlyUsedTools,
     toolNames: mergedCustomTools.map(t => t.name),
     contextEngineVersion: config.contextEngine?.version,
@@ -671,10 +529,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     neverDefer: config.deferredTools?.neverDefer,
     alwaysDefer: config.deferredTools?.alwaysDefer,
     providerFamily: resolvedModel?.provider
-      ? (isAnthropicFamily(resolvedModel.provider) ? "anthropic"
-        : isGoogleFamily(resolvedModel.provider) ? "google"
-        : "other")
+      ? resolveProviderCapabilities(resolvedModel.provider).providerFamily
       : "default",
+    // SD7 (Phase 159): capability-class active-tool ceiling.
+    activeToolCeiling: capacityDefaults.activeToolCeiling,
   };
   const deferralResult = applyToolDeferral(
     mergedCustomTools,
@@ -733,9 +591,16 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // Sonnet/Opus 4.x) lives entirely in `request-body-injector.ts` and is
   // gated there by a model-id capability check. See tool-deferral.ts JSDoc
   // on `buildDeferredToolsContext` for the rationale.
+  //
+  // C3: cap deferred-tools list for small/nano to bound preamble size.
+  // frontier/mid: DEFERRED_TOOLS_MAX_BY_CLASS[class] = Infinity → pass undefined (no cap).
+  const deferredToolsMax = DEFERRED_TOOLS_MAX_BY_CLASS[capabilityClass];
   let deferredContext = "";
   if (deferralResult.deferredEntries.length > 0) {
-    deferredContext = buildDeferredToolsContext(deferralResult.deferredEntries);
+    deferredContext = buildDeferredToolsContext(
+      deferralResult.deferredEntries,
+      deferredToolsMax !== Infinity ? { maxEntries: deferredToolsMax } : undefined,
+    );
   }
 
   // Per-turn capability index.
@@ -756,7 +621,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   mergedCustomTools = createJitGuideWrapper(mergedCustomTools, deliveredGuides, deps.logger);
 
   // Schema pruning for small models
-  mergedCustomTools = applySchemasPruning({ tools: mergedCustomTools, modelTier, logger: deps.logger });
+  mergedCustomTools = applySchemasPruning({ tools: mergedCustomTools, capabilityClass, logger: deps.logger });
 
   // Schema snapshot management
   const schemaSnapshotKey = formatSessionKey(sessionKey);
@@ -785,7 +650,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deferredContext,
     capabilityIndexResult,
     deliveredGuides,
-    modelTier,
+    capabilityClass,
     discoveryTracker,
     currentDiscoveryTracker,
     lifecycleDemotedNames,

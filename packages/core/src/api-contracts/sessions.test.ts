@@ -29,6 +29,7 @@ import {
   SessionResetContract,
   SessionExportContract,
   SessionCompactContract,
+  SessionResetConversationContract,
   INTERNAL_FIELD_NAMES,
 } from "./index.js";
 
@@ -37,8 +38,8 @@ import {
 // ===========================================================================
 
 describe("SESSIONS_CONTRACTS aggregator", () => {
-  it("has exactly 12 entries (6 rpc + 6 admin)", () => {
-    expect(SESSIONS_CONTRACTS.length).toBe(12);
+  it("has exactly 13 entries (6 rpc + 7 admin)", () => {
+    expect(SESSIONS_CONTRACTS.length).toBe(13);
   });
 
   it("includes every expected method-name", () => {
@@ -56,10 +57,11 @@ describe("SESSIONS_CONTRACTS aggregator", () => {
       "session.reset",
       "session.export",
       "session.compact",
+      "session.reset_conversation",
     ]));
   });
 
-  it("partitions scopes correctly (6 rpc + 6 admin per setup-gateway-api.ts)", () => {
+  it("partitions scopes correctly (6 rpc + 7 admin per setup-gateway-api.ts)", () => {
     const byScope = new Map<string, string[]>();
     for (const c of SESSIONS_CONTRACTS) {
       const scope = c.scopes[0]!;
@@ -81,6 +83,7 @@ describe("SESSIONS_CONTRACTS aggregator", () => {
       "session.export",
       "session.list",
       "session.reset",
+      "session.reset_conversation",
     ]);
   });
 
@@ -98,7 +101,7 @@ describe("SESSIONS_CONTRACTS aggregator", () => {
 describe("sessions domain contracts do not declare dispatcher internals", () => {
   it("no contract's request schema declares any INTERNAL_FIELD_NAMES key", () => {
     // Run a probe input carrying every internal-field name + minimal-valid
-    // payload for the required fields across the 12 contracts. Each request
+    // payload for the required fields across the 13 contracts. Each request
     // schema must either silently strip the internal keys (z.object default)
     // or reject — never echo them back in the parsed output.
     //
@@ -657,6 +660,40 @@ describe("SessionCompactContract", () => {
       estimatedTokens: 0,
       compactionTriggered: false,
       instructions: null,
+    })).toThrow();
+  });
+});
+
+describe("SessionResetConversationContract", () => {
+  it("accepts valid request with session_key only", () => {
+    expect(SessionResetConversationContract.request.parse({ session_key: "k" })).toEqual({
+      session_key: "k",
+    });
+  });
+
+  it("accepts request with optional memory flag", () => {
+    expect(SessionResetConversationContract.request.parse({
+      session_key: "k",
+      memory: true,
+    })).toEqual({ session_key: "k", memory: true });
+  });
+
+  it("rejects request missing session_key", () => {
+    expect(() => SessionResetConversationContract.request.parse({})).toThrow();
+  });
+
+  it("accepts response with both layer counts (memoriesDeleted omitted)", () => {
+    expect(SessionResetConversationContract.response.parse({
+      sessionKey: "k",
+      lcdRowsDeleted: 12,
+      sessionMessagesCleared: 8,
+    })).toBeDefined();
+  });
+
+  it("rejects response missing lcdRowsDeleted", () => {
+    expect(() => SessionResetConversationContract.response.parse({
+      sessionKey: "k",
+      sessionMessagesCleared: 0,
     })).toThrow();
   });
 });

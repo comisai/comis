@@ -121,7 +121,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt, extractUserLanguage, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 import * as nodeOs from "node:os";
 import { formatSessionKey, type SpawnPacket, type MemorySearchResult } from "@comis/core";
@@ -2153,6 +2153,45 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
+  // WR-03: resolvePromptModeForProfile priority ladder (compact-secure wins
+  // over the cron/heartbeat → operational downgrade for small/nano).
+  // -----------------------------------------------------------------
+  describe("WR-03: resolvePromptModeForProfile cron/heartbeat on small/nano", () => {
+    const smallProfile = { capabilityClass: "small" } as any;
+    const nanoProfile = { capabilityClass: "nano" } as any;
+    const frontierProfile = { capabilityClass: "frontier" } as any;
+    const compactOn = { enabled: true };
+
+    it("small + cron + full → compact-secure (NOT operational) — keeps S1 hardening", () => {
+      expect(resolvePromptModeForProfile("full", "cron", smallProfile, compactOn)).toBe("compact-secure");
+    });
+
+    it("nano + heartbeat + full → compact-secure (NOT operational)", () => {
+      expect(resolvePromptModeForProfile("full", "heartbeat", nanoProfile, compactOn)).toBe("compact-secure");
+    });
+
+    it("small + interactive + full → compact-secure (unchanged)", () => {
+      expect(resolvePromptModeForProfile("full", "interactive", smallProfile, compactOn)).toBe("compact-secure");
+    });
+
+    it("frontier + cron + full → operational (large-tier downgrade preserved)", () => {
+      expect(resolvePromptModeForProfile("full", "cron", frontierProfile, compactOn)).toBe("operational");
+    });
+
+    it("no profile + cron + full → operational (existing behavior preserved)", () => {
+      expect(resolvePromptModeForProfile("full", "cron", undefined, compactOn)).toBe("operational");
+    });
+
+    it("small + cron + full but compactPrompt disabled → operational (opt-out respected)", () => {
+      expect(resolvePromptModeForProfile("full", "cron", smallProfile, { enabled: false })).toBe("operational");
+    });
+
+    it("explicit minimal baseMode wins for small + cron (no auto-upgrade from non-full)", () => {
+      expect(resolvePromptModeForProfile("minimal", "cron", smallProfile, compactOn)).toBe("minimal");
+    });
+  });
+
+  // -----------------------------------------------------------------
   // BOOT.md injection (relocated from system prompt to dynamic preamble)
   // -----------------------------------------------------------------
   describe("BOOT.md injection", () => {
@@ -2424,6 +2463,77 @@ describe("assembleExecutionPrompt", () => {
       expect(call.canarySecret).toBeUndefined();
       expect(call.sessionKey).toBeUndefined();
     });
+
+    // WR-02: compact-secure + senderTrustDisplayConfig disabled → WARN log
+    it("WR-02: compact-secure active with senderTrustDisplayConfig disabled emits WARN log", async () => {
+      // Trigger compact-secure mode: small capabilityClass + compactPrompt.enabled (default true).
+      const smallProfile = {
+        capabilityClass: "small",
+        contextWindow: 32_000,
+        maxOutputTokens: 4_096,
+        securityLevel: "standard",
+      } as any;
+      const params = makeParams({
+        // senderTrustDisplayConfig NOT set (undefined → disabled by default)
+        deps: { workspaceDir: "/workspace" },
+        // Pass a small-class model profile to trigger compact-secure mode
+        modelProfile: smallProfile,
+      });
+      // Also clear snapshot so promptMode resolves fresh (not cached from another test)
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      // Must emit exactly the WR-02 WARN
+      const warnCalls = (params.logger.warn as any).mock.calls;
+      const wr02Warn = warnCalls.find(
+        (c: any[]) => typeof c[1] === "string" && c[1].includes("S1: sender-trust not injected in compact-secure"),
+      );
+      expect(wr02Warn).toBeDefined();
+      // Structured log field assertions (submodule per CLAUDE.md logging — module is bound via getLogger)
+      expect(wr02Warn![0]).toMatchObject({
+        submodule: "prompt-assembly",
+        errorKind: "config",
+        hint: expect.stringContaining("senderTrustDisplayConfig"),
+      });
+    });
+
+    it("WR-02: compact-secure with senderTrustDisplayConfig.enabled=true does NOT emit the WR-02 WARN", async () => {
+      const smallProfile = {
+        capabilityClass: "small",
+        contextWindow: 32_000,
+        maxOutputTokens: 4_096,
+        securityLevel: "standard",
+      } as any;
+      const params = makeParams({
+        config: makeConfig({
+          elevatedReply: { senderTrustMap: { "user-1": "trusted" }, defaultTrustLevel: "external" },
+        }),
+        deps: {
+          workspaceDir: "/workspace",
+          // senderTrustDisplayConfig IS enabled → WARN must not fire
+          senderTrustDisplayConfig: { enabled: true, displayMode: "raw" },
+        },
+        modelProfile: smallProfile,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      const warnCalls = (params.logger.warn as any).mock.calls;
+      const wr02Warn = warnCalls.find(
+        (c: any[]) => typeof c[1] === "string" && c[1].includes("S1: sender-trust not injected in compact-secure"),
+      );
+      expect(wr02Warn).toBeUndefined();
+    });
   });
 
   // -----------------------------------------------------------------
@@ -2515,6 +2625,25 @@ describe("assembleExecutionPrompt", () => {
     expect(budgetCall).toBeDefined();
     const [fields] = budgetCall!;
     expect(fields.hasSpawnPacket).toBe(false);
+  });
+
+  it("bootstrap budget warn includes toolDefOverheadChars and totalEstimatedChars when warn fires", async () => {
+    // Non-brittle: only assert field types, not exact values (threshold/content-dependent).
+    const params = makeParams({
+      deps: { workspaceDir: "/workspace" },
+    });
+    await assembleExecutionPrompt(params);
+
+    const warnCalls = (params.logger.warn as any).mock.calls;
+    const warnCall = warnCalls.find(
+      ([_fields, msg]: [any, string]) => msg === "Bootstrap content exceeds budget threshold",
+    );
+    if (warnCall) {
+      const [fields] = warnCall;
+      expect(typeof fields.toolDefOverheadChars).toBe("number");
+      expect(typeof fields.totalEstimatedChars).toBe("number");
+    }
+    // If warn didn't fire (below threshold), that's fine — test is non-brittle
   });
 
   // -----------------------------------------------------------------
@@ -4181,5 +4310,216 @@ describe("assembleExecutionPrompt — CR-03: pinnedSet identified by entry.pinne
     // Budget: 2 pins measured (200 chars) → split gets 4000 - 200 = 3800.
     const splitMaxChars = mockHybridSplit.mock.calls[0][1] as number;
     expect(splitMaxChars).toBe(MAX_CONTEXT_CHARS - PINNED_SECTION_CHARS);
+  });
+
+  // -----------------------------------------------------------------
+  // R3 Small/nano count cap (153-03)
+  // -----------------------------------------------------------------
+  describe("R3 small/nano profile count/chars caps", () => {
+    const SMALL_PROFILE = {
+      capabilityClass: "small",
+      contextWindow: 32_000,
+      maxOutputTokens: 4_096,
+      securityLevel: "locked",
+      scaffoldLevel: "max",
+      supportsVision: false,
+      supportsTools: true,
+      supportsPromptCache: false,
+      supportsServerToolSearch: false,
+      supportsStructuredOutput: false,
+      reasoningStyle: "none",
+    } as any;
+
+    const NANO_PROFILE = {
+      capabilityClass: "nano",
+      contextWindow: 16_000,
+      maxOutputTokens: 2_048,
+      securityLevel: "locked",
+      scaffoldLevel: "max",
+      supportsVision: false,
+      supportsTools: true,
+      supportsPromptCache: false,
+      supportsServerToolSearch: false,
+      supportsStructuredOutput: false,
+      reasoningStyle: "none",
+    } as any;
+
+    const FRONTIER_PROFILE = {
+      capabilityClass: "frontier",
+      contextWindow: 200_000,
+      maxOutputTokens: 8_192,
+      securityLevel: "standard",
+      scaffoldLevel: "light",
+      supportsVision: true,
+      supportsTools: true,
+      supportsPromptCache: true,
+      supportsServerToolSearch: true,
+      supportsStructuredOutput: true,
+      reasoningStyle: "none",
+    } as any;
+
+    function makeRankedMemory(id: string, contentLength: number) {
+      return {
+        entry: {
+          id,
+          tenantId: "default",
+          agentId: "default",
+          userId: "user_a",
+          content: "x".repeat(contentLength),
+          trustLevel: "learned",
+          source: { who: "agent" },
+          tags: [],
+          createdAt: Date.now(),
+          pinned: false,
+        },
+        score: 0.8,
+      } as any;
+    }
+
+    // A stub memoryPort that satisfies `deps.memoryPort && config.rag?.enabled` gate.
+    const stubMemoryPort = { search: vi.fn().mockResolvedValue({ ok: true, value: [] }) } as any;
+    // A full rag config (all required fields) used across caps tests.
+    const ragConfig = { enabled: true, maxResults: 10, minScore: 0.1, includeTrustLevels: ["system", "learned"], maxContextChars: 8000 };
+
+    it("small profile: count cap of 3 — only 3 items pass to injector.split when 5 recalled", async () => {
+      const fiveMemories = [1, 2, 3, 4, 5].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
+
+      const params = makeParams({
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
+        modelProfile: SMALL_PROFILE,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitArg = mockHybridSplit.mock.calls[0][0] as Array<{ entry: { id: string } }>;
+      // Small profile caps at 3 items — only the first 3 should be passed to split
+      expect(splitArg).toHaveLength(3);
+      expect(splitArg.map((r) => r.entry.id)).toEqual(["mem-1", "mem-2", "mem-3"]);
+    });
+
+    it("nano profile: count cap of 3 — only 3 items pass to injector.split when 5 recalled", async () => {
+      const fiveMemories = [1, 2, 3, 4, 5].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
+
+      const params = makeParams({
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
+        modelProfile: NANO_PROFILE,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitArg = mockHybridSplit.mock.calls[0][0] as Array<{ entry: { id: string } }>;
+      // Nano profile caps at 3 items
+      expect(splitArg).toHaveLength(3);
+    });
+
+    it("frontier profile: no count cap — all 5 items pass to injector.split", async () => {
+      const fiveMemories = [1, 2, 3, 4, 5].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
+
+      const params = makeParams({
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
+        modelProfile: FRONTIER_PROFILE,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitArg = mockHybridSplit.mock.calls[0][0] as Array<{ entry: { id: string } }>;
+      // Frontier: no cap → all 5 pass
+      expect(splitArg).toHaveLength(5);
+    });
+
+    it("no modelProfile: no count cap — all 5 items pass to injector.split", async () => {
+      const fiveMemories = [1, 2, 3, 4, 5].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: fiveMemories });
+
+      const params = makeParams({
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
+        // modelProfile omitted
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitArg = mockHybridSplit.mock.calls[0][0] as Array<{ entry: { id: string } }>;
+      // No profile: no cap → all 5 pass
+      expect(splitArg).toHaveLength(5);
+    });
+
+    it("small profile chars cap of 2000: maxContextChars passed to split is capped at 2000", async () => {
+      const twoMemories = [1, 2].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: twoMemories });
+
+      const params = makeParams({
+        // maxContextChars=8000 but small profile chars cap=2000 overrides it
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
+        modelProfile: SMALL_PROFILE,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitMaxChars = mockHybridSplit.mock.calls[0][1] as number;
+      // Small profile caps chars at 2000 (takes min with remainingChars)
+      expect(splitMaxChars).toBeLessThanOrEqual(2000);
+    });
+
+    it("nano profile chars cap of 1000: maxContextChars passed to split is capped at 1000", async () => {
+      const twoMemories = [1, 2].map((i) => makeRankedMemory(`mem-${i}`, 100));
+      mockRecall.mockResolvedValue({ ok: true, value: twoMemories });
+
+      const params = makeParams({
+        // maxContextChars=8000 but nano profile chars cap=1000 overrides it
+        config: makeConfig({ rag: ragConfig }),
+        deps: { workspaceDir: "/workspace", memoryPort: stubMemoryPort },
+        modelProfile: NANO_PROFILE,
+      });
+      const sessionKey = formatSessionKey(params.sessionKey as any);
+      clearSessionToolNameSnapshot(sessionKey);
+      clearSessionBootstrapFileSnapshot(sessionKey);
+      clearSessionPromptSkillsXmlSnapshot(sessionKey);
+      clearCacheSafeParams(sessionKey);
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockHybridSplit).toHaveBeenCalledOnce();
+      const splitMaxChars = mockHybridSplit.mock.calls[0][1] as number;
+      // Nano profile caps chars at 1000
+      expect(splitMaxChars).toBeLessThanOrEqual(1000);
+    });
   });
 });

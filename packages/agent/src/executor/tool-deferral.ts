@@ -22,7 +22,7 @@ import { getToolMetadata } from "@comis/core";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import { extractMcpServerName } from "@comis/shared";
 import { PRIVILEGED_TOOL_NAMES } from "../bootstrap/sections/tooling-sections.js";
-import type { ModelTier } from "../bootstrap/sections/tooling-sections.js";
+import type { CapabilityClass } from "./model-profile.js";
 import { LEAN_TOOL_DESCRIPTIONS } from "../bootstrap/sections/tool-descriptions.js";
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ export interface DeferralRule {
 export interface DeferralContext {
   trustLevel: string;
   channelType?: string;
-  modelTier: ModelTier;
+  capabilityClass: CapabilityClass;
   recentlyUsedToolNames: Set<string>;
   toolNames: string[];
   contextEngineVersion?: string;
@@ -90,6 +90,13 @@ export interface DeferralContext {
    *  queries re-ask for loaded MCPs. Must NOT include names that were
    *  deferred -- pass the post-deferral set, not mergedCustomTools. */
   activeToolNames?: ReadonlySet<string>;
+  /** SD7 (Phase 159): capability-class active-tool ceiling.
+   *  When set, the active tool count is capped to this value after all other
+   *  deferral passes. Only CORE_TOOLS and recently-used tools are guaranteed
+   *  active; the cold long-tail is deferred behind discover_tools until the
+   *  active count <= ceiling.
+   *  undefined = no ceiling (nano has its own aggressive path; frontier/mid uncapped). */
+  activeToolCeiling?: number;
 }
 
 /** Entry describing a deferred tool with its display description and original definition. */
@@ -169,35 +176,6 @@ export const CORE_TOOLS = new Set([
   "web_search", "web_fetch",
 ]);
 
-// ---------------------------------------------------------------------------
-// ModelTier resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Classify a model by its context window size into small/medium/large tiers.
- *
- * - small (<= 32K): Aggressive deferral, 0.0 temperature
- * - medium (<= 64K): Standard deferral, 0.1 temperature
- * - large (> 64K): Standard deferral, 0.1 temperature
- */
-export function resolveModelTier(contextWindow: number): ModelTier {
-  if (contextWindow <= 32_000) return "small";
-  if (contextWindow <= 64_000) return "medium";
-  return "large";
-}
-
-// ---------------------------------------------------------------------------
-// Tool calling temperature
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve the optimal tool-calling temperature for a given model tier.
- * Small models benefit from deterministic tool selection (0.0).
- */
-export function resolveToolCallingTemperature(modelTier: ModelTier): number {
-  return modelTier === "small" ? 0.0 : 0.1;
-}
-
 /**
  * Anthropic models that support server-side tool-search via defer_loading.
  * Sonnet 4.x+, Opus 4.x+; NOT Haiku.
@@ -267,6 +245,10 @@ export function extractRecentlyUsedToolNames(
 export function resolveToolDescription(tool: ToolDefinition): string {
   const entry = LEAN_TOOL_DESCRIPTIONS[tool.name];
   if (typeof entry === "function") {
+    // WR-01 / TODO(Phase-152): pass capabilityClass when small-model lean
+    // descriptions are introduced. Until then, "large" is the correct safe
+    // default — it produces the same output as the current behavior, and
+    // DeferralContext.capabilityClass is not threaded to this function yet.
     return entry({ modelTier: "large" });
   }
   if (typeof entry === "string") return entry;
@@ -296,17 +278,37 @@ export function resolveToolDescription(tool: ToolDefinition): string {
  * Anthropic regex tool. Naming the tool explicitly gives the model a
  * concrete next step.
  *
+ * C3 (Plan 152-04): optional `maxEntries` cap truncates the formatted list
+ * and appends a "[+N more deferred tools — use discover_tools to list all]"
+ * suffix. Frontier/mid: uncapped (options undefined or {}). Small/nano: caller
+ * passes `{ maxEntries: DEFERRED_TOOLS_MAX_BY_CLASS[capabilityClass] }`.
+ * The options parameter is optional; omitting it leaves the list uncapped.
+ *
  * @param entries - Deferred tool entries (remaining after discovery re-inclusion)
+ * @param options - Optional cap options: `maxEntries` limits formatted lines
  * @returns XML block string, or empty string when no entries
  */
-export function buildDeferredToolsContext(entries: DeferredToolEntry[]): string {
+export function buildDeferredToolsContext(
+  entries: DeferredToolEntry[],
+  options?: { maxEntries?: number },
+): string {
   if (entries.length === 0) return "";
+
+  // C3: apply maxEntries cap before formatting
+  const maxEntries = options?.maxEntries;
+  let effectiveEntries = entries;
+  let truncatedCount = 0;
+
+  if (maxEntries !== undefined && entries.length > maxEntries) {
+    effectiveEntries = entries.slice(0, maxEntries);
+    truncatedCount = entries.length - maxEntries;
+  }
 
   // Separate MCP tools (group by server) from non-MCP tools (individual listing)
   const mcpByServer = new Map<string, DeferredToolEntry[]>();
   const nonMcpEntries: DeferredToolEntry[] = [];
 
-  for (const e of entries) {
+  for (const e of effectiveEntries) {
     const server = extractMcpServerName(e.name);
     if (server) {
       const list = mcpByServer.get(server) ?? [];
@@ -329,6 +331,11 @@ export function buildDeferredToolsContext(entries: DeferredToolEntry[]): string 
     const prefix = `mcp__${server}--`;
     const shortNames = tools.map(t => t.name.startsWith(prefix) ? t.name.slice(prefix.length) : t.name);
     lines.push(`[${server}] (${tools.length} tools): ${shortNames.join(", ")}`);
+  }
+
+  // C3: append truncation notice when entries were capped
+  if (truncatedCount > 0) {
+    lines.push(`[+${truncatedCount} more deferred tools — use discover_tools to list all]`);
   }
 
   const instruction =
@@ -402,17 +409,40 @@ export function applyToolDeferral(
   // sub-agent run.
   //
   // Operators who DO want MCP deferral opt in via
-  // `config.deferredTools.alwaysDefer`. The small-model rule below still
-  // catches MCP tools when modelTier is `"small"` (aggressive deferral for
-  // narrow context windows). Providers without mid-turn injection (OpenAI,
+  // `config.deferredTools.alwaysDefer`. The nano-class rule below still
+  // catches MCP tools when capabilityClass is `"nano"` (aggressive deferral for
+  // the most constrained models). Providers without mid-turn injection (OpenAI,
   // xAI, etc.) were already exempt from MCP deferral and remain so -- the
   // flip means the Anthropic/Google branch now matches their behavior.
 
-  // Small model aggressive deferral
-  if (deferralContext.modelTier === "small") {
+  // Aggressive deferral for nano-class models (behavior-neutral: old modelTier="small" at <=32K maps to capabilityClass="nano")
+  // Phase 159/SD7: 'small' class ceiling policy implemented via DeferralContext.activeToolCeiling.
+  // nano retains its own aggressive CORE_TOOLS-only path below.
+  if (deferralContext.capabilityClass === "nano") {
     for (const t of tools) {
       if (!deferredSet.has(t.name) && !CORE_TOOLS.has(t.name) && !deferralContext.recentlyUsedToolNames.has(t.name)) {
         deferredSet.add(t.name);
+      }
+    }
+  }
+
+  // SD7 (Phase 159): active-tool ceiling for small class (fills Phase-152/SD7 deferred TODO).
+  // Only fires when DeferralContext.activeToolCeiling is set — undefined guard preserves
+  // the Phase-151 regression test (makeContext without activeToolCeiling → skipped).
+  // CRITICAL: mirrors the nano path — CORE_TOOLS and recently-used tools are NEVER deferred.
+  // Deferred tools remain fully reachable via discover_tools (no capability removal).
+  if (deferralContext.activeToolCeiling !== undefined) {
+    const ceiling = deferralContext.activeToolCeiling;
+    const activeCount = tools.filter(t => !deferredSet.has(t.name)).length;
+    if (activeCount > ceiling) {
+      let remaining = activeCount - ceiling; // how many to defer
+      for (const t of tools) {
+        if (remaining <= 0) break;
+        if (deferredSet.has(t.name)) continue;
+        if (CORE_TOOLS.has(t.name)) continue;
+        if (deferralContext.recentlyUsedToolNames.has(t.name)) continue;
+        deferredSet.add(t.name);
+        remaining--;
       }
     }
   }

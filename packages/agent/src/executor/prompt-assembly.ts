@@ -77,7 +77,66 @@ import { buildRelationshipBlock } from "./relationship-block.js";
 import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context-engine/index.js";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
+import { FAIL_CLOSED_PROFILE, type ModelProfile } from "./model-profile.js";
+import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import * as os from "node:os";
+
+// ---------------------------------------------------------------------------
+// C2/S1: Prompt mode resolution for ModelProfile
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the effective PromptMode for a given execution context.
+ *
+ * Priority (highest to lowest):
+ * 1. Compact-secure for small/nano capabilityClass (C2/S1) — wins even for
+ *    cron/heartbeat turns (WR-03: security holds independent of model + operation).
+ * 2. Cron/heartbeat auto-upgrade: "full" → "operational" (frontier/mid + no-profile).
+ * 3. baseMode (operator-explicit or "full" default).
+ *
+ * compact-secure fires ONLY when:
+ *   - compactPromptConfig.enabled is true (default)
+ *   - profile.capabilityClass is "small" or "nano"
+ *   - baseMode is "full" (respect explicit operator overrides)
+ *
+ * WR-03: the compact-secure check is evaluated BEFORE the cron/heartbeat →
+ * operational downgrade. The milestone's premise is "weaker class ⇒ stricter
+ * securityLevel", and compact-secure carries the S1 anti-injection sender-trust
+ * hardening. A cron/heartbeat turn on a small/nano model must NOT silently lose
+ * that hardening — it gets compact-secure, not operational. The operational
+ * downgrade is reserved for frontier/mid (and no-profile) cron/heartbeat turns,
+ * which never enter compact-secure anyway.
+ *
+ * Frontier/mid: never compact-secure. This is the behavior-neutral guarantee
+ * for large-tier models — their prompt stays byte-identical to pre-152 output.
+ *
+ * @internal exported for tests only
+ */
+export function resolvePromptModeForProfile(
+  baseMode: PromptMode,
+  operationType: ModelOperationType,
+  profile: ModelProfile | undefined,
+  compactPromptConfig: { enabled?: boolean; targetTokens?: number } | undefined,
+): PromptMode {
+  // compact-secure: only for small/nano with config flag enabled (default: true).
+  // NEVER for frontier/mid — behavior-neutral guarantee (T-152-05). Evaluated
+  // FIRST so a cron/heartbeat turn on a weak model keeps the S1 hardening (WR-03)
+  // instead of being downgraded to "operational".
+  if (
+    (compactPromptConfig?.enabled ?? true) &&
+    profile !== undefined &&
+    (profile.capabilityClass === "small" || profile.capabilityClass === "nano") &&
+    baseMode === "full" // only auto-downgrade from full; respect explicit baseMode overrides
+  ) {
+    return "compact-secure";
+  }
+  // Cron/heartbeat → operational (frontier/mid + no-profile; small/nano already
+  // resolved to compact-secure above).
+  if ((operationType === "cron" || operationType === "heartbeat") && baseMode === "full") {
+    return "operational";
+  }
+  return baseMode;
+}
 
 // ---------------------------------------------------------------------------
 // User language extraction
@@ -427,6 +486,13 @@ export interface PromptAssemblyParams {
    *  the promptMode from "full" to "operational" and dispatch operation-specific
    *  bootstrap filters. */
   operationType: ModelOperationType;
+  /** C2/S1: ModelProfile resolved per execution in pi-executor. Drives compact-secure
+   *  promptMode selection for small/nano capabilityClass when
+   *  contextEngine.compactPrompt.enabled is true. Also supplies securityLevel for
+   *  lockdown scaling inside the compact-secure assembler. When absent, no compact-secure
+   *  downgrade is applied (fail-open for the mode selection, fail-closed at the security
+   *  level via the assembler's default "standard" securityLevel). */
+  modelProfile?: ModelProfile;
 }
 
 // ---------------------------------------------------------------------------
@@ -693,15 +759,32 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   }
 
   // 1. Resolve promptMode
-  // Cron and heartbeat auto-upgrade from "full" -> "operational" to trim
-  // interactive-only sections (compaction recovery, silent replies, reactions,
-  // media, SEP, sender trust). An explicit `config.bootstrap?.promptMode` wins
-  // -- operators can still force "minimal"/"none"/"full" if they have reason.
+  // Priority: cron/heartbeat → operational; small/nano + compactPrompt.enabled → compact-secure;
+  // operator override wins over compact-secure (only baseMode="full" gets auto-downgraded).
+  // An explicit `config.bootstrap?.promptMode` wins for all modes including "minimal"/"none".
   const baseMode: PromptMode = (config.bootstrap?.promptMode as PromptMode) ?? "full";
-  const promptMode: PromptMode =
-    (params.operationType === "cron" || params.operationType === "heartbeat") && baseMode === "full"
-      ? "operational"
-      : baseMode;
+  const promptMode: PromptMode = resolvePromptModeForProfile(
+    baseMode,
+    params.operationType,
+    params.modelProfile,
+    config.contextEngine?.compactPrompt,
+  );
+
+  // WR-02: warn when compact-secure is active but senderTrustDisplayConfig is disabled.
+  // The sender-trust section wiring is correct (MODES_FULL_MIN_COMPACT includes it), but
+  // the data it receives is always an empty array when the feature is not configured —
+  // producing a structurally-satisfied but content-empty section. Operators should
+  // configure senderTrustDisplayConfig to get meaningful anti-injection trust display.
+  if (promptMode === "compact-secure" && !deps.senderTrustDisplayConfig?.enabled) {
+    logger.warn(
+      {
+        submodule: "prompt-assembly",
+        hint: "compact-secure mode active but senderTrustDisplayConfig is disabled — sender-trust section will be empty. Configure senderTrustDisplayConfig.enabled=true for S1 anti-injection trust display.",
+        errorKind: "config" as const,
+      },
+      "S1: sender-trust not injected in compact-secure (feature disabled)",
+    );
+  }
 
   // Consolidated lightContext flag: heartbeat implies light-context regardless
   // of the explicit msg.metadata.lightContext flag. Callers that only set the
@@ -718,7 +801,13 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   let bootstrapFilesForReport: BootstrapFile[] = [];
   // Capture the bootstrap budget for the report (and any truncation summary
   // the system prompt assembler applies).
-  const bootstrapMaxChars = config.bootstrap?.maxChars ?? 20_000;
+  // SD6 (Phase 159): capability-gated bootstrap.maxChars.
+  // resolveScaffoldDefaults handles the === 20_000 sentinel check internally.
+  // Fail-closed: absent modelProfile → FAIL_CLOSED_PROFILE (nano) → 3_500 (conservative).
+  const { bootstrapMaxChars, bootstrapTotalMaxChars } = resolveScaffoldDefaults(
+    params.modelProfile ?? FAIL_CLOSED_PROFILE,
+    config,
+  );
   if (promptMode !== "none") {
     // Snapshot raw bootstrap files on first turn to keep system prompt stable.
     // When the agent writes workspace files mid-session (e.g., IDENTITY.md during onboarding),
@@ -729,7 +818,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     const bsSnapKey = formatSessionKey(sessionKey);
     let bootstrapFiles = sessionBootstrapFileSnapshots.get(bsSnapKey);
     if (!bootstrapFiles) {
-      bootstrapFiles = await loadWorkspaceBootstrapFiles(deps.workspaceDir, bootstrapMaxChars);
+      bootstrapFiles = await loadWorkspaceBootstrapFiles(deps.workspaceDir);
       sessionBootstrapFileSnapshots.set(bsSnapKey, bootstrapFiles);
     }
 
@@ -748,7 +837,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       bootstrapFiles = filterBootstrapFilesForGroupChat(bootstrapFiles);
     }
 
-    bootstrapContextFiles = buildBootstrapContextFiles(bootstrapFiles, { maxChars: bootstrapMaxChars });
+    bootstrapContextFiles = buildBootstrapContextFiles(bootstrapFiles, {
+      maxChars: bootstrapMaxChars,
+      totalMaxChars: bootstrapTotalMaxChars,
+    });
     bootstrapFilesForReport = bootstrapFiles;
   }
 
@@ -869,6 +961,16 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           // A fully-defaulted RagConfig field (same posture as mmr/forget), so it passes DIRECTLY.
           // Default-OFF (`enabled:false`) ⇒ the pinned lane is skipped (byte-identical).
           pinned: config.rag.pinned,
+          // R3: forward the base-score floor gate.
+          // SD2 (Phase 158): capability-gated baseFloor.
+          // Resolved: explicit config.rag.baseFloor (>0) wins; for small/nano with
+          // baseFloor===0 (schema default/"unset"), applies SMALL_NANO_DEFAULT_BASE_FLOOR=0.15.
+          // frontier/mid with no config: effective floor remains 0 (byte-identical).
+          // Fail-closed when modelProfile absent → 0 floor (frontier-equivalent behavior).
+          // T-153-poison: boosts cannot resurrect a low-base memory (floor gates pre-boost).
+          baseFloor: params.modelProfile !== undefined
+            ? resolveScaffoldDefaults(params.modelProfile, config).baseFloor
+            : (config.rag as typeof config.rag & { baseFloor?: number }).baseFloor,
           ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },
       );
@@ -895,13 +997,38 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           config.rag.pinned?.enabled === true
             ? ranked.filter((r) => r.entry.pinned === true)
             : [];
-        const fusedSet = ranked.filter((r) => r.entry.pinned !== true);
+        let fusedSet = ranked.filter((r) => r.entry.pinned !== true);
         let pinnedChars = 0;
         if (pinnedSet.length > 0) {
           const pinnedSection = formatMemorySection(pinnedSet, config.rag.maxContextChars);
           pinnedChars = pinnedSection ? pinnedSection.length : 0;
         }
-        const remainingChars = Math.max(0, config.rag.maxContextChars - pinnedChars);
+
+        // R3: small/nano profile count cap (3 items max) and chars cap (2000/1000).
+        // Applied AFTER the base-floor filter in the recall pipeline, at the injection site.
+        // Caps are conservative but generous for small models; frontier/mid are uncapped.
+        // T-153-03b: accepted DoS risk — caps are well above typical useful recall sets.
+        const maxRecallItems =
+          params.modelProfile?.capabilityClass === "small" || params.modelProfile?.capabilityClass === "nano"
+            ? 3
+            : undefined;
+        const maxRecallChars =
+          params.modelProfile?.capabilityClass === "small"
+            ? 2000
+            : params.modelProfile?.capabilityClass === "nano"
+              ? 1000
+              : undefined;
+        if (maxRecallItems !== undefined && fusedSet.length > maxRecallItems) {
+          fusedSet = fusedSet.slice(0, maxRecallItems);
+        }
+
+        const remainingChars = Math.max(
+          0,
+          Math.min(
+            config.rag.maxContextChars - pinnedChars,
+            maxRecallChars !== undefined ? maxRecallChars : Infinity,
+          ),
+        );
         const injection = injector.split(fusedSet, remainingChars);
 
         inlineMemory = injection.inlineMemory;
@@ -1229,6 +1356,9 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     workspaceProfile: config.workspace?.profile,
     sepEnabled: params.sepEnabled,
     dagModeEnabled,
+    // C2/S1: securityLevel from ModelProfile drives lockdown tightening in compact-secure mode.
+    // Only applied when promptMode === "compact-secure"; ignored for full/operational/minimal.
+    securityLevel: params.modelProfile?.securityLevel,
   };
 
   let systemPrompt = assembleRichSystemPrompt(assemblerParams);
@@ -1379,19 +1509,26 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     wrappedApiSystemPrompt = wrapExternalContent(apiSystemPrompt, { source: "api", includeWarning: true, onSuspiciousContent: deps.onSuspiciousContent });
   }
 
-  // Bootstrap content budget tracking
+  // Bootstrap content budget tracking (F4: denominator = systemPromptChars + toolDefOverheadChars)
   const bootstrapChars = bootstrapContextFiles.reduce((sum, f) => sum + f.content.length, 0);
   const systemPromptChars = systemPrompt.length;
+  const toolDefOverheadChars = mergedCustomTools.reduce((sum, t) => {
+    return sum + (t.name?.length ?? 0) + (t.description?.length ?? 0) +
+      (t.parameters ? JSON.stringify(t.parameters).length : 0);
+  }, 0);
+  const totalEstimatedChars = systemPromptChars + toolDefOverheadChars;
   if (systemPromptChars > 0) {
-    const bootstrapPercent = Math.round((bootstrapChars / systemPromptChars) * 100);
+    const bootstrapPercent = Math.round((bootstrapChars / totalEstimatedChars) * 100);
     if (bootstrapPercent > BOOTSTRAP_BUDGET_WARN_PERCENT) {
       logger.warn(
         {
           bootstrapChars,
           systemPromptChars,
+          toolDefOverheadChars,
+          totalEstimatedChars,
           bootstrapPercent,
           threshold: BOOTSTRAP_BUDGET_WARN_PERCENT,
-          hint: `Bootstrap files consume ${bootstrapPercent}% of system prompt; consider trimming AGENTS.md or reducing maxChars`,
+          hint: `Bootstrap files consume ${bootstrapPercent}% of estimated total prompt (system + tools); consider total bootstrap budget or reducing maxChars`,
           errorKind: "resource" as const,
         },
         "Bootstrap content exceeds budget threshold",
@@ -1594,7 +1731,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       systemPromptChars: systemPrompt.length,
       dynamicPreambleChars: dynamicPreamble.length,
       bootstrapChars,
-      bootstrapPercent: systemPromptChars > 0 ? Math.round((bootstrapChars / systemPromptChars) * 100) : 0,
+      bootstrapPercent: totalEstimatedChars > 0 ? Math.round((bootstrapChars / totalEstimatedChars) * 100) : 0,
       toolCount: mergedCustomTools.length,
       isFirstMessage: deps.isFirstMessageInSession ?? false,
       hasSpawnPacket: !!deps.spawnPacket,

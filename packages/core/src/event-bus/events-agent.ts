@@ -426,6 +426,32 @@ export interface AgentEvents {
     action: "warn" | "reinforce" | "terminate";
   };
 
+  /**
+   * Critic isolation: canary token detected in the critic's verdict output
+   * (prompt-extraction attempt). 100% capture per AI-SPEC §7 (S2, Phase 154).
+   */
+  "critic.isolation.canary_leak": {
+    timestamp: number;
+    agentId: string;
+    sessionKey?: string;
+    traceId?: string;
+    /** First 10 chars of the canary token (never the full HMAC — enough to correlate, not leak). */
+    canaryPrefix: string;
+  };
+
+  /**
+   * Critic isolation: implied tool call detected in the critic's verdict
+   * (scope-widening attempt). 100% capture per AI-SPEC §7 (S2, Phase 154).
+   */
+  "critic.isolation.implied_tool_call": {
+    timestamp: number;
+    agentId: string;
+    sessionKey?: string;
+    traceId?: string;
+    /** Which regex pattern triggered (e.g., "call write_file"). Sanitized — no user content. */
+    pattern: string;
+  };
+
   /** Sender trust level resolved for display (audit trail) */
   "sender:trust_resolved": {
     agentId: string;

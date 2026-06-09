@@ -304,6 +304,32 @@ Extensible key-value map of task type to model identifier. Any string key maps t
 | `default` | `string` | _(unset)_ | Default model for unrouted tasks (falls back to `agent.model`) |
 | _(any key)_ | `string` | -- | Custom route name to model ID |
 
+#### Operation Model Overrides (agents.*.operationModels)
+
+Override the model and timeout for specific internal operation types. Each entry is an `OperationModelEntry` with optional `model` (string `"provider:modelId"`) and `timeoutMs` (number) fields. Omit any type to use the agent's primary model.
+
+| Operation type | When it fires | Recommended model |
+|---------------|---------------|-------------------|
+| `cron` | Scheduled cron task execution | — |
+| `heartbeat` | Periodic heartbeat check | — |
+| `subagent` | Sub-agent task delegation | — |
+| `compaction` | Context compaction summarization | Capable model or `contextEngine.compaction.strongerSummarizerModel` |
+| `taskExtraction` | Task extraction from conversation | — |
+| `condensation` | Memory condensation | Capable model |
+| `verification` | Pre-delivery critic (R4). Fires when `agents.<id>.verification.enabled=true` and the response is a completion-claiming response meeting `minResponseChars`. | Cheap model: `"anthropic:claude-haiku-4-5-20250929"` or `"ollama:qwen3.6:27b"` for local self-check. Omit to use the primary model. |
+| `planning` | Pre-execution planner (R5, deferrable on M2). | Capable model for checklist generation. Omit to use the primary model. |
+
+```yaml
+agents:
+  default:
+    operationModels:
+      verification:
+        model: "anthropic:claude-haiku-4-5-20250929"
+        timeoutMs: 30000
+      compaction:
+        model: "anthropic:claude-haiku-4-5-20250929"
+```
+
 #### Model Failover (agents.*.modelFailover)
 
 | Key | Type | Default | Description |
@@ -343,6 +369,17 @@ See [Resilience](/agents/resilience) for how prompt timeouts fit into the full r
 | `maxContextChars` | `number` | `4000` | Maximum characters of memory context injected |
 | `minScore` | `number` | `0.1` | Minimum RRF score threshold (0-1) |
 | `includeTrustLevels` | `string[]` | `["system", "learned"]` | Trust levels to include in retrieval |
+| `baseFloor` | `number` (0–1) | `0` for frontier/mid; `0.15` for small/nano (capability-gated) | Minimum BASE relevance score (pre-boost) for memory injection. Boosts cannot resurrect a memory whose base score falls below this threshold. Gates on `ScoreBreakdown.base` (un-boosted cosine/RRF score), applied after `scoreWithBreakdown()`. Setting `baseFloor: 0` is the unset sentinel — the capability default applies (0.15 for small/nano). Any value greater than 0 is treated as explicit and wins over the capability default. |
+
+> **Security (S6):** A weaker ModelProfile cannot lower this below the operator-set value. `FROZEN_TRUST_PATHS` and `MemoryWriteValidator` remain enforced for all `capabilityClass`es regardless of this setting.
+
+> **Capability-gated default (Phase 158):** For `small`/`nano` agents, `rag.baseFloor` defaults
+> to `0.15` — dropping memories with a base relevance score below 0.15 (the Phase 153 poison
+> mitigation). For `frontier`/`mid`, the default remains `0` (no filter). Setting
+> `rag.baseFloor: 0` explicitly is treated the same as "unset" — the capability default applies.
+> To disable the relevance floor on a small/nano agent, set
+> `providers.<id>.capabilityClass: "frontier"` to override the capability class, or set
+> `rag.baseFloor: 0.01` (any value greater than 0 is treated as explicit and wins over the capability default).
 
 **Cross-encoder rerank (agents.*.rag.rerank)** — opt-in (default off)
 
@@ -417,7 +454,7 @@ diagnostics:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `maxChars` | `number` | `20000` | Per-file character limit for workspace files injected into system prompt |
+| `maxChars` | `number` | `20000` for frontier/mid; `3500` for small/nano (capability-gated) | Per-file character limit for workspace files injected into system prompt. For `capabilityClass` in `{small, nano}`, the effective default drops to `3_500` chars per file (SD6, Phase 159). Setting `maxChars: 20000` explicitly is treated the same as "unset" — the capability default of `3_500` still applies for small/nano. Use `capabilityClassOverride: frontier` or set an explicit value other than `20000` to override. |
 | `promptMode` | `enum` | `"full"` | Verbosity: `full`, `minimal` (sub-agents), `none` (identity only) |
 | `groupChatFiltering` | `boolean` | `true` | Exclude USER.md from bootstrap in group chats (privacy) |
 
@@ -558,6 +595,37 @@ Context engine configuration. Controls the system that manages what your agent s
   The DAG cross-agent isolation adds an `agent_id` column to the full-text search index, created once on a fresh database (no migration — sessions start fresh on the LCD engine). A pre-existing development `~/.comis` database created before this release may need to be wiped to pick up the isolated index; a fresh install needs nothing. See [Compaction](/agents/compaction#per-tenant-agent-session-isolation).
 </Note>
 
+#### Capacity Cap (agents.\*.contextEngine.budget)
+
+Prevents 256K context-window models from over-provisioning when running a small executive (e.g., qwen3.6:27b). Applied in `computeTokenBudgetForProfile` before history budget computation. `frontier` and `mid` classes always receive the full `contextWindow`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.contextEngine.budget.effectiveContextCapSmall` | `number` (non-negative int) | `32000` | Maximum effective context tokens for `capabilityClass="small"`. `0` = no cap (use raw contextWindow). Applied to prevent 256K overfill degrading a 27–35B executive. |
+| `agents.<id>.contextEngine.budget.effectiveContextCapNano` | `number` (non-negative int) | `16000` | Maximum effective context tokens for `capabilityClass="nano"`. `0` = no cap. `frontier` and `mid` classes always receive the full `contextWindow`. |
+
+#### Compaction Routing (agents.\*.contextEngine.compaction)
+
+Controls how the context engine handles LLM summarization for low-capability models. Applied in both pipeline `llm-compaction` and DAG leaf-summarizer layers.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.contextEngine.compaction.preferEvictionByCapability` | `boolean` | `true` | When `true`: `small`/`nano` capabilityClass → eviction-first (or `strongerSummarizerModel` if set) instead of same-model LLM summarization. Prevents degraded summaries from a weak model. A `context:compaction_routed` event fires when routing occurs. |
+| `agents.<id>.contextEngine.compaction.strongerSummarizerModel` | `string` | `""` | Optional `"provider:modelId"` for a stronger summarizer when `small`/`nano` models are detected. Empty string = pure eviction/deterministic fallback. Example: `"anthropic:claude-haiku-4-5-20250929"`. |
+
+> **Security (S4):** Eviction never drops security-relevant context (sender-trust, safety reinforcement, untrusted-content markers, canary token). The `security-context-pinner` enforces this fail-closed.
+
+#### Compact Prompt (agents.\*.contextEngine.compactPrompt)
+
+Controls the compact-secure promptMode for `small`/`nano` models. This mode assembles the system prompt to a bounded target while **always** retaining the full safety core, sender-trust, and config-secret sections.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.contextEngine.compactPrompt.enabled` | `boolean` | `true` | Enable compact-secure promptMode for `small`/`nano` capabilityClass. When `true`, retains the FULL safety core, sender-trust, and config-secret sections — never falls back to minimal mode's empty safety. `frontier`/`mid` agents are unaffected. |
+| `agents.<id>.contextEngine.compactPrompt.targetTokens` | `number` (500–8000) | `3000` | Soft token target for the compact prompt (~chars/3.5). At 3000 ≈ 10,500 chars. |
+
+> **Security warning (S1):** Setting `enabled=false` does **not** make the prompt smaller — it restores the full-size `full` promptMode. The compact prompt is safe for all deployments because it retains the security core. It is **not safe** to use `minimal` promptMode (which drops the safety block) for any security-sensitive deployment.
+
 #### Memory Consolidation (agents.*.memoryConsolidation)
 
 Periodic LLM-driven consolidation of similar memories into observations. Opt-in (default off) because each run spends model tokens -- it is a cost gate. When enabled, a scheduled cron clusters near-duplicate memories and folds each cluster into a single observation; external-trust memories are excluded by default.
@@ -581,6 +649,48 @@ Periodic LLM-driven consolidation of similar memories into observations. Opt-in 
 |-----|------|---------|-------------|
 | `maxResponseBytes` | `number` | `2000000` | Default byte cap for HTTP responses |
 | `stripHiddenHtml` | `boolean` | `true` | Whether to strip hidden HTML before extraction |
+
+#### Goal Anchor (agents.\*.goalAnchor)
+
+Injects the current execution objective and uncompleted step checklist at the context tail every turn. Helps weak models stay on task across multi-turn executions. **Default-ON** for scaffolded (`small`/`nano`) tiers; **off** by default for `frontier`/`mid`, but injected when `enabled: true` is set explicitly. Precedence: **explicit per-agent config > capability default > off**.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.goalAnchor.enabled` | `boolean` | automatic for small/nano (no config needed); false for frontier/mid | Enable GoalAnchor tail injection. Default-ON for `small`/`nano` (no config needed); off for `frontier`/`mid` unless `enabled: true` is set explicitly (which injects on `frontier`/`mid` too). When effective, the execution objective and uncompleted step checklist is tail-appended each turn. Precedence: explicit per-agent config > capability default > off. |
+| `agents.<id>.goalAnchor.maxChars` | `number` (100–2000) | `500` | Maximum characters for the injected GoalAnchor block. ~5–10 steps at ~50 chars/step. |
+
+> **Capability-gated default (Phase 158):** For `capabilityClass` in `{small, nano}` (e.g. any Ollama
+> qwen3.6 deployment), `goalAnchor` is **default-ON** — no `enabled: true` required. Set
+> `agents.<id>.goalAnchor.enabled: false` explicitly to disable it on a small/nano agent.
+> For `frontier`/`mid` agents, behavior is unchanged (default off). Precedence:
+> **explicit per-agent config > capability default > off**.
+
+#### Verification Critic (agents.\*.verification)
+
+A pre-delivery critic that checks the terminal response against the GoalAnchor checklist before delivery. Unmet requirements redirect the executor; exhausted retries deliver an honest unmet-list. Meaningful only for `scaffoldLevel=max` (small/nano) agents.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.verification.enabled` | `boolean` | cost-gated automatic for small/nano when a distinct cheap critic is configured; false otherwise | Enable pre-delivery verification critic. Fires only when a completion-claiming response meets `minResponseChars`. Default `false` for frontier/mid and for small/nano when no distinct cheap critic model is configured = opt-in. |
+| `agents.<id>.verification.minResponseChars` | `number` (50–2000) | `200` | Minimum response length in characters before the critic is invoked. Prevents firing on short acks, clarifying questions, and non-completion replies. |
+
+> **Security (S2):** The critic treats the output-under-review as untrusted (`wrapExternalContent`), inherits the safety core, embeds the canary, fails closed (uncertain → not-verified, never auto-approve), and re-validates any implied tool calls through the same exec gates. Use `agents.<id>.operationModels.verification` to run the critic on a cheaper or faster model.
+
+> **Capability-gated default + cost-gate (Phase 158):** For `capabilityClass` in `{small, nano}`,
+> `verification` is **default-ON** — but **only when `agents.<id>.operationModels.verification`
+> resolves to a distinct cheaper model** (i.e. `operationModels.verification.model` is explicitly
+> configured to a different, faster model). If no distinct critic model is configured, the default
+> stays **OFF** — the critic never silently doubles local-CPU inference latency. Set
+> `agents.<id>.verification.enabled: false` explicitly to force-off the critic on a small/nano
+> agent even when a cheap critic is configured. Set `agents.<id>.verification.enabled: true` to
+> force-on the critic regardless of class (including frontier/mid, if a critic model is configured).
+> Precedence: **explicit per-agent config > capability default > off**.
+
+#### Honesty Guardrail (agents.\*.honesty)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.honesty.maxCriticRetries` | `number` (0–5) | `2` | Maximum critic retry redirects before delivering an honest unmet-list. After this many not-verified verdicts, the executor delivers an honest unmet-list instead of an unqualified "done". Prevents infinite re-prompt loops. |
 
 #### Skills (agents.*.skills)
 
@@ -1887,6 +1997,20 @@ LLM provider configuration. API keys are referenced by SecretManager key name, n
 | `dropThinkingBlockModelHints` | `string[]` | `[]` | Model ID substrings that trigger thinking block suppression |
 | `transcriptToolCallIdMode` | `enum` | `"default"` | Tool call ID format: `default` (pass-through) or `strict9` (truncate to 9 chars for providers with ID length limits) |
 | `transcriptToolCallIdModelHints` | `string[]` | `[]` | Model ID substrings that trigger strict9 tool call ID mode |
+| `supportsVision` | `boolean` | `false` | When `true`, image attachments are forwarded to the model. When `false` (or unset), images are warn-dropped with a log entry. Set `true` for qwen3.6:27b/35b GGUF variants that support image input. |
+| `supportsPromptCache` | `boolean` | _(auto from providerFamily)_ | Whether models on this provider support prompt caching. Auto-detected from `providerFamily`: `true` for `anthropic`/`google`, `false` for `default`/`openai`. Set explicitly to override. When `false`, prompt assembly emits a single block with no `cache_control` split overhead. |
+| `supportsStructuredOutput` | `boolean` | `false` | When `true`, tool-call repair uses constrained decoding (e.g., Ollama's `/api/generate` `format` param) for near-miss tool JSON. When `false`, lenient parse-and-repair is used. |
+| `capabilityClass` | `"frontier"` \| `"mid"` \| `"small"` \| `"nano"` | _(resolver heuristic)_ | Explicit capability-class override for all models on this provider. Overrides the default resolver heuristic (which keys off model context-window and provider-family). Forces `scaffoldLevel` (GoalAnchor, critic) and `securityLevel` (lockdown intensity). Use `"small"` for an Ollama provider running qwen3.6. Setting `"frontier"` for a weak model silences scaffolding — not recommended for production. |
+
+> **v2.15 capability-gated defaults:** The v2.14 reliability scaffold (GoalAnchor, relevance floor,
+> cost-gated critic) is now **default-ON for `small`/`nano` agents** — no per-agent opt-in required.
+> Phase 159 adds two capacity defaults for `small`/`nano`: `bootstrap.maxChars` drops to `3_500`
+> chars per file (SD6), and the active-tool ceiling is set to 24 tools (SD7; overflow tools stay
+> reachable via `discover_tools`). Phase 160 adds a total bootstrap budget (5,000 chars sum-cap
+> for small/nano), capability-gated graph concurrency (small/nano→2, frontier/mid→4), and a
+> corrected bootstrap-budget warn threshold. `frontier`/`mid` behavior is **byte-identical** to
+> v2.14 (the non-regression guarantee). The security guarantee holds: a weaker model class cannot
+> lower the platform's security posture; the scaffolding defaults reinforce it.
 
 **UserModel (providers.entries.{name}.models[])**
 
@@ -1944,6 +2068,176 @@ providers:
 </Accordion>
 
 </AccordionGroup>
+
+### Recommended Secure qwen3.6 Configuration
+
+The following `config.yaml` snippet shows the recommended settings for a secure, scaffolded qwen3.6 local deployment. All security-relevant keys from Phases 151–155 are shown with their recommended values.
+
+```yaml
+providers:
+  entries:
+    qwen36-local:
+      baseUrl: "http://localhost:11434/v1"
+      # No apiKeyName — keyless Ollama
+      capabilities:
+        capabilityClass: small          # Forces scaffoldLevel=max + securityLevel=locked
+        supportsVision: true            # For 27b/35b GGUF; false for MLX variants
+        supportsStructuredOutput: true  # Enables constrained-decode tool-call repair
+
+models:
+  defaultModel: "qwen36-local:qwen3.6:35b"
+
+agents:
+  default:
+    contextEngine:
+      budget:
+        effectiveContextCapSmall: 32000  # Cap effective history at 32K (prevents 256K overfill)
+      compaction:
+        preferEvictionByCapability: true  # Evict rather than summarize with the small model
+      compactPrompt:
+        enabled: true        # Compact-secure prompt (retains full safety core)
+        targetTokens: 3000
+    goalAnchor:
+      # enabled: true is the capability default for small/nano — omit to rely on capability default
+      enabled: true          # Explicit: tail-inject objective checklist each turn (scaffoldLevel=max)
+      maxChars: 500
+    verification:
+      # enabled: true is the capability default for small/nano when operationModels.verification is set
+      enabled: true          # Explicit force-on: pre-delivery critic (honest unmet-list on failure)
+      minResponseChars: 200
+    honesty:
+      maxCriticRetries: 2
+    rag:
+      baseFloor: 0.3         # Memory relevance floor; capability default is 0.15 for small/nano (0 = sentinel)
+```
+
+### Capability-gated capacity defaults (Phase 159/160 — D2/D3)
+
+These defaults fire only for `capabilityClass` in `{small, nano}` (e.g., any Ollama qwen3.6 deployment). The 2026-06-08 re-verification measured ~32K input tokens per qwen3.6 turn — 98 active tool schemas and a 14.4K-char bootstrap file drove a 495% bootstrap warning. Phase 159 adds two capability-gated defaults to address this without changing `frontier`/`mid` behavior. Phase 160 adds a total bootstrap budget, capability-gated graph concurrency, and a corrected bootstrap-budget warn threshold.
+
+#### bootstrap.maxChars capability default (SD6)
+
+For `capabilityClass` in `{small, nano}`, `bootstrap.maxChars` defaults to `3_500` chars per file (down from the schema baseline of `20_000`). For `frontier`/`mid`, the value is unchanged (`20_000` per file — byte-identical to v2.14).
+
+Key properties:
+
+- **Per-file limit.** Each workspace file is truncated individually. At `3_500` chars, AGENTS.md (the largest file) is preserved head 70% + tail 20%; smaller identity files (SOUL/IDENTITY/USER/ROLE/TOOLS/HEARTBEAT/BOOT) fit entirely within the limit.
+- **Precedence:** explicit `agents.<id>.bootstrap.maxChars` > capability default (`3_500` for small/nano) > `20_000` (frontier/mid baseline).
+- **Sentinel: `20_000` is treated as "unset".** Setting `bootstrap.maxChars: 20000` explicitly has the same effect as omitting the key — the capability default of `3_500` applies for small/nano. This is because `20_000` is the schema default, so the runtime cannot distinguish "operator chose 20_000" from "no override". To force the `20_000` limit on a small/nano agent, set `agents.<id>.capabilityClassOverride: frontier` instead.
+
+<Warning>
+  If security-critical content lives in the **middle** of AGENTS.md (between the first 70% and last 20%), it may be truncated for small/nano models. Place critical rules in the **first ~2,450 chars** or **last ~700 chars** of AGENTS.md for reliable injection. See AGENTS.md placement guidance for the recommended section order.
+</Warning>
+
+To override the capability default for a single agent:
+
+```yaml
+agents:
+  my-agent:
+    bootstrap:
+      maxChars: 8000   # override the small/nano default of 3_500
+```
+
+#### Active-tool ceiling (SD7)
+
+For `capabilityClass: small`, at most **24 tool schemas** are active in each prompt request. The cold long-tail (tools not in the core set and not recently used) is deferred.
+
+<Note>
+  **No capability is removed.** All deferred tools remain fully callable via the `discover_tools` mechanism. The model can search for and invoke any deferred tool in the same turn. This ceiling is a **prompt-size control**, not a security control — it does not restrict which tools the agent is authorized to use.
+</Note>
+
+The ceiling applies only to `capabilityClass: small`. Key properties:
+
+- **CORE_TOOLS are never deferred.** The following tools are always kept active regardless of the ceiling: `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process`, `message`, `memory_search`, `memory_store`, `memory_get`, `web_search`, `web_fetch`.
+- **Recently-used tools are never deferred.** Any tool the agent invoked in recent turns is preserved in the active set.
+- **`nano` class is not affected.** Nano already uses aggressive CORE_TOOLS-only deferral; the 24-tool ceiling does not change its behavior.
+- **`frontier`/`mid` classes are not affected.** No ceiling applies — behavior is unchanged from v2.14.
+- **Savings:** 15 CORE_TOOLS + 9 discretionary slots at 24 active tools vs. the previous 40 saves approximately 750–1,250 tokens per turn (~300 chars per tool schema average).
+
+#### Total bootstrap budget (Phase 160 — F2)
+
+For `capabilityClass` in `{small, nano}`, the **total bootstrap budget** caps the sum of all bootstrap file content at **5,000 chars**, applied as a second pass after the per-file `3_500`-char cap (SD6).
+
+Key properties:
+
+- **Sum-cap, not per-file.** If all workspace files together would exceed 5,000 chars after per-file truncation, each file is proportionally scaled down to fit the total budget.
+- **Per-file floor.** Each file retains at least **300 chars**, regardless of how many files compete for the budget. No file is silenced entirely.
+- **Proportional truncation.** Each file's allocation is `(file_chars / total_chars) * totalMaxChars`, floored at 300. Content is taken from the beginning of the file (direct slice — not head+tail; the per-file SD6 pass already applied head+tail truncation).
+- **`frontier`/`mid` unaffected.** No total cap is applied; behavior is byte-identical to v2.14.
+- **Config override.** Explicit `agents.<id>.bootstrap.maxChars` always takes precedence over both the per-file and total-budget capability defaults.
+
+Typical result: with the default workspace files (AGENTS.md, SOUL, IDENTITY, USER, ROLE, TOOLS, HEARTBEAT, BOOT), the total bootstrap fits within 5,000 chars after per-file truncation — the proportional pass is a safety net, not the primary reducer.
+
+To override the total budget for a single agent:
+
+```yaml
+agents:
+  my-agent:
+    bootstrap:
+      maxChars: 8000   # overrides the small/nano per-file default (3_500)
+      # Note: there is no explicit totalMaxChars config key — the total budget is
+      # capability-derived (5_000 for small/nano). Override the per-file limit instead,
+      # or use capabilityClassOverride: frontier to remove both caps entirely.
+```
+
+#### Capability-gated graph concurrency (Phase 160 — F3)
+
+For `capabilityClass` in `{small, nano}`, the graph coordinator's `maxConcurrency` defaults to **2** (down from 4). For `frontier`/`mid`, the default remains **4** (byte-identical to v2.14).
+
+**Why lower concurrency for small/nano?** Local inference on Ollama (or any local GPU-bound runtime) serializes model loads in practice. With 4 concurrent sub-agents, all four issue simultaneous inference requests; the GPU queues them, producing peak saturation that can cause 50–80% of sub-agents to time out on longer prompts. Lowering the default to 2 staggers the load while keeping two in-flight at all times.
+
+To override the default for your deployment:
+
+```yaml
+security:
+  agentToAgent:
+    graphMaxConcurrency: 4   # restore the frontier default, or set any value >= 1
+```
+
+The operator override always takes precedence over the capability-class default.
+
+**Prompt timeout for local Ollama.** The default `promptTimeoutMs` (180,000 ms — 3 minutes) is sized for cloud APIs that typically respond in under 60 seconds. A local model with slow inference (e.g., qwen3.6 on a loaded GPU with multiple concurrent agents) can exceed this. For local deployments, set a longer timeout:
+
+```yaml
+agents:
+  my-agent:
+    promptTimeout:
+      promptTimeoutMs: 300000   # 5 minutes — recommended for local qwen3.6 under load
+```
+
+**Fallback-model recommendation.** For deep multi-agent pipelines on local hardware, configure a `models.failoverModel` pointing to a lighter local model (e.g., a faster quantized variant) that can handle sub-agent calls when the primary model is loaded. This provides graceful degradation rather than timeout cascades.
+
+#### Bootstrap-budget warn re-base (Phase 160 — F4)
+
+The `Bootstrap content exceeds budget threshold` WARN fires when bootstrap files exceed **40%** of the estimated total prompt (system prompt chars + tool schema definition chars).
+
+**Old behavior (pre-Phase 160):** The threshold was 85% of the system prompt character count alone. With the compact-secure prompt (~2,800 chars), this meant bootstrap content over ~2,380 chars triggered the warning — which fired on every small-model turn even with a normal workspace (false-alarm rate: ~100%).
+
+**New behavior:** The denominator is `systemPromptChars + toolDefOverheadChars` (the same formula used by `executor-tool-assembly.ts` for the context-budget breakdown). With a compact-secure system prompt (~2,800 chars) and 24 active tool schemas (~12,000 chars overhead), the denominator is ~14,800 chars. With the Phase 160 F2 total bootstrap budget of 5,000 chars, the ratio is ~34% — below the 40% threshold, so no warning fires under normal conditions.
+
+**When does the warn still fire?** If an operator adds large custom workspace files that push the total bootstrap above 5,920 chars (40% of ~14,800), the warn fires correctly — signaling that bootstrap content is crowding out the system prompt and tool schemas in a meaningful way.
+
+#### Summary
+
+| Class | bootstrap.maxChars (per-file) | bootstrap total budget | Active-tool ceiling | Graph maxConcurrency |
+|-------|-------------------------------|------------------------|---------------------|----------------------|
+| `frontier` / `mid` | `20_000` (unchanged) | No total cap | No ceiling | 4 |
+| `small` | `3_500` (capability default) | `5_000` chars sum-cap | 24 tools active | 2 |
+| `nano` | `3_500` (capability default) | `5_000` chars sum-cap | CORE_TOOLS-only (existing) | 2 |
+
+All capability defaults follow the same precedence: **explicit per-agent config > capability default**. The D2/D3 capacity defaults are additive: all behaviors activate together for `small`/`nano` agents with no per-agent config required.
+
+> **Relationship to Phase 158 D1 (reliability defaults):** The GoalAnchor, `rag.baseFloor`, and verification critic defaults from Phase 158 follow the same precedence model — explicit per-agent config > capability default > off. The D2/D3 capacity defaults (bootstrap budget, tool ceiling, graph concurrency) are additive: all default-on behaviors activate together for `small`/`nano` agents with no per-agent config required.
+
+### General vs. Coding-Tuned Model Guidance
+
+For agent reliability, prefer **general-purpose** qwen3.6 variants over coding-tuned models:
+
+- **General models** (e.g., `qwen3.6:35b`, `qwen3.6:27b`) are the right choice for agentic tasks. They handle multi-turn conversations, multi-constraint instructions, and tool use reliably.
+- **Coding-tuned models** can exhibit **goal fixation** — continuing to pursue a sub-task at the expense of the original objective. The Comis scaffold (GoalAnchor, verification critic, compact-secure prompt) is designed to detect and correct this behavior, but general models avoid the problem in the first place. The v2.14 small-model milestone originated from a snake game incident involving a coding-tuned model; general-purpose qwen3.6 reproduces this scenario far less.
+- The Comis scaffold is designed for general models. It is not a substitute for choosing the right model class.
+
+For local model runtime selection (MLX vs. GGUF), see the [Environment Variables](/reference/environment-variables#local-model-runtime-selection-mlx-vs-gguf) reference.
 
 ## UX Features
 

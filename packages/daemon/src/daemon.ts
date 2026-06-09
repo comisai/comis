@@ -88,7 +88,6 @@ import {
   createInjectionRateLimiter,
   checkApprovalsConfig,
   formatSessionKey,
-  generateStrongToken,
   safePath,
   resolveConfigSecretRefs,
   validateMemoryWrite,
@@ -155,6 +154,7 @@ import {
   createBackgroundSessionResolver,
   createGeminiCacheManager,
   createSessionTrackerRegistry,
+  seedDefaultDagTemplates,
   validateProviderOverrides,
   wireGeminiCacheCleanup,
   wireMcpDisconnectCleanup,
@@ -176,6 +176,7 @@ import { createChannelHealthMonitor } from "@comis/channels";
 // the breaker's lifetime; the orchestrator owns its logic.
 import { createActivityCircuitBreaker } from "@comis/orchestrator";
 import { createGraphCoordinator, createNodeTypeRegistry } from "./graph/index.js";
+import { resolveGraphConcurrencyDefaults } from "./graph/graph-capability-defaults.js";
 import { createWakeCoalescer, createSystemEventQueue, type WakeReasonKind } from "@comis/scheduler";
 import { createTokenRegistry } from "./api/token-handlers.js";
 // 154-03: the shared obs.explain assembler + production reader, for the
@@ -213,7 +214,7 @@ import {
 import { setupSingleAgent } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -695,11 +696,27 @@ function buildGraphCoordinatorDeps(deps: {
       tools: [] as Array<{ name: string; description?: string; inputSchema?: unknown }>,
     };
   })();
+  // F3: capability-gated graph concurrency — small/nano → 2, frontier/mid → 4.
+  // Reads the default agent's model+provider — the same values the preWarm block uses,
+  // but declared here in the outer function scope (not inside the IIFE above).
+  // Explicit `graphMaxConcurrency` config always wins via the ?? chain below.
+  const agentCfg = agentsConfig[defaultAgentId];
+  const defaultModel = agentCfg?.model === "default" || !agentCfg?.model
+    ? "claude-sonnet-4-5-20250929"
+    : agentCfg.model;
+  const defaultProvider = agentCfg?.provider ?? "anthropic";
+  const capabilityOverride = (
+    container.config.providers?.entries?.[defaultProvider]?.capabilities?.capabilityClass
+  ) as import("@comis/agent").CapabilityClass | undefined;
+  const graphDefaults = resolveGraphConcurrencyDefaults(
+    { provider: defaultProvider, modelId: defaultModel },
+    capabilityOverride,
+  );
   return {
     subAgentRunner: channels.subAgentRunner, eventBus: container.eventBus,
     sendToChannel: channels.sendToChannel, announceToParent: channels.announceToParent,
     batcher: channels.announcementBatcher, tenantId: container.config.tenantId, defaultAgentId,
-    maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? 4,
+    maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? graphDefaults.maxConcurrency,
     maxResultLength: a2aSec.graphMaxResultLength as number | undefined,
     maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
     logger: agentLogger?.child?.({ submodule: "graph-coordinator" }),
@@ -820,83 +837,6 @@ type PostChannelsBootContext = BootContext & Required<Pick<BootContext,
   | "resolveAttachment" | "deliveryQueue"
   | "imageGenProvider" | "imageGenRateLimiter" | "imageGenConfig"
 >>;
-
-/**
- * Resolve gateway tokens from config (config -> env -> auto-generated).
- */
-/**
- * Per-token MCP-client config block. Surface to the gateway TokenStore via
- * `TokenEntry.mcpClient` so the verified TokenClient carries the allowlist +
- * sessionAllowlist + per-tool rate-limit overrides.
- */
-interface ResolvedGatewayToken {
-  id: string;
-  secret: string;
-  scopes: string[];
-  mcpClient?: {
-    allowlist: string[];
-    sessionAllowlist: string[];
-    toolRateLimit: Record<string, number>;
-  };
-}
-
-function resolveGatewayTokens(deps: {
-  container: BootContext["container"];
-  daemonLogger: BootContext["daemonLogger"];
-}): Array<ResolvedGatewayToken> {
-  const { container, daemonLogger } = deps;
-  const resolved: Array<ResolvedGatewayToken> = [];
-  for (const t of container.config.gateway?.tokens ?? []) {
-    const tokenId = t.id ?? "unknown";
-    const tokenScopes = [...(t.scopes ?? [])];
-    // Preserve the per-MCP-client config block so the TokenStore can surface
-    // it on verified TokenClient instances. Schema defaults guarantee the
-    // fields are populated when the block is present.
-    const mcpClient = t.mcpClient
-      ? {
-          allowlist: [...t.mcpClient.allowlist],
-          sessionAllowlist: [...t.mcpClient.sessionAllowlist],
-          toolRateLimit: { ...t.mcpClient.toolRateLimit },
-        }
-      : undefined;
-
-    if (typeof t.secret === "string" && t.secret.length >= 32) {
-      // Source: config (explicit secret present and valid)
-      resolved.push({
-        id: tokenId,
-        secret: t.secret,
-        scopes: tokenScopes,
-        ...(mcpClient && { mcpClient }),
-      });
-    } else {
-      const envKey = `GATEWAY_TOKEN_${tokenId.toUpperCase().replace(/-/g, "_")}`;
-      const envSecret = container.secretManager.get(envKey);
-      if (envSecret) {
-        // Source: env / SecretManager
-        resolved.push({
-          id: tokenId,
-          secret: envSecret,
-          scopes: tokenScopes,
-          ...(mcpClient && { mcpClient }),
-        });
-      } else {
-        // Source: auto-generated (ephemeral)
-        const generated = generateStrongToken();
-        resolved.push({
-          id: tokenId,
-          secret: generated,
-          scopes: tokenScopes,
-          ...(mcpClient && { mcpClient }),
-        });
-        daemonLogger.warn(
-          { tokenId, envVar: envKey, hint: `Set ${envKey} in environment or secrets store for persistence`, errorKind: "config" as const },
-          "Gateway token auto-generated (ephemeral -- will be lost on restart)",
-        );
-      }
-    }
-  }
-  return resolved;
-}
 
 /**
  * Factory: hot-add agent closure. Returns the closure that captures
@@ -2386,6 +2326,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
   }));
   subAgentRunner.setGraphCoordinator(graphCoordinator);
   const namedGraphStore = createNamedGraphStore(db);
+  // O2 (WR-02): seed the four canonical small-model DAG templates into the
+  // named-graph store. Idempotent via INSERT-OR-IGNORE semantics inside the
+  // seeder, so operator-customized templates are preserved across restarts and
+  // re-running on every boot is safe.
+  seedDefaultDagTemplates(namedGraphStore);
 
   // 6.7. Monitoring + per-agent heartbeat + wake coalescer
   const { heartbeatRunner, duplicateDetector } = setupMonitoring({ container, schedulerLogger, logger, adaptersByType });

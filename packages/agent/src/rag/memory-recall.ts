@@ -60,6 +60,28 @@ export type { MemoryRecallDeps, MemoryRecallConfig, MemoryRecall } from "./recal
 import type { MemoryRecallDeps, MemoryRecallConfig, MemoryRecall } from "./recall-types.js";
 
 /**
+ * R3 base-score floor decision (T-153-poison mitigation), FAIL-CLOSED (WR-02).
+ *
+ * A memory survives the floor ONLY when its recorded pre-boost `breakdown.base`
+ * is at or above `baseFloor` (boundary inclusive). A memory with NO breakdown
+ * (`undefined`) is DROPPED — it cannot be proven above the floor.
+ *
+ * Why no `r.score` fallback: on the rerank-applied path the entry's `score` is
+ * the cross-encoder probability, a different (typically higher) scale than
+ * `breakdown.base`. Comparing the floor against that inflated score would let a
+ * low-base poisoned memory survive the exact filter meant to drop it. This gate
+ * is security-critical, so a missing base fails closed.
+ *
+ * @internal exported for tests only
+ */
+export function passesBaseFloor(
+  breakdown: ScoreBreakdown | undefined,
+  baseFloor: number,
+): boolean {
+  return breakdown !== undefined && breakdown.base >= baseFloor;
+}
+
+/**
  * Build a recall orchestrator from injected deps + recall config.
  *
  * The returned `recall` composes search -> fuse -> rerank -> score -> trust-filter ->
@@ -573,6 +595,22 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         );
         for (const r of scored) breakdownById.set(r.entry.id, r.breakdown);
         ranked = scored;
+      }
+
+      // 4b. R3 BASE-SCORE FLOOR — drop memories whose pre-boost base score is below the
+      //     operator-set floor. Runs AFTER scoreWithBreakdown() (breakdownById populated)
+      //     so the filter accesses the EXACT breakdown.base — not the boosted r.score.
+      //     Boosts (recency/temporal/proof/trust/usefulness) CANNOT resurrect a memory
+      //     whose raw cosine/RRF base sits below the floor (T-153-poison mitigation).
+      //     DEFAULT-OFF BYTE-IDENTITY: floor absent or === 0 → no filter, ranked unchanged.
+      //     FAIL-CLOSED (WR-02): a memory with no recorded breakdown.base cannot be proven
+      //     above the floor, so it is DROPPED. The prior fallback compared r.score against
+      //     the floor — but on the rerank-applied path r.score is the cross-encoder
+      //     probability (a different, typically HIGHER scale than breakdown.base), so a
+      //     low-base poisoned memory with an inflated CE score would survive the exact
+      //     filter meant to drop it. This is a security gate: a missing base is a hard drop.
+      if (cfg.baseFloor !== undefined && cfg.baseFloor > 0) {
+        ranked = ranked.filter((r) => passesBaseFloor(breakdownById.get(r.entry.id), cfg.baseFloor!));
       }
 
       // 5. TRUST-FILTER (mirrors the old inline filter). score() does not depend on the

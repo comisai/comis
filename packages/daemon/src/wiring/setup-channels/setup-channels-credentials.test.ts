@@ -40,10 +40,22 @@ const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
   source: "default",
 })));
 
+// Faithful capability-axis stub for resolveModelProfile (CR-01): explicit
+// override wins; else anthropic/openai → frontier, google → mid, else → small.
+const mockResolveModelProfile = vi.hoisted(() => vi.fn((model: { provider: string }, override?: string) => {
+  let capabilityClass = override;
+  if (capabilityClass === undefined) {
+    const p = model.provider;
+    capabilityClass = p === "anthropic" || p === "openai" ? "frontier" : p === "google" ? "mid" : "small";
+  }
+  return { capabilityClass };
+}));
+
 vi.mock("@comis/agent", () => ({
   sanitizeAssistantResponse: vi.fn((s: string) => s),
   resolveOperationModel: mockResolveOperationModel,
   resolveProviderFamily: vi.fn(() => "anthropic"),
+  resolveModelProfile: mockResolveModelProfile,
   runMemoryReview: mockRunMemoryReview,
   runMemoryConsolidation: mockRunMemoryConsolidation,
   runMemoryReasoning: mockRunMemoryReasoning,
@@ -154,6 +166,14 @@ describe("setup-channels-credentials", () => {
     mockResolveOperationModel.mockReturnValue({
       provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku",
       timeoutMs: 60_000, source: "default",
+    });
+    mockResolveModelProfile.mockImplementation((model: { provider: string }, override?: string) => {
+      let capabilityClass = override;
+      if (capabilityClass === undefined) {
+        const p = model.provider;
+        capabilityClass = p === "anthropic" || p === "openai" ? "frontier" : p === "google" ? "mid" : "small";
+      }
+      return { capabilityClass } as any;
     });
   });
 
@@ -275,6 +295,61 @@ describe("setup-channels-credentials", () => {
     expect(arg.apiKey).toBe("test-key");
     expect(arg.config).toEqual({ enabled: true, maxCandidatesPerRun: 50 });
     expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  // -------------------------------------------------------------------------
+  // CR-01: the __MEMORY_REVIEW__ branch threads R6 capabilityClass +
+  // hasCapableModelOverride into runMemoryReview's deps so the abstain path is
+  // reachable in production for a small/nano cron model. Before the fix neither
+  // field was passed → default "frontier" → "capable", so a weak model still ran
+  // the extraction LLM call (the R6-dead bug).
+  // -------------------------------------------------------------------------
+  it("CR-01: __MEMORY_REVIEW__ threads capabilityClass='small' + no override for a small cron model (abstain reachable)", async () => {
+    mockResolveOperationModel.mockReturnValue({
+      provider: "ollama", modelId: "ollama:qwen3.6:35b", model: "ollama:qwen3.6:35b",
+      timeoutMs: 60_000, source: "default",
+    } as any);
+    const deps = makeDeps({
+      agents: { "agent-1": { name: "Agent 1", provider: "ollama", memoryReview: { enabled: true } } },
+      apiKey: "test-key",
+    });
+    registerCronEventListeners(deps);
+
+    const onComplete = vi.fn();
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "__MEMORY_REVIEW__",
+      agentId: "agent-1",
+      onComplete,
+    });
+
+    expect(mockRunMemoryReview).toHaveBeenCalledOnce();
+    const arg = mockRunMemoryReview.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.capabilityClass).toBe("small");
+    expect(arg.hasCapableModelOverride).toBe(false);
+  });
+
+  it("CR-01: __MEMORY_REVIEW__ threads hasCapableModelOverride=true when the cron provider pins a capable class", async () => {
+    mockResolveOperationModel.mockReturnValue({
+      provider: "ollama", modelId: "ollama:qwen3.6:35b", model: "ollama:qwen3.6:35b",
+      timeoutMs: 60_000, source: "default",
+    } as any);
+    const deps = makeDeps({
+      agents: { "agent-1": { name: "Agent 1", provider: "ollama", memoryReview: { enabled: true } } },
+      apiKey: "test-key",
+    });
+    (deps.container as any).config.providers.entries.ollama = { capabilities: { capabilityClass: "frontier" } };
+    registerCronEventListeners(deps);
+
+    const onComplete = vi.fn();
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "__MEMORY_REVIEW__",
+      agentId: "agent-1",
+      onComplete,
+    });
+
+    const arg = mockRunMemoryReview.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.capabilityClass).toBe("frontier");
+    expect(arg.hasCapableModelOverride).toBe(true);
   });
 
   it("reports an error onComplete when runMemoryConsolidation returns err", async () => {

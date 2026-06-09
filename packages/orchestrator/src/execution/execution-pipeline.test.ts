@@ -768,10 +768,10 @@ describe("executeAndDeliver", () => {
       // Executor captures onDelta and feeds thinking-only tokens
       const executor = makeExecutor({
         execute: vi.fn(async (_msg, _sk, _tools, onDelta) => {
-          // Simulate LLM emitting thinking tokens that the thinkFilter strips
-          onDelta?.("<think>reasoning step");
-          onDelta?.(" about the problem");
-          onDelta?.("</think>");
+          // Simulate LLM emitting thinking tokens (kind="thinking") -- never reach accumulated
+          onDelta?.("<think>reasoning step", "thinking");
+          onDelta?.(" about the problem", "thinking");
+          onDelta?.("</think>", "thinking");
           return {
             response: "",
             sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
@@ -805,8 +805,8 @@ describe("executeAndDeliver", () => {
       // Executor captures onDelta and feeds visible content
       const executor = makeExecutor({
         execute: vi.fn(async (_msg, _sk, _tools, onDelta) => {
-          onDelta?.("Hello ");
-          onDelta?.("world!");
+          onDelta?.("Hello ", "text");
+          onDelta?.("world!", "text");
           return {
             response: "Hello world!",
             sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },

@@ -82,13 +82,13 @@ export function applyJitGuideWrapping(params: JitGuideParams): ToolDefinition[] 
 /** Parameters for schema pruning. */
 export interface SchemaPruneParams {
   tools: ToolDefinition[];
-  modelTier: "small" | "medium" | "large";
+  capabilityClass: import("./model-profile.js").CapabilityClass;
   logger: ComisLogger;
 }
 
-/** Apply schema pruning for small models. Returns processed tools. */
+/** Apply schema pruning for nano-class models (behavior-neutral: old small=<=32K → new nano). */
 export function applySchemasPruning(params: SchemaPruneParams): ToolDefinition[] {
-  if (params.modelTier !== "small") return params.tools;
+  if (params.capabilityClass !== "nano") return params.tools;
 
   const pruneResult = pruneToolSchemas(params.tools);
   // INFO log for schema pruning (promoted, per-execution boundary event)
@@ -98,7 +98,7 @@ export function applySchemasPruning(params: SchemaPruneParams): ToolDefinition[]
       tokensSaved: pruneResult.estimatedTokensSaved,
       toolCount: pruneResult.tools.length,
     },
-    "Schema descriptions pruned for small model",
+    "Schema descriptions pruned for nano-class model",
   );
   return pruneResult.tools;
 }

@@ -32,6 +32,7 @@ import type { ProviderHealthMonitor } from "../../safety/provider-health-monitor
 import type { LastKnownModelTracker } from "../../model/last-known-model.js";
 import type { EnvelopeConfig } from "@comis/core";
 import type { CapabilityIndexRenderResult } from "../capability-index-context.js";
+import type { ModelProfile } from "../model-profile.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,6 +49,8 @@ export interface PromptRunnerBridge {
     tokensUsed?: { output?: number };
     stepsExecuted?: number;
     toolCallHistory?: string[];
+    /** R2: Abort redirect message set at bridge abort sites; undefined for normal completions. */
+    abortResponse?: string;
   };
 }
 
@@ -84,6 +87,8 @@ export interface RunPromptParams {
   _directives: CommandDirectives | undefined;
   _prevTimestamp: number | undefined;
   resolvedModel: { id: string; provider: string; input?: string[] } | undefined;
+  /** ModelProfile resolved once per execution; drives scaffoldLevel-gated features (R1 GoalAnchor). */
+  modelProfile?: ModelProfile;
   // Deps
   deps: {
     eventBus: TypedEventBus;

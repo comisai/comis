@@ -169,6 +169,44 @@ describe("runMemoryReview", () => {
     expect(completeSimple).not.toHaveBeenCalled();
   });
 
+  it("WR-04: flattens array/multi-block message content into the extraction batch (does not drop it)", async () => {
+    const deps = makeDeps();
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+      makeSession("default:user1:ch1", 10, 2000),
+    ]);
+    // Modern message content is an array of blocks. The extractor must
+    // concatenate the text blocks (and skip non-text blocks like tool_use)
+    // rather than collapse the whole turn to an empty string.
+    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "I moved to Berlin" },
+            { type: "tool_use", name: "search", input: {} },
+            { type: "text", text: "last March" },
+          ],
+        },
+      ],
+      metadata: {},
+      createdAt: 1000,
+      updatedAt: 2000,
+    });
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({ memories: [] }));
+
+    await runMemoryReview(deps);
+
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    const callArgs = (completeSimple as Mock).mock.calls[0];
+    const batchText = callArgs[1].messages[0].content as string;
+    // Both text blocks reach the LLM; the tool_use block is omitted (no body leak).
+    expect(batchText).toContain("I moved to Berlin");
+    expect(batchText).toContain("last March");
+    expect(batchText).not.toContain("tool_use");
+    // The turn was NOT collapsed to an empty "[user]: " line.
+    expect(batchText).not.toMatch(/\[user\]:\s*\n/);
+  });
+
   it("calls completeSimple exactly once with all qualifying sessions batched", async () => {
     const deps = makeDeps();
     (deps.sessionStore.listDetailed as Mock).mockReturnValue([

@@ -6,7 +6,11 @@
  *   1. stripMinimaxToolCallXml -- remove <invoke> XML (Minimax)
  *   2. stripModelSpecialTokens -- remove <|...|> tokens (GLM, DeepSeek)
  *   3. stripDowngradedToolCallText -- remove [Tool Call: ...] (Gemini replay)
- *   4. stripReasoningTagsFromText -- remove <think>/<thinking> blocks
+ *   4. extractFinalTagContent (coaching path only, when enforceFinalTag=true)
+ *   4. stripReasoningTagsFromText -- SA3 defense-in-depth backstop, runs UNCONDITIONALLY
+ *      on ALL paths. SA1+SA2 mean thinking never reaches accumulated for native-reasoning
+ *      models (SDK-typed path), so this is a no-op for them. Kept as the last-line
+ *      confidentiality net for any provider that embeds <think> in a text_delta.
  *
  * Followed by whitespace normalization (collapse 3+ newlines) and trim.
  *
@@ -111,8 +115,10 @@ export function setSanitizeLogger(l: ComisLogger): void {
  */
 export interface SanitizeOptions {
   /** When true, only return text inside `<final>` blocks; suppress everything else.
-   *  This covers the non-streaming fallback path -- the streaming path handles
-   *  enforceFinalTag via ThinkingTagFilter FSM options.
+   *  This covers the non-streaming fallback path (coaching path).
+   *  When true, `extractFinalTagContent` is applied first. Native-reasoning models
+   *  set this false; their thinking is excluded by the SA2 onDelta kind gate upstream.
+   *  `stripReasoningTagsFromText` runs unconditionally after this branch as defense-in-depth.
    *  Default: false. */
   enforceFinalTag?: boolean;
 }
@@ -136,14 +142,19 @@ export function sanitizeAssistantResponse(
     cleaned = stripDowngradedToolCallText(cleaned);
 
     if (options?.enforceFinalTag) {
-      // "strict" mode: extract only content inside <final> blocks, drop everything else.
-      // This is the non-streaming equivalent of the ThinkingTagFilter "suppressed" initial state.
+      // Coaching path (<think>/<final> Comis prompt): extract only <final> block content.
+      // Non-streaming equivalent of ThinkingTagFilter "suppressed" initial state.
       cleaned = extractFinalTagContent(cleaned);
-    } else {
-      // "preserve" mode keeps trailing content after unclosed tags -- avoids silently
-      // dropping legitimate content.
-      cleaned = stripReasoningTagsFromText(cleaned, { mode: "preserve", trim: "both" });
     }
+    // SA3 defense-in-depth backstop: stripReasoningTagsFromText runs unconditionally on
+    // ALL paths. SA1+SA2 mean thinking never reaches `accumulated` for native-reasoning
+    // models (SDK-typed onDelta kind gate), so this is a no-op for them in practice.
+    // For coaching models, it runs AFTER extractFinalTagContent — idempotent on clean text.
+    // Kept as the last-line confidentiality net for any provider that embeds <think> in
+    // a text_delta (defense-in-depth; not a primary mechanism).
+    // "preserve" mode keeps trailing content after unclosed tags — avoids silently
+    // dropping legitimate content.
+    cleaned = stripReasoningTagsFromText(cleaned, { mode: "preserve", trim: "both" });
 
     // Collapse excessive newlines left after block removal
     cleaned = cleaned.replace(/\n{3,}/g, "\n\n");

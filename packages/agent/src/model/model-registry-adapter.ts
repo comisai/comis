@@ -16,9 +16,25 @@ import { getModels, getProviders } from "@earendil-works/pi-ai";
 import type { Api, Model, KnownProvider } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { SecretManager } from "@comis/core";
+import { KEYLESS_PROVIDER_TYPES } from "@comis/core";
 import type { ModelAllowlist } from "./model-allowlist.js";
 
-/** Result of initial model resolution. */
+/**
+ * Result of initial model resolution.
+ *
+ * SA6a: This interface mirrors the shape of `InitialModelResult` in
+ * `@earendil-works/pi-coding-agent` (dist/core/model-resolver.d.ts).
+ * The SDK type is structurally identical but is NOT re-exported from the
+ * package root and `./core/model-resolver` is absent from the package's
+ * `exports` map (which only exposes `.` and `./hooks`). With
+ * `moduleResolution:NodeNext`, importing from that subpath is a hard
+ * TS2307 error. This local definition is therefore retained as-is.
+ *
+ * Migration path: when @earendil-works/pi-coding-agent adds
+ * `"./core/model-resolver"` to its exports map, replace this interface
+ * with: `export type { InitialModelResult } from
+ * "@earendil-works/pi-coding-agent/core/model-resolver";`
+ */
 export interface InitialModelResult {
   /** Resolved model, or undefined if no match / blocked by allowlist. */
   model: Model<Api> | undefined;
@@ -38,19 +54,6 @@ export interface InitialModelResult {
 export function createModelRegistryAdapter(authStorage: AuthStorage): ModelRegistry {
   return ModelRegistry.inMemory(authStorage);
 }
-
-/**
- * Provider types that can register without an API key.
- *
- * Ollama (and similar local inference servers) do not require authentication
- * by default. When a provider entry has a type in this set and no apiKeyName
- * is configured (or the named secret is missing), registration proceeds with
- * the "ollama-no-auth" sentinel instead of being skipped.
- *
- * The sentinel reaches the wire as `Authorization: Bearer ollama-no-auth`.
- * Ollama ignores Authorization unless `OLLAMA_API_KEY` is set server-side.
- */
-const KEYLESS_PROVIDER_TYPES = new Set(["ollama"]);
 
 const _builtInProviders = new Set<string>(getProviders());
 

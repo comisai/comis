@@ -175,6 +175,19 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** C4/S4: emitted when the compaction layer routes based on capabilityClass (pipeline or LCD).
+   *  strategy="eviction" means no LLM summarization was used (deterministic fallback).
+   *  securityPinnedCount = number of messages excluded from eviction by S4 pinning. */
+  "context:compaction_routed": {
+    agentId: string;
+    sessionKey: string;
+    capabilityClass: "frontier" | "mid" | "small" | "nano";
+    strategy: "llm" | "eviction" | "strong-summarizer" | "deterministic";
+    layer: "pipeline" | "lcd";
+    securityPinnedCount: number;
+    timestamp: number;
+  };
+
   /** Post-compaction rehydration: critical context re-injected */
   "context:rehydrated": {
     agentId: string;
@@ -280,7 +293,13 @@ export interface MessagingEvents {
       | "spend_cap"
       | "live_store_divergence"
       | "leaf_window_divergence"
-      | "condense_window_divergence";
+      | "condense_window_divergence"
+      /** Phase 164 (RR6): a fresh/disjoint live transcript was detected (JSONL
+       *  re-based) and the ingest continued appending at the store's current max
+       *  seq — NOT a degradation, a correct continuation. Distinct from
+       *  `live_store_divergence` (the genuine-shrink fail-safe) so operators can
+       *  tell "continued after restart" from "skipped due to corruption". */
+      | "session_rebase";
     durationMs: number;
     timestamp: number;
   };

@@ -35,6 +35,9 @@ export interface BridgeMetricsState {
   // Finish reason and abort tracking
   finishReason: ExecutionResult["finishReason"];
   aborted: boolean;
+  /** R2: Abort redirect message set at abort sites (max_steps, budget_exceeded, etc.).
+   *  Overrides result.response in executor-post-execution when finishReason is non-stop. */
+  abortResponse: string | undefined;
 
   // Context usage tracking
   lastContextUsage: ContextUsageData | undefined;
@@ -205,6 +208,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     llmCallCount: 0,
     finishReason: "stop",
     aborted: false,
+    abortResponse: undefined,
     lastContextUsage: undefined,
     textEmitted: false,
     lastLlmErrorMessage: undefined,
@@ -291,6 +295,8 @@ export function buildBridgeResult(
   totalPendingCacheInvestmentUsd?: number;
   // Cumulative cost-correction delta surfaced on Execution-complete log
   totalCostCorrectionDeltaUsd?: number;
+  /** R2: Abort redirect message set at bridge abort sites; undefined for normal completions. */
+  abortResponse?: string;
 } {
   return {
     tokensUsed: {
@@ -348,5 +354,7 @@ export function buildBridgeResult(
     // the per-call emit at executor-post-execution gates on > 0 to
     // avoid logging zeros).
     totalCostCorrectionDeltaUsd: metrics.totalCostCorrectionDeltaUsd,
+    // R2: Abort redirect message — only set at abort sites; omitted for normal completions.
+    abortResponse: metrics.abortResponse,
   };
 }

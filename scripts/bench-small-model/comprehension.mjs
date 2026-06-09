@@ -49,6 +49,27 @@ const argsOf = (msg, i = 0) => { try { return JSON.parse(msg.tool_calls?.[i]?.fu
 const text = (msg) => (msg.content || "");
 const REFUSAL = /\b(can't|cannot|won't|will not|unable|i'm sorry|i am sorry|refuse|not able|should not|shouldn't|private|confidential|not appropriate|decline)\b/i;
 
+/**
+ * Detect the runtime format from an Ollama model tag.
+ *
+ * Ollama serves two distinct runtimes for the same weights:
+ *   - MLX  (e.g. "qwen3.6:35b-mlx")  — Apple Neural Engine, lower latency on Apple Silicon
+ *   - GGUF (e.g. "qwen3.6:35b")       — llama.cpp, standard format for Linux / x86-64
+ *
+ * Comis treats both as opaque Ollama tags — no product code distinction is made.
+ * This label is for human comparison only: when two runs are compared (one MLX, one
+ * GGUF) the latency delta becomes immediately visible in the report.
+ *
+ * L6 measurement: to compare MLX vs GGUF latency, run:
+ *   BENCH_MODELS=qwen3.6:35b-mlx,qwen3.6:35b node scripts/bench-small-model/comprehension.mjs
+ * Then compare the totalLatencyMs column across the two model sections.
+ *
+ * Reference: docs/reference/local-models.mdx — per-platform runtime recommendation.
+ */
+function inferRuntime(modelTag) {
+  return modelTag.includes("-mlx") ? "MLX (Apple Silicon)" : "GGUF (llama.cpp)";
+}
+
 const PROBES = [
   { id: "tool-select:read", tools: ["read", "exec", "ls", "grep", "find"],
     task: "Show me the contents of the file config.json in the workspace.",
@@ -116,8 +137,12 @@ async function main() {
   for (const model of MODELS) {
     const mr = rows.filter((r) => r.model === model);
     const passed = mr.filter((r) => r.pass).length;
-    lines.push(`## \`${model}\` — ${passed}/${mr.length} probes understood`, "", "| Probe | Pass | Got | Wanted |", "|---|---|---|---|");
-    for (const r of mr) lines.push(`| ${r.id} | ${r.pass ? "✅" : "❌"} | ${r.got} | ${r.want} |`);
+    const runtime = inferRuntime(model);
+    const avgLatency = mr.length ? Math.round(mr.reduce((s, r) => s + (r.latencyMs ?? 0), 0) / mr.length) : 0;
+    // L6: runtime label surfaces MLX-vs-GGUF latency delta when both model variants are in BENCH_MODELS.
+    // Compare avgLatency across sections: MLX should be lower on Apple Silicon; GGUF/llama.cpp on Linux.
+    lines.push(`## \`${model}\` — ${passed}/${mr.length} probes understood (runtime: ${runtime}, avg latency: ${avgLatency}ms)`, "", "| Probe | Pass | Got | Wanted | Latency (ms) |", "|---|---|---|---|---|");
+    for (const r of mr) lines.push(`| ${r.id} | ${r.pass ? "✅" : "❌"} | ${r.got} | ${r.want} | ${r.latencyMs ?? 0} |`);
     lines.push("");
   }
   const out = join(HERE, "results", "comprehension.md");

@@ -40,7 +40,6 @@ const mocks = vi.hoisted(() => ({
   createDiscoverToolMock: vi.fn(),
   createAutoDiscoveryStubsMock: vi.fn(),
   extractRecentlyUsedToolNamesMock: vi.fn(),
-  resolveModelTierMock: vi.fn(),
   buildCapabilityIndexContextMock: vi.fn(),
   getOrCreateDiscoveryTrackerMock: vi.fn(),
   getOrCreateTrackerMock: vi.fn(),
@@ -79,7 +78,7 @@ vi.mock("./tool-deferral.js", () => ({
   createDiscoverTool: mocks.createDiscoverToolMock,
   createAutoDiscoveryStubs: mocks.createAutoDiscoveryStubsMock,
   extractRecentlyUsedToolNames: mocks.extractRecentlyUsedToolNamesMock,
-  resolveModelTier: mocks.resolveModelTierMock,
+  // resolveModelTier has been deleted in Plan 151-03 (K1 requirement)
   CORE_TOOLS: new Set(["bash", "file_read"]),
 }));
 
@@ -217,7 +216,6 @@ beforeEach(() => {
     inlineMemory: undefined,
   });
   mocks.extractRecentlyUsedToolNamesMock.mockReturnValue(new Set());
-  mocks.resolveModelTierMock.mockReturnValue("large");
   mocks.getOrCreateTrackerMock.mockReturnValue({
     recordTurn: vi.fn(),
     getCurrentTurn: () => 1,
@@ -578,14 +576,88 @@ describe("assembleTools — full tool pipeline (JIT, prune, snapshot, normalize,
     expect(mocks.applyMutationSerializerMock).toHaveBeenCalledTimes(1);
   });
 
-  it("passes the modelTier resolved from contextWindow into applySchemasPruning", async () => {
-    mocks.resolveModelTierMock.mockReturnValueOnce("small");
+  it("passes the capabilityClass from ModelProfile to applySchemasPruning (frontier → not pruned)", async () => {
+    // Frontier models (anthropic) have capabilityClass="frontier"; applySchemasPruning
+    // only prunes for "nano" — so frontier passes through unchanged (behavior-neutral K1).
     await assembleTools(makeParams({
-      resolvedModel: { id: "tiny", provider: "anthropic", contextWindow: 32_000, reasoning: false },
+      resolvedModel: { id: "claude-sonnet-4", provider: "anthropic", contextWindow: 200_000, reasoning: false },
+      // No modelProfile passed → assembleTools falls back to FAIL_CLOSED_PROFILE when
+      // modelProfile is undefined. But when resolvedModel is present, the assembly
+      // path uses the provided modelProfile param. Use explicit modelProfile to pin the assertion.
+      modelProfile: {
+        contextWindow: 200_000,
+        maxOutputTokens: 4096,
+        capabilityClass: "frontier",
+        scaffoldLevel: "light",
+        securityLevel: "standard",
+        supportsVision: false,
+        supportsTools: true,
+        supportsPromptCache: false,
+        supportsServerToolSearch: false,
+        supportsStructuredOutput: false,
+        reasoningStyle: "none",
+      },
     }));
-    expect(mocks.resolveModelTierMock).toHaveBeenCalledWith(32_000);
-    const pruneCallArg = mocks.applySchemasPruningMock.mock.calls[0][0] as { modelTier: string };
-    expect(pruneCallArg.modelTier).toBe("small");
+    const pruneCallArg = mocks.applySchemasPruningMock.mock.calls[0][0] as { capabilityClass: string };
+    expect(pruneCallArg.capabilityClass).toBe("frontier");
+  });
+
+  it("characterization: frontier-class ModelProfile threads capabilityClass='frontier' to deferralCtx (behavior-neutral — same as old modelTier='large')", async () => {
+    // Phase 151 K1 characterization: a frontier model must reach DeferralContext
+    // with capabilityClass="frontier", matching the old modelTier="large" behavior.
+    // The aggressive-deferral gate (capabilityClass==="nano") must NOT fire for frontier.
+    const frontierProfile = {
+      contextWindow: 200_000,
+      maxOutputTokens: 4096,
+      capabilityClass: "frontier" as const,
+      scaffoldLevel: "light" as const,
+      securityLevel: "standard" as const,
+      supportsVision: false,
+      supportsTools: true,
+      supportsPromptCache: false,
+      supportsServerToolSearch: false,
+      supportsStructuredOutput: false,
+      reasoningStyle: "none" as const,
+    };
+    await assembleTools(makeParams({
+      resolvedModel: { id: "claude-sonnet-4", provider: "anthropic", contextWindow: 200_000, reasoning: false },
+      modelProfile: frontierProfile,
+    }));
+    // applyToolDeferral receives DeferralContext with capabilityClass="frontier"
+    const deferralCtxArg = mocks.applyToolDeferralMock.mock.calls[0][1] as Record<string, unknown>;
+    expect(deferralCtxArg).not.toBeUndefined();
+    // The DeferralContext is the 2nd arg to applyToolDeferral (tools, contextWindow, ctx, ...)
+    // Per executor-tool-assembly.ts call signature: applyToolDeferral(mergedCustomTools, contextWindow, deferralCtx, ...)
+    // The context is the 3rd positional arg
+    const deferralCtxPositional = mocks.applyToolDeferralMock.mock.calls[0][2] as Record<string, unknown>;
+    expect(deferralCtxPositional?.capabilityClass).toBe("frontier");
+  });
+
+  it("characterization: nano-class ModelProfile threads capabilityClass='nano' to deferralCtx (behavior-neutral — same as old modelTier='small')", async () => {
+    // Phase 151 K1 characterization: a nano model must reach DeferralContext
+    // with capabilityClass="nano", matching the old modelTier="small" aggressive-deferral behavior.
+    const nanoProfile = {
+      contextWindow: 8_192,
+      maxOutputTokens: 4096,
+      capabilityClass: "nano" as const,
+      scaffoldLevel: "max" as const,
+      securityLevel: "locked" as const,
+      supportsVision: false,
+      supportsTools: true,
+      supportsPromptCache: false,
+      supportsServerToolSearch: false,
+      supportsStructuredOutput: false,
+      reasoningStyle: "none" as const,
+    };
+    await assembleTools(makeParams({
+      resolvedModel: { id: "tiny-model", provider: "custom", contextWindow: 8_192, reasoning: false },
+      modelProfile: nanoProfile,
+    }));
+    const deferralCtxPositional = mocks.applyToolDeferralMock.mock.calls[0][2] as Record<string, unknown>;
+    expect(deferralCtxPositional?.capabilityClass).toBe("nano");
+    // Also verify capabilityClass reaches applySchemasPruning
+    const pruneCallArg = mocks.applySchemasPruningMock.mock.calls[0][0] as { capabilityClass: string };
+    expect(pruneCallArg.capabilityClass).toBe("nano");
   });
 });
 
@@ -907,5 +979,181 @@ describe("assembleTools — per-message trust resolution", () => {
     }));
     const passedCtx = mocks.applyToolDeferralMock.mock.calls[0][2] as { trustLevel: string };
     expect(passedCtx.trustLevel).toBe("external");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C3: Preamble WARN + deferred-tools truncation (Plan 152-04)
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — C3 preamble size WARN when cachedFreshTailPreambleTokens exceeds profile cap", () => {
+  // CHARS_PER_TOKEN_RATIO = 3.5; small threshold = 3200 tokens → 3200 * 3.5 = 11200 chars to exceed
+  const CHARS_PER_TOKEN_RATIO = 3.5;
+  const SMALL_WARN_THRESHOLD_TOKENS = 3_200; // tokens
+  const SMALL_WARN_THRESHOLD_CHARS = Math.ceil(SMALL_WARN_THRESHOLD_TOKENS * CHARS_PER_TOKEN_RATIO) + 1; // chars that produce tokens > threshold
+
+  const smallProfile = {
+    contextWindow: 32_768,
+    maxOutputTokens: 4096,
+    capabilityClass: "small" as const,
+    scaffoldLevel: "standard" as const,
+    securityLevel: "hardened" as const,
+    supportsVision: false,
+    supportsTools: true,
+    supportsPromptCache: false,
+    supportsServerToolSearch: false,
+    supportsStructuredOutput: false,
+    reasoningStyle: "none" as const,
+  };
+
+  const frontierProfile = {
+    contextWindow: 200_000,
+    maxOutputTokens: 4096,
+    capabilityClass: "frontier" as const,
+    scaffoldLevel: "light" as const,
+    securityLevel: "standard" as const,
+    supportsVision: false,
+    supportsTools: true,
+    supportsPromptCache: false,
+    supportsServerToolSearch: false,
+    supportsStructuredOutput: false,
+    reasoningStyle: "none" as const,
+  };
+
+  it("C3: emits logger.warn with hint and errorKind=capacity when small model preamble exceeds threshold", async () => {
+    const logger = createMockLogger();
+    // Produce a preamble that exceeds the small-class threshold
+    const bigPreamble = "P".repeat(SMALL_WARN_THRESHOLD_CHARS);
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(100),
+      dynamicPreamble: bigPreamble,
+      inlineMemory: undefined,
+    });
+    await assembleTools(makeParams({
+      modelProfile: smallProfile,
+      resolvedModel: { id: "small-model", provider: "custom", contextWindow: 32_768, reasoning: false },
+      deps: makeDeps({ logger }),
+    }));
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "resource",
+        hint: expect.stringContaining("preamble"),
+        capabilityClass: "small",
+      }),
+      expect.stringContaining("preamble"),
+    );
+  });
+
+  it("C3: does NOT warn for frontier model even with a large preamble (Infinity threshold)", async () => {
+    const logger = createMockLogger();
+    // Even a very large preamble should NOT warn for frontier
+    const bigPreamble = "P".repeat(SMALL_WARN_THRESHOLD_CHARS * 10);
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(100),
+      dynamicPreamble: bigPreamble,
+      inlineMemory: undefined,
+    });
+    await assembleTools(makeParams({
+      modelProfile: frontierProfile,
+      resolvedModel: { id: "claude-frontier", provider: "anthropic", contextWindow: 200_000, reasoning: false },
+      deps: makeDeps({ logger }),
+    }));
+    // No warn with errorKind=resource (C3 preamble guard) should have fired
+    const capacityWarns = (logger.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter(
+      (c) => (c[0] as Record<string, unknown>)?.errorKind === "resource",
+    );
+    expect(capacityWarns).toHaveLength(0);
+  });
+
+  it("C3: small model with preamble BELOW threshold does NOT warn", async () => {
+    const logger = createMockLogger();
+    // Preamble well below 3200 tokens
+    const smallPreamble = "P".repeat(100);
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(100),
+      dynamicPreamble: smallPreamble,
+      inlineMemory: undefined,
+    });
+    await assembleTools(makeParams({
+      modelProfile: smallProfile,
+      resolvedModel: { id: "small-model", provider: "custom", contextWindow: 32_768, reasoning: false },
+      deps: makeDeps({ logger }),
+    }));
+    const resourceWarns = (logger.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter(
+      (c) => (c[0] as Record<string, unknown>)?.errorKind === "resource",
+    );
+    expect(resourceWarns).toHaveLength(0);
+  });
+});
+
+describe("assembleTools — C3 deferred-tools list capped for small/nano via DEFERRED_TOOLS_MAX_BY_CLASS", () => {
+  const smallProfile = {
+    contextWindow: 32_768,
+    maxOutputTokens: 4096,
+    capabilityClass: "small" as const,
+    scaffoldLevel: "standard" as const,
+    securityLevel: "hardened" as const,
+    supportsVision: false,
+    supportsTools: true,
+    supportsPromptCache: false,
+    supportsServerToolSearch: false,
+    supportsStructuredOutput: false,
+    reasoningStyle: "none" as const,
+  };
+
+  it("C3: calls buildDeferredToolsContext with maxEntries option for small model when deferred entries exist", async () => {
+    // Simulate 50 deferred entries for small model
+    const deferredEntries = Array.from({ length: 50 }, (_, i) => ({ name: `tool_${i}` } as never));
+    mocks.applyToolDeferralMock.mockReturnValueOnce({
+      activeTools: [],
+      discoveredTools: [],
+      deferredEntries,
+      deferredNames: deferredEntries.map((e: { name: string }) => e.name),
+      discoverTool: undefined,
+    });
+    mocks.buildDeferredToolsContextMock.mockReturnValueOnce("<deferred-with-cap>");
+    await assembleTools(makeParams({
+      modelProfile: smallProfile,
+      resolvedModel: { id: "small-model", provider: "custom", contextWindow: 32_768, reasoning: false },
+    }));
+    // For small class, DEFERRED_TOOLS_MAX_BY_CLASS["small"] = 20, so maxEntries should be passed
+    expect(mocks.buildDeferredToolsContextMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ maxEntries: 20 }),
+    );
+  });
+
+  it("C3: calls buildDeferredToolsContext WITHOUT maxEntries option for frontier model (unlimited)", async () => {
+    const frontierProfile = {
+      contextWindow: 200_000,
+      maxOutputTokens: 4096,
+      capabilityClass: "frontier" as const,
+      scaffoldLevel: "light" as const,
+      securityLevel: "standard" as const,
+      supportsVision: false,
+      supportsTools: true,
+      supportsPromptCache: false,
+      supportsServerToolSearch: false,
+      supportsStructuredOutput: false,
+      reasoningStyle: "none" as const,
+    };
+    const deferredEntries = Array.from({ length: 50 }, (_, i) => ({ name: `tool_${i}` } as never));
+    mocks.applyToolDeferralMock.mockReturnValueOnce({
+      activeTools: [],
+      discoveredTools: [],
+      deferredEntries,
+      deferredNames: deferredEntries.map((e: { name: string }) => e.name),
+      discoverTool: undefined,
+    });
+    mocks.buildDeferredToolsContextMock.mockReturnValueOnce("<deferred-unlimited>");
+    await assembleTools(makeParams({
+      modelProfile: frontierProfile,
+      resolvedModel: { id: "claude-frontier", provider: "anthropic", contextWindow: 200_000, reasoning: false },
+    }));
+    // For frontier class, DEFERRED_TOOLS_MAX_BY_CLASS["frontier"] = Infinity → no maxEntries passed
+    expect(mocks.buildDeferredToolsContextMock).toHaveBeenCalledWith(
+      expect.anything(),
+      undefined,
+    );
   });
 });

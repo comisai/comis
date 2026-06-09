@@ -23,16 +23,18 @@
  * Returns the assistant message, usage, and measured latency. Throws on
  * transport/HTTP error so the caller can record a per-scenario error and move on.
  */
-export async function chatCompletion({ baseUrl, model, messages, tools, temperature = 0, maxTokens = 1024, timeoutMs = 300_000 }) {
+export async function chatCompletion({ baseUrl, model, messages, tools, temperature = 0, maxTokens = 1024, timeoutMs = 300_000, apiKey }) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   const startedAt = Date.now();
   try {
     const body = { model, messages, stream: false, temperature, max_tokens: maxTokens };
     if (tools && tools.length) { body.tools = tools; body.tool_choice = "auto"; }
+    const headers = { "Content-Type": "application/json" };
+    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
     const res = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
@@ -64,7 +66,7 @@ export async function chatCompletion({ baseUrl, model, messages, tools, temperat
  *
  * Never throws: a transport error is recorded on `run.error` and the run ends.
  */
-export async function runScenario({ baseUrl, model, scenario, maxSteps = 8, maxTokens = 1024, timeoutMs = 300_000, systemPrompt: systemPromptOverride }) {
+export async function runScenario({ baseUrl, model, scenario, maxSteps = 8, maxTokens = 1024, timeoutMs = 300_000, systemPrompt: systemPromptOverride, apiKey }) {
   const messages = [];
   const perCall = [];
   let malformedToolCalls = 0;
@@ -83,7 +85,7 @@ export async function runScenario({ baseUrl, model, scenario, maxSteps = 8, maxT
       for (let step = 0; step < maxSteps; step++) {
         steps++;
         const { message, usage, latencyMs } = await chatCompletion({
-          baseUrl, model, messages, tools: scenario.tools, maxTokens, timeoutMs,
+          baseUrl, model, messages, tools: scenario.tools, maxTokens, timeoutMs, apiKey,
         });
         perCall.push({ turn: turnIdx, step, usage, latencyMs });
         run.totalTokens += usage.total_tokens ?? ((usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0));
@@ -200,10 +202,7 @@ export function aggregate(scored) {
       const vals = rows.map((r) => r.metrics?.[key]).filter((v) => typeof v === "number");
       return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
     };
-    const rate = (key) => {
-      const vals = rows.map((r) => r.metrics?.[key]).filter((v) => typeof v === "number");
-      return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-    };
+    const rate = mean; // {0,1} binary events — same arithmetic, different semantic intent
     summaries.push({
       model,
       scenarios: n,
@@ -217,6 +216,7 @@ export function aggregate(scored) {
       injectionResistedRate: rate("injectionResisted"),
       secretLeakedRate: rate("secretLeaked"),
       overRefusedRate: rate("overRefused"),
+      historyRetentionRate: rate("historyRetention"),
       malformedToolCalls: rows.reduce((a, r) => a + (r.run?.malformedToolCalls ?? 0), 0),
       totalTokens: rows.reduce((a, r) => a + (r.run?.totalTokens ?? 0), 0),
       avgLatencyMsPerScenario: rows.reduce((a, r) => a + (r.run?.totalLatencyMs ?? 0), 0) / n,
@@ -242,10 +242,10 @@ export function renderReport({ summaries, scored, meta }) {
   lines.push("");
   lines.push(`## Per-model summary`);
   lines.push("");
-  lines.push(`| Model | Pass | Success | Constraint adh. | Derail | False-success | Poison | Efficient | Malformed | Tokens | Avg latency/scn | Errors |`);
-  lines.push(`|---|---|---|---|---|---|---|---|---|---|---|---|`);
+  lines.push(`| Model | Pass | Success | Constraint adh. | Derail | False-success | Poison | Efficient | Hist-ret | Malformed | Tokens | Avg latency/scn | Errors |`);
+  lines.push(`|---|---|---|---|---|---|---|---|---|---|---|---|---|`);
   for (const s of summaries) {
-    lines.push(`| \`${s.model}\` | ${pct(s.passRate)} | ${pct(s.successMean)} | ${pct(s.constraintAdherenceMean)} | ${pct(s.derailRate)} | ${pct(s.falseSuccessRate)} | ${pct(s.poisonRate)} | ${pct(s.efficientRate)} | ${s.malformedToolCalls} | ${s.totalTokens} | ${num(s.avgLatencyMsPerScenario)}ms | ${s.errors} |`);
+    lines.push(`| \`${s.model}\` | ${pct(s.passRate)} | ${pct(s.successMean)} | ${pct(s.constraintAdherenceMean)} | ${pct(s.derailRate)} | ${pct(s.falseSuccessRate)} | ${pct(s.poisonRate)} | ${pct(s.efficientRate)} | ${pct(s.historyRetentionRate)} | ${s.malformedToolCalls} | ${s.totalTokens} | ${num(s.avgLatencyMsPerScenario)}ms | ${s.errors} |`);
   }
   lines.push("");
   lines.push(`## Security summary (higher injection-resisted = better; lower secret-leaked / over-refused = better)`);

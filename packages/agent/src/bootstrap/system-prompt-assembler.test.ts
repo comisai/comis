@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { assembleRichSystemPrompt, assembleRichSystemPromptBlocks, SECTION_SEPARATOR, SECTIONS } from "./system-prompt-assembler.js";
+import { assembleRichSystemPrompt, assembleRichSystemPromptBlocks, computeBlockBoundaries, SECTION_SEPARATOR, SECTIONS } from "./system-prompt-assembler.js";
 import {
   buildDateTimeSection,
   buildRuntimeMetadataSection,
@@ -2423,5 +2423,186 @@ describe("Snapshot regression: operational prompt trim delta", () => {
     // where an "operational"-excluded section slips back in.
     expect(delta).toBeGreaterThanOrEqual(4500);
     expect(opPrompt.length).toBeLessThan(fullPrompt.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compact-secure promptMode — C2/S1 security invariants
+// ---------------------------------------------------------------------------
+// S1 RED gate: these tests assert that the compact-secure prompt NEVER drops
+// the safety core. They are the primary security guard against the S1 trap
+// (buildSafetySection(isMinimal=true) → []).
+//
+// Per AGENTS.md §2.6, RED+GREEN are combined in plan 152-03 because the
+// PromptMode union does not contain "compact-secure" until types.ts is patched
+// in the same plan; the pre-patch code cannot compile the tests.
+
+describe("compact-secure promptMode — C2/S1 security invariants", () => {
+  const senderTrustEntries = [{ senderId: "u1", trustLevel: "trusted", displayId: "u1" }];
+
+  it("minimal mode DROPS safety section (confirms the S1 trap exists)", () => {
+    const prompt = assembleRichSystemPrompt({ promptMode: "minimal" });
+    expect(prompt).not.toContain("## Safety");
+  });
+
+  it("compact-secure ALWAYS contains ## Safety (never uses buildSafetySection(true))", () => {
+    // S1: this is the load-bearing RED test — FAILS until implementation lands
+    const prompt = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      toolNames: ["exec", "read", "memory_search"],
+      senderTrustEntries,
+    });
+    expect(prompt).toContain("## Safety");
+    expect(prompt).toContain("Constitutional Principles");
+  });
+
+  it("compact-secure contains sender-trust content", () => {
+    const prompt = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      senderTrustEntries,
+    });
+    // sender-trust section must appear (anti-injection trust display).
+    // buildSenderTrustSection emits "## Authorized Senders" heading.
+    expect(prompt).toContain("## Authorized Senders");
+  });
+
+  it("compact-secure contains config-secret section heading", () => {
+    // buildConfigSecretIntegritySection only renders when a CONFIRMATION_TOOL_NAMES tool
+    // (gateway, pipeline, etc.) is present. Pass "gateway" to trigger the section.
+    const prompt = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      toolNames: ["gateway", "read"],
+    });
+    // Assert the EXACT section heading from tooling-sections.ts:185 — not just the bare word "config"
+    expect(prompt).toContain("## Config & Secret File Integrity");
+  });
+
+  it("compact-secure token estimate <= 3500 (3K target + 500 buffer)", () => {
+    const prompt = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      toolNames: Array.from({ length: 20 }, (_, i) => `tool_${i}`),
+      senderTrustEntries,
+    });
+    const tokenEstimate = Math.ceil(prompt.length / 3.5);
+    expect(tokenEstimate).toBeLessThanOrEqual(3_500);
+  });
+
+  it("compact-secure with securityLevel=locked contains mandatory sandbox restriction line", () => {
+    // W6: assert the SPECIFIC lockdown phrase, not just locked.length > standard.length
+    // The line is emitted by buildLockdownReinforcement() when securityLevel="locked"
+    const locked = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      securityLevel: "locked",
+    });
+    expect(locked).toContain("- Mandatory: all exec commands run in the sandbox. No exceptions.");
+  });
+
+  it("compact-secure with securityLevel=standard does NOT contain the mandatory sandbox line", () => {
+    const standard = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      securityLevel: "standard",
+    });
+    expect(standard).not.toContain("- Mandatory: all exec commands run in the sandbox. No exceptions.");
+  });
+
+  it("frontier/mid: full mode includes sections excluded from compact-secure", () => {
+    // The assembler always respects the promptMode param it receives.
+    // resolvePromptModeForProfile (in prompt-assembly.ts) is what prevents compact-secure
+    // from firing for frontier/mid. At assembler level, full mode includes more sections.
+    const fullPrompt = assembleRichSystemPrompt({
+      promptMode: "full",
+      toolNames: ["gateway", "read"],
+      heartbeatPrompt: "check alerts",
+      reactionLevel: "minimal",
+    });
+    const compactPrompt = assembleRichSystemPrompt({
+      promptMode: "compact-secure",
+      toolNames: ["gateway", "read"],
+    });
+    // Full mode must contain sections that compact-secure excludes
+    expect(fullPrompt).toContain("## Safety");
+    // Full mode includes heartbeats, reactions — compact-secure does not
+    expect(fullPrompt).toContain("## Heartbeats");
+    expect(compactPrompt).not.toContain("## Heartbeats");
+    // Full mode prompt is larger than compact-secure (more sections included)
+    expect(fullPrompt.length).toBeGreaterThan(compactPrompt.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-03: mode-aware cache block boundaries in assembleRichSystemPromptBlocks
+// ---------------------------------------------------------------------------
+
+describe("WR-03: computeBlockBoundaries — mode-aware cache block split", () => {
+  // Static IDs: identity, persona. Attribution IDs: safety, language.
+  // In full mode: [identity, persona, safety, language, ...] → staticEnd=2, attributionEnd=4
+  // In compact-secure: [identity, safety, language, ...] (persona excluded) → staticEnd=1, attributionEnd=3
+
+  it("full mode: staticEnd=2 (identity+persona), attributionEnd=4 (safety+language)", () => {
+    const fullDescriptors = SECTIONS.filter((s) => s.includeIn.has("full"));
+    const { staticEnd, attributionEnd } = computeBlockBoundaries(fullDescriptors);
+    // In full mode, first two sections are identity + persona
+    expect(fullDescriptors[0]!.id).toBe("identity");
+    expect(fullDescriptors[1]!.id).toBe("persona");
+    expect(staticEnd).toBe(2);
+    // Safety and language follow
+    expect(fullDescriptors[2]!.id).toBe("safety");
+    expect(fullDescriptors[3]!.id).toBe("language");
+    expect(attributionEnd).toBe(4);
+  });
+
+  it("compact-secure mode: staticEnd=1 (identity only), attributionEnd=3 (safety+language)", () => {
+    // persona is in MODES_ALL, not MODES_ALL_PLUS_COMPACT, so it is excluded.
+    // The filtered list starts [identity, safety, language, tooling, ...].
+    const compactDescriptors = SECTIONS.filter((s) => s.includeIn.has("compact-secure"));
+    const { staticEnd, attributionEnd } = computeBlockBoundaries(compactDescriptors);
+    expect(compactDescriptors[0]!.id).toBe("identity");
+    expect(staticEnd).toBe(1);
+    // safety and language come right after identity in compact-secure
+    expect(compactDescriptors[1]!.id).toBe("safety");
+    expect(compactDescriptors[2]!.id).toBe("language");
+    expect(attributionEnd).toBe(3);
+  });
+
+  it("compact-secure: safety section lands in attribution block (not staticPrefix)", () => {
+    // This is the primary WR-03 regression guard: with the old fixed-count code,
+    // safety was mis-classified into staticPrefix. With mode-aware boundaries,
+    // safety must always be in attribution.
+    const blocks = assembleRichSystemPromptBlocks({
+      promptMode: "compact-secure",
+      toolNames: ["exec", "read"],
+    });
+    // Safety must NOT be in staticPrefix
+    expect(blocks.staticPrefix).not.toContain("## Safety");
+    // Safety MUST be in attribution
+    expect(blocks.attribution).toContain("## Safety");
+    // Language must also be in attribution (not body)
+    expect(blocks.attribution).toContain("## Language");
+    // Tooling must be in semiStableBody (not attribution)
+    expect(blocks.semiStableBody).toContain("When this turn includes a `Capabilities` context");
+    expect(blocks.attribution).not.toContain("When this turn includes a `Capabilities` context");
+  });
+
+  it("compact-secure: identity invariant holds (concatenated blocks == assembleRichSystemPrompt)", () => {
+    // The mode-aware boundary change must preserve the identity invariant.
+    const params = {
+      promptMode: "compact-secure" as const,
+      toolNames: ["exec", "read", "memory_search"],
+    };
+    const blocks = assembleRichSystemPromptBlocks(params);
+    const fullPrompt = assembleRichSystemPrompt(params);
+    const parts = [blocks.staticPrefix, blocks.attribution, blocks.semiStableBody].filter(Boolean);
+    const reassembled = parts.join(SECTION_SEPARATOR);
+    expect(reassembled).toEqual(fullPrompt);
+  });
+
+  it("full mode: safety section lands in attribution block (existing behavior preserved)", () => {
+    const blocks = assembleRichSystemPromptBlocks({
+      promptMode: "full",
+      toolNames: ["exec"],
+    });
+    // With mode-aware boundaries, full mode behavior is byte-identical to old behavior.
+    expect(blocks.staticPrefix).not.toContain("## Safety");
+    expect(blocks.attribution).toContain("## Safety");
   });
 });

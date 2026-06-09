@@ -1,0 +1,553 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * K2 boundary invariant tests for resolveModelProfile().
+ *
+ * RED state: model-profile.ts does not exist yet — all tests will fail with
+ * "Cannot find module './model-profile.js'" until Plan 02 creates the
+ * implementation. This failing state is committed intentionally per
+ * CLAUDE.md Tests-First.
+ *
+ * Invariants tested:
+ *  - Fail-closed: unknown/undefined model → most-locked profile (capabilityClass="nano",
+ *    scaffoldLevel="max", securityLevel="locked") [T-151-failclosed]
+ *  - capabilityClass ⊥ contextWindow (K2): a 256K window must NOT force
+ *    frontier/mid class; qwen3.6:27b (ollama) → "small" or "nano"
+ *  - securityLevel tightens inversely as capabilityClass drops
+ *  - capabilityClassOverride in config wins over heuristic
+ *  - supportsVision derives from resolvedModel.input (not model ID)
+ *  - reasoningStyle derives from resolvedModel.reasoning flag
+ *  - scaffoldLevel derived from capabilityClass
+ *
+ * @module
+ */
+
+import { describe, it, expect } from "vitest";
+import {
+  resolveModelProfile,
+} from "./model-profile.js";
+import type { ModelProfile, CapabilityClass } from "./model-profile.js";
+
+// ---------------------------------------------------------------------------
+// T-151-failclosed: unknown / undefined model → most-locked profile
+// ---------------------------------------------------------------------------
+describe("resolveModelProfile — K2 boundary invariants", () => {
+  describe("T-151-failclosed: fail-closed for undefined model", () => {
+    it("resolveModelProfile(undefined) returns capabilityClass='nano'", () => {
+      const profile: ModelProfile = resolveModelProfile(undefined);
+      expect(profile.capabilityClass).toBe("nano");
+    });
+
+    it("resolveModelProfile(undefined) returns scaffoldLevel='max'", () => {
+      const profile = resolveModelProfile(undefined);
+      expect(profile.scaffoldLevel).toBe("max");
+    });
+
+    it("resolveModelProfile(undefined) returns securityLevel='locked'", () => {
+      const profile = resolveModelProfile(undefined);
+      expect(profile.securityLevel).toBe("locked");
+    });
+
+    it("resolveModelProfile(undefined) returns supportsVision=false", () => {
+      const profile = resolveModelProfile(undefined);
+      expect(profile.supportsVision).toBe(false);
+    });
+
+    it("resolveModelProfile(undefined) returns supportsStructuredOutput=false", () => {
+      const profile = resolveModelProfile(undefined);
+      expect(profile.supportsStructuredOutput).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // K2 invariant: contextWindow is DECOUPLED from capabilityClass
+  // A 256K window must NOT force frontier or mid class
+  // ---------------------------------------------------------------------------
+  describe("K2 invariant: capabilityClass is independent of contextWindow", () => {
+    it("qwen3.6:27b (ollama, 256K) resolves capabilityClass to small or nano — NOT frontier or mid", () => {
+      const profile = resolveModelProfile({
+        id: "qwen3.6:27b",
+        provider: "ollama",
+        contextWindow: 262_144,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(
+        ["small", "nano"] as CapabilityClass[],
+        `Expected capabilityClass in ["small","nano"] but got "${profile.capabilityClass}"`,
+      ).toContain(profile.capabilityClass);
+    });
+
+    it("qwen3.6:27b (ollama, 256K) preserves contextWindow=262144 independently on the capacity axis", () => {
+      const profile = resolveModelProfile({
+        id: "qwen3.6:27b",
+        provider: "ollama",
+        contextWindow: 262_144,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.contextWindow).toBe(262_144);
+    });
+
+    it("frontier anthropic model (200K) resolves capabilityClass='frontier' — distinct from 256K ollama model", () => {
+      const frontier = resolveModelProfile({
+        id: "claude-sonnet-4",
+        provider: "anthropic",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      const small = resolveModelProfile({
+        id: "qwen3.6:27b",
+        provider: "ollama",
+        contextWindow: 262_144,
+        reasoning: false,
+        input: ["text"],
+      });
+      // Two models with similar contextWindow but different capability yield different capabilityClass
+      expect(frontier.capabilityClass).toBe("frontier");
+      expect(["small", "nano"] as CapabilityClass[]).toContain(small.capabilityClass);
+      expect(frontier.capabilityClass).not.toBe(small.capabilityClass);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // securityLevel tightens inversely as capabilityClass drops
+  // ---------------------------------------------------------------------------
+  describe("securityLevel inverse of capabilityClass", () => {
+    it("resolves securityLevel='standard' for a frontier anthropic model (200K context)", () => {
+      const profile = resolveModelProfile({
+        id: "claude-sonnet-4",
+        provider: "anthropic",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.securityLevel).toBe("standard");
+    });
+
+    it("resolves securityLevel to hardened or locked for a small/nano ollama model (256K context)", () => {
+      const profile = resolveModelProfile({
+        id: "qwen3.6:27b",
+        provider: "ollama",
+        contextWindow: 262_144,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(["hardened", "locked"]).toContain(profile.securityLevel);
+    });
+
+    it("small/nano model has strictly tighter securityLevel than frontier model", () => {
+      const frontier = resolveModelProfile({
+        id: "claude-sonnet-4",
+        provider: "anthropic",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      const small = resolveModelProfile({
+        id: "qwen3.6:27b",
+        provider: "ollama",
+        contextWindow: 262_144,
+        reasoning: false,
+        input: ["text"],
+      });
+      // frontier is always "standard"; small/nano must be "hardened" or "locked" (stricter)
+      expect(frontier.securityLevel).toBe("standard");
+      expect(small.securityLevel).not.toBe("standard");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // capabilityClassOverride takes priority over provider heuristic
+  // ---------------------------------------------------------------------------
+  describe("capabilityClassOverride takes priority over heuristic", () => {
+    it("capabilityClassOverride='frontier' on an ollama model forces capabilityClass='frontier'", () => {
+      const profile = resolveModelProfile(
+        {
+          id: "qwen3.6:27b",
+          provider: "ollama",
+          contextWindow: 262_144,
+          reasoning: false,
+          input: ["text"],
+        },
+        "frontier",
+      );
+      expect(profile.capabilityClass).toBe("frontier");
+    });
+
+    it("capabilityClassOverride='frontier' on an ollama model sets securityLevel='standard'", () => {
+      const profile = resolveModelProfile(
+        {
+          id: "qwen3.6:27b",
+          provider: "ollama",
+          contextWindow: 262_144,
+          reasoning: false,
+          input: ["text"],
+        },
+        "frontier",
+      );
+      expect(profile.securityLevel).toBe("standard");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Vision flag: derived from resolvedModel.input
+  // ---------------------------------------------------------------------------
+  describe("supportsVision flag", () => {
+    it("input includes 'image' → supportsVision=true", () => {
+      const profile = resolveModelProfile({
+        id: "qwen3.6:27b",
+        provider: "ollama",
+        contextWindow: 262_144,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.supportsVision).toBe(true);
+    });
+
+    it("input is text-only → supportsVision=false", () => {
+      const profile = resolveModelProfile({
+        id: "qwen3.6:27b-mlx",
+        provider: "ollama",
+        contextWindow: 262_144,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.supportsVision).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Reasoning flag: derived from resolvedModel.reasoning
+  // ---------------------------------------------------------------------------
+  describe("reasoningStyle flag", () => {
+    it("resolvedModel.reasoning=true → reasoningStyle='native'", () => {
+      const profile = resolveModelProfile({
+        id: "deepseek-r1:32b",
+        provider: "ollama",
+        contextWindow: 128_000,
+        reasoning: true,
+        input: ["text"],
+      });
+      expect(profile.reasoningStyle).toBe("native");
+    });
+
+    it("resolvedModel.reasoning=false → reasoningStyle='none'", () => {
+      const profile = resolveModelProfile({
+        id: "qwen3.6:27b",
+        provider: "ollama",
+        contextWindow: 262_144,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.reasoningStyle).toBe("none");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // scaffoldLevel derivation from capabilityClass
+  // (tested via capabilityClassOverride to be independent of provider heuristic)
+  // ---------------------------------------------------------------------------
+  describe("scaffoldLevel derived from capabilityClass", () => {
+    it("resolves scaffoldLevel='light' when capabilityClassOverride is 'frontier'", () => {
+      const profile = resolveModelProfile(
+        {
+          id: "any-model",
+          provider: "ollama",
+          contextWindow: 128_000,
+          reasoning: false,
+          input: ["text"],
+        },
+        "frontier",
+      );
+      expect(profile.scaffoldLevel).toBe("light");
+    });
+
+    it("resolves scaffoldLevel='standard' when capabilityClassOverride is 'mid'", () => {
+      const profile = resolveModelProfile(
+        {
+          id: "any-model",
+          provider: "ollama",
+          contextWindow: 128_000,
+          reasoning: false,
+          input: ["text"],
+        },
+        "mid",
+      );
+      expect(profile.scaffoldLevel).toBe("standard");
+    });
+
+    it("resolves scaffoldLevel='max' when capabilityClassOverride is 'small'", () => {
+      const profile = resolveModelProfile(
+        {
+          id: "any-model",
+          provider: "ollama",
+          contextWindow: 128_000,
+          reasoning: false,
+          input: ["text"],
+        },
+        "small",
+      );
+      expect(profile.scaffoldLevel).toBe("max");
+    });
+
+    it("resolves scaffoldLevel='max' when capabilityClassOverride is 'nano'", () => {
+      const profile = resolveModelProfile(
+        {
+          id: "any-model",
+          provider: "ollama",
+          contextWindow: 128_000,
+          reasoning: false,
+          input: ["text"],
+        },
+        "nano",
+      );
+      expect(profile.scaffoldLevel).toBe("max");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // CR-01: provider alias classification — bedrock/vertex/azure must NOT fall
+  // through to capabilityClass="small". Tests cover the security-load-bearing
+  // path: amazon-bedrock (Anthropic Claude via AWS) and google-vertex
+  // (Gemini via GCP Vertex) must resolve to their true capability class.
+  // ---------------------------------------------------------------------------
+  describe("CR-01: provider alias classification — bedrock/vertex/azure map to correct family", () => {
+    it("amazon-bedrock resolves capabilityClass='frontier' (NOT small)", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-sonnet-4-5",
+        provider: "amazon-bedrock",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.capabilityClass).toBe("frontier");
+    });
+
+    it("amazon-bedrock resolves securityLevel='standard' (NOT locked)", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-sonnet-4-5",
+        provider: "amazon-bedrock",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.securityLevel).toBe("standard");
+    });
+
+    it("google-vertex resolves capabilityClass='mid' (NOT small)", () => {
+      const profile = resolveModelProfile({
+        id: "gemini-2.5-pro",
+        provider: "google-vertex",
+        contextWindow: 1_000_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.capabilityClass).toBe("mid");
+    });
+
+    it("google-vertex resolves securityLevel='hardened' (NOT locked)", () => {
+      const profile = resolveModelProfile({
+        id: "gemini-2.5-pro",
+        provider: "google-vertex",
+        contextWindow: 1_000_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.securityLevel).toBe("hardened");
+    });
+
+    it("azure-openai-responses resolves capabilityClass='frontier' (NOT small)", () => {
+      const profile = resolveModelProfile({
+        id: "gpt-4o",
+        provider: "azure-openai-responses",
+        contextWindow: 128_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.capabilityClass).toBe("frontier");
+    });
+
+    it("bedrock alias resolves capabilityClass='frontier'", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-opus-4",
+        provider: "bedrock",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.capabilityClass).toBe("frontier");
+    });
+
+    it("genuinely-unknown provider (ollama) still resolves capabilityClass='small'", () => {
+      const profile = resolveModelProfile({
+        id: "llama3:8b",
+        provider: "ollama",
+        contextWindow: 8_192,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.capabilityClass).toBe("small");
+    });
+
+    it("undefined model still returns FAIL_CLOSED_PROFILE (nano/locked)", () => {
+      const profile = resolveModelProfile(undefined);
+      expect(profile.capabilityClass).toBe("nano");
+      expect(profile.securityLevel).toBe("locked");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // SA7: supportsPromptCache enriched with SDK Model.compat.cacheControlFormat
+  // and Model.cost.cacheRead. Covers openai-compat providers like
+  // Fireworks/OpenRouter that support Anthropic-style caching.
+  // Frontier byte-identical: Anthropic/Bedrock MUST still resolve true.
+  // Fail-safe direction: prefer false-negative over false-positive.
+  // ---------------------------------------------------------------------------
+  describe("SA7 supportsPromptCache SDK enrichment", () => {
+    it("SA7 supportsPromptCache=true for anthropic (frontier byte-identical)", () => {
+      const profile = resolveModelProfile({
+        id: "claude-sonnet-4-5",
+        provider: "anthropic",
+        contextWindow: 200_000,
+        maxTokens: 8_192,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("SA7 supportsPromptCache=true for amazon-bedrock (frontier byte-identical)", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-sonnet-4-5-20250929",
+        provider: "amazon-bedrock",
+        contextWindow: 200_000,
+        maxTokens: 8_192,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("SA7 supportsPromptCache=true when Model has compat.cacheControlFormat='anthropic' (openai-compat provider)", () => {
+      const profile = resolveModelProfile({
+        id: "accounts/fireworks/models/llama-v3p1-70b-instruct",
+        provider: "fireworks",
+        contextWindow: 131_072,
+        maxTokens: 16_384,
+        reasoning: false,
+        input: ["text"],
+        compat: { cacheControlFormat: "anthropic" },
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("SA7 supportsPromptCache=true when Model has cost.cacheRead>0 (native caching signal)", () => {
+      const profile = resolveModelProfile({
+        id: "accounts/fireworks/models/llama-v3p1-70b-instruct",
+        provider: "fireworks",
+        contextWindow: 131_072,
+        maxTokens: 16_384,
+        reasoning: false,
+        input: ["text"],
+        cost: { cacheRead: 0.2 },
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("SA7 supportsPromptCache=false for plain non-caching provider (no compat.cacheControlFormat, cost.cacheRead=0)", () => {
+      const profile = resolveModelProfile({
+        id: "gpt-4o",
+        provider: "openai",
+        contextWindow: 128_000,
+        maxTokens: 8_192,
+        reasoning: false,
+        input: ["text", "image"],
+        cost: { cacheRead: 0 },
+      });
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // CR-02: supportsPromptCache must reflect the REAL provider-family capability.
+  // The factory/cache-detection swap reads
+  //   `config.modelProfile?.supportsPromptCache ?? isAnthropicFamily(provider)`,
+  // whose `??` only falls through on `undefined`. A hardcoded `false` therefore
+  // silently disabled Anthropic prompt caching. supportsPromptCache must be
+  // `true` for the anthropic family (anthropic, amazon-bedrock, aliases) and
+  // `false` for everything else.
+  // ---------------------------------------------------------------------------
+  describe("CR-02: supportsPromptCache reflects provider-family caching capability", () => {
+    it("anthropic model resolves supportsPromptCache=true", () => {
+      const profile = resolveModelProfile({
+        id: "claude-sonnet-4-5",
+        provider: "anthropic",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("amazon-bedrock (Anthropic via AWS) resolves supportsPromptCache=true", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-sonnet-4-5",
+        provider: "amazon-bedrock",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("bedrock alias resolves supportsPromptCache=true", () => {
+      const profile = resolveModelProfile({
+        id: "anthropic.claude-opus-4",
+        provider: "bedrock",
+        contextWindow: 200_000,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.supportsPromptCache).toBe(true);
+    });
+
+    it("ollama (local) model resolves supportsPromptCache=false", () => {
+      const profile = resolveModelProfile({
+        id: "qwen3.6:35b",
+        provider: "ollama",
+        contextWindow: 262_144,
+        reasoning: false,
+        input: ["text"],
+      });
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+
+    it("openai model resolves supportsPromptCache=false (no anthropic-style cache_control)", () => {
+      const profile = resolveModelProfile({
+        id: "gpt-4o",
+        provider: "openai",
+        contextWindow: 128_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+
+    it("google model resolves supportsPromptCache=false (uses Gemini CachedContent, not cache_control)", () => {
+      const profile = resolveModelProfile({
+        id: "gemini-2.5-pro",
+        provider: "google",
+        contextWindow: 1_000_000,
+        reasoning: false,
+        input: ["text", "image"],
+      });
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+
+    it("unknown/undefined model fails closed to supportsPromptCache=false", () => {
+      const profile = resolveModelProfile(undefined);
+      expect(profile.supportsPromptCache).toBe(false);
+    });
+  });
+});

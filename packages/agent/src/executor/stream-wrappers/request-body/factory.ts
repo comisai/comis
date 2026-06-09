@@ -83,7 +83,8 @@ export function createRequestBodyInjector(
 ): StreamFnWrapper {
   return function requestBodyInjector(next: StreamFn): StreamFn {
     return (model, context, options) => {
-      const needsCacheBreakpoints = isAnthropicFamily(model.provider);
+      const needsCacheBreakpoints = config.modelProfile?.supportsPromptCache
+        ?? isAnthropicFamily(model.provider);
       const needsResponsesApiInjection = isResponsesApiProvider(model as { api?: string });
 
       if (!needsCacheBreakpoints && !needsResponsesApiInjection) {

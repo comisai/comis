@@ -133,6 +133,14 @@ const securityRows: Row[] = [
       "Relies on agent voluntarily honouring HTTPS_PROXY. A jailbroken agent ignores the proxy and calls the API directly. Credentials must be present in the process environment to authenticate.",
     verdict: "comis",
   },
+  {
+    label: "Local-model security floor & tuning",
+    comis:
+      "The security floor is a property of the platform, not the model: the kernel sandbox, credential broker, and skill content scanner apply identically whether you run a frontier cloud model or a local one (Ollama, vLLM, etc.) - the guarantees never depend on the model's goodwill. And the floor is only half of it: an immutable capability profile actively tunes Comis to the model - prompt-size budgets, focused tool sets, and deterministic tool selection so a small model isn't drowned in context it can't use, plus reliability rails (goal re-anchoring, a poison-resistant recall floor, tool-call JSON repair with self-correction, and reasoning models' chain-of-thought kept out of the reply). Weaker model, stricter lockdown and more scaffolding; capable models pay nothing for it.",
+    openclaw:
+      "Local models are supported (Ollama, LM Studio, vLLM). No model-aware hardening or scaffolding - the same context and tool presentation regardless of the model, and the security posture does not change for a weaker model.",
+    verdict: "comis",
+  },
 ];
 
 const extensibilityRows: Row[] = [

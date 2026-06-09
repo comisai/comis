@@ -144,30 +144,39 @@ describe("applyJitGuideWrapping — JIT guide injection wrapper around tool exec
 // applySchemasPruning
 // ---------------------------------------------------------------------------
 
-describe("applySchemasPruning — small-model schema pruning gated on modelTier", () => {
-  it("passes tools through unchanged for medium-tier models without invoking pruning", () => {
+describe("applySchemasPruning — nano-class schema pruning gated on capabilityClass (Phase 151: behavior-neutral)", () => {
+  it("passes tools through unchanged for 'small' capabilityClass models without invoking pruning", () => {
+    // Phase 151 behavior-neutral: only "nano" triggers pruning; "small" (qwen3.6 27B/256K) is NOT pruned.
     const logger = createMockLogger();
     const tools = [makeTool({ name: "a", description: "do a" }), makeTool({ name: "b", description: "do b" })];
-    const result = applySchemasPruning({ tools, modelTier: "medium", logger });
+    const result = applySchemasPruning({ tools, capabilityClass: "small", logger });
     expect(result).toEqual(tools);
     expect((logger.info as unknown as { mock: { calls: unknown[][] } }).mock.calls.length).toBe(0);
   });
 
-  it("passes tools through unchanged for large-tier models without invoking pruning", () => {
+  it("passes tools through unchanged for 'frontier' capabilityClass models without invoking pruning", () => {
     const logger = createMockLogger();
     const tools = [makeTool({ name: "a" })];
-    const result = applySchemasPruning({ tools, modelTier: "large", logger });
+    const result = applySchemasPruning({ tools, capabilityClass: "frontier", logger });
     expect(result).toEqual(tools);
   });
 
-  it("emits an INFO log when pruning is invoked for a small-tier model", () => {
+  it("passes tools through unchanged for 'mid' capabilityClass models without invoking pruning", () => {
+    const logger = createMockLogger();
+    const tools = [makeTool({ name: "a", description: "do a" }), makeTool({ name: "b", description: "do b" })];
+    const result = applySchemasPruning({ tools, capabilityClass: "mid", logger });
+    expect(result).toEqual(tools);
+    expect((logger.info as unknown as { mock: { calls: unknown[][] } }).mock.calls.length).toBe(0);
+  });
+
+  it("emits an INFO log when pruning is invoked for a 'nano' capabilityClass model", () => {
     const logger = createMockLogger();
     // Build a tool with a long description so pruning has something to remove.
     const tools = [makeTool({ name: "search", description: "lorem ipsum ".repeat(50) })];
-    applySchemasPruning({ tools, modelTier: "small", logger });
+    applySchemasPruning({ tools, capabilityClass: "nano", logger });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ toolCount: expect.any(Number) }),
-      "Schema descriptions pruned for small model",
+      "Schema descriptions pruned for nano-class model",
     );
   });
 });

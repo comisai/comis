@@ -24,6 +24,7 @@ import type { ExecutionResult } from "../types.js";
 import type { PiExecutorDeps } from "./pi-executor-types.js";
 import { validateInput } from "../executor-input-guard.js";
 import { tryInjectSilentFailure } from "../fault-injector.js";
+import { buildAbortRedirectMessage } from "../../bridge/bridge-safety-controls.js";
 
 /**
  * State surface required by the safety gates.
@@ -101,6 +102,7 @@ export function runSafetyGates(
   // Provider-level degradation pre-check (before per-agent circuit breaker)
   if (deps.providerHealth?.isDegraded(ctx.provider)) {
     state.result.finishReason = "provider_degraded";
+    state.result.response = buildAbortRedirectMessage(undefined, "provider_degraded", ctx.msg.text.slice(0, 200));
     deps.logger.warn(
       {
         provider: ctx.provider,
@@ -115,6 +117,7 @@ export function runSafetyGates(
   // Circuit breaker pre-check
   if (deps.circuitBreaker.isOpen()) {
     state.result.finishReason = "circuit_open";
+    state.result.response = buildAbortRedirectMessage(undefined, "circuit_open", ctx.msg.text.slice(0, 200));
     deps.logger.warn(
       {
         hint: "Circuit breaker is open, skipping execution",

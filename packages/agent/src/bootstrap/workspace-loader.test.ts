@@ -258,6 +258,56 @@ describe("buildBootstrapContextFiles", () => {
 });
 
 // ---------------------------------------------------------------------------
+// buildBootstrapContextFiles — totalMaxChars budget (F2)
+// ---------------------------------------------------------------------------
+
+describe("buildBootstrapContextFiles — totalMaxChars budget", () => {
+  it("does not re-truncate when sum is already within budget", () => {
+    const files: BootstrapFile[] = [
+      { name: "SOUL.md", path: "/ws/SOUL.md", content: "a".repeat(100), missing: false },
+      { name: "AGENTS.md", path: "/ws/AGENTS.md", content: "b".repeat(100), missing: false },
+    ];
+    const result = buildBootstrapContextFiles(files, { totalMaxChars: 300 });
+    // sum=200 < 300 budget → no re-truncation
+    expect(result.reduce((s, f) => s + f.content.length, 0)).toBeLessThanOrEqual(300);
+  });
+
+  it("proportionally re-truncates when sum exceeds budget", () => {
+    const files: BootstrapFile[] = [
+      { name: "SOUL.md", path: "/ws/SOUL.md", content: "a".repeat(2000), missing: false },
+      { name: "AGENTS.md", path: "/ws/AGENTS.md", content: "b".repeat(2000), missing: false },
+    ];
+    const result = buildBootstrapContextFiles(files, { totalMaxChars: 1000 });
+    const total = result.reduce((s, f) => s + f.content.length, 0);
+    // Allow ± files.length for rounding
+    expect(total).toBeLessThanOrEqual(1000 + files.length);
+  });
+
+  it("respects per-file floor of 300 chars even under tight budget", () => {
+    const files: BootstrapFile[] = [
+      { name: "SOUL.md", path: "/ws/SOUL.md", content: "a".repeat(5000), missing: false },
+      { name: "AGENTS.md", path: "/ws/AGENTS.md", content: "b".repeat(5000), missing: false },
+    ];
+    // Budget so tight each file would scale below floor
+    const result = buildBootstrapContextFiles(files, { totalMaxChars: 200 });
+    // Each file must be at least 300 chars (the floor), but content may include truncation marker
+    for (const f of result) {
+      expect(f.content.length).toBeGreaterThanOrEqual(300);
+    }
+  });
+
+  it("undefined totalMaxChars skips total budget logic (frontier/mid byte-identical)", () => {
+    const content = "x".repeat(10_000);
+    const files: BootstrapFile[] = [
+      { name: "SOUL.md", path: "/ws/SOUL.md", content, missing: false },
+    ];
+    const result = buildBootstrapContextFiles(files, { totalMaxChars: undefined });
+    // No re-truncation — content unchanged (no per-file maxChars set, uses 20_000 default)
+    expect(result[0]!.content).toBe(content);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // filterBootstrapFilesForGroupChat
 // ---------------------------------------------------------------------------
 

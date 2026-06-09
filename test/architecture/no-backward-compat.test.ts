@@ -509,4 +509,21 @@ describe("no-backward-compat", () => {
       }),
     ).toEqual([]);
   });
+
+  // Phase 151 no-BC: resolveModelTier is deleted — not present in packages/*/src/**/*.ts
+  // RED until Plan 03 deletes resolveModelTier from tool-deferral.ts.
+  it("resolveModelTier is deleted — not present in packages/*/src/**/*.ts (Phase 151 no-BC)", () => {
+    const allFiles = listAllProductionFiles();
+    const hits: string[] = [];
+    for (const file of allFiles) {
+      const content = readFileSync(file, "utf-8");
+      if (/\bresolveModelTier\b/.test(content)) {
+        hits.push(repoRelative(file));
+      }
+    }
+    expect(
+      hits,
+      `resolveModelTier still present in: ${hits.join(", ")}`,
+    ).toHaveLength(0);
+  });
 });

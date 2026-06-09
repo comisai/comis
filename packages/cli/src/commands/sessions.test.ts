@@ -3,7 +3,7 @@
  * Tests for the sessions CLI command registration AND the
  * `comis sessions report show` rendering path.
  *
- * Two test blocks below:
+ * Three test blocks below:
  *
  *   - `registerSessionsCommand` / `formatRelativeTime` — verify the
  *     subcommand wiring (list / inspect / delete / report show / list).
@@ -11,15 +11,26 @@
  *   - `renderSystemPromptReport — Tools/Skills lines never render
  *     'undefined entries'`. Any non-array `entries` value must render an
  *     honest `?` instead of the misleading literal `undefined`.
+ *
+ *   - Phase 164-03 (RR4): sessions reset-lcd subcommand wiring:
+ *     CLI1 — subcommand is registered; accepts sessionKey + --memory + --yes
+ *     CLI2 — calls session.reset_conversation with { session_key } when --yes is passed
+ *     CLI3 — --memory flag threads memory: true to the RPC request
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Command } from "commander";
 import {
   registerSessionsCommand,
   formatRelativeTime,
   renderSystemPromptReport,
 } from "./sessions.js";
+import { createMockRpcClient } from "../mock-rpc-client.js";
+import {
+  createTestProgram,
+  createConsoleSpy,
+  createProcessExitSpy,
+} from "../test-helpers.js";
 
 describe("registerSessionsCommand", () => {
   it("registers the sessions command with list, inspect, and delete subcommands", () => {
@@ -253,5 +264,299 @@ describe("renderSystemPromptReport — Tools/Skills lines never render 'undefine
     } finally {
       cap.restore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 164-06 (gap-closure): sessions reset — complete cross-mode conversation reset
+// Replaces Phase 164-03 sessions reset-lcd (LCD-only).
+//
+// CLI1: subcommand `sessions reset` is registered (NOT `sessions reset-lcd`)
+// CLI2: sends session.reset_conversation with { session_key } when --yes is passed
+// CLI3: --memory flag threads memory: true to the request
+// CLI4: --memory with memoriesDeleted===undefined → ⚠ warning to stderr
+// CLI4b: --memory with memoriesDeleted defined (future impl) → RAG line to stdout
+// CLI5: output includes both lcdRowsDeleted and sessionMessagesCleared counts
+//
+// Uses vi.mock for withClient (same pattern as trace.test.ts).
+// ---------------------------------------------------------------------------
+
+vi.mock("../client/rpc-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
+
+vi.mock("../output/spinner.js", () => ({
+  withSpinner: vi.fn(async (_text: string, fn: () => Promise<unknown>) => fn()),
+}));
+
+vi.mock("@clack/prompts", () => ({
+  confirm: vi.fn().mockResolvedValue(true),
+  cancel: vi.fn(),
+  isCancel: vi.fn().mockReturnValue(false),
+}));
+
+const { withClient: mockedWithClient } = await import("../client/rpc-client.js");
+
+/** Minimal session.reset_conversation success response — memoriesDeleted OMITTED (honest-defer) */
+const RESET_CONVERSATION_RESPONSE = {
+  sessionKey: "tenant1:user1:chan1",
+  lcdRowsDeleted: 7,
+  sessionMessagesCleared: 4,
+  // memoriesDeleted is intentionally absent: the handler omits it when RAG clear is not-implemented
+};
+
+describe("CLI1: sessions reset subcommand registration (Phase 164-06)", () => {
+  it("CLI1: registerSessionsCommand registers sessions reset subcommand (not reset-lcd)", () => {
+    const program = new Command();
+    registerSessionsCommand(program);
+
+    const sessionsCmd = program.commands.find((c) => c.name() === "sessions");
+    expect(sessionsCmd).toBeDefined();
+
+    // New name is 'reset' (Phase 164-06 rename)
+    const resetCmd = sessionsCmd!.commands.find((c) => c.name() === "reset");
+    expect(resetCmd).toBeDefined();
+    expect(resetCmd!.description()).toMatch(/conversation|session|clear|reset/i);
+
+    // Old name 'reset-lcd' must NOT exist (renamed in Phase 164-06)
+    const oldResetLcdCmd = sessionsCmd!.commands.find((c) => c.name() === "reset-lcd");
+    expect(oldResetLcdCmd).toBeUndefined();
+  });
+
+  it("CLI1b: reset subcommand has --memory and --yes options", () => {
+    const program = new Command();
+    registerSessionsCommand(program);
+
+    const sessionsCmd = program.commands.find((c) => c.name() === "sessions")!;
+    const resetCmd = sessionsCmd.commands.find((c) => c.name() === "reset")!;
+
+    const optNames = resetCmd.options.map((o) => o.long);
+    expect(optNames).toContain("--memory");
+    expect(optNames).toContain("--yes");
+  });
+});
+
+describe("CLI2: sessions reset calls session.reset_conversation via callTyped (Phase 164-06)", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(mockedWithClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("CLI2: sends session.reset_conversation with session_key when --yes is passed", async () => {
+    const capturedMethods: string[] = [];
+    const capturedParams: unknown[] = [];
+
+    vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
+      const mockClient = {
+        call: vi.fn().mockImplementation(async (method: string, params?: unknown) => {
+          capturedMethods.push(method);
+          capturedParams.push(params);
+          return RESET_CONVERSATION_RESPONSE;
+        }),
+        close: vi.fn(),
+        onNotification: vi.fn(),
+      };
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerSessionsCommand(program);
+    await program.parseAsync([
+      "node", "test",
+      "sessions", "reset", "tenant1:user1:chan1",
+      "--yes",
+    ]);
+
+    expect(vi.mocked(mockedWithClient)).toHaveBeenCalledTimes(1);
+    expect(capturedMethods[0]).toBe("session.reset_conversation");
+    const params = capturedParams[0] as Record<string, unknown>;
+    expect(params["session_key"]).toBe("tenant1:user1:chan1");
+  });
+
+  it("CLI2b: output includes both lcdRowsDeleted and sessionMessagesCleared counts on success", async () => {
+    vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
+      const mockClient = createMockRpcClient()
+        .onCall("session.reset_conversation", RESET_CONVERSATION_RESPONSE)
+        .build();
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerSessionsCommand(program);
+    await program.parseAsync([
+      "node", "test",
+      "sessions", "reset", "tenant1:user1:chan1",
+      "--yes",
+    ]);
+
+    const output = consoleSpy.log.mock.calls.map((c) => c.join(" ")).join("\n");
+    // Output must reference both cleared counts
+    expect(output).toMatch(/7/);   // lcdRowsDeleted
+    expect(output).toMatch(/4/);   // sessionMessagesCleared
+  });
+});
+
+describe("CLI3: sessions reset --memory threads memory: true (Phase 164-06)", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(mockedWithClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("CLI3: --memory threads memory: true to the RPC request", async () => {
+    const capturedParams: unknown[] = [];
+
+    vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
+      const mockClient = {
+        call: vi.fn().mockImplementation(async (_method: string, params?: unknown) => {
+          capturedParams.push(params);
+          return RESET_CONVERSATION_RESPONSE;
+        }),
+        close: vi.fn(),
+        onNotification: vi.fn(),
+      };
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerSessionsCommand(program);
+    await program.parseAsync([
+      "node", "test",
+      "sessions", "reset", "tenant1:user1:chan1",
+      "--yes",
+      "--memory",
+    ]);
+
+    expect(capturedParams).toHaveLength(1);
+    const params = capturedParams[0] as Record<string, unknown>;
+    expect(params["memory"]).toBe(true);
+  });
+
+  it("CLI3b: without --memory, memory param is false or falsy", async () => {
+    const capturedParams: unknown[] = [];
+
+    vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
+      const mockClient = {
+        call: vi.fn().mockImplementation(async (_method: string, params?: unknown) => {
+          capturedParams.push(params);
+          return RESET_CONVERSATION_RESPONSE;
+        }),
+        close: vi.fn(),
+        onNotification: vi.fn(),
+      };
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerSessionsCommand(program);
+    await program.parseAsync([
+      "node", "test",
+      "sessions", "reset", "tenant1:user1:chan1",
+      "--yes",
+    ]);
+
+    expect(capturedParams).toHaveLength(1);
+    const params = capturedParams[0] as Record<string, unknown>;
+    expect(params["memory"]).toBeFalsy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CLI4: --memory not-implemented warning output (Phase 164-06)
+// ---------------------------------------------------------------------------
+
+describe("CLI4: sessions reset --memory not-implemented warning (Phase 164-06)", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+  let stderrSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.mocked(mockedWithClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+    stderrSpy.mockRestore();
+  });
+
+  it("CLI4: --memory + memoriesDeleted===undefined prints not-implemented warning to stderr", async () => {
+    vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
+      const mockClient = {
+        call: vi.fn().mockResolvedValue(RESET_CONVERSATION_RESPONSE), // no memoriesDeleted field
+        close: vi.fn(),
+        onNotification: vi.fn(),
+      };
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerSessionsCommand(program);
+    await program.parseAsync([
+      "node", "test",
+      "sessions", "reset", "tenant1:user1:chan1",
+      "--yes",
+      "--memory",
+    ]);
+
+    // stderr must contain the warning about not-implemented
+    const stderrOutput = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+    expect(stderrOutput).toMatch(/not yet implemented|RAG memory was NOT cleared/i);
+
+    // stdout must NOT contain a "RAG memories cleared" line
+    const stdoutOutput = consoleSpy.log.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(stdoutOutput).not.toMatch(/RAG memories cleared/i);
+  });
+
+  it("CLI4b: --memory + memoriesDeleted defined → RAG line printed to stdout, no stderr warning", async () => {
+    vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
+      const mockClient = {
+        call: vi.fn().mockResolvedValue({ ...RESET_CONVERSATION_RESPONSE, memoriesDeleted: 3 }),
+        close: vi.fn(),
+        onNotification: vi.fn(),
+      };
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerSessionsCommand(program);
+    await program.parseAsync([
+      "node", "test",
+      "sessions", "reset", "tenant1:user1:chan1",
+      "--yes",
+      "--memory",
+    ]);
+
+    // stdout must contain the RAG line
+    const stdoutOutput = consoleSpy.log.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(stdoutOutput).toMatch(/RAG memories cleared.*3/i);
+
+    // stderr must NOT contain the not-implemented warning
+    const stderrOutput = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+    expect(stderrOutput).not.toMatch(/not yet implemented|RAG memory was NOT cleared/i);
   });
 });

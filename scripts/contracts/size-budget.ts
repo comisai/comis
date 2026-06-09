@@ -24,15 +24,14 @@ import { transformSync } from "esbuild";
 import { gzipSync } from "node:zlib";
 
 /**
- * Budget: 121 KB minified. Raised from 120 KB for the QT1 `obs.explain`
- * `coverage.toolStats` reconciliation block (the transparent rollup-vs-trajectory
- * note that stops `comis explain` and `comis fleet` silently contradicting). The
- * addition is bounded (counts + tool names) and gzip-friendly — the gzipped total
- * (the real wire cost) sits at ~11.6 KB against the 38 KB gzipped budget, so this
- * tracks the legitimate contract growth on the flagship report rather than
- * loosening the wire constraint.
+ * Budget: 122 KB minified. Raised from 121 KB for the Phase-164
+ * `session.reset_conversation` admin contract (the complete cross-mode forget
+ * that clears both the LCD history and the daemon sessionStore). The addition is
+ * bounded (one request/response pair) and gzip-friendly — the gzipped total (the
+ * real wire cost) stays well under the 38 KB gzipped budget, so this tracks the
+ * legitimate contract growth rather than loosening the wire constraint.
  */
-export const BUDGET_MINIFIED_BYTES = 121_000;
+export const BUDGET_MINIFIED_BYTES = 122_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;

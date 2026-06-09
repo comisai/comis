@@ -17,6 +17,7 @@
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ComisLogger, ErrorKind } from "@comis/core";
+import { wrapExternalContent } from "@comis/core";
 
 import { parseUserTokenBudget } from "../../budget/budget-parser.js";
 import {
@@ -25,6 +26,8 @@ import {
 } from "../../budget/turn-budget-tracker.js";
 import { wrapInEnvelope } from "../../envelope/message-envelope.js";
 import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
+import { buildGoalAnchorBlock } from "./goal-anchor.js";
+import { resolveScaffoldDefaults } from "../scaffold-defaults.js";
 
 import type { RunPromptParams } from "./prompt-runner-types.js";
 
@@ -67,6 +70,8 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
     resolvedModel,
     config,
     budgetWarningRef,
+    modelProfile,
+    executionPlanRef,
   } = params;
 
   // Wrap message text with envelope
@@ -100,11 +105,37 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
     messageText = `${inlineMemory}\n${messageText}`;
   }
 
+  // R1: GoalAnchor tail injection — APPENDED after user message text.
+  // SD1 (Phase 158): GoalAnchor capability-gated default.
+  // Effective flag = explicit config ?? capability default (small/nano=true, frontier/mid=false).
+  // Precedence: explicit false on small/nano → stays OFF. explicit true on frontier → turns ON.
+  // resolveScaffoldDefaults reads config.goalAnchor?.enabled which is `boolean | undefined`
+  // from PerAgentConfig (the block is .optional()); do NOT re-parse through GoalAnchorConfigSchema.
+  // Fail-closed when modelProfile is absent (no profile → frontier-equivalent → no injection).
+  // T-153-02a: injection is bounded by maxChars (500 default); no untrusted data.
+  if (
+    modelProfile !== undefined &&
+    resolveScaffoldDefaults(modelProfile, config).goalAnchorEnabled &&
+    executionPlanRef.current?.active
+  ) {
+    const goalAnchorBlock = buildGoalAnchorBlock(
+      executionPlanRef.current,
+      (config.goalAnchor as { maxChars?: number } | undefined)?.maxChars,
+    );
+    if (goalAnchorBlock) {
+      messageText = `${messageText}\n\n${goalAnchorBlock}`;
+    }
+  }
+
   // Extract vision-direct image content blocks for multimodal prompt
   const imageContents = Array.isArray(msg.metadata?.imageContents)
     ? (msg.metadata.imageContents as ImageContent[])
     : [];
-  const modelSupportsVision = resolvedModel?.input?.includes("image") ?? false;
+  // L4: read supportsVision from the resolved ModelProfile (not directly from
+  // resolvedModel.input). Both are set from the same config field in model-profile.ts,
+  // but reading from modelProfile ensures the single-resolve-point invariant and
+  // makes the vision gate testable independently of the resolved model entry.
+  const modelSupportsVision = modelProfile?.supportsVision ?? false;
   let promptImages: ImageContent[] | undefined;
 
   if (imageContents.length > 0) {
@@ -119,9 +150,15 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
 
     if (modelSupportsVision) {
       promptImages = imageContents;
-      const imageHint = imageContents.length === 1
+      const rawHint = imageContents.length === 1
         ? "[An image is attached to this message and is visible to you. Analyze it directly — do NOT call image_analyze, you can already see it.]"
         : `[${imageContents.length} images are attached to this message and are visible to you. Analyze them directly — do NOT call image_analyze, you can already see them.]`;
+      // S7: flag image-derived hint as untrusted (vision input = injection vector).
+      // Apply wrapExternalContent ONLY to rawHint (not the full messageText) to
+      // avoid double-wrapping already-wrapped content (memory, goal-anchor) in messageText.
+      // includeWarning:false avoids visual noise — the real defense is the canary in
+      // the system prompt + OutputGuard on the response, both active on all paths.
+      const imageHint = wrapExternalContent(rawHint, { source: "vision", includeWarning: false });
       messageText = imageHint + "\n" + messageText;
 
       deps.logger.info(

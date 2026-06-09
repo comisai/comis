@@ -264,6 +264,69 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
+    "default": {
+      "effectiveContextCapNano": 16000,
+      "effectiveContextCapSmall": 32000
+    },
+    "immutable": true,
+    "path": "agents.contextEngine.budget",
+    "type": "object"
+  },
+  {
+    "default": 16000,
+    "immutable": true,
+    "path": "agents.contextEngine.budget.effectiveContextCapNano",
+    "type": "integer"
+  },
+  {
+    "default": 32000,
+    "immutable": true,
+    "path": "agents.contextEngine.budget.effectiveContextCapSmall",
+    "type": "integer"
+  },
+  {
+    "default": {
+      "enabled": true,
+      "targetTokens": 3000
+    },
+    "immutable": true,
+    "path": "agents.contextEngine.compactPrompt",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.contextEngine.compactPrompt.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 3000,
+    "immutable": true,
+    "path": "agents.contextEngine.compactPrompt.targetTokens",
+    "type": "integer"
+  },
+  {
+    "default": {
+      "preferEvictionByCapability": true,
+      "strongerSummarizerModel": ""
+    },
+    "immutable": true,
+    "path": "agents.contextEngine.compaction",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.contextEngine.compaction.preferEvictionByCapability",
+    "type": "boolean"
+  },
+  {
+    "default": "",
+    "immutable": true,
+    "path": "agents.contextEngine.compaction.strongerSummarizerModel",
+    "type": "string"
+  },
+  {
     "default": 5,
     "immutable": true,
     "path": "agents.contextEngine.compactionCooldownTurns",
@@ -761,6 +824,34 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": 20,
     "immutable": true,
     "path": "agents.geminiCache.maxActiveCaches",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.goalAnchor",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.goalAnchor.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 500,
+    "immutable": true,
+    "path": "agents.goalAnchor.maxChars",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.honesty",
+    "type": "object"
+  },
+  {
+    "default": 2,
+    "immutable": true,
+    "path": "agents.honesty.maxCriticRetries",
     "type": "integer"
   },
   {
@@ -1343,6 +1434,21 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "immutable": true,
+    "path": "agents.operationModels.planning",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.planning.model",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.planning.timeout",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
     "path": "agents.operationModels.subagent",
     "type": "object"
   },
@@ -1369,6 +1475,21 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "immutable": true,
     "path": "agents.operationModels.taskExtraction.timeout",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.verification",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.verification.model",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.verification.timeout",
     "type": "integer"
   },
   {
@@ -1406,6 +1527,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
+      "baseFloor": 0,
       "enabled": true,
       "entityLane": {
         "enabled": true,
@@ -1483,6 +1605,13 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.rag",
     "type": "object"
+  },
+  {
+    "default": 0,
+    "description": "Minimum BASE relevance score (pre-boost) for memory injection. Boosts cannot resurrect a memory whose base score is below this threshold. Frozen: a weaker ModelProfile cannot lower this below the operator-set value (S6).",
+    "immutable": true,
+    "path": "agents.rag.baseFloor",
+    "type": "number"
   },
   {
     "default": true,
@@ -2952,6 +3081,23 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.verbosity.threadLevel",
     "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "agents.verification",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.verification.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 200,
+    "immutable": true,
+    "path": "agents.verification.minResponseChars",
+    "type": "integer"
   },
   {
     "default": {
@@ -7703,6 +7849,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         },
         "provider": "default",
         "rag": {
+          "baseFloor": 0,
           "enabled": true,
           "entityLane": {
             "enabled": true,
@@ -14785,6 +14932,78 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "minimum": 10000,
           "type": "integer"
         },
+        "budget": {
+          "additionalProperties": false,
+          "default": {
+            "effectiveContextCapNano": 16000,
+            "effectiveContextCapSmall": 32000
+          },
+          "properties": {
+            "effectiveContextCapNano": {
+              "default": 16000,
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "effectiveContextCapSmall": {
+              "default": 32000,
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "effectiveContextCapSmall",
+            "effectiveContextCapNano"
+          ],
+          "type": "object"
+        },
+        "compactPrompt": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": true,
+            "targetTokens": 3000
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "targetTokens": {
+              "default": 3000,
+              "maximum": 8000,
+              "minimum": 500,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "targetTokens"
+          ],
+          "type": "object"
+        },
+        "compaction": {
+          "additionalProperties": false,
+          "default": {
+            "preferEvictionByCapability": true,
+            "strongerSummarizerModel": ""
+          },
+          "properties": {
+            "preferEvictionByCapability": {
+              "default": true,
+              "type": "boolean"
+            },
+            "strongerSummarizerModel": {
+              "default": "",
+              "type": "string"
+            }
+          },
+          "required": [
+            "preferEvictionByCapability",
+            "strongerSummarizerModel"
+          ],
+          "type": "object"
+        },
         "compactionCooldownTurns": {
           "default": 5,
           "maximum": 50,
@@ -15102,7 +15321,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "deferCompaction",
         "summarizerSpend",
         "summarizerBreaker",
-        "postBatchContinuation"
+        "postBatchContinuation",
+        "budget",
+        "compaction",
+        "compactPrompt"
       ],
       "type": "object"
     },
@@ -15390,6 +15612,41 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "required": [
         "enabled",
         "maxActiveCaches"
+      ],
+      "type": "object"
+    },
+    "goalAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "maxChars": {
+          "default": 500,
+          "maximum": 2000,
+          "minimum": 100,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "enabled",
+        "maxChars"
+      ],
+      "type": "object"
+    },
+    "honesty": {
+      "additionalProperties": false,
+      "properties": {
+        "maxCriticRetries": {
+          "default": 2,
+          "maximum": 5,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxCriticRetries"
       ],
       "type": "object"
     },
@@ -16064,6 +16321,21 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           },
           "type": "object"
         },
+        "planning": {
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "timeout": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
         "subagent": {
           "additionalProperties": false,
           "properties": {
@@ -16080,6 +16352,21 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "object"
         },
         "taskExtraction": {
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "timeout": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "verification": {
           "additionalProperties": false,
           "properties": {
             "model": {
@@ -16137,6 +16424,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "rag": {
       "additionalProperties": false,
       "default": {
+        "baseFloor": 0,
         "enabled": true,
         "entityLane": {
           "enabled": true,
@@ -16212,6 +16500,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         }
       },
       "properties": {
+        "baseFloor": {
+          "default": 0,
+          "description": "Minimum BASE relevance score (pre-boost) for memory injection. Boosts cannot resurrect a memory whose base score is below this threshold. Frozen: a weaker ModelProfile cannot lower this below the operator-set value (S6).",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
         "enabled": {
           "default": true,
           "type": "boolean"
@@ -16679,6 +16974,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "maxResults",
         "maxContextChars",
         "minScore",
+        "baseFloor",
         "includeTrustLevels",
         "rerank",
         "scoring",
@@ -18139,6 +18435,26 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "enabled",
         "defaultLevel",
         "overrides"
+      ],
+      "type": "object"
+    },
+    "verification": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "minResponseChars": {
+          "default": 200,
+          "maximum": 2000,
+          "minimum": 50,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "enabled",
+        "minResponseChars"
       ],
       "type": "object"
     },
@@ -23182,6 +23498,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("pro
               "transcriptToolCallIdModelHints": []
             },
             "properties": {
+              "capabilityClass": {
+                "enum": [
+                  "frontier",
+                  "mid",
+                  "small",
+                  "nano"
+                ],
+                "type": "string"
+              },
               "dropThinkingBlockModelHints": {
                 "default": [],
                 "items": {
@@ -23198,6 +23523,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("pro
                   "google"
                 ],
                 "type": "string"
+              },
+              "supportsPromptCache": {
+                "type": "boolean"
+              },
+              "supportsStructuredOutput": {
+                "type": "boolean"
+              },
+              "supportsVision": {
+                "type": "boolean"
               },
               "transcriptToolCallIdMode": {
                 "default": "default",
@@ -24873,6 +25207,78 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "minimum": 10000,
                 "type": "integer"
               },
+              "budget": {
+                "additionalProperties": false,
+                "default": {
+                  "effectiveContextCapNano": 16000,
+                  "effectiveContextCapSmall": 32000
+                },
+                "properties": {
+                  "effectiveContextCapNano": {
+                    "default": 16000,
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "effectiveContextCapSmall": {
+                    "default": 32000,
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "effectiveContextCapSmall",
+                  "effectiveContextCapNano"
+                ],
+                "type": "object"
+              },
+              "compactPrompt": {
+                "additionalProperties": false,
+                "default": {
+                  "enabled": true,
+                  "targetTokens": 3000
+                },
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "targetTokens": {
+                    "default": 3000,
+                    "maximum": 8000,
+                    "minimum": 500,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "targetTokens"
+                ],
+                "type": "object"
+              },
+              "compaction": {
+                "additionalProperties": false,
+                "default": {
+                  "preferEvictionByCapability": true,
+                  "strongerSummarizerModel": ""
+                },
+                "properties": {
+                  "preferEvictionByCapability": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "strongerSummarizerModel": {
+                    "default": "",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "preferEvictionByCapability",
+                  "strongerSummarizerModel"
+                ],
+                "type": "object"
+              },
               "compactionCooldownTurns": {
                 "default": 5,
                 "maximum": 50,
@@ -25190,7 +25596,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "deferCompaction",
               "summarizerSpend",
               "summarizerBreaker",
-              "postBatchContinuation"
+              "postBatchContinuation",
+              "budget",
+              "compaction",
+              "compactPrompt"
             ],
             "type": "object"
           },
@@ -25478,6 +25887,41 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "required": [
               "enabled",
               "maxActiveCaches"
+            ],
+            "type": "object"
+          },
+          "goalAnchor": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "default": false,
+                "type": "boolean"
+              },
+              "maxChars": {
+                "default": 500,
+                "maximum": 2000,
+                "minimum": 100,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "enabled",
+              "maxChars"
+            ],
+            "type": "object"
+          },
+          "honesty": {
+            "additionalProperties": false,
+            "properties": {
+              "maxCriticRetries": {
+                "default": 2,
+                "maximum": 5,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "maxCriticRetries"
             ],
             "type": "object"
           },
@@ -26152,6 +26596,21 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 },
                 "type": "object"
               },
+              "planning": {
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "timeout": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
               "subagent": {
                 "additionalProperties": false,
                 "properties": {
@@ -26168,6 +26627,21 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "object"
               },
               "taskExtraction": {
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "timeout": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "verification": {
                 "additionalProperties": false,
                 "properties": {
                   "model": {
@@ -26225,6 +26699,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "rag": {
             "additionalProperties": false,
             "default": {
+              "baseFloor": 0,
               "enabled": true,
               "entityLane": {
                 "enabled": true,
@@ -26300,6 +26775,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               }
             },
             "properties": {
+              "baseFloor": {
+                "default": 0,
+                "description": "Minimum BASE relevance score (pre-boost) for memory injection. Boosts cannot resurrect a memory whose base score is below this threshold. Frozen: a weaker ModelProfile cannot lower this below the operator-set value (S6).",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
               "enabled": {
                 "default": true,
                 "type": "boolean"
@@ -26767,6 +27249,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "maxResults",
               "maxContextChars",
               "minScore",
+              "baseFloor",
               "includeTrustLevels",
               "rerank",
               "scoring",
@@ -28230,6 +28713,26 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             ],
             "type": "object"
           },
+          "verification": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "default": false,
+                "type": "boolean"
+              },
+              "minResponseChars": {
+                "default": 200,
+                "maximum": 2000,
+                "minimum": 50,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "enabled",
+              "minResponseChars"
+            ],
+            "type": "object"
+          },
           "workspace": {
             "additionalProperties": false,
             "default": {
@@ -28438,6 +28941,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "provider": "default",
           "rag": {
+            "baseFloor": 0,
             "enabled": true,
             "entityLane": {
               "enabled": true,
@@ -35049,6 +35553,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "transcriptToolCallIdModelHints": []
                 },
                 "properties": {
+                  "capabilityClass": {
+                    "enum": [
+                      "frontier",
+                      "mid",
+                      "small",
+                      "nano"
+                    ],
+                    "type": "string"
+                  },
                   "dropThinkingBlockModelHints": {
                     "default": [],
                     "items": {
@@ -35065,6 +35578,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                       "google"
                     ],
                     "type": "string"
+                  },
+                  "supportsPromptCache": {
+                    "type": "boolean"
+                  },
+                  "supportsStructuredOutput": {
+                    "type": "boolean"
+                  },
+                  "supportsVision": {
+                    "type": "boolean"
                   },
                   "transcriptToolCallIdMode": {
                     "default": "default",

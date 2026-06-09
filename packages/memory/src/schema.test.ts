@@ -317,16 +317,17 @@ describe("initSchema", () => {
     expect(() => ensureLcdTables(db)).not.toThrow();
     expect(() => ensureLcdTables(db)).not.toThrow();
 
-    // The six LCD BUSINESS tables: lcd_messages + lcd_message_parts (Phase 127),
+    // The seven LCD BUSINESS tables: lcd_messages + lcd_message_parts (Phase 127),
     // the three Phase-129 compaction tables (summaries / summary_messages /
-    // context_items), plus the Phase-130 lcd_summary_parents condensed→child edge.
+    // context_items), the Phase-130 lcd_summary_parents condensed→child edge,
+    // plus the Phase-164 lcd_ingest_cursor (epoch-cursor continue-append state).
     // The Phase-131 FTS5 virtual tables (lcd_*_fts) + their shadow tables
     // (lcd_*_fts_data/_idx/_content/_docsize/_config) are EXCLUDED here — they are
     // an index, not a business table; their presence is asserted separately below.
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lcd_%' AND name NOT LIKE '%\\_fts%' ESCAPE '\\'")
       .all() as Array<{ name: string }>;
-    expect(tables).toHaveLength(6);
+    expect(tables).toHaveLength(7);
 
     // The two Phase-131 FTS5 virtual tables exist after ensureLcdTables (E1
     // ctx_search). On a host whose better-sqlite3 lacks compiled FTS5 the guarded

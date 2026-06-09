@@ -133,8 +133,6 @@ export function truncateFileContent(
  */
 export async function loadWorkspaceBootstrapFiles(
   workspaceDir: string,
-   
-  _maxChars?: number,
 ): Promise<BootstrapFile[]> {
   const files: BootstrapFile[] = [];
 
@@ -266,7 +264,12 @@ export function filterBootstrapFilesForGroupChat(
  */
 export function buildBootstrapContextFiles(
   files: BootstrapFile[],
-  opts?: { maxChars?: number; warn?: (msg: string) => void; scan?: WorkspaceScanOptions },
+  opts?: {
+    maxChars?: number;
+    totalMaxChars?: number; // F2: total budget across all files (undefined = no total cap)
+    warn?: (msg: string) => void;
+    scan?: WorkspaceScanOptions;
+  },
 ): BootstrapContextFile[] {
   const maxChars = opts?.maxChars ?? 20_000;
   const result: BootstrapContextFile[] = [];
@@ -326,6 +329,29 @@ export function buildBootstrapContextFiles(
       );
     }
     result.push({ path: file.name, content: truncated.content });
+  }
+
+  // F2: total bootstrap budget — proportional re-truncation if sum exceeds budget.
+  // Only fires when totalMaxChars is set (small/nano). Frontier/mid: undefined → skip.
+  // Uses a direct slice (not truncateFileContent) so the total budget is strictly honored;
+  // truncateFileContent adds a marker (~80 chars) that would exceed the budget.
+  const totalMaxChars = opts?.totalMaxChars;
+  if (totalMaxChars !== undefined) {
+    const totalChars = result.reduce((sum, f) => sum + f.content.length, 0);
+    if (totalChars > totalMaxChars) {
+      const scale = totalMaxChars / totalChars;
+      const PER_FILE_FLOOR = 300;
+      for (let i = 0; i < result.length; i++) {
+        const current = result[i]!;
+        const scaledMax = Math.max(PER_FILE_FLOOR, Math.floor(current.content.length * scale));
+        if (scaledMax < current.content.length) {
+          result[i] = {
+            path: current.path,
+            content: current.content.slice(0, scaledMax),
+          };
+        }
+      }
+    }
   }
 
   return result;

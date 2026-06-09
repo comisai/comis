@@ -87,7 +87,7 @@ export const COMIS_WINS = [
   "Trust-partitioned learning memory (bounded tuner, trust weight frozen)",
   "Lossless context (DAG engine - nothing deleted, compression reversible in-session)",
   "Natural-language → DAG orchestration (7 node types)",
-  "Local-model security floor - a weaker model gets a stricter posture",
+  "Local-model security floor + reliability scaffold - a weaker model gets a stricter posture and is actively tuned to run well",
   "Result<T, E> + traceId glass box - every action reconstructable from logs alone",
 ] as const;
 

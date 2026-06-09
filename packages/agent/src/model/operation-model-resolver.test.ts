@@ -424,15 +424,71 @@ describe("resolveProviderFamily", () => {
     expect(resolveProviderFamily("google")).toBe("google");
   });
 
-  it("strips -bedrock suffix: 'anthropic-bedrock' -> 'anthropic'", () => {
-    expect(resolveProviderFamily("anthropic-bedrock")).toBe("anthropic");
+  it("passes 'anthropic-bedrock' through as-is (not a pi-ai KnownProvider alias; normalizeProviderId returns as-is)", () => {
+    // SA8: normalizeProviderId does not strip suffixes — it resolves ALIASES only.
+    // "anthropic-bedrock" has no alias entry, so it passes through unchanged.
+    // "amazon-bedrock" is the canonical pi-ai ID (covered by SA8 tests below).
+    expect(resolveProviderFamily("anthropic-bedrock")).toBe("anthropic-bedrock");
   });
 
-  it("strips -vertex suffix: 'google-vertex' -> 'google'", () => {
-    expect(resolveProviderFamily("google-vertex")).toBe("google");
+  it("passes 'google-vertex' through as canonical pi-ai KnownProvider (SA8: no suffix stripping)", () => {
+    // SA8: "google-vertex" is a native pi-ai KnownProvider in getProviders().
+    // normalizeProviderId("google-vertex") = "google-vertex" (no alias match).
+    // Stripping to "google" was never correct for operation-tier lookup.
+    expect(resolveProviderFamily("google-vertex")).toBe("google-vertex");
   });
 
   it("passes through unknown providers unchanged: 'xai' -> 'xai'", () => {
     expect(resolveProviderFamily("xai")).toBe("xai");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SA8: resolveProviderFamily Bedrock/Vertex misroute fix
+//
+// BUG (pre-fix): "amazon-bedrock" → "amazon" (NOT a pi-ai KnownProvider →
+// resolveOperationDefaults returns {} → Level 5 silent fallback).
+// FIX: route through normalizeProviderId — both "amazon-bedrock" and
+// "google-vertex" are native pi-ai KnownProvider entries, no suffix stripping.
+// ---------------------------------------------------------------------------
+describe("SA8 resolveProviderFamily Bedrock/Vertex misroute fix", () => {
+  it("SA8 resolveProviderFamily('amazon-bedrock') returns amazon-bedrock (pi-ai KnownProvider, no suffix strip)", () => {
+    expect(resolveProviderFamily("amazon-bedrock")).toBe("amazon-bedrock");
+  });
+
+  it("SA8 resolveProviderFamily('google-vertex') returns google-vertex (pi-ai KnownProvider, symmetric fix)", () => {
+    expect(resolveProviderFamily("google-vertex")).toBe("google-vertex");
+  });
+
+  it("SA8 resolveOperationDefaults for amazon-bedrock returns non-empty result (has fast or mid)", () => {
+    const family = resolveProviderFamily("amazon-bedrock");
+    const defaults = resolveOperationDefaults(family);
+    expect(defaults.fast ?? defaults.mid).toBeTruthy();
+  });
+
+  it("SA8 resolveOperationModel for amazon-bedrock resolves to source='family_default' (not agent_primary)", () => {
+    const result = resolveOperationModel(
+      baseParams({
+        operationType: "heartbeat",
+        agentProvider: "amazon-bedrock",
+        agentModel: "anthropic.claude-sonnet-4-5-20250929",
+        providerFamily: resolveProviderFamily("amazon-bedrock"),
+      }),
+    );
+    expect(result.source).toBe("family_default");
+  });
+
+  it("SA8 resolveOperationDefaults for google-vertex returns non-empty result (has fast or mid)", () => {
+    const family = resolveProviderFamily("google-vertex");
+    const defaults = resolveOperationDefaults(family);
+    expect(defaults.fast ?? defaults.mid).toBeTruthy();
+  });
+
+  it("SA8 resolveProviderFamily('bedrock') resolves alias to amazon-bedrock (via normalizeProviderId)", () => {
+    expect(resolveProviderFamily("bedrock")).toBe("amazon-bedrock");
+  });
+
+  it("SA8 resolveProviderFamily('aws-bedrock') resolves alias to amazon-bedrock (via normalizeProviderId)", () => {
+    expect(resolveProviderFamily("aws-bedrock")).toBe("amazon-bedrock");
   });
 });

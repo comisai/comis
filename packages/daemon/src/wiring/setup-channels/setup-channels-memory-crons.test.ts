@@ -36,9 +36,24 @@ const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
   source: "default",
 })));
 
+// A faithful stub of resolveModelProfile's CAPABILITY axis (the only axis
+// resolveMemoryOpsCapability reads): explicit override wins; else provider-family
+// heuristic (anthropic/openai → frontier, google → mid, else → small). The real
+// fn lives in @comis/agent which this file mocks wholesale, so the helper under
+// test (resolveMemoryOpsCapability) gets this stub.
+const mockResolveModelProfile = vi.hoisted(() => vi.fn((model: { provider: string }, override?: string) => {
+  let capabilityClass = override;
+  if (capabilityClass === undefined) {
+    const p = model.provider;
+    capabilityClass = p === "anthropic" || p === "openai" ? "frontier" : p === "google" ? "mid" : "small";
+  }
+  return { capabilityClass };
+}));
+
 vi.mock("@comis/agent", () => ({
   resolveOperationModel: mockResolveOperationModel,
   resolveProviderFamily: vi.fn(() => "anthropic"),
+  resolveModelProfile: mockResolveModelProfile,
   runMemoryConsolidation: mockRunMemoryConsolidation,
   runMemoryReasoning: mockRunMemoryReasoning,
   createReasoningSeam: mockCreateReasoningSeam,
@@ -97,6 +112,22 @@ function makeCtx(overrides: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Restore default model-resolution behavior cleared by clearAllMocks.
+  mockResolveOperationModel.mockReturnValue({
+    provider: "anthropic",
+    modelId: "anthropic:claude-haiku",
+    model: "anthropic:claude-haiku",
+    timeoutMs: 60_000,
+    source: "default",
+  } as any);
+  mockResolveModelProfile.mockImplementation((model: { provider: string }, override?: string) => {
+    let capabilityClass = override;
+    if (capabilityClass === undefined) {
+      const p = model.provider;
+      capabilityClass = p === "anthropic" || p === "openai" ? "frontier" : p === "google" ? "mid" : "small";
+    }
+    return { capabilityClass } as any;
+  });
   mockRunMemoryConsolidation.mockResolvedValue({ ok: true as const, value: undefined });
   mockRunMemoryReasoning.mockResolvedValue({ ok: true as const, value: undefined });
   mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
@@ -166,6 +197,68 @@ describe("handleMemoryCronSentinel", () => {
     const arg = mockRunMemoryConsolidation.mock.calls[0][0] as Record<string, unknown>;
     expect(arg.consolidationStore).toBe(ctx.consolidationStore);
     expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  // -------------------------------------------------------------------------
+  // CR-01: R6 capabilityClass / hasCapableModelOverride are THREADED into the
+  // consolidation deps so the abstain path is reachable in production. Before
+  // the fix neither field was passed and every consumer hit its default
+  // ("frontier"/false) → "capable", so a small/nano model still ran the merge
+  // LLM call. These pin the deps the daemon actually constructs.
+  // -------------------------------------------------------------------------
+  it("CR-01: a SMALL cron/memory model threads capabilityClass='small' + no override into the consolidation deps (abstain reachable)", async () => {
+    // The cron model resolves to a local/ollama provider → small.
+    mockResolveOperationModel.mockReturnValue({
+      provider: "ollama",
+      modelId: "ollama:qwen3.6:35b",
+      model: "ollama:qwen3.6:35b",
+      timeoutMs: 60_000,
+      source: "default",
+    } as any);
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "ollama", memoryConsolidation: { enabled: true } } },
+      apiKey: "test-key",
+    });
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
+    expect(mockRunMemoryConsolidation).toHaveBeenCalledOnce();
+    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.capabilityClass).toBe("small");
+    expect(arg.hasCapableModelOverride).toBe(false);
+  });
+
+  it("CR-01: a FRONTIER cron/memory model threads capabilityClass='frontier' (behavior-neutral)", async () => {
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true } } },
+      apiKey: "test-key",
+    });
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
+    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.capabilityClass).toBe("frontier");
+    expect(arg.hasCapableModelOverride).toBe(false);
+  });
+
+  it("CR-01: an operator capabilityClass override on the cron provider threads hasCapableModelOverride=true", async () => {
+    mockResolveOperationModel.mockReturnValue({
+      provider: "ollama",
+      modelId: "ollama:qwen3.6:35b",
+      model: "ollama:qwen3.6:35b",
+      timeoutMs: 60_000,
+      source: "default",
+    } as any);
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "ollama", memoryConsolidation: { enabled: true } } },
+      apiKey: "test-key",
+    });
+    // Pin a capable class on the cron provider's capabilities (the operator
+    // "stronger cheap model for the memory pipeline" override).
+    (ctx.container as any).config.providers.entries.ollama = { capabilities: { capabilityClass: "mid" } };
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
+    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.capabilityClass).toBe("mid");
+    expect(arg.hasCapableModelOverride).toBe(true);
   });
 
   it("warns + errors when a memory-cron sentinel fires without an agentId", async () => {

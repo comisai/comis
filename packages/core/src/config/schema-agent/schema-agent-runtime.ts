@@ -65,6 +65,9 @@ import {
   ToolLifecycleConfigSchema,
   DeferredToolsConfigSchema,
   SepConfigSchema,
+  GoalAnchorConfigSchema,
+  VerificationConfigSchema,
+  HonestyConfigSchema,
 } from "./schema-agent-prompt.js";
 
 export const AgentConfigSchema = z.strictObject({
@@ -350,6 +353,12 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   toolLifecycle: ToolLifecycleConfigSchema.default(() => ToolLifecycleConfigSchema.parse({})),
   /** Silent Execution Planner (SEP): in-memory checklist for multi-step task tracking */
   sep: SepConfigSchema.optional(),
+  /** GoalAnchor: tail-injects objective + uncompleted steps into system prompt (small/nano models only; enabled=false by default) */
+  goalAnchor: GoalAnchorConfigSchema.optional(),
+  /** Pre-delivery verification critic (R4, Phase 154): scores completion claims against GoalAnchor checklist. Opt-in; enabled=false by default. */
+  verification: VerificationConfigSchema.optional(),
+  /** Honesty guardrails (R4/S2, Phase 154): bounds critic retry redirects and enforces honest unmet-list on exhaustion. */
+  honesty: HonestyConfigSchema.optional(),
   /** Proactive notification configuration (rate limits, primary channel, dedup) */
   notification: NotificationConfigSchema.optional(),
   /** Channel-aware response-style verbosity hints (KEPT unchanged — distinct

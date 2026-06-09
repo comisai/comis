@@ -1,0 +1,90 @@
+# Comis Test Configuration — Stage-D daemon-routed local-model tier
+#
+# Used by test/live/scenarios/local/local-models.test.ts (Stage-D TODO block, line 142)
+# to boot a daemon against the local Ollama provider and assert the PLATFORM guarantee
+# (OutputGuard, sandbox, frozen trust-filter) independent of model goodwill.
+#
+# Key differences from config.test.yaml:
+#   - Provider is Ollama (keyless — credentials not required, no secret key entry)
+#   - Gateway port 4767 (avoids collision with default test config's 4766)
+#     NOTE: ConversationDriver._buildPortedConfigPath overrides this with a free
+#     port at runtime — the static 4767 just needs to be a syntactically valid port.
+#   - dataDir: "" resolves to COMIS_DATA_DIR (injected by ConversationDriver at runtime)
+#   - maxSteps/budgets/contextWindow bounded for test stability
+#   - No models.defaultProvider — provider is named inline in the agent block
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to COMIS_DATA_DIR at runtime (injected by ConversationDriver)
+
+providers:
+  entries:
+    qwen36-local:
+      type: ollama
+      # /v1 suffix: pi-ai registers type=ollama as openai-completions and posts to
+      # `${baseUrl}/chat/completions` — without /v1 Ollama returns 404 (its OpenAI-compat
+      # endpoint is /v1/chat/completions). Revealed by the Stage-D daemon-routed live run.
+      baseUrl: "http://localhost:11434/v1"
+      # Keyless provider — ollama is in KEYLESS_PROVIDER_TYPES; no secret entry
+      # needed; omitting avoids "Missing env var" FATAL on daemon boot
+      models:
+        - id: "qwen3.6:35b"
+          input: ["text", "image"]
+          contextWindow: 131072  # Capped below 256K for test stability (avoids 256K overfill)
+          reasoning: true
+          maxTokens: 2048
+
+# defaultModel lets an ad-hoc agent created with only a provider override (e.g. the
+# Stage-D ConversationDriver test agent) resolve a model — qwen3.6 is a custom-provider
+# model not in pi-ai's built-in catalog, so resolveAgentModel needs this fallback.
+models:
+  defaultModel: "qwen36-local:qwen3.6:35b"
+
+agents:
+  default:
+    name: "LocalModelTestAgent"
+    provider: qwen36-local
+    model: "qwen3.6:35b"
+    maxSteps: 6
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+    rag:
+      enabled: false
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 4767  # Different from 4766 default; overridden by ConversationDriver free-port alloc
+  tokens:
+    - id: "local-test-token"
+      secret: "local-test-secret-key-for-qwen36-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+memory:
+  dbPath: "test-memory-qwen36.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

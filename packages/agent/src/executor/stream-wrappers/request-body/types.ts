@@ -12,6 +12,7 @@
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { SessionLatch } from "../../session-latch.js";
 import type { BlockStabilityTracker } from "../../block-stability-tracker.js";
+import type { ModelProfile } from "../../model-profile.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -151,4 +152,18 @@ export interface RequestBodyInjectorConfig {
    * in executor-stream-setup.ts.
    */
   getCallCount?: () => number | undefined;
+  /**
+   * ModelProfile resolved for this execution. Carries supportsPromptCache,
+   * supportsServerToolSearch, and other capability flags resolved once
+   * per execution in pi-executor.ts (L1/L2 routing — Phase 155-01).
+   *
+   * When present: supportsPromptCache drives cache-breakpoint placement
+   * (factory.ts needsCacheBreakpoints); supportsServerToolSearch drives
+   * tool_search injection (tool-deferral-injection.ts).
+   *
+   * When absent: existing provider-string predicates (isAnthropicFamily /
+   * supportsToolSearch) serve as the fallback — behavior is unchanged for
+   * callers that do not yet thread modelProfile.
+   */
+  modelProfile?: ModelProfile;
 }

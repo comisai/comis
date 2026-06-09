@@ -37,6 +37,8 @@ import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
 import { completeSimple, getModel } from "@earendil-works/pi-ai";
 import { buildDialecticPrompt, parseDialecticOutput, type DialecticParsed } from "./memory-dialectic-prompt.js";
+import { resolveMemoryOpsStrategy } from "./memory-capability-router.js";
+import type { CapabilityClass } from "../executor/model-profile.js";
 
 /** Hard abort ceiling per LLM call (mirrors the representation/reasoning-seam LLM timeout). */
 const LLM_TIMEOUT_MS = 120_000;
@@ -57,6 +59,19 @@ export interface DialecticSeamDeps {
   logger: ComisLogger;
   /** Scope tag for the failure logs. */
   agentId: string;
+  /**
+   * R6: the capability class of the agent's model (from ModelProfile.capabilityClass).
+   * When small/nano without a capable override, synthesize() returns { abstain: true }
+   * immediately — no LLM call is made (T-153-fabricate mitigation).
+   * Optional: callers that don't pass it default to "frontier" behavior (capable).
+   */
+  capabilityClass?: CapabilityClass;
+  /**
+   * R6: operator override — a stronger cheap model is configured for the memory
+   * pipeline. When true, small/nano are treated as "capable" for dialectic synthesis.
+   * Optional; defaults to false.
+   */
+  hasCapableModelOverride?: boolean;
 }
 
 /** Pull the concatenated text parts out of a pi-ai completeSimple response. */
@@ -95,6 +110,11 @@ export function createDialecticSeam(
   deps: DialecticSeamDeps,
 ): (question: string, groundingText: string) => Promise<DialecticParsed> {
   const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId } = deps;
+  // R6: pre-resolve the capability routing (once per seam instance, not per call).
+  // Defaults to "frontier" behavior when capabilityClass is absent (capable path).
+  const capabilityClass = deps.capabilityClass ?? "frontier";
+  const hasCapableModelOverride = deps.hasCapableModelOverride ?? false;
+  const strategy = resolveMemoryOpsStrategy(capabilityClass, hasCapableModelOverride);
 
   /** Issue one bounded, non-fatal cheap-model call; return raw text or undefined. */
   async function callModel(systemPrompt: string, userText: string): Promise<string | undefined> {
@@ -166,6 +186,15 @@ export function createDialecticSeam(
     question: string,
     groundingText: string,
   ): Promise<DialecticParsed> {
+    // R6 pre-call check (T-153-fabricate mitigation): if the capability class
+    // routes to "abstain", return immediately — NO LLM call is made. A small/nano
+    // model receiving a dialectic synthesis task will fabricate citations; this
+    // gate prevents fabricated citations from entering trusted storage.
+    // The diagnostic: "insufficient model capability to synthesize grounded citations".
+    if (strategy === "abstain") {
+      return { abstain: true };
+    }
+
     // ONE synthesis call. The system prompt is buildDialecticPrompt() (agent-internal); the
     // question + the trust-filtered/redacted recall grounding ride the user message. The
     // raw text is never logged by counts-only callers.

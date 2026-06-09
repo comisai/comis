@@ -1717,3 +1717,107 @@ function makeSilentLogger(): {
 } {
   return { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 }
+
+// ---------------------------------------------------------------------------
+// R4 critic hook wiring in executor-post-execution.ts
+//
+// The critic is invoked via a thin hook — shouldRunCritic guard + one
+// runVerificationCritic call — between the tool-failure notice and the
+// session-metadata write. No inline critic logic lives in this file.
+//
+// Source-grep is the load-bearing test mode (scaffolding all 30+ postExecution
+// deps is impractical — the same strategy used by every other describe block
+// above). Tests assert:
+//   - verification-gate.ts is imported (key-links contract)
+//   - shouldRunCritic appears exactly once (the guard)
+//   - runVerificationCritic appears exactly once (the await call)
+//   - "verification" is in MEMORY_SKIP_OPERATIONS
+//   - result.response mutation is conditioned on not-verified verdict
+//   - generateCanaryToken is imported (canary is built per-execution)
+// ---------------------------------------------------------------------------
+describe("R4 critic hook — thin wiring in executor-post-execution.ts", () => {
+  function readPostExecSource(): string {
+    return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+  }
+
+  function strippedSource(): string {
+    const src = readPostExecSource();
+    return src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+  }
+
+  it("imports shouldRunCritic and runVerificationCritic from verification-gate.js", () => {
+    const stripped = strippedSource();
+    expect(stripped).toMatch(
+      /import\s*\{[^}]*\bshouldRunCritic\b[^}]*\}\s*from\s*"\.\/verification-gate\.js"/,
+    );
+    expect(stripped).toMatch(/runVerificationCritic/);
+  });
+
+  it("shouldRunCritic call appears exactly once in non-import, non-comment source (the guard)", () => {
+    const stripped = strippedSource();
+    // Exclude the import line: only count runtime call sites.
+    const nonImportLines = stripped.split("\n").filter((l) => !l.trim().startsWith("import "));
+    const callMatches = nonImportLines.join("\n").match(/\bshouldRunCritic\b/g) ?? [];
+    expect(callMatches.length).toBe(1);
+  });
+
+  it("runVerificationCritic call appears exactly once in non-import, non-comment source (the await)", () => {
+    const stripped = strippedSource();
+    // Exclude the import line: only count runtime call sites (the await call in the hook).
+    const nonImportLines = stripped.split("\n").filter((l) => !l.trim().startsWith("import "));
+    const callMatches = nonImportLines.join("\n").match(/\brunVerificationCritic\b/g) ?? [];
+    expect(callMatches.length).toBe(1);
+  });
+
+  it('"verification" is present in MEMORY_SKIP_OPERATIONS set', () => {
+    const stripped = strippedSource();
+    // The set literal must include "verification" — critic calls do not create paired memory entries.
+    expect(stripped).toMatch(/MEMORY_SKIP_OPERATIONS[^=]*=.*new Set\s*\(\s*\[[\s\S]*?"verification"[\s\S]*?\]\s*\)/);
+  });
+
+  it("result.response mutation is conditioned on verdict not being verified or skipped", () => {
+    const stripped = strippedSource();
+    // The mutation guard: verdict !== "verified" && verdict !== "skipped" (or equivalent).
+    // Accept any variable name (criticResult, cr, etc.) — pattern is structural.
+    const hasMutationGuard =
+      /\bverdict\s*!==\s*"verified"/.test(stripped) ||
+      /\bverdict\s*===\s*"not-verified"/.test(stripped);
+    expect(hasMutationGuard).toBe(true);
+  });
+
+  it("generateCanaryToken is imported for per-execution canary construction", () => {
+    const stripped = strippedSource();
+    expect(stripped).toMatch(/\bgenerateCanaryToken\b/);
+  });
+
+  // WR-03: the canary salt must be the FORMATTED session key, not String(sessionKey)
+  // (a plain Zod object → the constant "[object Object]" for every session, which
+  // makes the canary's session-binding dead and the JSDoc claim false).
+  it("canary is salted with formattedKey, never String(sessionKey)", () => {
+    const stripped = strippedSource();
+    const canaryCall = stripped.match(/generateCanaryToken\([^)]*\)/)?.[0] ?? "";
+    expect(canaryCall).toContain("formattedKey");
+    expect(canaryCall).not.toMatch(/String\s*\(\s*sessionKey\s*\)/);
+    // Belt-and-suspenders: the dead stringify must not appear anywhere in source.
+    expect(stripped).not.toMatch(/generateCanaryToken\(\s*String\s*\(\s*sessionKey\s*\)/);
+  });
+
+  it("hook position is between tool-failure notice and session metadata write", () => {
+    const src = readPostExecSource();
+    const toolFailurePos = src.indexOf("[tool failure]");
+    // Use the await-call site (not the import which is near the top of the file).
+    const awaitCriticPos = src.indexOf("await runVerificationCritic");
+    const sessionMetaPos = src.indexOf("sessionAdapter.writeSessionMetadata");
+    // All three must exist in the file.
+    expect(toolFailurePos).toBeGreaterThan(-1);
+    expect(awaitCriticPos).toBeGreaterThan(-1);
+    expect(sessionMetaPos).toBeGreaterThan(-1);
+    // critic must come AFTER tool-failure notice and BEFORE session metadata write.
+    expect(awaitCriticPos).toBeGreaterThan(toolFailurePos);
+    expect(awaitCriticPos).toBeLessThan(sessionMetaPos);
+  });
+});

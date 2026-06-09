@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for graph-helpers.ts — focused on transformNodes() field forwarding.
+ * Tests for graph-helpers.ts — focused on transformNodes() field forwarding
+ * and the O3 capabilityClass routing in buildGraphInput + isWeakCapabilityClass.
  *
  * These tests exist as a regression guard against the dropped-mcpServers bug
  * (yfinance trace): the daemon RPC pipeline.execute path
@@ -14,12 +15,18 @@
  * absent-key case (downstream Zod default applies), and a full mapping
  * regression guard that every other existing field still flows through.
  *
+ * O3 routing tests (added for Plan 155-04b):
+ *   - isWeakCapabilityClass predicate: small/nano→true, frontier/mid/undefined→false
+ *   - buildGraphInput with capabilityClass="frontier": unchanged direct path
+ *   - buildGraphInput with capabilityClass="small" + valid graph: returns ValidatedGraph
+ *   - buildGraphInput with capabilityClass="small" + invalid (cyclic) graph: throws fail-closed
+ *
  * @module
  */
 
 import { describe, it, expect } from "vitest";
 
-import { transformNodes } from "./graph-helpers.js";
+import { transformNodes, isWeakCapabilityClass, buildGraphInput } from "./graph-helpers.js";
 
 describe("transformNodes", () => {
   it("forwards mcp_servers snake_case input as mcpServers", () => {
@@ -84,5 +91,100 @@ describe("transformNodes", () => {
     expect(node.contextMode).toBe("graph");
     expect(node.typeId).toBe("approval-gate");
     expect(node.typeConfig).toEqual({ mode: "noop" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O3: isWeakCapabilityClass predicate
+// ---------------------------------------------------------------------------
+
+/** Minimal valid graph params for use in buildGraphInput tests. */
+const VALID_GRAPH_PARAMS: Record<string, unknown> = {
+  nodes: [
+    { node_id: "a", task: "Research topic A" },
+    { node_id: "b", task: "Research topic B", depends_on: ["a"] },
+  ],
+};
+
+/** Cyclic graph params — b depends_on a AND a depends_on b → cycle. */
+const CYCLIC_GRAPH_PARAMS: Record<string, unknown> = {
+  nodes: [
+    { node_id: "a", task: "Task A", depends_on: ["b"] },
+    { node_id: "b", task: "Task B", depends_on: ["a"] },
+  ],
+};
+
+describe("isWeakCapabilityClass", () => {
+  it('returns true for "small"', () => {
+    expect(isWeakCapabilityClass("small")).toBe(true);
+  });
+
+  it('returns true for "nano"', () => {
+    expect(isWeakCapabilityClass("nano")).toBe(true);
+  });
+
+  it('returns false for "frontier"', () => {
+    expect(isWeakCapabilityClass("frontier")).toBe(false);
+  });
+
+  it('returns false for "mid"', () => {
+    expect(isWeakCapabilityClass("mid")).toBe(false);
+  });
+
+  it("returns false for undefined", () => {
+    expect(isWeakCapabilityClass(undefined)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O3: buildGraphInput capabilityClass routing
+// ---------------------------------------------------------------------------
+
+describe("buildGraphInput — capabilityClass routing (O3)", () => {
+  it("capable path: capabilityClass='frontier' returns ValidatedGraph (unchanged direct path)", () => {
+    const result = buildGraphInput(VALID_GRAPH_PARAMS, "frontier");
+    expect(result).toBeDefined();
+    expect(result.graph).toBeDefined();
+    expect(result.executionOrder).toBeDefined();
+    expect(Array.isArray(result.executionOrder)).toBe(true);
+    expect(result.graph.nodes).toHaveLength(2);
+  });
+
+  it("capable path: capabilityClass omitted returns the same ValidatedGraph as with 'frontier'", () => {
+    const withFrontier = buildGraphInput(VALID_GRAPH_PARAMS, "frontier");
+    const withUndefined = buildGraphInput(VALID_GRAPH_PARAMS);
+    expect(withUndefined.executionOrder).toEqual(withFrontier.executionOrder);
+    expect(withUndefined.graph.nodes.map((n) => n.nodeId)).toEqual(
+      withFrontier.graph.nodes.map((n) => n.nodeId),
+    );
+  });
+
+  it("weak path: capabilityClass='small' with a valid graph returns ValidatedGraph (fast-path)", () => {
+    const result = buildGraphInput(VALID_GRAPH_PARAMS, "small");
+    expect(result).toBeDefined();
+    expect(result.graph).toBeDefined();
+    expect(result.executionOrder).toBeDefined();
+    expect(Array.isArray(result.executionOrder)).toBe(true);
+  });
+
+  it("weak path: capabilityClass='nano' with a valid graph returns ValidatedGraph (fast-path)", () => {
+    const result = buildGraphInput(VALID_GRAPH_PARAMS, "nano");
+    expect(result).toBeDefined();
+    expect(result.graph).toBeDefined();
+    expect(result.executionOrder).toBeDefined();
+  });
+
+  it("weak path: capabilityClass='small' with a cyclic (invalid) graph throws fail-closed with Phase-157 comment", () => {
+    expect(() => buildGraphInput(CYCLIC_GRAPH_PARAMS, "small")).toThrow();
+  });
+
+  it("weak path: capabilityClass='small' with a cyclic graph throw message mentions Phase 157", () => {
+    let msg = "";
+    try {
+      buildGraphInput(CYCLIC_GRAPH_PARAMS, "small");
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toMatch(/157/);
   });
 });

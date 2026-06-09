@@ -566,6 +566,22 @@ export type { ThinkingTagFilter, ThinkingTagFilterOptions } from "./response-fil
 // Operation model resolver
 export { resolveOperationModel, resolveProviderFamily } from "./model/operation-model-resolver.js";
 export type { OperationModelResolution } from "./model/operation-model-resolver.js";
+
+// ModelProfile resolver — the immutable capability/capacity profile. Exported so
+// the daemon wiring can derive the memory-job capabilityClass (R6) the SAME way
+// pi-executor does per-execution (CR-01: R6 was never reaching production). Only
+// the resolver + CapabilityClass type cross the package boundary; the memory jobs
+// (also in @comis/agent) own the resolveMemoryOpsStrategy call internally.
+export { resolveModelProfile } from "./executor/model-profile.js";
+export type { CapabilityClass } from "./executor/model-profile.js";
+// O2 (WR-02): canonical DAG template seeding. seedDefaultDagTemplates is wired
+// into daemon bootstrap (idempotent INSERT-OR-IGNORE) so the four canonical
+// small-model templates exist in the named-graph store at startup. Only the
+// seeder is exported — fillDagTemplate / CANONICAL_DAG_TEMPLATES and the
+// DagTemplate types stay package-internal until their Phase-157 weak-model
+// repair consumer exists (exporting them now would be dead public API; see the
+// O3 producer deferral in graph-helpers.ts and dag-templates.ts).
+export { seedDefaultDagTemplates } from "./executor/dag-templates.js";
 export { resolveOperationDefaults, OPERATION_TIER_MAP, OPERATION_TIMEOUT_DEFAULTS, OPERATION_CACHE_DEFAULTS } from "./model/operation-model-defaults.js";
 export { resolveCompactionModel } from "./model/compaction-model-resolver.js";
 
