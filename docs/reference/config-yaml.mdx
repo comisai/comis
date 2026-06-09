@@ -2010,6 +2010,7 @@ LLM provider configuration. API keys are referenced by SecretManager key name, n
 | `supportsPromptCache` | `boolean` | _(auto from providerFamily)_ | Whether models on this provider support prompt caching. Auto-detected from `providerFamily`: `true` for `anthropic`/`google`, `false` for `default`/`openai`. Set explicitly to override. When `false`, prompt assembly emits a single block with no `cache_control` split overhead. |
 | `supportsStructuredOutput` | `boolean` | `false` | When `true`, tool-call repair uses constrained decoding (e.g., Ollama's `/api/generate` `format` param) for near-miss tool JSON. When `false`, lenient parse-and-repair is used. |
 | `capabilityClass` | `"frontier"` \| `"mid"` \| `"small"` \| `"nano"` | _(resolver heuristic)_ | Explicit capability-class override for all models on this provider. Overrides the default resolver heuristic (which keys off model context-window and provider-family). Forces `scaffoldLevel` (GoalAnchor, critic) and `securityLevel` (lockdown intensity). Use `"small"` for an Ollama provider running qwen3.6. Setting `"frontier"` for a weak model silences scaffolding — not recommended for production. |
+| `probeServedWindow` | `boolean` | `true` for `type: "ollama"` | Probe the Ollama served `num_ctx` at daemon boot and reconcile with the configured `contextWindow`. When unset (or `true`), Comis queries `GET /api/ps` and `POST /api/show` on start and uses the smaller of the served window vs. configured. Set to `false` to skip the probe if Ollama is offline at daemon start. |
 
 > **v2.15 capability-gated defaults:** The v2.14 reliability scaffold (GoalAnchor, relevance floor,
 > cost-gated critic) is now **default-ON for `small`/`nano` agents** — no per-agent opt-in required.
@@ -2247,6 +2248,42 @@ For agent reliability, prefer **general-purpose** qwen3.6 variants over coding-t
 - The Comis scaffold is designed for general models. It is not a substitute for choosing the right model class.
 
 For local model runtime selection (MLX vs. GGUF), see the [Environment Variables](/reference/environment-variables#local-model-runtime-selection-mlx-vs-gguf) reference.
+
+### Local model context window
+
+For Ollama providers, the **served** context window (`num_ctx`) may differ from the configured
+`contextWindow`. By default, Comis probes `GET /api/ps` and `POST /api/show` at daemon boot
+and reconciles:
+
+```
+effectiveWindow = min(configured contextWindow, served num_ctx, capability class cap)
+```
+
+The reconciled value is used for context budgeting and the post-turn context-window guard —
+so the agent plans against the model's actual KV-cache limit, not a stale declaration.
+
+**Changing the served window:** The probe is read-only; it discovers what Ollama has loaded.
+To serve a larger context (up to the model's native maximum), set it on the Ollama side:
+
+- Environment variable: `OLLAMA_CONTEXT_LENGTH=65536` (before starting Ollama)
+- Modelfile parameter: `PARAMETER num_ctx 65536`
+- Ollama.app: Settings → Models → Context Length
+
+**VRAM / KV-cache caveat:** A larger `num_ctx` increases GPU memory usage proportionally
+(the KV-cache scales linearly with context length). A 35B model at 256K context can OOM
+or cause heavy memory thrashing on consumer hardware. Raise `num_ctx` only as far as
+your VRAM allows; start conservatively (e.g., 32768 or 65536) and measure.
+
+To suppress the boot probe for a provider (e.g., Ollama is offline at daemon start):
+
+```yaml
+providers:
+  entries:
+    my-ollama:
+      type: ollama
+      capabilities:
+        probeServedWindow: false
+```
 
 ## UX Features
 
