@@ -196,23 +196,60 @@ export function isScopeSafeForIngest(
 }
 
 /**
- * Guarded afterTurn ingest: derive the not-yet-persisted delta from the store's
- * persisted high-water mark and append it — but SKIP cleanly (with a WARN) when
- * the live array is SHORTER than the high-water mark (WR-01) OR when the scope is
- * ambiguous/malformed (R3 fail-closed rollover — see {@link isScopeSafeForIngest}).
+ * RR1: Derive a stable epoch anchor string from the identity of the first message
+ * in the live array. Used to detect JSONL re-bases (the live transcript re-starting
+ * from a fresh disjoint session).
  *
- * The store is strictly append-only, so its count only grows; in steady state
- * the live array (`session.agent.state.messages`) is the full conversation and
- * leads the store by the in-flight turn's delta (`live.length >= persisted`),
- * and `delta = live.slice(persisted)` is the not-yet-persisted tail. But if a
- * future heal/compaction ever reassigns `state.messages` SMALLER than the store,
- * `live.slice(persisted)` is empty (a permanent history gap — the turn's real
- * messages are never persisted) or, on a rewritten tail, re-appends at a `seq`
- * that already exists — the unique `(conversationId, seq)` index throws, the
- * per-entry catch in {@link ingestTurn} swallows it, and the high-water mark
- * never advances past the collision. We detect that divergence and skip the
- * append, WARNing (errorKind `precondition` — an unmet guard-state, §2.7) so the
- * divergence is observable rather than silent.
+ * INVARIANT: live[0] is stable across all turns within a single epoch because
+ * SDK compaction is disabled (the SDK never re-orders or removes messages within
+ * a session). If SDK compaction were ever enabled, this invariant must be
+ * re-evaluated.
+ *
+ * Collision safety: two messages must share role+timestamp+first-content-prefix to
+ * produce the same anchor. This is safe: if a new epoch begins with a message
+ * byte-identical to the old epoch's first message, the no-re-anchor path runs
+ * live.slice(ingestedLiveLen) which is either a correct delta or a no-op.
+ */
+export function messageEpochAnchor(msg: AgentMessage): string {
+  const m = msg as unknown as { role?: string; timestamp?: number; content?: unknown; toolCallId?: string };
+  const role = m.role ?? "";
+  const ts = String(m.timestamp ?? 0);
+  let fp = "";
+  const content = m.content;
+  if (role === "toolResult") {
+    fp = (m as unknown as { toolCallId?: string }).toolCallId ?? "";
+  } else if (typeof content === "string") {
+    fp = content.slice(0, 16);
+  } else if (Array.isArray(content) && content.length > 0) {
+    const first = content[0] as { type?: string; text?: string; name?: string };
+    fp = first.text?.slice(0, 16) ?? first.name ?? first.type ?? "";
+  }
+  return `${role}:${ts}:${fp}`;
+}
+
+/**
+ * Guarded afterTurn ingest: derive the not-yet-persisted delta from the durable
+ * epoch cursor and append it — with three distinct guard paths:
+ *
+ * 1. **New epoch** (live[0] anchor differs from stored cursor, or no cursor yet):
+ *    The live transcript re-based (JSONL deleted/re-created). Anchor at the
+ *    store's current max seq and append the entire new live array as a
+ *    continuation (RR2 — close the ~39-message gap). Emits onRebase("session_rebase").
+ *
+ * 2. **Genuine in-session shrink** (same anchor, live.length < cursor.ingestedLiveLen):
+ *    A real heal/compaction shrank state.messages within the same epoch. SKIP +
+ *    WARN (the original WR-01 fail-safe — unchanged). Emits onDivergence.
+ *
+ * 3. **Steady state** (same anchor, live grows monotonically): delta =
+ *    live.slice(ingestedLiveLen). Byte-identical to the pre-patch path when
+ *    ingestedLiveLen === persisted (RR3 keystone).
+ *
+ * Also refuses writes on an ambiguous/malformed scope (R3 fail-closed rollover —
+ * see {@link isScopeSafeForIngest}).
+ *
+ * ATOMICITY: `upsertIngestCursor` is called inside the same `store.runOnConversation`
+ * lambda as the append (see executor-post-execution.ts call site). The single-flight
+ * serializer guarantees cursor + rows are written in the same serialized slot.
  *
  * @param store        The injected core ContextStorePort.
  * @param scope        The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
@@ -220,19 +257,14 @@ export function isScopeSafeForIngest(
  * @param now          Injected wall-clock ms (`deps.clock.now()`).
  * @param logger       For the divergence WARN + the delegated ingest logs.
  * @param onFailClosed Optional callback fired ONLY on the R3 fail-closed-rollover
- *                     refuse path (NOT the WR-01 shrink skip), carrying the
- *                     refusal `reason`. The agent-side call site uses it to emit
- *                     a content-free `context:dag_degraded` event (the eventBus
- *                     lives agent-side; this module stays bus-free). Never carries
+ *                     refuse path, carrying the refusal `reason`. Never carries
+ *                     message content; keeps this module bus-free.
+ * @param onDivergence Optional callback fired ONLY on the WR-01 genuine in-session
+ *                     shrink skip, carrying `"live_store_divergence"`. Never carries
  *                     message content.
- * @param onDivergence Optional callback fired ONLY on the WR-01 live/store-
- *                     divergence skip (the live array is shorter than the store
- *                     high-water mark), carrying the closed-meaning reason tag
- *                     (`"live_store_divergence"`). The agent-side caller turns it
- *                     into a content-free `context:dag_degraded` emit so the
- *                     divergence is queryable as a `health_signal` (Phase 160 I1)
- *                     rather than log-file-only. Never carries message content;
- *                     keeps this module bus-free (mirrors `onFailClosed`).
+ * @param onRebase     Optional callback fired ONLY on an epoch re-base continuation,
+ *                     carrying `"session_rebase"`. RR6: INFO signal (correct continuation,
+ *                     not degradation). Never carries message content.
  */
 export function ingestTurnGuarded(
   store: ContextStorePort,
@@ -242,6 +274,7 @@ export function ingestTurnGuarded(
   logger: ComisLogger,
   onFailClosed?: (reason: string) => void,
   onDivergence?: (reason: string) => void,
+  onRebase?: (reason: string) => void,
 ): void {
   // R3 (132-04) fail-closed rollover: refuse the write on an ambiguous/malformed
   // scope BEFORE touching the store, so a mis-derived session key can never
@@ -266,31 +299,74 @@ export function ingestTurnGuarded(
     return;
   }
 
-  // R4 (132-03): the high-water mark is AGENT-SCOPED — getMessages(scope) counts
-  // ONLY this agent's persisted rows, so each agent in a shared conversation owns
-  // an independent seq sequence (WR-02). The unique (conversation_id, agent_id,
-  // tenant_id, seq) index is the per-agent backstop against a duplicate seq.
-  const persisted = store.getMessages(scope).length;
-  if (live.length < persisted) {
+  // RR1: guard empty live array (nothing to ingest; no anchor to read — Pitfall 4
+  // prevention: messageEpochAnchor must not be called on live[0] when live is empty).
+  if (live.length === 0) return;
+
+  // RR1: read the durable epoch cursor (null = no prior ingest for this conversation).
+  const storedCursor = store.getIngestCursor(scope);
+
+  // RR1: compute the identity of the current live[0].
+  const currentAnchor = messageEpochAnchor(live[0]!);
+
+  // RR1: epoch change detection — if the anchor differs from the stored cursor,
+  // the live transcript has re-based (JSONL deleted/re-created).
+  const isNewEpoch = storedCursor === null || storedCursor.epochAnchor !== currentAnchor;
+
+  if (isNewEpoch) {
+    // RR2: new epoch — re-base continuation.
+    // The store's current message count is the seq base; we append from live[0].
+    // R4 (132-03): getMessages is AGENT-SCOPED so each agent keeps an independent
+    // seq sequence (WR-02). The unique (conversation_id, agent_id, tenant_id, seq)
+    // index is the per-agent backstop against duplicate seqs.
+    const persisted = store.getMessages(scope).length;
+    const delta = live; // ingest the entire new live array starting from live[0]
+    ingestTurn(store, scope, persisted, delta, now, logger);
+    // Persist the cursor INSIDE the same runOnConversation lambda (see call site).
+    // Guarantees cursor + rows are written in the same serialized slot (atomicity).
+    store.upsertIngestCursor(scope, { epochAnchor: currentAnchor, ingestedLiveLen: live.length }, now);
+    // RR6: emit the session_rebase signal (INFO — a correct continuation, not
+    // degradation). onDivergence is NOT called (this is not a shrink/corruption).
+    onRebase?.("session_rebase");
+    return;
+  }
+
+  // Steady state or genuine shrink — same epoch (currentAnchor === storedCursor.epochAnchor).
+  const { ingestedLiveLen } = storedCursor;
+
+  if (live.length < ingestedLiveLen) {
+    // RR5: genuine in-session shrink (same epoch, live shorter than cursor).
+    // This is the original WR-01 fail-safe — still skip + WARN so the divergence
+    // is observable. onRebase is NOT called (this is not a re-base; the anchor matched).
     logger.warn(
       {
         conversationId: scope.conversationId,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         liveLen: live.length,
-        persisted,
-        hint: "live array shorter than the LCD store high-water mark — skipping ingest this turn to avoid a seq collision / silent history gap; investigate any heal/compaction that shrank state.messages",
+        ingestedLiveLen,
+        hint: "live array shorter than cursor ingestedLiveLen within the same epoch — skipping ingest to avoid seq collision; investigate any heal/compaction that shrank state.messages",
         errorKind: "precondition" as ErrorKind,
       },
       "LCD ingest skipped: live/store divergence",
     );
     // Let the agent-side caller emit a content-free context:dag_degraded
     // (reason: live_store_divergence) so the WR-01 divergence is queryable as a
-    // health_signal (Phase 160 I1), not log-file-only. Closed-meaning tag only —
-    // NEVER message content (this module stays bus-free).
+    // health_signal (Phase 160 I1), not log-file-only.
     onDivergence?.("live_store_divergence");
     return;
   }
-  const delta = live.slice(persisted);
-  ingestTurn(store, scope, persisted, delta, now, logger);
+
+  // RR3: steady state — append only the delta (live.slice(ingestedLiveLen)).
+  // When ingestedLiveLen === persisted (the common path), this is byte-identical
+  // to the pre-patch live.slice(persisted) behavior (keystone test S1).
+  // R4 (132-03): persisted is AGENT-SCOPED via getMessages(scope).
+  const persisted = store.getMessages(scope).length;
+  const delta = live.slice(ingestedLiveLen);
+  if (delta.length > 0) {
+    ingestTurn(store, scope, persisted, delta, now, logger);
+  }
+  // Always update the cursor (even if delta is empty — keeps updatedAt fresh and
+  // ensures ingestedLiveLen is authoritative for subsequent calls).
+  store.upsertIngestCursor(scope, { epochAnchor: currentAnchor, ingestedLiveLen: live.length }, now);
 }

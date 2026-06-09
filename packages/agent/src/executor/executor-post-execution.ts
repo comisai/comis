@@ -1333,6 +1333,20 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
             timestamp: deps.clock.now(),
           });
         },
+        // RR6 (Phase 164): a detected epoch re-base that continues emits a distinct
+        // content-free context:dag_degraded reason:"session_rebase" (INFO — a correct
+        // continuation, not degradation) so operators can tell "continued after
+        // restart/JSONL-housekeeping" from "skipped due to corruption".
+        () => {
+          deps.eventBus.emit("context:dag_degraded", {
+            conversationId: scope.conversationId,
+            agentId: scope.agentId,
+            sessionKey: scope.sessionKey,
+            reason: "session_rebase",
+            durationMs: Math.max(0, deps.clock.now() - ingestStart),
+            timestamp: deps.clock.now(),
+          });
+        },
       ),
     );
 

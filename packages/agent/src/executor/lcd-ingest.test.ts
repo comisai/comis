@@ -392,14 +392,26 @@ describe("ingestTurn", () => {
 // and the turn's messages would be silently never persisted).
 // ---------------------------------------------------------------------------
 
-/** A recording store whose persisted COUNT is controllable (the high-water mark). */
-function makeStoreWithPersistedCount(persistedCount: number): {
+/** A recording store whose persisted COUNT is controllable (the high-water mark).
+ *
+ * @param persistedCount The number of placeholder rows `getMessages` reports.
+ * @param initialCursor  Optional epoch cursor to pre-seed `getIngestCursor`. When
+ *   provided, the cursor's epochAnchor must match the live[0] anchor of the test's
+ *   live array so the WR-01 genuine-shrink path fires (not the new-epoch path).
+ *   Pass null (the default) to simulate a fresh store (no prior ingest — cursor
+ *   not yet written); any call to ingestTurnGuarded will then take the new-epoch
+ *   continuation path regardless of live length.
+ */
+function makeStoreWithPersistedCount(
+  persistedCount: number,
+  initialCursor: { epochAnchor: string; ingestedLiveLen: number } | null = null,
+): {
   store: ContextStorePort;
   appended: AppendMessageInput[];
 } {
   const appended: AppendMessageInput[] = [];
-  // Phase 164 Plan 01 added three new ContextStorePort methods — stub them here
-  // (no-op; this double only controls the persisted count for WR-01 divergence tests).
+  // Phase 164 Plan 01 added three new ContextStorePort methods — stub them here.
+  let cursor = initialCursor;
   const store: ContextStorePort = {
     append(input: AppendMessageInput): void {
       appended.push(input);
@@ -410,9 +422,11 @@ function makeStoreWithPersistedCount(persistedCount: number): {
       return new Array(persistedCount).fill(null) as unknown as ReturnType<ContextStorePort["getMessages"]>;
     },
     getIngestCursor(_scope: ContextStoreScope) {
-      return null;
+      return cursor;
     },
-    upsertIngestCursor() {},
+    upsertIngestCursor(_scope: ContextStoreScope, c: { epochAnchor: string; ingestedLiveLen: number }) {
+      cursor = { ...c };
+    },
     deleteConversationLcd() {
       return 0;
     },
@@ -426,14 +440,20 @@ describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
     // SMALLER (4 < 6). Slicing live[6..] from a length-4 array is empty (or, on a
     // rewritten tail, re-appends at an existing seq → unique-index throw). The
     // guard must SKIP and WARN so the divergence is observable, not silent.
-    const { store, appended } = makeStoreWithPersistedCount(6);
-    const logger = createMockLogger();
+    //
+    // Phase 164: the new epoch-cursor algorithm requires a pre-seeded cursor whose
+    // epochAnchor matches live[0] so the genuine-shrink path fires (not new-epoch).
     const live: AgentMessage[] = [
       userMsg("u0") as AgentMessage,
       assistantText("a0") as AgentMessage,
       userMsg("u1") as AgentMessage,
       assistantText("a1") as AgentMessage,
     ];
+    const { store, appended } = makeStoreWithPersistedCount(6, {
+      epochAnchor: messageEpochAnchor(live[0]!),
+      ingestedLiveLen: 6, // cursor says 6 live messages were ingested (same epoch)
+    });
+    const logger = createMockLogger();
 
     ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger);
 
@@ -445,7 +465,7 @@ describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
       expect.objectContaining({
         errorKind: "precondition",
         liveLen: 4,
-        persisted: 6,
+        ingestedLiveLen: 6,
         hint: expect.any(String),
         conversationId: CONVERSATION_ID,
       }),
@@ -455,14 +475,20 @@ describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
 
   it("Test 10: live array >= persisted high-water mark → appends only the not-yet-persisted delta", () => {
     // Normal mid-turn: 2 already persisted, live has 4 → append exactly live[2..4).
-    const { store, appended } = makeStoreWithPersistedCount(2);
-    const logger = createMockLogger();
+    //
+    // Phase 164: pre-seed cursor with epochAnchor matching live[0] and
+    // ingestedLiveLen=2 (the store has 2 rows, cursor says 2 live ingested).
     const live: AgentMessage[] = [
       userMsg("u0") as AgentMessage,
       assistantText("a0") as AgentMessage,
       userMsg("u1") as AgentMessage, // seq 2 — the delta
       assistantText("a1") as AgentMessage, // seq 3 — the delta
     ];
+    const { store, appended } = makeStoreWithPersistedCount(2, {
+      epochAnchor: messageEpochAnchor(live[0]!),
+      ingestedLiveLen: 2,
+    });
+    const logger = createMockLogger();
 
     ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger);
 
@@ -481,16 +507,22 @@ describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
     // on the live/store-divergence skip, carrying the closed-meaning reason tag
     // (NEVER message content) — the agent-side caller turns it into a
     // health_signal-bound context:dag_degraded emit.
-    const { store, appended } = makeStoreWithPersistedCount(6);
-    const logger = createMockLogger();
-    const onFailClosed = vi.fn();
-    const onDivergence = vi.fn();
+    //
+    // Phase 164: pre-seed cursor with same epoch anchor (live[0] matches) and
+    // ingestedLiveLen=6 so live.length(4) < 6 hits the genuine-shrink path.
     const live: AgentMessage[] = [
       userMsg("u0") as AgentMessage,
       assistantText("a0") as AgentMessage,
       userMsg("u1") as AgentMessage,
       assistantText("a1") as AgentMessage,
     ];
+    const { store, appended } = makeStoreWithPersistedCount(6, {
+      epochAnchor: messageEpochAnchor(live[0]!),
+      ingestedLiveLen: 6,
+    });
+    const logger = createMockLogger();
+    const onFailClosed = vi.fn();
+    const onDivergence = vi.fn();
 
     ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger, onFailClosed, onDivergence);
 
@@ -506,15 +538,21 @@ describe("ingestTurnGuarded (WR-01 shrink guard)", () => {
 
   it("Test 9c (I1): a non-divergent ingest does NOT invoke onDivergence", () => {
     // The callback is divergence-only — a normal delta append never fires it.
-    const { store } = makeStoreWithPersistedCount(2);
-    const logger = createMockLogger();
-    const onDivergence = vi.fn();
+    //
+    // Phase 164: pre-seed cursor with ingestedLiveLen=2 (same as persisted count)
+    // so the first call is steady-state (not new-epoch).
     const live: AgentMessage[] = [
       userMsg("u0") as AgentMessage,
       assistantText("a0") as AgentMessage,
       userMsg("u1") as AgentMessage,
       assistantText("a1") as AgentMessage,
     ];
+    const { store } = makeStoreWithPersistedCount(2, {
+      epochAnchor: messageEpochAnchor(live[0]!),
+      ingestedLiveLen: 2,
+    });
+    const logger = createMockLogger();
+    const onDivergence = vi.fn();
 
     ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger, undefined, onDivergence);
 
