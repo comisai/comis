@@ -11,6 +11,7 @@ import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import type { ExecutionResult } from "../executor/types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import { createThinkingTagFilter } from "../response-filter/thinking-tag-filter.js";
+import { ContextExhaustionError } from "../context-engine/errors.js";
 
 // ---------------------------------------------------------------------------
 // Mock @comis/observability so session-index writes don't hit real fs
@@ -982,6 +983,30 @@ describe("createPiEventBridge", () => {
       listener(makeTurnEndEvent() as any);
 
       expect(getResult().llmCalls).toBe(2);
+    });
+
+    // HR-01 (v2.19): a mid-turn ContextExhaustionError surfaces here as a
+    // turn_end stopReason:"error". The bridge must map it to
+    // finishReason:"context_exhausted" so postExecution delivers the honest
+    // degraded reply instead of the empty-turn recovery's "the work was done".
+    describe("context-exhaustion mid-turn → finishReason mapping (HR-01)", () => {
+      function makeErrorTurnEnd(errorMessage: string) {
+        const ev = makeTurnEndEvent({ stopReason: "error" }) as any;
+        ev.message.errorMessage = errorMessage;
+        return ev;
+      }
+
+      it("maps a ContextExhaustionError message to context_exhausted", () => {
+        const { listener, getResult } = createPiEventBridge(deps);
+        listener(makeErrorTurnEnd(new ContextExhaustionError(32000, 30525).message) as any);
+        expect(getResult().finishReason).toBe("context_exhausted");
+      });
+
+      it("does NOT map a generic provider error to context_exhausted", () => {
+        const { listener, getResult } = createPiEventBridge(deps);
+        listener(makeErrorTurnEnd("503 upstream connect error") as any);
+        expect(getResult().finishReason).not.toBe("context_exhausted");
+      });
     });
 
     it("records usage on budgetGuard and costTracker when message has usage", () => {

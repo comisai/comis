@@ -83,6 +83,7 @@ import {
   WIRE_DIFF_HINT_NOT_FOUND,
   type ThinkingBlockHash,
 } from "./thinking-block-hash-invariant.js";
+import { isContextExhaustionErrorMessage } from "../context-engine/errors.js";
 
 // ---------------------------------------------------------------------------
 // Module-level one-shot latches
@@ -1992,14 +1993,37 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         const turnMsg = (event as { message: unknown }).message as AssistantMessage | undefined;
         if (turnMsg && "stopReason" in turnMsg && turnMsg.stopReason === "error") {
           m.lastLlmErrorMessage = turnMsg.errorMessage ?? "Unknown LLM error";
-          deps.logger.warn(
-            {
-              err: m.lastLlmErrorMessage,
-              hint: "Check LLM provider status",
-              errorKind: "dependency" as const,
-            },
-            "LLM call returned error",
-          );
+          // HR-01 (v2.19): a ContextExhaustionError thrown by the context-engine
+          // pre-flight during a MID-TURN continuation surfaces here as a turn_end
+          // error with its message preserved (the SDK strips the `instanceof`, so
+          // the top-level handleEnvelopeException mapping never runs). Recover the
+          // signal and map it to finishReason:"context_exhausted" — this makes
+          // postExecution deliver the honest buildContextExhaustedReply() instead
+          // of letting the empty-turn recovery synthesize a false "the work was
+          // done" summary. The provider is healthy; this is a local fit failure,
+          // so it is a resource condition, not a dependency error. The wire-diff
+          // diagnostic below is a no-op for this message (its regex needs
+          // thinking-block-replay tokens), so we let it fall through.
+          if (isContextExhaustionErrorMessage(m.lastLlmErrorMessage)) {
+            m.finishReason = "context_exhausted";
+            deps.logger.warn(
+              {
+                err: m.lastLlmErrorMessage,
+                hint: "Context window exhausted mid-turn (pre-flight) — mapped to context_exhausted so the honest degraded reply is delivered; raise the agent's context window or narrow the ask",
+                errorKind: "resource" as const,
+              },
+              "Context exhausted mid-turn — mapped to finishReason",
+            );
+          } else {
+            deps.logger.warn(
+              {
+                err: m.lastLlmErrorMessage,
+                hint: "Check LLM provider status",
+                errorKind: "dependency" as const,
+              },
+              "LLM call returned error",
+            );
+          }
           // Wire-edge diagnostic: when the LLM error matches the Anthropic
           // signed-replay rejection signature ("thinking blocks ... cannot
           // be modified"), diff the in-memory content against the persisted
