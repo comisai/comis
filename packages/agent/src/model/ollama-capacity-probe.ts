@@ -234,6 +234,8 @@ export interface ProbeAllOllamaProvidersParams {
   /** Providers config entries (keyed by provider ID). */
   providerEntries: Record<string, {
     type?: string;
+    /** Whether the provider is enabled. Disabled providers (enabled: false) are skipped. */
+    enabled?: boolean;
     baseUrl?: string;
     capabilities?: { probeServedWindow?: boolean };
     defaultModel?: string;
@@ -273,6 +275,9 @@ export async function probeAllOllamaProviders(
   for (const [providerId, entry] of Object.entries(providerEntries)) {
     // Only probe Ollama-native providers
     if (entry.type !== "ollama") continue;
+
+    // Skip disabled providers — no boot-time network attempt for disabled entries
+    if (entry.enabled === false) continue;
 
     // Skip if explicitly opted out
     if (entry.capabilities?.probeServedWindow === false) continue;
