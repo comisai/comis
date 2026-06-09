@@ -1871,7 +1871,14 @@ async function bootAgents(
     timeoutMs: 5_000,
     logger: agentLogger,
   }).catch((err: unknown) => {
-    agentLogger.warn({ err }, "Ollama served-window probe threw unexpectedly — starting with empty map (fail-open)");
+    agentLogger.warn(
+      {
+        err,
+        errorKind: "dependency" as const,
+        hint: "probeAllOllamaProviders threw an unhandled exception; all executor servedContextWindow values will be undefined. Check @comis/agent version compatibility.",
+      },
+      "Ollama served-window probe threw unexpectedly — starting with empty map (fail-open)",
+    );
     return new Map<string, number>();
   });
 
