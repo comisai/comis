@@ -37,7 +37,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
 import { initSchema, createLcdStore } from "@comis/memory";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { ingestTurn, ingestTurnGuarded, isScopeSafeForIngest } from "./lcd-ingest.js";
+import { ingestTurn, ingestTurnGuarded, isScopeSafeForIngest, messageEpochAnchor } from "./lcd-ingest.js";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { createLcdContextEngine } from "../context-engine/lcd-assembler.js";
 import type { ContextEngineDeps } from "../context-engine/types.js";
@@ -125,6 +125,9 @@ function makeRecordingStore(): {
   appended: AppendMessageInput[];
 } {
   const appended: AppendMessageInput[] = [];
+  // Phase 164 Plan 01 added three new ContextStorePort methods — stub them here
+  // so this double satisfies the interface after Plan 01 lands.
+  let cursorStore: { epochAnchor: string; ingestedLiveLen: number } | null = null;
   const store: ContextStorePort = {
     append(input: AppendMessageInput): void {
       appended.push(input);
@@ -132,7 +135,17 @@ function makeRecordingStore(): {
     getMessages() {
       return [];
     },
-  };
+    getIngestCursor(_scope: ContextStoreScope) {
+      return cursorStore;
+    },
+    upsertIngestCursor(_scope: ContextStoreScope, cursor: { epochAnchor: string; ingestedLiveLen: number }) {
+      cursorStore = { ...cursor };
+    },
+    deleteConversationLcd(_scope: ContextStoreScope) {
+      appended.length = 0;
+      return 0;
+    },
+  } as unknown as ContextStorePort;
   return { store, appended };
 }
 
@@ -385,6 +398,8 @@ function makeStoreWithPersistedCount(persistedCount: number): {
   appended: AppendMessageInput[];
 } {
   const appended: AppendMessageInput[] = [];
+  // Phase 164 Plan 01 added three new ContextStorePort methods — stub them here
+  // (no-op; this double only controls the persisted count for WR-01 divergence tests).
   const store: ContextStorePort = {
     append(input: AppendMessageInput): void {
       appended.push(input);
@@ -394,7 +409,14 @@ function makeStoreWithPersistedCount(persistedCount: number): {
     getMessages() {
       return new Array(persistedCount).fill(null) as unknown as ReturnType<ContextStorePort["getMessages"]>;
     },
-  };
+    getIngestCursor(_scope: ContextStoreScope) {
+      return null;
+    },
+    upsertIngestCursor() {},
+    deleteConversationLcd() {
+      return 0;
+    },
+  } as unknown as ContextStorePort;
   return { store, appended };
 }
 
@@ -638,5 +660,272 @@ describe("ingestTurnGuarded (R3 fail-closed rollover predicate)", () => {
   });
 });
 
-// Suppress unused-import lint when vi is only used in a subset of runs.
-void vi;
+// ---------------------------------------------------------------------------
+// Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)
+//
+// These tests drive the epoch-cursor algorithm in `ingestTurnGuarded`. RED
+// before the Plan 02 GREEN patch; all prior tests remain GREEN throughout.
+// ---------------------------------------------------------------------------
+
+describe("Phase 164 — continue-append / rebase (RR1/RR2/RR3/RR5/RR6)", () => {
+  // -------------------------------------------------------------------------
+  // Epoch-B message fixtures (genuinely disjoint from epoch-A timestamps).
+  // live[0] differs in role+timestamp+content from any epoch-A message so
+  // messageEpochAnchor produces a distinct anchor (RR2 RED fixture).
+  // -------------------------------------------------------------------------
+  const EPOCH_B_TS_0 = 9_000_000;
+  const EPOCH_B_TS_1 = 9_000_001;
+
+  function epochBUser(ts: number, text: string): AgentMessage {
+    return { role: "user", timestamp: ts, content: text } as unknown as AgentMessage;
+  }
+
+  function epochBAssistant(ts: number, text: string): AgentMessage {
+    return {
+      role: "assistant",
+      timestamp: ts,
+      content: [{ type: "text", text }],
+    } as unknown as AgentMessage;
+  }
+
+  // -------------------------------------------------------------------------
+  // Test R1 (RR2): pre-populated store (epoch A, 38 rows) + fresh disjoint live
+  // (epoch B) — continue-append produces no gap.
+  //
+  // RED before patch: current live.slice(persisted) → live.length(2) < 38 →
+  // onDivergence fires, nothing appended.
+  // -------------------------------------------------------------------------
+  it("Test R1 (RR2): re-based transcript appended as continuation (no gap)", () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const logger = createMockLogger();
+
+    // Populate 38 epoch-A rows directly (startSeq 0 → 37).
+    const epochAMsgs: AgentMessage[] = Array.from({ length: 38 }, (_, i) =>
+      ({ role: i % 2 === 0 ? "user" : "assistant", timestamp: i, content: `epoch-a msg ${i}` } as unknown as AgentMessage),
+    );
+    ingestTurn(store, SCOPE, 0, epochAMsgs, FIXED_NOW, logger);
+    expect(store.getMessages(SCOPE).length).toBe(38); // baseline
+
+    // Turn 1: fresh epoch-B live = [m0, m1] (genuinely disjoint — different timestamps)
+    const liveTurn1: AgentMessage[] = [
+      epochBUser(EPOCH_B_TS_0, "post-rebase message 0"),
+      epochBAssistant(EPOCH_B_TS_1, "post-rebase reply"),
+    ];
+    const onDivergence1 = vi.fn();
+    const onRebase1 = vi.fn();
+    // RR2: onRebase must be called; onDivergence must NOT be called
+    ingestTurnGuarded(store, SCOPE, liveTurn1, FIXED_NOW, logger, undefined, onDivergence1, onRebase1);
+    expect(onDivergence1).not.toHaveBeenCalled();
+    expect(onRebase1).toHaveBeenCalledWith("session_rebase");
+    // Store should have 38 + 2 = 40 rows; seqs 38 and 39
+    const rows1 = store.getMessages(SCOPE);
+    expect(rows1.length).toBe(40);
+    expect(rows1[38]!.seq).toBe(38);
+    expect(rows1[39]!.seq).toBe(39);
+
+    // Turn 2: same epoch B, live grows to 9 messages
+    const liveTurn2: AgentMessage[] = [
+      ...liveTurn1,
+      ...Array.from({ length: 7 }, (_, i) =>
+        epochBUser(EPOCH_B_TS_0 + 2 + i, `post-rebase turn-2 msg ${i}`) as AgentMessage,
+      ),
+    ];
+    const onDivergence2 = vi.fn();
+    const onRebase2 = vi.fn();
+    ingestTurnGuarded(store, SCOPE, liveTurn2, FIXED_NOW, logger, undefined, onDivergence2, onRebase2);
+    // Same epoch: not a re-base again → onRebase NOT called on turn 2
+    expect(onDivergence2).not.toHaveBeenCalled();
+    const rows2 = store.getMessages(SCOPE);
+    expect(rows2.length).toBe(47); // 38 + 2 + 7
+    // Seqs 40-46 appended
+    for (let i = 0; i < 7; i++) {
+      expect(rows2[40 + i]!.seq).toBe(40 + i);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Test R2 (RR6): onRebase callback receives "session_rebase"; onDivergence NOT
+  // called during a re-base.
+  // -------------------------------------------------------------------------
+  it("Test R2 (RR6): onRebase receives session_rebase; onDivergence not called on re-base", () => {
+    const { store } = makeRecordingStore();
+    const logger = createMockLogger();
+    const onDivergence = vi.fn();
+    const onRebase = vi.fn();
+
+    // epoch B — one message, different from any prior cursor (cursor starts null)
+    const live: AgentMessage[] = [
+      epochBUser(EPOCH_B_TS_0, "first epoch-B message"),
+    ];
+
+    ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger, undefined, onDivergence, onRebase);
+
+    expect(onRebase).toHaveBeenCalledTimes(1);
+    expect(onRebase).toHaveBeenCalledWith("session_rebase");
+    expect(onDivergence).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Test S1 (RR3 keystone): steady-state — same epoch, live grows monotonically.
+  // Seqs must be 0..7 continuous; cursor.ingestedLiveLen tracks live.length.
+  // MUST pass BOTH before and after the patch (byte-identical).
+  // -------------------------------------------------------------------------
+  it("Test S1 (RR3): steady-state seqs are 0..7 continuous; cursor tracks live.length", () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const logger = createMockLogger();
+
+    // Fixed epoch-A anchor (same live[0] across all turns)
+    const anchor0 = { role: "user", timestamp: 1, content: "turn 0 user" } as unknown as AgentMessage;
+
+    // Turn 0→2: live grows 0→2
+    const live2: AgentMessage[] = [
+      anchor0,
+      { role: "assistant", timestamp: 2, content: [{ type: "text", text: "reply 0" }] } as unknown as AgentMessage,
+    ];
+    ingestTurnGuarded(store, SCOPE, live2, FIXED_NOW, logger);
+    expect(store.getMessages(SCOPE).length).toBe(2);
+
+    // Turn 2→4
+    const live4: AgentMessage[] = [
+      ...live2,
+      { role: "user", timestamp: 3, content: "turn 1 user" } as unknown as AgentMessage,
+      { role: "assistant", timestamp: 4, content: [{ type: "text", text: "reply 1" }] } as unknown as AgentMessage,
+    ];
+    ingestTurnGuarded(store, SCOPE, live4, FIXED_NOW, logger);
+    expect(store.getMessages(SCOPE).length).toBe(4);
+
+    // Turn 4→6
+    const live6: AgentMessage[] = [
+      ...live4,
+      { role: "user", timestamp: 5, content: "turn 2 user" } as unknown as AgentMessage,
+      { role: "assistant", timestamp: 6, content: [{ type: "text", text: "reply 2" }] } as unknown as AgentMessage,
+    ];
+    ingestTurnGuarded(store, SCOPE, live6, FIXED_NOW, logger);
+    expect(store.getMessages(SCOPE).length).toBe(6);
+
+    // Turn 6→8
+    const live8: AgentMessage[] = [
+      ...live6,
+      { role: "user", timestamp: 7, content: "turn 3 user" } as unknown as AgentMessage,
+      { role: "assistant", timestamp: 8, content: [{ type: "text", text: "reply 3" }] } as unknown as AgentMessage,
+    ];
+    ingestTurnGuarded(store, SCOPE, live8, FIXED_NOW, logger);
+
+    const rows = store.getMessages(SCOPE);
+    expect(rows.length).toBe(8);
+    // seqs 0..7 continuous — byte-identical to pre-patch
+    for (let i = 0; i < 8; i++) {
+      expect(rows[i]!.seq).toBe(i);
+    }
+
+    // cursor.ingestedLiveLen === live.length after final turn
+    const cursor = store.getIngestCursor(SCOPE);
+    expect(cursor).not.toBeNull();
+    expect(cursor!.ingestedLiveLen).toBe(8);
+    expect(cursor!.epochAnchor).toBe(messageEpochAnchor(anchor0));
+  });
+
+  // -------------------------------------------------------------------------
+  // Test G1 (RR5): genuine in-session shrink (same epochAnchor, live.length <
+  // ingestedLiveLen) → onDivergence called; onRebase NOT called; nothing appended.
+  // -------------------------------------------------------------------------
+  it("Test G1 (RR5): genuine shrink in same epoch → onDivergence; onRebase not called", () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const logger = createMockLogger();
+
+    // Establish cursor: ingest 4 messages
+    const anchor0 = { role: "user", timestamp: 1, content: "base msg" } as unknown as AgentMessage;
+    const live4: AgentMessage[] = [
+      anchor0,
+      { role: "assistant", timestamp: 2, content: [{ type: "text", text: "a1" }] } as unknown as AgentMessage,
+      { role: "user", timestamp: 3, content: "u2" } as unknown as AgentMessage,
+      { role: "assistant", timestamp: 4, content: [{ type: "text", text: "a3" }] } as unknown as AgentMessage,
+    ];
+    ingestTurnGuarded(store, SCOPE, live4, FIXED_NOW, logger);
+    expect(store.getMessages(SCOPE).length).toBe(4);
+    const cursorAfterIngest = store.getIngestCursor(SCOPE);
+    expect(cursorAfterIngest!.ingestedLiveLen).toBe(4);
+
+    // Now simulate genuine in-session shrink: same anchor, but live is shorter
+    const liveShrunk: AgentMessage[] = [anchor0, { role: "assistant", timestamp: 2, content: [{ type: "text", text: "a1" }] } as unknown as AgentMessage];
+    const onDivergence = vi.fn();
+    const onRebase = vi.fn();
+    ingestTurnGuarded(store, SCOPE, liveShrunk, FIXED_NOW, logger, undefined, onDivergence, onRebase);
+
+    expect(onDivergence).toHaveBeenCalledWith("live_store_divergence");
+    expect(onRebase).not.toHaveBeenCalled();
+    // Nothing appended — store still has 4 rows
+    expect(store.getMessages(SCOPE).length).toBe(4);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test I1 (RR1 idempotency): calling ingestTurnGuarded twice with the exact
+  // same live array (same epoch, same length) appends the delta exactly once.
+  // Second call is a no-op (delta = live.slice(ingestedLiveLen) = []).
+  // -------------------------------------------------------------------------
+  it("Test I1 (RR1 idempotency): second call on same live array is a no-op (no duplicate rows)", () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const logger = createMockLogger();
+
+    const live: AgentMessage[] = [
+      { role: "user", timestamp: 10, content: "idempotency msg 0" } as unknown as AgentMessage,
+      { role: "assistant", timestamp: 11, content: [{ type: "text", text: "idem reply" }] } as unknown as AgentMessage,
+    ];
+
+    // First call: appends 2 rows
+    ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger);
+    expect(store.getMessages(SCOPE).length).toBe(2);
+
+    // Second call on same live array: cursor.ingestedLiveLen === 2 === live.length
+    // → delta is empty → no rows appended
+    ingestTurnGuarded(store, SCOPE, live, FIXED_NOW, logger);
+    expect(store.getMessages(SCOPE).length).toBe(2); // still 2, not 4
+    // seqs still 0,1 (no collision/duplication)
+    const rows = store.getMessages(SCOPE);
+    expect(rows[0]!.seq).toBe(0);
+    expect(rows[1]!.seq).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test L1 (hardening directive 1 — false-rebase guard): live[0] stable across
+  // N growing turns in one epoch → exactly ONE epochAnchor stored; cursor never
+  // changes its anchor within the epoch.
+  // -------------------------------------------------------------------------
+  it("Test L1 (false-rebase guard): stable live[0] across N turns → single epochAnchor", () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const logger = createMockLogger();
+
+    const stableAnchor = { role: "user", timestamp: 42, content: "stable anchor msg" } as unknown as AgentMessage;
+    const expectedAnchor = messageEpochAnchor(stableAnchor);
+
+    // 4 turns, live grows each time, live[0] stays the same
+    const turns = [
+      [stableAnchor],
+      [stableAnchor, { role: "assistant", timestamp: 43, content: [{ type: "text", text: "r1" }] } as unknown as AgentMessage],
+      [stableAnchor, { role: "assistant", timestamp: 43, content: [{ type: "text", text: "r1" }] } as unknown as AgentMessage, { role: "user", timestamp: 44, content: "u2" } as unknown as AgentMessage],
+      [stableAnchor, { role: "assistant", timestamp: 43, content: [{ type: "text", text: "r1" }] } as unknown as AgentMessage, { role: "user", timestamp: 44, content: "u2" } as unknown as AgentMessage, { role: "assistant", timestamp: 45, content: [{ type: "text", text: "r3" }] } as unknown as AgentMessage],
+    ];
+
+    for (const turn of turns) {
+      ingestTurnGuarded(store, SCOPE, turn as AgentMessage[], FIXED_NOW, logger);
+      const cursor = store.getIngestCursor(SCOPE);
+      // Cursor must exist after every turn
+      expect(cursor).not.toBeNull();
+      // epochAnchor is stable across all turns (no false re-base)
+      expect(cursor!.epochAnchor).toBe(expectedAnchor);
+    }
+    // Final cursor.ingestedLiveLen === 4 (last turn had 4 messages)
+    const finalCursor = store.getIngestCursor(SCOPE);
+    expect(finalCursor!.ingestedLiveLen).toBe(4);
+  });
+});
