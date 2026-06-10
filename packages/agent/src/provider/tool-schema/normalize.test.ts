@@ -5,13 +5,27 @@ import {
   setToolNormalizationLogger,
   type ToolNormalizationContext,
 } from "./normalize.js";
+import * as normalizeModule from "./normalize.js";
 import {
   hostileMcpTool,
   hostileMcpToolset,
+  wellFormedTool,
   type HostileMcpTool,
 } from "./gbnf-hostile-fixtures.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ComisLogger } from "@comis/core";
+
+/**
+ * Reset the module-level gbnf boot-summary latch between tests (mirrors the
+ * logger reset in the top-level beforeEach — without it, test order breaks).
+ * Bound tolerantly via the namespace so the file still loads on the pre-patch
+ * module where the export does not exist yet (the RED state).
+ */
+function resetGbnfBootSummary(): void {
+  (
+    normalizeModule as unknown as { resetGbnfBootSummaryForTest?: () => void }
+  ).resetGbnfBootSummaryForTest?.();
+}
 
 /** Create a minimal ToolDefinition stub for testing. */
 function makeTool(
@@ -657,6 +671,137 @@ describe("normalizeToolSchemasForProvider", () => {
         },
         required: ["due"],
       });
+    });
+  });
+
+  describe("GBNF once-per-boot INFO summary (GBNF-03)", () => {
+    beforeEach(() => {
+      // The latch is module-level state — reset it alongside the logger
+      // (top-level beforeEach) so each test starts from a fresh boot.
+      resetGbnfBootSummary();
+    });
+
+    function makeMockLogger(): {
+      logger: ComisLogger;
+      infoFn: ReturnType<typeof vi.fn>;
+      traceFn: ReturnType<typeof vi.fn>;
+    } {
+      const infoFn = vi.fn();
+      const traceFn = vi.fn();
+      const logger = {
+        trace: traceFn,
+        debug: vi.fn(),
+        info: infoFn,
+        warn: vi.fn(),
+        error: vi.fn(),
+      } as unknown as ComisLogger;
+      return { logger, infoFn, traceFn };
+    }
+
+    const gbnfCtxFor = (provider: string): ToolNormalizationContext => ({
+      provider,
+      modelId: "qwen3.6:35b",
+      compat: { toolSchemaProfile: "gbnf" },
+    });
+
+    it("emits exactly one INFO summary {provider, toolCount, transformedTools, keywords} on the first transforming call", () => {
+      const { logger, infoFn } = makeMockLogger();
+      setToolNormalizationLogger(logger);
+
+      normalizeToolSchemasForProvider(
+        asToolDefs(hostileMcpToolset),
+        gbnfCtxFor("my-ollama"),
+      );
+
+      expect(infoFn).toHaveBeenCalledOnce();
+      const [logArg, message] = infoFn.mock.calls[0] as [
+        Record<string, unknown>,
+        string,
+      ];
+      expect(message).toBe("GBNF tool-schema transforms applied for local provider");
+      // EXACTLY these four fields — nothing else rides on the summary line.
+      expect(Object.keys(logArg).sort()).toEqual([
+        "keywords",
+        "provider",
+        "toolCount",
+        "transformedTools",
+      ]);
+      expect(logArg.provider).toBe("my-ollama");
+      // schedule_task + nested_hostility transformed; well_formed untouched.
+      expect(logArg.toolCount).toBe(2);
+      expect(logArg.transformedTools).toEqual(["schedule_task", "nested_hostility"]);
+      // Deduplicated union of the closed 4-token transform vocabulary.
+      expect(logArg.keywords).toEqual([
+        "nullable_union",
+        "type_array",
+        "free_form_object",
+        "missing_type",
+      ]);
+    });
+
+    it("emits no second INFO for the same provider (per-boot latch) while per-tool trace still fires", () => {
+      const { logger, infoFn, traceFn } = makeMockLogger();
+      setToolNormalizationLogger(logger);
+      const ctx = gbnfCtxFor("my-ollama");
+
+      normalizeToolSchemasForProvider(asToolDefs(hostileMcpToolset), ctx);
+      normalizeToolSchemasForProvider(asToolDefs(hostileMcpToolset), ctx);
+
+      // Latched: exactly ONE info across both calls.
+      expect(infoFn).toHaveBeenCalledOnce();
+      // Per-tool detail keeps firing at trace on every call (2 transformed
+      // tools x 2 calls).
+      expect(traceFn).toHaveBeenCalledTimes(4);
+    });
+
+    it("emits its own single INFO per provider: the latch is keyed per provider, not global", () => {
+      const { logger, infoFn } = makeMockLogger();
+      setToolNormalizationLogger(logger);
+
+      normalizeToolSchemasForProvider(
+        asToolDefs(hostileMcpToolset),
+        gbnfCtxFor("my-ollama"),
+      );
+      normalizeToolSchemasForProvider(
+        asToolDefs(hostileMcpToolset),
+        gbnfCtxFor("my-lmstudio"),
+      );
+
+      expect(infoFn).toHaveBeenCalledTimes(2);
+      const providers = infoFn.mock.calls.map(
+        (call) => (call[0] as Record<string, unknown>).provider,
+      );
+      expect(providers).toEqual(["my-ollama", "my-lmstudio"]);
+    });
+
+    it("keeps the INFO content-free: no schema-structure substrings leak into the log fields (I7)", () => {
+      const { logger, infoFn } = makeMockLogger();
+      setToolNormalizationLogger(logger);
+
+      normalizeToolSchemasForProvider(
+        asToolDefs(hostileMcpToolset),
+        gbnfCtxFor("my-ollama"),
+      );
+
+      expect(infoFn).toHaveBeenCalledOnce();
+      // Schema bodies and schema keywords-as-structure must never leak —
+      // only the 4-token transform vocabulary + registry tool names.
+      const serialized = JSON.stringify(infoFn.mock.calls[0][0]);
+      expect(serialized).not.toContain("properties");
+      expect(serialized).not.toContain("anyOf");
+      expect(serialized).not.toContain("pattern");
+    });
+
+    it("emits no INFO when the gbnf profile applies zero transforms (well-formed toolset)", () => {
+      const { logger, infoFn } = makeMockLogger();
+      setToolNormalizationLogger(logger);
+
+      normalizeToolSchemasForProvider(
+        asToolDefs([wellFormedTool]),
+        gbnfCtxFor("my-ollama"),
+      );
+
+      expect(infoFn).not.toHaveBeenCalled();
     });
   });
 });
