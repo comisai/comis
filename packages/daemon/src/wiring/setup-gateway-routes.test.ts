@@ -25,19 +25,27 @@ vi.mock("@comis/gateway", () => ({
   createTokenStore: vi.fn(() => ({ verify: vi.fn() })),
 }));
 
-vi.mock("@comis/core", () => ({
-  safePath: vi.fn((...args: string[]) => args.join("/")),
-  generateStrongToken: vi.fn(() => "mock-generated-token"),
-  systemNowMs: () => Date.now(),
-}));
+vi.mock("@comis/core", async (importOriginal) => {
+  // Spread the REAL module: the W-live context test needs the actual
+  // runWithContext/tryGetContext AsyncLocalStorage pair; only the two
+  // path/token helpers stay stubbed.
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  return {
+    ...actual,
+    safePath: vi.fn((...args: string[]) => args.join("/")),
+    generateStrongToken: vi.fn(() => "mock-generated-token"),
+  };
+});
 
 import { mountGatewayRoutes, type GatewayRouteDeps } from "./setup-gateway-routes.js";
 import {
   createMappedWebhookEndpoint,
   getPresetMappings,
   createMediaRoutes,
+  createOpenaiCompletionsRoute,
+  createResponsesRoute,
 } from "@comis/gateway";
-import { generateStrongToken } from "@comis/core";
+import { generateStrongToken, tryGetContext } from "@comis/core";
 
 function createMockDeps(overrides: Partial<GatewayRouteDeps> = {}): GatewayRouteDeps {
   return {
@@ -274,5 +282,62 @@ describe("mountGatewayRoutes", () => {
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error.message).toBe("Insufficient scope");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §2.6 request-context wrap on the openai-compatible entries (live finding,
+// 2026-06-10): the exhausted-run log showed EVERY executor line traceId-less
+// on this channel — no ALS context means no trace stitching and no incident
+// ref on the degraded reply. The route closures ARE the channel entry, so
+// they must runWithContext once per request.
+// ---------------------------------------------------------------------------
+
+describe("openai/responses executeAgent request-context wrap (§2.6)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("chat-completions executeAgent runs the executor inside an ALS context carrying a traceId", async () => {
+    const seenTraceIds: Array<string | undefined> = [];
+    const deps = createMockDeps({
+      getExecutor: vi.fn(() => ({
+        execute: vi.fn(async () => {
+          seenTraceIds.push(tryGetContext()?.traceId);
+          return { response: "ok", tokensUsed: 0, finishReason: "stop" };
+        }),
+      })) as any,
+    });
+    mountGatewayRoutes(deps);
+
+    const routeArgs = vi.mocked(createOpenaiCompletionsRoute).mock.calls[0]![0] as {
+      executeAgent: (p: { message: string }) => Promise<unknown>;
+    };
+    await routeArgs.executeAgent({ message: "hi" });
+
+    expect(seenTraceIds).toHaveLength(1);
+    expect(seenTraceIds[0]).toBeDefined();
+    expect(typeof seenTraceIds[0]).toBe("string");
+  });
+
+  it("responses executeAgent runs the executor inside an ALS context carrying a traceId", async () => {
+    const seenTraceIds: Array<string | undefined> = [];
+    const deps = createMockDeps({
+      getExecutor: vi.fn(() => ({
+        execute: vi.fn(async () => {
+          seenTraceIds.push(tryGetContext()?.traceId);
+          return { response: "ok", tokensUsed: 0, finishReason: "stop" };
+        }),
+      })) as any,
+    });
+    mountGatewayRoutes(deps);
+
+    const routeArgs = vi.mocked(createResponsesRoute).mock.calls[0]![0] as {
+      executeAgent: (p: { message: string }) => Promise<unknown>;
+    };
+    await routeArgs.executeAgent({ message: "hi" });
+
+    expect(seenTraceIds).toHaveLength(1);
+    expect(seenTraceIds[0]).toBeDefined();
   });
 });
