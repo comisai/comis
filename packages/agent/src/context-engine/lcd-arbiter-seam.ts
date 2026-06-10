@@ -32,11 +32,20 @@ import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
 import type { ContextEngineDeps } from "./types.js";
 
 /**
- * Fallback scorer used ONLY when no `relevanceScorer` dep is threaded. On the C2 assembly
- * path the LTM/KG candidate lanes are EMPTY (the recall path owns LTM ranking), so the
- * arbiter never invokes the scorer — the history band is allocated recency-ordered within
- * its slot. The real `scoreRelevance` is injected from `executor/` (which may import the
- * rag layer) for forward-compat when LTM candidates flow to assembly (Phase 174).
+ * PLANNED ORPHAN — C2→Phase-174 SEAM (IN-02, Phase 173-05). Fallback scorer used ONLY when
+ * no `relevanceScorer` dep is threaded. On the C2 assembly path the LTM/KG candidate lanes
+ * are EMPTY (the recall path owns LTM ranking), so `marginArbitrate` never invokes the
+ * scorer (it guards each tier on `length > 0`) — the history band is allocated
+ * recency-ordered within its slot. Therefore BOTH this `NOOP_RELEVANCE_SCORER` fallback AND
+ * the real `scoreRelevance` injected from `executor/executor-context-engine-setup.ts` are
+ * UNREACHABLE on every live path this phase ships. They are wired AHEAD of Phase 174
+ * (DEPTH-01), when LTM/KG candidates flow to assembly and the scorer fuses them by rank.
+ * This is a DELIBERATE wired-ahead seam (the plan-checker cleared it), not silent dead code:
+ * the `relevanceScorer` dep plumbing + the `RelevanceScorerFn` type + this noop are
+ * forward-compat scaffolding, tracked the same way as the `reduceFleetWindow` planned orphan
+ * (`packages/memory/src/index.ts`). Neither symbol is on the `@comis/agent` public barrel, so
+ * the public-export-consumers gate does not fire; this comment is the YAGNI-exception record
+ * (§2.3). Remove the wired-ahead note when Phase 174 makes the scorer reachable.
  */
 const NOOP_RELEVANCE_SCORER: RelevanceScorerFn = () => [];
 

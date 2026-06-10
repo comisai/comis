@@ -688,9 +688,15 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     modelProfile,
     // RETR-02/03 (Phase 173): the resolved relevance-first policy + the shared scorer for
     // the margin arbiter. relevanceFirst undefined/false ⇒ the assembler takes the verbatim
-    // recency path (frontier/mid byte-identical, LOCKED #2). The scorer is threaded for the
-    // fused-rank cross-tier allocation (unused on the C2 history-only path — empty LTM/KG).
+    // recency path (frontier/mid byte-identical, LOCKED #2).
     relevanceFirst,
+    // PLANNED ORPHAN — C2→Phase-174 SEAM (WR-01/IN-02, Phase 173-05): the injected
+    // scoreRelevance is threaded for the fused-rank cross-tier allocation but is NEVER
+    // invoked on the only live path this phase ships — the C2 assembly path has EMPTY LTM/KG
+    // candidate lanes, so marginArbitrate's per-tier `length > 0` guards skip the scorer (and
+    // NOOP_RELEVANCE_SCORER alike). It becomes reachable in Phase 174 (DEPTH-01) when LTM/KG
+    // candidates flow to assembly. Deliberate wired-ahead seam (plan-checker cleared), not
+    // dead code — see the lcd-arbiter-seam NOOP_RELEVANCE_SCORER planned-orphan note.
     relevanceScorer: scoreRelevance,
     // Phase 166 T-S4: security-pin markers so the dag eviction never drops security context.
     securityPinMarkers: params.securityPinMarkers,
