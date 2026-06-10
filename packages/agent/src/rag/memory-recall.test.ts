@@ -3599,6 +3599,134 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
   });
 });
 
+// ── RETR-04: security gates upstream of fusion (bypass-attempt) ──────────────
+//
+// The unified arbiter (Plan 03) ranks LTM T3/T4 candidates against history by FUSED
+// rank. RETR-04 requires that a trust-excluded or sub-floor candidate can NEVER be
+// resurrected by a high fused rank. These tests construct a malicious candidate at
+// rank-1 in BOTH lanes (the HIGHEST possible RRF fused rank) and assert it is still
+// dropped — proving the trust filter runs UPSTREAM of fuse() (no resurrection route)
+// and the baseFloor is fail-closed under the arbiter (design §17 S6, Pitfall 2).
+describe("createMemoryRecall — RETR-04: security gates upstream of fusion (bypass-attempt)", () => {
+  // Boosts neutralized so FUSION rank (not score() boosts) is the only ordering signal —
+  // the malicious candidate's rank-1-in-both-lanes gives it the top fused score.
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
+  const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
+
+  it("BYPASS-ATTEMPT (trust): an external-trust candidate at rank-1 in BOTH lanes is NEVER in the result (high fused rank cannot resurrect a trust-excluded memory)", async () => {
+    // EVIL is rank-1 in fts AND vector → the maximal RRF fused score. If the trust filter
+    // ran only DOWNSTREAM of an arbiter that fused across corpora, a high fused rank could
+    // surface it. The trust filter is upstream of the recall fuse, so EVIL never survives.
+    const fts = [
+      makeResult("EVIL", { base: 1, trustLevel: "external" }), // rank 1 fts
+      makeResult("good1", { base: 1, trustLevel: "learned" }),
+    ];
+    const vector = [
+      makeResult("EVIL", { base: 1, trustLevel: "external" }), // rank 1 vector too → max fused
+      makeResult("good2", { base: 1, trustLevel: "system" }),
+    ];
+    const port = fakeLaneMemoryPort({ fts, vector });
+    const recall = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        minScore: 0,
+        includeTrustLevels: ["system", "learned"], // external excluded
+        relevanceFirst: true,
+      } as unknown as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((r) => r.entry.id);
+    expect(ids).not.toContain("EVIL"); // trust-excluded — un-resurrectable by fused rank
+    expect(ids).toContain("good1");
+    expect(ids).toContain("good2");
+  });
+
+  it("BYPASS-ATTEMPT (baseFloor): a sub-floor candidate at rank-1 in BOTH lanes is NEVER in the result under relevanceFirst (high fused rank cannot resurrect a floor-dropped memory)", async () => {
+    // POISON has base=0.10 (< class default 0.15) but is rank-1 in both lanes (max fused
+    // rank). cfg.baseFloor is 0 (unconfigured) — under relevanceFirst the floor is enforced
+    // at the class default, so POISON is dropped despite its top fused rank.
+    const fts = [
+      makeResult("POISON", { base: 0.1, trustLevel: "learned" }), // sub-floor, rank 1 fts
+      makeResult("clean1", { base: 0.8, trustLevel: "learned" }),
+    ];
+    const vector = [
+      makeResult("POISON", { base: 0.1, trustLevel: "learned" }), // rank 1 vector → max fused
+      makeResult("clean2", { base: 0.8, trustLevel: "system" }),
+    ];
+    const port = fakeLaneMemoryPort({ fts, vector });
+    const recall = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        minScore: 0,
+        baseFloor: 0, // unconfigured — WR-02 fail-open trigger
+        relevanceFirst: true, // arbiter active → floor enforced at the class default
+      } as unknown as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((r) => r.entry.id);
+    expect(ids).not.toContain("POISON"); // sub-floor — un-resurrectable by fused rank
+    expect(ids).toContain("clean1");
+    expect(ids).toContain("clean2");
+  });
+
+  it("DEFENSE-IN-DEPTH: the downstream trust filter still drops an external candidate even on the recency-first path (gates retained, not removed)", async () => {
+    // relevanceFirst=false (frontier/mid). The upstream trust pre-filter and the downstream
+    // trust filter BOTH run; the external candidate is dropped by the retained gates — proving
+    // the upstream addition did not remove the existing defense-in-depth.
+    const fts = [
+      makeResult("ext", { base: 1, trustLevel: "external" }),
+      makeResult("keep", { base: 1, trustLevel: "learned" }),
+    ];
+    const vector = [makeResult("keep", { base: 1, trustLevel: "learned" })];
+    const port = fakeLaneMemoryPort({ fts, vector });
+    const recall = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        minScore: 0,
+        includeTrustLevels: ["system", "learned"],
+        relevanceFirst: false,
+      } as unknown as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((r) => r.entry.id);
+    expect(ids).not.toContain("ext");
+    expect(ids).toContain("keep");
+  });
+
+  it("FRONTIER byte-identical: the new pre-filter is a NO-OP for an all-allowed corpus (deep-equal to the pre-patch reference)", async () => {
+    // No trust-excluded, no sub-floor candidate, relevanceFirst=false. The reorder/new
+    // pre-filter must not change the result vs the documented reference pipeline.
+    const input = [
+      makeResult("f1", { base: 0.9, trustLevel: "learned", createdAt: NOW - 5 * 86_400_000 }),
+      makeResult("f2", { base: 0.6, trustLevel: "system", createdAt: NOW - 1 * 86_400_000 }),
+      makeResult("f3", { base: 0.4, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const reference = await runReference(input);
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"], relevanceFirst: false } as unknown as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // Deep-equal the full result (ids + order) to the pre-patch reference — the gate is
+    // that the new code is a no-op for frontier/mid, not that it happens to reorder the same.
+    expect(got.value.map((r) => r.entry.id)).toEqual(reference.map((r) => r.entry.id));
+  });
+});
+
 /**
  * The documented default recall pipeline WITHOUT the provenance pass, used as the
  * byte-identity / un-down-weighted reference. Mirrors the reference computation in
