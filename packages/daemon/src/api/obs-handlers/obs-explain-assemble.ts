@@ -321,11 +321,21 @@ export function assembleIncidentReport(
     (metadata !== null ? asString(metadata.traceId) : undefined) ??
     (metadata !== null ? asString(metadata.secondTurnTraceId) : undefined) ??
     "";
-  const agentId = (metadata !== null ? asString(metadata.agentId) : undefined) ?? "";
+  // W8: fall back to the signals-derived identity (trajectory envelopes +
+  // session.started) — the live metadata rollup carries neither field, so a
+  // real session's report printed empty strings.
+  const agentId =
+    (metadata !== null ? asString(metadata.agentId) : undefined) ?? signals.agentId ?? "";
   const channelRecord = metadata !== null ? asRecord(metadata.channel) : undefined;
   const channel = {
-    type: (channelRecord !== undefined ? asString(channelRecord.type) : undefined) ?? "",
-    id: (channelRecord !== undefined ? asString(channelRecord.id) : undefined) ?? "",
+    type:
+      (channelRecord !== undefined ? asString(channelRecord.type) : undefined) ??
+      signals.channel?.type ??
+      "",
+    id:
+      (channelRecord !== undefined ? asString(channelRecord.id) : undefined) ??
+      signals.channel?.id ??
+      "",
   };
 
   // --- deterministic summary one-liner (NO LLM) ----------------------------

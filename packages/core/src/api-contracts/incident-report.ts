@@ -231,6 +231,12 @@ export interface IncidentFailure {
  */
 export interface IncidentSignals {
   sessionKey: string;
+  /** W8: agentId from the trajectory record envelopes (first seen). Fallback for
+   *  reports whose metadata rollup carries no agentId. */
+  agentId?: string;
+  /** W8: channel identity from the session.started trajectory record. Fallback for
+   *  reports whose metadata rollup carries no channel. */
+  channel?: { type: string; id: string };
   toolStats: Record<
     string,
     { ok: number; failed: number; topErrorKind?: string }

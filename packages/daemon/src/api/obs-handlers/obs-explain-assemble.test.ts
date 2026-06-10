@@ -657,3 +657,36 @@ describe("assembleIncidentReport — contextBudget threading (W3)", () => {
     expect(report.contextBudget).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// W8 (obs-llm-troubleshooting): the report falls back to signals-derived
+// agentId/channel when the metadata rollup lacks them (the live rollup carries
+// neither — the report printed empty strings for a real session).
+// ---------------------------------------------------------------------------
+
+describe("assembleIncidentReport — agentId/channel fallback (W8)", () => {
+  it("falls back to signals agentId and channel when the metadata rollup lacks them", () => {
+    const report = assembleIncidentReport(
+      makeSignals({ agentId: "default", channel: { type: "telegram", id: "678314278" } }),
+      // The LIVE rollup shape carries neither agentId nor channel — strip the
+      // fixture's convenience fields to reproduce it.
+      makeMetadata({ agentId: undefined, channel: undefined }),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+    expect(report.agentId).toBe("default");
+    expect(report.channel).toEqual({ type: "telegram", id: "678314278" });
+  });
+
+  it("metadata agentId still wins over the signals fallback when present", () => {
+    const report = assembleIncidentReport(
+      makeSignals({ agentId: "from-signals" }),
+      makeMetadata({ agentId: "from-metadata" }),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+    expect(report.agentId).toBe("from-metadata");
+  });
+});

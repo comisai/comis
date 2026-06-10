@@ -467,3 +467,78 @@ describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
     expect(s.contextBudget).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// W8 (obs-llm-troubleshooting): toolStats fidelity. The live explain reported
+// ctx_search ok:2 for ONE call — the cache-trace tool:after record (traceSchema
+// comis-cache-trace, carrying toolName + success:true) fell into the log-shape
+// handler and re-counted the trajectory's tool.result.
+// ---------------------------------------------------------------------------
+
+describe("toolStats fidelity (W8)", () => {
+  it("a comis-cache-trace tool:after record does not count as a tool success", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-cache-trace",
+        schemaVersion: 1,
+        stage: "tool:after",
+        seq: 6,
+        toolName: "ctx_search",
+        toolCallId: "call_1",
+        success: true,
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 13,
+        data: { toolName: "ctx_search", toolCallId: "call_1", success: true },
+      },
+    ]);
+    expect(s.toolStats.ctx_search?.ok).toBe(1);
+  });
+
+  it("duplicate event-shape tool.result records with the same toolCallId count once", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 1,
+        data: { toolName: "web_fetch", toolCallId: "tc-1", success: true },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 2,
+        data: { toolName: "web_fetch", toolCallId: "tc-1", success: true },
+      },
+    ]);
+    expect(s.toolStats.web_fetch?.ok).toBe(1);
+  });
+
+  it("log-shape success lines without a toolCallId keep per-line counting (frozen-fixture behavior)", () => {
+    const s = toIncidentSignals([log678Success(), log678Success()]);
+    expect(s.toolStats.web_fetch?.ok).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W8: agentId + channel extraction — the live report printed agentId:"" and
+// channel {type:"",id:""} although every trajectory record carries agentId and
+// session.started carries channelType/channelId.
+// ---------------------------------------------------------------------------
+
+describe("agentId + channel extraction (W8)", () => {
+  it("extracts agentId from the record envelope and channel from session.started data", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "session.started",
+        agentId: "default",
+        seq: 2,
+        data: { channelType: "telegram", channelId: "678314278" },
+      },
+    ]);
+    expect(s.agentId).toBe("default");
+    expect(s.channel).toEqual({ type: "telegram", id: "678314278" });
+  });
+});
