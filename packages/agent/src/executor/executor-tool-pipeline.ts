@@ -213,7 +213,7 @@ export interface ProviderNormalizeParams {
   tools: ToolDefinition[];
   provider: string;
   modelId: string;
-  compat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
+  compat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai" | "gbnf"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
 }
 
 /**
