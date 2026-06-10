@@ -3450,6 +3450,185 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
     expect(distilledScore).toBeGreaterThan(pairedScore);
   });
 
+  it("CR-01: a down-weighted paired memory MOVES BELOW a non-downweighted peer it previously outranked (the demotion changes RANK, not just score)", async () => {
+    // The headline BLOCKER: applyProvenanceDownweighting multiplied `score` by 0.5
+    // but PRESERVED array position, and nothing downstream re-sorts (deduplicateResults
+    // preserves order; the hybrid injector consumes in order). So the demotion was a
+    // functional no-op for RANKING. This test asserts ORDER, not score.
+    //
+    // RED on pre-patch code: `paired` (base 0.8) enters ABOVE `peer` (base 0.6) in the
+    // fused/scored order. The pass halves paired → 0.4 (< peer's 0.6) but leaves it in
+    // slot 0. Pre-patch: got.value order is still [distilled, paired, peer] → the
+    // assertion `idx(paired) > idx(peer)` FAILS. GREEN (re-sort by descending score):
+    // the order becomes [distilled, peer, paired] → paired sinks below peer.
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1"],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("paired", {
+        base: 0.8, // OUTRANKS peer pre-pass (0.8 > 0.6); ×0.5 → 0.4 (< 0.6) post-pass
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        sessionKey: CONV_SESSION, // same session as the distilled summary → down-weighted
+      }),
+      makeResult("peer", {
+        base: 0.6, // a non-downweighted peer from a DIFFERENT session
+        trustLevel: "learned",
+        tags: ["conversation"],
+        sessionKey: "telegram:chat_OTHER:user_z",
+      }),
+    ];
+    const { store } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const order = got.value.map((r) => r.entry.id);
+    const idxPaired = order.indexOf("paired");
+    const idxPeer = order.indexOf("peer");
+    // Both survive (down-weight never deletes).
+    expect(idxPaired).toBeGreaterThanOrEqual(0);
+    expect(idxPeer).toBeGreaterThanOrEqual(0);
+    // The CONTRACT: the demoted paired row now ranks BELOW the peer it previously
+    // outranked — the demotion is observable in ORDER (not merely the score value).
+    expect(idxPaired).toBeGreaterThan(idxPeer);
+    // Sanity: the down-weighted score really is below the peer's (the cause of the move).
+    const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+    expect(byId.get("paired")!).toBeLessThan(byId.get("peer")!);
+  });
+
+  it("CR-01 STABLE re-sort: ties between two down-weighted rows preserve their relative input order (index tiebreaker)", async () => {
+    // Two same-session paired rows with EQUAL base → both ×0.5 → equal score. The
+    // re-sort MUST be STABLE: `pairedA` (input slot 1) stays ahead of `pairedB`
+    // (input slot 2). A non-stable sort could swap them. They both sink below the
+    // higher-scored peer, but keep their mutual order.
+    const input = [
+      makeResult("distilled", { base: 0.95, trustLevel: "learned", tags: ["lcd_distilled", "depth:1"], sessionKey: CONV_SESSION }),
+      makeResult("pairedA", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+      makeResult("pairedB", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+    ];
+    const { store } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const order = got.value.map((r) => r.entry.id);
+    // Stable: pairedA precedes pairedB (their equal scores resolve to input order).
+    expect(order.indexOf("pairedA")).toBeLessThan(order.indexOf("pairedB"));
+  });
+
+  it("IN-03: branch (2) does NOT over-demote a legitimately-distinct same-session memory once the precise summary:<id> tag is present", async () => {
+    // The IN-03 over-reach: when CR-01 makes the pass effective, the SESSION-HEURISTIC
+    // branch (2) — which down-weights EVERY non-distilled candidate sharing the
+    // summary's sessionKey — suppresses same-session memories the precise provenance
+    // branch (1) never linked. Once 173-04 stamps the summary:<id> tag, branch (1) is
+    // the primary selector; branch (2) must be GATED OFF so a distinct same-session
+    // row keeps its rank.
+    //
+    // RED on pre-patch code (branch 2 always runs): `distinct` shares CONV_SESSION but
+    // is NOT in the provenance row set, so the heuristic down-weights it anyway →
+    // demoted below `peer`. GREEN (branch 2 gated behind absence of a usable
+    // summary:<id> tag): the precise branch links only `linked`; `distinct` keeps its
+    // score and stays ABOVE peer.
+    const SUMMARY_ID = "sum-in03";
+    const input = [
+      makeResult("distilled", {
+        base: 0.95,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1", `summary:${SUMMARY_ID}`],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("linked", {
+        base: 0.8, // the genuinely-subsumed paired row (in the provenance set)
+        trustLevel: "learned",
+        tags: ["paired"],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("distinct", {
+        base: 0.7, // shares the session but is NOT in the provenance set — must NOT demote
+        trustLevel: "learned",
+        tags: ["conversation"],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("peer", {
+        base: 0.6, // a different-session peer `distinct` outranks pre-pass
+        trustLevel: "learned",
+        tags: ["conversation"],
+        sessionKey: "telegram:chat_OTHER:user_z",
+      }),
+    ];
+    const { store } = fakeProvenanceStore({
+      [SUMMARY_ID]: [{ provenanceId: "p1", memoryId: "linked", sourceSessionKey: CONV_SESSION, supersededBy: null }],
+    });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+    const order = got.value.map((r) => r.entry.id);
+    // The genuinely-linked row IS demoted (precise branch 1 fired) → below peer.
+    expect(byId.get("linked")!).toBeLessThan(byId.get("peer")!);
+    expect(order.indexOf("linked")).toBeGreaterThan(order.indexOf("peer"));
+    // The legitimately-distinct same-session row is NOT demoted → keeps its rank ABOVE peer.
+    expect(byId.get("distinct")!).toBeCloseTo(0.7, 10);
+    expect(order.indexOf("distinct")).toBeLessThan(order.indexOf("peer"));
+  });
+
+  it("IN-03: with NO usable summary:<id> tag, the session heuristic (branch 2) STILL fires (fallback preserved)", async () => {
+    // The complement of the test above: when the distilled summary carries NO precise
+    // summary:<id> tag, branch (1) cannot select anything, so branch (2) must remain the
+    // fallback selector — a same-session paired row is still demoted. This pins that the
+    // IN-03 gate scopes branch (2) to the no-precise-tag case rather than removing it.
+    const input = [
+      makeResult("distilled", { base: 0.95, trustLevel: "learned", tags: ["lcd_distilled", "depth:1"], sessionKey: CONV_SESSION }),
+      makeResult("paired", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+      makeResult("peer", { base: 0.6, trustLevel: "learned", tags: ["conversation"], sessionKey: "telegram:chat_OTHER:user_z" }),
+    ];
+    const { store } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const order = got.value.map((r) => r.entry.id);
+    // Fallback heuristic fired: the same-session paired row sank below the peer.
+    expect(order.indexOf("paired")).toBeGreaterThan(order.indexOf("peer"));
+  });
+
   it("W6 PRECEDENCE: the distilled summary itself is NEVER down-weighted even when it is the only same-session entry besides another lcd_distilled row", async () => {
     // Two lcd_distilled summaries from the same session: NEITHER may be down-weighted.
     // The buggy `a && b || c` predicate would down-weight one distilled entry; the
