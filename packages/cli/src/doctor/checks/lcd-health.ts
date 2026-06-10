@@ -201,6 +201,51 @@ function scanR4Anomalies(db: Database.Database): DoctorFinding[] {
   ];
 }
 
+// ── Scan class 6: lcd_ingest_cursor over-count ───────────────────────────────
+
+/**
+ * Detect lcd_ingest_cursor rows whose `ingested_live_len` EXCEEDS the persisted
+ * message count for the scope — a genuine cursor/store inconsistency.
+ *
+ * The ingest path appends live messages 1:1 and NEVER deletes (the only delete
+ * path, deleteConversationLcd, also clears the cursor in the same transaction),
+ * so a healthy cursor always has `ingested_live_len <= COUNT(lcd_messages)` for
+ * its scope — equal in single-epoch steady state, strictly less once a prior
+ * epoch has accumulated. `ingested_live_len` GREATER than the persisted count is
+ * therefore impossible in normal operation and signals a corrupt / hand-edited
+ * cursor. Phase-164 note: a cursor with `ingested_live_len = 0` (or small) while
+ * many durable messages exist is a NORMAL fresh epoch / continue-append state and
+ * is correctly NOT flagged (0 <= msg_count). Content-free: counts only.
+ */
+function scanCursorInconsistencies(db: Database.Database): DoctorFinding[] {
+  const rows = db
+    .prepare(`
+      SELECT c.conversation_id
+      FROM lcd_ingest_cursor c
+      WHERE c.ingested_live_len > (
+        SELECT COUNT(*) FROM lcd_messages m
+        WHERE m.conversation_id = c.conversation_id
+          AND m.agent_id = c.agent_id
+          AND m.tenant_id = c.tenant_id
+      )
+      LIMIT 20
+    `)
+    .all() as Array<{ conversation_id: string }>;
+
+  if (rows.length === 0) return [];
+
+  return [
+    {
+      category: CATEGORY,
+      check: "Cursor over-count",
+      status: "warn",
+      message: `${rows.length} lcd_ingest_cursor rows with ingested_live_len exceeding the persisted message count`,
+      suggestion: "Recalculate the affected cursor(s) — ingested_live_len must not exceed COUNT(lcd_messages) for the scope",
+      repairable: false,
+    },
+  ];
+}
+
 // ── Main check export ─────────────────────────────────────────────────────────
 
 /**
@@ -210,9 +255,9 @@ function scanR4Anomalies(db: Database.Database): DoctorFinding[] {
  *   1. Orphaned lcd_summaries (no context_item back-link)
  *   2. Dangling context_item refs (ref_id points nowhere)
  *   3. Fallback-marker summaries (fallback=1, quality debt)
- *   4. lcd_ingest_cursor zero-with-messages inconsistency
- *   5. FTS row-count drift (when FTS5 tables are present)
- *   6. R4 scope anomalies (NULL tenant_id or agent_id)
+ *   4. FTS row-count drift (when FTS5 tables are present)
+ *   5. R4 scope anomalies (NULL tenant_id or agent_id)
+ *   6. lcd_ingest_cursor over-count (ingested_live_len > persisted msg count)
  *
  * Returns [] when memory.db is absent (new-install safe).
  * Returns 1 "pass" finding when all 6 scan classes are clean.
@@ -239,8 +284,9 @@ export const lcdHealthCheck: DoctorCheck = {
       findings.push(...scanFallbackMarkers(db));
       findings.push(...scanFtsDrift(db));
       findings.push(...scanR4Anomalies(db));
+      findings.push(...scanCursorInconsistencies(db));
 
-      // If all five scan classes came back clean, report healthy
+      // If all six scan classes came back clean, report healthy
       if (findings.length === 0) {
         findings.push({
           category: CATEGORY,

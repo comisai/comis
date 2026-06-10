@@ -258,6 +258,43 @@ describe("lcdHealthCheck", () => {
     expect(f!.repairable).toBe(false);
   });
 
+  // DOC-01-T-6: scan class 6 — lcd_ingest_cursor over-count. Corrected (WR-04): the
+  // scan flags ONLY ingested_live_len > persisted msg count (impossible in healthy
+  // operation), NOT the old ingested_live_len=0 premise (a normal fresh epoch).
+  it("DOC-01-T-6: flags a cursor whose ingested_live_len exceeds the persisted message count", async () => {
+    const { dataDir, db } = makeTempDb();
+    // 2 persisted messages, but a cursor claiming 5 ingested — impossible/corrupt.
+    seedMessage(db, { id: "m1", seq: 1 });
+    seedMessage(db, { id: "m2", seq: 2 });
+    db.prepare(`INSERT INTO lcd_ingest_cursor
+      (conversation_id, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)`).run("conv-001", "agent-001", "tenant-001", "user:1000000:abc", 5, 1000000);
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    const f = findings.find((x) => x.message.includes("ingested_live_len exceeding"));
+    expect(f).toBeDefined();
+    expect(f!.status).toBe("warn");
+    expect(f!.repairable).toBe(false);
+  });
+
+  // DOC-01-T-6b: a fresh-epoch cursor (ingested_live_len=0 with durable messages) is
+  // NORMAL under the Phase-164 epoch model and must NOT be flagged (the WR-04 guard).
+  it("DOC-01-T-6b: does NOT flag a fresh-epoch cursor (ingested_live_len=0) with durable messages", async () => {
+    const { dataDir, db } = makeTempDb();
+    seedMessage(db, { id: "m1", seq: 1 });
+    seedMessage(db, { id: "m2", seq: 2 });
+    seedMessage(db, { id: "m3", seq: 3 });
+    db.prepare(`INSERT INTO lcd_ingest_cursor
+      (conversation_id, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)`).run("conv-001", "agent-001", "tenant-001", "user:1000000:abc", 0, 1000000);
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    const f = findings.find((x) => x.check === "Cursor over-count");
+    expect(f).toBeUndefined();
+  });
+
   // DOC-01-T-7: scan class 5 — FTS row-count drift (FTS may or may not be available)
   it("DOC-01-T-7: detects FTS row-count drift when lcd_messages_fts has fewer rows than lcd_messages", async () => {
     const { dataDir, db } = makeTempDb();
