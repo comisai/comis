@@ -1842,6 +1842,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryExportEntrySchema",
       "MemoryExportEnvelope",
       "MemoryExportEntry",
+      // LCD provenance read port + write input type (172-01 contract layer).
+      // LcdProvenanceReadStore is the read-side port consumed BY TYPE in
+      // @comis/agent's distillation runner (lcd-distillation-runner.ts) via the
+      // ContextStorePort optional methods (appendProvenance? / markProvenanceSuperseded?).
+      // AppendProvenanceInput is the payload type for those optional methods.
+      // The agent package imports only @comis/core types (never @comis/memory — the
+      // agent↛memory architecture cut); the concrete SQLite adapter lives in
+      // @comis/memory and is injected by the daemon. The AST walker counts them as
+      // orphans because the agent imports them by TYPE only (erased at runtime).
+      // Shrinks when the daemon wiring or a cross-package consumer imports them by name.
+      "LcdProvenanceReadStore",
+      "AppendProvenanceInput",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,

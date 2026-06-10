@@ -2128,8 +2128,9 @@ describe("W4 — onCondensed callback seam (built-not-wired guard for Phase 172-
 
   it("source-grep: lcd-condense-trigger.ts fires onCondensed after appendCondensedSummary", () => {
     const src = readFileSync(resolve(here, "lcd-condense-trigger.ts"), "utf-8");
-    // The implementation must call params.onCondensed?. after the store write
-    expect(src).toMatch(/params\.onCondensed\?\.\(/);
+    // The implementation must call onCondensed?. (via params.onCondensed or
+    // as a direct parameter) after the store write
+    expect(src).toMatch(/onCondensed\?\.\(/);
   });
 
   it("source-grep: executor-post-execution.ts imports runDistillationPassAfterTurn from lcd-distillation-runner", () => {

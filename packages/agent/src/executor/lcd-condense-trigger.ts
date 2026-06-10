@@ -134,6 +134,7 @@ export async function maybeRunCondensePass(
   nowFn: (() => number) | undefined,
   logger: ComisLogger,
   eventBus?: TypedEventBus,
+  onCondensed?: (summaryId: string, content: string, fallback: boolean, depth: number) => void,
 ): Promise<void> {
   // Gated on the summarizer deps + a positive window (a missing getter / model is
   // a clean skip, not a fault — mirrors the leaf gate).
@@ -227,7 +228,9 @@ export async function maybeRunCondensePass(
     // SUMMARY-ref window — one atomic store transaction (C2). The store recomputes
     // descendantCount + time-range from the child summary rows; depth/taint/
     // fallback/tokenCount/content come from here (the agent-side authority).
-    store.appendCondensedSummary({
+    // Capture the summaryId returned by appendCondensedSummary for the onCondensed
+    // callback (Phase 172-02: the distillation hook seam).
+    const summaryId = store.appendCondensedSummary({
       scope,
       content: result.content,
       tokenCount: result.tokenCount,
@@ -247,6 +250,25 @@ export async function maybeRunCondensePass(
       childSummaryIds,
       depth,
     });
+
+    // Phase 172-02: fire the optional distillation hook immediately after the
+    // condensed summary is persisted. Non-fatal — errors from the hook MUST NOT
+    // propagate into the condense pass's own error handling (T-130-07).
+    try {
+      onCondensed?.(summaryId, result.content, result.fallback, depth);
+    } catch (hookErr) {
+      logger.warn(
+        {
+          err: hookErr instanceof Error ? hookErr.message : String(hookErr),
+          conversationId,
+          agentId: scope.agentId,
+          sessionKey: scope.sessionKey,
+          hint: "onCondensed callback threw — distillation hook error is non-fatal; condense pass is unaffected",
+          errorKind: "dependency" as ErrorKind,
+        },
+        "onCondensed hook error (non-fatal)",
+      );
+    }
 
     // O1 (Phase 133): real pass-timing — a SECOND injected-clock read at emit
     // minus the pass-entry `passStart`. The injected clock is the only time
@@ -328,6 +350,17 @@ export interface RunCondensePassAfterTurnParams {
   logger: ComisLogger;
   /** Optional bus for the `context:dag_compacted` emit on a completed pass. */
   eventBus?: TypedEventBus;
+  /**
+   * Optional callback fired immediately after store.appendCondensedSummary returns.
+   * Receives the new summaryId, content, fallback flag, and depth.
+   * Phase 172-02 (DIST-01): this is the distillation hook seam — the runner fires
+   * after each condensed summary is persisted.
+   *
+   * Non-fatal: callers MUST NOT depend on this callback throwing — if it throws,
+   * the condense pass wraps it in its own try/catch and logs a WARN. Lower
+   * blast radius than changing maybeRunCondensePass's return type.
+   */
+  onCondensed?: (summaryId: string, content: string, fallback: boolean, depth: number) => void;
 }
 
 /**
@@ -345,7 +378,7 @@ export interface RunCondensePassAfterTurnParams {
  * @param params - the minimal afterTurn inputs (see {@link RunCondensePassAfterTurnParams}).
  */
 export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnParams): Promise<void> {
-  const { store, scope, contextEngine, getCondenseSummarizerDeps, now, nowFn, logger, eventBus } = params;
+  const { store, scope, contextEngine, getCondenseSummarizerDeps, now, nowFn, logger, eventBus, onCondensed } = params;
   // Gate: no summarizer-deps getter ⇒ the condense pass is off (clean skip).
   if (getCondenseSummarizerDeps === undefined) return;
   const summarizerDeps = getCondenseSummarizerDeps();
@@ -374,5 +407,9 @@ export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnP
     nowFn,
     logger,
     eventBus,
+    // Phase 172-02: thread the onCondensed distillation hook seam through to
+    // maybeRunCondensePass. When present, fires with (summaryId, content, fallback,
+    // depth) immediately after store.appendCondensedSummary returns.
+    onCondensed,
   );
 }

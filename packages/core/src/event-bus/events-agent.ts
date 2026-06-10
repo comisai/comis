@@ -701,6 +701,45 @@ export interface AgentEvents {
     timestamp: number;
   };
 
+  // ---------------------------------------------------------------------------
+  // Phase 172 (DIST-01..04): LCD→LTM distillation observability events.
+  // Content-free: ids/counts/reasons only — NEVER summary or memory text
+  // (T-130-09 + §2.7 logging matrix). Both events are emitted by the
+  // distillation runner in lcd-distillation-runner.ts.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Emitted when the distillation runner skips writing to LTM.
+   * `reason` encodes the gate that fired: "fallback_marker" |
+   * "subagent_session" | "depth_below_min" | "weak_model_no_override" |
+   * "near_duplicate" | "validation" (from validateMemoryWrite).
+   * Content-free: ids, agentId, sessionKey, reason, optional score/depth only.
+   */
+  "memory:distillation_skipped": {
+    reason: string;
+    summaryId?: string;
+    agentId?: string;
+    sessionKey?: string;
+    score?: number;
+    depth?: number;
+    minDepth?: number;
+    capabilityClass?: string;
+    timestamp?: number;
+  };
+
+  /**
+   * Emitted when the distillation runner successfully writes an episodic
+   * memory + provenance row to LTM. Content-free: ids/counts/depth only.
+   */
+  "memory:distillation_complete": {
+    summaryId: string;
+    memoryId: string;
+    depth: number;
+    agentId?: string;
+    sessionKey?: string;
+    timestamp?: number;
+  };
+
   // ---------------------------------------------------------------------
   // Trajectory observability events (prompt:* / session:* / memory:injected
   // / tool:timeout) moved to events-trajectory.ts (`TrajectoryEvents`) for
