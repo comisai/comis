@@ -85,7 +85,7 @@ function scanDanglingRefs(db: Database.Database): DoctorFinding[] {
       status: "warn",
       message: `${rows.length} dangling context_items refs found`,
       suggestion: "Run lcd context-item repair to remove stale refs",
-      repairable: false,
+      repairable: true,
     },
   ];
 }
@@ -113,7 +113,7 @@ function scanFallbackMarkers(db: Database.Database): DoctorFinding[] {
       status: "warn",
       message: `${c} fallback-marker lcd_summaries (quality debt — model truncated without LLM)`,
       suggestion: "Re-run compaction on affected conversations to replace fallback summaries",
-      repairable: false,
+      repairable: true,
     },
   ];
 }
@@ -161,7 +161,7 @@ function scanFtsDrift(db: Database.Database): DoctorFinding[] {
       status: "warn",
       message: `FTS out of sync: messages drift=${msgDrift}, summaries drift=${sumDrift}`,
       suggestion: "Rebuild FTS indexes: INSERT INTO lcd_messages_fts(lcd_messages_fts) VALUES('rebuild')",
-      repairable: false,
+      repairable: true,
     },
   ];
 }

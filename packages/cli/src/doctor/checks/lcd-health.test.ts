@@ -242,11 +242,12 @@ describe("lcdHealthCheck", () => {
     expect(f).toBeDefined();
     expect(f!.status).toBe("warn");
     expect(f!.message).toMatch(/\b1\b/);
-    expect(f!.repairable).toBe(false);
+    // DOC-03 (Phase 171-04): dangling refs are now repairable via repairContextItems
+    expect(f!.repairable).toBe(true);
   });
 
   // DOC-01-T-5: scan class 3 — fallback-marker summaries
-  it("DOC-01-T-5: detects fallback-marker lcd_summaries with status warn and repairable false", async () => {
+  it("DOC-01-T-5: detects fallback-marker lcd_summaries with status warn and repairable true (DOC-03)", async () => {
     const { dataDir, db } = makeTempDb();
     seedSummary(db, { summaryId: "fallback-sum", fallback: 1 });
     db.close();
@@ -255,7 +256,8 @@ describe("lcdHealthCheck", () => {
     const f = findings.find((x) => x.message.includes("fallback"));
     expect(f).toBeDefined();
     expect(f!.status).toBe("warn");
-    expect(f!.repairable).toBe(false);
+    // DOC-03 (Phase 171-04): fallback summaries are now repairable via repairFallbackSummaries
+    expect(f!.repairable).toBe(true);
   });
 
   // DOC-01-T-6: scan class 6 — lcd_ingest_cursor over-count. Corrected (WR-04): the
