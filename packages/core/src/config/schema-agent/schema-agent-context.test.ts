@@ -88,3 +88,47 @@ describe("ContextEngineConfigSchema — memory.distillFromLcd config block (Phas
     expect(result.success).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// RETR-03 (Phase 173-03): contextEngine.relevance.firstByDefault config block.
+//
+// RED on pre-patch: ContextEngineConfigSchema (a z.strictObject) has no `relevance`
+// field, so parsing `{ contextEngine: { relevance: {...} } }` would be rejected by
+// strictObject — the schema block does not exist yet.
+//
+// The CRITICAL contract (Pitfall 1 — the schema re-parse trap): firstByDefault is an
+// OPTIONAL boolean with NO `.default()`. An OMITTED field must parse to `undefined`
+// (NOT `false`) so the scaffold-defaults resolver's `?? (capability gate)` survives.
+// A `.default(false)` here would collapse undefined→false and silently kill the
+// capability-gated default for small/nano. These tests pin undefined-stays-undefined.
+// ---------------------------------------------------------------------------
+describe("ContextEngineConfigSchema — relevance.firstByDefault config block (RETR-03)", () => {
+  it("parses { relevance: { firstByDefault: true } } to true", () => {
+    const cfg = ContextEngineConfigSchema.parse({ relevance: { firstByDefault: true } });
+    expect(cfg.relevance?.firstByDefault).toBe(true);
+  });
+
+  it("parses { relevance: { firstByDefault: false } } to false (explicit force-off preserved)", () => {
+    const cfg = ContextEngineConfigSchema.parse({ relevance: { firstByDefault: false } });
+    expect(cfg.relevance?.firstByDefault).toBe(false);
+  });
+
+  it("OMITTING relevance leaves it undefined (NO .default() — the resolver ?? gate survives)", () => {
+    const cfg = ContextEngineConfigSchema.parse({});
+    // The block itself is .optional() → undefined when omitted (NOT a defaulted object).
+    expect(cfg.relevance).toBeUndefined();
+  });
+
+  it("OMITTING firstByDefault inside an explicit relevance block leaves the field undefined", () => {
+    const cfg = ContextEngineConfigSchema.parse({ relevance: {} });
+    // The field is .optional() with NO .default(false) → undefined, not false (Pitfall 1).
+    expect(cfg.relevance?.firstByDefault).toBeUndefined();
+  });
+
+  it("rejects a non-boolean firstByDefault (type safety)", () => {
+    const result = ContextEngineConfigSchema.safeParse({
+      relevance: { firstByDefault: "yes" },
+    });
+    expect(result.success).toBe(false);
+  });
+});

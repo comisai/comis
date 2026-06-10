@@ -411,6 +411,52 @@ describe("MessagingEvents payload structure", () => {
     bus.emit("message:sent", { channelId: "c1", messageId: "m1" });
   });
 
+  // RETR-02 (Phase 173-03): the new content-free margin-arbiter Glass-Box event.
+  // RED on pre-patch: `context:arbitrated` is not in EventMap, so the typed payload
+  // below fails to COMPILE (per AGENTS §2.10 a compile-RED is the failing state for
+  // a new closed event contract). Payload is per-tier kept COUNTS + discretionary
+  // pool TOKENS + a relevanceFirst BOOLEAN + ids/timestamp ONLY — NEVER message,
+  // memory, or query content (the lossless store; AGENTS.md §2.2/§2.7; T-173-03-04).
+  it("context:arbitrated delivers per-tier kept counts + pool tokens + relevanceFirst (content-free)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const now = Date.now();
+    const payload: EventMap["context:arbitrated"] = {
+      agentId: "agent-1",
+      sessionKey: "default:user1:channel1",
+      perTierKept: { history: 4, ltm: 1, kg: 0 },
+      discretionaryPoolTokens: 12_000,
+      relevanceFirst: true,
+      timestamp: now,
+    };
+
+    bus.on("context:arbitrated", handler);
+    bus.emit("context:arbitrated", payload);
+
+    expect(handler).toHaveBeenCalledOnce();
+    const received = handler.mock.calls[0]![0] as EventMap["context:arbitrated"];
+    expect(received.agentId).toBe("agent-1");
+    expect(received.perTierKept.history).toBe(4);
+    expect(received.perTierKept.ltm).toBe(1);
+    expect(received.discretionaryPoolTokens).toBe(12_000);
+    expect(received.relevanceFirst).toBe(true);
+    expect(received.timestamp).toBe(now);
+  });
+
+  it("type safety: context:arbitrated rejects a content-bearing field (content-free contract)", () => {
+    const bus = new TypedEventBus();
+    bus.emit("context:arbitrated", {
+      agentId: "agent-1",
+      sessionKey: "default:user1:channel1",
+      perTierKept: { history: 1 },
+      discretionaryPoolTokens: 100,
+      relevanceFirst: false,
+      timestamp: Date.now(),
+      // @ts-expect-error - the event is content-free; no message/query text field exists
+      messageText: "leaked content",
+    });
+  });
+
   // Closed-union guard: from/to are the literal
   // "pipeline" | "dag" union — an arbitrary string is a COMPILE error, not a
   // runtime discriminator. These @ts-expect-error lines fail to compile if the
