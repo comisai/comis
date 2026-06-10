@@ -643,8 +643,15 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       wireTerminalTools(tools, terminalRegistries, agentId, buildTerminalWiringDeps(terminalBase, skillsConfig.terminal));
 
       // Context expansion tools (v2.12 Phase 131, E1/E2): in-session lossless-store recovery
-      // (ctx_*). Wired ONLY in dag mode WITH a store; never-export, OUTSIDE the parity registry.
-      if ((agentConfig?.contextEngine?.version ?? "pipeline") === "dag" && deps.lcdStore) {
+      // (ctx_*). Wired in dag mode WITH a store; never-export, OUTSIDE the parity registry.
+      // WR-05 (Phase 174-04): the missing-version default is "dag" — ALIGNED with
+      // shouldRunLcdStorePasses (executor-post-execution.ts: `version ?? "dag"`), which gates
+      // the LCD store WRITES (ingest + leaf/condense + the DEPTH-03 bootstrap sweep). The two
+      // halves of the feature must fire under the SAME default: a bare agent config that
+      // writes durable history must also wire the ctx_* tools that read it back, else it
+      // writes history it can never recover in-session. (Was `?? "pipeline"` — a pre-existing
+      // skew this milestone closes.)
+      if ((agentConfig?.contextEngine?.version ?? "dag") === "dag" && deps.lcdStore) {
         const maxExpandTokens = agentConfig?.contextEngine?.maxExpandTokens ?? 4000;
         // WR-04: thread the operator capabilityClass override (providers.entries.<id>.
         // capabilities.capabilityClass) so a pinned tier governs the walk depth — same
