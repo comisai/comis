@@ -2044,7 +2044,7 @@ describe("createLcdStore — DIST-05 provenance write surface", () => {
     });
 
     // First supersede → sets the pointer.
-    store.markProvenanceSuperseded!("sum-x", mem2);
+    store.markProvenanceSuperseded!("sum-x", mem2, "tenant-p", "agent-p");
     let row = db.prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE summary_id = ?").get("sum-x") as
       | { superseded_by: string | null }
       | undefined;
@@ -2052,7 +2052,7 @@ describe("createLcdStore — DIST-05 provenance write surface", () => {
 
     // Second supersede with a different memory → no-op (superseded_by IS NULL guard).
     seedMemoryRow("mem-c");
-    store.markProvenanceSuperseded!("sum-x", "mem-c");
+    store.markProvenanceSuperseded!("sum-x", "mem-c", "tenant-p", "agent-p");
     row = db.prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE summary_id = ?").get("sum-x") as
       | { superseded_by: string | null }
       | undefined;
@@ -2061,8 +2061,49 @@ describe("createLcdStore — DIST-05 provenance write surface", () => {
 
   it("markProvenanceSuperseded is a no-op when no matching summary row exists", () => {
     // No throw, no rows affected.
-    expect(() => store.markProvenanceSuperseded!("sum-missing", "mem-z")).not.toThrow();
+    expect(() => store.markProvenanceSuperseded!("sum-missing", "mem-z", "tenant-p", "agent-p")).not.toThrow();
     const count = db.prepare("SELECT COUNT(*) AS c FROM lcd_memory_provenance").get() as { c: number };
     expect(count.c).toBe(0);
+  });
+
+  // WR-01 (R4 fail-open write): the supersession UPDATE must be tenant+agent
+  // scoped. A summary_id collision (or a malicious/buggy caller) under a DIFFERENT
+  // tenant/agent must NOT flip another scope's provenance row. This fails on the
+  // pre-fix UPDATE that filtered on summary_id alone (no tenant_id/agent_id).
+  it("WR-01: markProvenanceSuperseded does NOT touch a row in a DIFFERENT tenant (R4 scoped UPDATE)", () => {
+    // Seed a memory + provenance row under tenant-p / agent-p, summary_id "sum-shared".
+    const memId = "mem-tenant-p";
+    seedMemoryRow(memId);
+    store.appendProvenance!({
+      provenanceId: "prov-tp",
+      memoryId: memId,
+      summaryId: "sum-shared",
+      sourceSessionKey: "sess-p",
+      conversationId: "conv-p",
+      agentId: "agent-p",
+      tenantId: "tenant-p",
+      createdAt: 1,
+    });
+
+    // A DIFFERENT tenant supersedes the SAME summary_id — must be a no-op.
+    store.markProvenanceSuperseded!("sum-shared", memId, "tenant-OTHER", "agent-p");
+    let row = db
+      .prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE provenance_id = ?")
+      .get("prov-tp") as { superseded_by: string | null } | undefined;
+    expect(row!.superseded_by).toBeNull(); // untouched — wrong tenant
+
+    // A DIFFERENT agent (same tenant) supersedes the SAME summary_id — also no-op.
+    store.markProvenanceSuperseded!("sum-shared", memId, "tenant-p", "agent-OTHER");
+    row = db
+      .prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE provenance_id = ?")
+      .get("prov-tp") as { superseded_by: string | null } | undefined;
+    expect(row!.superseded_by).toBeNull(); // untouched — wrong agent
+
+    // The CORRECT scope flips it.
+    store.markProvenanceSuperseded!("sum-shared", memId, "tenant-p", "agent-p");
+    row = db
+      .prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE provenance_id = ?")
+      .get("prov-tp") as { superseded_by: string | null } | undefined;
+    expect(row!.superseded_by).toBe(memId);
   });
 });
