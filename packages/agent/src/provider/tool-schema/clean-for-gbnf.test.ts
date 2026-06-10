@@ -137,6 +137,54 @@ describe("cleanSchemaForGbnf", () => {
       expect(transformedKeywords).toContain("missing_type");
     });
 
+    // WR-04 (175-REVIEW): constraint-only typeless nodes used to default to
+    // "string" — `{minimum: 0}` became `{type:"string", minimum:0}` and the
+    // grammar forced the model to emit a string where the tool expects a
+    // number/array. Inference must read the constraint family first.
+    it('WR-04: infers type "number" from numeric constraint keys (minimum/maximum/exclusive*/multipleOf)', () => {
+      expect(cleanSchemaForGbnf({ minimum: 0 }).schema).toEqual({ minimum: 0, type: "number" });
+      expect(cleanSchemaForGbnf({ maximum: 10, multipleOf: 2 }).schema).toEqual({
+        maximum: 10,
+        multipleOf: 2,
+        type: "number",
+      });
+      expect(cleanSchemaForGbnf({ exclusiveMinimum: 1 }).schema).toEqual({
+        exclusiveMinimum: 1,
+        type: "number",
+      });
+      expect(cleanSchemaForGbnf({ exclusiveMaximum: 9 }).schema).toEqual({
+        exclusiveMaximum: 9,
+        type: "number",
+      });
+    });
+
+    it('WR-04: infers type "array" from array constraint keys (minItems/maxItems/uniqueItems/contains)', () => {
+      expect(cleanSchemaForGbnf({ minItems: 1 }).schema).toEqual({ minItems: 1, type: "array" });
+      expect(cleanSchemaForGbnf({ maxItems: 5, uniqueItems: true }).schema).toEqual({
+        maxItems: 5,
+        uniqueItems: true,
+        type: "array",
+      });
+      expect(cleanSchemaForGbnf({ contains: { type: "string" } }).schema).toEqual({
+        contains: { type: "string" },
+        type: "array",
+      });
+    });
+
+    it('WR-04: string constraint keys (minLength/maxLength/pattern/format) still infer type "string"', () => {
+      expect(cleanSchemaForGbnf({ minLength: 3 }).schema).toEqual({ minLength: 3, type: "string" });
+      expect(cleanSchemaForGbnf({ maxLength: 9 }).schema).toEqual({ maxLength: 9, type: "string" });
+      // pattern/format survive the proactive profile — only the type is added.
+      expect(cleanSchemaForGbnf({ pattern: "^x$" }).schema).toEqual({
+        pattern: "^x$",
+        type: "string",
+      });
+      expect(cleanSchemaForGbnf({ format: "date" }).schema).toEqual({
+        format: "date",
+        type: "string",
+      });
+    });
+
     it("does NOT inject a type on nodes carrying enum/const/anyOf/oneOf/allOf/$ref/not", () => {
       const carriers: Record<string, unknown>[] = [
         { enum: ["a", "b"] },

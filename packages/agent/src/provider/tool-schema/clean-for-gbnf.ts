@@ -16,12 +16,18 @@
  * - T3 free-form-object properties injection — template-rendering / Go-side
  *   robustness for `{"type":"object"}` nodes with no shape at all.
  *
- * I6 invariant (security posture untouched): every transform REMOVES or
- * RELAXES a constraint, never adds one. T3 is non-tightening because
+ * I6 invariant (security posture untouched) — the real guarantee
+ * (175-REVIEW WR-04): no transform ever WIDENS the set of values the schema
+ * admits. Transformed schemas accept a SUBSET of the original's values
+ * (T1/T2 drop the null branch; T4 injects an inferred `type` that narrows a
+ * previously-unconstrained node) or the IDENTICAL set (T3 —
  * `{"type":"object","properties":{}}` WITHOUT `additionalProperties:false`
- * still admits any properties. Non-null unions and 3+-entry type arrays are
- * deliberately left untouched — collapsing them would pick a branch and
- * tighten the contract.
+ * still admits any properties). Narrowing can never authorize new tool
+ * inputs, so the security direction is safe; the cost is functional
+ * narrowing on pathological inputs, which beats the alternative — a hard
+ * grammar-compile 400 that fails the whole toolset. Non-null unions and
+ * 3+-entry type arrays are deliberately left untouched — collapsing them
+ * would pick one branch arbitrarily.
  *
  * Idempotent by construction: each transform's trigger condition is destroyed
  * by its own rewrite (collapsed unions have no 2-element nullable union left,
@@ -178,11 +184,34 @@ function collapseTypeArray(
   return out;
 }
 
+/** WR-04: typeless nodes carrying any of these keys infer `type: "number"`. */
+const NUMERIC_CONSTRAINT_KEYS = [
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+] as const;
+
+/** WR-04: typeless nodes carrying any of these keys infer `type: "array"`. */
+const ARRAY_CONSTRAINT_KEYS = ["minItems", "maxItems", "uniqueItems", "contains"] as const;
+
+/** True when the node carries at least one of the given keys. */
+function hasAnyKey(node: Record<string, unknown>, keys: readonly string[]): boolean {
+  return keys.some((key) => key in node);
+}
+
 /**
  * T4: inject an inferred `type` on a node carrying NONE of the type-bearing
- * keys (the llama.cpp "Unrecognized schema" class). Inference:
- * properties/required/additionalProperties → "object"; items → "array";
- * otherwise "string" (the bare description-only leaf).
+ * keys (the llama.cpp "Unrecognized schema" class). Inference reads the
+ * constraint family (175-REVIEW WR-04 — a constraint-only `{minimum: 0}`
+ * must become "number", not the string default that would force the model
+ * to emit a string where the tool expects a number):
+ * properties/required/additionalProperties → "object";
+ * items/minItems/maxItems/uniqueItems/contains → "array";
+ * minimum/maximum/exclusiveMinimum/exclusiveMaximum/multipleOf → "number";
+ * otherwise "string" (the bare description-only leaf, and the
+ * minLength/maxLength/pattern/format string-constraint family).
  */
 function injectMissingType(
   node: Record<string, unknown>,
@@ -194,9 +223,11 @@ function injectMissingType(
   const inferred =
     "properties" in node || "required" in node || "additionalProperties" in node
       ? "object"
-      : "items" in node
+      : "items" in node || hasAnyKey(node, ARRAY_CONSTRAINT_KEYS)
         ? "array"
-        : "string";
+        : hasAnyKey(node, NUMERIC_CONSTRAINT_KEYS)
+          ? "number"
+          : "string";
   applied.add("missing_type");
   return { ...node, type: inferred };
 }
