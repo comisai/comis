@@ -1158,4 +1158,94 @@ describe("runWithModelRetry", () => {
       expect(payload!.traceId).toBe(traceId);
     });
   });
+
+  // -------------------------------------------------------------------
+  // tool_schema_unsupported ladder short-circuit (GBNF-02)
+  // -------------------------------------------------------------------
+  //
+  // A grammar-compile/schema 400 is deterministic — rotating auth keys or
+  // burning fallback models cannot fix a tool schema the provider can't
+  // compile. The ladder must return { succeeded: false } immediately and
+  // leave the single repair attempt to the executor's withSession-scoped
+  // strip-retry (silent-failure-handlers.ts, Plan 05).
+  describe("tool_schema_unsupported ladder short-circuit (GBNF-02)", () => {
+    // Verbatim llama-server grammar-400 body (llama.cpp #19716). The wrapper
+    // embeds `invalid_request_error`; since GBNF-02 it classifies
+    // tool_schema_unsupported (ordered before client_request).
+    const llamaServerBody =
+      '{"error":{"code":400,"message":"JSON schema conversion failed:\\nUnrecognized schema: {\\"description\\":\\"Value for add/replace/test operations\\"}","type":"invalid_request_error"}}';
+
+    it("returns succeeded:false immediately for a grammar-400 without burning rotation, fallback models, or setModel", async () => {
+      const session = makeSession();
+      const grammarError = new Error(llamaServerBody);
+      session.prompt.mockRejectedValue(grammarError);
+
+      const authRotation = makeAuthRotation();
+      const logger = createMockLogger();
+      const params = makeParams({
+        session,
+        deps: {
+          eventBus: makeEventBus(),
+          logger,
+          modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
+          authRotation: authRotation as any,
+          fallbackModels: ["openai:gpt-4"],
+        },
+      });
+
+      const result = await runWithModelRetry(params);
+
+      // Deterministic schema problem: the ladder must not run at all.
+      expect(result.succeeded).toBe(false);
+      expect(result.error).toBe(grammarError);
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+      expect(session.setModel).not.toHaveBeenCalled();
+      expect(authRotation.rotateKey).not.toHaveBeenCalled();
+
+      // Guard WARN carries the §2.7 fields: hint naming the durable knob
+      // (comisCompat.toolSchemaProfile) + errorKind "validation".
+      const warnCalls = vi.mocked(logger.warn).mock.calls;
+      const guardLog = warnCalls.find(
+        (call: unknown[]) => call[1] === "Schema-unsupported error: fallback ladder skipped",
+      );
+      expect(guardLog).toBeDefined();
+      expect(guardLog![0]).toEqual(
+        expect.objectContaining({
+          errorKind: "validation",
+          hint: expect.stringContaining("toolSchemaProfile"),
+        }),
+      );
+    });
+
+    it("falls through to the fallback ladder unchanged for a generic provider error (guard scoped to the one category)", async () => {
+      const session = makeSession();
+      session.prompt
+        .mockRejectedValueOnce(new Error("connection reset"))
+        .mockResolvedValueOnce(undefined); // fallback succeeds
+
+      const eventBus = makeEventBus();
+      const params = makeParams({
+        session,
+        deps: {
+          eventBus,
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
+          fallbackModels: ["openai:gpt-4"],
+        },
+      });
+
+      const result = await runWithModelRetry(params);
+
+      expect(result.succeeded).toBe(true);
+      expect(session.setModel).toHaveBeenCalled();
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "model:fallback_attempt",
+        expect.objectContaining({ toProvider: "openai", toModel: "gpt-4" }),
+      );
+    });
+  });
 });
