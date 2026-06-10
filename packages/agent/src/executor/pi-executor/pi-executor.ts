@@ -311,10 +311,14 @@ export function createPiExecutor(
         (alsCtx as Record<string, unknown>).agentId = agentId;
       }
 
-      // Derive compat config via normalizeModelCompat (xAI auto-detection).
+      // Derive compat config via normalizeModelCompat (xAI + GBNF auto-detection;
+      // providerType/comisCompat resolved per-execution because model overrides
+      // can switch providers — GBNF-01).
       const modelCompat = resolvedModel ? normalizeModelCompat({
         provider: resolvedModel.provider,
         id: resolvedModel.id,
+        providerType: deps.getProviderType?.(resolvedModel.provider),
+        comisCompat: deps.getModelCompat?.(resolvedModel.provider, resolvedModel.id),
       }) : undefined;
 
       // Resolve ModelProfile once per execution (K1: resolve-once, thread everywhere).
