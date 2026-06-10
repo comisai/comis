@@ -1982,4 +1982,54 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(rowExists(obsB)).toBe(true); // untouched — different agent
     });
   });
+
+  describe("DIST-05 defensive branches — empty source_ids + all-surviving sources", () => {
+    it("unlinkDeletedSources skips an observation whose source_ids is EMPTY (nothing to unlink)", async () => {
+      const obs = await seedMemory({ content: "observation with no sources", proofCount: 2, sourceIds: [] });
+      const r = await store.unlinkDeletedSources("sess-any", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0);
+      expect(rowExists(obs)).toBe(true);
+    });
+
+    it("unlinkDeletedSources leaves an observation whose sources ALL survive untouched (source_ids not rewritten)", async () => {
+      const s1 = await seedMemory({ content: "surviving raw", source: { who: "u", channel: "c", sessionKey: "sess-keep" } });
+      const obs = await seedObservation([s1]);
+      const r = await store.unlinkDeletedSources("sess-unrelated", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0);
+      expect(rowExists(obs)).toBe(true);
+      const row = db.prepare("SELECT source_ids FROM memories WHERE id = ?").get(obs) as
+        | { source_ids: string }
+        | undefined;
+      expect(JSON.parse(row!.source_ids)).toEqual([s1]);
+    });
+
+    it("purgeConsolidatedDerivedFrom skips an observation whose source_ids is EMPTY", async () => {
+      const sGone = await seedMemory({ content: "raw to wipe", source: { who: "u", channel: "c", sessionKey: "sess-wipe" } });
+      const obs = await seedMemory({ content: "observation with no sources", proofCount: 2, sourceIds: [] });
+      await adapter.deleteBySessionKey("sess-wipe", { tenantId: TENANT_A, agentId: AGENT_A });
+      const r = await store.purgeConsolidatedDerivedFrom("sess-wipe", TENANT_A, AGENT_A, [sGone]);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0);
+      expect(rowExists(obs)).toBe(true);
+    });
+  });
+
+  describe("DIST-05 Result error boundary — a thrown DB error returns err, never throws", () => {
+    it("unlinkDeletedSources returns err (not a throw) when the database handle is closed", async () => {
+      db.close();
+      const r = await store.unlinkDeletedSources("sess-x", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(false);
+    });
+
+    it("purgeConsolidatedDerivedFrom returns err (not a throw) when the database handle is closed", async () => {
+      db.close();
+      const r = await store.purgeConsolidatedDerivedFrom("sess-x", TENANT_A, AGENT_A, ["mem-id-1"]);
+      expect(r.ok).toBe(false);
+    });
+  });
 });
