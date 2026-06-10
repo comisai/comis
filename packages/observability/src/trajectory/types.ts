@@ -101,6 +101,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   "execution.prompt_timeout",
   "execution.output_escalated",
   "execution.replay_recovered",
+  // GBNF-02 strip-retry self-heal (Phase 175): content-free counts/names only.
+  "execution.tool_schema_unsupported",
 
   // Security + sender (scanned subset)
   "security.injection_detected",

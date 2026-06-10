@@ -512,6 +512,24 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** GBNF-02 self-heal fired: the provider rejected the tool JSON Schema at
+   *  grammar-compile/unmarshal time (llama.cpp "JSON schema conversion
+   *  failed", Ollama Go-side tools unmarshal). The runner stripped
+   *  pattern/format from the named session-held tool schemas and retried
+   *  exactly once per session ('retried' false when nothing was strippable).
+   *  Payload is content-free: tool + keyword NAMES only, never schema bodies
+   *  (I7). 'succeeded' reports whether the retry produced a non-empty
+   *  response. */
+  "execution:tool_schema_unsupported": {
+    agentId: string;
+    sessionKey: string;
+    toolNames: string[];
+    strippedKeywords: string[];
+    retried: boolean;
+    succeeded: boolean;
+    timestamp: number;
+  };
+
   // -------------------------------------------------------------------------
   // Dead-letter queue events
   // -------------------------------------------------------------------------

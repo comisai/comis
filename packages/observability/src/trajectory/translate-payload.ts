@@ -343,6 +343,18 @@ export function translatePayload(
         succeeded: payload.succeeded,
       };
 
+    case "execution:tool_schema_unsupported":
+      // GBNF-02 strip-retry self-heal. The emit site is already content-free
+      // (tool + keyword NAMES only, never schema bodies — I7), so all four
+      // diagnostic fields forward verbatim. agentId/sessionKey/timestamp are
+      // envelope-only and stripped.
+      return {
+        toolNames: payload.toolNames,
+        strippedKeywords: payload.strippedKeywords,
+        retried: payload.retried,
+        succeeded: payload.succeeded,
+      };
+
     // ---- Security + Sender (scanned subset) ----
     // SECURITY INVARIANT: patterns[] (verbatim injection strings) and
     // senderId (user identifier) are intentionally NOT forwarded.

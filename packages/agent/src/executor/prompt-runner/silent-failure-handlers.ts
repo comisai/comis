@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Silent-failure detection branches — the four distinct recovery paths the
- * pre-split prompt runner took when the SDK resolved `session.prompt()`
- * without throwing but emitted a content-less assistant turn:
+ * Silent-failure detection branches — the five distinct recovery paths the
+ * prompt runner takes when the SDK resolved `session.prompt()` without
+ * throwing but emitted a content-less assistant turn:
  *
  *   1. signed-replay self-heal (scrub thinking state + retry once with 1s settle)
- *   2. rate-limit short-circuit (window can't roll; declare terminal failure)
- *   3. client-request short-circuit (deterministic provider validation; do not retry)
- *   4. default strip-and-retry + LKW (last-known-working) auth-failure fallback
+ *   2. tool-schema strip-retry (GBNF-02: strip pattern/format once per
+ *      session + retry; body lives in tool-schema-unsupported-handler.ts —
+ *      500-line directory cap — and is re-exported below)
+ *   3. rate-limit short-circuit (window can't roll; declare terminal failure)
+ *   4. client-request short-circuit (deterministic provider validation; do not retry)
+ *   5. default strip-and-retry + LKW (last-known-working) auth-failure fallback
  *
  * Imports types only from `./prompt-runner-types.js` — never from
  * `./prompt-runner.js` (avoids circular dependency).
@@ -26,6 +29,15 @@ import { getVisibleAssistantText } from "../phase-filter.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { RunPromptParams } from "./prompt-runner-types.js";
+
+// GBNF-02 strip-retry handler (cascade member #2). Extracted to a sibling
+// module for the prompt-runner 500-line file cap; re-exported here so the
+// retry-loop dispatch imports the whole silent-failure cascade from one
+// module. Behavioral coverage: tool-schema-unsupported-handler.test.ts.
+export {
+  handleToolSchemaUnsupported,
+  resetToolSchemaStripGateForTest,
+} from "./tool-schema-unsupported-handler.js";
 
 /** Mutable state threaded through the silent-failure branches. */
 export interface RetryState {
