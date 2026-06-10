@@ -1813,7 +1813,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(rowExists(s1)).toBe(false);
       expect(rowExists(s2)).toBe(false);
 
-      const r = await store.unlinkDeletedSources("sess-x", TENANT_A);
+      const r = await store.unlinkDeletedSources("sess-x", TENANT_A, AGENT_A);
       expect(r.ok).toBe(true);
       if (!r.ok) return;
       expect(r.value).toBe(1); // one orphan deleted
@@ -1830,7 +1830,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(rowExists(s1)).toBe(false);
       expect(rowExists(s2)).toBe(true);
 
-      const r = await store.unlinkDeletedSources("sess-wipe", TENANT_A);
+      const r = await store.unlinkDeletedSources("sess-wipe", TENANT_A, AGENT_A);
       expect(r.ok).toBe(true);
       if (!r.ok) return;
       expect(r.value).toBe(0); // nothing orphaned — the observation survives
@@ -1850,7 +1850,7 @@ describe("createSqliteMemoryConsolidationStore", () => {
 
       await adapter.deleteBySessionKey("sess-x", { tenantId: TENANT_A, agentId: AGENT_A });
 
-      const r = await store.unlinkDeletedSources("sess-x", TENANT_A);
+      const r = await store.unlinkDeletedSources("sess-x", TENANT_A, AGENT_A);
       expect(r.ok).toBe(true);
       // The other-tenant observation is untouched (tenant-scoped query).
       expect(rowExists(obsOther)).toBe(true);
@@ -1860,8 +1860,39 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(JSON.parse(row!.source_ids)).toEqual([s1]);
     });
 
+    // WR-05 (scope asymmetry): deleteBySessionKey is (tenant, agent)-scoped, so
+    // the cleanup MUST be too. An observation owned by a DIFFERENT agent in the
+    // SAME tenant — even one that references the deleted agent-A source id — must
+    // NOT be deleted or unlinked by an agent-A reset. Fails on the pre-fix code
+    // whose liveIds + observation scan filtered tenant_id only (the cross-agent
+    // observation saw the deleted id as "absent" and got mutated).
+    it("WR-05: agent isolation — an observation owned by a DIFFERENT agent (same tenant) is never touched", async () => {
+      // agent-A source deleted by an agent-A reset.
+      const sA = await seedMemory({
+        content: "raw A",
+        agentId: AGENT_A,
+        source: { who: "u", channel: "c", sessionKey: "sess-x" },
+      });
+      // agent-B observation that (improperly, but defensively) references sA. With
+      // the cleanup scoped to agent-A it must be invisible to this reset.
+      const obsB = await seedObservation([sA], { agentId: "agent_b" });
+
+      await adapter.deleteBySessionKey("sess-x", { tenantId: TENANT_A, agentId: AGENT_A });
+      expect(rowExists(sA)).toBe(false);
+
+      const r = await store.unlinkDeletedSources("sess-x", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0); // agent-B observation is out of scope — nothing orphaned here
+      expect(rowExists(obsB)).toBe(true); // untouched — different agent
+      const row = db.prepare("SELECT source_ids FROM memories WHERE id = ?").get(obsB) as
+        | { source_ids: string }
+        | undefined;
+      expect(JSON.parse(row!.source_ids)).toEqual([sA]); // source_ids NOT reduced
+    });
+
     it("no observations → returns 0, no error", async () => {
-      const r = await store.unlinkDeletedSources("sess-none", TENANT_A);
+      const r = await store.unlinkDeletedSources("sess-none", TENANT_A, AGENT_A);
       expect(r.ok).toBe(true);
       if (!r.ok) return;
       expect(r.value).toBe(0);
@@ -1869,20 +1900,23 @@ describe("createSqliteMemoryConsolidationStore", () => {
   });
 
   describe("purgeConsolidatedDerivedFrom (DIST-05)", () => {
-    it("deletes EVERY observation with any deleted source — even multi-source corroborated", async () => {
+    it("deletes EVERY observation derived from THIS session's ids — even multi-source corroborated", async () => {
       const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-wipe" } });
       const s2 = await seedMemory({ content: "raw 2", source: { who: "u", channel: "c", sessionKey: "sess-keep" } });
-      // obsMulti is corroborated by a surviving source — purge nukes it anyway.
+      // obsMulti is corroborated by a surviving source — purge nukes it anyway
+      // because s1 (a THIS-session id) is among its sources.
       const obsMulti = await seedObservation([s1, s2], { content: "multi" });
       // obsSolo derived only from the wiped session.
       const obsSolo = await seedObservation([s1], { content: "solo" });
 
+      // Capture THIS session's ids BEFORE the delete (WR-02 contract).
+      const thisSessionIds = [s1];
       await adapter.deleteBySessionKey("sess-wipe", { tenantId: TENANT_A, agentId: AGENT_A });
 
-      const r = await store.purgeConsolidatedDerivedFrom("sess-wipe", TENANT_A);
+      const r = await store.purgeConsolidatedDerivedFrom("sess-wipe", TENANT_A, AGENT_A, thisSessionIds);
       expect(r.ok).toBe(true);
       if (!r.ok) return;
-      expect(r.value).toBe(2); // both observations purged
+      expect(r.value).toBe(2); // both observations purged (both reference s1)
       expect(rowExists(obsMulti)).toBe(false);
       expect(rowExists(obsSolo)).toBe(false);
     });
@@ -1894,11 +1928,58 @@ describe("createSqliteMemoryConsolidationStore", () => {
       // Wipe a DIFFERENT session (no overlap) — obs sources all survive.
       await adapter.deleteBySessionKey("sess-other", { tenantId: TENANT_A, agentId: AGENT_A });
 
-      const r = await store.purgeConsolidatedDerivedFrom("sess-other", TENANT_A);
+      const r = await store.purgeConsolidatedDerivedFrom("sess-other", TENANT_A, AGENT_A, []);
       expect(r.ok).toBe(true);
       if (!r.ok) return;
       expect(r.value).toBe(0);
       expect(rowExists(obs)).toBe(true);
+    });
+
+    // WR-02 (purge over-delete vs "derived from THIS session" contract): a PRIOR
+    // unrelated dangling source id in an UNRELATED observation must NOT be purged
+    // by this session's --purge-derived. The pre-fix oracle ("any source id absent
+    // from memories") deleted it; the session-scoped oracle (source_ids ∩
+    // thisSessionIds) must leave it. This is the destructive-correctness fix.
+    it("WR-02: an UNRELATED observation with a pre-existing dangling source id is NOT purged by this session", async () => {
+      // An unrelated observation whose source was deleted by a PRIOR, unrelated
+      // operation (admin delete / TTL / another session's purge). Its dangling id
+      // belongs to NO live row and is NOT part of this session's ids.
+      const priorGoneId = crypto.randomUUID(); // never inserted → already "absent"
+      const obsUnrelated = await seedObservation([priorGoneId], { content: "unrelated-prior" });
+
+      // THIS session's own source + an observation derived from it.
+      const sThis = await seedMemory({ content: "this", source: { who: "u", channel: "c", sessionKey: "sess-now" } });
+      const obsThis = await seedObservation([sThis], { content: "this-derived" });
+
+      const thisSessionIds = [sThis];
+      await adapter.deleteBySessionKey("sess-now", { tenantId: TENANT_A, agentId: AGENT_A });
+
+      const r = await store.purgeConsolidatedDerivedFrom("sess-now", TENANT_A, AGENT_A, thisSessionIds);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(1); // ONLY the THIS-session-derived observation
+      expect(rowExists(obsThis)).toBe(false); // purged — derived from this session
+      expect(rowExists(obsUnrelated)).toBe(true); // KEPT — its dangling id is not ours
+    });
+
+    // WR-05 agent isolation on the purge path: an agent-B observation referencing
+    // an agent-A this-session id must NOT be purged by an agent-A reset.
+    it("WR-05: purge does not cross agents — agent-B observation is never purged by an agent-A reset", async () => {
+      const sA = await seedMemory({
+        content: "raw A",
+        agentId: AGENT_A,
+        source: { who: "u", channel: "c", sessionKey: "sess-wipe" },
+      });
+      const obsB = await seedObservation([sA], { agentId: "agent_b", content: "agent-b obs" });
+
+      const thisSessionIds = [sA];
+      await adapter.deleteBySessionKey("sess-wipe", { tenantId: TENANT_A, agentId: AGENT_A });
+
+      const r = await store.purgeConsolidatedDerivedFrom("sess-wipe", TENANT_A, AGENT_A, thisSessionIds);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0); // agent-B observation out of scope
+      expect(rowExists(obsB)).toBe(true); // untouched — different agent
     });
   });
 });

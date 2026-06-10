@@ -87,12 +87,14 @@ function makeLcdStore(deleteCount = 5): ContextStorePort {
 }
 
 /** Minimal MemoryPort stub for DIST-05 --memory reset. deleteBySessionKey
- *  returns ok(deletedCount). */
-function makeMemoryPort(deletedCount = 2): MemoryPort {
+ *  returns ok(deletedCount); listMemoryIdsBySessionKey returns the given ids
+ *  (WR-02: captured BEFORE the delete so the purge is session-scoped). */
+function makeMemoryPort(deletedCount = 2, sessionIds: string[] = ["mem-this-1", "mem-this-2"]): MemoryPort {
   return {
     store: vi.fn(),
     search: vi.fn(),
     delete: vi.fn(),
+    listMemoryIdsBySessionKey: vi.fn().mockResolvedValue(ok(sessionIds)),
     deleteBySessionKey: vi.fn().mockResolvedValue(ok(deletedCount)),
   } as unknown as MemoryPort;
 }
@@ -471,11 +473,14 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
     expect(consolidationStore.purgeConsolidatedDerivedFrom).not.toHaveBeenCalled();
   });
 
-  it("DIST-05-5: purge_derived:true → purgeConsolidatedDerivedFrom called with (sessionKey, tenantId)", async () => {
+  it("DIST-05-5 / WR-02 / WR-05: purge_derived:true → purgeConsolidatedDerivedFrom called with (sessionKey, tenantId, agentId, thisSessionIds)", async () => {
     const consolidationStore = makeConsolidationStore();
+    // The ids captured BEFORE the delete (WR-02): purge must receive THEM, not
+    // re-derive "any dangling source id".
+    const memoryPort = makeMemoryPort(2, ["mem-x", "mem-y"]);
     const deps = makeDeps({
       lcdStore: makeLcdStore(5),
-      memoryPort: makeMemoryPort(2),
+      memoryPort,
       consolidationStore,
     } as Partial<SessionHandlerDeps>);
     const handlers = bindSessionArchiveHandlers(deps);
@@ -487,14 +492,24 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
       _trustLevel: "admin",
     });
 
+    // WR-02: the ids are read BEFORE the destructive delete.
+    expect(memoryPort.listMemoryIdsBySessionKey).toHaveBeenCalledTimes(1);
+    const listInvokeOrder = (memoryPort.listMemoryIdsBySessionKey as ReturnType<typeof vi.fn>).mock
+      .invocationCallOrder[0]!;
+    const deleteInvokeOrder = (memoryPort.deleteBySessionKey as ReturnType<typeof vi.fn>).mock
+      .invocationCallOrder[0]!;
+    expect(listInvokeOrder).toBeLessThan(deleteInvokeOrder);
+
     expect(consolidationStore.purgeConsolidatedDerivedFrom).toHaveBeenCalledTimes(1);
     const callArgs = (consolidationStore.purgeConsolidatedDerivedFrom as ReturnType<typeof vi.fn>).mock
-      .calls[0] as [string, string];
+      .calls[0] as [string, string, string, string[]];
     expect(callArgs[0]).toBe(SESSION_KEY);
     expect(callArgs[1]).toBe("tenant1");
+    expect(callArgs[2]).toBe("default"); // WR-05: agentId threaded
+    expect(callArgs[3]).toEqual(["mem-x", "mem-y"]); // WR-02: this-session ids passed
   });
 
-  it("DIST-05-6: deletedCount>0 → consolidationStore.unlinkDeletedSources called (orphan handling)", async () => {
+  it("DIST-05-6 / WR-05: deletedCount>0 → consolidationStore.unlinkDeletedSources called with (sessionKey, tenantId, agentId)", async () => {
     // The unlink step (orphan→delete, multi-source→keep) lives in the
     // consolidation store; the handler delegates to it when memories were deleted.
     const consolidationStore = makeConsolidationStore();
@@ -513,9 +528,10 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
 
     expect(consolidationStore.unlinkDeletedSources).toHaveBeenCalledTimes(1);
     const callArgs = (consolidationStore.unlinkDeletedSources as ReturnType<typeof vi.fn>).mock
-      .calls[0] as [string, string];
+      .calls[0] as [string, string, string];
     expect(callArgs[0]).toBe(SESSION_KEY);
     expect(callArgs[1]).toBe("tenant1");
+    expect(callArgs[2]).toBe("default"); // WR-05: agentId threaded (matches the delete scope)
   });
 
   it("DIST-05-7: deletedCount===0 → unlinkDeletedSources NOT called (nothing to unlink)", async () => {
