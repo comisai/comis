@@ -222,4 +222,103 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     expect(String(outcome.promptError)).toContain("Client request rejected by provider");
     expect(emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported")).toHaveLength(0);
   });
+
+  // -------------------------------------------------------------------------
+  // WR-01 (175-REVIEW): the THROWN path. When session.prompt() throws the
+  // grammar-400, runWithModelRetry's GBNF-02 ladder guard returns
+  // {succeeded:false, error} immediately — pre-fix runRetryLoop passed the
+  // failure straight to output-escalation, where the canned userMessage
+  // PROMISES "the agent will simplify the tool definition and try again
+  // automatically" while no strip, no retry, and no
+  // execution:tool_schema_unsupported event ever happened (obs-explain blind).
+  // -------------------------------------------------------------------------
+
+  it("WR-01: grammar-400 on the THROWN path dispatches to the strip-retry handler — strip + one retry + event, not a terminal false promise", async () => {
+    const tools = makeHostileTools();
+    const capturedAtInvocation: string[] = [];
+    vi.mocked(runWithModelRetry)
+      .mockImplementationOnce(async () => {
+        capturedAtInvocation.push(JSON.stringify(tools));
+        return { succeeded: false, error: new Error(LLAMA_SERVER_GRAMMAR_400) };
+      })
+      .mockImplementationOnce(async () => {
+        capturedAtInvocation.push(JSON.stringify(tools));
+        return { succeeded: true };
+      });
+    const { params, emit } = makeDispatchParams(tools, "", "c-thrown-strip");
+    // Thrown path: the error never reached the bridge (no recorded LLM error
+    // message) and the recovered retry emitted text.
+    (params.bridge.getResult as ReturnType<typeof vi.fn>).mockReturnValue({
+      llmCalls: 1,
+      stepsExecuted: 1,
+      textEmitted: true,
+      finishReason: "stop",
+      lastLlmErrorMessage: undefined,
+    });
+
+    const outcome = await runRetryLoop(params, "hello", undefined, false);
+
+    // Initial (thrown) prompt + exactly ONE strip-retry.
+    expect(vi.mocked(runWithModelRetry)).toHaveBeenCalledTimes(2);
+    // The strip happened BEFORE the retry invocation.
+    expect(capturedAtInvocation[0]).toContain('"pattern"');
+    expect(capturedAtInvocation[1]).not.toContain('"pattern"');
+    expect(capturedAtInvocation[1]).not.toContain('"format"');
+    expect(outcome.promptSucceeded).toBe(true);
+    // The obs chain sees the thrown path too.
+    const events = emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported");
+    expect(events).toHaveLength(1);
+    expect(events[0][1]).toMatchObject({
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern", "format"],
+      retried: true,
+      succeeded: true,
+    });
+  });
+
+  it("WR-01: gate-closed thrown-path failure carries the THROWN error body in promptError (bridge has no recorded LLM error) so failure-path classification stays correct", async () => {
+    // Consume the session's one strip-retry via the thrown path.
+    const tools = makeHostileTools();
+    vi.mocked(runWithModelRetry)
+      .mockResolvedValueOnce({ succeeded: false, error: new Error(LLAMA_SERVER_GRAMMAR_400) })
+      .mockResolvedValueOnce({ succeeded: true });
+    const first = makeDispatchParams(tools, "", "c-thrown-gate");
+    (first.params.bridge.getResult as ReturnType<typeof vi.fn>).mockReturnValue({
+      llmCalls: 1, stepsExecuted: 1, textEmitted: true, finishReason: "stop", lastLlmErrorMessage: undefined,
+    });
+    await runRetryLoop(first.params, "hello", undefined, false);
+
+    // Second thrown grammar-400, SAME session: once-gate is closed — terminal,
+    // but the promptError must carry the classified source (the thrown body),
+    // not an empty string that classifies "unknown".
+    vi.mocked(runWithModelRetry).mockReset();
+    vi.mocked(runWithModelRetry).mockResolvedValue({
+      succeeded: false,
+      error: new Error(LLAMA_SERVER_GRAMMAR_400),
+    });
+    const second = makeDispatchParams(tools, "", "c-thrown-gate");
+    (second.params.bridge.getResult as ReturnType<typeof vi.fn>).mockReturnValue({
+      llmCalls: 1, stepsExecuted: 1, textEmitted: true, finishReason: "stop", lastLlmErrorMessage: undefined,
+    });
+
+    const outcome = await runRetryLoop(second.params, "hello", undefined, false);
+
+    expect(vi.mocked(runWithModelRetry)).toHaveBeenCalledTimes(1);
+    expect(outcome.promptSucceeded).toBe(false);
+    expect(String(outcome.promptError)).toContain("JSON schema conversion failed");
+  });
+
+  it("WR-01: a non-grammar thrown failure stays terminal — no strip dispatch, no event (scope guard)", async () => {
+    vi.mocked(runWithModelRetry).mockResolvedValue({
+      succeeded: false,
+      error: new Error("ECONNREFUSED connection refused"),
+    });
+    const { params, emit } = makeDispatchParams(makeHostileTools(), "", "c-thrown-other");
+
+    const outcome = await runRetryLoop(params, "hello", undefined, false);
+
+    expect(vi.mocked(runWithModelRetry)).toHaveBeenCalledTimes(1);
+    expect(outcome.promptSucceeded).toBe(false);
+    expect(emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported")).toHaveLength(0);
+  });
 });
