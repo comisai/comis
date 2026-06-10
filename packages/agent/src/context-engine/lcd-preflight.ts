@@ -114,6 +114,32 @@ export function runPreflightFitCheck(
   const originalAssembledInputTokens = systemTokens + budgetedTokens + freshTailTokens;
   let assembledInputTokens = originalAssembledInputTokens;
 
+  // W2 (obs-llm-troubleshooting): emit the budget equation once per fit check —
+  // "fits"/"downshifted" at the end, "exhausted" right before the throw — so the
+  // trajectory carries the numbers obs.explain needs to explain a degraded turn
+  // (they previously existed only as daemon-log DEBUG lines).
+  let governorFired = false;
+  const emitBudgetComputed = (
+    verdict: "fits" | "downshifted" | "exhausted",
+    assembled: number,
+    headroom: number,
+  ): void => {
+    deps.eventBus?.emit("context:budget_computed", {
+      agentId: deps.agentId ?? "",
+      sessionKey: deps.sessionKey ?? "",
+      windowTokens: effectiveWindow,
+      rawContextWindowTokens: capInfo?.rawContextWindowTokens ?? effectiveWindow,
+      windowCapSource: capInfo?.windowCapSource ?? "none",
+      systemTokens,
+      freshTailTokens,
+      budgetedHistoryTokens: budgetedTokens,
+      keptCount,
+      assembledInputTokens: assembled,
+      outputHeadroom: headroom,
+      verdict,
+    });
+  };
+
   if (assembledInputTokens > headroomBound) {
     // (a) Evict harder with security-pinned messages excluded (T-S4).
     const markers = deps.securityPinMarkers;
@@ -165,6 +191,7 @@ export function runPreflightFitCheck(
             originalThinkingLevel: thinkingLevelInput,
           });
           deps.onThinkingDownshifted?.(effectiveThinkingLevel);
+          governorFired = true;
           break;
         }
         downshifted = downshiftThinkingLevel(effectiveThinkingLevel);
@@ -193,6 +220,7 @@ export function runPreflightFitCheck(
         },
         "pre-flight fit check: context exhausted",
       );
+      emitBudgetComputed("exhausted", assembledInputTokens, finalHeadroom);
       throw new ContextExhaustionError(effectiveWindow, assembledInputTokens, capInfo);
     }
   }
@@ -203,4 +231,9 @@ export function runPreflightFitCheck(
   // lcd-assembler.ts). Reporting the simulated count would give config-resolver a
   // stale undercount → dynamicMax set too high → silent LLM truncation.
   deps.onAssembledInputTokens?.(originalAssembledInputTokens);
+
+  // W2: the non-throw outcomes. `outputHeadroom` holds the downshifted value when
+  // the governor fired (the loop reassigns it), so the event reports the headroom
+  // the dispatch will actually run with.
+  emitBudgetComputed(governorFired ? "downshifted" : "fits", originalAssembledInputTokens, outputHeadroom);
 }

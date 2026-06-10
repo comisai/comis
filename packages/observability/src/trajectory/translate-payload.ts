@@ -510,6 +510,21 @@ export function translatePayload(
     // Content fields (message bodies, raw text) are NOT in any of these payloads;
     // only counts, sizes, and category tags are forwarded.
 
+    case "context:budget_computed":
+      // The full budget equation — token counts + closed unions only, no content.
+      return {
+        windowTokens: payload.windowTokens,
+        rawContextWindowTokens: payload.rawContextWindowTokens,
+        windowCapSource: payload.windowCapSource,
+        systemTokens: payload.systemTokens,
+        freshTailTokens: payload.freshTailTokens,
+        budgetedHistoryTokens: payload.budgetedHistoryTokens,
+        keptCount: payload.keptCount,
+        assembledInputTokens: payload.assembledInputTokens,
+        outputHeadroom: payload.outputHeadroom,
+        verdict: payload.verdict,
+      };
+
     case "context:evicted":
       return {
         evictedCount: payload.evictedCount,

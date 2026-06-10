@@ -177,6 +177,87 @@ describe("capped-window provenance in the exhaustion throw and WARN", () => {
     expect(payload.windowCapSource).toBe("effectiveContextCapSmall");
   });
 
+  it("emits a fits-verdict context:budget_computed event carrying the full budget equation", () => {
+    // W2 (obs-llm-troubleshooting): the budget math must reach the trajectory.
+    const emit = vi.fn();
+    const deps = makeDeps({
+      getThinkingLevel: () => "high",
+      getSystemTokensEstimate: () => 1_000,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      eventBus: { emit } as unknown as ContextEngineDeps["eventBus"],
+    });
+    const evictable = makeBudgetItems(2, 100); // 200 history tokens, all kept
+    runPreflightFitCheck(deps, 32_000, evictable, 2, [], "native", {
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "effectiveContextCapSmall",
+    });
+    const call = emit.mock.calls.find((c) => c[0] === "context:budget_computed");
+    expect(call).toBeDefined();
+    const p = call?.[1] as Record<string, unknown>;
+    expect(p.verdict).toBe("fits");
+    expect(p.windowTokens).toBe(32_000);
+    expect(p.rawContextWindowTokens).toBe(131_072);
+    expect(p.windowCapSource).toBe("effectiveContextCapSmall");
+    expect(p.systemTokens).toBe(1_000);
+    expect(p.budgetedHistoryTokens).toBe(200);
+    expect(p.keptCount).toBe(2);
+    expect(p.assembledInputTokens).toBe(1_200);
+    expect(p.outputHeadroom).toBeGreaterThan(0);
+    expect(p.agentId).toBe("agent-1");
+    expect(p.sessionKey).toBe("t1:u1:c1");
+  });
+
+  it("emits a downshifted-verdict budget event when the thinking governor fires", () => {
+    const emit = vi.fn();
+    const deps = makeDeps({
+      getThinkingLevel: () => "high",
+      getSystemTokensEstimate: () => 25_584,
+      onThinkingDownshifted: vi.fn(),
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      eventBus: { emit } as unknown as ContextEngineDeps["eventBus"],
+    });
+    const evictable = makeBudgetItems(2, 100);
+    runPreflightFitCheck(deps, 32_000, evictable, 2, [], "native");
+    const call = emit.mock.calls.find((c) => c[0] === "context:budget_computed");
+    expect(call).toBeDefined();
+    const p = call?.[1] as Record<string, unknown>;
+    expect(p.verdict).toBe("downshifted");
+    expect(p.windowCapSource).toBe("none");
+    expect(p.rawContextWindowTokens).toBe(32_000);
+  });
+
+  it("emits an exhausted-verdict budget event before throwing ContextExhaustionError", () => {
+    const emit = vi.fn();
+    const deps = makeDeps({
+      getThinkingLevel: () => "high",
+      getSystemTokensEstimate: () => 25_584,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      onThinkingDownshifted: vi.fn(),
+      eventBus: { emit } as unknown as ContextEngineDeps["eventBus"],
+    });
+    const freshTail = [{ role: "user", content: "x".repeat(21_000) }]; // ~6000 tokens
+    expect(() =>
+      runPreflightFitCheck(deps, 32_000, [], 0, freshTail as never, "native", {
+        rawContextWindowTokens: 131_072,
+        windowCapSource: "effectiveContextCapSmall",
+      }),
+    ).toThrow(ContextExhaustionError);
+    const call = emit.mock.calls.find((c) => c[0] === "context:budget_computed");
+    expect(call).toBeDefined();
+    const p = call?.[1] as Record<string, unknown>;
+    expect(p.verdict).toBe("exhausted");
+    expect(p.freshTailTokens).toBe(6_000);
+    expect(p.systemTokens).toBe(25_584);
+    expect(p.assembledInputTokens).toBe(31_584);
+    expect(p.rawContextWindowTokens).toBe(131_072);
+    expect(p.windowCapSource).toBe("effectiveContextCapSmall");
+  });
+
   it("omitting capInfo keeps the throw message in the uncapped form (no knob mention)", () => {
     const deps = makeDeps({
       getThinkingLevel: () => "high",
