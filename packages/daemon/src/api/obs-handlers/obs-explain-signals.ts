@@ -90,6 +90,10 @@ interface Acc {
   misclassTokenByTool: Map<string, string>;
   /** W3: the LAST context.budget trajectory record (the terminal fit check). */
   contextBudget?: IncidentContextBudget;
+  /** GBNF-02: the LAST `execution.tool_schema_unsupported` record — the
+   *  strip-retry self-heal outcome (one strip-retry per session means at most
+   *  a handful; the terminal repair state explains the end). */
+  toolSchemaUnsupported?: IncidentSignals["toolSchemaUnsupported"];
   /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
    *  call must not count twice if its result event is duplicated across sources). */
   seenToolResultCallIds: Set<string>;
@@ -120,6 +124,13 @@ function asString(v: unknown): string | undefined {
 
 function asNumber(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+/** Keep only string entries of an array payload field (non-array → empty).
+ * Defensive read for record fields that cross the provider/MCP-influenced
+ * trust boundary into admin-facing verdict text (T-175-17). */
+function asStringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
 
 /**
@@ -328,6 +339,20 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       });
       return;
     }
+    case "execution.tool_schema_unsupported": {
+      // GBNF-02 (Phase 175): the strip-retry self-heal record (Plan 05 bridge
+      // mapping). LAST record wins — the terminal repair state explains the
+      // end. Content-free by construction (tool + keyword NAMES only — I7);
+      // the string-array filters + exact-true boolean reads keep smuggled
+      // non-string payload entries out of the verdict text (T-175-17).
+      acc.toolSchemaUnsupported = {
+        toolNames: asStringArray(data.toolNames),
+        strippedKeywords: asStringArray(data.strippedKeywords),
+        retried: data.retried === true,
+        succeeded: data.succeeded === true,
+      };
+      return;
+    }
     default:
       // Unknown event type — ignore (forward-compatible).
       return;
@@ -437,6 +462,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(misclassifiedTool !== undefined ? { misclassifiedTool } : {}),
     ...(misclassifiedToken !== undefined ? { misclassifiedToken } : {}),
     ...(acc.contextBudget !== undefined ? { contextBudget: acc.contextBudget } : {}),
+    ...(acc.toolSchemaUnsupported !== undefined
+      ? { toolSchemaUnsupported: acc.toolSchemaUnsupported }
+      : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
   };

@@ -542,3 +542,79 @@ describe("agentId + channel extraction (W8)", () => {
     expect(s.channel).toEqual({ type: "telegram", id: "678314278" });
   });
 });
+
+// ---------------------------------------------------------------------------
+// GBNF-02 (Phase 175): execution.tool_schema_unsupported derivation. The
+// strip-retry self-heal record (the kind Plan 05's bridge mapping writes:
+// data = {toolNames, strippedKeywords, retried, succeeded}) must reach
+// IncidentSignals so the explain heuristic can NAME the schema failure
+// instead of "unknown".
+// ---------------------------------------------------------------------------
+
+describe("toolSchemaUnsupported derivation (GBNF-02)", () => {
+  it("derives toolSchemaUnsupported from an execution.tool_schema_unsupported trajectory record", () => {
+    const s = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 5, {
+        toolNames: ["schedule_task"],
+        strippedKeywords: ["pattern", "format"],
+        retried: true,
+        succeeded: false,
+      }),
+    ]);
+    expect(s.toolSchemaUnsupported).toEqual({
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern", "format"],
+      retried: true,
+      succeeded: false,
+    });
+  });
+
+  it("the LAST execution.tool_schema_unsupported record wins (terminal repair state explains the end)", () => {
+    const s = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 1, {
+        toolNames: ["alpha_tool"],
+        strippedKeywords: ["pattern"],
+        retried: false,
+        succeeded: false,
+      }),
+      event("execution.tool_schema_unsupported", 2, {
+        toolNames: ["schedule_task"],
+        strippedKeywords: ["pattern", "format"],
+        retried: true,
+        succeeded: true,
+      }),
+    ]);
+    expect(s.toolSchemaUnsupported).toEqual({
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern", "format"],
+      retried: true,
+      succeeded: true,
+    });
+  });
+
+  it("omits toolSchemaUnsupported when no record of that kind exists", () => {
+    const s = toIncidentSignals([log678Success(), log678Failure()]);
+    expect(s.toolSchemaUnsupported).toBeUndefined();
+  });
+
+  it("filters non-string entries out of toolNames/strippedKeywords and coerces non-boolean flags (T-175-17 payload guard)", () => {
+    // Record payloads cross a trust boundary (provider/MCP-influenced events →
+    // admin-facing report): only string entries survive the array reads, and
+    // the booleans are exact-true checks — payload smuggling of other types
+    // cannot reach the verdict text.
+    const s = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 1, {
+        toolNames: ["schedule_task", 42, { evil: true }],
+        strippedKeywords: ["pattern", null],
+        retried: "yes",
+        succeeded: false,
+      }),
+    ]);
+    expect(s.toolSchemaUnsupported).toEqual({
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern"],
+      retried: false,
+      succeeded: false,
+    });
+  });
+});
