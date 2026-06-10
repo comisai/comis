@@ -2065,9 +2065,30 @@ LLM provider configuration. API keys are referenced by SecretManager key name, n
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `supportsTools` | `boolean` | _(unset)_ | Whether this model supports tool/function calling |
-| `toolSchemaProfile` | `enum` | _(unset)_ | Tool schema normalization profile: `"default"` or `"xai"` (strips constraint keywords) |
+| `toolSchemaProfile` | `enum` | _(unset)_ | Tool schema normalization profile: `"default"`, `"xai"` (strips constraint keywords xAI rejects), or `"gbnf"` (GBNF-safe structural transforms for llama.cpp-family local providers: collapses nullable `anyOf`/`oneOf` and `["T","null"]` type arrays, injects `properties: {}` on free-form objects and a `type` on typeless nodes — removal/relaxation only, `pattern`/`format` are kept) |
 | `toolCallArgumentsEncoding` | `enum` | _(unset)_ | How tool call arguments are encoded: `"json"` or `"html-entities"` (auto-decoded) |
 | `nativeWebSearchTool` | `boolean` | _(unset)_ | Whether this model uses native web search (filters out Comis web-fetch tool) |
+
+<Note>
+**GBNF auto-detection:** providers with `type: "ollama"` default their models to the `gbnf`
+profile automatically. An explicit `toolSchemaProfile` value always wins for `gbnf` (set
+`"default"` to opt a model out while debugging) — unlike `xai`, whose auto-detected flags are
+non-negotiable API requirements and override user config.
+
+**Explicit opt-in:** LM Studio, llama-server (llama.cpp), and vLLM endpoints have no provider
+`type` that auto-enables the profile (only `type: "ollama"` does) — they opt in per model via
+`comisCompat.toolSchemaProfile: "gbnf"` (zero new config keys; this is the existing `comisCompat`
+surface).
+
+**Reactive repair:** if a provider still rejects a schema at grammar-compile time, Comis
+classifies the 400 (`tool_schema_unsupported`), strips `pattern`/`format` from the offending
+tools, and retries exactly once per session before failing honestly; `comis explain` names the
+offending tool. A once-per-boot INFO line summarizes which tools were transformed (names and
+keyword counts only — never schema bodies).
+
+For the served-context-window side of local-provider setup, see
+[Local model context window](#local-model-context-window).
+</Note>
 
 **ModelCost (providers.entries.{name}.models[].cost)**
 
@@ -2082,10 +2103,20 @@ LLM provider configuration. API keys are referenced by SecretManager key name, n
 providers:
   entries:
     ollama:
+      # type: "ollama" auto-enables comisCompat.toolSchemaProfile: "gbnf" for its models
       type: ollama
       name: "Local Ollama"
       baseUrl: "http://localhost:11434"
       enabled: true
+    lmstudio:
+      type: lm-studio
+      name: "LM Studio"
+      baseUrl: "http://localhost:1234/v1"
+      enabled: true
+      models:
+        - id: qwen3.6-35b
+          comisCompat:
+            toolSchemaProfile: gbnf   # explicit opt-in — LM Studio / llama.cpp / vLLM have no auto-detected type
     xai:
       type: xai
       apiKeyName: XAI_API_KEY
