@@ -5615,6 +5615,69 @@ describe("session-index emit sites", () => {
     expect(payload.outputTokens).toBe(456);
   });
 
+  it("W7: turn_completed row carries the per-turn stopReason so degraded turns are greppable from the index", () => {
+    // The live incident's aborted call produced an index row of durationMs:3,
+    // 0/0 tokens, lastError:null — indistinguishable from a healthy idle turn.
+    const deps = createMockDeps();
+    const { listener } = createPiEventBridge(deps);
+
+    listener({
+      type: "turn_end",
+      message: {
+        usage: {
+          input: 0,
+          output: 0,
+          totalTokens: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "error",
+        errorMessage: "Context exhausted: assembled 31572 tokens leaves no room in effective window 32000",
+      },
+    } as any);
+
+    const appendMock = vi.mocked(mockAppendSessionIndexEntry);
+    const rows = appendMock.mock.calls.filter((c) => c[1].event === "turn_completed");
+    expect(rows).toHaveLength(1);
+    const payload = rows[0][1] as { stopReason?: string };
+    expect(payload.stopReason).toBe("error");
+  });
+
+  it("W7: turn_completed row carries a settled non-stop finishReason on subsequent turns", () => {
+    const deps = createMockDeps();
+    const { listener } = createPiEventBridge(deps);
+
+    const usage = {
+      input: 10,
+      output: 5,
+      totalTokens: 15,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+    // Turn 1: pre-flight exhaustion surfaces as a turn_end error — HR-01 settles
+    // m.finishReason = "context_exhausted" AFTER the turn-1 row is appended.
+    listener({
+      type: "turn_end",
+      message: {
+        usage,
+        stopReason: "error",
+        errorMessage: "Context exhausted: assembled 31572 tokens leaves no room in effective window 32000",
+      },
+    } as any);
+    // Turn 2: a normal stop — its row must carry the settled finishReason.
+    listener({ type: "turn_end", message: { usage, stopReason: "end_turn" } } as any);
+
+    const appendMock = vi.mocked(mockAppendSessionIndexEntry);
+    const rows = appendMock.mock.calls.filter((c) => c[1].event === "turn_completed");
+    expect(rows).toHaveLength(2);
+    const second = rows[1][1] as { finishReason?: string };
+    expect(second.finishReason).toBe("context_exhausted");
+    const first = rows[0][1] as { finishReason?: string };
+    expect(first.finishReason).toBeUndefined();
+  });
+
   // -------------------------------------------------------------------------
   // tool_execution_end 'Tool not found' enrichment
   // -------------------------------------------------------------------------
