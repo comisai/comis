@@ -43,11 +43,20 @@
  *     declared in `margin-arbiter.ts` (the rag types are structurally compatible). This is the
  *     exact cut that bit 173-03 — the relevance scorer is INJECTED, never imported.
  *
+ * Match (WR-01, Phase 174-04): a band message is associated with its `searchLcd` hit by the
+ * hit's STABLE `refId` (= `lcd_messages.id`), carried onto the BudgetItem as `lcdId` at
+ * assembly (`lcd-assembler.resolveContextItem`). This is the robust match — a pure
+ * `tool_use`/`tool_result` message (whose live block-text render is "" but whose stored FTS
+ * snippet is the `toolName`+JSON envelope) ranks correctly, and the non-FTS5 LIKE fallback
+ * (snippet = part metadata JSON, no BM25 rank) ranks too. The legacy snippet-substring match
+ * survives ONLY as the fallback for genuinely id-less items (live/synthetic — no store row),
+ * with its documented residual; it is NEVER reached for a store-resolved message-ref.
+ *
  * Purity: no clock, no globals, no mutation of the input arrays; the ONLY I/O is the injected
  * `contextStore.searchLcd` read. Same input → same output (the FTS read is deterministic for a
- * fixed store + query). The `searchLcd` snippet is UNTRUSTED — it is used ONLY transiently to
- * associate a band message with its BM25 rank position and is NEVER logged or returned
- * (T-174-01-03); only the resulting ordinal rank drives selection.
+ * fixed store + query). The `searchLcd` snippet is UNTRUSTED — on the id-less fallback it is
+ * used ONLY transiently to associate a band message with its rank position and is NEVER logged
+ * or returned (T-174-01-03); only the resulting ordinal rank drives selection.
  *
  * @module
  */
@@ -115,9 +124,10 @@ export function rankMiddleBandByRelevance(
   // --- FTS-the-band: rank the evictable band by BM25 relevance. ---
   // The R4 scope is built from the same deps the assembler uses (WR-02 agent/tenant isolation).
   // searchLcd returns BM25-`rank`ed hits best-first; the per-item rank is the position of the
-  // first hit whose (untrusted) snippet contains the band item's rendered text. Unmatched items
-  // rank WORST (after every matched item) — they fall back to recency within the chronological
-  // restore. NB: the snippet is read ONLY for this transient association, never logged/returned.
+  // hit whose STABLE `refId` (= lcd_messages.id) equals the band item's `lcdId` (WR-01 — the
+  // robust id-based match). Unmatched items rank WORST (after every matched item) — they fall
+  // back to recency within the chronological restore. NB: the snippet is read ONLY for the
+  // legacy id-less fallback association, never logged/returned.
   const scope: ContextStoreScope = {
     conversationId: deps.conversationId ?? "",
     agentId: deps.agentId ?? "",
@@ -140,10 +150,30 @@ export function rankMiddleBandByRelevance(
     return evictHistoryUnderBudget(middleBand, poolTokens);
   }
 
-  // Per-item relevance ordinal: lower = more relevant (best-first hit position). Unmatched →
-  // a large sentinel so matched items always outrank them; ties broken by chronological index
-  // so the order is total + deterministic.
-  const relevanceOrdinal = (it: BudgetItem): number => matchHitPosition(it.msg, hits);
+  // WR-01: build the refId → best-first POSITION map ONCE. `searchLcd` returns hits ordered
+  // by relevance (BM25 rank on the FTS path; SELECT order on the LIKE fallback), and each hit
+  // carries `refId` = lcd_messages.id. Keying on the stable id (not the snippet text) is the
+  // robust match: a pure tool_use/tool_result message — whose live block-text render is "" but
+  // whose stored FTS snippet is the toolName+JSON envelope — now ranks correctly, and the
+  // non-FTS5 LIKE fallback (snippet = metadata JSON, no BM25 rank) ranks too. First occurrence
+  // of an id wins (best position). The snippet is NEVER read for an id-carrying item.
+  const positionByRefId = new Map<string, number>();
+  for (let i = 0; i < hits.length; i++) {
+    const refId = hits[i]!.refId;
+    if (refId.length > 0 && !positionByRefId.has(refId)) positionByRefId.set(refId, i);
+  }
+
+  // Per-item relevance ordinal: lower = more relevant (best-first hit position). An item with a
+  // store `lcdId` matches by `refId` (WR-01 robust path); an id-less item (live/synthetic — no
+  // store row) falls back to the legacy snippet-substring association. Unmatched → a large
+  // sentinel so matched items always outrank them; ties broken by chronological index so the
+  // order is total + deterministic.
+  const relevanceOrdinal = (it: BudgetItem): number => {
+    if (it.lcdId !== undefined && it.lcdId.length > 0) {
+      return positionByRefId.get(it.lcdId) ?? Number.MAX_SAFE_INTEGER;
+    }
+    return matchHitPosition(it.msg, hits);
+  };
 
   // Project the evictable band into a SINGLE FTS lane (MemorySearchResult-shaped), ordered
   // best-first by the FTS ordinal, keyed by a synthetic per-band index id. The INJECTED scorer
@@ -211,11 +241,18 @@ export function rankMiddleBandByRelevance(
 // ---------------------------------------------------------------------------
 
 /**
- * The relevance ordinal for a band message: the position (0-based, best-first) of the FIRST
- * FTS hit whose snippet contains the message's rendered text. Returns a large sentinel when no
- * hit matches (so matched items always outrank unmatched ones). The snippet is the message's
- * FTS-rendered text on the FTS path (`lcd-fts.ts` `content AS snippet`) — used here ONLY for
- * the transient match (never logged/returned). A blank rendering never matches (→ sentinel).
+ * LEGACY id-less FALLBACK (WR-01): the relevance ordinal for a band message that has NO store
+ * `lcdId` (a live/synthetic item — the fresh tail, a coalesced summary message, a unit fixture
+ * with no id) — the position (0-based, best-first) of the FIRST FTS hit whose snippet contains
+ * the message's rendered text. Returns a large sentinel when no hit matches (so matched items
+ * always outrank unmatched ones). The snippet is used here ONLY for the transient match (never
+ * logged/returned). A blank rendering never matches (→ sentinel).
+ *
+ * KNOWN RESIDUAL (DEPTH-01 limitation): this substring fallback STILL mis-handles a pure
+ * tool_use/tool_result message (empty block-text render) and the non-FTS5 LIKE metadata-JSON
+ * snippet for an id-less item. Store-resolved message-refs now carry `lcdId` and never reach
+ * here (they match by `refId`), so the residual is confined to the genuinely id-less items
+ * above — which are rare on the relevance-first path and correctly fall back to recency.
  */
 function matchHitPosition(msg: AgentMessage, hits: LcdSearchHit[]): number {
   const text = renderMessageText(msg).trim();

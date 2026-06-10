@@ -671,7 +671,11 @@ function resolveContextItem(
     case "message": {
       const row = rowById.get(item.refId);
       if (row === undefined) return undefined; // dangling message-ref (drift) — skip.
-      return { msg: partsToMessage(row) as AgentMessage, tokens: row.tokenCount };
+      // WR-01 (Phase 174-04): carry the durable lcd_messages.id so the DEPTH-01 relevance
+      // pass (rankMiddleBandByRelevance) can match a searchLcd hit by its stable `refId`
+      // (= row.id) instead of a fragile snippet substring. row.id IS the refId every hit
+      // carries — so a pure tool_use/tool_result message (empty block-text render) now ranks.
+      return { msg: partsToMessage(row) as AgentMessage, tokens: row.tokenCount, lcdId: row.id };
     }
     case "summary": {
       const summary = summaryById.get(item.refId);
