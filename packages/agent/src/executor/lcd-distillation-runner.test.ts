@@ -196,6 +196,33 @@ describe("runDistillationPassAfterTurn — gate predicates", () => {
     );
   });
 
+  // WR-04 (subagent gate regression pin): a subagent/ephemeral session must NEVER
+  // distill to shared LTM, even when every other gate would pass (enabled, deep
+  // enough, real content). The gate writes NOTHING — no memory row AND no
+  // provenance row — and it fires regardless of depth (depth=5 here proves the
+  // subagent gate is independent of the depth gate). Pins the GATE 3 short-circuit
+  // so a future refactor cannot silently let subagent content leak into LTM.
+  it("WR-04: subagent gate skips the LTM write entirely (no store, no provenance) regardless of depth", async () => {
+    const memoryPort = makeMemoryPort();
+    const lcdStore = makeLcdStore();
+    const params = makeParams({
+      depth: 5, // well above minDepth — only the subagent gate should stop it
+      deps: {
+        ...makeParams().deps,
+        memoryPort,
+        lcdStore: lcdStore as unknown as ContextStorePort,
+        distillConfig: { enabled: true, minDepth: 1, dedupCosineThreshold: 0.92 },
+        modelProfile: { capabilityClass: "frontier" },
+        isSubagentSession: true,
+      },
+    });
+    await runDistillationPassAfterTurn(params);
+    expect(memoryPort.store).not.toHaveBeenCalled();
+    expect(memoryPort.search).not.toHaveBeenCalled();
+    expect(lcdStore.appendProvenance).not.toHaveBeenCalled();
+    expect(lcdStore.markProvenanceSuperseded).not.toHaveBeenCalled();
+  });
+
   it("GATE: distillConfig.enabled=false → silent fast-path, no writes, no event", async () => {
     const eventBus = makeEventBus();
     const memoryPort = makeMemoryPort();
@@ -516,6 +543,34 @@ describe("runDistillationPassAfterTurn — DIST-02 dedup", () => {
       expect.objectContaining({ reason: "near_duplicate" }),
     );
   });
+
+  // CR-02 (R4 read-isolation on the dedup path): the pre-write dedup search MUST
+  // pass agentId in the SEARCH OPTIONS — that is the ONLY field SqliteMemoryAdapter
+  // applies the `agent_id = ?` predicate from (sessionKey.agentId is ignored by
+  // search()). Without it, a near-duplicate distilled memory belonging to a
+  // DIFFERENT agent in the same tenant suppresses this agent's legitimate write
+  // (cross-agent dedup false positive) — an R4 read-isolation gap. This test
+  // fails on the pre-fix code because the options object omitted agentId.
+  it("CR-02: dedup search passes agentId in the search OPTIONS (the load-bearing R4 agent filter)", async () => {
+    const searchSpy = vi.fn().mockResolvedValue({ ok: true, value: [] });
+    const memoryPort = makeMemoryPort({ search: searchSpy });
+    const params = makeParams({
+      scope: makeScope({ agentId: "agent-a", tenantId: "tenant-1" }),
+      deps: {
+        ...makeParams().deps,
+        memoryPort,
+        distillConfig: { enabled: true, minDepth: 1, dedupCosineThreshold: 0.92 },
+        isSubagentSession: false,
+      },
+    });
+    await runDistillationPassAfterTurn(params);
+
+    expect(searchSpy).toHaveBeenCalledOnce();
+    // 3rd arg is the MemorySearchOptions — agentId MUST be present here (the
+    // adapter only honours options.agentId, never sessionKey.agentId).
+    const optionsArg = searchSpy.mock.calls[0]![2] as { agentId?: string };
+    expect(optionsArg.agentId).toBe("agent-a");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -626,5 +681,139 @@ describe("runDistillationPassAfterTurn — nano model gate", () => {
       }),
       expect.any(String),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-03 — write-path observability (AGENTS.md §2.7)
+// The brand-new fire-and-forget memory-write boundary must emit an INFO
+// completion line carrying durationMs (timed via the injected clock, never
+// Date.now()), and must NOT silently no-op when appendProvenance is absent.
+// ---------------------------------------------------------------------------
+
+describe("runDistillationPassAfterTurn — WR-03 write-path observability", () => {
+  it("WR-03: a successful write emits a step:distillation INFO completion line with durationMs (from the injected clock)", async () => {
+    const logger = makeLogger();
+    const memoryPort = makeMemoryPort();
+    const lcdStore = makeLcdStore();
+    // An injected clock callable advancing 7ms between the two reads (entry → emit).
+    let tick = 1000;
+    const nowFn = vi.fn().mockImplementation(() => {
+      const v = tick;
+      tick += 7;
+      return v;
+    });
+    const params = makeParams({
+      depth: 2,
+      now: 1000,
+      deps: {
+        ...makeParams().deps,
+        memoryPort,
+        lcdStore: lcdStore as unknown as ContextStorePort,
+        logger,
+        nowFn,
+        distillConfig: { enabled: true, minDepth: 1, dedupCosineThreshold: 0.92 },
+        isSubagentSession: false,
+      },
+    });
+    await runDistillationPassAfterTurn(params);
+
+    expect(memoryPort.store).toHaveBeenCalledOnce();
+    // The INFO completion line: step:"distillation", durationMs present (number),
+    // ids/depth only — never content.
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "distillation",
+        summaryId: "summary-1",
+        depth: 2,
+        agentId: "agent-a",
+        durationMs: expect.any(Number),
+      }),
+      expect.any(String),
+    );
+    // durationMs must be derived from the injected clock (>0 from the 7ms advance),
+    // proving Date.now() was not used for the timing.
+    const infoCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { step?: string }).step === "distillation",
+    );
+    expect(infoCall).toBeDefined();
+    expect((infoCall![0] as { durationMs: number }).durationMs).toBeGreaterThan(0);
+  });
+
+  it("WR-03: a write occurred but appendProvenance is ABSENT → a DEBUG/WARN with errorKind+hint (no silent skip)", async () => {
+    const logger = makeLogger();
+    const memoryPort = makeMemoryPort();
+    // lcdStore WITHOUT appendProvenance (a realistic partial-wire) but WITH the
+    // BFS walk method so STEP 12 does not crash.
+    const lcdStore = {
+      getSummaryChildren: vi.fn().mockReturnValue([]),
+      markProvenanceSuperseded: vi.fn(),
+      // appendProvenance intentionally omitted
+    } as unknown as ContextStorePort;
+    const params = makeParams({
+      depth: 2,
+      deps: {
+        ...makeParams().deps,
+        memoryPort,
+        lcdStore,
+        logger,
+        distillConfig: { enabled: true, minDepth: 1, dedupCosineThreshold: 0.92 },
+        isSubagentSession: false,
+      },
+    });
+    await runDistillationPassAfterTurn(params);
+
+    expect(memoryPort.store).toHaveBeenCalledOnce();
+    // The provenance-skip must be observable: a DEBUG or WARN carrying an
+    // errorKind + an operator-actionable hint (not a silent optional-chain no-op).
+    const debugCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls;
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const observed = [...debugCalls, ...warnCalls].some(
+      (c) =>
+        typeof c[0] === "object" &&
+        c[0] !== null &&
+        "errorKind" in (c[0] as object) &&
+        "hint" in (c[0] as object),
+    );
+    expect(observed).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IN-04 — validation/secret-egress skip must be fleet-observable
+// GATE 7 (validateMemoryWrite non-clean) previously only WARNed; the documented
+// reason:"validation" was never emitted on the bus. The skip must emit
+// memory:distillation_skipped CONTENT-FREE (ids only, never the matched secret).
+// ---------------------------------------------------------------------------
+
+describe("runDistillationPassAfterTurn — IN-04 validation skip event", () => {
+  it("IN-04: validateMemoryWrite non-clean → emits memory:distillation_skipped reason:validation (content-free)", async () => {
+    const eventBus = makeEventBus();
+    const memoryPort = makeMemoryPort();
+    const content = "AKIA1234567890ABCDEF"; // AWS-key-like → non-clean verdict
+    const params = makeParams({
+      content,
+      deps: {
+        ...makeParams().deps,
+        memoryPort,
+        eventBus,
+        distillConfig: { enabled: true, minDepth: 1, dedupCosineThreshold: 0.92 },
+        isSubagentSession: false,
+      },
+    });
+    await runDistillationPassAfterTurn(params);
+
+    expect(memoryPort.store).not.toHaveBeenCalled();
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "memory:distillation_skipped",
+      expect.objectContaining({ reason: "validation", summaryId: "summary-1", agentId: "agent-a" }),
+    );
+    // CONTENT-FREE: the emitted payload must NOT carry the matched secret text.
+    const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => c[0] === "memory:distillation_skipped" && (c[1] as { reason?: string }).reason === "validation",
+    );
+    expect(emitCalls).toHaveLength(1);
+    const payload = emitCalls[0]![1] as Record<string, unknown>;
+    expect(JSON.stringify(payload)).not.toContain("AKIA1234567890ABCDEF");
   });
 });
