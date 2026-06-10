@@ -215,7 +215,7 @@ describe("scanEnvForSecrets", () => {
     });
   });
 
-  it("skips PATH and HOME", () => {
+  it("skips non-secret PATH and HOME env vars", () => {
     const env = {
       PATH: "/usr/bin:/usr/local/bin",
       HOME: "/home/user",
@@ -246,7 +246,7 @@ describe("scanEnvForSecrets", () => {
     expect(findings[0].message).toContain("unknown");
   });
 
-  it("skips empty values", () => {
+  it("skips secret-named env vars with empty values", () => {
     const env = {
       OPENAI_API_KEY: "",
     };
