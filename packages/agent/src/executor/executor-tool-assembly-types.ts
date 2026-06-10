@@ -228,7 +228,7 @@ export interface ToolAssemblyParams {
   formattedKeyForGuides: string;
   deliveredGuides: Set<string>;
   resolvedModel?: { id: string; provider: string; contextWindow?: number; reasoning?: boolean };
-  modelCompat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
+  modelCompat?: { supportsTools?: boolean; toolSchemaProfile?: "default" | "xai" | "gbnf"; toolCallArgumentsEncoding?: "json" | "html-entities"; nativeWebSearchTool?: boolean };
   /** ModelProfile resolved once per execution in pi-executor. Used to thread capabilityClass to consumers. */
   modelProfile?: ModelProfile;
   agentId?: string;
