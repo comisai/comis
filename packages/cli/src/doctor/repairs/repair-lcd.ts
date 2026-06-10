@@ -2,13 +2,27 @@
 /**
  * LCD repair module for comis doctor — DOC-03 (Phase 171).
  *
- * Three repair actions:
- *   - repairFtsDrift: rebuild FTS5 content indexes for lcd_messages and lcd_summaries
+ * Two repair actions (offline-safe, pure-SQL, no daemon required):
+ *   - repairFtsDrift: repopulate contentless lcd_messages_fts from lcd_message_parts;
+ *                     rebuild external-content lcd_summaries_fts via 'rebuild' idiom
  *   - repairContextItems: remove dangling lcd_context_items refs (summary/message not in store)
- *   - repairFallbackSummaries: re-enqueue fallback=1 summaries through the §6.4 seam
+ *
+ * REMOVED: repairFallbackSummaries — LLM re-summarization is IMPOSSIBLE offline
+ * (the daemon is stopped during --repair and cli↛agent is a forbidden import cut).
+ * Fallback-marker summaries (fallback=1) are quality debt re-summarized by the daemon
+ * during normal compaction — not repairable by doctor --repair. The fallback-summary
+ * finding in lcd-health.ts is repairable:false.
  *
  * F1 ABSOLUTE CONSTRAINT: lcd_messages is NEVER written by any repair path.
  * Repairs operate strictly above the lossless verbatim raw store.
+ *
+ * FTS architecture:
+ *   - lcd_summaries_fts: EXTERNAL-CONTENT (content='lcd_summaries') — the 'rebuild'
+ *     idiom works: INSERT INTO lcd_summaries_fts(lcd_summaries_fts) VALUES('rebuild')
+ *   - lcd_messages_fts: CONTENTLESS (no content= clause) — 'rebuild' ERRORS because
+ *     there is no external content table to read from. Instead, re-derive FTS rows from
+ *     lcd_message_parts using the same render fn as the adapter populate path
+ *     (renderMessageFtsText from @comis/memory).
  *
  * Open DB in READ-WRITE mode (timeout: 5000) to surface SQLITE_BUSY cleanly.
  * Operator must stop daemon first and run `comis sessions backup` before repair.
@@ -20,39 +34,29 @@
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import Database from "better-sqlite3";
-
-// ── Local types (no @comis/agent import — cli does not depend on agent) ───────
-
-/**
- * Minimal injected deps for repairFallbackSummaries.
- *
- * This is a locally-defined structural type so that repair-lcd.ts does NOT
- * import from @comis/agent (which would break the cycles:refs gate).
- * The daemon wires the actual LeafSummarizer at call time.
- */
-export type RepairSummarizeDeps = {
-  /**
-   * Spend-governed summarizer seam (§6.4). Receives the stored content as a
-   * single user message and returns a new summary string. Output passes through
-   * validateMemoryWrite (inside the seam) — T-171-15 scrub is inside deps.summarize.
-   */
-  summarize: (
-    messages: Array<{ role: string; content: string }>,
-    opts?: { reserveTokens?: number },
-  ) => Promise<string>;
-  /** Returns true when the per-tenant circuit breaker is open. */
-  isBreakerOpen: () => boolean;
-};
+import type { LcdMessagePart } from "@comis/core";
+import { renderMessageFtsText } from "@comis/memory";
 
 // ── repairFtsDrift ────────────────────────────────────────────────────────────
 
 /**
- * Rebuild FTS5 content-table indexes for lcd_messages and lcd_summaries.
+ * Repair FTS5 index drift for lcd_messages and lcd_summaries.
  *
- * Uses the FTS5 `rebuild` command which re-indexes all content already present
- * in the base tables. Gracefully skips any FTS table that does not exist.
+ * lcd_summaries_fts (EXTERNAL-CONTENT): uses the standard FTS5 'rebuild' command.
  *
- * F1: Never writes to lcd_messages.
+ * lcd_messages_fts (CONTENTLESS): the 'rebuild' idiom does NOT work on contentless
+ * tables (SQLite errors with "content= option required"). Instead:
+ *   1. Delete all existing FTS shadow rows
+ *   2. Re-derive content from lcd_message_parts using renderMessageFtsText
+ *   3. Re-insert one FTS row per message (rowid, content, conversation_id, agent_id, message_id)
+ *
+ * This mirrors the adapter populate path in lcd-store.ts (the createLcdStore append
+ * transaction) exactly — same render fn, same columns, same rowid linkage.
+ *
+ * Gracefully skips any FTS table that does not exist (FTS5 not compiled on host).
+ *
+ * F1: Never writes to lcd_messages. Reads lcd_messages + lcd_message_parts to
+ * derive FTS content (SELECT only on both tables).
  */
 export async function repairFtsDrift(
   db: Database.Database,
@@ -68,13 +72,53 @@ export async function repairFtsDrift(
       return row !== undefined;
     };
 
+    // ── lcd_messages_fts (CONTENTLESS) ─────────────────────────────────────
+    // 'rebuild' ERRORS on contentless tables — must re-derive from parts.
     if (tableExists("lcd_messages_fts")) {
-      db.prepare(
-        "INSERT INTO lcd_messages_fts(lcd_messages_fts) VALUES('rebuild')",
-      ).run();
-      actions.push("Rebuilt lcd_messages_fts FTS index");
+      // Delete all existing FTS shadow rows (re-populate from scratch)
+      db.prepare("DELETE FROM lcd_messages_fts").run();
+
+      // Walk every lcd_message and re-render its parts into the contentless index
+      const messages = db
+        .prepare("SELECT rowid, id, conversation_id, agent_id FROM lcd_messages ORDER BY rowid")
+        .all() as Array<{ rowid: number; id: string; conversation_id: string; agent_id: string }>;
+
+      const insertFts = db.prepare(
+        "INSERT INTO lcd_messages_fts(rowid, content, conversation_id, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
+      );
+
+      const selectParts = db.prepare(
+        "SELECT tool_name, tool_input, tool_output, metadata FROM lcd_message_parts WHERE message_id = ? ORDER BY ordinal",
+      );
+
+      for (const msg of messages) {
+        const partRows = selectParts.all(msg.id) as Array<{
+          tool_name: string | null;
+          tool_input: string | null;
+          tool_output: string | null;
+          metadata: string;
+        }>;
+
+        // Map raw DB rows to LcdMessagePart — same projection the adapter populate path uses
+        const parts: LcdMessagePart[] = partRows.map((p) => ({
+          kind: "text" as const, // kind is not used by renderMessageFtsText — it reads metadata.raw.text
+          toolName: p.tool_name ?? undefined,
+          toolInput: p.tool_input !== null ? safeParseJson(p.tool_input) : undefined,
+          toolOutput: p.tool_output !== null ? safeParseJson(p.tool_output) : undefined,
+          metadata: safeParseJson(p.metadata) as LcdMessagePart["metadata"],
+        }));
+
+        const content = renderMessageFtsText(parts);
+        insertFts.run(msg.rowid, content, msg.conversation_id, msg.agent_id, msg.id);
+      }
+
+      actions.push(
+        `Repopulated lcd_messages_fts from lcd_message_parts (${messages.length} message(s))`,
+      );
     }
 
+    // ── lcd_summaries_fts (EXTERNAL-CONTENT) ───────────────────────────────
+    // 'rebuild' works because lcd_summaries_fts has content='lcd_summaries'
     if (tableExists("lcd_summaries_fts")) {
       db.prepare(
         "INSERT INTO lcd_summaries_fts(lcd_summaries_fts) VALUES('rebuild')",
@@ -85,6 +129,15 @@ export async function repairFtsDrift(
     return ok(actions);
   } catch (error) {
     return err(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
+/** JSON.parse that degrades to the raw string on error (mirrors safeStringify in lcd-fts.ts). */
+function safeParseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
   }
 }
 
@@ -140,68 +193,6 @@ export async function repairContextItems(
       actions.push(
         `Removed ${messageDangling.changes} dangling message lcd_context_items ref(s)`,
       );
-    }
-
-    return ok(actions);
-  } catch (error) {
-    return err(error instanceof Error ? error : new Error(String(error)));
-  }
-}
-
-// ── repairFallbackSummaries ───────────────────────────────────────────────────
-
-/**
- * Re-enqueue fallback=1 summaries through the §6.4 summarizer seam.
- *
- * For each lcd_summaries row with fallback=1:
- *   - Re-summarizes via deps.summarize (the spend-governed seam)
- *   - Updates lcd_summaries SET content=<new>, fallback=0 for the row
- *   - Individual failures (summarizer unavailable) are skipped — non-fatal
- *
- * Per §6.4: if deps.isBreakerOpen() returns true, no summarization is attempted
- * and ok([]) is returned immediately (truncation floor remains).
- *
- * T-171-15 VERIFICATION: deps.summarize is the spend-governed seam
- * (wrapSummarizerWithDegradeObservability → summarizerSpendBreaker →
- * wrapSummarizerWithFailover → inner). The inner summarizer calls generateSummary
- * which passes through validateMemoryWrite (the existing output scrub path in the
- * @comis/agent barrel). No additional scrub is needed here — the scrub is inside
- * the seam, not the caller.
- *
- * F1: NEVER writes to lcd_messages. Only lcd_summaries is modified.
- */
-export async function repairFallbackSummaries(
-  db: Database.Database,
-  deps: RepairSummarizeDeps,
-): Promise<Result<string[], Error>> {
-  const actions: string[] = [];
-
-  // Per §6.4: breaker OPEN → no summarization attempted
-  if (deps.isBreakerOpen()) {
-    return ok([]);
-  }
-
-  try {
-    const fallbackRows = db
-      .prepare("SELECT summary_id, content FROM lcd_summaries WHERE fallback=1")
-      .all() as Array<{ summary_id: string; content: string }>;
-
-    for (const row of fallbackRows) {
-      // Content-free: never log row.content; log row.summary_id (UUID) only
-      try {
-        const newContent = await deps.summarize(
-          [{ role: "user", content: row.content }],
-          { reserveTokens: 800 },
-        );
-        // T-171-15: newContent is scrub-safe via the deps.summarize seam
-        db.prepare(
-          "UPDATE lcd_summaries SET content=?, fallback=0 WHERE summary_id=?",
-        ).run(newContent, row.summary_id);
-        actions.push(`Re-summarized fallback summary id=${row.summary_id}`);
-      } catch (_err) {
-        // Individual summary failure — skip and continue (non-fatal)
-        actions.push(`Skipped summary id=${row.summary_id} (summarizer unavailable)`);
-      }
     }
 
     return ok(actions);
