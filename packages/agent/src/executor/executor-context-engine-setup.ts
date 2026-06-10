@@ -690,13 +690,13 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // the margin arbiter. relevanceFirst undefined/false ⇒ the assembler takes the verbatim
     // recency path (frontier/mid byte-identical, LOCKED #2).
     relevanceFirst,
-    // PLANNED ORPHAN — C2→Phase-174 SEAM (WR-01/IN-02, Phase 173-05): the injected
-    // scoreRelevance is threaded for the fused-rank cross-tier allocation but is NEVER
-    // invoked on the only live path this phase ships — the C2 assembly path has EMPTY LTM/KG
-    // candidate lanes, so marginArbitrate's per-tier `length > 0` guards skip the scorer (and
-    // NOOP_RELEVANCE_SCORER alike). It becomes reachable in Phase 174 (DEPTH-01) when LTM/KG
-    // candidates flow to assembly. Deliberate wired-ahead seam (plan-checker cleared), not
-    // dead code — see the lcd-arbiter-seam NOOP_RELEVANCE_SCORER planned-orphan note.
+    // RETR-02 / DEPTH-01: the injected shared relevance scorer. As of Phase 174 it has a LIVE
+    // caller — the DEPTH-01 within-history middle-band relevance pass (rankMiddleBandByRelevance,
+    // injected as marginArbitrate's middleBandRanker in lcd-arbiter-seam) calls it over the
+    // FTS-the-band lane to re-rank the evictable middle band cache-safely. It is injected here
+    // (executor/ may import rag/) so the context-engine never imports rag/ (the I2 cut). The
+    // cross-tier LTM/KG lanes remain EMPTY on the C2 assembly path, so the scorer's live use is
+    // the middle-band pass, not the cross-session tiers.
     relevanceScorer: scoreRelevance,
     // Phase 166 T-S4: security-pin markers so the dag eviction never drops security context.
     securityPinMarkers: params.securityPinMarkers,

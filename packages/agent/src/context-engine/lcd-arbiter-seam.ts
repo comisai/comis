@@ -27,25 +27,22 @@ import {
   type ArbiterRelevanceQuery,
   type RelevanceScorerFn,
 } from "./margin-arbiter.js";
+import { rankMiddleBandByRelevance } from "./relevance-eviction.js";
 import type { BudgetItem } from "./lcd-budget-eviction.js";
 import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
 import type { ContextEngineDeps } from "./types.js";
 
 /**
- * PLANNED ORPHAN — C2→Phase-174 SEAM (IN-02, Phase 173-05). Fallback scorer used ONLY when
- * no `relevanceScorer` dep is threaded. On the C2 assembly path the LTM/KG candidate lanes
- * are EMPTY (the recall path owns LTM ranking), so `marginArbitrate` never invokes the
- * scorer (it guards each tier on `length > 0`) — the history band is allocated
- * recency-ordered within its slot. Therefore BOTH this `NOOP_RELEVANCE_SCORER` fallback AND
- * the real `scoreRelevance` injected from `executor/executor-context-engine-setup.ts` are
- * UNREACHABLE on every live path this phase ships. They are wired AHEAD of Phase 174
- * (DEPTH-01), when LTM/KG candidates flow to assembly and the scorer fuses them by rank.
- * This is a DELIBERATE wired-ahead seam (the plan-checker cleared it), not silent dead code:
- * the `relevanceScorer` dep plumbing + the `RelevanceScorerFn` type + this noop are
- * forward-compat scaffolding, tracked the same way as the `reduceFleetWindow` planned orphan
- * (`packages/memory/src/index.ts`). Neither symbol is on the `@comis/agent` public barrel, so
- * the public-export-consumers gate does not fire; this comment is the YAGNI-exception record
- * (§2.3). Remove the wired-ahead note when Phase 174 makes the scorer reachable.
+ * The absent-dep fallback scorer: an empty-result identity used ONLY when no `relevanceScorer`
+ * dep is threaded. As of Phase 174 (DEPTH-01) the real injected `scoreRelevance` IS reachable —
+ * the DEPTH-01 middle-band relevance pass (`rankMiddleBandByRelevance`, injected below as the
+ * `middleBandRanker`) calls it over the FTS-the-band lane to re-rank the evictable middle band.
+ * This noop remains the safe fallback for the (unit / mis-wired) case where the scorer dep is
+ * absent: `rankMiddleBandByRelevance` ALSO degrades to the recency fill when `relevanceScorer`
+ * is undefined, so a missing scorer can never break assembly. On the C2 assembly path the
+ * LTM/KG candidate lanes are still EMPTY (the recall path owns LTM ranking), so the per-tier
+ * `length > 0` guards keep the scorer out of the LTM/KG lanes — its live caller is the
+ * middle-band pass, not the cross-session tiers.
  */
 const NOOP_RELEVANCE_SCORER: RelevanceScorerFn = () => [];
 
@@ -92,6 +89,9 @@ export function evictUnderArbiter(
         isSecurityRelevantMessage(it.msg as { content?: unknown; role?: string }, markers),
       )
     : [];
+  // DEPTH-01: build the live relevance query from the last ~3 user turns of liveMessages
+  // (the within-history relevance signal) and inject the cache-stable middle-band ranker.
+  const query = buildAssemblyRelevanceQuery(liveMessages);
   const arbitrated = marginArbitrate({
     historyItems: evictable,
     ltmCandidates: [], // C2: the assembler holds no LTM candidates (recall owns LTM)
@@ -99,7 +99,12 @@ export function evictUnderArbiter(
     floors: { freshTailItems: [], pinnedItems },
     poolTokens,
     scorer: deps.relevanceScorer ?? NOOP_RELEVANCE_SCORER,
-    query: buildAssemblyRelevanceQuery(liveMessages),
+    query,
+    // DEPTH-01: the now-live within-history relevance pass. evictUnderArbiter holds `deps` +
+    // `liveMessages`, so it constructs the ranker here and passes it as an injected dep —
+    // keeping marginArbitrate PURE and the I2 cut intact (the relevance scorer is INJECTED
+    // into rankMiddleBandByRelevance via deps.relevanceScorer, never imported by it).
+    middleBandRanker: (band, pool) => rankMiddleBandByRelevance(deps, band, pool, liveMessages, query),
   });
   deps.eventBus?.emit("context:arbitrated", {
     agentId: deps.agentId ?? "",
@@ -156,16 +161,77 @@ export function emitEvictedEvent(
 }
 
 /**
- * Build the relevance query for the assembly-path arbiter.
+ * Build the within-history relevance query for the assembly-path middle-band pass (DEPTH-01).
  *
- * C2 boundary: on the assembly path the LTM/KG lanes are EMPTY, so the query is not
- * actually consumed by the arbiter (the history band is recency-ordered within its slot;
- * the cross-tier LTM ranking — where the query matters — lives on the recall side). A
- * `degraded` query is therefore both correct and honest here: it signals "no cross-tier
- * relevance ranking on this path." This avoids duplicating the rag tokenizer in the
- * context-engine (the I2 cut forbids importing `rag/relevance-scorer`'s buildRelevanceQuery).
- * When Phase 174 flows LTM candidates to assembly, the real query threads in via a dep.
+ * The query is the content terms of the last ~{@link RELEVANCE_TURN_WINDOW} USER turns of the
+ * live message array (the live intent the middle-band relevance ranking matches against), with
+ * a small deictic stopword set dropped and the newest turn's terms first. It is `degraded`
+ * (low-signal → the ranker falls back to recency) when fewer than 2 content terms remain.
+ *
+ * The I2 cut (context-engine ↮ rag) forbids importing `rag/relevance-scorer`'s
+ * `buildRelevanceQuery`, so the minimal tokenize+stopword is replicated LOCALLY here (pure
+ * string work, the same carve-out as the local `ArbiterRelevanceQuery` structural type). The
+ * scorer's own low-signal fallback (the injected `scoreRelevance`) covers a degraded query, and
+ * `rankMiddleBandByRelevance` short-circuits to recency on `degraded`, so a thin query is safe.
+ * The LTM/KG lanes remain EMPTY on the C2 assembly path, so this query feeds ONLY the
+ * middle-band relevance pass (the cross-tier LTM ranking lives on the recall side).
  */
-function buildAssemblyRelevanceQuery(_liveMessages: AgentMessage[]): ArbiterRelevanceQuery {
-  return { terms: [], degraded: true };
+function buildAssemblyRelevanceQuery(liveMessages: AgentMessage[]): ArbiterRelevanceQuery {
+  const userTexts: string[] = [];
+  for (const m of liveMessages) {
+    if ((m as { role?: string }).role !== "user") continue;
+    userTexts.push(extractUserText((m as { content?: unknown }).content));
+  }
+  const window = userTexts.slice(-RELEVANCE_TURN_WINDOW);
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (let i = window.length - 1; i >= 0; i--) {
+    for (const tok of tokenizeQuery(window[i] ?? "")) {
+      if (ASSEMBLY_STOPWORDS.has(tok) || seen.has(tok)) continue;
+      seen.add(tok);
+      terms.push(tok);
+    }
+  }
+  return { terms, degraded: terms.length < 2 };
+}
+
+/** The number of most-recent user turns the within-history query draws from (mirrors the rag
+ *  scorer's RELEVANCE_TURN_WINDOW; replicated locally for the I2 cut). */
+const RELEVANCE_TURN_WINDOW = 3;
+
+/** A small deictic/filler stopword set (the rag scorer's compact set, replicated for the I2
+ *  cut — bounded static map, not a generated stoplist). All lowercase. */
+const ASSEMBLY_STOPWORDS: ReadonlySet<string> = new Set([
+  "a", "an", "the", "this", "that", "these", "those", "it", "is", "are", "was", "were", "be",
+  "do", "does", "did", "can", "could", "will", "would", "should", "and", "or", "but", "if",
+  "so", "of", "to", "in", "on", "at", "by", "for", "with", "from", "yes", "no", "ok", "not",
+  "please", "just", "now", "here", "there", "what", "which", "how", "you", "i", "me", "my",
+]);
+
+/** Lowercase + Unicode-aware tokenize (the buildFtsQuery shape; replicated for the I2 cut). */
+function tokenizeQuery(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/"/g, "")
+    .split(/[^\p{L}\p{N}]+/u)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+}
+
+/** Extract plain text from a user message's content (string or array of blocks). Pure. */
+function extractUserText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => {
+        if (typeof block === "string") return block;
+        if (block !== null && typeof block === "object") {
+          const b = block as { text?: unknown };
+          if (typeof b.text === "string") return b.text;
+        }
+        return "";
+      })
+      .join(" ");
+  }
+  return "";
 }

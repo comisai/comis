@@ -37,6 +37,9 @@ import type { ModelProfile } from "../executor/model-profile.js";
 import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import { ContextExhaustionError } from "./errors.js";
 import type { SecurityPinMarkers } from "./security-context-pinner.js";
+// DEPTH-01: the test file (excluded from the I2 grep) imports the real scorer to prove the
+// END-TO-END relevance reorder through the wired margin-arbiter middle-band seam.
+import { scoreRelevance } from "../rag/relevance-scorer.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -2577,5 +2580,87 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     const keptCount = ev.keptCount as number;
     // kept history tokens = keptCount × 600 ≤ pool (no over-allocate-then-reclaim).
     expect(keptCount * 600).toBeLessThanOrEqual(pool);
+  });
+
+  it("Test 8 (DEPTH-01 END-TO-END relevance reorder): a relevant OLDER message survives where pure recency would drop it", async () => {
+    // The CR-01 proof at the assembler level: with the real scorer + the real FTS store wired
+    // through the margin-arbiter middle-band seam, an OLDER message whose text matches the live
+    // query is KEPT while a less-relevant NEWER one is DROPPED — the SELECTION differs from
+    // recency. The distinctive terms ("zebra deploy trading bot") appear in the OLDEST seeded
+    // history turn AND in the last live user turn (the relevance query source).
+    const DISTINCTIVE = "zebra deploy trading bot configuration";
+    // seq 0: the distinctive, relevant OLD user message; seq 1: its assistant reply.
+    store.append({
+      scope: SCOPE,
+      seq: 0,
+      role: "user",
+      tokenCount: 600,
+      createdAt: FIXED_CREATED_AT,
+      parts: messageToParts(userMsg(DISTINCTIVE)),
+    });
+    store.append({
+      scope: SCOPE,
+      seq: 1,
+      role: "assistant",
+      tokenCount: 600,
+      createdAt: FIXED_CREATED_AT,
+      parts: messageToParts(assistantText("ack zebra")),
+    });
+    // seq 2..15: generic, NON-relevant middle turns (these are the recency winners).
+    let seq = 2;
+    for (let i = 0; i < 7; i++) {
+      store.append({
+        scope: SCOPE,
+        seq: seq++,
+        role: "user",
+        tokenCount: 600,
+        createdAt: FIXED_CREATED_AT,
+        parts: messageToParts(userMsg(`generic filler turn number ${i}`)),
+      });
+      store.append({
+        scope: SCOPE,
+        seq: seq++,
+        role: "assistant",
+        tokenCount: 600,
+        createdAt: FIXED_CREATED_AT,
+        parts: messageToParts(assistantText(`reply ${i}`)),
+      });
+    }
+
+    const live: AgentMessage[] = [userMsg(DISTINCTIVE) as AgentMessage, assistantText("ack zebra") as AgentMessage];
+    for (let i = 0; i < 7; i++) {
+      live.push(userMsg(`generic filler turn number ${i}`) as AgentMessage);
+      live.push(assistantText(`reply ${i}`) as AgentMessage);
+    }
+    // The last live USER turn carries the distinctive query terms (drives buildAssemblyRelevanceQuery).
+    live.push(userMsg("what about the zebra deploy trading bot status") as AgentMessage);
+
+    // Non-caching small profile (relevance-first reachable) + the REAL scorer injected.
+    const { deps } = makeDeps(store);
+    const out = await createLcdContextEngine(dagConfig(1), {
+      ...deps,
+      getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
+      modelProfile: smallNoCacheProfile,
+      getThinkingLevel: () => "medium",
+      relevanceFirst: true,
+      relevanceScorer: scoreRelevance,
+    }).transformContext(live);
+
+    // The distinctive, relevant OLD message survives the tight window (relevance kept it).
+    const outText = JSON.stringify(out);
+    expect(outText).toContain("zebra deploy trading bot configuration");
+
+    // CONTRAST: on the pure-recency path (relevanceFirst:false) the same OLD message is evicted
+    // (the newest generic turns win the tight pool) — proving the survival above is RELEVANCE,
+    // not an artifact of the window fitting everything.
+    const { deps: deps2 } = makeDeps(store);
+    const outRecency = await createLcdContextEngine(dagConfig(1), {
+      ...deps2,
+      getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
+      modelProfile: smallNoCacheProfile,
+      getThinkingLevel: () => "medium",
+      relevanceFirst: false, // recency path — the arbiter does NOT run
+    }).transformContext(live);
+    expect(JSON.stringify(outRecency)).not.toContain("zebra deploy trading bot configuration");
   });
 });

@@ -113,22 +113,6 @@ export interface RelevanceQuery {
 }
 
 /**
- * PLANNED ORPHAN — C2→Phase-174 SEAM (WR-01, Phase 173-05). `buildRelevanceQuery` is the
- * relevance-query builder the cross-tier (LTM/KG) allocator consumes. It is shipped AHEAD of
- * its production caller: on the only live path that reaches the arbiter (the C2 assembly
- * path) the LTM/KG candidate lanes are EMPTY, so `buildAssemblyRelevanceQuery`
- * (`lcd-arbiter-seam.ts`) hard-codes `{ terms: [], degraded: true }` and never calls this.
- * The recall path builds its own FTS query. The real caller arrives in Phase 174 (DEPTH-01),
- * when LTM candidates flow to assembly and the within-history relevance eviction lands —
- * then this builds the live query threaded through a dep. This is a DELIBERATE wired-ahead
- * seam (the plan-checker cleared it), NOT speculative scaffolding: it is fully tested and is
- * the documented counterpart of the injected `scoreRelevance` seam. Tracked the same way as
- * the `reduceFleetWindow` planned orphan (`packages/memory/src/index.ts` / the
- * public-api-policy baseline) so the YAGNI gate (§2.3) is an INFORMED exception. NB: it is
- * NOT on the `@comis/agent` public barrel, so the public-export-consumers gate does not fire
- * on it; this comment is the YAGNI-exception record. Remove the wired-ahead note when Phase
- * 174 lands the caller.
- *
  * Build the relevance query from the newest-weighted rolling window of the last ~3 user
  * turns + the GoalAnchor bias term when present (design §6.1/§6.6 — GoalAnchor IS the
  * focus-bias, one mechanism).

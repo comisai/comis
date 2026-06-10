@@ -32,8 +32,10 @@
  * the unconditional floors ride on top (they are a security/A1 guarantee, not a budget
  * line). Step-atomic fill reuses the {@link BudgetItem} token authority — it never splits
  * a `tool_use`/`tool_result` pair (history is kept whole-step, recency-ordered within its
- * slot; the within-history relevance eviction of the middle band is Phase 174 / DEPTH-01
- * — see the C2 boundary note below).
+ * slot BY DEFAULT; the within-history relevance eviction of the middle band — DEPTH-01's
+ * now-live `rankMiddleBandByRelevance` — is supplied as the optional injected
+ * {@link MarginArbitrateInput.middleBandRanker}, which keeps this allocator pure while
+ * re-ranking the evictable middle band cache-safely — see the C2 boundary note below).
  *
  * Purity (and the architecture cuts): no I/O, no clock, no estimator, no globals; the
  * input arrays (and their items) are NEVER mutated; a new array is returned; same input →
@@ -147,6 +149,14 @@ export interface MarginArbitrateInput {
   minTierSlots?: number;
   /** Optional content-free logger forwarded to the scorer's degraded log. */
   scorerOptions?: ArbiterScorerOptions;
+  /** DEPTH-01: the injected middle-band fill. Default = the pure recency
+   *  {@link evictHistoryUnderBudget}. On the relevance-first path the seam
+   *  (`lcd-arbiter-seam.evictUnderArbiter`) injects
+   *  `rankMiddleBandByRelevance` (cache-stable relevance ranking + chronological
+   *  restore + step-atomic fill), keeping this allocator PURE — the ranker is a
+   *  dep, the relevance scorer lives behind the I2 cut. The signature mirrors the
+   *  recency fill `(band, pool) => AgentMessage[]` so the default is a drop-in. */
+  middleBandRanker?: (band: BudgetItem[], pool: number) => AgentMessage[];
 }
 
 /** The arbiter result. Pure — a fresh object over fresh arrays. */
@@ -199,6 +209,10 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
     kgTokensPerCandidate = 0,
     minTierSlots = DEFAULT_MIN_TIER_SLOTS,
     scorerOptions,
+    // DEPTH-01: the middle-band fill — defaults to the pure recency allocator so
+    // every caller that does NOT inject a ranker (frontier/mid never reach here)
+    // is byte-identical; the relevance-first seam injects rankMiddleBandByRelevance.
+    middleBandRanker = evictHistoryUnderBudget,
   } = input;
 
   // -------------------------------------------------------------------------
@@ -226,12 +240,14 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
   const isFloor = (it: BudgetItem): boolean => stepFloorIds.has(it);
 
   // The non-floor history band (the relevance-evictable middle, T1/T2) — fed to the
-  // step-atomic recency fill within its slot. NB (C2 boundary / Open Question 3): the
-  // WITHIN-history relevance eviction of this middle band is Phase 174 (DEPTH-01); here
-  // the arbiter ALLOCATES the discretionary pool across tiers by fused rank with the
-  // floors guaranteed and keeps the history slot RECENCY-ordered. Do NOT relevance-evict
-  // the middle band here. Because floors are STEP-atomic (above), middleBand contains only
-  // WHOLE non-floor steps — groupIntoSteps over it reproduces the true history grouping.
+  // injected middleBandRanker. NB (C2 boundary): the WITHIN-history relevance eviction of
+  // this middle band is DEPTH-01's now-live `rankMiddleBandByRelevance`, supplied as the
+  // `middleBandRanker` dep (default = the recency `evictHistoryUnderBudget`). The arbiter
+  // ALLOCATES the discretionary pool across tiers by fused rank with the floors guaranteed;
+  // the ranker re-orders the history slot cache-safely (recency on a caching profile,
+  // relevance below the fence on a non-caching one) and ALWAYS restores chronological order.
+  // Because floors are STEP-atomic (above), middleBand contains only WHOLE non-floor steps —
+  // groupIntoSteps over it (and the ranker's own step-atomic fill) reproduces the true grouping.
   const middleBand = historyItems.filter((it) => !isFloor(it));
 
   // -------------------------------------------------------------------------
@@ -287,13 +303,14 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
     }
   }
 
-  // --- Tier: history middle band (T1/T2) — recency-ordered, step-atomic fill. ---
-  // REUSE evictHistoryUnderBudget (the tested pure step-atomic allocator) over the
-  // REMAINING pool so the kept history is the newest whole steps that fit AND a
-  // tool_use/tool_result pair is never split (the load-bearing pair-atomicity rule).
+  // --- Tier: history middle band (T1/T2) — step-atomic fill via the injected ranker. ---
+  // DEPTH-01: call the injected `middleBandRanker` (default = the recency
+  // `evictHistoryUnderBudget`; the relevance-first seam injects `rankMiddleBandByRelevance`)
+  // over the REMAINING pool. BOTH the default and the DEPTH-01 ranker keep the kept history
+  // step-atomic (a tool_use/tool_result pair is never split) AND in chronological order.
   // History is the FINAL tier — it consumes whatever pool the LTM/KG tiers left, so
   // `remainingPool` is not decremented again after this (it is the last reader).
-  const keptMiddle = evictHistoryUnderBudget(middleBand, remainingPool);
+  const keptMiddle = middleBandRanker(middleBand, remainingPool);
   // WR-04 (Phase 173-05): bill the kept middle band from ACTUAL set membership, not the
   // positional `sumKeptTokens(band, count)` shortcut. With STEP-atomic floors (above) the
   // two now agree, but membership is the honest accounting (it sums the tokens of the exact
