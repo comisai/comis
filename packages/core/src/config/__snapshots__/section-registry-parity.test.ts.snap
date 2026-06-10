@@ -466,6 +466,46 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
+    "default": {
+      "distillFromLcd": {
+        "dedupCosineThreshold": 0.92,
+        "enabled": false,
+        "minDepth": 1
+      }
+    },
+    "immutable": true,
+    "path": "agents.contextEngine.memory",
+    "type": "object"
+  },
+  {
+    "default": {
+      "dedupCosineThreshold": 0.92,
+      "enabled": false,
+      "minDepth": 1
+    },
+    "immutable": true,
+    "path": "agents.contextEngine.memory.distillFromLcd",
+    "type": "object"
+  },
+  {
+    "default": 0.92,
+    "immutable": true,
+    "path": "agents.contextEngine.memory.distillFromLcd.dedupCosineThreshold",
+    "type": "number"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.contextEngine.memory.distillFromLcd.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 1,
+    "immutable": true,
+    "path": "agents.contextEngine.memory.distillFromLcd.minDepth",
+    "type": "integer"
+  },
+  {
     "default": 80000,
     "immutable": true,
     "path": "agents.contextEngine.observationDeactivationChars",
@@ -15177,6 +15217,54 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "minimum": 1,
           "type": "integer"
         },
+        "memory": {
+          "additionalProperties": false,
+          "default": {
+            "distillFromLcd": {
+              "dedupCosineThreshold": 0.92,
+              "enabled": false,
+              "minDepth": 1
+            }
+          },
+          "properties": {
+            "distillFromLcd": {
+              "additionalProperties": false,
+              "default": {
+                "dedupCosineThreshold": 0.92,
+                "enabled": false,
+                "minDepth": 1
+              },
+              "properties": {
+                "dedupCosineThreshold": {
+                  "default": 0.92,
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "enabled": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "minDepth": {
+                  "default": 1,
+                  "maximum": 10,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "enabled",
+                "minDepth",
+                "dedupCosineThreshold"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "distillFromLcd"
+          ],
+          "type": "object"
+        },
         "observationDeactivationChars": {
           "default": 80000,
           "maximum": 500000,
@@ -15372,7 +15460,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "postBatchContinuation",
         "budget",
         "compaction",
-        "compactPrompt"
+        "compactPrompt",
+        "memory"
       ],
       "type": "object"
     },
@@ -25489,6 +25578,54 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "minimum": 1,
                 "type": "integer"
               },
+              "memory": {
+                "additionalProperties": false,
+                "default": {
+                  "distillFromLcd": {
+                    "dedupCosineThreshold": 0.92,
+                    "enabled": false,
+                    "minDepth": 1
+                  }
+                },
+                "properties": {
+                  "distillFromLcd": {
+                    "additionalProperties": false,
+                    "default": {
+                      "dedupCosineThreshold": 0.92,
+                      "enabled": false,
+                      "minDepth": 1
+                    },
+                    "properties": {
+                      "dedupCosineThreshold": {
+                        "default": 0.92,
+                        "maximum": 1,
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "enabled": {
+                        "default": false,
+                        "type": "boolean"
+                      },
+                      "minDepth": {
+                        "default": 1,
+                        "maximum": 10,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "enabled",
+                      "minDepth",
+                      "dedupCosineThreshold"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "distillFromLcd"
+                ],
+                "type": "object"
+              },
               "observationDeactivationChars": {
                 "default": 80000,
                 "maximum": 500000,
@@ -25684,7 +25821,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "postBatchContinuation",
               "budget",
               "compaction",
-              "compactPrompt"
+              "compactPrompt",
+              "memory"
             ],
             "type": "object"
           },

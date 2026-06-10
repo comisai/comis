@@ -385,6 +385,26 @@ export const ContextEngineConfigSchema = z.strictObject({
     /** Soft token target for the compact prompt (chars/3.5). Default 3000 tokens ≈ 10500 chars. */
     targetTokens: z.number().int().min(500).max(8_000).default(3_000),
   }).default({ enabled: true, targetTokens: 3_000 }),
+
+  // ── Phase 172: LCD→LTM distillation (DIST-01/04/05) ───────────────────
+  // Fully-populated default object (NOT `.default({})`) so an empty config
+  // resolves to the real defaults — Zod uses .default(value) verbatim and does
+  // NOT re-parse it through the inner field defaults (mirrors compaction above).
+  /** LCD→LTM distillation: per-condense pass, depth≥minDepth condensed summaries
+   *  are distilled into episodic/learned LTM memories for cross-session recall.
+   *  Default: enabled=false (capability-gated — measured before default-on). */
+  memory: z.strictObject({
+    distillFromLcd: z.strictObject({
+      /** Master toggle. false = distillation never fires (safe default). */
+      enabled: z.boolean().default(false),
+      /** Minimum condense depth to trigger distillation. 1 = first condense level. */
+      minDepth: z.number().int().min(1).max(10).default(1),
+      /** Cosine-similarity threshold for vec dedup before write (0–1).
+       *  0.92 = near-duplicate suppression without over-aggressive dedup. */
+      dedupCosineThreshold: z.number().min(0).max(1).default(0.92),
+      // Fully-populated default object — see note above about NOT using .default({}).
+    }).default({ enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 }),
+  }).default({ distillFromLcd: { enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 } }),
 });
 
 export type ContextEngineConfig = z.infer<typeof ContextEngineConfigSchema>;

@@ -196,6 +196,48 @@ export function ensureLcdTables(db: Database.Database): void {
     );
   `);
 
+  // ── Phase 172 (DIST-01/03/05): LCD→LTM distillation provenance ─────────
+  // Links a distilled episodic memory to the LCD condensed summary it came from.
+  // Additive (CREATE IF NOT EXISTS only, forward-only — design §9).
+  //
+  // FK design decisions (from design/lcd-v3-unified-substrate.md §6.2):
+  //   memory_id → memories(id) ON DELETE CASCADE:
+  //     Auto-deletes provenance row when the distilled memory is deleted.
+  //     This is the correct direction for DIST-05 (--memory cleanup) — a
+  //     deleteBySessionKey call removes memories rows and their provenance rows
+  //     are swept automatically by the CASCADE.
+  //   superseded_by → memories(id) ON DELETE SET NULL:
+  //     If the subsuming distilled memory is later deleted, the superseded
+  //     provenance row becomes "dormant-eligible" again rather than being
+  //     deleted (conservative / reversible by design — §14 decision 3).
+  //   summary_id is intentionally NOT a FK into lcd_summaries:
+  //     Provenance rows must survive LCD resets (which wipe lcd_summaries) so
+  //     that DIST-05 --memory delete can still query source_session_key.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS lcd_memory_provenance (
+      provenance_id      TEXT    PRIMARY KEY,
+      memory_id          TEXT    NOT NULL
+        REFERENCES memories(id) ON DELETE CASCADE,
+      summary_id         TEXT    NOT NULL,     -- NOT FK into lcd_summaries (survives LCD resets)
+      source_session_key TEXT    NOT NULL,     -- for DIST-05 --memory delete path
+      conversation_id    TEXT    NOT NULL,     -- R4 isolation column
+      agent_id           TEXT    NOT NULL,     -- R4 isolation column
+      tenant_id          TEXT    NOT NULL,     -- R4 isolation column
+      created_at         INTEGER NOT NULL,
+      superseded_by      TEXT                 -- memory_id of subsuming distilled memory (pyramid rule)
+        REFERENCES memories(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_prov_memory
+      ON lcd_memory_provenance(memory_id);
+    CREATE INDEX IF NOT EXISTS idx_prov_summary
+      ON lcd_memory_provenance(summary_id);
+    CREATE INDEX IF NOT EXISTS idx_prov_session
+      ON lcd_memory_provenance(source_session_key, tenant_id, agent_id);
+    CREATE INDEX IF NOT EXISTS idx_prov_superseded
+      ON lcd_memory_provenance(superseded_by)
+      WHERE superseded_by IS NOT NULL;
+  `);
+
   // ── LCD full-text search (Phase 131, E1 ctx_search) ────────────────────────
   // TWO FTS5 virtual tables over the lossless store (RESEARCH Open Q1 → two
   // tables: origin parity, clean per-`scope` query, and PATTERNS gap #1 forces

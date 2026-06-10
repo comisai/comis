@@ -21,6 +21,7 @@
 import type {
   AppendCondensedSummaryInput,
   AppendMessageInput,
+  AppendProvenanceInput,
   AppendSummaryInput,
   ContextBrowseScope,
   ContextStoreScope,
@@ -209,6 +210,60 @@ export interface ContextStorePort {
    * a cross-tenant or cross-agent wipe is impossible by construction.
    */
   deleteConversationLcd(scope: ContextStoreScope): number;
+
+  /**
+   * Phase 172 (DIST-01): Write a provenance row linking a distilled episodic
+   * memory to the LCD condensed summary it was distilled from.
+   *
+   * Synchronous (better-sqlite3). R4-scoped via input.conversationId /
+   * agentId / tenantId. No return value — the provenanceId is caller-supplied.
+   *
+   * OPTIONAL: existing ContextStorePort implementations (e.g. test stubs) do
+   * not need to implement this until 172-03 adds the concrete SQL in lcd-store.ts.
+   * The distillation runner gates on `deps.lcdStore.appendProvenance != null`.
+   */
+  appendProvenance?(input: AppendProvenanceInput): void;
+
+  /**
+   * Phase 172 (DIST-03): Mark an existing lcd_memory_provenance row as
+   * superseded by a newer distilled memory (the pyramid rule).
+   *
+   * Sets `superseded_by = supersededByMemoryId` WHERE `summary_id = summaryId`
+   * AND `superseded_by IS NULL`. Synchronous. No-op when no matching row.
+   *
+   * OPTIONAL: see appendProvenance note above.
+   */
+  markProvenanceSuperseded?(summaryId: string, supersededByMemoryId: string): void;
+}
+
+/**
+ * Phase 172 (DIST-03/recall): TYPE-ONLY read port for the lcd_memory_provenance
+ * table, consumed by the post-fusion provenance down-weighting pass in
+ * createMemoryRecall (packages/agent/src/rag/memory-recall.ts).
+ *
+ * This is a SEPARATE, minimal read port — NOT a method on ContextStorePort —
+ * to keep the recall pipeline's import surface narrow (it already has
+ * MemoryEmbeddingStore, MemoryEntityStore, etc. as optional deps; this follows
+ * the same pattern). The concrete adapter is daemon-injected. TYPE-ONLY from
+ * @comis/core — the agent↛memory build cut holds.
+ *
+ * Synchronous (better-sqlite3).
+ */
+export interface LcdProvenanceReadStore {
+  /**
+   * Return all provenance rows where summary_id = summaryId, scoped to
+   * (tenant, agent) for R4 isolation. Used by the post-fusion pass to
+   * identify same-conversation paired memories to down-weight.
+   */
+  getProvenanceForSummary(
+    scope: ContextStoreScope,
+    summaryId: string,
+  ): Array<{
+    provenanceId: string;
+    memoryId: string;
+    sourceSessionKey: string;
+    supersededBy: string | null;
+  }>;
 }
 
 /**

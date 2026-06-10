@@ -110,4 +110,24 @@ export interface MemoryPort {
    * @returns true if deleted, false if not found, or an error
    */
   delete(id: string, tenantId?: string): Promise<Result<boolean, Error>>;
+
+  /**
+   * Phase 172 (DIST-05): Delete all memory entries matching a session key
+   * + tenant+agent scope. Covers BOTH paired-conversation memories and
+   * LCD-distilled episodic memories (both store source_session_key on the
+   * memories row). The ON DELETE CASCADE on lcd_memory_provenance.memory_id
+   * handles provenance row cleanup automatically.
+   *
+   * R4-scoped: scope.tenantId + scope.agentId are REQUIRED — never deletes
+   * cross-tenant or cross-agent rows. Returns count of deleted memories rows,
+   * or an error.
+   *
+   * OPTIONAL: existing MemoryPort implementations do not need to implement
+   * this until 172-03 adds the concrete SQL in sqlite-memory-adapter.ts.
+   * The session-archive.ts handler gates on `deps.memoryPort.deleteBySessionKey`.
+   */
+  deleteBySessionKey?(
+    sessionKey: string,
+    scope: { tenantId: string; agentId: string },
+  ): Promise<Result<number, Error>>;
 }
