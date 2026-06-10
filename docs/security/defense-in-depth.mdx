@@ -407,7 +407,10 @@ They are your last line of defense against leaked secrets and prompt extraction.
     Bearer tokens and JWTs). Critical findings are replaced with
     `[REDACTED:pattern_name]` before the response reaches the user. The
     guard also runs the **two prompt-extraction patterns** (`system_prompt_label`,
-    `instructions_label`) and the canary token check.
+    `instructions_label`), the canary token check, and an **exact-match redaction
+    of the daemon's own known secret values** (e.g. the resolved gateway token) —
+    this catches a bare high-entropy secret that has no `key=`/`token:` prefix for
+    the regex patterns to anchor on, with zero false-positive risk.
 
     **Why it matters:** Even if your agent accidentally includes a secret in
     its response, users never see it.
