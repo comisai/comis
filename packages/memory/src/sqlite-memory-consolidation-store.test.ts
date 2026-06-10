@@ -1780,4 +1780,125 @@ describe("createSqliteMemoryConsolidationStore", () => {
       }
     });
   });
+
+  // =====================================================================
+  // Phase 172-03 (DIST-05) — unlinkDeletedSources + purgeConsolidatedDerivedFrom
+  // The --memory honest reset deletes raw memories first, then cleans up the
+  // consolidated observations that referenced them: orphan (every source gone) →
+  // delete; multi-source (some sources survive) → keep with reduced source_ids.
+  // purge-derived nukes EVERY observation with any deleted source.
+  // =====================================================================
+
+  /** Seed an observation row (proof_count IS NOT NULL) with the given source ids. */
+  async function seedObservation(sourceIds: string[], overrides: Partial<MemoryEntry> = {}): Promise<string> {
+    return seedMemory({
+      content: overrides.content ?? "an observation",
+      proofCount: sourceIds.length,
+      sourceIds,
+      confidence: 0.9,
+      ...overrides,
+    });
+  }
+
+  describe("unlinkDeletedSources (DIST-05)", () => {
+    it("orphan observation (all sources deleted) is DELETED", async () => {
+      // Two raw sources, one observation built from both. Delete both raws, then
+      // unlink: the observation has no surviving sources → orphan → deleted.
+      const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-x" } });
+      const s2 = await seedMemory({ content: "raw 2", source: { who: "u", channel: "c", sessionKey: "sess-x" } });
+      const obs = await seedObservation([s1, s2]);
+
+      // Delete both raw sources (the --memory delete already ran).
+      await adapter.deleteBySessionKey("sess-x", { tenantId: TENANT_A, agentId: AGENT_A });
+      expect(rowExists(s1)).toBe(false);
+      expect(rowExists(s2)).toBe(false);
+
+      const r = await store.unlinkDeletedSources("sess-x", TENANT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(1); // one orphan deleted
+      expect(rowExists(obs)).toBe(false);
+    });
+
+    it("multi-source observation (one source survives) is KEPT with reduced source_ids", async () => {
+      // s1 from the session to wipe, s2 from a DIFFERENT session that survives.
+      const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-wipe" } });
+      const s2 = await seedMemory({ content: "raw 2", source: { who: "u", channel: "c", sessionKey: "sess-keep" } });
+      const obs = await seedObservation([s1, s2]);
+
+      await adapter.deleteBySessionKey("sess-wipe", { tenantId: TENANT_A, agentId: AGENT_A });
+      expect(rowExists(s1)).toBe(false);
+      expect(rowExists(s2)).toBe(true);
+
+      const r = await store.unlinkDeletedSources("sess-wipe", TENANT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0); // nothing orphaned — the observation survives
+      expect(rowExists(obs)).toBe(true);
+      // source_ids reduced to the surviving source only.
+      const row = db.prepare("SELECT source_ids FROM memories WHERE id = ?").get(obs) as
+        | { source_ids: string }
+        | undefined;
+      expect(JSON.parse(row!.source_ids)).toEqual([s2]);
+    });
+
+    it("tenant isolation: an observation in a DIFFERENT tenant is never touched", async () => {
+      const OTHER = "tenant_b";
+      const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-x" } });
+      // Observation under a different tenant referencing s1 (cross-tenant edge — must NOT be touched).
+      const obsOther = await seedObservation([s1], { tenantId: OTHER });
+
+      await adapter.deleteBySessionKey("sess-x", { tenantId: TENANT_A, agentId: AGENT_A });
+
+      const r = await store.unlinkDeletedSources("sess-x", TENANT_A);
+      expect(r.ok).toBe(true);
+      // The other-tenant observation is untouched (tenant-scoped query).
+      expect(rowExists(obsOther)).toBe(true);
+      const row = db.prepare("SELECT source_ids FROM memories WHERE id = ?").get(obsOther) as
+        | { source_ids: string }
+        | undefined;
+      expect(JSON.parse(row!.source_ids)).toEqual([s1]);
+    });
+
+    it("no observations → returns 0, no error", async () => {
+      const r = await store.unlinkDeletedSources("sess-none", TENANT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0);
+    });
+  });
+
+  describe("purgeConsolidatedDerivedFrom (DIST-05)", () => {
+    it("deletes EVERY observation with any deleted source — even multi-source corroborated", async () => {
+      const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-wipe" } });
+      const s2 = await seedMemory({ content: "raw 2", source: { who: "u", channel: "c", sessionKey: "sess-keep" } });
+      // obsMulti is corroborated by a surviving source — purge nukes it anyway.
+      const obsMulti = await seedObservation([s1, s2], { content: "multi" });
+      // obsSolo derived only from the wiped session.
+      const obsSolo = await seedObservation([s1], { content: "solo" });
+
+      await adapter.deleteBySessionKey("sess-wipe", { tenantId: TENANT_A, agentId: AGENT_A });
+
+      const r = await store.purgeConsolidatedDerivedFrom("sess-wipe", TENANT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(2); // both observations purged
+      expect(rowExists(obsMulti)).toBe(false);
+      expect(rowExists(obsSolo)).toBe(false);
+    });
+
+    it("leaves observations whose sources all survive", async () => {
+      const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-keep" } });
+      const obs = await seedObservation([s1]);
+
+      // Wipe a DIFFERENT session (no overlap) — obs sources all survive.
+      await adapter.deleteBySessionKey("sess-other", { tenantId: TENANT_A, agentId: AGENT_A });
+
+      const r = await store.purgeConsolidatedDerivedFrom("sess-other", TENANT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0);
+      expect(rowExists(obs)).toBe(true);
+    });
+  });
 });

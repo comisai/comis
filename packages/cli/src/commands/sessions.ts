@@ -240,14 +240,18 @@ export function registerSessionsCommand(program: Command): void {
   // AND the daemon sessionStore working transcript for the given session.
   // After this reset, a follow-up turn has NO prior context in both dag mode
   // (LCD empty) and pipeline mode (sessionStore empty → rehydrates empty).
-  // --memory also clears RAG memories (GDPR / full-forget path, deferred).
+  // --memory also clears RAG memories — the GDPR / full-forget path (Phase 172-03
+  // DIST-05): deletes paired + lcd-distilled memories by source_session_key and
+  // unlinks consolidated observations. --purge-derived (opt-in, with --memory)
+  // nukes EVERY observation derived from this session (destructive).
   // --yes skips confirmation (required for scripted/automated use).
   sessions
     .command("reset <sessionKey>")
     .description("Reset a conversation to a clean slate: clears LCD history + working session transcript (admin). Use --memory to also clear RAG memories.")
-    .option("--memory", "Also clear RAG memories for this session")
+    .option("--memory", "Also clear RAG memories (paired + distilled) for this session")
+    .option("--purge-derived", "With --memory: also purge consolidated observations derived from this session (destructive)")
     .option("--yes", "Skip confirmation prompt")
-    .action(async (sessionKeyArg: string, opts: { memory?: boolean; yes?: boolean }) => {
+    .action(async (sessionKeyArg: string, opts: { memory?: boolean; purgeDerived?: boolean; yes?: boolean }) => {
       if (!opts.yes) {
         // Destructive and admin-only: require --yes to avoid accidental wipes.
         error("Conversation reset is irreversible. Pass --yes to confirm.");
@@ -258,17 +262,21 @@ export function registerSessionsCommand(program: Command): void {
           return await callTyped(client, SessionResetConversationContract, {
             session_key: sessionKeyArg,
             memory: opts.memory ?? false,
+            // Commander camelCases --purge-derived → purgeDerived. Only meaningful
+            // with --memory (the handler gates it on memory:true).
+            ...(opts.purgeDerived ? { purge_derived: true } : {}),
           });
         });
         console.log(`Conversation reset: ${result.lcdRowsDeleted} LCD rows deleted, ${result.sessionMessagesCleared} session messages cleared.`);
         if (opts.memory) {
           if (result.memoriesDeleted !== undefined) {
-            // RAG memory clear was implemented and ran — surface the count.
+            // RAG memory clear ran — surface the count (0 = nothing matched).
             console.log(`RAG memories cleared: ${result.memoriesDeleted} memories deleted.`);
           } else {
-            // Handler omitted memoriesDeleted → not yet implemented (deferred).
+            // memoriesDeleted omitted → the daemon has no MemoryPort wired, so the
+            // --memory clear could not run (LCD + session transcript ARE cleared).
             process.stderr.write(
-              "⚠ --memory is not yet implemented — RAG memory was NOT cleared (only LCD history and session transcript were cleared).\n",
+              "⚠ --memory not available on this daemon — RAG memory was NOT cleared (only LCD history and session transcript were cleared).\n",
             );
           }
         }

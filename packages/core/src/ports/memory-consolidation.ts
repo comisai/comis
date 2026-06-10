@@ -195,4 +195,56 @@ export interface MemoryConsolidationStore {
     tenantId: string,
     now: number,
   ): Promise<Result<number, Error>>;
+
+  /**
+   * Phase 172 (DIST-05): Unlink the given session's memory ids from all
+   * consolidated observations after those source memories were deleted by
+   * `session.reset_conversation --memory`.
+   *
+   * For each observation (`proof_count IS NOT NULL`) in scope whose `source_ids`
+   * JSON array contains any memory id from the given session: remove those ids.
+   * If `source_ids` becomes empty (the observation was derived ONLY from this
+   * session — an orphan) → DELETE the observation. A multi-source observation
+   * (still has surviving source ids from other sessions) → KEEP it with the
+   * reduced `source_ids` (unlink-only — never over-delete).
+   *
+   * NOTE: this is the cleanup AFTER the source rows are already gone, so it
+   * re-derives the deleted session's memory ids from the
+   * `lcd_memory_provenance.source_session_key` rows (which survive via
+   * ON DELETE CASCADE only when the memory row is dropped — so by the time this
+   * runs the provenance rows are gone too). It therefore matches by re-scanning
+   * the surviving `source_ids` against the still-present memory rows: any
+   * source id no longer present in `memories` for this tenant is treated as
+   * deleted. See the adapter for the exact predicate.
+   *
+   * Tenant-scoped: a cross-tenant id is a fail-closed no-op (never crosses
+   * tenants). Returns the count of orphan observations deleted.
+   *
+   * @param sessionKey - The session key whose memories were deleted (source_session_key match)
+   * @param tenantId - Tenant scope (never crosses tenants)
+   * @returns Count of orphan observations deleted, or an error
+   */
+  unlinkDeletedSources(
+    sessionKey: string,
+    tenantId: string,
+  ): Promise<Result<number, Error>>;
+
+  /**
+   * Phase 172 (DIST-05): Nuclear escalation — delete ALL consolidated
+   * observations where ANY source memory was derived from the given session.
+   * Use ONLY when `--purge-derived` is explicitly requested — it is destructive
+   * (an observation corroborated by other sessions is STILL deleted) and cannot
+   * be undone.
+   *
+   * Tenant-scoped: a cross-tenant id is a fail-closed no-op. Returns the count
+   * of observations deleted.
+   *
+   * @param sessionKey - The session key to purge derived observations for
+   * @param tenantId - Tenant scope (never crosses tenants)
+   * @returns Count of observations deleted, or an error
+   */
+  purgeConsolidatedDerivedFrom(
+    sessionKey: string,
+    tenantId: string,
+  ): Promise<Result<number, Error>>;
 }

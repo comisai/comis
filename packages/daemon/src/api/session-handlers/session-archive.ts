@@ -184,24 +184,15 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         "Conversation reset (LCD + sessionStore)",
       );
 
-      // DEFERRED: conversation-scoped RAG-memory clear spans ~12 memory stores.
-      // --memory is accepted without error but not yet implemented.
-      const requestMemory = (rawParams.memory ?? false) as boolean;
-      if (requestMemory) {
-        deps.logger.warn(
-          {
-            method: SessionResetConversationContract.method,
-            conversationId: scope.conversationId,
-            submodule: "session-reset-conversation",
-            errorKind: "precondition" as const,
-            hint: "RAG-memory clearing (--memory) is not yet implemented; cleared LCD history and sessionStore only — see Phase 164 deferred follow-up",
-          },
-          "--memory requested but RAG-memory clear is not yet implemented — LCD + sessionStore cleared only",
-        );
-      }
-
-      // memoriesDeleted is intentionally OMITTED: returning 0 would falsely
-      // imply an attempted-but-empty RAG clear.
+      // Phase 172-03 (DIST-05): --memory honest reset. Deletes the RAG-memory
+      // rows by source_session_key — ONE query covers BOTH paired-conversation
+      // memories AND lcd-distilled episodic memories — then unlinks them from
+      // consolidated observations (orphan→delete, multi-source→keep). The
+      // optional --purge-derived flag escalates to deleting EVERY observation
+      // derived from this session (nuclear, opt-in). Every step is non-fatal: a
+      // memory-store failure must not undo the LCD/sessionStore reset that already
+      // succeeded — it degrades to a WARN. memoriesDeleted is included in the
+      // result ONLY when --memory was requested (omitted otherwise).
       const result: {
         sessionKey: string;
         lcdRowsDeleted: number;
@@ -212,6 +203,122 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         lcdRowsDeleted,
         sessionMessagesCleared,
       };
+
+      const requestMemory = (rawParams.memory ?? false) as boolean;
+      if (requestMemory) {
+        // Left undefined in the graceful-degrade branch (memoryPort absent) so the
+        // result OMITS memoriesDeleted — returning 0 would falsely imply an
+        // attempted-but-empty RAG clear. Set to the real count once a delete runs.
+        let memoriesDeleted: number | undefined;
+        if (!deps.memoryPort?.deleteBySessionKey) {
+          // Graceful degrade: the deployment did not wire a MemoryPort (or the
+          // adapter predates DIST-05). LCD + sessionStore are still cleared; the
+          // --memory flag is honestly reported as ignored (no false success).
+          deps.logger.warn(
+            {
+              method: SessionResetConversationContract.method,
+              conversationId: scope.conversationId,
+              submodule: "session-reset-conversation",
+              errorKind: "precondition" as const,
+              hint: "memoryPort not available in deps — --memory flag ignored; LCD + sessionStore cleared",
+            },
+            "--memory requested but memoryPort not wired (deployment may not support it)",
+          );
+        } else {
+          // A real delete is attempted — report 0 even on failure (an honest
+          // "attempted, nothing deleted"), never undefined.
+          memoriesDeleted = 0;
+          const memoriesResult = await deps.memoryPort.deleteBySessionKey(sessionKey, {
+            tenantId: scope.tenantId,
+            agentId: scope.agentId,
+          });
+          if (!memoriesResult.ok) {
+            // Non-fatal: the LCD reset already succeeded — log + carry on.
+            deps.logger.warn(
+              {
+                method: SessionResetConversationContract.method,
+                conversationId: scope.conversationId,
+                submodule: "session-reset-conversation",
+                hint: "Memory delete by session key failed; LCD reset succeeded — retry --memory or check DB",
+                errorKind: "dependency" as const,
+                err: memoriesResult.error.message,
+              },
+              "RAG-memory clear failed (non-fatal)",
+            );
+          } else {
+            memoriesDeleted = memoriesResult.value;
+            // Unlink consolidated observations that referenced the now-deleted
+            // sources — orphan→delete, multi-source→keep. Only when something was
+            // deleted (nothing to unlink otherwise). Non-fatal.
+            if (memoriesDeleted > 0 && deps.consolidationStore) {
+              const unlinkResult = await deps.consolidationStore.unlinkDeletedSources(
+                sessionKey,
+                scope.tenantId,
+              );
+              if (!unlinkResult.ok) {
+                deps.logger.warn(
+                  {
+                    method: SessionResetConversationContract.method,
+                    conversationId: scope.conversationId,
+                    submodule: "session-reset-conversation",
+                    hint: "Consolidated-observation unlink failed; deleted memories may still be referenced by observations",
+                    errorKind: "dependency" as const,
+                    err: unlinkResult.error.message,
+                  },
+                  "Consolidated-observation unlink failed (non-fatal)",
+                );
+              }
+            }
+            deps.logger.info(
+              {
+                method: SessionResetConversationContract.method,
+                conversationId: scope.conversationId,
+                memoriesDeleted,
+                submodule: "session-reset-conversation",
+              },
+              "RAG-memory cleared by source_session_key",
+            );
+          }
+
+          // --purge-derived: nuclear escalation — delete EVERY consolidated
+          // observation derived from this session (ignores surviving multi-source
+          // corroboration). Only fires when explicitly requested. Non-fatal.
+          const purgeDerived = (rawParams.purge_derived ?? false) as boolean;
+          if (purgeDerived && deps.consolidationStore) {
+            const purgeResult = await deps.consolidationStore.purgeConsolidatedDerivedFrom(
+              sessionKey,
+              scope.tenantId,
+            );
+            if (!purgeResult.ok) {
+              deps.logger.warn(
+                {
+                  method: SessionResetConversationContract.method,
+                  conversationId: scope.conversationId,
+                  submodule: "session-reset-conversation",
+                  hint: "--purge-derived failed; some observations derived from this session may remain",
+                  errorKind: "dependency" as const,
+                  err: purgeResult.error.message,
+                },
+                "--purge-derived failed (non-fatal)",
+              );
+            } else {
+              deps.logger.info(
+                {
+                  method: SessionResetConversationContract.method,
+                  conversationId: scope.conversationId,
+                  observationsPurged: purgeResult.value,
+                  submodule: "session-reset-conversation",
+                },
+                "--purge-derived: consolidated observations derived from session purged",
+              );
+            }
+          }
+        }
+
+        // Only surface the count when a delete was actually attempted (memoryPort
+        // present). When absent it stays undefined → omitted from the result.
+        if (memoriesDeleted !== undefined) result.memoriesDeleted = memoriesDeleted;
+      }
       if (IS_DEV) SessionResetConversationContract.response.parse(result);
       return result;
     },

@@ -477,6 +477,85 @@ describe("SqliteMemoryAdapter", () => {
     });
   });
 
+  // ── deleteBySessionKey (DIST-05) ─────────────────────────────
+
+  describe("deleteBySessionKey (DIST-05)", () => {
+    it("deletes ALL rows for a (sessionKey, tenant, agent) scope and returns the count", async () => {
+      // Two memories from the same session + a third from a different session.
+      await adapter.store(makeEntry({ content: "a", source: { who: "u", channel: "c", sessionKey: "sess-1" } }));
+      await adapter.store(makeEntry({ content: "b", source: { who: "u", channel: "c", sessionKey: "sess-1" } }));
+      await adapter.store(makeEntry({ content: "c", source: { who: "u", channel: "c", sessionKey: "sess-2" } }));
+
+      const r = await adapter.deleteBySessionKey!("sess-1", { tenantId: "default", agentId: "default" });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(2);
+
+      const remaining = adapter
+        .getDb()
+        .prepare("SELECT COUNT(*) AS c FROM memories WHERE source_session_key = ?")
+        .get("sess-1") as { c: number };
+      expect(remaining.c).toBe(0);
+      const other = adapter
+        .getDb()
+        .prepare("SELECT COUNT(*) AS c FROM memories WHERE source_session_key = ?")
+        .get("sess-2") as { c: number };
+      expect(other.c).toBe(1); // the other session is untouched
+    });
+
+    it("is R4-scoped: never deletes a row from a different tenant or agent", async () => {
+      await adapter.store(
+        makeEntry({ tenantId: "t-a", agentId: "ag-a", source: { who: "u", channel: "c", sessionKey: "sess-x" } }),
+      );
+      // Same session key but a DIFFERENT tenant — must survive.
+      await adapter.store(
+        makeEntry({ tenantId: "t-b", agentId: "ag-a", source: { who: "u", channel: "c", sessionKey: "sess-x" } }),
+      );
+      // Same session key + tenant but a DIFFERENT agent — must survive.
+      await adapter.store(
+        makeEntry({ tenantId: "t-a", agentId: "ag-b", source: { who: "u", channel: "c", sessionKey: "sess-x" } }),
+      );
+
+      const r = await adapter.deleteBySessionKey!("sess-x", { tenantId: "t-a", agentId: "ag-a" });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(1); // only the (t-a, ag-a) row
+
+      const survivors = adapter
+        .getDb()
+        .prepare("SELECT COUNT(*) AS c FROM memories WHERE source_session_key = ?")
+        .get("sess-x") as { c: number };
+      expect(survivors.c).toBe(2); // cross-tenant + cross-agent rows survive
+    });
+
+    it("returns 0 when no rows match (no error)", async () => {
+      const r = await adapter.deleteBySessionKey!("missing", { tenantId: "default", agentId: "default" });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0);
+    });
+
+    it("removes matching vec_memories rows when vec is available", async () => {
+      if (!isVecAvailable()) return;
+      await adapter.store(
+        makeEntry({ embedding: [0.5, 0.5, 0.5, 0.5], source: { who: "u", channel: "c", sessionKey: "sess-v" } }),
+      );
+      const before = adapter.getDb().prepare("SELECT COUNT(*) AS c FROM vec_memories").get() as { c: number };
+      expect(before.c).toBeGreaterThanOrEqual(1);
+
+      await adapter.deleteBySessionKey!("sess-v", { tenantId: "default", agentId: "default" });
+
+      const remaining = adapter
+        .getDb()
+        .prepare(
+          "SELECT COUNT(*) AS c FROM vec_memories WHERE memory_id IN " +
+            "(SELECT id FROM memories WHERE source_session_key = ?)",
+        )
+        .get("sess-v") as { c: number };
+      expect(remaining.c).toBe(0);
+    });
+  });
+
   // ── multi-agent memory isolation ─────────────────────────────
 
   describe("multi-agent memory isolation", () => {

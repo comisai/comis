@@ -65,6 +65,7 @@ import {
   buildAppendLeafSummaryTxn,
 } from "./lcd-store-writes.js";
 import { createBoundedReads } from "./lcd-store-reads.js";
+import { buildProvenanceWrites } from "./lcd-store-provenance.js";
 import {
   messageRowMapper,
   partRowMapper,
@@ -299,6 +300,9 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   const selectCursorStmt = db.prepare(
     "SELECT epoch_anchor, ingested_live_len FROM lcd_ingest_cursor WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
   );
+
+  // Phase 172 (DIST-01/DIST-03): lcd_memory_provenance writes (extracted helper).
+  const provenanceWrites = buildProvenanceWrites(db);
 
   // ── Phase 164 (RR4): deleteConversationLcd transaction ──────────────────────
   // Deletes ALL lcd_* rows for a (conversation, agent, tenant) scope in FK-safe
@@ -782,12 +786,14 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     },
 
     // ── Phase 164 (RR4): explicit LCD reset ─────────────────────────────────
-
     deleteConversationLcd(scope: ContextStoreScope): number {
       // Delegate to the db.transaction that deletes in FK-safe dependency order.
       // Must be called inside runOnConversation so it serializes against live ingest.
       // Returns the count of lcd_messages rows deleted (0 for an empty scope).
       return deleteConversationLcdTxn(scope);
     },
+
+    // Phase 172 (DIST-01/DIST-03): provenance writes (extracted helper).
+    ...provenanceWrites,
   };
 }

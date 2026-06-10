@@ -115,7 +115,7 @@ The observability rows live in the `obs_diagnostics` table, grouped by a `catego
 | Layer | Tables | Durability |
 |-------|--------|------------|
 | **LCD store** | `lcd_messages`, `lcd_message_parts`, `lcd_context_items`, `lcd_summaries` | **Durable — the truth.** Every turn is persisted verbatim (auto-condensed past 75%). Survives daemon restarts, redeploys, and JSONL deletions. |
-| **RAG memory** | `memory_*` | **Durable.** Distilled facts learned from conversations. Cleared separately via `comis sessions reset --memory` (reserved — not yet implemented). |
+| **RAG memory** | `memory_*` | **Durable.** Distilled facts learned from conversations. Cleared per-session via `comis sessions reset --memory` (deletes paired + LCD-distilled memories by `source_session_key` and unlinks consolidated observations; `--purge-derived` also purges derived observations). |
 | **SDK session JSONL** | `~/.comis/workspace/sessions/.../<key>.jsonl` | **Disposable** — the SDK's per-session working transcript. Routinely deleted by the operator (housekeeping) and wiped by `comis sessions reset`. |
 
 <Note>
@@ -127,8 +127,10 @@ The SDK session JSONL is **disposable**. Deleting it directly (for any reason �
 ```bash
 # Reset a conversation (clears LCD history + session transcript — irreversible):
 comis sessions reset <sessionKey> --yes
-# Also clear RAG memories (full-forget path — reserved, not yet implemented):
+# Also clear RAG memories for this session (the full-forget path):
 comis sessions reset <sessionKey> --memory --yes
+# Nuclear forget — also purge consolidated observations derived from this session:
+comis sessions reset <sessionKey> --memory --purge-derived --yes
 ```
 
 `sessions reset` clears two layers atomically: the LCD lossless-store history (dag mode) and the daemon sessionStore working transcript (both modes). A follow-up turn has no prior context regardless of which context engine the session uses.

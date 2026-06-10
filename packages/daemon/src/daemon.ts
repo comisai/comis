@@ -972,6 +972,12 @@ function buildRpcDispatchDeps(deps: {
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
     defaultWorkspaceDir: c.defaultWorkspaceDir, workspaceDirs: c.workspaceDirs,
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
+    // DIST-05: thread the memory adapter as the MemoryPort for the
+    // session.reset_conversation --memory honest reset. SqliteMemoryAdapter
+    // implements MemoryPort (incl. deleteBySessionKey, Phase 172-03), so the
+    // SAME object satisfies SessionsApiDeps.memoryPort. consolidationStore (the
+    // unlink/purge surface) is already on the spread below.
+    memoryPort: c.memoryAdapter,
     // context.* operator-browse RPC deps (Context DAG browser): the LCD
     // ContextStorePort (context.tree reads getSummaries/getContextItems) + the
     // ContextBrowsePort (context.conversations). Both R4 agent+tenant scoped.

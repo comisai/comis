@@ -301,12 +301,13 @@ vi.mock("@clack/prompts", () => ({
 
 const { withClient: mockedWithClient } = await import("../client/rpc-client.js");
 
-/** Minimal session.reset_conversation success response — memoriesDeleted OMITTED (honest-defer) */
+/** Minimal session.reset_conversation success response — memoriesDeleted OMITTED.
+ *  Post-DIST-05 the handler omits memoriesDeleted ONLY when no MemoryPort is wired
+ *  (deployment does not support the --memory clear); when wired it returns a count. */
 const RESET_CONVERSATION_RESPONSE = {
   sessionKey: "tenant1:user1:chan1",
   lcdRowsDeleted: 7,
   sessionMessagesCleared: 4,
-  // memoriesDeleted is intentionally absent: the handler omits it when RAG clear is not-implemented
 };
 
 describe("CLI1: sessions reset subcommand registration (Phase 164-06)", () => {
@@ -327,7 +328,7 @@ describe("CLI1: sessions reset subcommand registration (Phase 164-06)", () => {
     expect(oldResetLcdCmd).toBeUndefined();
   });
 
-  it("CLI1b: reset subcommand has --memory and --yes options", () => {
+  it("CLI1b: reset subcommand has --memory, --purge-derived and --yes options", () => {
     const program = new Command();
     registerSessionsCommand(program);
 
@@ -336,6 +337,7 @@ describe("CLI1: sessions reset subcommand registration (Phase 164-06)", () => {
 
     const optNames = resetCmd.options.map((o) => o.long);
     expect(optNames).toContain("--memory");
+    expect(optNames).toContain("--purge-derived");
     expect(optNames).toContain("--yes");
   });
 });
@@ -480,10 +482,41 @@ describe("CLI3: sessions reset --memory threads memory: true (Phase 164-06)", ()
     const params = capturedParams[0] as Record<string, unknown>;
     expect(params["memory"]).toBeFalsy();
   });
+
+  it("CLI3c (DIST-05): --purge-derived threads purge_derived: true to the request", async () => {
+    const capturedParams: unknown[] = [];
+
+    vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
+      const mockClient = {
+        call: vi.fn().mockImplementation(async (_method: string, params?: unknown) => {
+          capturedParams.push(params);
+          return { ...RESET_CONVERSATION_RESPONSE, memoriesDeleted: 2 };
+        }),
+        close: vi.fn(),
+        onNotification: vi.fn(),
+      };
+      return fn(mockClient);
+    });
+
+    const program = createTestProgram();
+    registerSessionsCommand(program);
+    await program.parseAsync([
+      "node", "test",
+      "sessions", "reset", "tenant1:user1:chan1",
+      "--yes",
+      "--memory",
+      "--purge-derived",
+    ]);
+
+    expect(capturedParams).toHaveLength(1);
+    const params = capturedParams[0] as Record<string, unknown>;
+    expect(params["memory"]).toBe(true);
+    expect(params["purge_derived"]).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
-// CLI4: --memory not-implemented warning output (Phase 164-06)
+// CLI4: --memory not-wired warning output (Phase 164-06 / DIST-05)
 // ---------------------------------------------------------------------------
 
 describe("CLI4: sessions reset --memory not-implemented warning (Phase 164-06)", () => {
@@ -504,7 +537,7 @@ describe("CLI4: sessions reset --memory not-implemented warning (Phase 164-06)",
     stderrSpy.mockRestore();
   });
 
-  it("CLI4: --memory + memoriesDeleted===undefined prints not-implemented warning to stderr", async () => {
+  it("CLI4: --memory + memoriesDeleted===undefined prints not-wired warning to stderr", async () => {
     vi.mocked(mockedWithClient).mockImplementation(async (fn) => {
       const mockClient = {
         call: vi.fn().mockResolvedValue(RESET_CONVERSATION_RESPONSE), // no memoriesDeleted field
@@ -523,9 +556,9 @@ describe("CLI4: sessions reset --memory not-implemented warning (Phase 164-06)",
       "--memory",
     ]);
 
-    // stderr must contain the warning about not-implemented
+    // stderr must contain the not-wired warning (the deployment lacks a MemoryPort).
     const stderrOutput = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
-    expect(stderrOutput).toMatch(/not yet implemented|RAG memory was NOT cleared/i);
+    expect(stderrOutput).toMatch(/not.*available|not.*wired|RAG memory was NOT cleared/i);
 
     // stdout must NOT contain a "RAG memories cleared" line
     const stdoutOutput = consoleSpy.log.mock.calls.map((c) => c.join(" ")).join("\n");

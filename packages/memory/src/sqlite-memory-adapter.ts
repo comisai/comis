@@ -434,6 +434,62 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     }
   }
 
+  // ── deleteBySessionKey (DIST-05) ───────────────────────────────────
+
+  /**
+   * Phase 172 (DIST-05): Delete ALL memory rows for a (sessionKey, tenant, agent)
+   * scope. ONE query covers BOTH paired-conversation memories AND lcd-distilled
+   * episodic memories — both store `source_session_key` on the `memories` row.
+   *
+   * R4 isolation: the WHERE filters on `source_session_key` AND `tenant_id` AND
+   * `agent_id`, so a cross-tenant or cross-agent row is never deleted (the same
+   * fail-closed scoping the consolidation paths use). The `ON DELETE CASCADE` on
+   * `lcd_memory_provenance.memory_id` drops the provenance rows automatically;
+   * the `memories_ad AFTER DELETE` FTS trigger cleans `memory_fts`. We delete the
+   * matching `vec_memories` rows first (the vec0 virtual table has no FK cascade —
+   * per-id delete, same as `delete`).
+   *
+   * Returns the count of `memories` rows deleted (0 when none match), or an error.
+   */
+  async deleteBySessionKey(
+    sessionKey: string,
+    scope: { tenantId: string; agentId: string },
+  ): Promise<Result<number, Error>> {
+    const startMs = systemNowMs();
+    try {
+      const tx = this.db.transaction(() => {
+        // vec_memories has no cascade — delete the matching vec rows by id first.
+        // Subquery is fully tenant+agent+session scoped (R4) so it can only ever
+        // reference this scope's memory ids.
+        if (this.vecAvailable) {
+          this.db
+            .prepare(
+              "DELETE FROM vec_memories WHERE memory_id IN " +
+                "(SELECT id FROM memories WHERE source_session_key = ? AND tenant_id = ? AND agent_id = ?)",
+            )
+            .run(sessionKey, scope.tenantId, scope.agentId);
+        }
+        // Delete the memory rows (FTS trigger + provenance CASCADE handle the rest).
+        const info = this.db
+          .prepare(
+            "DELETE FROM memories WHERE source_session_key = ? AND tenant_id = ? AND agent_id = ?",
+          )
+          .run(sessionKey, scope.tenantId, scope.agentId);
+        return info.changes;
+      });
+      const changes = tx();
+
+      const durationMs = systemNowMs() - startMs;
+      this.logger?.debug(
+        { durationMs, op: "deleteBySessionKey", deleted: changes },
+        "Memory delete-by-session-key complete",
+      );
+      return ok(changes);
+    } catch (e: unknown) {
+      return err(e instanceof Error ? e : new Error(String(e)));
+    }
+  }
+
   // ── WAL checkpoint ─────────────────────────────────────────────────
 
   /**

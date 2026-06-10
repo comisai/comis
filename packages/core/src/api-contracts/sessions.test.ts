@@ -678,6 +678,14 @@ describe("SessionResetConversationContract", () => {
     })).toEqual({ session_key: "k", memory: true });
   });
 
+  it("DIST-05: accepts request with optional purge_derived flag preserved", () => {
+    expect(SessionResetConversationContract.request.parse({
+      session_key: "k",
+      memory: true,
+      purge_derived: true,
+    })).toEqual({ session_key: "k", memory: true, purge_derived: true });
+  });
+
   it("rejects request missing session_key", () => {
     expect(() => SessionResetConversationContract.request.parse({})).toThrow();
   });
@@ -688,6 +696,15 @@ describe("SessionResetConversationContract", () => {
       lcdRowsDeleted: 12,
       sessionMessagesCleared: 8,
     })).toBeDefined();
+  });
+
+  it("DIST-05: accepts response with memoriesDeleted present", () => {
+    expect(SessionResetConversationContract.response.parse({
+      sessionKey: "k",
+      lcdRowsDeleted: 12,
+      sessionMessagesCleared: 8,
+      memoriesDeleted: 3,
+    })).toEqual({ sessionKey: "k", lcdRowsDeleted: 12, sessionMessagesCleared: 8, memoriesDeleted: 3 });
   });
 
   it("rejects response missing lcdRowsDeleted", () => {

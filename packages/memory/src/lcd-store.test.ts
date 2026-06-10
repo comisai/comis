@@ -1346,6 +1346,11 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
         token_count INTEGER NOT NULL, content TEXT NOT NULL, file_ids TEXT NOT NULL DEFAULT '[]',
         taint INTEGER NOT NULL DEFAULT 0, fallback INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
       );
+      -- Phase 172: lcd_memory_provenance (created by ensureLcdTables) FKs into
+      -- memories(id). The LCD store shares the memory DB in production
+      -- (createLcdStore(memoryAdapter.getDb())), so the FK target must exist for
+      -- createLcdStore's eager INSERT-provenance prepare to resolve. Minimal stub.
+      CREATE TABLE memories (id TEXT PRIMARY KEY);
     `);
     // Insert a summary row DIRECTLY (the index does not exist yet — this is the
     // pre-index history the rebuild backfill must cover).
@@ -1946,5 +1951,118 @@ describe("EFF-01: getMessagesByIds / getSummariesByIds", () => {
 
   it("EFF-01-S-7: countMessages returns 0 for a scope with no persisted messages", () => {
     expect(store.countMessages({ ...SCOPE_A, conversationId: "conv-none" })).toBe(0);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// createLcdStore — Phase 172 (DIST-01/DIST-03) provenance write surface
+// appendProvenance INSERTs an lcd_memory_provenance row (the distilled-memory ↔
+// LCD-summary link); markProvenanceSuperseded sets the pyramid supersession
+// pointer. Both are synchronous (better-sqlite3) and R4-scoped via the DTO.
+// The provenance row FKs into memories(id) ON DELETE CASCADE, so we seed a real
+// memory row first.
+// ───────────────────────────────────────────────────────────────────────────
+describe("createLcdStore — DIST-05 provenance write surface", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createLcdStore>;
+
+  /** Insert a minimal memories row so the provenance FK resolves. */
+  function seedMemoryRow(id: string, sessionKey = "sess-p"): void {
+    db.prepare(
+      "INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_session_key, tags, created_at)" +
+        " VALUES (?, 'tenant-p', 'agent-p', 'user-p', 'distilled content', 'learned', 'episodic', 'agent', ?, '[]', 1)",
+    ).run(id, sessionKey);
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("appendProvenance persists a row resolvable by summary_id and source_session_key", () => {
+    const memId = "mem-1";
+    seedMemoryRow(memId, "sess-p");
+    store.appendProvenance!({
+      provenanceId: "prov-1",
+      memoryId: memId,
+      summaryId: "sum-1",
+      sourceSessionKey: "sess-p",
+      conversationId: "conv-p",
+      agentId: "agent-p",
+      tenantId: "tenant-p",
+      createdAt: 123,
+    });
+
+    const row = db
+      .prepare(
+        "SELECT provenance_id, memory_id, summary_id, source_session_key, superseded_by FROM lcd_memory_provenance WHERE summary_id = ?",
+      )
+      .get("sum-1") as
+      | { provenance_id: string; memory_id: string; summary_id: string; source_session_key: string; superseded_by: string | null }
+      | undefined;
+    expect(row).toBeDefined();
+    expect(row!.provenance_id).toBe("prov-1");
+    expect(row!.memory_id).toBe(memId);
+    expect(row!.source_session_key).toBe("sess-p");
+    expect(row!.superseded_by).toBeNull();
+  });
+
+  it("ON DELETE CASCADE: deleting the memory row removes its provenance row", () => {
+    const memId = "mem-cascade";
+    seedMemoryRow(memId);
+    store.appendProvenance!({
+      provenanceId: "prov-c",
+      memoryId: memId,
+      summaryId: "sum-c",
+      sourceSessionKey: "sess-p",
+      conversationId: "conv-p",
+      agentId: "agent-p",
+      tenantId: "tenant-p",
+      createdAt: 1,
+    });
+    db.prepare("DELETE FROM memories WHERE id = ?").run(memId);
+    const row = db.prepare("SELECT 1 FROM lcd_memory_provenance WHERE provenance_id = ?").get("prov-c");
+    expect(row).toBeUndefined();
+  });
+
+  it("markProvenanceSuperseded sets superseded_by only on rows where it is NULL (first subsumer wins)", () => {
+    const mem1 = "mem-a";
+    const mem2 = "mem-b";
+    seedMemoryRow(mem1);
+    seedMemoryRow(mem2);
+    store.appendProvenance!({
+      provenanceId: "prov-x",
+      memoryId: mem1,
+      summaryId: "sum-x",
+      sourceSessionKey: "sess-p",
+      conversationId: "conv-p",
+      agentId: "agent-p",
+      tenantId: "tenant-p",
+      createdAt: 1,
+    });
+
+    // First supersede → sets the pointer.
+    store.markProvenanceSuperseded!("sum-x", mem2);
+    let row = db.prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE summary_id = ?").get("sum-x") as
+      | { superseded_by: string | null }
+      | undefined;
+    expect(row!.superseded_by).toBe(mem2);
+
+    // Second supersede with a different memory → no-op (superseded_by IS NULL guard).
+    seedMemoryRow("mem-c");
+    store.markProvenanceSuperseded!("sum-x", "mem-c");
+    row = db.prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE summary_id = ?").get("sum-x") as
+      | { superseded_by: string | null }
+      | undefined;
+    expect(row!.superseded_by).toBe(mem2); // unchanged — first subsumer won
+  });
+
+  it("markProvenanceSuperseded is a no-op when no matching summary row exists", () => {
+    // No throw, no rows affected.
+    expect(() => store.markProvenanceSuperseded!("sum-missing", "mem-z")).not.toThrow();
+    const count = db.prepare("SELECT COUNT(*) AS c FROM lcd_memory_provenance").get() as { c: number };
+    expect(count.c).toBe(0);
   });
 });

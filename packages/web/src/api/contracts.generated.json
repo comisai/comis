@@ -9478,6 +9478,9 @@
         },
         "memory": {
           "type": "boolean"
+        },
+        "purge_derived": {
+          "type": "boolean"
         }
       },
       "required": [

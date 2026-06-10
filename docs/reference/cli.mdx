@@ -1251,7 +1251,8 @@ This is the correct command when you want the model to explicitly forget a conve
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--memory` | `boolean` | `false` | **Reserved — not yet implemented.** Accepted without error, but RAG memory is NOT cleared; only LCD history and session transcript are cleared. The CLI prints a warning when this flag is passed. A future phase will wire the full conversation-scoped RAG-memory clear. |
+| `--memory` | `boolean` | `false` | Also clear the conversation's RAG memories — the full-forget path. Deletes every memory row matching this session (both paired-conversation memories **and** LCD-distilled episodic memories) for the agent + tenant scope, then unlinks them from consolidated observations (an observation built only from this session is deleted; one corroborated by other sessions is kept with the reference removed). The CLI prints the deleted count. If the daemon has no memory store wired, the flag is reported as unavailable (a stderr warning) and only LCD history + the session transcript are cleared. |
+| `--purge-derived` | `boolean` | `false` | Only meaningful with `--memory`. Escalates to deleting **every** consolidated observation derived from this session — even those still corroborated by other sessions (nuclear forget). Destructive; use only when a complete erasure of anything learned from the session is required. |
 | `--yes` | `boolean` | `false` | Required — skip the confirmation prompt (the command exits with an error if omitted) |
 
 <Warning>
@@ -1271,8 +1272,11 @@ comis sessions delete "default:user123:telegram" --yes
 # Full conversation reset (clears LCD history + session transcript — irreversible, requires --yes)
 comis sessions reset "default:user123:telegram" --yes
 
-# Pass --memory (reserved, not yet implemented — prints warning; only LCD + session are cleared)
+# Also clear RAG memories for this session (the full-forget path — prints deleted count)
 comis sessions reset "default:user123:telegram" --memory --yes
+
+# Nuclear forget — also purge consolidated observations derived from this session
+comis sessions reset "default:user123:telegram" --memory --purge-derived --yes
 ```
 
 #### `sessions backup`

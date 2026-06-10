@@ -76,7 +76,7 @@ import { systemNowMs } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { createRowMapper, rowToEntry, insertMemoryRow } from "./row-mapper.js";
 import { searchByVector } from "./hybrid-search.js";
-import { MemoryRowSchema } from "./row-schemas.js";
+import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
 import { isVecAvailable } from "./schema.js";
 
 /** Minimal pino-compatible logger (mirrors sqlite-memory-entity-store.ts). */
@@ -98,6 +98,9 @@ export interface MemoryConsolidationStoreDeps {
 // peels the joined `embedding` column off each raw row BEFORE this strict parse,
 // so the extra column never trips MemoryRowSchema's `strictObject`.
 const memoryRowMapper = createRowMapper(MemoryRowSchema);
+
+// DIST-05 id-projection mapper (sanctioned typed-read path; no `as Foo[]` cast).
+const idProjectionMapper = createRowMapper(IdProjectionRowSchema);
 
 /**
  * Decode a sqlite-vec embedding column (a Node Buffer of packed float32s) into
@@ -532,6 +535,165 @@ export function createSqliteMemoryConsolidationStore(
      * `consolidated_at IS NULL` already excludes it from re-selection). Returns
      * the number of rows actually changed.
      */
+    async unlinkDeletedSources(
+      _sessionKey: string,
+      tenantId: string,
+    ): Promise<Result<number, Error>> {
+      // DIST-05: called AFTER the raw memories were deleted by
+      // deleteBySessionKey, so the source rows are already gone. We re-scan each
+      // in-scope observation's source_ids and treat any id no longer present in
+      // `memories` (for this tenant) as a deleted source. Orphan (every source
+      // gone) → DELETE the observation; multi-source (some sources survive) →
+      // KEEP with the reduced source_ids (unlink-only — never over-delete).
+      //
+      // `_sessionKey` is part of the port signature for symmetry with the
+      // --purge path + a future provenance-joined variant; the
+      // delete-already-happened semantics mean the load-bearing predicate is
+      // "source id absent from memories" — sessionKey-agnostic but TENANT-scoped
+      // (fail-closed isolation), so the param is intentionally unused here.
+      const startMs = systemNowMs();
+      try {
+        // The set of live memory ids for this tenant — the membership oracle for
+        // "still exists". Scoped on tenant_id (fail-closed: a cross-tenant id is
+        // never in this set, so it can never be treated as "surviving"). Typed
+        // read via the sanctioned mapper (no `as Foo[]` cast — untyped-sqlite).
+        const liveIdsParsed = idProjectionMapper.parseRows(
+          db.prepare("SELECT id FROM memories WHERE tenant_id = ?").all(tenantId),
+        );
+        if (!liveIdsParsed.ok) return err(new Error(liveIdsParsed.error.message));
+        const liveIds = new Set(liveIdsParsed.value.map((r) => r.id));
+
+        // All observations (proof_count IS NOT NULL) in this tenant carry the
+        // source_ids array. Read the full rows through the existing memoryRowMapper
+        // (SELECT *) so source_ids is parsed for us by rowToEntry (no new schema,
+        // no manual JSON.parse). Scoped on tenant_id (isolation).
+        const observationsParsed = memoryRowMapper.parseRows(
+          db.prepare("SELECT * FROM memories WHERE proof_count IS NOT NULL AND tenant_id = ?").all(tenantId),
+        );
+        if (!observationsParsed.ok) return err(new Error(observationsParsed.error.message));
+        const observations = observationsParsed.value.map((row) => rowToEntry(row));
+
+        let orphansDeleted = 0;
+        const deleteSingle = db.prepare("DELETE FROM memories WHERE id = ? AND tenant_id = ?");
+        const updateSourceIds = db.prepare(
+          "UPDATE memories SET source_ids = ? WHERE id = ? AND tenant_id = ?",
+        );
+
+        const tx = db.transaction(() => {
+          for (const obs of observations) {
+            const ids = obs.sourceIds ?? [];
+            if (ids.length === 0) continue; // no sources to unlink
+            const surviving = ids.filter((id) => liveIds.has(id));
+            if (surviving.length === ids.length) continue; // no deleted sources — untouched
+            if (surviving.length === 0) {
+              // Orphan: every source gone → delete the observation.
+              deleteSingle.run(obs.id, tenantId);
+              orphansDeleted++;
+            } else {
+              // Multi-source: keep with reduced source_ids (unlink only).
+              updateSourceIds.run(JSON.stringify(surviving), obs.id, tenantId);
+            }
+          }
+          return orphansDeleted;
+        });
+        const deleted = tx();
+
+        logger?.debug(
+          { step: "consolidation-unlink", durationMs: systemNowMs() - startMs, orphansDeleted: deleted },
+          "unlinkDeletedSources complete (orphans deleted, multi-source unlinked)",
+        );
+        return ok(deleted);
+      } catch (e: unknown) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "consolidation-unlink",
+            durationMs: systemNowMs() - startMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "unlinkDeletedSources transaction failed — rolled back; consolidated observations may still reference deleted sources",
+          },
+          "unlinkDeletedSources failed",
+        );
+        return err(error);
+      }
+    },
+
+    async purgeConsolidatedDerivedFrom(
+      sessionKey: string,
+      tenantId: string,
+    ): Promise<Result<number, Error>> {
+      // DIST-05 nuclear escalation: delete EVERY observation that was derived
+      // (even partially) from this session's memories. Called via the opt-in
+      // --purge-derived flag ONLY. Like unlinkDeletedSources, this runs AFTER
+      // the raw memories were deleted, so we re-derive "was a source from this
+      // session" from the lcd_memory_provenance rows IF any survive — but the
+      // provenance rows are CASCADE-deleted with the memory rows, so instead we
+      // delete any observation whose source_ids reference a now-absent memory id
+      // (the same deleted-source oracle as unlinkDeletedSources, but DELETE the
+      // whole observation regardless of surviving multi-source corroboration).
+      //
+      // `sessionKey` is retained in the signature for the audit log + future
+      // provenance-joined variant; the predicate is tenant-scoped (fail-closed).
+      const startMs = systemNowMs();
+      try {
+        const liveIdsParsed = idProjectionMapper.parseRows(
+          db.prepare("SELECT id FROM memories WHERE tenant_id = ?").all(tenantId),
+        );
+        if (!liveIdsParsed.ok) return err(new Error(liveIdsParsed.error.message));
+        const liveIds = new Set(liveIdsParsed.value.map((r) => r.id));
+
+        const observationsParsed = memoryRowMapper.parseRows(
+          db.prepare("SELECT * FROM memories WHERE proof_count IS NOT NULL AND tenant_id = ?").all(tenantId),
+        );
+        if (!observationsParsed.ok) return err(new Error(observationsParsed.error.message));
+        const observations = observationsParsed.value.map((row) => rowToEntry(row));
+
+        let deletedCount = 0;
+        const deleteObs = db.prepare("DELETE FROM memories WHERE id = ? AND tenant_id = ?");
+
+        const tx = db.transaction(() => {
+          for (const obs of observations) {
+            const ids = obs.sourceIds ?? [];
+            if (ids.length === 0) continue;
+            // If ANY source id is now absent (deleted from this session's wipe),
+            // purge the whole observation — nuclear, ignores surviving sources.
+            const hasDeletedSource = ids.some((id) => !liveIds.has(id));
+            if (hasDeletedSource) {
+              deleteObs.run(obs.id, tenantId);
+              deletedCount++;
+            }
+          }
+          return deletedCount;
+        });
+        const deleted = tx();
+
+        logger?.debug(
+          {
+            step: "consolidation-purge-derived",
+            durationMs: systemNowMs() - startMs,
+            observationsDeleted: deleted,
+            sessionKey,
+          },
+          "purgeConsolidatedDerivedFrom complete (derived observations purged)",
+        );
+        return ok(deleted);
+      } catch (e: unknown) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "consolidation-purge-derived",
+            durationMs: systemNowMs() - startMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "purgeConsolidatedDerivedFrom transaction failed — rolled back; no observations purged",
+          },
+          "purgeConsolidatedDerivedFrom failed",
+        );
+        return err(error);
+      }
+    },
+
     async markReasoned(
       sourceIds: string[],
       tenantId: string,

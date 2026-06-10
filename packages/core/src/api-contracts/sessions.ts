@@ -607,9 +607,18 @@ export const SessionCompactContract = defineContract({
  * lcdStore.runOnConversation. Returns count-only — no message content is
  * returned or logged.
  *
- * `memory: true` additionally clears the conversation's RAG memories (the
- * GDPR / full-forget path). Deferred — accepted without error but not yet
- * implemented; the response will omit `memoriesDeleted` to signal that state.
+ * `memory: true` additionally clears the conversation's RAG memories — the
+ * GDPR / full-forget path (Phase 172-03 DIST-05). It deletes every memory row
+ * matching `source_session_key` (BOTH paired-conversation AND lcd-distilled
+ * episodic memories) for the (tenant, agent) scope, then unlinks them from
+ * consolidated observations (orphan→delete, multi-source→keep). The response
+ * then includes `memoriesDeleted` (the count). When the deployment has no
+ * MemoryPort wired, `--memory` is honestly reported as ignored (a WARN) and
+ * `memoriesDeleted` is omitted.
+ *
+ * `purge_derived: true` (opt-in, only meaningful with `memory: true`) escalates
+ * to deleting EVERY consolidated observation derived from this session, even
+ * those still corroborated by other sessions (nuclear forget — destructive).
  *
  * Best-effort on each layer:
  *   - If sessionStore has no entry for the session (e.g., dag conversation
@@ -617,8 +626,10 @@ export const SessionCompactContract = defineContract({
  *     no error is raised.
  *   - If lcdStore returns 0 rows (e.g., pipeline-mode session with no LCD
  *     history), `lcdRowsDeleted` is 0 and no error is raised.
+ *   - A RAG-memory delete failure is non-fatal — the LCD/sessionStore reset is
+ *     preserved and the failure degrades to a WARN.
  *
- * Request: `{ session_key, memory? }`.
+ * Request: `{ session_key, memory?, purge_derived? }`.
  * Response: `{ sessionKey, lcdRowsDeleted, sessionMessagesCleared, memoriesDeleted? }`.
  *
  * Schema uses the 12-shape allowlist: z.object, z.string, z.number,
@@ -629,6 +640,7 @@ export const SessionResetConversationContract = defineContract({
   request: z.object({
     session_key: z.string(),
     memory: z.boolean().optional(),
+    purge_derived: z.boolean().optional(),
   }),
   response: z.object({
     sessionKey: z.string(),
