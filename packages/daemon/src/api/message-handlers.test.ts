@@ -472,6 +472,88 @@ describe("capability guard", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Cross-channel authorization confinement.
+//
+// Security regression for the v2.20 review finding: the per-method channel
+// guard read the dispatcher field `_originChannelId`, which is NEVER injected
+// (the agent rpc bridge injects `_callerChannelId` from DeliveryOrigin). With
+// the wrong field name, `authorizeChannelAccess(undefined, target, undefined)`
+// always hit the "no origin -> allow (daemon-initiated)" branch, so a
+// prompt-injected agent could fetch/send on ANY channel the bot can reach,
+// not just the one the inbound message arrived on. These tests pin that a
+// non-admin caller carrying a `_callerChannelId` is confined to that channel.
+// ---------------------------------------------------------------------------
+
+describe("cross-channel authorization confinement", () => {
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    workspaceDir = mkdtempSync(join(tmpdir(), "comis-test-authz-"));
+  });
+
+  afterEach(() => {
+    rmSync(workspaceDir, { recursive: true, force: true });
+  });
+
+  it("denies message.send to a channel other than the caller's origin channel", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const handlers = createMessageHandlers(deps);
+
+    await expect(
+      handlers["message.send"]({
+        channel_type: "telegram",
+        channel_id: "channel-B",
+        text: "exfiltrated",
+        // Injected by createAgentRpcCall from ctx.deliveryOrigin for an inbound
+        // message that arrived on channel-A; non-admin (no _trustLevel).
+        _callerChannelId: "channel-A",
+      }),
+    ).rejects.toThrow("Channel access denied");
+  });
+
+  it("denies message.fetch from a channel other than the caller's origin channel", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const handlers = createMessageHandlers(deps);
+
+    await expect(
+      handlers["message.fetch"]({
+        channel_type: "telegram",
+        channel_id: "channel-B",
+        _callerChannelId: "channel-A",
+      }),
+    ).rejects.toThrow("Channel access denied");
+  });
+
+  it("allows message.send when target equals the caller's origin channel", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const handlers = createMessageHandlers(deps);
+
+    const result = await handlers["message.send"]({
+      channel_type: "telegram",
+      channel_id: "channel-A",
+      text: "hi",
+      _callerChannelId: "channel-A",
+    });
+
+    expect(result).toHaveProperty("channelId", "channel-A");
+  });
+
+  it("allows daemon-initiated send (no caller channel) for cron/heartbeat delivery", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const handlers = createMessageHandlers(deps);
+
+    // No _callerChannelId — a heartbeat/cron turn with no DeliveryOrigin.
+    const result = await handlers["message.send"]({
+      channel_type: "telegram",
+      channel_id: "channel-B",
+      text: "scheduled",
+    });
+
+    expect(result).toHaveProperty("channelId", "channel-B");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Inbound UUID -> platform-native message id resolution (production repro
 // 2026-04-30 17:04:31Z `message.delete` failed because
 // Number("e60f9634-...") -> NaN was passed to Telegram).

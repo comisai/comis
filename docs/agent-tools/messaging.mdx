@@ -8,6 +8,10 @@ icon: "paper-plane"
 
 **Who it's for:** Anyone building cross-channel agents -- alert routing, notification systems, multi-platform bots. The same `message` tool call works for Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, LINE, and Email.
 
+<Warning>
+**Channel confinement (security).** When an agent is handling an inbound user message, its `message` calls are confined to the channel that conversation arrived on — a prompt-injected agent cannot read or post to a *different* channel the bot can reach (the confused-deputy / cross-channel exfiltration boundary in the [threat model](/security/threat-model)). Cross-channel delivery is available from **trusted contexts**: scheduled/heartbeat tasks (no originating channel) and operators calling the gateway with an admin-scoped token. Attempting a cross-channel operation from a confined context returns a `Channel access denied` error.
+</Warning>
+
 ## message -- Cross-Channel Messaging
 
 The `message` tool supports **7 actions** -- `send`, `reply`, `react`, `edit`, `delete`, `fetch`, and `attach`. Comis dispatches each call to the right channel adapter based on `channel_type`. Not every action is supported on every platform (see the [capability matrix](#per-channel-capability-matrix) below); the tool returns a structured error if you ask for something the channel cannot do.
@@ -30,7 +34,7 @@ All actions require the `channel_type` parameter to specify which platform adapt
 
 <AccordionGroup>
   <Accordion title="send -- Send a new message">
-    Sends a new message to a specified channel. The agent does not need to be actively conversing in that channel -- it can send messages to any channel it has access to.
+    Sends a new message to a channel. From a **trusted context** (a scheduled/heartbeat task, or an operator using an admin-scoped gateway token) the agent can send to any channel it has access to. When **handling an inbound user message**, sends are confined to that conversation's channel (see the channel-confinement note above).
 
     **Parameters:**
 
@@ -54,7 +58,7 @@ All actions require the `channel_type` parameter to specify which platform adapt
     ```
 
     <Tip>
-    Use `send` for proactive messages like notifications, alerts, and announcements. The agent can send to channels it is not currently conversing in, making this ideal for cross-channel coordination.
+    Use `send` for proactive messages like notifications, alerts, and announcements. Cross-channel coordination (sending to a channel the agent is not currently conversing in) works from scheduled tasks and operator-initiated (admin) contexts; an agent answering an inbound message stays confined to that channel.
     </Tip>
   </Accordion>
 
