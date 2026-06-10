@@ -55,9 +55,25 @@ function result(id: string, score: number, content = `mem-${id}`): MemorySearchR
   return { entry, score };
 }
 
+/** A `toolResult`-role BudgetItem: the inseparable result tail of an assistant `tool_use`.
+ *  The step grouper (lcd-budget-eviction.groupIntoSteps) binds a trailing toolResult to the
+ *  preceding non-toolResult message, so an assistant tool_use + its toolResult form ONE step. */
+function toolResultItem(text: string, tokens: number): BudgetItem {
+  return { msg: { role: "toolResult", content: text } as unknown as AgentMessage, tokens };
+}
+
 /** Read a message's identifying text back (the builder stores it on `content`). */
 function textOf(m: AgentMessage): string {
   return (m as unknown as { content: string }).content;
+}
+
+/** Sum the tokens of the kept NON-floor (middle-band) items, by membership — the TRUE
+ *  discretionary consumption the `poolTokensUsed` accounting must match. */
+function trueKeptMiddleTokens(kept: AgentMessage[], band: BudgetItem[], floorTexts: Set<string>): number {
+  const keptTexts = new Set(kept.map(textOf));
+  return band
+    .filter((b) => keptTexts.has(textOf(b.msg)) && !floorTexts.has(textOf(b.msg)))
+    .reduce((s, b) => s + b.tokens, 0);
 }
 
 const NO_FLOORS: ArbiterFloors = { freshTailItems: [], pinnedItems: [] };
@@ -227,5 +243,77 @@ describe("marginArbitrate — RETR-02 pure tiered allocator", () => {
     expect(keptTexts).toContain("CANARY"); // floor survives a 0 pool
     expect(keptTexts).not.toContain("m1"); // nothing discretionary fits
     expect(out.perTierKept.ltm).toBe(0); // no LTM allocated with a 0 pool
+  });
+
+  it("WR-04: a pinned tool_use mid-step keeps its trailing toolResult whole AND bills poolTokensUsed exactly", () => {
+    // The accounting/atomicity gap: S4 pins were filtered at MESSAGE granularity. A
+    // pinned assistant `tool_use` whose `toolResult` is NOT itself pinned orphans a
+    // half-step — the toolResult is left in the relevance-evictable middle band, where
+    // the step grouper mis-binds it to the OLDER message and either drops it (splitting a
+    // pinned pair) or mis-counts the kept tail, so `poolTokensUsed` is off.
+    //
+    // History (oldest → newest):
+    //   h_old(50)                — an ordinary, evictable middle-band message
+    //   assistant tool_use(10)   — SECURITY-PINNED (a floor)
+    //   tr1(50)                  — its toolResult (NOT separately pinned)
+    // Pool = 50.
+    //
+    // STEP-correct behavior: the pinned tool_use's STEP is [tool_use, tr1] → the WHOLE
+    // step is a floor (both kept unconditionally, neither a relevance candidate). The
+    // middle band is just [h_old]; the 50-token pool keeps it. So poolTokensUsed = 50
+    // (h_old only — floors ride on top) and tr1 SURVIVES with its pinned tool_use.
+    //
+    // RED on pre-patch code (message-granularity): pinnedItems=[tool_use] only;
+    // middleBand=[h_old, tr1]; groupIntoSteps mis-binds tr1 to h_old → one 100-token step
+    // that does NOT fit the 50 pool → keptMiddle=[] → poolTokensUsed=0 and tr1 is DROPPED
+    // (the pinned tool_use's result orphaned). Both assertions below fail.
+    const hOld = item("h_old", 50);
+    const pinnedToolUse = item("PINNED-tool-use", 10, "assistant");
+    const tr1 = toolResultItem("tr1-result", 50);
+    const history: BudgetItem[] = [hOld, pinnedToolUse, tr1];
+    const out = marginArbitrate({
+      historyItems: history,
+      ltmCandidates: [],
+      kgCandidates: [],
+      floors: { freshTailItems: [], pinnedItems: [pinnedToolUse] }, // ONLY the tool_use is flagged
+      poolTokens: 50,
+      scorer: scoreRelevance,
+      query: HEALTHY_QUERY,
+    });
+    const keptTexts = out.kept.map(textOf);
+    // The pinned tool_use's toolResult must survive WITH it (step kept whole — no orphan).
+    expect(keptTexts).toContain("PINNED-tool-use");
+    expect(keptTexts).toContain("tr1-result");
+    // h_old fits the 50-token middle-band pool.
+    expect(keptTexts).toContain("h_old");
+    // poolTokensUsed counts the discretionary (non-floor) tokens EXACTLY: h_old = 50.
+    // The pinned step (tool_use + tr1) is a floor and rides on top (not billed).
+    const floorTexts = new Set(["PINNED-tool-use", "tr1-result"]);
+    const expectedUsed = trueKeptMiddleTokens(out.kept, history, floorTexts);
+    expect(expectedUsed).toBe(50); // sanity: the true middle-band consumption
+    expect(out.poolTokensUsed).toBe(expectedUsed);
+  });
+
+  it("WR-04: poolTokensUsed never exceeds the pool even with a mid-step pin (no over-billing)", () => {
+    // A complementary invariant: whatever the step boundaries, the discretionary
+    // accounting stays bounded by the pool (RETR-02 budget non-regression).
+    const pinnedToolUse = item("PIN-tu", 10, "assistant");
+    const tr = toolResultItem("tr", 30);
+    const h1 = item("h1", 40);
+    const h2 = item("h2", 40);
+    const history: BudgetItem[] = [h1, pinnedToolUse, tr, h2];
+    const out = marginArbitrate({
+      historyItems: history,
+      ltmCandidates: [],
+      kgCandidates: [],
+      floors: { freshTailItems: [], pinnedItems: [pinnedToolUse] },
+      poolTokens: 60,
+      scorer: scoreRelevance,
+      query: HEALTHY_QUERY,
+    });
+    expect(out.poolTokensUsed).toBeLessThanOrEqual(60);
+    // And it equals the true kept non-floor (membership) sum — the exact-accounting claim.
+    const floorTexts = new Set(["PIN-tu", "tr"]);
+    expect(out.poolTokensUsed).toBe(trueKeptMiddleTokens(out.kept, history, floorTexts));
   });
 });
