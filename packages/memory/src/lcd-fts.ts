@@ -135,7 +135,14 @@ export function isFtsAvailable(db: Database.Database): boolean {
  * Exported so tests can verify the detection independently (EFF-03-T-5).
  */
 export function hasCjkCodepoints(query: string): boolean {
-  return /[一-鿿㐀-䶿豈-﫿぀-ゟ゠-ヿ가-힯]/u.test(query);
+  // Explicit \u escapes (NOT literal glyphs) so the boundaries are auditable and
+  // immune to glyph/codepoint confusion. Ranges (WR-01): CJK Unified (4E00–9FFF),
+  // Ext-A (3400–4DBF), Compatibility Ideographs (F900–FAFF — NOT the literal 豈
+  // U+8C48, which over-matched ~27k codepoints), Hiragana (3040–309F), Katakana
+  // (30A0–30FF), Hangul Syllables (AC00–D7AF).
+  return /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]/u.test(
+    query,
+  );
 }
 
 /**
