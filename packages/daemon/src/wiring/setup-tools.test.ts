@@ -151,6 +151,10 @@ vi.mock("@comis/skills/tools", () => ({
   createCtxSearchTool: vi.fn(() => ({ name: "ctx_search", execute: vi.fn() })),
   createCtxInspectTool: vi.fn(() => ({ name: "ctx_inspect", execute: vi.fn() })),
   createCtxExpandTool: vi.fn(() => ({ name: "ctx_expand", execute: vi.fn() })),
+  // DEPTH-02: the tier→multi-hop-depth map consumed by resolveCtxExpandDepth at the
+  // ctx_expand wiring site. A pure map (nano1/small2/mid3/frontier4) — the gate test
+  // only needs it to return a number; the real mapping is unit-tested in skills.
+  depthForTier: vi.fn((c: string) => ({ nano: 1, small: 2, mid: 3, frontier: 4 })[c] ?? 1),
 }));
 
 // `createPlatformToolRegistry` mock returns descriptors that delegate back
@@ -232,6 +236,11 @@ vi.mock("@comis/core", () => ({
 
 vi.mock("@comis/agent", () => ({
   sessionKeyToPath: mockSessionKeyToPath,
+  // DEPTH-02: the ctx_expand wiring resolves a tier-gated multi-hop depth via
+  // resolveModelProfile(...).capabilityClass (through resolveCtxExpandDepth). The
+  // mock returns a minimal profile so the dag-gated wiring path runs; the depth
+  // value itself is asserted in setup-context-tools.test.ts against the real resolver.
+  resolveModelProfile: () => ({ capabilityClass: "small" }),
 }));
 
 // ---------------------------------------------------------------------------
