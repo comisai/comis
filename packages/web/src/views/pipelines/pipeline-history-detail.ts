@@ -17,7 +17,7 @@ import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { RpcClient } from "../../api/rpc-client.js";
 import type { GraphRunDetail } from "../../api/types/index.js";
-import { renderMarkdown, sanitizeHtml } from "../../components/domain/ic-chat-message.js";
+import { renderMarkdown } from "../../components/domain/ic-chat-message.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import "../../components/nav/ic-breadcrumb.js";
 import type { BreadcrumbItem } from "../../components/nav/ic-breadcrumb.js";
@@ -65,9 +65,6 @@ function formatNodeName(nodeId: string): string {
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
-
-// Suppress unused import warning -- sanitizeHtml used indirectly via renderMarkdown
-void sanitizeHtml;
 
 @customElement("ic-pipeline-history-detail")
 export class IcPipelineHistoryDetail extends LitElement {

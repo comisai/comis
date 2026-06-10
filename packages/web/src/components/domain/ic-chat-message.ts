@@ -11,22 +11,6 @@ import "./ic-code-block.js";
 import "../display/ic-icon.js";
 
 /**
- * Sanitize HTML content to prevent XSS attacks.
- * Strips script tags, iframes, objects, embeds, forms,
- * on-event handlers, and javascript: URLs.
- */
-function sanitizeHtml(text: string): string {
-  let result = text;
-  // Strip dangerous tags (case-insensitive)
-  result = result.replace(/<\/?(?:script|iframe|object|embed|form)\b[^>]*>/gi, "");
-  // Strip on* event handlers from any remaining HTML
-  result = result.replace(/\bon\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "");
-  // Strip javascript: URLs
-  result = result.replace(/javascript\s*:/gi, "");
-  return result;
-}
-
-/**
  * Escape HTML special characters.
  */
 function escapeHtml(text: string): string {
@@ -35,6 +19,25 @@ function escapeHtml(text: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/**
+ * Validate a markdown link URL's scheme for safe rendering.
+ *
+ * The input is already HTML-escaped by `renderMarkdown` (so `<>&"` are inert),
+ * which neutralizes entity-encoded scheme tricks. This guard additionally
+ * rejects executable schemes (`javascript:`, `data:`, `vbscript:`, `file:`) —
+ * stripping all whitespace/control chars before the check so obfuscations like
+ * `java\tscript:` cannot slip through. Returns the (escaped) URL when safe, or
+ * `null` when the scheme is unsafe (caller renders the link text only).
+ */
+function sanitizeUrl(escapedUrl: string): string | null {
+  // eslint-disable-next-line no-control-regex -- deliberately match C0 controls used to obfuscate URL schemes
+  const probe = escapedUrl.replace(/[\u0000-\u0020]/g, "").toLowerCase();
+  if (/^(?:javascript|data|vbscript|file):/.test(probe)) {
+    return null;
+  }
+  return escapedUrl;
 }
 
 /**
@@ -114,10 +117,27 @@ function renderAttachment(json: string, token: string): string {
  * lists, tables, and line breaks.
  */
 function renderMarkdown(text: string, token = ""): string {
-  // Sanitize first
-  let sanitized = sanitizeHtml(text);
+  // SECURITY: this renderer emits ONLY the fixed set of tags it generates from
+  // markdown syntax — raw HTML from the (untrusted) message is NEVER passed
+  // through to the unsafeHTML sink. Trusted/structured markers (attachment
+  // markers, code fences) are pulled out to placeholders FIRST, then ALL
+  // remaining markup is HTML-escaped, so a payload like `<iframe srcdoc=…>` or
+  // `<svg onload=…>` renders as inert text rather than a live element. This
+  // replaces the old single-pass denylist that a nested-tag payload
+  // (`<ifr<iframe>ame …>`) could defeat to smuggle a live `<iframe>` through.
 
-  // 1. Code fences: ```lang\n...\n```
+  // 1. Attachment markers -> placeholders. renderAttachment escapes url +
+  //    fileName, so this is safe whether the marker is server-generated or
+  //    forged in the message body. The placeholder uses no markdown-significant
+  //    chars so later inline transforms leave it intact.
+  const attachmentBlocks: string[] = [];
+  let sanitized = text.replace(/<!-- attachment:(.*?) -->/g, (_, json) => {
+    const placeholder = `\x00ATTACH${attachmentBlocks.length}\x00`;
+    attachmentBlocks.push(renderAttachment(json, token));
+    return placeholder;
+  });
+
+  // 2. Code fences: ```lang\n...\n``` -> placeholders (content escaped inside).
   const codeFenceBlocks: string[] = [];
   sanitized = sanitized.replace(
     /```(\w*)\n([\s\S]*?)```/g,
@@ -131,10 +151,15 @@ function renderMarkdown(text: string, token = ""): string {
     },
   );
 
-  // 2. Inline code: `code`
+  // 3. Escape ALL remaining markup. After this point no raw tag from the
+  //    message can reach the output; markdown syntax (* _ # | [] backtick) is
+  //    untouched by escapeHtml and is rendered into the safe tag set below.
+  sanitized = escapeHtml(sanitized);
+
+  // 4. Inline code: `code` (content already escaped by step 3).
   sanitized = sanitized.replace(
     /`([^`]+)`/g,
-    (_, code) => `<code class="inline-code">${escapeHtml(code)}</code>`,
+    (_, code) => `<code class="inline-code">${code}</code>`,
   );
 
   // Process block-level elements line by line
@@ -213,12 +238,11 @@ function renderMarkdown(text: string, token = ""): string {
 
   let result = output.join("\n");
 
-  // Replace attachment markers with rendered media elements
-  // HTML comments survive sanitizeHtml and processInline unchanged
-  result = result.replace(
-    /<!-- attachment:(.*?) -->/g,
-    (_, json) => renderAttachment(json, token),
-  );
+  // Restore attachment placeholders with their rendered media elements. The
+  // placeholder carries no markdown-significant chars, so it survives the
+  // inline transforms above and can be restored anywhere (including inline).
+  // eslint-disable-next-line no-control-regex -- placeholder sentinel uses NUL delimiters
+  result = result.replace(/\x00ATTACH(\d+)\x00/g, (_, n) => attachmentBlocks[parseInt(n, 10)] ?? "");
 
   return result;
 }
@@ -229,11 +253,17 @@ function renderMarkdown(text: string, token = ""): string {
 function processInline(text: string): string {
   let result = text;
 
-  // Links: [text](url)
+  // Links: [text](url). The whole text was HTML-escaped by renderMarkdown, so
+  // `linkText` and `url` are already attribute-safe; validate the URL scheme so
+  // a `javascript:` / `data:` link cannot yield an executable href. On an
+  // unsafe scheme, render the (inert, escaped) link text only.
   result = result.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
-    (_, linkText, url) =>
-      `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="md-link">${linkText}</a>`,
+    (_, linkText, url) => {
+      const safeUrl = sanitizeUrl(url);
+      if (safeUrl === null) return linkText;
+      return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${linkText}</a>`;
+    },
   );
 
   // Bold: **text** or __text__
@@ -604,7 +634,7 @@ export class IcChatMessage extends LitElement {
 }
 
 /** Exported for testing. */
-export { renderMarkdown, sanitizeHtml };
+export { renderMarkdown };
 
 declare global {
   interface HTMLElementTagNameMap {
