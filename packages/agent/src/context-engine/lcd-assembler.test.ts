@@ -2234,3 +2234,293 @@ describe("EFF-02: assembler freshTailTurns tier-aware clamping", () => {
     expect(assistantMsgs.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// RETR-02/03/05 (Phase 173-03): the margin arbiter wired at the evict seam.
+//
+// The KEYSTONE invariant (LOCKED #2, Pitfall 5): frontier/mid assembly is
+// BYTE-IDENTICAL with the flag present — the arbiter does NOT run for them. The
+// frontier/mid branch calls the EXACT pre-patch `evictHistoryUnderBudget(evictable,
+// budget.availableHistoryTokens)`. The gate is "the arbiter did not run," proven by
+// (a) NO context:arbitrated event AND (b) deep equality of the assembled AgentMessage[]
+// flag-OFF (relevanceFirst absent / undefined) vs flag-path (relevanceFirst:false).
+// The relevance-first path (small non-caching) runs the arbiter (event fires); S4 pins
+// survive arbitration unconditionally; the context:arbitrated event is content-free.
+// ---------------------------------------------------------------------------
+describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identical + arbiter path + S4 pins)", () => {
+  let store: ContextStorePort;
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  const frontierProfile: ModelProfile = {
+    ...FAIL_CLOSED_PROFILE,
+    capabilityClass: "frontier" as const,
+    contextWindow: 200_000,
+    maxOutputTokens: 8_192,
+  };
+  const midProfile: ModelProfile = {
+    ...FAIL_CLOSED_PROFILE,
+    capabilityClass: "mid" as const,
+    contextWindow: 200_000,
+    maxOutputTokens: 8_192,
+  };
+  // Small non-caching profile: supportsPromptCache=false → relevance-first eligible.
+  const smallNoCacheProfile: ModelProfile = {
+    ...FAIL_CLOSED_PROFILE,
+    capabilityClass: "small" as const,
+    contextWindow: 8_192,
+    maxOutputTokens: 2_048,
+    reasoningStyle: "none" as const,
+    supportsPromptCache: false,
+  };
+
+  /** Seed N user/assistant text turns with a fixed token count each (forces eviction). */
+  function seedTurns(count: number, tokensEach: number): Message[] {
+    const msgs: Message[] = [];
+    for (let i = 0; i < count; i++) {
+      msgs.push(userMsg(`u${i}`));
+      msgs.push(assistantText(`a${i}`));
+    }
+    let seq = 0;
+    for (const m of msgs) {
+      store.append({
+        scope: SCOPE,
+        seq: seq++,
+        role: m.role,
+        tokenCount: tokensEach,
+        createdAt: FIXED_CREATED_AT,
+        parts: messageToParts(m),
+      });
+    }
+    return msgs;
+  }
+
+  /** Strip the per-message timestamp the transcript-repair stamps (clock noise) for deep-equal. */
+  function stripVolatile(out: AgentMessage[]): unknown {
+    return JSON.parse(JSON.stringify(out, (key, value) => (key === "timestamp" ? undefined : value)));
+  }
+
+  it("Test 1 (KEYSTONE — FRONTIER BYTE-IDENTICAL): assembled output is deep-equal flag-OFF vs flag-path; arbiter does NOT run", async () => {
+    seedTurns(8, 600); // 9600 tokens → forces eviction under the 200K window? no — but exercises the evict seam
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 8; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+
+    // Path A: relevanceFirst ABSENT (frontier default — the pre-patch state).
+    const emitA = vi.fn<[string, unknown], void>();
+    const { deps: depsA } = makeDeps(store);
+    const outA = await createLcdContextEngine(dagConfig(2), {
+      ...depsA,
+      modelProfile: frontierProfile,
+      eventBus: { emit: emitA },
+    }).transformContext(live);
+
+    // Path B: relevanceFirst EXPLICITLY false (frontier recency-first).
+    const emitB = vi.fn<[string, unknown], void>();
+    const { deps: depsB } = makeDeps(store);
+    const outB = await createLcdContextEngine(dagConfig(2), {
+      ...depsB,
+      modelProfile: frontierProfile,
+      relevanceFirst: false,
+      eventBus: { emit: emitB },
+    }).transformContext(live);
+
+    // The arbiter NEVER runs for frontier — no context:arbitrated event on either path.
+    expect(emitA.mock.calls.some(([n]) => n === "context:arbitrated")).toBe(false);
+    expect(emitB.mock.calls.some(([n]) => n === "context:arbitrated")).toBe(false);
+    // DEEP EQUALITY: flag-OFF and flag-path produce byte-identical assembled output.
+    expect(stripVolatile(outA)).toEqual(stripVolatile(outB));
+    // And the output is non-empty (the test actually exercised assembly).
+    expect(outA.length).toBeGreaterThan(0);
+  });
+
+  it("Test 2 (MID byte-identical): mid profile is byte-identical flag-OFF vs flag-path; arbiter does NOT run", async () => {
+    seedTurns(6, 600);
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 6; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+
+    const emitA = vi.fn<[string, unknown], void>();
+    const { deps: depsA } = makeDeps(store);
+    const outA = await createLcdContextEngine(dagConfig(2), {
+      ...depsA,
+      modelProfile: midProfile,
+      eventBus: { emit: emitA },
+    }).transformContext(live);
+
+    const emitB = vi.fn<[string, unknown], void>();
+    const { deps: depsB } = makeDeps(store);
+    const outB = await createLcdContextEngine(dagConfig(2), {
+      ...depsB,
+      modelProfile: midProfile,
+      relevanceFirst: false,
+      eventBus: { emit: emitB },
+    }).transformContext(live);
+
+    expect(emitA.mock.calls.some(([n]) => n === "context:arbitrated")).toBe(false);
+    expect(emitB.mock.calls.some(([n]) => n === "context:arbitrated")).toBe(false);
+    expect(stripVolatile(outA)).toEqual(stripVolatile(outB));
+  });
+
+  it("Test 3 (relevance-first path runs the arbiter): small non-caching + relevanceFirst=true emits context:arbitrated", async () => {
+    // Tight 8K window + heavy turns → the evict seam is exercised; the arbiter runs.
+    seedTurns(8, 600);
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 8; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+    const emit = vi.fn<[string, unknown], void>();
+    const { deps } = makeDeps(store);
+    await createLcdContextEngine(dagConfig(1), {
+      ...deps,
+      getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
+      modelProfile: smallNoCacheProfile,
+      getThinkingLevel: () => "medium",
+      relevanceFirst: true,
+      eventBus: { emit },
+    }).transformContext(live);
+
+    // The arbiter ran → a content-free context:arbitrated event fired.
+    const arb = emit.mock.calls.find(([n]) => n === "context:arbitrated");
+    expect(arb).toBeDefined();
+  });
+
+  it("Test 4 (S4 pin survival on the arbiter path): a canary-marked history item is NEVER a relevance candidate and is always kept", async () => {
+    const CANARY = "CANARY-TOKEN-173-03-ARBITER";
+    seedTurns(7, 600);
+    // Append the security-pinned message (seq 14) — a canary-bearing user message.
+    const securityMsg: Message = {
+      role: "user",
+      content: `Security context: canary=${CANARY}, system boundary enforced`,
+      timestamp: FIXED_CREATED_AT,
+    } as Message;
+    store.append({
+      scope: SCOPE,
+      seq: 14,
+      role: securityMsg.role,
+      tokenCount: 600,
+      createdAt: FIXED_CREATED_AT,
+      parts: messageToParts(securityMsg),
+    });
+    store.append({
+      scope: SCOPE,
+      seq: 15,
+      role: "user",
+      tokenCount: 1,
+      createdAt: FIXED_CREATED_AT,
+      parts: messageToParts(userMsg("final")),
+    });
+
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 7; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+    live.push(securityMsg as AgentMessage);
+    live.push(assistantText("ok after security") as AgentMessage);
+
+    const { deps } = makeDeps(store);
+    const out = await createLcdContextEngine(dagConfig(1), {
+      ...deps,
+      getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
+      modelProfile: smallNoCacheProfile,
+      getThinkingLevel: () => "medium",
+      relevanceFirst: true, // arbiter active
+      securityPinMarkers: { canaryToken: CANARY, contentDelimiter: "" },
+    }).transformContext(live);
+
+    // The canary-bearing item survives the relevance arbiter unconditionally.
+    expect(JSON.stringify(out)).toContain(CANARY);
+  });
+
+  it("Test 5 (T0 fresh-tail unconditional on the relevance path): the fresh tail is always kept", async () => {
+    seedTurns(8, 600);
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 8; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+    const { deps } = makeDeps(store);
+    const out = await createLcdContextEngine(dagConfig(2), {
+      ...deps,
+      getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
+      modelProfile: smallNoCacheProfile,
+      getThinkingLevel: () => "medium",
+      relevanceFirst: true,
+    }).transformContext(live);
+    // The last live message (the fresh tail) ALWAYS ships (A1/A3) on the arbiter path too.
+    expect(out[out.length - 1]).toBe(live[live.length - 1]);
+  });
+
+  it("Test 6 (content-free context:arbitrated emit): the payload carries per-tier counts + pool tokens + boolean only (NO content)", async () => {
+    seedTurns(8, 600);
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 8; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+    const emit = vi.fn<[string, unknown], void>();
+    const { deps } = makeDeps(store);
+    await createLcdContextEngine(dagConfig(1), {
+      ...deps,
+      getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
+      modelProfile: smallNoCacheProfile,
+      getThinkingLevel: () => "medium",
+      relevanceFirst: true,
+      eventBus: { emit },
+    }).transformContext(live);
+
+    const arb = emit.mock.calls.find(([n]) => n === "context:arbitrated");
+    expect(arb).toBeDefined();
+    const payload = arb![1] as Record<string, unknown>;
+    // CONTENT-FREE: exactly the counts/ids/boolean/timestamp keys — nothing else.
+    expect(Object.keys(payload).sort()).toEqual(
+      ["agentId", "discretionaryPoolTokens", "perTierKept", "relevanceFirst", "sessionKey", "timestamp"].sort(),
+    );
+    expect(payload.relevanceFirst).toBe(true);
+    expect(typeof payload.discretionaryPoolTokens).toBe("number");
+    expect(typeof payload.timestamp).toBe("number");
+    expect(payload.agentId).toBe("agent_a");
+    expect(payload.sessionKey).toBe("sess-a");
+    // perTierKept is a counts map (history/ltm/kg) — no content strings.
+    const perTier = payload.perTierKept as Record<string, unknown>;
+    expect(typeof perTier.history).toBe("number");
+  });
+
+  it("Test 7 (no over-allocate composes with Fix-3): assembled history tokens ≤ budget.availableHistoryTokens on the arbiter path", async () => {
+    seedTurns(8, 600);
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 8; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+    const logger = createMockLogger();
+    const { deps } = makeDeps(store);
+    await createLcdContextEngine(dagConfig(1), {
+      ...deps,
+      logger: logger as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
+      modelProfile: smallNoCacheProfile,
+      getThinkingLevel: () => "medium",
+      relevanceFirst: true,
+    }).transformContext(live);
+
+    // The lcd-evict DEBUG reports the pool (budget.availableHistoryTokens) and keptCount.
+    const evictCall = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
+      .find(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
+    expect(evictCall).toBeDefined();
+    const ev = evictCall![0] as Record<string, unknown>;
+    const pool = ev.budgetTokens as number;
+    const keptCount = ev.keptCount as number;
+    // kept history tokens = keptCount × 600 ≤ pool (no over-allocate-then-reclaim).
+    expect(keptCount * 600).toBeLessThanOrEqual(pool);
+  });
+});

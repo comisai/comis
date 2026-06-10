@@ -269,6 +269,16 @@ export interface ContextEngineDeps {
    *  This makes the schema field live rather than dead config. Frontier/mid: default 768
    *  → byte-identical result (MIN_VISIBLE_OUTPUT_TOKENS=768). */
   minVisibleOutputTokens?: number;
+
+  /** RETR-02/03 (Phase 173): the resolved relevance-first policy signal for this turn.
+   *  Resolved ONCE in scaffold-defaults (the capability + supportsPromptCache gate;
+   *  explicit > capability-default > off) and threaded from setupContextEngine — the
+   *  assembler CONSUMES the boolean, it does NOT recompute the gate. When `true` (small/
+   *  nano non-caching, or an explicit opt-in) the dag assembler runs the margin arbiter
+   *  (marginArbitrate) at the evict seam instead of evictHistoryUnderBudget; when `false`
+   *  or ABSENT (frontier/mid + caching) the existing recency-first eviction runs VERBATIM
+   *  — frontier/mid byte-identical (LOCKED #2: the arbiter does not run for them). */
+  relevanceFirst?: boolean;
 }
 
 // ---------------------------------------------------------------------------
