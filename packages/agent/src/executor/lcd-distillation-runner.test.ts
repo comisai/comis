@@ -863,9 +863,10 @@ describe("runDistillationPassAfterTurn — WR-05 supersession partial-wire obser
         c[0] !== null &&
         "errorKind" in (c[0] as object) &&
         "hint" in (c[0] as object) &&
-        // The signal must specifically name the supersession method (not the
-        // appendProvenance branch, which is present in this fixture).
-        String((c[1] ?? "")).toLowerCase().includes("supersed"),
+        // The signal must specifically name the supersession path (not the
+        // appendProvenance branch, which is present in this fixture). "supers"
+        // matches both "supersession" (message) and "supersede" (hint).
+        String((c[1] ?? "")).toLowerCase().includes("supers"),
     );
     expect(observed).toBe(true);
   });
@@ -903,7 +904,7 @@ describe("runDistillationPassAfterTurn — WR-05 supersession partial-wire obser
     const supersedSignals = [
       ...(logger.debug as ReturnType<typeof vi.fn>).mock.calls,
       ...(logger.warn as ReturnType<typeof vi.fn>).mock.calls,
-    ].filter((c) => String((c[1] ?? "")).toLowerCase().includes("supersed"));
+    ].filter((c) => String((c[1] ?? "")).toLowerCase().includes("supers"));
     expect(supersedSignals).toHaveLength(1);
   });
 });

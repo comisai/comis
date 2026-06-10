@@ -405,6 +405,31 @@ async function markDescendantsSuperseded(
     logger: ComisLogger;
   },
 ): Promise<void> {
+  // WR-05 (Phase 173-05): mirror the appendProvenance sibling (~STEP 11) — do NOT
+  // silently optional-chain past a missing markProvenanceSuperseded. Branch on
+  // `== null` ONCE (the method ref is stable) and emit a content-free DEBUG so a
+  // realistic partial-wire (appendProvenance present, markProvenanceSuperseded not)
+  // is diagnosable: without the mark, descendant provenance rows are never superseded
+  // and the recall down-weighting will double-count across condense levels. The BFS's
+  // ONLY side effect is the mark call, so when it is absent the whole walk is a no-op —
+  // skip it after the single DEBUG (one signal, not per-node spam; the §2.7 N→aggregate
+  // discipline). DEBUG (not WARN): the memory write + provenance link already succeeded.
+  const markFn = deps.lcdStore.markProvenanceSuperseded;
+  if (markFn == null) {
+    deps.logger.debug(
+      {
+        rootSummaryId,
+        memoryId: supersededByMemoryId,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        errorKind: "precondition" as ErrorKind,
+        hint: "lcdStore.markProvenanceSuperseded not implemented — descendant provenance rows NOT superseded (recall down-weighting may double-count across condense levels); wire the concrete LCD provenance supersession adapter",
+      },
+      "LCD distillation supersession skipped (no impl)",
+    );
+    return;
+  }
+
   // BFS — never revisit a summaryId (cycle guard).
   const visited = new Set<string>();
   const queue: string[] = [rootSummaryId];
@@ -417,14 +442,9 @@ async function markDescendantsSuperseded(
     // getSummaryChildren is synchronous (better-sqlite3).
     const children = deps.lcdStore.getSummaryChildren(scope, id);
     for (const child of children) {
-      // markProvenanceSuperseded is optional (172-03 adds concrete SQL impl).
       // WR-01: thread scope.tenantId/agentId — the UPDATE is R4-scoped fail-closed.
-      deps.lcdStore.markProvenanceSuperseded?.(
-        child.summaryId,
-        supersededByMemoryId,
-        scope.tenantId,
-        scope.agentId,
-      );
+      // markFn is proven non-null above (WR-05), so no optional-chain here.
+      markFn(child.summaryId, supersededByMemoryId, scope.tenantId, scope.agentId);
       queue.push(child.summaryId);
     }
   }
