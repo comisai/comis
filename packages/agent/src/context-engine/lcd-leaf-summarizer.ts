@@ -46,6 +46,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
 import type { ComisLogger } from "@comis/core";
 import type { CapabilityClass } from "../executor/model-profile.js";
+import { buildDepthAwareInstructions } from "./summarize-prompt-style.js";
 import type { SecurityPinMarkers } from "./security-context-pinner.js";
 import {
   COMPACTION_MAX_RETRIES,
@@ -182,6 +183,8 @@ export interface LeafSummarizeOptions {
   previousSummary?: string;
   /** Aggressive (Level-2) hint — best-effort retry over the oversized-filtered set. */
   aggressive?: boolean;
+  /** Depth of the summary being built (0=leaf, 1=timeline, 2=trajectory, 3+=memory-node). Defaults to 0. */
+  depth?: number;
 }
 
 /**
@@ -644,26 +647,6 @@ function buildDeterministicFallback(messageCount: number, chunkTokens: number): 
 // ---------------------------------------------------------------------------
 
 /**
- * Build the leaf-specific summarization instructions appended to the SDK's base
- * prompt via `customInstructions`. A leaf is a finer-grained chunk summary than a
- * full compaction — it does NOT require the 9-section compaction schema (RESEARCH
- * §Pattern 1 difference #2); it asks for a faithful, compact prose summary that
- * preserves concrete details (ids, decisions, tool outcomes) so a later
- * expansion / recall pass can rely on it. Returns the instruction string.
- */
-function buildLeafSummaryInstructions(aggressive: boolean): string {
-  const base =
-    "Summarize the conversation chunk above into a faithful, compact summary. " +
-    "Preserve concrete details that later turns may rely on: file paths, ids, " +
-    "decisions made, tool calls and their outcomes (success/failure), and any " +
-    "open questions. Do NOT invent facts not present in the chunk. Write prose, " +
-    "not a section template.";
-  return aggressive
-    ? base + " Be as terse as possible while keeping the load-bearing facts."
-    : base;
-}
-
-/**
  * Construct the PRODUCTION {@link LeafSummarizer} — the seam that wraps the SDK
  * `generateSummary`. Phase 132 swaps THIS factory's output for a spend-governed /
  * circuit-broken variant; 129 calls `generateSummary` directly. The override
@@ -693,7 +676,7 @@ export function buildLeafSummarizeFn(
     const apiKey = deps.overrideModel
       ? await deps.overrideModel.getApiKey()
       : await deps.getApiKey();
-    const instructions = buildLeafSummaryInstructions(opts.aggressive ?? false);
+    const instructions = buildDepthAwareInstructions(opts.depth ?? 0, opts.aggressive ?? false);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK generateSummary takes an opaque Model<any>
     return generateSummary(
       messages,

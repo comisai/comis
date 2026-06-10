@@ -220,6 +220,7 @@ export async function maybeRunCondensePass(
     const result = await summarizeCondensedChunk(run.children, summarizerDeps, {
       reserveTokens: opts.condensedTargetTokens,
       previousSummary,
+      depth, // SUM-01: thread computed depth so d1/d2/d3+ prompt styles actually fire
     });
 
     // Persist + link + range-replace at the run's EXACT [startOrdinal, endOrdinal]

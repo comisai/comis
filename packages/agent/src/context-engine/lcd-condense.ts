@@ -236,7 +236,7 @@ export function selectCondensableTier(
 export async function summarizeCondensedChunk(
   children: CondenseChildSummary[],
   deps: LeafSummarizerDeps,
-  opts: { reserveTokens: number; previousSummary?: string },
+  opts: { reserveTokens: number; previousSummary?: string; depth?: number },
 ): Promise<CondenseSummaryResult> {
   // Before-size authority: the STORED per-child tokenCounts (Pitfall 2/5) — NOT a
   // re-estimate of the concatenation (which would exclude the F3 thinking the
@@ -267,7 +267,7 @@ export async function summarizeCondensedChunk(
     const accepted = await tryCondenseLevel(
       deps,
       pseudoMessage,
-      { reserveTokens: effectiveReserveTokens, previousSummary: opts.previousSummary },
+      { reserveTokens: effectiveReserveTokens, previousSummary: opts.previousSummary, depth: opts.depth },
       shrinkCeilingTokens,
       attempt,
     );
@@ -292,7 +292,7 @@ export async function summarizeCondensedChunk(
   const aggressive = await tryCondenseLevel(
     deps,
     pseudoMessage,
-    { reserveTokens: effectiveReserveTokens, previousSummary: opts.previousSummary, aggressive: true },
+    { reserveTokens: effectiveReserveTokens, previousSummary: opts.previousSummary, aggressive: true, depth: opts.depth },
     shrinkCeilingTokens,
     maxAttempts,
   );
