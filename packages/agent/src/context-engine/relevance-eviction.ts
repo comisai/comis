@@ -77,7 +77,10 @@ import type { ContextEngineDeps } from "./types.js";
  * @param deps - the context-engine deps (modelProfile, relevanceScorer, contextStore, R4 scope).
  * @param middleBand - the evictable (already pin-free by construction) history band + tokens.
  * @param poolTokens - the discretionary pool the middle band may consume (post-floors).
- * @param liveMessages - the live message array (reserved for query construction at the seam).
+ * @param _liveMessages - CURRENTLY UNUSED (IN-02, Phase 174-04). The relevance query is built
+ *   UPSTREAM by the seam (`evictUnderArbiter` → `buildAssemblyRelevanceQuery`) and passed as
+ *   `query`; this function never reads the live array. Retained for signature symmetry with the
+ *   recency fill / a possible future in-function query refinement — prefixed `_` (unused).
  * @param query - the relevance query (degraded → recency floor).
  * @returns the kept middle-band messages in chronological order (selection reorders; output does not).
  */
@@ -138,7 +141,9 @@ export function rankMiddleBandByRelevance(
   // (FTS5 MATCH of space-separated terms is implicit AND — an AND of the whole query almost
   // never matches a single historical message, which would silently degrade the pass to
   // recency, the CR-01 no-op trap). The terms come from buildAssemblyRelevanceQuery's
-  // tokenizer (quotes + non-\p{L}\p{N} already stripped), so the bare ` OR ` is FTS5-safe.
+  // tokenizer (quotes + non-\p{L}\p{N} already stripped) AND ASSEMBLY_STOPWORDS now drops the
+  // FTS5 operator keywords near/and/or/not (IN-04), so the bare ` OR ` is FTS5-safe — no term
+  // can be a bare operator that alters MATCH parsing.
   const ftsQuery = query.terms.join(" OR ");
   const result = store.searchLcd(scope, ftsQuery, {
     limit: Math.max(1, evictableBand.length),

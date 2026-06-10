@@ -199,13 +199,28 @@ function buildAssemblyRelevanceQuery(liveMessages: AgentMessage[]): ArbiterRelev
  *  scorer's RELEVANCE_TURN_WINDOW; replicated locally for the I2 cut). */
 const RELEVANCE_TURN_WINDOW = 3;
 
-/** A small deictic/filler stopword set (the rag scorer's compact set, replicated for the I2
- *  cut — bounded static map, not a generated stoplist). All lowercase. */
+/**
+ * A small deictic/filler stopword set (the rag scorer's compact set, replicated for the I2
+ * cut — bounded static map, not a generated stoplist). All lowercase.
+ *
+ * SOURCE OF TRUTH (IN-03, Phase 174-04): `STOPWORDS` in `packages/agent/src/rag/relevance-scorer.ts`
+ * is the canonical stoplist. This is a DELIBERATE carve-out copy (the context-engine must NOT
+ * import the rag tokenizer — the I2 cut), so the two lists can drift; keep this subset in sync
+ * with the rag one when changing either, and prefer the rag list as the reference. This list is
+ * the one feeding the LIVE FTS query (terms OR-joined into `lcd_messages_fts MATCH`).
+ *
+ * FTS5 OPERATOR GUARD (IN-04): `near` / `and` / `or` / `not` are stopped UNCONDITIONALLY so the
+ * OR-join (`relevance-eviction.ts:132`) can never splice a bare FTS5 operator keyword into the
+ * MATCH query (which could subtly alter FTS5 parsing). `tokenizeQuery` already strips quotes +
+ * non-`\p{L}\p{N}`, so this stoplist is the remaining FTS5-safety surface.
+ */
 const ASSEMBLY_STOPWORDS: ReadonlySet<string> = new Set([
   "a", "an", "the", "this", "that", "these", "those", "it", "is", "are", "was", "were", "be",
-  "do", "does", "did", "can", "could", "will", "would", "should", "and", "or", "but", "if",
-  "so", "of", "to", "in", "on", "at", "by", "for", "with", "from", "yes", "no", "ok", "not",
+  "do", "does", "did", "can", "could", "will", "would", "should", "but", "if",
+  "so", "of", "to", "in", "on", "at", "by", "for", "with", "from", "yes", "no", "ok",
   "please", "just", "now", "here", "there", "what", "which", "how", "you", "i", "me", "my",
+  // FTS5 operator keywords (IN-04) — stopped so a bare operator can never reach the MATCH query.
+  "near", "and", "or", "not",
 ]);
 
 /** Lowercase + Unicode-aware tokenize (the buildFtsQuery shape; replicated for the I2 cut). */
