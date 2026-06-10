@@ -56,9 +56,11 @@ export interface ArbiterSeamResult {
  * passed as UNCONDITIONAL floors. When no markers are threaded, nothing is pinned here
  * (the pre-flight harder-eviction remains the backstop).
  *
- * RETR-02 event: per-tier kept COUNTS + the discretionary pool TOKENS + the relevanceFirst
- * BOOLEAN + ids/timestamp ONLY — NEVER message/memory/query content (AGENTS.md §2.2/§2.7;
- * T-173-03-04). Reuses the caller's entry-clock read `startMs` (no new ambient clock —
+ * RETR-02 event: per-tier kept COUNTS + the discretionary pool TOKENS (OFFERED via
+ * `discretionaryPoolTokens` AND CONSUMED via `poolTokensUsed`, WR-03) + the floor-token
+ * weight + the kept LTM/KG ids (WR-02) + the relevanceFirst BOOLEAN + a timestamp ONLY —
+ * NEVER message/memory/query content (AGENTS.md §2.2/§2.7; T-173-03-04; ids are opaque
+ * memory keys). Reuses the caller's entry-clock read `startMs` (no new ambient clock —
  * the globals gate). Frontier/mid never call this → the event never fires for them.
  *
  * @param deps - the context-engine deps (relevanceScorer, securityPinMarkers, eventBus).
@@ -94,7 +96,14 @@ export function evictUnderArbiter(
     agentId: deps.agentId ?? "",
     sessionKey: deps.sessionKey ?? "",
     perTierKept: arbitrated.perTierKept,
+    // discretionaryPoolTokens = OFFERED; poolTokensUsed = CONSUMED (WR-03). The arbiter
+    // already computes both + the floor weight + the cross-tier winner ids — surface them
+    // all (content-free) instead of dropping them at the emit boundary.
     discretionaryPoolTokens: poolTokens,
+    poolTokensUsed: arbitrated.poolTokensUsed,
+    floorTokens: arbitrated.floorTokensUsed,
+    keptLtmIds: arbitrated.keptLtmIds,
+    keptKgIds: arbitrated.keptKgIds,
     relevanceFirst: true,
     timestamp: startMs,
   });

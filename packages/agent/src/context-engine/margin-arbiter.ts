@@ -157,6 +157,11 @@ export interface MarginArbitrateResult {
   perTierKept: { history: number; ltm: number; kg: number };
   /** Discretionary (non-floor) tokens allocated from the pool — always ≤ poolTokens. */
   poolTokensUsed: number;
+  /** WR-03 (Phase 173-05): the UNCONDITIONAL floor weight — the summed tokens of every
+   *  kept floor item (T0 fresh-tail + S4-pinned, STEP-atomic). These ride ON TOP of the
+   *  pool (NOT counted in poolTokensUsed), so surfacing them lets an operator see when the
+   *  pinned floors dwarf the discretionary pool (the small-model context-exhaustion signal). */
+  floorTokensUsed: number;
   /** The kept LTM candidate ids (fused-rank winners that fit the pool). */
   keptLtmIds: string[];
   /** The kept KG candidate ids (fused-rank winners that fit the pool). */
@@ -310,10 +315,16 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
   const keptMiddleSet = new Set<AgentMessage>(keptMiddle);
   const kept: AgentMessage[] = [];
   let historyKeptCount = 0;
+  // WR-03: accumulate the floor weight (the unconditional floor steps' tokens) so the
+  // event can report it alongside the discretionary poolTokensUsed. Floors are STEP-atomic
+  // (stepFloorIds) and ride on top of the pool — never billed to poolTokensUsed.
+  let floorTokensUsed = 0;
   for (const it of historyItems) {
-    if (isFloor(it) || keptMiddleSet.has(it.msg)) {
+    const itemIsFloor = isFloor(it);
+    if (itemIsFloor || keptMiddleSet.has(it.msg)) {
       kept.push(it.msg);
       historyKeptCount++;
+      if (itemIsFloor) floorTokensUsed += it.tokens;
     }
   }
 
@@ -325,6 +336,7 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
       kg: keptKgIds.length,
     },
     poolTokensUsed,
+    floorTokensUsed,
     keptLtmIds,
     keptKgIds,
   };

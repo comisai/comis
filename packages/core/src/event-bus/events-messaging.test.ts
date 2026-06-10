@@ -417,15 +417,21 @@ describe("MessagingEvents payload structure", () => {
   // a new closed event contract). Payload is per-tier kept COUNTS + discretionary
   // pool TOKENS + a relevanceFirst BOOLEAN + ids/timestamp ONLY — NEVER message,
   // memory, or query content (the lossless store; AGENTS.md §2.2/§2.7; T-173-03-04).
-  it("context:arbitrated delivers per-tier kept counts + pool tokens + relevanceFirst (content-free)", () => {
+  it("context:arbitrated delivers per-tier kept counts + pool tokens (offered+consumed) + floor + ids + relevanceFirst (content-free)", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const now = Date.now();
+    // WR-03/WR-02 (Phase 173-05): the payload distinguishes the pool OFFERED from CONSUMED,
+    // carries the floor-token weight, and the kept LTM/KG ids — all content-free.
     const payload: EventMap["context:arbitrated"] = {
       agentId: "agent-1",
       sessionKey: "default:user1:channel1",
       perTierKept: { history: 4, ltm: 1, kg: 0 },
       discretionaryPoolTokens: 12_000,
+      poolTokensUsed: 9_500,
+      floorTokens: 800,
+      keptLtmIds: ["mem-ltm-1"],
+      keptKgIds: [],
       relevanceFirst: true,
       timestamp: now,
     };
@@ -439,6 +445,13 @@ describe("MessagingEvents payload structure", () => {
     expect(received.perTierKept.history).toBe(4);
     expect(received.perTierKept.ltm).toBe(1);
     expect(received.discretionaryPoolTokens).toBe(12_000);
+    // WR-03: consumed is reported distinctly from offered, plus the floor weight.
+    expect(received.poolTokensUsed).toBe(9_500);
+    expect(received.floorTokens).toBe(800);
+    expect(received.poolTokensUsed).toBeLessThanOrEqual(received.discretionaryPoolTokens);
+    // WR-02: the kept cross-tier ids (content-free memory keys).
+    expect(received.keptLtmIds).toEqual(["mem-ltm-1"]);
+    expect(received.keptKgIds).toEqual([]);
     expect(received.relevanceFirst).toBe(true);
     expect(received.timestamp).toBe(now);
   });
@@ -450,6 +463,10 @@ describe("MessagingEvents payload structure", () => {
       sessionKey: "default:user1:channel1",
       perTierKept: { history: 1 },
       discretionaryPoolTokens: 100,
+      poolTokensUsed: 80,
+      floorTokens: 0,
+      keptLtmIds: [],
+      keptKgIds: [],
       relevanceFirst: false,
       timestamp: Date.now(),
       // @ts-expect-error - the event is content-free; no message/query text field exists
