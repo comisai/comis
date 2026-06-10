@@ -405,6 +405,31 @@ export const ContextEngineConfigSchema = z.strictObject({
       // Fully-populated default object — see note above about NOT using .default({}).
     }).default({ enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 }),
   }).default({ distillFromLcd: { enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 } }),
+
+  // ── Phase 173: Unified-retrieval relevance policy (RETR-03) ────────────
+  /** RETR-03: the relevance-first vs recency-first assembly policy gate. When
+   *  `relevance-first` is active the margin arbiter (RETR-02) allocates the
+   *  discretionary history pool across tiers by fused rank; otherwise the
+   *  existing recency-first eviction runs verbatim (frontier/mid byte-identical).
+   *
+   *  Precedence: explicit > capability-default > off. The capability default is
+   *  resolved in scaffold-defaults.ts — small/nano on a NON-caching model
+   *  (supportsPromptCache=false) default relevance-first; frontier/mid + caching
+   *  models default recency-first (byte-identical, LOCKED #2). The small/nano
+   *  default-on flip is MEASUREMENT-GATED (the Phase-171 harness) — this flag
+   *  ships the mechanism; the live default flip is an operator step.
+   *
+   *  CRITICAL (Pitfall 1 — the schema re-parse trap): the WHOLE block is
+   *  `.optional()` and `firstByDefault` is an OPTIONAL boolean with NO `.default()`.
+   *  An omitted field stays `undefined` (NOT `false`) so the resolver's
+   *  `config.contextEngine?.relevance?.firstByDefault ?? (capability gate)` survives.
+   *  A `.default(false)` here would collapse undefined→false and silently kill the
+   *  capability-gated default. Do NOT add a default. */
+  relevance: z.strictObject({
+    /** Force relevance-first (true) or recency-first (false) regardless of the
+     *  capability default. OPTIONAL — omit to use the capability-gated default. */
+    firstByDefault: z.boolean().optional(),
+  }).optional(),
 });
 
 export type ContextEngineConfig = z.infer<typeof ContextEngineConfigSchema>;

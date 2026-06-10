@@ -219,6 +219,27 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** RETR-02 (Phase 173): the tiered margin arbiter allocated the discretionary
+   *  history pool across tiers by fused rank (relevance-first classes only —
+   *  frontier/mid never run the arbiter, so this event never fires for them).
+   *  CONTENT-FREE (AGENTS.md §2.2/§2.7; T-173-03-04): per-tier kept COUNTS
+   *  (`perTierKept` — e.g. { history, ltm, kg }), the discretionary pool TOKENS,
+   *  a `relevanceFirst` BOOLEAN, ids + a timestamp ONLY. NEVER message, memory, or
+   *  query content. The emitter reuses the entry-clock read (no new ambient clock).
+   *  A counts-only internal-health signal (same class as context:compaction_routed)
+   *  — NOT a turn-level trajectory step. */
+  "context:arbitrated": {
+    agentId: string;
+    sessionKey: string;
+    /** Per-tier kept counts, e.g. { history, ltm, kg } — counts only, never content. */
+    perTierKept: Record<string, number>;
+    /** The discretionary pool (budget.availableHistoryTokens) the arbiter allocated. */
+    discretionaryPoolTokens: number;
+    /** Whether the relevance-first arbiter path ran (always true when this fires). */
+    relevanceFirst: boolean;
+    timestamp: number;
+  };
+
   /** Re-read detector found duplicate tool calls in session */
   "context:reread": {
     agentId: string;
