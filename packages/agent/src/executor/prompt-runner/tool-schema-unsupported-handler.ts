@@ -130,6 +130,9 @@ export async function handleToolSchemaUnsupported(
       strippedKeywords: [],
       retried: false,
       succeeded: false,
+      // WR-05: distinguishable from nothing_to_strip — a repair WAS
+      // attempted earlier this session.
+      reason: "gate_closed",
       timestamp: deps.clock.now(),
     });
     return;
@@ -170,6 +173,7 @@ export async function handleToolSchemaUnsupported(
       strippedKeywords: [],
       retried: false,
       succeeded: false,
+      reason: "nothing_to_strip",
       timestamp: deps.clock.now(),
     });
     return;
@@ -226,6 +230,7 @@ export async function handleToolSchemaUnsupported(
     strippedKeywords,
     retried: true,
     succeeded: recovered,
+    reason: "stripped",
     timestamp: deps.clock.now(),
   });
 

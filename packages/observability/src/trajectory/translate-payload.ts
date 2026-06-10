@@ -345,14 +345,17 @@ export function translatePayload(
 
     case "execution:tool_schema_unsupported":
       // GBNF-02 strip-retry self-heal. The emit site is already content-free
-      // (tool + keyword NAMES only, never schema bodies — I7), so all four
-      // diagnostic fields forward verbatim. agentId/sessionKey/timestamp are
-      // envelope-only and stripped.
+      // (tool + keyword NAMES only, never schema bodies — I7), so all five
+      // diagnostic fields forward verbatim — `reason` (WR-05) is the closed
+      // branch discriminator (stripped | nothing_to_strip | gate_closed) that
+      // keeps the two terminal branches distinguishable in obs verdicts.
+      // agentId/sessionKey/timestamp are envelope-only and stripped.
       return {
         toolNames: payload.toolNames,
         strippedKeywords: payload.strippedKeywords,
         retried: payload.retried,
         succeeded: payload.succeeded,
+        reason: payload.reason,
       };
 
     // ---- Security + Sender (scanned subset) ----

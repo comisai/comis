@@ -381,6 +381,54 @@ describe("tool_schema_unsupported (GBNF-02)", () => {
     expect(r!.detail).toContain("nothing strippable");
   });
 
+  // WR-05 (175-REVIEW): gate-closed and nothing-to-strip terminals used to
+  // emit indistinguishable payloads — with last-record-wins, a session that
+  // healed once and then hit the gate produced a verdict claiming "nothing
+  // strippable so no retry was attempted" when stripping WAS performed and a
+  // retry WAS attempted earlier in the session. The reason discriminator
+  // branches the detail.
+  it("WR-05: reason gate_closed says the strip-retry was already attempted earlier this session — never 'nothing strippable'", () => {
+    const r = rootCause(
+      makeSignals({
+        toolSchemaUnsupported: {
+          toolNames: [],
+          strippedKeywords: [],
+          retried: false,
+          succeeded: false,
+          reason: "gate_closed",
+        },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("tool_schema_unsupported");
+    expect(r!.detail).toContain("already attempted earlier this session");
+    expect(r!.detail).not.toContain("nothing strippable");
+  });
+
+  it("WR-05: reason nothing_to_strip keeps the nothing-strippable explanation", () => {
+    const r = rootCause(
+      makeSignals({
+        toolSchemaUnsupported: {
+          toolNames: [],
+          strippedKeywords: [],
+          retried: false,
+          succeeded: false,
+          reason: "nothing_to_strip",
+        },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.detail).toContain("nothing strippable");
+  });
+
+  it("WR-05: an absent reason (historical pre-WR-05 record) falls back to the retried-based wording", () => {
+    const r = rootCause(makeSignals({ toolSchemaUnsupported: { ...UNRECOVERED, retried: false } }));
+    expect(r).not.toBeNull();
+    expect(r!.detail).toContain("nothing strippable");
+    const retriedForm = rootCause(makeSignals({ toolSchemaUnsupported: UNRECOVERED }));
+    expect(retriedForm!.detail).toContain("strip-pattern/format-retry");
+  });
+
   it("PRIORITY: the misclassification signal out-ranks tool_schema_unsupported (below X3 code #1)", () => {
     const r = rootCause(
       makeSignals({

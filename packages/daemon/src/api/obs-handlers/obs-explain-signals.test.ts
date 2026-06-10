@@ -559,6 +559,7 @@ describe("toolSchemaUnsupported derivation (GBNF-02)", () => {
         strippedKeywords: ["pattern", "format"],
         retried: true,
         succeeded: false,
+        reason: "stripped",
       }),
     ]);
     expect(s.toolSchemaUnsupported).toEqual({
@@ -566,7 +567,51 @@ describe("toolSchemaUnsupported derivation (GBNF-02)", () => {
       strippedKeywords: ["pattern", "format"],
       retried: true,
       succeeded: false,
+      reason: "stripped",
     });
+  });
+
+  it("WR-05: the reason discriminator survives derivation for the gate_closed terminal (last record wins)", () => {
+    const s = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 1, {
+        toolNames: ["schedule_task"],
+        strippedKeywords: ["pattern", "format"],
+        retried: true,
+        succeeded: true,
+        reason: "stripped",
+      }),
+      event("execution.tool_schema_unsupported", 2, {
+        toolNames: [],
+        strippedKeywords: [],
+        retried: false,
+        succeeded: false,
+        reason: "gate_closed",
+      }),
+    ]);
+    expect(s.toolSchemaUnsupported?.reason).toBe("gate_closed");
+  });
+
+  it("WR-05: an absent or off-vocabulary reason yields undefined (historical pre-WR-05 trajectory records stay readable; payload smuggling guarded)", () => {
+    const absent = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 1, {
+        toolNames: [],
+        strippedKeywords: [],
+        retried: false,
+        succeeded: false,
+      }),
+    ]);
+    expect(absent.toolSchemaUnsupported?.reason).toBeUndefined();
+
+    const smuggled = toIncidentSignals([
+      event("execution.tool_schema_unsupported", 1, {
+        toolNames: [],
+        strippedKeywords: [],
+        retried: false,
+        succeeded: false,
+        reason: "<script>evil</script>",
+      }),
+    ]);
+    expect(smuggled.toolSchemaUnsupported?.reason).toBeUndefined();
   });
 
   it("the LAST execution.tool_schema_unsupported record wins (terminal repair state explains the end)", () => {

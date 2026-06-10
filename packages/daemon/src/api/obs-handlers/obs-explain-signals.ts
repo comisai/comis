@@ -344,12 +344,19 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       // mapping). LAST record wins — the terminal repair state explains the
       // end. Content-free by construction (tool + keyword NAMES only — I7);
       // the string-array filters + exact-true boolean reads keep smuggled
-      // non-string payload entries out of the verdict text (T-175-17).
+      // non-string payload entries out of the verdict text (T-175-17). The
+      // WR-05 reason discriminator is validated against its closed vocabulary
+      // (same trust-boundary posture); absent/off-vocabulary → undefined so
+      // pre-WR-05 trajectory records on disk stay readable.
+      const rawReason = asString(data.reason);
       acc.toolSchemaUnsupported = {
         toolNames: asStringArray(data.toolNames),
         strippedKeywords: asStringArray(data.strippedKeywords),
         retried: data.retried === true,
         succeeded: data.succeeded === true,
+        ...(rawReason === "stripped" || rawReason === "nothing_to_strip" || rawReason === "gate_closed"
+          ? { reason: rawReason }
+          : {}),
       };
       return;
     }

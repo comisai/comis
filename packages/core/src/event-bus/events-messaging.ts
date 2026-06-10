@@ -519,7 +519,12 @@ export interface MessagingEvents {
    *  exactly once per session ('retried' false when nothing was strippable).
    *  Payload is content-free: tool + keyword NAMES only, never schema bodies
    *  (I7). 'succeeded' reports whether the retry produced a non-empty
-   *  response. */
+   *  response. 'reason' discriminates the branch (175-REVIEW WR-05 — the two
+   *  terminal branches were otherwise byte-identical and the obs verdict
+   *  misdirected the operator): "stripped" = strip applied + one retry fired;
+   *  "nothing_to_strip" = no pattern/format anywhere, futile retry skipped;
+   *  "gate_closed" = the session's single strip-retry was already consumed
+   *  earlier (a repair WAS attempted this session). */
   "execution:tool_schema_unsupported": {
     agentId: string;
     sessionKey: string;
@@ -527,6 +532,7 @@ export interface MessagingEvents {
     strippedKeywords: string[];
     retried: boolean;
     succeeded: boolean;
+    reason: "stripped" | "nothing_to_strip" | "gate_closed";
     timestamp: number;
   };
 

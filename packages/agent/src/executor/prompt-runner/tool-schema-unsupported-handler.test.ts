@@ -194,7 +194,7 @@ describe("handleToolSchemaUnsupported — strip-and-retry contract", () => {
     expect(allArgs).not.toContain('{"type"');
   });
 
-  it("emits exactly one execution:tool_schema_unsupported event with the locked 7-field payload (formatted sessionKey, clock-injected timestamp)", async () => {
+  it("emits exactly one execution:tool_schema_unsupported event with the locked 8-field payload (formatted sessionKey, clock-injected timestamp, reason discriminator)", async () => {
     const { params, emit } = makeParams();
     const retryState = makeRetryState();
     const invokeRetry: InvokeRetry = vi.fn(async () => ({ succeeded: true }));
@@ -210,6 +210,10 @@ describe("handleToolSchemaUnsupported — strip-and-retry contract", () => {
       strippedKeywords: ["pattern", "format"],
       retried: true,
       succeeded: true,
+      // WR-05 (175-REVIEW): the branch discriminator — without it the
+      // gate-closed and nothing-to-strip terminal events were byte-identical
+      // and the obs verdict misdirected the operator.
+      reason: "stripped",
       timestamp: 1234,
     });
   });
@@ -234,7 +238,15 @@ describe("handleToolSchemaUnsupported — strip-and-retry contract", () => {
     expect(String(secondState.promptError)).toContain("JSON schema conversion failed");
     const gateEvents = second.emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported");
     expect(gateEvents).toHaveLength(1);
-    expect(gateEvents[0][1]).toMatchObject({ retried: false, succeeded: false, toolNames: [] });
+    // WR-05: gate-closed must be distinguishable from nothing-to-strip — a
+    // session that healed once and then hit the gate previously produced a
+    // verdict claiming "nothing strippable" when stripping WAS performed.
+    expect(gateEvents[0][1]).toMatchObject({
+      retried: false,
+      succeeded: false,
+      toolNames: [],
+      reason: "gate_closed",
+    });
     // Gate-closed WARN still actionable: hint names the durable knob.
     const warnArg = second.logger.warn.mock.calls[0][0] as Record<string, unknown>;
     expect(String(warnArg.hint)).toContain("comisCompat.toolSchemaProfile");
@@ -277,7 +289,12 @@ describe("handleToolSchemaUnsupported — strip-and-retry contract", () => {
     expect(String(warnArg.hint)).toContain('"gbnf"');
     const events = emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported");
     expect(events).toHaveLength(1);
-    expect(events[0][1]).toMatchObject({ retried: false, succeeded: false, toolNames: [] });
+    expect(events[0][1]).toMatchObject({
+      retried: false,
+      succeeded: false,
+      toolNames: [],
+      reason: "nothing_to_strip",
+    });
 
     // The once-gate is STILL set: a second occurrence does not re-enter.
     const second = makeParams({ tools: structuredClone(clean) });

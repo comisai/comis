@@ -172,13 +172,27 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //    strip-retry: a recovered repair is evidence, not a verdict (T-175-19).
   //    Detail is assembled solely from Comis-registry tool names + the closed
   //    keyword names — the signal carries no body fields by construction
-  //    (T-175-17).
+  //    (T-175-17). The WR-05 reason discriminator branches the wording: the
+  //    gate-closed terminal previously emitted the same payload as
+  //    nothing-to-strip, so a session that healed once and then hit the gate
+  //    produced a verdict claiming "nothing strippable" when stripping WAS
+  //    performed earlier — the exact wrong-way pointer the troubleshooting
+  //    doctrine forbids. Absent reason (pre-WR-05 records) falls back to the
+  //    retried-based wording.
   (s) => {
     if (!s.toolSchemaUnsupported || s.toolSchemaUnsupported.succeeded) return null;
-    const { toolNames, strippedKeywords, retried } = s.toolSchemaUnsupported;
+    const { toolNames, strippedKeywords, retried, reason } = s.toolSchemaUnsupported;
+    const branch =
+      reason === "gate_closed"
+        ? ", a strip-pattern/format-retry was already attempted earlier this session (once-per-session gate closed)"
+        : reason === "nothing_to_strip"
+          ? ", nothing strippable so no retry was attempted"
+          : retried
+            ? `, one strip-${strippedKeywords.join("/")}-retry already attempted`
+            : ", nothing strippable so no retry was attempted";
     return {
       code: "tool_schema_unsupported",
-      detail: `provider rejected the tool JSON Schema at grammar-compile (GBNF) — tool(s) [${toolNames.join(", ") || "unknown"}]${retried ? `, one strip-${strippedKeywords.join("/")}-retry already attempted` : ", nothing strippable so no retry was attempted"}, still failing`,
+      detail: `provider rejected the tool JSON Schema at grammar-compile (GBNF) — tool(s) [${toolNames.join(", ") || "unknown"}]${branch}, still failing`,
       suggestedNextSteps: [
         'set providers.entries.<provider>.models[].comisCompat.toolSchemaProfile: "gbnf" (auto-enabled only for provider type "ollama"; LM Studio/llama.cpp/vLLM need the explicit value)',
         "obs.explain depth=full for the raw failure rows",

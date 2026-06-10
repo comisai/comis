@@ -1463,17 +1463,21 @@ describe("queue + execution + sender bridge", () => {
       strippedKeywords: ["pattern", "format"],
       retried: true,
       succeeded: false,
+      reason: "stripped",
       timestamp: Date.now(),
     } as never);
 
     expect(recorder.calls).toHaveLength(1);
     expect(recorder.calls[0].type).toBe("execution.tool_schema_unsupported");
     const data = recorder.calls[0].data as Record<string, unknown>;
-    // All 4 payload fields survive translation (Plan 06's explain heuristic input).
+    // All 5 payload fields survive translation (Plan 06's explain heuristic input).
     expect(data.toolNames).toEqual(["schedule_task"]);
     expect(data.strippedKeywords).toEqual(["pattern", "format"]);
     expect(data.retried).toBe(true);
     expect(data.succeeded).toBe(false);
+    // WR-05 (175-REVIEW): the branch discriminator must reach the trajectory
+    // so gate-closed and nothing-to-strip terminals stay distinguishable.
+    expect(data.reason).toBe("stripped");
     // Envelope-only correlation keys are stripped from data.
     expect(data.agentId).toBeUndefined();
     expect(data.sessionKey).toBeUndefined();

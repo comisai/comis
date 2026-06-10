@@ -264,12 +264,16 @@ export interface IncidentSignals {
   misclassifiedToken?: string; // e.g. "403"|"status"|"200"
   /** GBNF-02: derived from `execution.tool_schema_unsupported` trajectory records
    *  (last record wins — one strip-retry per session means at most a handful).
-   *  Content-free by construction: tool + keyword NAMES only. */
+   *  Content-free by construction: tool + keyword NAMES only. `reason`
+   *  (175-REVIEW WR-05) discriminates the handler branch so gate-closed and
+   *  nothing-to-strip terminals stay distinguishable in the verdict; optional
+   *  because pre-WR-05 trajectory records on disk lack it. */
   toolSchemaUnsupported?: {
     toolNames: string[];
     strippedKeywords: string[];
     retried: boolean;
     succeeded: boolean;
+    reason?: "stripped" | "nothing_to_strip" | "gate_closed";
   };
   /**
    * The mapped terminal `endReason` (the NAMED degradation cause — QT2/QT3 Glass
