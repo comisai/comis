@@ -635,6 +635,29 @@ Controls the compact-secure promptMode for `small`/`nano` models. This mode asse
 
 > **Security warning (S1):** Setting `enabled=false` does **not** make the prompt smaller — it restores the full-size `full` promptMode. The compact prompt is safe for all deployments because it retains the security core. It is **not safe** to use `minimal` promptMode (which drops the safety block) for any security-sensitive deployment.
 
+#### Relevance Policy (agents.\*.contextEngine.relevance)
+
+Controls whether within-conversation history is assembled **relevance-first** (the margin arbiter allocates the contended history budget across tiers by fused rank, with the fresh-tail and security-pinned floors guaranteed) or **recency-first** (the existing newest-kept eviction). The decision is **capability-gated**: `small`/`nano` models on a **non-caching** provider default relevance-first (reordering is free when there is no prompt cache to break); `frontier`/`mid` and any prompt-caching model default recency-first and are **byte-identical** to prior releases (the arbiter does not run for them). Precedence: **explicit per-agent config > capability default > off**.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `agents.<id>.contextEngine.relevance.firstByDefault` | `boolean` (optional) | unset → capability default (`small`/`nano` + non-caching → relevance-first; `frontier`/`mid` + caching → recency-first) | Force the relevance policy. `true` runs the margin arbiter at the eviction seam (relevance-first); `false` keeps recency-first. The field is **optional with no default** — omit it to let the capability gate decide. An explicit value (either direction) always wins. Setting `true` on a `frontier`/`mid` agent opts that agent into relevance-first; setting `false` on a non-caching `small`/`nano` agent forces recency-first. |
+
+> **Capability-gated default (Phase 173):** The `small`/`nano` relevance-first default is gated on
+> `supportsPromptCache=false` — a non-caching local model (typical Ollama) reorders history for
+> free, while a caching model stays recency-first below the cache fence (reordering would break the
+> prefix cache). `frontier`/`mid` are **byte-identical** by default (the arbiter never runs for them).
+> The `small`/`nano` default-on flip is **measurement-gated** (validated by the outcome harness before
+> being relied upon in production); the mechanism ships behind this flag. Precedence:
+> **explicit per-agent config > capability default > off**.
+
+> **Security (RETR-05):** The arbiter never demotes security-relevant history (canary token,
+> untrusted-content delimiters, safety reinforcement, sender-trust markers) — those items are
+> **unconditional floors**, excluded from relevance candidacy and always kept, exactly as the
+> recency path's pre-flight already protects them. A content-free `context:arbitrated` event
+> (per-tier kept counts + pool tokens + a `relevanceFirst` boolean) fires only on the
+> relevance-first path; it carries no message, memory, or query content.
+
 #### Memory Consolidation (agents.*.memoryConsolidation)
 
 Periodic LLM-driven consolidation of similar memories into observations. Opt-in (default off) because each run spends model tokens -- it is a cost gate. When enabled, a scheduled cron clusters near-duplicate memories and folds each cluster into a single observation; external-trust memories are excluded by default.
