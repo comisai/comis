@@ -231,8 +231,24 @@ export interface MemoryRecallConfig {
    *  trust-filter. Gates on ScoreBreakdown.base — NOT on r.score (the boosted value).
    *  Fallback: if a memory has no breakdown entry, gates on r.score (safe degrade).
    *  Default=0 (absent or 0) → no filtering (byte-identical to the pre-R3 path).
-   *  Optional so a caller predating the field leaves it absent → no floor applied. */
+   *  Optional so a caller predating the field leaves it absent → no floor applied.
+   *
+   *  WR-02 (Phase 173): when {@link MemoryRecallConfig.relevanceFirst} is true, an
+   *  UNCONFIGURED floor (0) is NOT silently skipped — it is enforced at the class
+   *  default (see RELEVANCE_FIRST_DEFAULT_BASE_FLOOR in memory-recall.ts). See that
+   *  field's doc. */
   baseFloor?: number;
+  /**
+   * RETR-04 / WR-02 (Phase 173): the unified-arbiter-active signal (from
+   * ScaffoldDefaults.relevanceFirst). When `true` (small/nano relevance-first), the
+   * recall path ranks LTM T3/T4 candidates relevance-first and the baseFloor gate is
+   * FAIL-CLOSED: an unconfigured floor (0) resolves to the class default and the filter
+   * runs — an arbiter that ranks LTM against history needs the floor enforced (design
+   * §17 S6). When `false`/absent (frontier/mid recency-first, the default), the gate
+   * keeps the legacy `> 0` skip → byte-identical to v2.14 (LOCKED #2). Optional so a
+   * caller predating the field leaves it absent → off (recency-first, byte-identical).
+   */
+  relevanceFirst?: boolean;
 }
 
 /** The recall orchestrator surface — a single `recall` method. */

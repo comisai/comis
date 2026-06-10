@@ -971,6 +971,15 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           baseFloor: params.modelProfile !== undefined
             ? resolveScaffoldDefaults(params.modelProfile, config).baseFloor
             : (config.rag as typeof config.rag & { baseFloor?: number }).baseFloor,
+          // RETR-04 / WR-02 (Phase 173): thread the unified-arbiter-active signal so the
+          // recall baseFloor gate is FAIL-CLOSED under the arbiter (an unconfigured floor
+          // resolves to the class default instead of silently skipping) AND the trust gate
+          // runs upstream of fusion. relevanceFirst=true only for small/nano non-caching
+          // models (resolveScaffoldDefaults); frontier/mid → false → recall byte-identical
+          // (LOCKED #2). Absent modelProfile → undefined → off (recency-first, byte-identical).
+          ...(params.modelProfile !== undefined
+            ? { relevanceFirst: resolveScaffoldDefaults(params.modelProfile, config).relevanceFirst }
+            : {}),
           ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },
       );
