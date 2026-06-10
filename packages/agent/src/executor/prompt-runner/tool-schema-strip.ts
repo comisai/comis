@@ -45,6 +45,19 @@
 export const REACTIVE_STRIP_KEYWORDS: ReadonlySet<string> = new Set(["pattern", "format"]);
 
 /**
+ * Stack-depth cap for the recursive strip walk (175-REVIEW WR-03).
+ * Third-party MCP schemas are attacker-controlled: a chain deep enough to
+ * overflow the un-capped walk still parses cleanly through JSON.parse at the
+ * transport boundary — and this walk runs on the REPAIR path the schema
+ * rejection itself triggered. Nodes deeper than the cap pass through
+ * UN-WALKED (fail-safe: surviving keywords at worst reproduce the 400 the
+ * once-gate then terminates honestly; never a crash). Deliberately a
+ * module-local twin of clean-for-gbnf's MAX_GBNF_WALK_DEPTH to keep this
+ * module self-contained (same rationale as REACTIVE_STRIP_KEYWORDS above).
+ */
+const MAX_STRIP_WALK_DEPTH = 64;
+
+/**
  * Pure deep strip: returns a NEW schema with the given keywords removed at
  * every nesting depth, plus the deduplicated keyword names that were
  * removed (ordered by the keyword set's declaration order).
@@ -58,16 +71,36 @@ export const REACTIVE_STRIP_KEYWORDS: ReadonlySet<string> = new Set(["pattern", 
 export function stripSchemaKeywordsDeep(
   schema: unknown,
   keywords: ReadonlySet<string>,
-): { schema: unknown; stripped: string[] } {
+): { schema: unknown; stripped: string[]; depthLimited: boolean } {
   const found = new Set<string>();
-  const rebuilt = walkAndStrip(schema, keywords, found);
-  return { schema: rebuilt, stripped: [...keywords].filter((k) => found.has(k)) };
+  const limited = { hit: false };
+  const rebuilt = walkAndStrip(schema, keywords, found, 0, limited);
+  return {
+    schema: rebuilt,
+    stripped: [...keywords].filter((k) => found.has(k)),
+    depthLimited: limited.hit,
+  };
 }
 
-/** Recursive worker for {@link stripSchemaKeywordsDeep}. Pure — new objects out. */
-function walkAndStrip(schema: unknown, keywords: ReadonlySet<string>, found: Set<string>): unknown {
+/** Recursive worker for {@link stripSchemaKeywordsDeep}. Pure — new objects
+ *  out. Depth-capped (WR-03): an object node at the cap is returned
+ *  UN-WALKED and `limited.hit` is set — pass-through, never a throw. */
+function walkAndStrip(
+  schema: unknown,
+  keywords: ReadonlySet<string>,
+  found: Set<string>,
+  depth: number,
+  limited: { hit: boolean },
+): unknown {
   if (schema === null || schema === undefined) return schema;
   if (typeof schema !== "object" || Array.isArray(schema)) return schema;
+
+  // WR-03: cap BEFORE stripping at this node so the entire subtree passes
+  // through byte-identical (a half-stripped cut node would be confusing).
+  if (depth >= MAX_STRIP_WALK_DEPTH) {
+    limited.hit = true;
+    return schema;
+  }
 
   const node = schema as Record<string, unknown>;
   const cleaned: Record<string, unknown> = {};
@@ -84,7 +117,7 @@ function walkAndStrip(schema: unknown, keywords: ReadonlySet<string>, found: Set
     if (key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
       const propsOut: Record<string, unknown> = {};
       for (const [propName, propSchema] of Object.entries(value as Record<string, unknown>)) {
-        propsOut[propName] = walkAndStrip(propSchema, keywords, found);
+        propsOut[propName] = walkAndStrip(propSchema, keywords, found, depth + 1, limited);
       }
       cleaned[key] = propsOut;
       continue;
@@ -93,21 +126,21 @@ function walkAndStrip(schema: unknown, keywords: ReadonlySet<string>, found: Set
     // Recurse into items (single schema or tuple array of schemas).
     if (key === "items") {
       cleaned[key] = Array.isArray(value)
-        ? value.map((item) => walkAndStrip(item, keywords, found))
-        : walkAndStrip(value, keywords, found);
+        ? value.map((item) => walkAndStrip(item, keywords, found, depth + 1, limited))
+        : walkAndStrip(value, keywords, found, depth + 1, limited);
       continue;
     }
 
     // Recurse into allOf/anyOf/oneOf (array of schemas).
     if ((key === "allOf" || key === "anyOf" || key === "oneOf") && Array.isArray(value)) {
-      cleaned[key] = value.map((entry) => walkAndStrip(entry, keywords, found));
+      cleaned[key] = value.map((entry) => walkAndStrip(entry, keywords, found, depth + 1, limited));
       continue;
     }
 
     // Recurse into additionalProperties when it is a schema object (the
     // free-form-object family carries pattern/format here in the wild).
     if (key === "additionalProperties" && value && typeof value === "object" && !Array.isArray(value)) {
-      cleaned[key] = walkAndStrip(value, keywords, found);
+      cleaned[key] = walkAndStrip(value, keywords, found, depth + 1, limited);
       continue;
     }
 
@@ -131,9 +164,10 @@ function walkAndStrip(schema: unknown, keywords: ReadonlySet<string>, found: Set
  */
 export function applyReactiveSchemaStripInPlace(
   tools: Array<{ name: string; parameters?: unknown }>,
-): { strippedToolNames: string[]; strippedKeywords: string[] } {
+): { strippedToolNames: string[]; strippedKeywords: string[]; depthLimited: boolean } {
   const strippedToolNames: string[] = [];
   const keywordUnion = new Set<string>();
+  let depthLimited = false;
 
   for (const tool of tools) {
     const params = tool.parameters;
@@ -141,7 +175,11 @@ export function applyReactiveSchemaStripInPlace(
       continue;
     }
 
-    const { schema, stripped } = stripSchemaKeywordsDeep(params, REACTIVE_STRIP_KEYWORDS);
+    const { schema, stripped, depthLimited: toolDepthLimited } = stripSchemaKeywordsDeep(
+      params,
+      REACTIVE_STRIP_KEYWORDS,
+    );
+    if (toolDepthLimited) depthLimited = true;
     if (stripped.length === 0) continue;
 
     // CONTENT-level write-back into the SAME parameters object (identity
@@ -160,5 +198,6 @@ export function applyReactiveSchemaStripInPlace(
   return {
     strippedToolNames,
     strippedKeywords: [...REACTIVE_STRIP_KEYWORDS].filter((k) => keywordUnion.has(k)),
+    depthLimited,
   };
 }

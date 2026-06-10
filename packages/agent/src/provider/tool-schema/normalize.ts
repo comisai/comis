@@ -26,7 +26,11 @@ import {
   PROVIDER_UNSUPPORTED_KEYWORDS,
 } from "../../safety/tool-schema-safety.js";
 import { resolveProviderCapabilities } from "../capabilities.js";
-import { cleanSchemaForGbnf, type GbnfTransformKeyword } from "./clean-for-gbnf.js";
+import {
+  cleanSchemaForGbnf,
+  MAX_GBNF_WALK_DEPTH,
+  type GbnfTransformKeyword,
+} from "./clean-for-gbnf.js";
 import { cleanSchemaForGemini } from "./clean-for-gemini.js";
 import { stripXaiUnsupportedKeywords } from "./clean-for-xai.js";
 import { normalizeAnyOfToEnum } from "./normalize-enums.js";
@@ -220,6 +224,21 @@ export function normalizeToolSchemasForProvider(
       schema = ensureTopLevelObjectSingle(schema);
       const gbnfResult = cleanSchemaForGbnf(schema);
       schema = gbnfResult.schema;
+      if (gbnfResult.depthLimited) {
+        // WR-03 fail-safe surfaced: subtrees beyond the walk's depth cap
+        // passed through un-transformed (never a crash). Content-free per
+        // I7 — tool name + cap only, no schema bodies.
+        logger?.warn(
+          {
+            toolName: tool.name,
+            provider: ctx.provider,
+            maxWalkDepth: MAX_GBNF_WALK_DEPTH,
+            hint: "Tool schema exceeds the gbnf transform depth cap; subtrees beyond the cap passed through un-transformed — inspect the MCP server emitting this tool",
+            errorKind: "validation" as const,
+          },
+          "GBNF transform depth cap reached; deep subtrees passed through un-walked",
+        );
+      }
       if (gbnfResult.transformedKeywords.length > 0) {
         // Mirror the keyword-strip trace shape above: per-tool, trace level
         // (deterministic per (provider, tool) pair — trace recovers the

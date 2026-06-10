@@ -244,15 +244,17 @@ describe("cleanSchemaForGbnf", () => {
 
   describe("pass-throughs", () => {
     it("returns null/undefined/primitives as-is with no transforms reported", () => {
-      expect(cleanSchemaForGbnf(null)).toEqual({ schema: null, transformedKeywords: [] });
+      expect(cleanSchemaForGbnf(null)).toEqual({ schema: null, transformedKeywords: [], depthLimited: false });
       expect(cleanSchemaForGbnf(undefined)).toEqual({
         schema: undefined,
         transformedKeywords: [],
+        depthLimited: false,
       });
-      expect(cleanSchemaForGbnf(42)).toEqual({ schema: 42, transformedKeywords: [] });
+      expect(cleanSchemaForGbnf(42)).toEqual({ schema: 42, transformedKeywords: [], depthLimited: false });
       expect(cleanSchemaForGbnf("hello")).toEqual({
         schema: "hello",
         transformedKeywords: [],
+        depthLimited: false,
       });
     });
 
@@ -279,6 +281,59 @@ describe("cleanSchemaForGbnf", () => {
         "free_form_object",
         "missing_type",
       ]);
+    });
+  });
+
+  // WR-03 (175-REVIEW): third-party MCP schemas are attacker-controlled — a
+  // properties chain ~4000 levels deep parses cleanly through JSON.parse at
+  // the transport boundary but overflowed the un-capped walk, and the
+  // RangeError propagated out of assembleTools, failing the WHOLE turn for
+  // ALL tools on every message.
+  describe("WR-03: depth-limited recursion (attacker-controlled MCP schemas)", () => {
+    function makeDeepPropertiesChain(
+      depth: number,
+      leaf: Record<string, unknown>,
+    ): Record<string, unknown> {
+      let node: Record<string, unknown> = leaf;
+      for (let i = 0; i < depth; i++) {
+        node = { type: "object", properties: { child: node } };
+      }
+      return node;
+    }
+
+    it("survives a 6000-level properties chain without a stack overflow (a depth JSON.parse survives)", () => {
+      const deep = makeDeepPropertiesChain(6000, { description: "leaf" });
+      expect(() => cleanSchemaForGbnf(deep)).not.toThrow();
+    });
+
+    it("fails SAFE at the cap: shallow nodes are still transformed, the deep tail passes through, and depthLimited reports the cut", () => {
+      const input = {
+        type: "object",
+        properties: {
+          shallow: { anyOf: [{ type: "string" }, { type: "null" }] },
+          tail: makeDeepPropertiesChain(6000, { description: "leaf" }),
+        },
+      };
+
+      const result = cleanSchemaForGbnf(input);
+
+      expect(propsOf(result.schema).shallow).toEqual({
+        type: "string",
+        description: "(nullable)",
+      });
+      expect(result.transformedKeywords).toContain("nullable_union");
+      expect(
+        (result as unknown as { depthLimited?: boolean }).depthLimited,
+      ).toBe(true);
+    });
+
+    it("reports depthLimited false for ordinary schemas (the hostile toolset never reaches the cap)", () => {
+      for (const tool of hostileMcpToolset) {
+        const result = cleanSchemaForGbnf(tool.parameters);
+        expect(
+          (result as unknown as { depthLimited?: boolean }).depthLimited,
+        ).toBe(false);
+      }
     });
   });
 });

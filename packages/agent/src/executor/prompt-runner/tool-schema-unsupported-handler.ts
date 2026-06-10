@@ -141,7 +141,7 @@ export async function handleToolSchemaUnsupported(
   // (applyPersistedReactiveStrip), so the heal outlives this turn.
   armReactiveSchemaStrip(key);
 
-  const { strippedToolNames, strippedKeywords } = applyReactiveSchemaStripInPlace(
+  const { strippedToolNames, strippedKeywords, depthLimited } = applyReactiveSchemaStripInPlace(
     params.mergedCustomTools,
   );
 
@@ -154,6 +154,9 @@ export async function handleToolSchemaUnsupported(
         strippedKeywords: [],
         provider,
         modelId,
+        // WR-03: true when a tool's schema exceeded the strip walk's depth
+        // cap — keywords may survive below the cut (fail-safe pass-through).
+        depthLimited,
         hint: 'Provider rejected a tool schema but no pattern/format keywords were strippable; failing honestly. Durable fix: models[].comisCompat.toolSchemaProfile: "gbnf" (auto-enabled for provider type "ollama")',
         errorKind: "validation" as ErrorKind,
       },
@@ -182,6 +185,10 @@ export async function handleToolSchemaUnsupported(
       strippedKeywords,
       provider,
       modelId,
+      // WR-03: true when a tool's schema exceeded the strip walk's depth cap
+      // — keywords may survive below the cut, so a failed retry on a
+      // depth-limited toolset points at the oversized MCP schema itself.
+      depthLimited,
       hint: 'Provider rejected a tool schema at grammar-compile; stripped pattern/format from the named tools and retrying once. Durable fix: models[].comisCompat.toolSchemaProfile: "gbnf" (auto-enabled for provider type "ollama")',
       errorKind: "validation" as ErrorKind,
     },

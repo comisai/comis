@@ -37,6 +37,13 @@
  * (`properties`/`items`/`allOf`/`anyOf`/`oneOf`/`additionalProperties`); no
  * `$ref` resolution or expansion (refs pass through untouched), so a
  * maliciously deep third-party MCP schema costs O(nodes), never exponential.
+ * STACK DEPTH is bounded too (175-REVIEW WR-03): recursion stops at
+ * {@link MAX_GBNF_WALK_DEPTH} — subtrees beyond the cap pass through
+ * un-walked (every transform is skip-tolerant, so pass-through is always
+ * safe) and `depthLimited` reports the cut so the caller can WARN. Without
+ * the cap, a ~4000-level properties chain that JSON.parse accepts at the
+ * MCP transport boundary overflowed the call stack and the RangeError
+ * failed the WHOLE turn for ALL tools.
  *
  * @module
  */
@@ -57,6 +64,17 @@ const KEYWORD_ORDER: readonly GbnfTransformKeyword[] = [
 ];
 
 const NULLABLE_HINT = " (nullable)";
+
+/**
+ * Stack-depth cap for the recursive walk (175-REVIEW WR-03). Third-party MCP
+ * schemas are attacker-controlled: a chain deep enough to overflow the
+ * un-capped walk still parses cleanly through JSON.parse at the transport
+ * boundary. Nodes deeper than the cap pass through UN-WALKED — fail-safe by
+ * design (an un-transformed subtree at worst reproduces the provider 400 the
+ * reactive path already handles; it never crashes tool assembly). 64 levels
+ * is far beyond any legitimate tool schema.
+ */
+export const MAX_GBNF_WALK_DEPTH = 64;
 
 /**
  * Keys whose presence means a node already carries type information — T4 must
@@ -206,11 +224,26 @@ function injectEmptyProperties(
  * single pass — keeping twice-equals-once true by construction. Each collapse
  * strictly shrinks the subtree, so the loop terminates in O(nodes).
  *
+ * Depth-capped (WR-03): an object node at `depth >= MAX_GBNF_WALK_DEPTH` is
+ * returned UN-WALKED and `limited.hit` is set — pass-through, never a throw.
+ *
  * Always builds NEW objects; never mutates the input.
  */
-function walk(schema: unknown, applied: Set<GbnfTransformKeyword>): unknown {
+function walk(
+  schema: unknown,
+  applied: Set<GbnfTransformKeyword>,
+  depth: number,
+  limited: { hit: boolean },
+): unknown {
   if (schema === null || schema === undefined) return schema;
   if (typeof schema !== "object" || Array.isArray(schema)) return schema;
+
+  // WR-03: cap BEFORE any per-node transform so the entire subtree passes
+  // through byte-identical (a half-transformed cut node would be confusing).
+  if (depth >= MAX_GBNF_WALK_DEPTH) {
+    limited.hit = true;
+    return schema;
+  }
 
   let node = schema as Record<string, unknown>;
 
@@ -230,7 +263,7 @@ function walk(schema: unknown, applied: Set<GbnfTransformKeyword>): unknown {
     if (key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
       const propsOut: Record<string, unknown> = {};
       for (const [propName, propSchema] of Object.entries(value as Record<string, unknown>)) {
-        propsOut[propName] = walk(propSchema, applied);
+        propsOut[propName] = walk(propSchema, applied, depth + 1, limited);
       }
       out[key] = propsOut;
       continue;
@@ -239,14 +272,14 @@ function walk(schema: unknown, applied: Set<GbnfTransformKeyword>): unknown {
     // Recurse into items (single schema or array of schemas)
     if (key === "items") {
       out[key] = Array.isArray(value)
-        ? value.map((item) => walk(item, applied))
-        : walk(value, applied);
+        ? value.map((item) => walk(item, applied, depth + 1, limited))
+        : walk(value, applied, depth + 1, limited);
       continue;
     }
 
     // Recurse into allOf/anyOf/oneOf (array of schemas)
     if ((key === "allOf" || key === "anyOf" || key === "oneOf") && Array.isArray(value)) {
-      out[key] = value.map((entry) => walk(entry, applied));
+      out[key] = value.map((entry) => walk(entry, applied, depth + 1, limited));
       continue;
     }
 
@@ -259,7 +292,7 @@ function walk(schema: unknown, applied: Set<GbnfTransformKeyword>): unknown {
       typeof value === "object" &&
       !Array.isArray(value)
     ) {
-      out[key] = walk(value, applied);
+      out[key] = walk(value, applied, depth + 1, limited);
       continue;
     }
 
@@ -280,15 +313,21 @@ function walk(schema: unknown, applied: Set<GbnfTransformKeyword>): unknown {
  * `transformedKeywords` is the content-free report of which transform classes
  * fired anywhere in the tree (deduplicated, stable order) — safe for logging
  * under I7 (keyword names only, never schema bodies).
+ *
+ * `depthLimited` is true when any subtree exceeded {@link MAX_GBNF_WALK_DEPTH}
+ * and passed through un-walked (WR-03 fail-safe) — callers WARN on it.
  */
 export function cleanSchemaForGbnf(schema: unknown): {
   schema: unknown;
   transformedKeywords: GbnfTransformKeyword[];
+  depthLimited: boolean;
 } {
   const applied = new Set<GbnfTransformKeyword>();
-  const out = walk(schema, applied);
+  const limited = { hit: false };
+  const out = walk(schema, applied, 0, limited);
   return {
     schema: out,
     transformedKeywords: KEYWORD_ORDER.filter((keyword) => applied.has(keyword)),
+    depthLimited: limited.hit,
   };
 }

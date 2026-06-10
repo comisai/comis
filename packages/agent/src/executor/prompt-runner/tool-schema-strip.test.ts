@@ -158,9 +158,49 @@ describe("stripSchemaKeywordsDeep", () => {
   });
 
   it("passes through non-object inputs unchanged (null, undefined, string, array)", () => {
-    expect(stripSchemaKeywordsDeep(null, REACTIVE_STRIP_KEYWORDS)).toEqual({ schema: null, stripped: [] });
+    expect(stripSchemaKeywordsDeep(null, REACTIVE_STRIP_KEYWORDS)).toEqual({ schema: null, stripped: [], depthLimited: false });
     expect(stripSchemaKeywordsDeep(undefined, REACTIVE_STRIP_KEYWORDS).schema).toBeUndefined();
-    expect(stripSchemaKeywordsDeep("x", REACTIVE_STRIP_KEYWORDS)).toEqual({ schema: "x", stripped: [] });
+    expect(stripSchemaKeywordsDeep("x", REACTIVE_STRIP_KEYWORDS)).toEqual({ schema: "x", stripped: [], depthLimited: false });
+  });
+
+  // WR-03 (175-REVIEW): the strip walk shares the un-capped-recursion flaw —
+  // a hostile MCP schema deep enough to overflow it would crash the repair
+  // path the schema rejection itself triggered.
+  describe("WR-03: depth-limited recursion (attacker-controlled MCP schemas)", () => {
+    function makeDeepPropertiesChain(
+      depth: number,
+      leaf: Record<string, unknown>,
+    ): Record<string, unknown> {
+      let node: Record<string, unknown> = leaf;
+      for (let i = 0; i < depth; i++) {
+        node = { type: "object", properties: { child: node } };
+      }
+      return node;
+    }
+
+    it("survives a 6000-level properties chain without a stack overflow (a depth JSON.parse survives)", () => {
+      const deep = makeDeepPropertiesChain(6000, { type: "string", pattern: "^x$" });
+      expect(() => stripSchemaKeywordsDeep(deep, REACTIVE_STRIP_KEYWORDS)).not.toThrow();
+    });
+
+    it("fails SAFE at the cap: shallow pattern/format still stripped, deep tail passes through, depthLimited reports the cut", () => {
+      const input = {
+        type: "object",
+        properties: {
+          due: { type: "string", pattern: "\\d{4}", format: "date" },
+          tail: makeDeepPropertiesChain(6000, { type: "string", pattern: "^x$" }),
+        },
+      };
+
+      const result = stripSchemaKeywordsDeep(input, REACTIVE_STRIP_KEYWORDS);
+
+      const props = (result.schema as { properties: Record<string, Record<string, unknown>> }).properties;
+      expect(props.due).toEqual({ type: "string" });
+      expect(result.stripped).toEqual(["pattern", "format"]);
+      expect(
+        (result as unknown as { depthLimited?: boolean }).depthLimited,
+      ).toBe(true);
+    });
   });
 });
 
