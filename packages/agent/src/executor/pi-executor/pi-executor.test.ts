@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+// node:fs is partially mocked below (appendFileSync/statSync/renameSync/unlinkSync);
+// readFileSync passes through to the real implementation via the ...actual spread,
+// so the source-text wiring guard at the bottom of this file can use it.
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ok, err } from "@comis/shared";
 import { resolveModelProfile } from "../model-profile.js";
 import type { PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
@@ -6647,5 +6653,35 @@ describe("IN-01 (CR-01 regression): pi-executor capabilityCap absent-providerCap
     const logPayload = capLogCall![0] as Record<string, unknown>;
     expect(logPayload["source"]).toBe("capability");
     expect(logPayload["effectiveWindow"]).toBe(32_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Source-text wiring guard: normalizeModelCompat call-site threading (175-04)
+// ---------------------------------------------------------------------------
+
+describe("normalizeModelCompat call-site wiring guard (175-04)", () => {
+  it("passes providerType and comisCompat from deps resolvers into normalizeModelCompat", () => {
+    // GBNF-01 built-but-not-wired guard. RED on pre-patch code: the call
+    // passed only {provider, id}, dropping the user's models[].comisCompat
+    // entirely and giving auto-detection no provider-type signal. Resolver
+    // form (deps.getProviderType / deps.getModelCompat) is load-bearing:
+    // per-execution model overrides can switch providers mid-agent, so a
+    // static agent-primary value would mis-gate (WR-04 precedent).
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    const callStart = src.indexOf("normalizeModelCompat({");
+    expect(callStart).toBeGreaterThan(-1);
+    const callEnd = src.indexOf("})", callStart);
+    expect(callEnd).toBeGreaterThan(callStart);
+
+    const callBlock = src.slice(callStart, callEnd);
+    expect(callBlock).toContain(
+      "providerType: deps.getProviderType?.(resolvedModel.provider)",
+    );
+    expect(callBlock).toContain(
+      "comisCompat: deps.getModelCompat?.(resolvedModel.provider, resolvedModel.id)",
+    );
   });
 });
