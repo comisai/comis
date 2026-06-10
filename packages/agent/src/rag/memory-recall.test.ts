@@ -82,6 +82,12 @@ function makeResult(
     base?: number;
     content?: string;
     occurredAt?: number;
+    /** Entry tags. Default []; set e.g. ["lcd_distilled", "depth:1"] for the
+     *  DIST-03 provenance down-weighting pass fixtures. */
+    tags?: string[];
+    /** source.sessionKey — the conversation a memory was written from. Used by the
+     *  DIST-03 post-fusion provenance pass to find same-conversation paired rows. */
+    sessionKey?: string;
   } = {},
 ): MemorySearchResult {
   const entry: Record<string, unknown> = {
@@ -91,8 +97,8 @@ function makeResult(
     userId: "user_a",
     content: opts.content ?? `content for ${id}`,
     trustLevel: opts.trustLevel ?? "learned",
-    source: { who: "agent" },
-    tags: [],
+    source: opts.sessionKey !== undefined ? { who: "agent", sessionKey: opts.sessionKey } : { who: "agent" },
+    tags: opts.tags ?? [],
     createdAt: opts.createdAt ?? NOW,
     // The temporal lane seeds on entry.occurredAt — set it only when provided so the
     // no-seed gate (occurredAt absent on every top hit) is exercisable.
@@ -3335,3 +3341,273 @@ describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", (
     expect(typeof warnPayload.durationMs).toBe("number");
   });
 });
+
+// ---------------------------------------------------------------------------
+// DIST-03 POST-FUSION PROVENANCE DOWN-WEIGHTING PASS
+//
+// When a distilled summary (tag "lcd_distilled") is in the ranked set, the
+// recall pipeline down-weights same-conversation paired memories whose covered
+// range overlaps (score × 0.5, NEVER delete). The pass runs AFTER mmrRerank and
+// BEFORE captureRecallObservability, is guarded by `deps.provenanceStore != null`,
+// is NON-FATAL (a provenance failure never affects recall results), and is
+// BYTE-IDENTICAL when provenanceStore is absent / no lcd_distilled result.
+//
+// W6 INVARIANT: the distilled summary itself (and any OTHER lcd_distilled entry)
+// is NEVER down-weighted — the predicate is fully parenthesized
+// (candidate.id !== summary.id AND !candidateIsDistilled, candidateIsDistilled a
+// separate boolean) so the &&/|| precedence trap cannot down-weight the summary.
+// ---------------------------------------------------------------------------
+
+/**
+ * A controllable LcdProvenanceReadStore spy. `getProvenanceForSummary` returns a
+ * canned row set keyed by summaryId and records every (scope, summaryId) call so
+ * the load-bearing call-site (the pass actually queries the port) is assertable.
+ */
+function fakeProvenanceStore(
+  rowsBySummaryId: Record<
+    string,
+    Array<{ provenanceId: string; memoryId: string; sourceSessionKey: string; supersededBy: string | null }>
+  > = {},
+  opts: { throwOnCall?: boolean } = {},
+): {
+  store: { getProvenanceForSummary: (scope: unknown, summaryId: string) => unknown };
+  calls: Array<{ scope: { tenantId: string; agentId: string; conversationId?: string }; summaryId: string }>;
+} {
+  const calls: Array<{ scope: { tenantId: string; agentId: string; conversationId?: string }; summaryId: string }> = [];
+  const store = {
+    getProvenanceForSummary(scope: unknown, summaryId: string) {
+      calls.push({ scope: scope as { tenantId: string; agentId: string; conversationId?: string }, summaryId });
+      if (opts.throwOnCall) throw new Error("provenance store exploded");
+      return rowsBySummaryId[summaryId] ?? [];
+    },
+  };
+  return { store, calls };
+}
+
+/** Neutral scoring so the ONLY observable score delta in these tests is the pass's ×0.5. */
+const DIST_NEUTRAL_SCORING: ScoringAlphas = {
+  recencyAlpha: 0,
+  temporalAlpha: 0,
+  proofAlpha: 0,
+  trustAlpha: 0,
+  usefulnessAlpha: 0,
+};
+
+describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
+  // The two stable strings the fixtures share.
+  const CONV_SESSION = "telegram:chat_1:user_a"; // the distilled summary's source.sessionKey
+
+  it("down-weights a same-session paired memory (score × 0.5) when a lcd_distilled result is selected, never deleting it", async () => {
+    // The distilled summary + a paired conversation memory from the SAME session,
+    // plus an unrelated memory from a DIFFERENT session that must NOT be touched.
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1"],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("paired", {
+        base: 0.8,
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("other-session", {
+        base: 0.7,
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        sessionKey: "telegram:chat_9:user_z",
+      }),
+    ];
+    const { store } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+    // The paired same-session memory survives (NOT deleted) but is down-weighted.
+    expect(byId.has("paired")).toBe(true);
+    const pairedScore = byId.get("paired")!;
+    // The other-session memory keeps its score (≈0.7 base, neutral scoring → unchanged).
+    const otherScore = byId.get("other-session")!;
+    expect(pairedScore).toBeLessThan(otherScore);
+    // The distilled summary itself is never down-weighted (W6).
+    const distilledScore = byId.get("distilled")!;
+    expect(distilledScore).toBeGreaterThan(pairedScore);
+  });
+
+  it("W6 PRECEDENCE: the distilled summary itself is NEVER down-weighted even when it is the only same-session entry besides another lcd_distilled row", async () => {
+    // Two lcd_distilled summaries from the same session: NEITHER may be down-weighted.
+    // The buggy `a && b || c` predicate would down-weight one distilled entry; the
+    // correct fully-parenthesized predicate leaves BOTH untouched.
+    const input = [
+      makeResult("d1", { base: 0.9, trustLevel: "learned", tags: ["lcd_distilled", "depth:2"], sessionKey: CONV_SESSION }),
+      makeResult("d2", { base: 0.85, trustLevel: "learned", tags: ["lcd_distilled", "depth:1"], sessionKey: CONV_SESSION }),
+    ];
+    const referenceById = new Map(
+      // Reference scores with NO provenance pass (the pass must leave distilled rows alone).
+      (await runReference(input)).map((r) => [r.entry.id, r.score ?? 1]),
+    );
+    const { store } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+    // Both distilled rows keep their reference (un-down-weighted) score.
+    expect(byId.get("d1")).toBeCloseTo(referenceById.get("d1")!, 10);
+    expect(byId.get("d2")).toBeCloseTo(referenceById.get("d2")!, 10);
+  });
+
+  it("LOAD-BEARING getProvenanceForSummary: a provenance-linked memoryId is down-weighted and the port is queried with the (tenant, agent) scope", async () => {
+    // The distilled summary carries a summary:<id> tag; the provenance store maps
+    // that summaryId → a paired memoryId. The pass MUST query the port and
+    // down-weight the EXACT returned memoryId.
+    const SUMMARY_ID = "sum-abc";
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1", `summary:${SUMMARY_ID}`],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("prov-paired", {
+        base: 0.8,
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        // Deliberately a DIFFERENT sessionKey so ONLY the provenance row (not the
+        // session heuristic) can select it — proves getProvenanceForSummary is load-bearing.
+        sessionKey: "telegram:chat_other:user_a",
+      }),
+    ];
+    const referenceById = new Map((await runReference(input)).map((r) => [r.entry.id, r.score ?? 1]));
+    const { store, calls } = fakeProvenanceStore({
+      [SUMMARY_ID]: [
+        { provenanceId: "p1", memoryId: "prov-paired", sourceSessionKey: CONV_SESSION, supersededBy: null },
+      ],
+    });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // The port was queried for the distilled summary's id, scoped to (tenant, agent).
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.some((c) => c.summaryId === SUMMARY_ID)).toBe(true);
+    const scopedCall = calls.find((c) => c.summaryId === SUMMARY_ID)!;
+    expect(scopedCall.scope.tenantId).toBe("tenant_x"); // SESSION_KEY_OBJ.tenantId
+    expect(scopedCall.scope.agentId).toBe("agent_y");
+    // The provenance-linked memory was down-weighted below its reference score.
+    const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+    expect(byId.get("prov-paired")!).toBeLessThan(referenceById.get("prov-paired")!);
+  });
+
+  it("DEFAULT-OFF BYTE-IDENTITY: with provenanceStore ABSENT, recall output is byte-identical to today even when a lcd_distilled result is present", async () => {
+    const input = [
+      makeResult("distilled", { base: 0.9, trustLevel: "learned", tags: ["lcd_distilled", "depth:1"], sessionKey: CONV_SESSION }),
+      makeResult("paired", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+    ];
+    const expected = (await runReference(input)).map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+    // No provenanceStore injected.
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const actual = got.value.map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+    expect(actual).toEqual(expected);
+  });
+
+  it("NO-OP when NO lcd_distilled result is present: provenanceStore is NEVER queried and output is byte-identical", async () => {
+    const input = [
+      makeResult("a", { base: 0.9, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+      makeResult("b", { base: 0.8, trustLevel: "learned", tags: ["conversation"], sessionKey: CONV_SESSION }),
+    ];
+    const expected = (await runReference(input)).map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+    const { store, calls } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // Fast-path: no lcd_distilled entry → getProvenanceForSummary never called.
+    expect(calls.length).toBe(0);
+    const actual = got.value.map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+    expect(actual).toEqual(expected);
+  });
+
+  it("NON-FATAL: a provenanceStore that throws does NOT fail recall — results are returned unchanged with a WARN", async () => {
+    const input = [
+      makeResult("distilled", { base: 0.9, trustLevel: "learned", tags: ["lcd_distilled", "depth:1"], sessionKey: CONV_SESSION }),
+      makeResult("paired", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+    ];
+    const warnMock = vi.fn();
+    const { store } = fakeProvenanceStore({}, { throwOnCall: true });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: { info: vi.fn(), warn: warnMock, debug: vi.fn(), error: vi.fn() },
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    // Recall STILL succeeds (non-fatal pass).
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.length).toBe(2);
+    // The failure was logged with an errorKind + hint (§2.7).
+    expect(warnMock).toHaveBeenCalled();
+    const payload = warnMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload).toHaveProperty("errorKind");
+    expect(payload).toHaveProperty("hint");
+  });
+});
+
+/**
+ * The documented default recall pipeline WITHOUT the provenance pass, used as the
+ * byte-identity / un-down-weighted reference. Mirrors the reference computation in
+ * the recall-trace DEFAULT-OFF test (fuse → score → trust-filter → dedup), with
+ * DIST_NEUTRAL_SCORING so the only score deltas a test can observe are the pass's ×0.5.
+ */
+async function runReference(input: MemorySearchResult[]): Promise<MemorySearchResult[]> {
+  const cfg = baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] });
+  const fused = fuse([{ results: input, weight: 1.0 }]);
+  const scored = score(fused, cfg.scoring, NOW);
+  const allowed = new Set<TrustLevel>(cfg.includeTrustLevels);
+  return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel)));
+}
