@@ -28,6 +28,11 @@ const mockCreateSessionStore = vi.hoisted(() => vi.fn(() => ({ loadByFormattedKe
 // function` (the MEMORY.md "setup-memory mock" gate). The two port methods are
 // stubbed (the append write + the conversation-scoped getMessages read).
 const mockCreateLcdStore = vi.hoisted(() => vi.fn(() => ({ append: vi.fn(), getMessages: vi.fn(() => []) })));
+// LcdProvenanceReadStore stub (Phase 173, DIST-03 read side) — setupMemory now also
+// builds the provenance read adapter on the shared db (buildProvenanceReadStore) and
+// threads it to createMemoryRecall's down-weighting pass. Without the mock entry the
+// factory is undefined and EVERY setup call throws (the setup-memory mock gate).
+const mockBuildProvenanceReadStore = vi.hoisted(() => vi.fn(() => ({ getProvenanceForSummary: vi.fn(() => []) })));
 // ContextBrowsePort stub — the operator-browse read surface (createLcdBrowseStore)
 // setupMemory now also builds on the shared db (backs context.conversations).
 const mockCreateLcdBrowseStore = vi.hoisted(() => vi.fn(() => ({ listConversations: vi.fn(() => ({ conversations: [], total: 0 })) })));
@@ -180,6 +185,7 @@ vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
   createSessionStore: mockCreateSessionStore,
   createLcdStore: mockCreateLcdStore,
+  buildProvenanceReadStore: mockBuildProvenanceReadStore,
   createLcdBrowseStore: mockCreateLcdBrowseStore,
   createMemoryApi: mockCreateMemoryApi,
   createEmbeddingProvider: mockCreateEmbeddingProvider,
@@ -314,6 +320,33 @@ describe("setupMemory", () => {
     expect(result.disposeEmbedding).toBeUndefined();
     expect(result.cachedPort).toBeUndefined();
     expect(result.embeddingQueue).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // 1b. Builds + returns the LCD provenance read store (Phase 173, DIST-03 read
+  //     side, Link 1 of the carry-in wiring chain). The built-but-not-wired guard
+  //     for the FIRST link: setupMemory must construct buildProvenanceReadStore(db)
+  //     on the shared db handle and expose it as `provenanceStore` so the daemon can
+  //     thread it onward to createMemoryRecall's down-weighting pass. Paired with
+  //     the prompt-assembly + setup-agents wiring guards (the last links).
+  // -------------------------------------------------------------------------
+
+  it("builds buildProvenanceReadStore on the shared db and returns it as provenanceStore (DIST-03 Link 1)", async () => {
+    const container = createMinimalContainer({ embedding: { enabled: false } });
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // The factory was called on the SAME db handle as createLcdStore.
+    expect(mockBuildProvenanceReadStore).toHaveBeenCalledOnce();
+    expect(mockBuildProvenanceReadStore).toHaveBeenCalledWith(mockDb);
+    // The result is surfaced — the daemon threads this exact value onward.
+    expect(result.provenanceStore).toBeDefined();
+    expect(result.provenanceStore).toBe(mockBuildProvenanceReadStore.mock.results[0]!.value);
   });
 
   // -------------------------------------------------------------------------

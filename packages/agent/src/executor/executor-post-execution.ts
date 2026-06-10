@@ -80,6 +80,11 @@ import { runLeafPassAfterTurn } from "./lcd-compaction-trigger.js";
 // call here is a single non-fatal invocation. The agent↛memory cut: the condense
 // trigger imports only core types + the agent-side condense summarizer.
 import { runCondensePassAfterTurn } from "./lcd-condense-trigger.js";
+// LCD→LTM distillation runner (Phase 172-02, DIST-01..04). Fires via the
+// onCondensed callback on runCondensePassAfterTurn — non-fatal, fire-and-forget
+// (mirrors the condense pass's own T-130-07 wrapping). The agent↛memory cut:
+// the runner imports only core TYPE-only ports — no @comis/memory import.
+import { runDistillationPassAfterTurn } from "./lcd-distillation-runner.js";
 import type { LeafSummarizerDeps, CompactionModelSnapshot } from "../context-engine/lcd-leaf-summarizer.js";
 // In-package pure attribution fn (the agent↛memory cut — core types
 // only; the write-back is the daemon's job, off the recall-used bus event).
@@ -1569,6 +1574,42 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         nowFn: () => deps.clock.now(),
         logger: deps.logger,
         eventBus: deps.eventBus,
+        // Phase 172-02 (DIST-01): the distillation hook seam. Fires after
+        // appendCondensedSummary returns, passing summaryId/content/fallback/depth.
+        // runDistillationPassAfterTurn is non-fatal end-to-end (mirrors the
+        // condense pass's own T-130-07 wrapping). Only fires when the deps are
+        // present (memoryPort required; other deps optional).
+        onCondensed: deps.memoryPort
+          ? (summaryId, content, fallbackFlag, condensedDepth) => {
+              void runDistillationPassAfterTurn({
+                summaryId,
+                scope,
+                content,
+                fallback: fallbackFlag,
+                depth: condensedDepth,
+                now: deps.clock.now(),
+                deps: {
+                  memoryPort: deps.memoryPort!,
+                  lcdStore: store,
+                  embeddingEnqueue: deps.embeddingEnqueue,
+                  // WR-03: a clock CALLABLE so the runner times its write boundary
+                  // (entry → completion) for the durationMs INFO line. Bound to the
+                  // injected ClockPort — never Date.now().
+                  nowFn: () => deps.clock.now(),
+                  logger: deps.logger,
+                  eventBus: deps.eventBus,
+                  distillConfig: config.contextEngine?.memory?.distillFromLcd,
+                  modelProfile:
+                    capabilityClass !== undefined
+                      ? { capabilityClass: capabilityClass as "frontier" | "mid" | "small" | "nano" }
+                      : undefined,
+                  strongerSummarizerModel:
+                    config.contextEngine?.compaction?.strongerSummarizerModel || undefined,
+                  isSubagentSession: params.executionOverrides?.spawnPacket != null,
+                },
+              });
+            }
+          : undefined,
       });
     };
 

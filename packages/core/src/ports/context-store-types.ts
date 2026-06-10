@@ -295,6 +295,22 @@ export interface LcdSearchHit {
 }
 
 /**
+ * EFF-03: wrapper returned by {@link ContextStorePort.searchLcd} and
+ * `searchLcdImpl` to carry the CJK zero-hit diagnostic flag alongside the hits.
+ *
+ * `cjkZeroHit` is the §14.4 instrumented trigger for the deferred CJK-trigram
+ * FTS path: it is true ONLY when the query contained CJK codepoints AND the
+ * search returned 0 hits. The flag is content-free (boolean only — never the
+ * query text). The caller's logging boundary (skills/agent — NOT @comis/memory)
+ * emits a DEBUG event when this flag is true.
+ */
+export interface LcdSearchResult {
+  hits: LcdSearchHit[];
+  /** true iff the query had CJK codepoints AND hits.length === 0 */
+  cjkZeroHit: boolean;
+}
+
+/**
  * The write-path DTO for the compaction transaction (C3): persist one leaf
  * summary, link it to the covered messages, and range-replace the covered
  * context_items message-refs with one summary-ref — all atomically.
@@ -372,4 +388,31 @@ export interface AppendCondensedSummaryInput {
   childSummaryIds: string[];
   /** = max(child depths) + 1. */
   depth: number;
+}
+
+/**
+ * Phase 172 (DIST-01): The write-path DTO for
+ * ContextStorePort.appendProvenance — persists one lcd_memory_provenance row.
+ *
+ * Links a distilled episodic memory (memoryId) to the LCD condensed summary
+ * (summaryId) it was distilled from. R4-scoped via conversationId / agentId /
+ * tenantId. No FK on summaryId (survives LCD resets — design §14).
+ */
+export interface AppendProvenanceInput {
+  /** UUID for the new provenance row (caller-supplied, randomUUID). */
+  provenanceId: string;
+  /** ID of the distilled episodic memory row in the memories table (FK ON DELETE CASCADE). */
+  memoryId: string;
+  /** ID of the lcd_summaries row that was distilled (intentionally NOT a FK — survives resets). */
+  summaryId: string;
+  /** Formatted session key; used by DIST-05 --memory delete. */
+  sourceSessionKey: string;
+  /** R4 isolation: tenant+agent+session composite (R4 scoping). */
+  conversationId: string;
+  /** R4 isolation: agent boundary. */
+  agentId: string;
+  /** R4 isolation: tenant boundary. */
+  tenantId: string;
+  /** Caller-supplied epoch ms (the store never reads the clock). */
+  createdAt: number;
 }

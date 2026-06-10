@@ -9658,6 +9658,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "memory": {
           "type": "boolean"
+        },
+        "purge_derived": {
+          "type": "boolean"
         }
       },
       "required": [

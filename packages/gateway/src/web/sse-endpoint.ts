@@ -6,7 +6,7 @@ import { streamSSE } from "hono/streaming";
 import { suppressError } from "@comis/shared";
 import type { TokenStore } from "../auth/token-auth.js";
 import type { RpcAdapterDeps } from "../rpc/rpc-adapters.js";
-import { extractBearerToken } from "../auth/token-auth.js";
+import { extractBearerToken, checkScope } from "../auth/token-auth.js";
 
 interface SseEnv extends Env {
   Variables: { clientScopes: string[] };
@@ -113,6 +113,14 @@ export function createSseEndpoint(deps: SseEndpointDeps): Hono<SseEnv> {
 
     if (!client) {
       return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    // Enforce scope: SSE streams the cross-session event firehose and can drive
+    // agent turns, so require the same "rpc" scope the REST API does. A
+    // sole-scope "mcp-client" token (contained external credential) must NOT
+    // reach these surfaces — it is rejected here, matching rest-api.ts.
+    if (!checkScope(client.scopes, "rpc")) {
+      return c.json({ error: "Forbidden: insufficient scope" }, 403);
     }
 
     // Store client scopes on context for downstream handlers

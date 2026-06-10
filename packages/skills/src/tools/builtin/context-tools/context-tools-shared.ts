@@ -50,6 +50,15 @@ export interface ContextToolDeps {
   readonly nowMs: () => number;
   /** Inline-output cap before `ctx_expand` spills to a file (from `ContextEngineConfig`, default 4000). */
   readonly maxExpandTokens: number;
+  /**
+   * DEPTH-02: tier-gated max BFS hop depth for the `ctx_expand` multi-hop walk
+   * (nano1/small2/mid3/frontier4). Resolved at the wiring site from the agent's
+   * `ModelProfile` (`RequestContext` carries no `capabilityClass`). A capacity
+   * knob, NOT a scope — wiring-time resolution is correct (R4 scope still comes
+   * per-call from `requireCtxScope()`; A3 / Pitfall 3). Absent ⇒ a conservative
+   * depth of 1 (single-hop — the pre-DEPTH-02 behavior).
+   */
+  readonly maxExpandDepth?: number;
   /** Per-call session tool-results dir resolver (the exec-tool precedent). `undefined` ⇒ no live session dir. */
   readonly getToolResultsDir: () => string | undefined;
   /**

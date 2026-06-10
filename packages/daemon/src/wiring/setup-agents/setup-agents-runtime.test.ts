@@ -50,8 +50,10 @@ describe("setupSingleAgent OutputGuard wiring", () => {
   it("passes outputGuard and canaryToken to createPiExecutor deps (OGUARD regression guard)", () => {
     const source = readRuntimeSource();
 
-    // Verify OutputGuard and canary token are created before the deps block
-    expect(source).toContain("createOutputGuard()");
+    // Verify OutputGuard and canary token are created before the deps block.
+    // The guard must be constructed WITH the daemon's known secrets so bare
+    // (prefix-less) secret values are redacted by exact match.
+    expect(source).toContain("createOutputGuard({ knownSecrets: gatewayTokenSecrets })");
     expect(source).toContain("generateCanaryToken");
 
     // Verify both are passed inside the createPiExecutor deps object (not just anywhere in file)

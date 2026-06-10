@@ -477,6 +477,7 @@ change anything.
 | `contextEngine.summarizerBreaker.failureThreshold` | number | `5` | **DAG mode (live):** consecutive summarizer failures before the circuit breaker opens → truncation-only assembly |
 | `contextEngine.summarizerBreaker.resetTimeoutMs` | number | `60000` | **DAG mode (live):** how long the summarizer breaker stays open before a half-open trial |
 | `contextEngine.summarizerBreaker.halfOpenTimeoutMs` | number | `30000` | **DAG mode (live):** half-open trial window for the summarizer breaker |
+| `contextEngine.compaction.summarizerFallbackProviders` | string[] | `[]` | **DAG mode (live):** ordered list of fallback summarizer provider/model ids tried in turn when the primary summarizer fails (SUM-03); the per-tenant breaker + spend caps still bind, and only an all-providers-exhausted failure trips the breaker. `[]` (default) = no failover — primary only, byte-identical to prior behavior |
 
 ```yaml title="~/.comis/config.yaml"
 agents:

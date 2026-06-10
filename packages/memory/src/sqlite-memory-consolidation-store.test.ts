@@ -1780,4 +1780,256 @@ describe("createSqliteMemoryConsolidationStore", () => {
       }
     });
   });
+
+  // =====================================================================
+  // Phase 172-03 (DIST-05) — unlinkDeletedSources + purgeConsolidatedDerivedFrom
+  // The --memory honest reset deletes raw memories first, then cleans up the
+  // consolidated observations that referenced them: orphan (every source gone) →
+  // delete; multi-source (some sources survive) → keep with reduced source_ids.
+  // purge-derived nukes EVERY observation with any deleted source.
+  // =====================================================================
+
+  /** Seed an observation row (proof_count IS NOT NULL) with the given source ids. */
+  async function seedObservation(sourceIds: string[], overrides: Partial<MemoryEntry> = {}): Promise<string> {
+    return seedMemory({
+      content: overrides.content ?? "an observation",
+      proofCount: sourceIds.length,
+      sourceIds,
+      confidence: 0.9,
+      ...overrides,
+    });
+  }
+
+  describe("unlinkDeletedSources (DIST-05)", () => {
+    it("orphan observation (all sources deleted) is DELETED", async () => {
+      // Two raw sources, one observation built from both. Delete both raws, then
+      // unlink: the observation has no surviving sources → orphan → deleted.
+      const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-x" } });
+      const s2 = await seedMemory({ content: "raw 2", source: { who: "u", channel: "c", sessionKey: "sess-x" } });
+      const obs = await seedObservation([s1, s2]);
+
+      // Delete both raw sources (the --memory delete already ran).
+      await adapter.deleteBySessionKey("sess-x", { tenantId: TENANT_A, agentId: AGENT_A });
+      expect(rowExists(s1)).toBe(false);
+      expect(rowExists(s2)).toBe(false);
+
+      const r = await store.unlinkDeletedSources("sess-x", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(1); // one orphan deleted
+      expect(rowExists(obs)).toBe(false);
+    });
+
+    it("multi-source observation (one source survives) is KEPT with reduced source_ids", async () => {
+      // s1 from the session to wipe, s2 from a DIFFERENT session that survives.
+      const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-wipe" } });
+      const s2 = await seedMemory({ content: "raw 2", source: { who: "u", channel: "c", sessionKey: "sess-keep" } });
+      const obs = await seedObservation([s1, s2]);
+
+      await adapter.deleteBySessionKey("sess-wipe", { tenantId: TENANT_A, agentId: AGENT_A });
+      expect(rowExists(s1)).toBe(false);
+      expect(rowExists(s2)).toBe(true);
+
+      const r = await store.unlinkDeletedSources("sess-wipe", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0); // nothing orphaned — the observation survives
+      expect(rowExists(obs)).toBe(true);
+      // source_ids reduced to the surviving source only.
+      const row = db.prepare("SELECT source_ids FROM memories WHERE id = ?").get(obs) as
+        | { source_ids: string }
+        | undefined;
+      expect(JSON.parse(row!.source_ids)).toEqual([s2]);
+    });
+
+    it("tenant isolation: an observation in a DIFFERENT tenant is never touched", async () => {
+      const OTHER = "tenant_b";
+      const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-x" } });
+      // Observation under a different tenant referencing s1 (cross-tenant edge — must NOT be touched).
+      const obsOther = await seedObservation([s1], { tenantId: OTHER });
+
+      await adapter.deleteBySessionKey("sess-x", { tenantId: TENANT_A, agentId: AGENT_A });
+
+      const r = await store.unlinkDeletedSources("sess-x", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(true);
+      // The other-tenant observation is untouched (tenant-scoped query).
+      expect(rowExists(obsOther)).toBe(true);
+      const row = db.prepare("SELECT source_ids FROM memories WHERE id = ?").get(obsOther) as
+        | { source_ids: string }
+        | undefined;
+      expect(JSON.parse(row!.source_ids)).toEqual([s1]);
+    });
+
+    // WR-05 (scope asymmetry): deleteBySessionKey is (tenant, agent)-scoped, so
+    // the cleanup MUST be too. An observation owned by a DIFFERENT agent in the
+    // SAME tenant — even one that references the deleted agent-A source id — must
+    // NOT be deleted or unlinked by an agent-A reset. Fails on the pre-fix code
+    // whose liveIds + observation scan filtered tenant_id only (the cross-agent
+    // observation saw the deleted id as "absent" and got mutated).
+    it("WR-05: agent isolation — an observation owned by a DIFFERENT agent (same tenant) is never touched", async () => {
+      // agent-A source deleted by an agent-A reset.
+      const sA = await seedMemory({
+        content: "raw A",
+        agentId: AGENT_A,
+        source: { who: "u", channel: "c", sessionKey: "sess-x" },
+      });
+      // agent-B observation that (improperly, but defensively) references sA. With
+      // the cleanup scoped to agent-A it must be invisible to this reset.
+      const obsB = await seedObservation([sA], { agentId: "agent_b" });
+
+      await adapter.deleteBySessionKey("sess-x", { tenantId: TENANT_A, agentId: AGENT_A });
+      expect(rowExists(sA)).toBe(false);
+
+      const r = await store.unlinkDeletedSources("sess-x", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0); // agent-B observation is out of scope — nothing orphaned here
+      expect(rowExists(obsB)).toBe(true); // untouched — different agent
+      const row = db.prepare("SELECT source_ids FROM memories WHERE id = ?").get(obsB) as
+        | { source_ids: string }
+        | undefined;
+      expect(JSON.parse(row!.source_ids)).toEqual([sA]); // source_ids NOT reduced
+    });
+
+    it("no observations → returns 0, no error", async () => {
+      const r = await store.unlinkDeletedSources("sess-none", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0);
+    });
+  });
+
+  describe("purgeConsolidatedDerivedFrom (DIST-05)", () => {
+    it("deletes EVERY observation derived from THIS session's ids — even multi-source corroborated", async () => {
+      const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-wipe" } });
+      const s2 = await seedMemory({ content: "raw 2", source: { who: "u", channel: "c", sessionKey: "sess-keep" } });
+      // obsMulti is corroborated by a surviving source — purge nukes it anyway
+      // because s1 (a THIS-session id) is among its sources.
+      const obsMulti = await seedObservation([s1, s2], { content: "multi" });
+      // obsSolo derived only from the wiped session.
+      const obsSolo = await seedObservation([s1], { content: "solo" });
+
+      // Capture THIS session's ids BEFORE the delete (WR-02 contract).
+      const thisSessionIds = [s1];
+      await adapter.deleteBySessionKey("sess-wipe", { tenantId: TENANT_A, agentId: AGENT_A });
+
+      const r = await store.purgeConsolidatedDerivedFrom("sess-wipe", TENANT_A, AGENT_A, thisSessionIds);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(2); // both observations purged (both reference s1)
+      expect(rowExists(obsMulti)).toBe(false);
+      expect(rowExists(obsSolo)).toBe(false);
+    });
+
+    it("leaves observations whose sources all survive", async () => {
+      const s1 = await seedMemory({ content: "raw 1", source: { who: "u", channel: "c", sessionKey: "sess-keep" } });
+      const obs = await seedObservation([s1]);
+
+      // Wipe a DIFFERENT session (no overlap) — obs sources all survive.
+      await adapter.deleteBySessionKey("sess-other", { tenantId: TENANT_A, agentId: AGENT_A });
+
+      const r = await store.purgeConsolidatedDerivedFrom("sess-other", TENANT_A, AGENT_A, []);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0);
+      expect(rowExists(obs)).toBe(true);
+    });
+
+    // WR-02 (purge over-delete vs "derived from THIS session" contract): a PRIOR
+    // unrelated dangling source id in an UNRELATED observation must NOT be purged
+    // by this session's --purge-derived. The pre-fix oracle ("any source id absent
+    // from memories") deleted it; the session-scoped oracle (source_ids ∩
+    // thisSessionIds) must leave it. This is the destructive-correctness fix.
+    it("WR-02: an UNRELATED observation with a pre-existing dangling source id is NOT purged by this session", async () => {
+      // An unrelated observation whose source was deleted by a PRIOR, unrelated
+      // operation (admin delete / TTL / another session's purge). Its dangling id
+      // belongs to NO live row and is NOT part of this session's ids.
+      const priorGoneId = crypto.randomUUID(); // never inserted → already "absent"
+      const obsUnrelated = await seedObservation([priorGoneId], { content: "unrelated-prior" });
+
+      // THIS session's own source + an observation derived from it.
+      const sThis = await seedMemory({ content: "this", source: { who: "u", channel: "c", sessionKey: "sess-now" } });
+      const obsThis = await seedObservation([sThis], { content: "this-derived" });
+
+      const thisSessionIds = [sThis];
+      await adapter.deleteBySessionKey("sess-now", { tenantId: TENANT_A, agentId: AGENT_A });
+
+      const r = await store.purgeConsolidatedDerivedFrom("sess-now", TENANT_A, AGENT_A, thisSessionIds);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(1); // ONLY the THIS-session-derived observation
+      expect(rowExists(obsThis)).toBe(false); // purged — derived from this session
+      expect(rowExists(obsUnrelated)).toBe(true); // KEPT — its dangling id is not ours
+    });
+
+    // WR-05 agent isolation on the purge path: an agent-B observation referencing
+    // an agent-A this-session id must NOT be purged by an agent-A reset.
+    it("WR-05: purge does not cross agents — agent-B observation is never purged by an agent-A reset", async () => {
+      const sA = await seedMemory({
+        content: "raw A",
+        agentId: AGENT_A,
+        source: { who: "u", channel: "c", sessionKey: "sess-wipe" },
+      });
+      const obsB = await seedObservation([sA], { agentId: "agent_b", content: "agent-b obs" });
+
+      const thisSessionIds = [sA];
+      await adapter.deleteBySessionKey("sess-wipe", { tenantId: TENANT_A, agentId: AGENT_A });
+
+      const r = await store.purgeConsolidatedDerivedFrom("sess-wipe", TENANT_A, AGENT_A, thisSessionIds);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0); // agent-B observation out of scope
+      expect(rowExists(obsB)).toBe(true); // untouched — different agent
+    });
+  });
+
+  describe("DIST-05 defensive branches — empty source_ids + all-surviving sources", () => {
+    it("unlinkDeletedSources skips an observation whose source_ids is EMPTY (nothing to unlink)", async () => {
+      const obs = await seedMemory({ content: "observation with no sources", proofCount: 2, sourceIds: [] });
+      const r = await store.unlinkDeletedSources("sess-any", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0);
+      expect(rowExists(obs)).toBe(true);
+    });
+
+    it("unlinkDeletedSources leaves an observation whose sources ALL survive untouched (source_ids not rewritten)", async () => {
+      const s1 = await seedMemory({ content: "surviving raw", source: { who: "u", channel: "c", sessionKey: "sess-keep" } });
+      const obs = await seedObservation([s1]);
+      const r = await store.unlinkDeletedSources("sess-unrelated", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0);
+      expect(rowExists(obs)).toBe(true);
+      const row = db.prepare("SELECT source_ids FROM memories WHERE id = ?").get(obs) as
+        | { source_ids: string }
+        | undefined;
+      expect(JSON.parse(row!.source_ids)).toEqual([s1]);
+    });
+
+    it("purgeConsolidatedDerivedFrom skips an observation whose source_ids is EMPTY", async () => {
+      const sGone = await seedMemory({ content: "raw to wipe", source: { who: "u", channel: "c", sessionKey: "sess-wipe" } });
+      const obs = await seedMemory({ content: "observation with no sources", proofCount: 2, sourceIds: [] });
+      await adapter.deleteBySessionKey("sess-wipe", { tenantId: TENANT_A, agentId: AGENT_A });
+      const r = await store.purgeConsolidatedDerivedFrom("sess-wipe", TENANT_A, AGENT_A, [sGone]);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toBe(0);
+      expect(rowExists(obs)).toBe(true);
+    });
+  });
+
+  describe("DIST-05 Result error boundary — a thrown DB error returns err, never throws", () => {
+    it("unlinkDeletedSources returns err (not a throw) when the database handle is closed", async () => {
+      db.close();
+      const r = await store.unlinkDeletedSources("sess-x", TENANT_A, AGENT_A);
+      expect(r.ok).toBe(false);
+    });
+
+    it("purgeConsolidatedDerivedFrom returns err (not a throw) when the database handle is closed", async () => {
+      db.close();
+      const r = await store.purgeConsolidatedDerivedFrom("sess-x", TENANT_A, AGENT_A, ["mem-id-1"]);
+      expect(r.ok).toBe(false);
+    });
+  });
 });

@@ -26,9 +26,10 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { ok, err } from "@comis/shared";
 import { bindSessionArchiveHandlers } from "./session-archive.js";
 import type { SessionHandlerDeps } from "./session-helpers.js";
-import type { ContextStorePort } from "@comis/core";
+import type { ContextStorePort, MemoryPort, MemoryConsolidationStore } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -75,7 +76,7 @@ function makeLcdStore(deleteCount = 5): ContextStorePort {
     getSummaries: vi.fn().mockReturnValue([]),
     getSummaryChildren: vi.fn().mockReturnValue([]),
     getSummaryMessages: vi.fn().mockReturnValue([]),
-    searchLcd: vi.fn().mockReturnValue([]),
+    searchLcd: vi.fn().mockReturnValue({ hits: [], cjkZeroHit: false }),
     runOnConversation: vi.fn().mockImplementation(
       (_conversationId: string, fn: () => unknown) => Promise.resolve(fn()),
     ),
@@ -83,6 +84,33 @@ function makeLcdStore(deleteCount = 5): ContextStorePort {
     upsertIngestCursor: vi.fn(),
     deleteConversationLcd: vi.fn().mockReturnValue(deleteCount),
   } as unknown as ContextStorePort;
+}
+
+/** Minimal MemoryPort stub for DIST-05 --memory reset. deleteBySessionKey
+ *  returns ok(deletedCount); listMemoryIdsBySessionKey returns the given ids
+ *  (WR-02: captured BEFORE the delete so the purge is session-scoped). */
+function makeMemoryPort(deletedCount = 2, sessionIds: string[] = ["mem-this-1", "mem-this-2"]): MemoryPort {
+  return {
+    store: vi.fn(),
+    search: vi.fn(),
+    delete: vi.fn(),
+    listMemoryIdsBySessionKey: vi.fn().mockResolvedValue(ok(sessionIds)),
+    deleteBySessionKey: vi.fn().mockResolvedValue(ok(deletedCount)),
+  } as unknown as MemoryPort;
+}
+
+/** Minimal MemoryConsolidationStore stub for DIST-05 unlink/purge. */
+function makeConsolidationStore(): MemoryConsolidationStore {
+  return {
+    listConsolidationCandidates: vi.fn(),
+    listObservations: vi.fn(),
+    applyConsolidation: vi.fn(),
+    foldIntoExisting: vi.fn(),
+    knnDistances: vi.fn(),
+    markReasoned: vi.fn(),
+    unlinkDeletedSources: vi.fn().mockResolvedValue(ok(0)),
+    purgeConsolidatedDerivedFrom: vi.fn().mockResolvedValue(ok(0)),
+  } as unknown as MemoryConsolidationStore;
 }
 
 /** Build a minimal SessionHandlerDeps for session.reset_conversation tests. */
@@ -284,9 +312,12 @@ describe("session.reset_conversation handler", () => {
     expect(sessionStore.saveByFormattedKey).not.toHaveBeenCalled();
   });
 
-  it("H7: --memory flag accepted; memoriesDeleted OMITTED (not-implemented); WARN emitted", async () => {
+  it("H7: --memory but memoryPort ABSENT → graceful-degrade WARN, memoriesDeleted OMITTED", async () => {
+    // DIST-05: when memoryPort is NOT wired into deps (deployment doesn't support
+    // it), --memory must NOT throw — it logs a precondition WARN and leaves
+    // memoriesDeleted off the result (LCD + sessionStore are still cleared).
     const lcdStore = makeLcdStore(5);
-    const deps = makeDeps({ lcdStore });
+    const deps = makeDeps({ lcdStore }); // no memoryPort
     const handlers = bindSessionArchiveHandlers(deps);
 
     const result = (await handlers["session.reset_conversation"]!({
@@ -301,12 +332,12 @@ describe("session.reset_conversation handler", () => {
     expect(warnCalls.length).toBeGreaterThanOrEqual(1);
     const warnArg = warnCalls[0][0] as Record<string, unknown>;
     expect(warnArg["errorKind"]).toBe("precondition");
-    expect(String(warnArg["hint"] ?? "")).toMatch(/not yet implemented|deferred/i);
+    expect(String(warnArg["hint"] ?? "")).toMatch(/memoryPort not available|--memory flag ignored/i);
   });
 
-  it("H7b: --memory omitted; memoriesDeleted is OMITTED", async () => {
+  it("H7b: --memory omitted; memoriesDeleted is OMITTED (stub not reached)", async () => {
     const lcdStore = makeLcdStore(3);
-    const deps = makeDeps({ lcdStore });
+    const deps = makeDeps({ lcdStore, memoryPort: makeMemoryPort() } as Partial<SessionHandlerDeps>);
     const handlers = bindSessionArchiveHandlers(deps);
 
     const result = (await handlers["session.reset_conversation"]!({
@@ -316,6 +347,8 @@ describe("session.reset_conversation handler", () => {
 
     expect(result.lcdRowsDeleted).toBe(3);
     expect(result.memoriesDeleted).toBeUndefined();
+    // DIST-05 Test 8: --memory omitted → deleteBySessionKey NOT reached.
+    expect((deps.memoryPort!.deleteBySessionKey as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
   });
 
   it("H8: approvalGate.clearApprovalCache called with sessionKey after both clears", async () => {
@@ -356,5 +389,194 @@ describe("session.reset_conversation handler", () => {
     expect(result["lcdRowsDeleted"]).toBe(7);
     expect(result["sessionMessagesCleared"]).toBe(2);
     expect(result["sessionKey"]).toBe(SESSION_KEY);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DIST-05: session.reset_conversation --memory HONEST reset (Phase 172-03).
+// Replaces the Phase-164 not-implemented stub. --memory now deletes the
+// RAG-memory rows by source_session_key (BOTH paired-conversation AND
+// lcd-distilled episodic memories — one query covers both) and unlinks them
+// from consolidated observations (orphan→delete, multi-source→keep).
+// --purge-derived is a separate, opt-in nuclear escalation.
+// ---------------------------------------------------------------------------
+
+describe("session.reset_conversation --memory (DIST-05)", () => {
+  it("DIST-05-1: memory:true → deleteBySessionKey called with (sessionKey, {tenantId, agentId})", async () => {
+    const memoryPort = makeMemoryPort(2);
+    const deps = makeDeps({ lcdStore: makeLcdStore(5), memoryPort } as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      memory: true,
+      _trustLevel: "admin",
+    });
+
+    expect(memoryPort.deleteBySessionKey).toHaveBeenCalledTimes(1);
+    const callArgs = (memoryPort.deleteBySessionKey as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { tenantId: string; agentId: string },
+    ];
+    expect(callArgs[0]).toBe(SESSION_KEY);
+    expect(callArgs[1].tenantId).toBe("tenant1");
+    expect(callArgs[1].agentId).toBe("default");
+  });
+
+  it("DIST-05-2: deleteBySessionKey returns 2 → result.memoriesDeleted === 2 (field present)", async () => {
+    const deps = makeDeps({
+      lcdStore: makeLcdStore(5),
+      memoryPort: makeMemoryPort(2),
+    } as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    const result = (await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      memory: true,
+      _trustLevel: "admin",
+    })) as { memoriesDeleted?: number };
+
+    expect(result.memoriesDeleted).toBe(2);
+  });
+
+  it("DIST-05-3: deleteBySessionKey returns 0 → result.memoriesDeleted === 0 (no error)", async () => {
+    const deps = makeDeps({
+      lcdStore: makeLcdStore(5),
+      memoryPort: makeMemoryPort(0),
+    } as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    const result = (await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      memory: true,
+      _trustLevel: "admin",
+    })) as { memoriesDeleted?: number };
+
+    expect(result.memoriesDeleted).toBe(0);
+  });
+
+  it("DIST-05-4: purge_derived:false (default) → purgeConsolidatedDerivedFrom NOT called", async () => {
+    const consolidationStore = makeConsolidationStore();
+    const deps = makeDeps({
+      lcdStore: makeLcdStore(5),
+      memoryPort: makeMemoryPort(2),
+      consolidationStore,
+    } as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      memory: true,
+      _trustLevel: "admin",
+    });
+
+    expect(consolidationStore.purgeConsolidatedDerivedFrom).not.toHaveBeenCalled();
+  });
+
+  it("DIST-05-5 / WR-02 / WR-05: purge_derived:true → purgeConsolidatedDerivedFrom called with (sessionKey, tenantId, agentId, thisSessionIds)", async () => {
+    const consolidationStore = makeConsolidationStore();
+    // The ids captured BEFORE the delete (WR-02): purge must receive THEM, not
+    // re-derive "any dangling source id".
+    const memoryPort = makeMemoryPort(2, ["mem-x", "mem-y"]);
+    const deps = makeDeps({
+      lcdStore: makeLcdStore(5),
+      memoryPort,
+      consolidationStore,
+    } as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      memory: true,
+      purge_derived: true,
+      _trustLevel: "admin",
+    });
+
+    // WR-02: the ids are read BEFORE the destructive delete.
+    expect(memoryPort.listMemoryIdsBySessionKey).toHaveBeenCalledTimes(1);
+    const listInvokeOrder = (memoryPort.listMemoryIdsBySessionKey as ReturnType<typeof vi.fn>).mock
+      .invocationCallOrder[0]!;
+    const deleteInvokeOrder = (memoryPort.deleteBySessionKey as ReturnType<typeof vi.fn>).mock
+      .invocationCallOrder[0]!;
+    expect(listInvokeOrder).toBeLessThan(deleteInvokeOrder);
+
+    expect(consolidationStore.purgeConsolidatedDerivedFrom).toHaveBeenCalledTimes(1);
+    const callArgs = (consolidationStore.purgeConsolidatedDerivedFrom as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, string, string, string[]];
+    expect(callArgs[0]).toBe(SESSION_KEY);
+    expect(callArgs[1]).toBe("tenant1");
+    expect(callArgs[2]).toBe("default"); // WR-05: agentId threaded
+    expect(callArgs[3]).toEqual(["mem-x", "mem-y"]); // WR-02: this-session ids passed
+  });
+
+  it("DIST-05-6 / WR-05: deletedCount>0 → consolidationStore.unlinkDeletedSources called with (sessionKey, tenantId, agentId)", async () => {
+    // The unlink step (orphan→delete, multi-source→keep) lives in the
+    // consolidation store; the handler delegates to it when memories were deleted.
+    const consolidationStore = makeConsolidationStore();
+    const deps = makeDeps({
+      lcdStore: makeLcdStore(5),
+      memoryPort: makeMemoryPort(3),
+      consolidationStore,
+    } as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      memory: true,
+      _trustLevel: "admin",
+    });
+
+    expect(consolidationStore.unlinkDeletedSources).toHaveBeenCalledTimes(1);
+    const callArgs = (consolidationStore.unlinkDeletedSources as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, string, string];
+    expect(callArgs[0]).toBe(SESSION_KEY);
+    expect(callArgs[1]).toBe("tenant1");
+    expect(callArgs[2]).toBe("default"); // WR-05: agentId threaded (matches the delete scope)
+  });
+
+  it("DIST-05-7: deletedCount===0 → unlinkDeletedSources NOT called (nothing to unlink)", async () => {
+    const consolidationStore = makeConsolidationStore();
+    const deps = makeDeps({
+      lcdStore: makeLcdStore(5),
+      memoryPort: makeMemoryPort(0),
+      consolidationStore,
+    } as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      memory: true,
+      _trustLevel: "admin",
+    });
+
+    expect(consolidationStore.unlinkDeletedSources).not.toHaveBeenCalled();
+  });
+
+  it("DIST-05-8: deleteBySessionKey err result → non-fatal WARN, LCD reset still succeeds", async () => {
+    // A memory-store failure must NOT break the LCD/sessionStore reset that
+    // already succeeded — the handler logs a dependency WARN and returns.
+    const memoryPort = {
+      store: vi.fn(),
+      search: vi.fn(),
+      delete: vi.fn(),
+      deleteBySessionKey: vi.fn().mockResolvedValue(err(new Error("db locked"))),
+    } as unknown as MemoryPort;
+    const deps = makeDeps({ lcdStore: makeLcdStore(5), memoryPort } as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    const result = (await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      memory: true,
+      _trustLevel: "admin",
+    })) as { lcdRowsDeleted: number; memoriesDeleted?: number };
+
+    // LCD reset still reported; memoriesDeleted is 0 (the delete failed).
+    expect(result.lcdRowsDeleted).toBe(5);
+    expect(result.memoriesDeleted).toBe(0);
+    const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const dependencyWarn = warnCalls.find(
+      (c) => (c[0] as Record<string, unknown>)["errorKind"] === "dependency",
+    );
+    expect(dependencyWarn).toBeDefined();
   });
 });

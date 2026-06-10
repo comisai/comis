@@ -10,7 +10,15 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
+import { ok } from "@comis/shared";
 import { createRedirectPolicyFetch } from "./mcp-client-redirect-policy.js";
+
+// Deterministic SSRF stub for the header-scrub / method-rewrite suites below:
+// those assert redirect mechanics, not SSRF, and their synthetic cross-host
+// targets (other.example.com, etc.) must never trigger a real DNS lookup. The
+// dedicated "SSRF guard on cross-host redirects" suite uses the REAL default
+// (core validateUrl) against IP-literal targets that resolve locally.
+const allowAllSsrf = async (): Promise<ReturnType<typeof ok>> => ok(undefined);
 
 function makeRedirect(location: string): Response {
   return {
@@ -71,6 +79,7 @@ describe("createRedirectPolicyFetch — cross-realm Response normalization (MCP-
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
 
     const response = await wrapped("https://mcp.higgsfield.ai/oauth2/register", {});
@@ -89,6 +98,7 @@ describe("createRedirectPolicyFetch — cross-realm Response normalization (MCP-
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
 
     const response = await wrapped("https://example.com/", {});
@@ -102,6 +112,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     expect(typeof wrapped).toBe("function");
     const response = await wrapped("http://api.example.com/v1", {});
@@ -114,6 +125,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     const response = await wrapped("http://api.example.com/v1", {
       headers: { authorization: "Bearer kept" },
@@ -130,6 +142,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("http://api.example.com/v1", {
       headers: { authorization: "Bearer secret" },
@@ -148,6 +161,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("http://api.example.com/v1", {
       headers: {
@@ -170,6 +184,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("http://api.example.com/a", {
       headers: { authorization: "Bearer kept-token" },
@@ -187,6 +202,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("http://api.example.com/v1", {
       headers: { authorization: "Bearer upgrade-token" },
@@ -204,6 +220,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("http://a.example.com/v1", {
       headers: { authorization: "Bearer cross-token" },
@@ -225,6 +242,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await expect(
       wrapped("http://api.example.com/start", {}),
@@ -241,6 +259,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     const response = await wrapped("http://api.example.com/v1", {});
     expect((response as Response).status).toBe(304);
@@ -257,6 +276,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     const response = await wrapped("http://api.example.com/v1", {});
     expect((response as Response).status).toBe(500);
@@ -268,6 +288,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     const headersInstance = new Headers({ "x-custom": "value-h" });
     await wrapped("http://api.example.com/v1", { headers: headersInstance });
@@ -281,6 +302,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("http://api.example.com/v1", { headers: { "x-custom": "value-o" } });
     expect(baseFetch).toHaveBeenCalledTimes(1);
@@ -312,6 +334,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("http://api.example.com/v1", {
       method: "POST",
@@ -334,6 +357,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("http://api.example.com/v1", {
       method: "POST",
@@ -352,6 +376,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("http://api.example.com/v1", {
       method: "POST",
@@ -373,6 +398,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     const originalBody = JSON.stringify({ rpc: "tools/list" });
     await wrapped("http://api.example.com/v1", {
@@ -396,6 +422,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     const originalBody = JSON.stringify({ rpc: "tools/call", method: "foo" });
     await wrapped("http://api.example.com/v1", {
@@ -415,6 +442,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     const originalBody = JSON.stringify({ a: 2 });
     await wrapped("http://api.example.com/v1", {
@@ -434,6 +462,7 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("http://api.example.com/v1", { method: "GET" });
     const secondInit = baseFetch.mock.calls[1]![1] as RequestInit;
@@ -457,6 +486,7 @@ describe("expanded header stripping on cross-origin redirect", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("https://server-a.com/v1", {
       headers: { "x-auth-token": "secret-token-abc" },
@@ -474,6 +504,7 @@ describe("expanded header stripping on cross-origin redirect", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("https://server-a.com/v1", {
       headers: { "x-api-key": "api-key-xyz-12345" },
@@ -491,6 +522,7 @@ describe("expanded header stripping on cross-origin redirect", () => {
     const wrapped = createRedirectPolicyFetch({
       maxRedirections: 20,
       baseFetch: baseFetch as unknown as typeof fetch,
+      validateRedirectTarget: allowAllSsrf,
     });
     await wrapped("https://server-a.com/path1", {
       headers: { authorization: "Bearer same-host-token" },
@@ -498,5 +530,79 @@ describe("expanded header stripping on cross-origin redirect", () => {
     expect(baseFetch).toHaveBeenCalledTimes(2);
     const secondHeaders = new Headers((baseFetch.mock.calls[1]![1] as RequestInit).headers as HeadersInit);
     expect(secondHeaders.get("authorization")).toBe("Bearer same-host-token");
+  });
+});
+
+// =============================================================================
+// SSRF guard on cross-host redirects (v2.20 review finding).
+//
+// A malicious/compromised MCP server (untrusted per THREAT_MODEL §5.7) can
+// answer any request with a 3xx whose Location points at an internal address.
+// This fetch runs in-process in the daemon (NOT behind the broker egress jail),
+// so following it is host-control SSRF to cloud metadata / localhost / RFC-1918.
+// The default guard is core validateUrl; these tests exercise it end-to-end
+// (no injected fake) against IP-literal targets, which getaddrinfo resolves
+// locally — so the suite stays deterministic with no real network.
+// =============================================================================
+describe("SSRF guard on cross-host redirects", () => {
+  it("blocks a cross-host redirect to the cloud-metadata IP and never contacts it", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirectWithStatus(307, "http://169.254.169.254/latest/meta-data/iam/"))
+      .mockResolvedValueOnce(makeOk());
+    // No validateRedirectTarget -> the real default (core validateUrl) runs.
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    await expect(
+      wrapped("https://mcp.example.test/sse", { method: "POST", body: "{}" }),
+    ).rejects.toThrow(/\[redirect_blocked_ssrf\]/);
+    expect(baseFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks a cross-host redirect to a loopback service address", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirect("http://127.0.0.1:6379/"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    await expect(
+      wrapped("https://mcp.example.test/sse", {}),
+    ).rejects.toThrow(/\[redirect_blocked_ssrf\]/);
+    expect(baseFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a cross-host redirect to a public address (does not over-block)", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirect("http://8.8.8.8/v2"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    const res = await wrapped("https://mcp.example.test/v1", {});
+    expect((res as Response).status).toBe(200);
+    expect(baseFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows a same-host redirect even on a loopback host (local MCP server keeps working)", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirect("/mcp/v2"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    // Configured server is on loopback; staying on the same host is exempt
+    // from the SSRF check (the operator-trusted target).
+    const res = await wrapped("http://127.0.0.1:3000/mcp", {});
+    expect((res as Response).status).toBe(200);
+    expect(baseFetch).toHaveBeenCalledTimes(2);
   });
 });

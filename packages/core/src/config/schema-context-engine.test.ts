@@ -58,7 +58,9 @@ describe("ContextEngineConfigSchema", () => {
       // Phase 152 capacity + prompt-security knobs (C1/C2/C4) + Phase 166 CWF-02
       budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000, minVisibleOutputTokens: 768 },
       compactPrompt: { enabled: true, targetTokens: 3_000 },
-      compaction: { preferEvictionByCapability: true, strongerSummarizerModel: "" },
+      compaction: { preferEvictionByCapability: true, strongerSummarizerModel: "", summarizerFallbackProviders: [] },
+      // Phase 172 LCD→LTM distillation (default-OFF)
+      memory: { distillFromLcd: { enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 } },
     });
   });
 
@@ -137,7 +139,9 @@ describe("ContextEngineConfigSchema", () => {
       // Phase 152 knobs + Phase 166 CWF-02 (not overridden in this test — default through)
       budget: { effectiveContextCapSmall: 32_000, effectiveContextCapNano: 16_000, minVisibleOutputTokens: 768 },
       compactPrompt: { enabled: true, targetTokens: 3_000 },
-      compaction: { preferEvictionByCapability: true, strongerSummarizerModel: "" },
+      compaction: { preferEvictionByCapability: true, strongerSummarizerModel: "", summarizerFallbackProviders: [] },
+      // Phase 172 LCD→LTM distillation (not overridden in this test — default through)
+      memory: { distillFromLcd: { enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 } },
     });
   });
 

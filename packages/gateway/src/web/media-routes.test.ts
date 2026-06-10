@@ -186,4 +186,22 @@ describe("createMediaRoutes - bearer token auth", () => {
     const res = await app.request(`/${id}/meta`);
     expect(res.status).toBe(401);
   });
+
+  // Security regression for the v2.20 review finding: the media auth only
+  // verified the token, never its scope. A sole-scope `mcp-client` token (the
+  // most contained external credential) could fetch dashboard media. Require
+  // the same `rpc` scope the rest of the web surface enforces.
+  it("returns 403 for a sole-scope mcp-client token", async () => {
+    const mcpStore = createTokenStore([
+      { id: "mcp-only", secret: "mcp-client-media-padded-to-meet-32c", scopes: ["mcp-client"] },
+    ]);
+    const app = createMediaRoutes({ mediaDir: tmpDir, tokenStore: mcpStore });
+    const id = "scope-test-file";
+    await saveTestFile(id, "secret-data", "text/plain");
+
+    const res = await app.request(`/${id}`, {
+      headers: { Authorization: "Bearer mcp-client-media-padded-to-meet-32c" },
+    });
+    expect(res.status).toBe(403);
+  });
 });

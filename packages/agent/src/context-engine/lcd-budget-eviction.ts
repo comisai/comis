@@ -48,6 +48,16 @@ export interface BudgetItem {
   msg: AgentMessage;
   /** Pre-computed token count for this message (the budget authority). */
   tokens: number;
+  /**
+   * WR-01 (Phase 174-04): the durable `lcd_messages.id` of a store-resolved message-ref,
+   * carried from `resolveContextItem` so the DEPTH-01 relevance pass can match a `searchLcd`
+   * hit to this band item by the hit's STABLE `refId` (= `lcd_messages.id`) instead of a
+   * fragile snippet-substring. Absent for live/synthetic items (the fresh tail, a coalesced
+   * summary message, a unit fixture) — those simply never id-match and fall to recency, which
+   * is the correct floor. The recency fill (`evictHistoryUnderBudget`) NEVER reads this, so
+   * the frontier/mid recency path stays byte-identical (LOCKED #2).
+   */
+  lcdId?: string;
 }
 
 /**

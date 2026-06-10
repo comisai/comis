@@ -30,7 +30,8 @@
 // recall-types.ts — see the re-export below. memory-recall.ts itself imports only the
 // @comis/core types it uses DIRECTLY in the pipeline body (the usefulness side-map +
 // the trust-filter set); the agent↛memory cut holds (every store is a @comis/core port TYPE).
-import type { UsefulnessSignal, TrustLevel } from "@comis/core";
+import type { UsefulnessSignal, TrustLevel, ContextStoreScope } from "@comis/core";
+import { formatSessionKey } from "@comis/core";
 import { ok, withTimeout, TimeoutError } from "@comis/shared";
 import { fuse, type FusionLane } from "./fuse.js";
 import { scoreWithBreakdown, type ScoreBreakdown } from "./score.js";
@@ -46,6 +47,8 @@ import { mmrRerank } from "./mmr.js";
 import { appendCausalLane } from "./recall-causal-lane.js";
 import { appendGraphSpreadLane } from "./recall-graph-spread-lane.js";
 import { captureRecallObservability } from "./recall-observability.js";
+import { applyProvenanceDownweighting } from "./recall-provenance.js";
+import { gateLanes, resolveEffectiveBaseFloor, logPrefilterDrops, passesBaseFloor, type PrefilterAccumulator } from "./recall-security-prefilter.js";
 import {
   vectorLaneCouldContribute,
   type RecallDegradation,
@@ -59,27 +62,10 @@ import {
 export type { MemoryRecallDeps, MemoryRecallConfig, MemoryRecall } from "./recall-types.js";
 import type { MemoryRecallDeps, MemoryRecallConfig, MemoryRecall } from "./recall-types.js";
 
-/**
- * R3 base-score floor decision (T-153-poison mitigation), FAIL-CLOSED (WR-02).
- *
- * A memory survives the floor ONLY when its recorded pre-boost `breakdown.base`
- * is at or above `baseFloor` (boundary inclusive). A memory with NO breakdown
- * (`undefined`) is DROPPED — it cannot be proven above the floor.
- *
- * Why no `r.score` fallback: on the rerank-applied path the entry's `score` is
- * the cross-encoder probability, a different (typically higher) scale than
- * `breakdown.base`. Comparing the floor against that inflated score would let a
- * low-base poisoned memory survive the exact filter meant to drop it. This gate
- * is security-critical, so a missing base fails closed.
- *
- * @internal exported for tests only
- */
-export function passesBaseFloor(
-  breakdown: ScoreBreakdown | undefined,
-  baseFloor: number,
-): boolean {
-  return breakdown !== undefined && breakdown.base >= baseFloor;
-}
+// The R3 base-score floor predicate (FAIL-CLOSED, WR-02) lives in
+// recall-security-prefilter.ts (the module that owns the security floor); re-exported here
+// so existing consumers (memory-recall-floor.test.ts) import it from ./memory-recall.js unchanged.
+export { passesBaseFloor } from "./recall-security-prefilter.js";
 
 /**
  * Build a recall orchestrator from injected deps + recall config.
@@ -154,6 +140,15 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const laneWeight = (base: number, lane: ReweightLane): number =>
         intent !== undefined ? base * intentMultiplier(intent, lane) : base;
 
+      // RETR-04 (Phase 173): resolve the security-gate inputs ONCE so gateLanes() can
+      //   pre-filter EVERY candidate supply (trust + arbiter-scoped baseFloor) BEFORE any fusion
+      //   touches it, accumulating content-free dropped ids into prefilterAcc. effectiveBaseFloor:
+      //   explicit floor wins; else 0.15 when relevanceFirst; else 0 → frontier/mid byte-identical
+      //   (LOCKED #2). Why baseFloor must be pre-fusion: recall-security-prefilter.ts doc; §17 S6.
+      const allowed = new Set<TrustLevel>(cfg.includeTrustLevels);
+      const effectiveBaseFloor = resolveEffectiveBaseFloor(cfg.baseFloor, cfg.relevanceFirst);
+      const prefilterAcc: PrefilterAccumulator = { trustDroppedIds: [], floorDroppedIds: [] };
+
       // 1. SEARCH — overfetch only when rerank is enabled (default pool size unchanged).
       const limit = cfg.rerank.enabled
         ? Math.max(cfg.maxResults, cfg.rerank.maxCandidates)
@@ -201,13 +196,23 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         const vectorWeight = laneWeight(cfg.lanes?.vector.weight ?? 1.5, "vector");
         ftsCandidates = laneRes.value.fts.length;
         vectorCandidates = laneRes.value.vector.length;
+        // RETR-04 (Phase 173): gate the RAW fts/vector lanes BEFORE the within-recall fuse()
+        //   below — the load-bearing placement (fuse() inflates a rank-1 sub-floor candidate's
+        //   score past any later floor; gating raw lanes uses the TRUE pre-fusion relevance).
+        //   Byte-identity preserved by gateLanes when floor 0 + all-allowed. See module doc.
+        const gatedRaw = gateLanes(
+          [{ results: laneRes.value.fts, weight: ftsWeight }, { results: laneRes.value.vector, weight: vectorWeight }],
+          allowed, effectiveBaseFloor, prefilterAcc,
+        );
+        const gatedFts = gatedRaw[0]?.results ?? [];
+        const gatedVector = gatedRaw[1]?.results ?? [];
         // DROP EMPTY LANES before fuse(): a lone non-empty FTS lane
         // MUST hit fuse()'s single-lane pass-through (order + score preserved) rather than
         // the multi-lane rank-ramp, so the FTS-only degrade keeps today's BM25-distributed
         // scores. fuse() of [ftsLane, emptyVectorLane] would otherwise run the 2-lane RRF.
         const ftsVecLanes: FusionLane[] = [];
-        if (laneRes.value.fts.length > 0) ftsVecLanes.push({ results: laneRes.value.fts, weight: ftsWeight });
-        if (laneRes.value.vector.length > 0) ftsVecLanes.push({ results: laneRes.value.vector, weight: vectorWeight });
+        if (gatedFts.length > 0) ftsVecLanes.push({ results: gatedFts, weight: ftsWeight });
+        if (gatedVector.length > 0) ftsVecLanes.push({ results: gatedVector, weight: vectorWeight });
         // Cap: fuse the fts+vector lanes, slice the fused union to cfg.maxResults
         // (mirroring hybridSearch.ts's `filteredIds.slice(0, options.limit)` — the cap the
         // un-fused lane split dropped), then minScore-filter. This single pre-fused base lane is
@@ -237,7 +242,12 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         // The split is NOT observable on this path (search() returns ONE merged list),
         // so vectorCandidates stays its honest initial value — the recall layer cannot break
         // out a true vector count here. The searchLanes path above sets the real count.
-        if (searched.value.length > 0) baseLanes.push({ results: searched.value, weight: 1.0 });
+        // RETR-04 (Phase 173): gate the single merged search lane (its `score` is the genuine
+        //   per-result relevance — search()->hybridSearch fused internally but returns one list
+        //   with no second inflation). Byte-identity preserved when floor 0 + all-allowed.
+        const gatedSearchLanes = gateLanes([{ results: searched.value, weight: 1.0 }], allowed, effectiveBaseFloor, prefilterAcc);
+        const gatedSearch = gatedSearchLanes[0]?.results ?? [];
+        if (gatedSearch.length > 0) baseLanes.push({ results: gatedSearch, weight: 1.0 });
       }
 
       let entityCandidates = 0;
@@ -391,15 +401,23 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         // Reweight the graph-spread lane (1.0 off; no boosted intent today → 1.0).
         graphSpreadCandidates = await appendGraphSpreadLane(lanes, deps.tripleStore, laneWeight(gs.weight, "graphSpread"), cfg.maxResults, gs.maxDepth, gs.fanOut, seedSubjects, sessionKey, agentId, deps.logger);
       }
-      // FUSE the base lane (already capped + minScore-filtered) with any entity/temporal
-      // lanes. minScore is NOT re-applied here: the prior path filtered minScore exactly once on the
-      // capped base (inside search()->hybridSearch) and never re-filtered the entity lane's
-      // post-fusion contributions — reproducing that single-apply is what keeps the
+      // RETR-04 (Phase 173): gate upstream of the FINAL fuse() — the appended entity/temporal/
+      //   causal/graph-spread (T4 KG) lanes against trust + baseFloor, so a high fused rank can
+      //   never resurrect a dropped KG candidate (design §17 S6). The base lane is already gated
+      //   → re-gating it is a no-op. The downstream trust filter (Step 5) + baseFloor (Step 4b)
+      //   are RETAINED as defense in depth. Full rationale: recall-security-prefilter.ts doc.
+      const gatedLanes = gateLanes(lanes, allowed, effectiveBaseFloor, prefilterAcc);
+      logPrefilterDrops(deps.logger, prefilterAcc, { agentId, relevanceFirst: cfg.relevanceFirst === true });
+
+      // FUSE the (security-pre-filtered) base lane (already capped + minScore-filtered) with any
+      // entity/temporal lanes. minScore is NOT re-applied here: the prior path filtered minScore
+      // exactly once on the capped base (inside search()->hybridSearch) and never re-filtered the
+      // entity lane's post-fusion contributions — reproducing that single-apply is what keeps the
       // default-config result SET byte-identical AND lets the entity/temporal lanes add
       // candidates as designed. (On the searchLanes path the base lane was fused, sliced to
       // maxResults, and minScore-filtered above; on the fallback path search() did the same
       // internally — so the base entering fuse() is identically pre-filtered on both paths.)
-      let ranked = fuse(lanes);
+      let ranked = fuse(gatedLanes);
 
       // Stage-2 snapshot: the post-fuse id order (the fused ranking before rerank/score).
       const fusedOrder = ranked.map((r) => r.entry.id);
@@ -603,27 +621,34 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       }
 
       // 4b. R3 BASE-SCORE FLOOR — drop memories whose pre-boost base score is below the
-      //     operator-set floor. Runs AFTER scoreWithBreakdown() (breakdownById populated)
+      //     effective floor. Runs AFTER scoreWithBreakdown() (breakdownById populated)
       //     so the filter accesses the EXACT breakdown.base — not the boosted r.score.
       //     Boosts (recency/temporal/proof/trust/usefulness) CANNOT resurrect a memory
       //     whose raw cosine/RRF base sits below the floor (T-153-poison mitigation).
-      //     DEFAULT-OFF BYTE-IDENTITY: floor absent or === 0 → no filter, ranked unchanged.
-      //     FAIL-CLOSED (WR-02): a memory with no recorded breakdown.base cannot be proven
-      //     above the floor, so it is DROPPED. The prior fallback compared r.score against
-      //     the floor — but on the rerank-applied path r.score is the cross-encoder
-      //     probability (a different, typically HIGHER scale than breakdown.base), so a
-      //     low-base poisoned memory with an inflated CE score would survive the exact
-      //     filter meant to drop it. This is a security gate: a missing base is a hard drop.
-      if (cfg.baseFloor !== undefined && cfg.baseFloor > 0) {
-        ranked = ranked.filter((r) => passesBaseFloor(breakdownById.get(r.entry.id), cfg.baseFloor!));
+      //     FAIL-CLOSED-ON-MISSING-BASE (WR-02): a memory with no recorded breakdown.base
+      //     cannot be proven above the floor, so it is DROPPED (passesBaseFloor takes no
+      //     r.score fallback — on the rerank path r.score is the CE probability, a higher
+      //     scale that would let an inflated low-base poison survive). This is a security gate.
+      //
+      //     RETR-04 / WR-02 ARBITER-SCOPED FAIL-CLOSED (Phase 173) — DEFENSE IN DEPTH: the
+      //     baseFloor already ran UPSTREAM of fuse() against each candidate's genuine
+      //     pre-fusion relevance (the RETR-04 pre-filter), so for the fused list this gate is
+      //     normally a no-op. It is RETAINED unchanged as defense in depth (a future lane that
+      //     bypasses the pre-filter is still floored here). Reuses the arbiter-scoped
+      //     `effectiveBaseFloor` resolved before fuse(); 0 → skipped (frontier/mid, LOCKED #2).
+      if (effectiveBaseFloor > 0) {
+        ranked = ranked.filter((r) => passesBaseFloor(breakdownById.get(r.entry.id), effectiveBaseFloor));
       }
 
-      // 5. TRUST-FILTER (mirrors the old inline filter). score() does not depend on the
-      //    excluded entries, so filtering after scoring yields the same survivors.
-      //    Capture the trust-filtered ids BEFORE the filter so the trace can explain the
-      //    exclusion (reason "trust_filtered") rather than silently dropping them.
-      const allowed = new Set<TrustLevel>(cfg.includeTrustLevels);
-      const trustFilteredIds = ranked.filter((r) => !allowed.has(r.entry.trustLevel)).map((r) => r.entry.id);
+      // 5. TRUST-FILTER (DEFENSE IN DEPTH). The trust gate already ran upstream of fuse() (the
+      //    pre-filter), so this is normally a no-op; retained unchanged for any candidate that
+      //    re-enters post-fuse. Reuses the `allowed` Set built before fuse(). Capture the ids
+      //    BEFORE the filter (trace reason "trust_filtered"); merge the upstream-dropped ids so
+      //    the obs DROP set is complete (content-free, ids only).
+      const downstreamTrustFilteredIds = ranked.filter((r) => !allowed.has(r.entry.trustLevel)).map((r) => r.entry.id);
+      const trustFilteredIds = prefilterAcc.trustDroppedIds.length > 0
+        ? [...prefilterAcc.trustDroppedIds, ...downstreamTrustFilteredIds]
+        : downstreamTrustFilteredIds;
       ranked = ranked.filter((r) => allowed.has(r.entry.trustLevel));
 
       // 5b-pre. Remove pinned IDs from fused ranked BEFORE MMR to prevent double-injection.
@@ -660,6 +685,52 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
               hint: "embedding read failed; ranking without MMR diversity",
             },
             "mmr embedding read fallback",
+          );
+        }
+      }
+
+      // 5c. POST-FUSION PROVENANCE PASS (DIST-03). Optional, NON-FATAL, DEFAULT-OFF.
+      //     Runs AFTER mmrRerank (the rerank order has committed) and BEFORE dedup +
+      //     observability capture. When a distilled summary (tag "lcd_distilled") is in
+      //     the ranked set, down-weight same-conversation paired memories whose covered
+      //     range overlaps — score multiplier ×0.5, NEVER delete (the memory stays
+      //     accessible, just demoted so the lossy summary doesn't double-count with its
+      //     own paired source rows). BYTE-IDENTITY: with provenanceStore absent OR no
+      //     lcd_distilled result, applyProvenanceDownweighting returns `ranked` unchanged
+      //     and getProvenanceForSummary is never called. A pass failure is swallowed to a
+      //     WARN — recall results are NEVER affected. TYPE-only provenanceStore port
+      //     (the agent↛memory build cut).
+      //
+      //     LIVE AS OF PHASE 173 (C2): provenanceStore is now injected at the
+      //     composition root (setup-memory builds the concrete LcdProvenanceReadStore
+      //     and threads it daemon → setup-agents → pi-executor → prompt-assembly →
+      //     here), and the distillation runner stamps the `summary:<id>` tag, so the
+      //     PROVENANCE-PRECISE branch is the primary selector. The pass still
+      //     down-weights only (×0.5, NEVER deletes) and is a byte-identical no-op
+      //     when the store is absent OR no lcd_distilled result is present.
+      if (deps.provenanceStore != null) {
+        try {
+          const provenanceScope: ContextStoreScope = {
+            tenantId: sessionKey.tenantId,
+            agentId: agentId ?? sessionKey.agentId ?? "default",
+            // conversationId/sessionKey are not load-bearing for the (tenant, agent)-scoped
+            // getProvenanceForSummary read, but the port takes a full scope — fill them from
+            // the session key so the adapter's R4 filter has the complete context.
+            // IN-02 fix: formatSessionKey (not String(sessionKey) → "[object Object]").
+            conversationId: sessionKey.channelId ?? "",
+            sessionKey: formatSessionKey(sessionKey),
+          };
+          ranked = applyProvenanceDownweighting(ranked, deps.provenanceStore, provenanceScope);
+        } catch (err) {
+          // Non-fatal: the provenance pass must NEVER fail the recall hot path.
+          deps.logger.warn(
+            {
+              agentId,
+              err: err instanceof Error ? err.message : String(err),
+              errorKind: "dependency" as const,
+              hint: "provenance down-weighting failed; recall results returned unaffected",
+            },
+            "provenance pass fallback",
           );
         }
       }

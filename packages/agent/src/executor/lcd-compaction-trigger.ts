@@ -72,7 +72,10 @@ import {
 } from "../context-engine/lcd-leaf-summarizer.js";
 import { resolveCompactionStrategy } from "../context-engine/compaction-capability-router.js";
 import { isSecurityRelevantMessage } from "../context-engine/security-context-pinner.js";
-import { LEAF_FALLBACK_SUMMARY_MARKER } from "../context-engine/constants.js";
+import {
+  buildNanoStructuredExtraction,
+  resolveSummaryTargetTokens,
+} from "../context-engine/summarize-tier-targets.js";
 import { LCD_MAX_LEAF_PASSES_PER_TURN } from "../context-engine/constants.js";
 import type {
   CondenseChildSummary,
@@ -483,9 +486,16 @@ async function runOneLeafPass(
       timestamp: now,
     });
 
-    // Deterministic Level-3 fallback (bounded, guaranteed to reduce tokens).
-    const fallbackContent = `${LEAF_FALLBACK_SUMMARY_MARKER} [C5: eviction, ${chunkItems.length} messages summarized deterministically — model capabilityClass=${summarizerDeps.capabilityClass ?? "frontier"} not suitable for self-summarization]`;
-    const fallbackTokenCount = Math.max(1, Math.floor(chunkItems.reduce((acc, it) => acc + it.tokens, 0) / 4));
+    // Deterministic Level-3 fallback (SUM-02): nano structured extraction replaces
+    // the bare count-note with decisions/files/entities/constraints. Still carries
+    // LEAF_FALLBACK_SUMMARY_MARKER so DOC-01 scans detect it. Passes shrink invariant
+    // (computeShrinkBounds guard inside buildNanoStructuredExtraction).
+    const nanoExtraction = buildNanoStructuredExtraction(
+      chunkItems.map((it) => it.msg),
+      chunk.tokens,
+    );
+    const fallbackContent = nanoExtraction.content;
+    const fallbackTokenCount = nanoExtraction.tokenCount;
     store.appendLeafSummary({
       scope,
       content: fallbackContent,
@@ -542,9 +552,15 @@ async function runOneLeafPass(
   });
 
   // Summarize (3-level escalation; non-fatal inside — always returns a result).
+  // SUM-02: resolve tier-aware effective leaf target (nano ≤256, small ≤400, mid ≤800, frontier uncapped).
+  const effectiveLeafTarget = resolveSummaryTargetTokens(
+    summarizerDeps.capabilityClass ?? "frontier",
+    0, // leaf depth is always 0
+    opts.leafTargetTokens,
+  );
   const previousSummary = previousSummaryContent(store, scope);
   const result = await summarizeLeafChunk(chunkItems, summarizerDeps, {
-    reserveTokens: opts.leafTargetTokens,
+    reserveTokens: effectiveLeafTarget,
     previousSummary,
   });
 

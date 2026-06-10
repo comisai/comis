@@ -369,7 +369,13 @@ export const ContextEngineConfigSchema = z.strictObject({
     /** Optional "provider:modelId" string for a stronger summarizer for small/nano.
      *  Empty string (default) = pure eviction/deterministic fallback. */
     strongerSummarizerModel: z.string().default(""),
-  }).default({ preferEvictionByCapability: true, strongerSummarizerModel: "" }),
+    /** SUM-03: ordered list of fallback "provider:modelId" strings for the summarizer
+     *  seam. When the primary summarizer throws, each entry is tried in sequence.
+     *  The per-tenant breaker wraps the OUTER seam and records a failure only when
+     *  ALL providers in the list are exhausted. Default [] = zero behavior change
+     *  for existing deployments. */
+    summarizerFallbackProviders: z.array(z.string()).default([]),
+  }).default({ preferEvictionByCapability: true, strongerSummarizerModel: "", summarizerFallbackProviders: [] }),
 
   /** C2/S1: Compact-secure prompt for small/nano. Retains safety core + sender-trust +
    *  config-secret; drops interactive-only sections. NEVER uses buildSafetySection(true). */
@@ -379,6 +385,51 @@ export const ContextEngineConfigSchema = z.strictObject({
     /** Soft token target for the compact prompt (chars/3.5). Default 3000 tokens ≈ 10500 chars. */
     targetTokens: z.number().int().min(500).max(8_000).default(3_000),
   }).default({ enabled: true, targetTokens: 3_000 }),
+
+  // ── Phase 172: LCD→LTM distillation (DIST-01/04/05) ───────────────────
+  // Fully-populated default object (NOT `.default({})`) so an empty config
+  // resolves to the real defaults — Zod uses .default(value) verbatim and does
+  // NOT re-parse it through the inner field defaults (mirrors compaction above).
+  /** LCD→LTM distillation: per-condense pass, depth≥minDepth condensed summaries
+   *  are distilled into episodic/learned LTM memories for cross-session recall.
+   *  Default: enabled=false (capability-gated — measured before default-on). */
+  memory: z.strictObject({
+    distillFromLcd: z.strictObject({
+      /** Master toggle. false = distillation never fires (safe default). */
+      enabled: z.boolean().default(false),
+      /** Minimum condense depth to trigger distillation. 1 = first condense level. */
+      minDepth: z.number().int().min(1).max(10).default(1),
+      /** Cosine-similarity threshold for vec dedup before write (0–1).
+       *  0.92 = near-duplicate suppression without over-aggressive dedup. */
+      dedupCosineThreshold: z.number().min(0).max(1).default(0.92),
+      // Fully-populated default object — see note above about NOT using .default({}).
+    }).default({ enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 }),
+  }).default({ distillFromLcd: { enabled: false, minDepth: 1, dedupCosineThreshold: 0.92 } }),
+
+  // ── Phase 173: Unified-retrieval relevance policy (RETR-03) ────────────
+  /** RETR-03: the relevance-first vs recency-first assembly policy gate. When
+   *  `relevance-first` is active the margin arbiter (RETR-02) allocates the
+   *  discretionary history pool across tiers by fused rank; otherwise the
+   *  existing recency-first eviction runs verbatim (frontier/mid byte-identical).
+   *
+   *  Precedence: explicit > capability-default > off. The capability default is
+   *  resolved in scaffold-defaults.ts — small/nano on a NON-caching model
+   *  (supportsPromptCache=false) default relevance-first; frontier/mid + caching
+   *  models default recency-first (byte-identical, LOCKED #2). The small/nano
+   *  default-on flip is MEASUREMENT-GATED (the Phase-171 harness) — this flag
+   *  ships the mechanism; the live default flip is an operator step.
+   *
+   *  CRITICAL (Pitfall 1 — the schema re-parse trap): the WHOLE block is
+   *  `.optional()` and `firstByDefault` is an OPTIONAL boolean with NO `.default()`.
+   *  An omitted field stays `undefined` (NOT `false`) so the resolver's
+   *  `config.contextEngine?.relevance?.firstByDefault ?? (capability gate)` survives.
+   *  A `.default(false)` here would collapse undefined→false and silently kill the
+   *  capability-gated default. Do NOT add a default. */
+  relevance: z.strictObject({
+    /** Force relevance-first (true) or recency-first (false) regardless of the
+     *  capability default. OPTIONAL — omit to use the capability-gated default. */
+    firstByDefault: z.boolean().optional(),
+  }).optional(),
 });
 
 export type ContextEngineConfig = z.infer<typeof ContextEngineConfigSchema>;

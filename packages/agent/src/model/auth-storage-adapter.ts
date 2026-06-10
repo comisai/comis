@@ -9,7 +9,17 @@
  */
 
 import { AuthStorage, InMemoryAuthStorageBackend } from "@earendil-works/pi-coding-agent";
-import type { SecretManager } from "@comis/core";
+import { KEYLESS_PROVIDER_TYPES, type SecretManager } from "@comis/core";
+
+/**
+ * Keyless sentinel for local providers (Ollama / LM Studio) that need no real
+ * credential. MUST match `model-registry-adapter.ts` (which bakes the same value
+ * into the built Model) so the summarizer/compaction key path — which resolves
+ * through `authStorage.getApiKey` rather than the baked model key — sees the same
+ * sentinel and never throws the SDK's "No API key for provider" on a keyless
+ * local deployment.
+ */
+const KEYLESS_API_KEY_SENTINEL = "ollama-no-auth";
 
 /** Default provider-to-env-var mapping for known LLM providers. */
 export const DEFAULT_PROVIDER_KEYS: Record<string, string> = {
@@ -33,6 +43,10 @@ export interface CustomProviderAuth {
   apiKeyName: string;
   /** Whether the provider is enabled. Disabled entries are skipped. */
   enabled: boolean;
+  /** Provider type (e.g., "ollama", "lm-studio", "openai"). Keyless types
+   *  (KEYLESS_PROVIDER_TYPES) with no apiKeyName get the keyless sentinel so the
+   *  summarizer/compaction key path can authenticate the same as the main path. */
+  type?: string;
 }
 
 /** Options for creating an AuthStorage adapter. */
@@ -76,10 +90,17 @@ export function createAuthStorageAdapter(options: AuthStorageAdapterOptions): Au
   // might otherwise satisfy hasAuth() for an unrelated built-in provider.
   if (customProviderEntries) {
     for (const [providerName, entry] of Object.entries(customProviderEntries)) {
-      if (!entry.enabled || !entry.apiKeyName) continue;
-      const apiKey = secretManager.get(entry.apiKeyName);
+      if (!entry.enabled) continue;
+      const apiKey = entry.apiKeyName ? secretManager.get(entry.apiKeyName) : undefined;
       if (apiKey) {
         storage.setRuntimeApiKey(providerName, apiKey);
+      } else if (entry.type && KEYLESS_PROVIDER_TYPES.has(entry.type)) {
+        // Keyless local provider (Ollama / LM Studio) with no resolvable key:
+        // register the sentinel so resolveProviderApiKey -> authStorage.getApiKey
+        // yields it (parity with the baked model key in model-registry-adapter).
+        // A non-keyless type with no key stays skipped — a real misconfiguration
+        // should fail loud, not be masked by a sentinel.
+        storage.setRuntimeApiKey(providerName, KEYLESS_API_KEY_SENTINEL);
       }
     }
   }

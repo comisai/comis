@@ -31,6 +31,7 @@ import type {
   TripleStorePort,
   MemorySearchResult,
   SessionKey,
+  LcdProvenanceReadStore,
 } from "@comis/core";
 import type { RecallTrace } from "@comis/observability";
 import type { Result } from "@comis/shared";
@@ -105,6 +106,25 @@ export interface MemoryRecallDeps {
    * agent↛memory build cut); the daemon injects the concrete adapter.
    */
   pinnedStore?: MemoryPinnedStore;
+  /**
+   * Optional LCD provenance read store (DIST-03). When present AND a selected recall
+   * result carries the "lcd_distilled" tag, the post-fusion provenance pass (after
+   * mmrRerank, before observability capture) down-weights same-conversation paired
+   * memories whose covered range overlaps the distilled summary's (score multiplier
+   * ×0.5, NEVER deleted — the memory stays accessible). It also queries
+   * `getProvenanceForSummary(scope, summaryId)` for any distilled summary that carries
+   * a `summary:<id>` tag, down-weighting the EXACT provenance-linked memoryIds. TYPE-only
+   * from @comis/core — the agent never imports @comis/memory (the agent↛memory build cut).
+   * Absent / no lcd_distilled result → NO-OP (byte-identical; getProvenanceForSummary is
+   * never called). A FAILED pass is NON-FATAL (WARN + recall results unaffected). DEFAULT-OFF.
+   *
+   * INJECTED AT THE COMPOSITION ROOT IN PHASE 173 (C2): the daemon builds the concrete
+   * LcdProvenanceReadStore (setup-memory's buildProvenanceReadStore) and threads it here,
+   * and the distillation runner stamps the `summary:<id>` tag — so the precise-provenance
+   * branch is the primary selector. The pass is live but stays a byte-identical no-op when
+   * this store is absent (e.g. a unit harness that omits it).
+   */
+  provenanceStore?: LcdProvenanceReadStore;
   /** Timer port for the rerank wall-clock deadline. Absent -> no timeout wrap. */
   timers?: TimerPort;
   /** Wall-clock reads for the recency boost (never Date.now()). */
@@ -211,8 +231,24 @@ export interface MemoryRecallConfig {
    *  trust-filter. Gates on ScoreBreakdown.base — NOT on r.score (the boosted value).
    *  Fallback: if a memory has no breakdown entry, gates on r.score (safe degrade).
    *  Default=0 (absent or 0) → no filtering (byte-identical to the pre-R3 path).
-   *  Optional so a caller predating the field leaves it absent → no floor applied. */
+   *  Optional so a caller predating the field leaves it absent → no floor applied.
+   *
+   *  WR-02 (Phase 173): when {@link MemoryRecallConfig.relevanceFirst} is true, an
+   *  UNCONFIGURED floor (0) is NOT silently skipped — it is enforced at the class
+   *  default (see RELEVANCE_FIRST_DEFAULT_BASE_FLOOR in memory-recall.ts). See that
+   *  field's doc. */
   baseFloor?: number;
+  /**
+   * RETR-04 / WR-02 (Phase 173): the unified-arbiter-active signal (from
+   * ScaffoldDefaults.relevanceFirst). When `true` (small/nano relevance-first), the
+   * recall path ranks LTM T3/T4 candidates relevance-first and the baseFloor gate is
+   * FAIL-CLOSED: an unconfigured floor (0) resolves to the class default and the filter
+   * runs — an arbiter that ranks LTM against history needs the floor enforced (design
+   * §17 S6). When `false`/absent (frontier/mid recency-first, the default), the gate
+   * keeps the legacy `> 0` skip → byte-identical to v2.14 (LOCKED #2). Optional so a
+   * caller predating the field leaves it absent → off (recency-first, byte-identical).
+   */
+  relevanceFirst?: boolean;
 }
 
 /** The recall orchestrator surface — a single `recall` method. */

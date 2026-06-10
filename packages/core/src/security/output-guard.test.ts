@@ -80,6 +80,35 @@ describe("createOutputGuard", () => {
     }
   });
 
+  it("redacts a bound known secret even when bare (no key=/token: prefix)", () => {
+    // Live finding (v2.20 security validation, 2026-06-10): a bare 48-char hex
+    // gateway token has no "key="/"token:" prefix, so the prefix-gated
+    // HEX_SECRET_32 pattern misses it and it leaked through OutputGuard. Exact-match
+    // redaction of the daemon's KNOWN secret values closes this with zero
+    // false-positive risk (no entropy heuristic that would over-redact git SHAs).
+    const token = "53bfa28f30236de2c895d6fc2712485610f8f3ff08991df1"; // 48-char bare hex
+    const g = createOutputGuard({ knownSecrets: [token] });
+    const result = g.scan(`Sure, the value is ${token} — there you go.`);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.blocked).toBe(true);
+      expect(result.value.sanitized).not.toContain(token);
+      expect(result.value.sanitized).toContain("[REDACTED:known_secret]");
+      expect(result.value.findings.some((f) => f.type === "secret_leak" && f.pattern === "known_secret")).toBe(true);
+    }
+  });
+
+  it("ignores empty/short known secrets (never redacts ordinary text)", () => {
+    const g = createOutputGuard({ knownSecrets: ["", "   ", "ab"] });
+    const response = "A perfectly normal sentence with no secrets in it at all.";
+    const result = g.scan(response);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.safe).toBe(true);
+      expect(result.value.sanitized).toBe(response);
+    }
+  });
+
   it("redacts GitHub token in sanitized field, blocked=true", () => {
     const response = "Use token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij";
     const result = guard.scan(response);

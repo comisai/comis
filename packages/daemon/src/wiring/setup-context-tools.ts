@@ -34,8 +34,14 @@ import {
   createCtxSearchTool,
   createCtxInspectTool,
   createCtxExpandTool,
+  depthForTier,
   type ContextToolDeps,
 } from "@comis/skills/tools";
+// DEPTH-02: the capability-axis resolver (frontier/mid/small/nano) — the same
+// minimal {id, provider} the memory-ops capability resolver uses. The capability
+// axis ignores contextWindow (K2 invariant), so a bare model object is correct.
+import { resolveModelProfile } from "@comis/agent";
+import type { CapabilityClass } from "@comis/agent";
 
 /** The daemon tool-assembly array element type (an `AgentTool`), via skills. */
 type AgentToolArray = ReturnType<PlatformToolProvider>;
@@ -54,6 +60,13 @@ export interface ContextWiringDeps {
   readonly nowMs: () => number;
   /** Inline-output cap before `ctx_expand` spills to a file (from `ContextEngineConfig`, default 4000). */
   readonly maxExpandTokens: number;
+  /**
+   * DEPTH-02: tier-gated max BFS hop depth for the `ctx_expand` multi-hop walk
+   * (nano1/small2/mid3/frontier4). The daemon resolves it from the agent's
+   * `ModelProfile` at `setup-tools.ts` (a capacity knob — wiring-time is correct;
+   * R4 scope stays per-call). Absent ⇒ a conservative single-hop depth of 1.
+   */
+  readonly maxExpandDepth?: number;
   /** Per-call session tool-results dir resolver (the hoisted exec-tool precedent). */
   readonly getToolResultsDir: () => string | undefined;
   /**
@@ -91,6 +104,9 @@ export function wireContextTools(
     logger: deps.skillsLogger,
     nowMs: deps.nowMs,
     maxExpandTokens: deps.maxExpandTokens,
+    // DEPTH-02: the tier-gated multi-hop depth cap (resolved wiring-time from the
+    // agent's ModelProfile). A capacity knob — R4 scope is still per-call.
+    maxExpandDepth: deps.maxExpandDepth,
     getToolResultsDir: deps.getToolResultsDir,
     // O1: the daemon's real bus (structurally assignable) so each ctx_* hit
     // emits a content-free context:dag_expanded. `undefined` ⇒ silent no-op.
@@ -101,4 +117,89 @@ export function wireContextTools(
     createCtxInspectTool(shared),
     createCtxExpandTool(shared),
   );
+}
+
+/** The minimal per-agent shape {@link maybeWireContextTools} reads (a slice of PerAgentConfig). */
+export interface CtxToolAgentConfig {
+  contextEngine?: { version?: "pipeline" | "dag"; maxExpandTokens?: number };
+  model?: string;
+  provider?: string;
+}
+
+/**
+ * Gate + wire the dag-mode `ctx_*` tools (extracted from `setup-tools.ts` to keep that file
+ * under the 800-line cap — Phase 174-04). Wires the tools when the agent's
+ * `contextEngine.version` resolves to `"dag"` AND a store is present.
+ *
+ * WR-05 (Phase 174-04): the missing-version default is `"dag"` — ALIGNED with
+ * `shouldRunLcdStorePasses` (which gates the LCD store WRITES + the DEPTH-03 sweep), so a bare
+ * agent config that writes durable history also wires the `ctx_*` tools that read it back (was
+ * `?? "pipeline"` — a pre-existing skew). WR-04: the operator `capabilityClassOverride` (the
+ * same `providers.entries.<id>.capabilities.capabilityClass` source pi-executor uses, supplied
+ * by the caller) governs the tier-gated `ctx_expand` walk depth; absent ⇒ provider-family
+ * heuristic. No-op (nothing pushed) when not dag mode or no store.
+ */
+export function maybeWireContextTools(
+  tools: AgentToolArray,
+  store: ContextStorePort | undefined,
+  agentId: string,
+  agentConfig: CtxToolAgentConfig | undefined,
+  deps: Omit<ContextWiringDeps, "maxExpandTokens" | "maxExpandDepth"> & {
+    capabilityClassOverride?: CapabilityClass;
+  },
+): void {
+  if ((agentConfig?.contextEngine?.version ?? "dag") !== "dag" || !store) return;
+  const maxExpandTokens = agentConfig?.contextEngine?.maxExpandTokens ?? 4000;
+  // DEPTH-02 / WR-04: tier-gated multi-hop depth (capacity knob → wiring-time; R4 per-call).
+  const maxExpandDepth = resolveCtxExpandDepth(
+    agentConfig?.model,
+    agentConfig?.provider,
+    deps.capabilityClassOverride,
+  );
+  wireContextTools(tools, store, agentId, {
+    skillsLogger: deps.skillsLogger,
+    nowMs: deps.nowMs,
+    maxExpandTokens,
+    maxExpandDepth,
+    getToolResultsDir: deps.getToolResultsDir,
+    eventBus: deps.eventBus, // O1: ctx_* context:dag_expanded
+  });
+}
+
+/**
+ * DEPTH-02: resolve the tier-gated `ctx_expand` multi-hop walk depth
+ * (nano1/small2/mid3/frontier4) from an agent's `model`/`provider`.
+ *
+ * `RequestContext` carries NO `capabilityClass` (Pitfall 3), so the cap is
+ * resolved HERE at wiring time from the agent's `ModelProfile`. The DEPTH cap is
+ * a CAPACITY knob, NOT a scope — wiring-time resolution is correct even when one
+ * `wireContextTools` call serves multiple agents per channel (A3); the R4 read
+ * scope still comes per-call from `requireCtxScope()` inside each tool. The
+ * capability axis ignores `contextWindow`, so the minimal `{ id, provider }` the
+ * memory-ops resolver uses is correct here too (resolve-memory-ops-capability.ts).
+ *
+ * `model`/`provider` default to "default" on a parsed agent config; an undefined
+ * or unknown model fails closed to the most-locked profile (nano → depth 1).
+ *
+ * WR-04 (Phase 174-04): `capabilityClassOverride` is the operator's per-provider
+ * `providers.entries.<id>.capabilities.capabilityClass` pin (the same source pi-executor
+ * threads into the live ModelProfile). When supplied it wins over the provider-family
+ * heuristic, so an operator who pins a large quantized ollama model "mid" gets the mid
+ * walk depth (3) here too — not the ollama→small→2 heuristic. Absent ⇒ heuristic.
+ */
+export function resolveCtxExpandDepth(
+  model: string | undefined,
+  provider: string | undefined,
+  capabilityClassOverride?: CapabilityClass,
+): number {
+  // WR-04 (Phase 174-04): thread the operator capabilityClass override (the same
+  // providers.entries.<id>.capabilities.capabilityClass pin pi-executor.ts:359-364 honors)
+  // into resolveModelProfile so a pinned tier governs the ctx_expand walk depth consistently
+  // with the rest of the platform — not the provider-family heuristic alone. Absent ⇒ the
+  // heuristic (back-compat). The override wins unconditionally (model-profile.ts:158).
+  const profile = resolveModelProfile(
+    { id: model ?? "", provider: provider ?? "" },
+    capabilityClassOverride,
+  );
+  return depthForTier(profile.capabilityClass);
 }

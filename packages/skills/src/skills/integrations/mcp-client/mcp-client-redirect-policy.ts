@@ -17,6 +17,8 @@
  */
 
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { Result } from "@comis/shared";
+import { validateUrl } from "@comis/core";
 
 const SENSITIVE_HEADERS_TO_STRIP_ON_CROSS_HOST: readonly string[] = [
   // Standard auth headers
@@ -39,6 +41,22 @@ const SENSITIVE_HEADERS_TO_STRIP_ON_CROSS_HOST: readonly string[] = [
 export interface RedirectPolicyOptions {
   readonly maxRedirections: number;
   readonly baseFetch?: typeof fetch;
+  /**
+   * SSRF guard applied to every CROSS-HOST redirect target before it is
+   * followed. Defaults to core `validateUrl` (DNS-pinned block of private /
+   * loopback / link-local / cloud-metadata addresses + http/https-only).
+   *
+   * Same-host redirects are exempt: they stay on the operator-configured
+   * (trusted) MCP host, so a legitimately-local server (`http://localhost:…`)
+   * keeps redirecting within itself. Cross-host targets are server-chosen and
+   * therefore untrusted (THREAT_MODEL §5.7 — malicious/compromised MCP server),
+   * so they must resolve to a public address.
+   *
+   * Injectable so unit tests stay deterministic (no real DNS).
+   */
+  readonly validateRedirectTarget?: (
+    urlString: string,
+  ) => Promise<Result<unknown, Error>>;
 }
 
 /**
@@ -95,6 +113,7 @@ async function ensureNativeResponse(response: Response): Promise<Response> {
  */
 export function createRedirectPolicyFetch(opts: RedirectPolicyOptions): FetchLike {
   const baseFetch = opts.baseFetch ?? fetch;
+  const validateRedirectTarget = opts.validateRedirectTarget ?? validateUrl;
   return async (input, init) => {
     let currentUrl =
       typeof input === "string"
@@ -136,6 +155,26 @@ export function createRedirectPolicyFetch(opts: RedirectPolicyOptions): FetchLik
       // Deviation: same-host http→https upgrade preserves headers.
       const sameHost = nextUrl.host === currentUrl.host;
       const shouldStripSensitive = !sameHost;
+
+      // SSRF guard on cross-host redirects. A malicious or compromised MCP
+      // server (untrusted per THREAT_MODEL §5.7) can answer any request with a
+      // 3xx whose Location points at an internal address — cloud metadata
+      // (169.254.169.254), a localhost admin port, or an RFC-1918 service.
+      // This fetch runs IN-PROCESS in the daemon (not behind the broker egress
+      // jail), so following such a redirect is host-control SSRF. Validate the
+      // resolved IP of every cross-host target before following it; same-host
+      // redirects stay on the operator-configured host and are exempt so a
+      // local MCP server keeps working. Mirrors the validateUrl guard every
+      // other outbound path in this package already uses.
+      if (!sameHost) {
+        const ssrf = await validateRedirectTarget(nextUrl.toString());
+        if (!ssrf.ok) {
+          throw new Error(
+            `[redirect_blocked_ssrf] Refusing MCP redirect to ${nextUrl.host}: ${ssrf.error.message}. ` +
+              `Hint: the MCP server redirected to a private / loopback / link-local / cloud-metadata address.`,
+          );
+        }
+      }
 
       // Build next-hop headers from existing init.headers.
       const nextHeaders = new Headers();

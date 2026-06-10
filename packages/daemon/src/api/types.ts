@@ -107,6 +107,19 @@ export interface SessionsApiDeps {
    *  session-archive.ts handler access it without widening the consumption type
    *  to the full MemoryApiDeps slice. */
   lcdStore?: import("@comis/core").ContextStorePort;
+  /** MemoryPort for session-archive --memory reset (DIST-05). The concrete
+   *  adapter is SqliteMemoryAdapter (which implements MemoryPort) — it is the
+   *  SAME object as MemoryApiDeps.memoryAdapter, threaded onto this slice at the
+   *  composition root (daemon.ts) so the session.reset_conversation handler can
+   *  call `deleteBySessionKey` without widening to the full MemoryApiDeps slice.
+   *  Optional so existing handler tests construct deps without it; when absent the
+   *  --memory flag logs a not-available WARN and clears LCD + sessionStore only. */
+  memoryPort?: import("@comis/core").MemoryPort;
+  /** MemoryConsolidationStore for --memory consolidated-observation unlink /
+   *  --purge-derived (DIST-05). The SAME instance as MemoryApiDeps.consolidationStore.
+   *  Optional for the same handler-test reason; absent ⇒ the unlink/purge steps are
+   *  skipped (the by-session memory delete itself still runs). */
+  consolidationStore?: import("@comis/core").MemoryConsolidationStore;
 }
 
 /**

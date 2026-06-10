@@ -56,7 +56,7 @@ import {
   type LcdSummary,
   type LcdSummaryKind,
 } from "@comis/core";
-import type { LcdSearchHit } from "@comis/core";
+import type { LcdSearchResult } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { renderMessageFtsText, searchLcdImpl, isFtsAvailable } from "./lcd-fts.js";
 import { createIngestSerializer } from "./lcd-ingest-serializer.js";
@@ -64,6 +64,8 @@ import {
   buildAppendCondensedSummaryTxn,
   buildAppendLeafSummaryTxn,
 } from "./lcd-store-writes.js";
+import { createBoundedReads } from "./lcd-store-reads.js";
+import { buildProvenanceWrites } from "./lcd-store-provenance.js";
 import {
   messageRowMapper,
   partRowMapper,
@@ -299,6 +301,9 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     "SELECT epoch_anchor, ingested_live_len FROM lcd_ingest_cursor WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
   );
 
+  // Phase 172 (DIST-01/DIST-03): lcd_memory_provenance writes (extracted helper).
+  const provenanceWrites = buildProvenanceWrites(db);
+
   // ── Phase 164 (RR4): deleteConversationLcd transaction ──────────────────────
   // Deletes ALL lcd_* rows for a (conversation, agent, tenant) scope in FK-safe
   // dependency order. The RESTRICT FK on lcd_summary_messages.message_id →
@@ -420,6 +425,11 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   };
   const appendLeafSummaryTxn = buildAppendLeafSummaryTxn(db, summaryWriteDeps);
   const appendCondensedSummaryTxn = buildAppendCondensedSummaryTxn(db, summaryWriteDeps);
+
+  // EFF-01 bounded reads: extracted to ./lcd-store-reads.ts to keep this file
+  // under the 800-line cap (mirrors the lcd-store-writes.ts extraction pattern).
+  // `selectParts` is passed in so the prepare-once discipline is preserved.
+  const boundedReads = createBoundedReads(db, selectParts);
 
   // R3 (132-04): the per-conversation single-flight serializer the store
   // exposes via runOnConversation. The store is the single writer BOTH the live
@@ -659,6 +669,21 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       return out;
     },
 
+    getMessagesByIds(scope: ContextStoreScope, ids: string[]): LcdMessage[] {
+      // EFF-01: extracted to ./lcd-store-reads.ts (byte-identical relocation).
+      return boundedReads.getMessagesByIds(scope, ids);
+    },
+
+    countMessages(scope: ContextStoreScope): number {
+      // EFF-01: extracted to ./lcd-store-reads.ts (byte-identical relocation).
+      return boundedReads.countMessages(scope);
+    },
+
+    getSummariesByIds(scope: ContextStoreScope, ids: string[]): LcdSummary[] {
+      // EFF-01: extracted to ./lcd-store-reads.ts (byte-identical relocation).
+      return boundedReads.getSummariesByIds(scope, ids);
+    },
+
     getSummaryChildren(scope: ContextStoreScope, parentSummaryId: string): LcdSummary[] {
       // E1 region walk: the immediate child summaries of a condensed summary
       // (lcd_summary_parents condensed→child edge). Same map-to-DTO discipline as
@@ -708,13 +733,15 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       scope: ContextStoreScope,
       query: string,
       opts: { limit: number; scope?: "messages" | "summaries" | "both" },
-    ): LcdSearchHit[] {
+    ): LcdSearchResult {
       // E1 search: delegate the FTS5-MATCH-with-LIKE-fallback branch to lcd-fts.ts
       // (the extract that keeps this file under the 800-line cap). The `query`
       // arrives pre-sanitized (the tool sanitizes — the cut bars memory from the
       // skills sanitizer). R4: scoped by (conversation_id, agent_id) — BOTH the
       // FTS MATCH path AND the LIKE fallback filter agent_id (WR-02, Pitfall 3);
       // the conversation_id prefix carries the tenant boundary. Never throws.
+      // Returns LcdSearchResult (EFF-03): { hits, cjkZeroHit } — propagated
+      // directly from searchLcdImpl; no transformation needed.
       return searchLcdImpl(db, scope.conversationId, scope.agentId, query, opts);
     },
 
@@ -759,12 +786,14 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     },
 
     // ── Phase 164 (RR4): explicit LCD reset ─────────────────────────────────
-
     deleteConversationLcd(scope: ContextStoreScope): number {
       // Delegate to the db.transaction that deletes in FK-safe dependency order.
       // Must be called inside runOnConversation so it serializes against live ingest.
       // Returns the count of lcd_messages rows deleted (0 for an empty scope).
       return deleteConversationLcdTxn(scope);
     },
+
+    // Phase 172 (DIST-01/DIST-03): provenance writes (extracted helper).
+    ...provenanceWrites,
   };
 }

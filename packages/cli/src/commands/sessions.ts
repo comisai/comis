@@ -14,6 +14,9 @@
 import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
+import Database from "better-sqlite3";
+import { existsSync, chmodSync, rmSync } from "node:fs";
+import os from "node:os";
 import {
   SessionListContract,
   SessionStatusContract,
@@ -237,14 +240,18 @@ export function registerSessionsCommand(program: Command): void {
   // AND the daemon sessionStore working transcript for the given session.
   // After this reset, a follow-up turn has NO prior context in both dag mode
   // (LCD empty) and pipeline mode (sessionStore empty → rehydrates empty).
-  // --memory also clears RAG memories (GDPR / full-forget path, deferred).
+  // --memory also clears RAG memories — the GDPR / full-forget path (Phase 172-03
+  // DIST-05): deletes paired + lcd-distilled memories by source_session_key and
+  // unlinks consolidated observations. --purge-derived (opt-in, with --memory)
+  // nukes EVERY observation derived from this session (destructive).
   // --yes skips confirmation (required for scripted/automated use).
   sessions
     .command("reset <sessionKey>")
     .description("Reset a conversation to a clean slate: clears LCD history + working session transcript (admin). Use --memory to also clear RAG memories.")
-    .option("--memory", "Also clear RAG memories for this session")
+    .option("--memory", "Also clear RAG memories (paired + distilled) for this session")
+    .option("--purge-derived", "With --memory: also purge consolidated observations derived from this session (destructive)")
     .option("--yes", "Skip confirmation prompt")
-    .action(async (sessionKeyArg: string, opts: { memory?: boolean; yes?: boolean }) => {
+    .action(async (sessionKeyArg: string, opts: { memory?: boolean; purgeDerived?: boolean; yes?: boolean }) => {
       if (!opts.yes) {
         // Destructive and admin-only: require --yes to avoid accidental wipes.
         error("Conversation reset is irreversible. Pass --yes to confirm.");
@@ -255,17 +262,21 @@ export function registerSessionsCommand(program: Command): void {
           return await callTyped(client, SessionResetConversationContract, {
             session_key: sessionKeyArg,
             memory: opts.memory ?? false,
+            // Commander camelCases --purge-derived → purgeDerived. Only meaningful
+            // with --memory (the handler gates it on memory:true).
+            ...(opts.purgeDerived ? { purge_derived: true } : {}),
           });
         });
         console.log(`Conversation reset: ${result.lcdRowsDeleted} LCD rows deleted, ${result.sessionMessagesCleared} session messages cleared.`);
         if (opts.memory) {
           if (result.memoriesDeleted !== undefined) {
-            // RAG memory clear was implemented and ran — surface the count.
+            // RAG memory clear ran — surface the count (0 = nothing matched).
             console.log(`RAG memories cleared: ${result.memoriesDeleted} memories deleted.`);
           } else {
-            // Handler omitted memoriesDeleted → not yet implemented (deferred).
+            // memoriesDeleted omitted → the daemon has no MemoryPort wired, so the
+            // --memory clear could not run (LCD + session transcript ARE cleared).
             process.stderr.write(
-              "⚠ --memory is not yet implemented — RAG memory was NOT cleared (only LCD history and session transcript were cleared).\n",
+              "⚠ --memory not available on this daemon — RAG memory was NOT cleared (only LCD history and session transcript were cleared).\n",
             );
           }
         }
@@ -273,6 +284,53 @@ export function registerSessionsCommand(program: Command): void {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to reset conversation: ${msg}`);
         process.exit(1);
+      }
+    });
+
+  // sessions backup — SQLite Online Backup API (Phase 170-04 DOC-02)
+  // Opens memory.db as readonly and calls db.backup(destPath) — the SQLite
+  // Online Backup API — which is hot-backup-safe (daemon can continue writing).
+  // The backup file is created with a timestamp suffix and immediately chmod
+  // 0600 to prevent other OS users from reading session data.
+  sessions
+    .command("backup")
+    .description(
+      "Create a timestamped backup of memory.db using the SQLite Online Backup API." +
+      " Safe to run while the daemon is running.",
+    )
+    .option("--data-dir <dir>", "Override data directory (default: ~/.comis)")
+    .action(async (options: { dataDir?: string }) => {
+      const dataDir = options.dataDir ?? (os.homedir() + "/.comis");
+      const dbPath = dataDir + "/memory.db";
+      if (!existsSync(dbPath)) {
+        error("memory.db not found at " + dbPath);
+        process.exit(1);
+      }
+      // Timestamped destination: memory.db.backup.20260610T120000000Z
+      const ts = new Date().toISOString().replace(/[:.]/g, "");
+      const destPath = dbPath + ".backup." + ts;
+      const db = new Database(dbPath, { readonly: true });
+      // WR-02: tighten the umask so db.backup() creates the file 0600 FROM THE START.
+      // The session database is sensitive; a chmod-after-write pattern leaves a brief
+      // world-readable window between backup completion and chmod. Restored in finally.
+      const prevUmask = process.umask(0o077);
+      try {
+        await db.backup(destPath);
+        chmodSync(destPath, 0o600); // belt-and-suspenders (also re-tightens a pre-existing dest)
+        success("Backup created: " + destPath);
+      } catch (err) {
+        // Remove any partial / unprotected backup so a failure can't leak the DB.
+        try {
+          rmSync(destPath, { force: true });
+        } catch {
+          /* best-effort cleanup */
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        error("Backup failed: " + msg);
+        process.exit(1);
+      } finally {
+        process.umask(prevUmask);
+        db.close();
       }
     });
 

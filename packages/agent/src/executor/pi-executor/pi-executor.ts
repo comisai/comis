@@ -64,7 +64,7 @@ import {
 } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { suppressError } from "@comis/shared";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { CommandDirectives } from "../command-directive-types.js";
 import type { StepCounter } from "../step-counter.js";
 import { createToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
@@ -121,6 +121,7 @@ import { randomUUID } from "node:crypto";
 import { installCompactionTrigger } from "./compaction-trigger.js";
 import { bootstrapSession, decodeExecutionOverrides, type MutableRef } from "./session-bootstrap.js";
 import { runSafetyGates } from "./safety-gate.js";
+import { maybeRunBootstrapSweep } from "./maybe-run-bootstrap-sweep.js";
 import { applyPromptRunOutcome, handleEnvelopeException } from "./message-envelope.js";
 import { finalizeLockResult } from "./executor-error-mapping.js";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
@@ -1025,6 +1026,35 @@ async function runSessionLocked(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (session.agent as any).transformContext = ceSetup.contextEngine.transformContext;
   }
+
+  // DEPTH-03 (Plan 174-03): bootstrap crash-recovery sweep. Runs ONCE per session —
+  // after the context engine is wired, BEFORE the first turn's afterTurn ingest — so a
+  // mid-turn crash gap (messages written to the JSONL trajectory but never ingested into
+  // the durable LCD store because the daemon was killed before afterTurn) is
+  // continue-appended EXACTLY ONCE. WR-02 (Plan 174-04): gated on the existing
+  // `isFirstMessageInSession` signal (truly run-once) — turns 2+ were already idempotent
+  // via the durable cursor, so skipping them removes per-turn LCD single-flight overhead.
+  // Extracted to `maybeRunBootstrapSweep` (state-first helper, IN-01) to keep the in-lock
+  // body from accreting another wiring block; the recovery itself (the EXISTING
+  // ingestTurnGuarded path + the shouldRunLcdStorePasses dag gate) lives in
+  // `bootstrapLcdSweep`. The scope is built exactly as the afterTurn block does so read
+  // scope == write scope (DAG-CRIT-1 / WR-02): conversationId === sessionKey ===
+  // formattedKey, agentId === `agentId ?? "default"`. The JSONL-loaded live array is the
+  // same ref executor-post-execution reads at the afterTurn site (typed unknown on
+  // AgentSession — no public SDK type for it).
+  await maybeRunBootstrapSweep({
+    isFirstMessageInSession,
+    contextStore: frozenDeps.contextStore,
+    formattedKey,
+    tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
+    agentId: agentId ?? "default",
+    live: ((session.agent as unknown as { state?: { messages?: unknown[] } }).state
+      ?.messages ?? []) as AgentMessage[],
+    clock: frozenDeps.clock,
+    logger: frozenDeps.logger,
+    eventBus: frozenDeps.eventBus,
+    config,
+  });
 
   // Align register/deregister key shape with
   // BackgroundSessionResolver.formatComposite so production lookups via

@@ -242,6 +242,10 @@ export interface ProbeAllOllamaProvidersParams {
     baseUrl?: string;
     capabilities?: { probeServedWindow?: boolean };
     defaultModel?: string;
+    /** Configured models for this provider. `ProviderEntrySchema` stores the
+     *  model under `models[].id` (there is NO `defaultModel` field), so the
+     *  probe must read the model id from here for the /api/show cold-start path. */
+    models?: Array<{ id?: string }>;
   }>;
   /** Injectable fetch function. */
   fetchFn: (url: string, init: RequestInit) => Promise<Response>;
@@ -286,7 +290,11 @@ export async function probeAllOllamaProviders(
     if (entry.capabilities?.probeServedWindow === false) continue;
 
     const nativeBase = deriveOllamaNativeBase(entry.baseUrl ?? "http://localhost:11434");
-    const modelId = entry.defaultModel ?? "";
+    // ProviderEntrySchema has NO `defaultModel` — the model lives under `models[].id`.
+    // Fall back to the first configured model so the /api/show cold-start path
+    // (boot, before any inference, when /api/ps is empty) sends a real model name
+    // instead of "" (which Ollama rejects with HTTP 400 → served window never found).
+    const modelId = entry.defaultModel ?? entry.models?.[0]?.id ?? "";
 
     const task = probeOllamaServedWindow(nativeBase, modelId, { fetchFn, timeoutMs }).then(
       (result) => {

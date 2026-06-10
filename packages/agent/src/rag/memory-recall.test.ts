@@ -50,6 +50,11 @@ import { createMemoryRecall, type MemoryRecallConfig } from "./memory-recall.js"
 import { appendCausalLane } from "./recall-causal-lane.js";
 import { expandSynonyms, parseTemporalRange } from "./query-understanding.js";
 import type { FusionLane } from "./fuse.js";
+// DIST-03 live-path integration (Task 3): the CONCRETE @comis/memory adapters,
+// imported as a devDependency in the TEST only (the agent↛memory cut forbids this
+// in src/, NOT in .test.ts — verified by architecture.test.ts excludeFileSuffixes).
+import Database from "better-sqlite3";
+import { initSchema, createLcdStore, buildProvenanceReadStore } from "@comis/memory";
 
 // The binding constraint — the recall hot path is deterministic +
 // LLM-FREE. memory-recall.ts must NEVER reach the query-time LLM surface. We mock the
@@ -82,6 +87,12 @@ function makeResult(
     base?: number;
     content?: string;
     occurredAt?: number;
+    /** Entry tags. Default []; set e.g. ["lcd_distilled", "depth:1"] for the
+     *  DIST-03 provenance down-weighting pass fixtures. */
+    tags?: string[];
+    /** source.sessionKey — the conversation a memory was written from. Used by the
+     *  DIST-03 post-fusion provenance pass to find same-conversation paired rows. */
+    sessionKey?: string;
   } = {},
 ): MemorySearchResult {
   const entry: Record<string, unknown> = {
@@ -91,8 +102,8 @@ function makeResult(
     userId: "user_a",
     content: opts.content ?? `content for ${id}`,
     trustLevel: opts.trustLevel ?? "learned",
-    source: { who: "agent" },
-    tags: [],
+    source: opts.sessionKey !== undefined ? { who: "agent", sessionKey: opts.sessionKey } : { who: "agent" },
+    tags: opts.tags ?? [],
     createdAt: opts.createdAt ?? NOW,
     // The temporal lane seeds on entry.occurredAt — set it only when provided so the
     // no-seed gate (occurredAt absent on every top hit) is exercisable.
@@ -3362,3 +3373,774 @@ describe("createMemoryRecall — pinned-first lane (SC1 + SC2-cap + SC4-mmr)", (
     expect(typeof warnPayload.durationMs).toBe("number");
   });
 });
+
+// ---------------------------------------------------------------------------
+// DIST-03 POST-FUSION PROVENANCE DOWN-WEIGHTING PASS
+//
+// When a distilled summary (tag "lcd_distilled") is in the ranked set, the
+// recall pipeline down-weights same-conversation paired memories whose covered
+// range overlaps (score × 0.5, NEVER delete). The pass runs AFTER mmrRerank and
+// BEFORE captureRecallObservability, is guarded by `deps.provenanceStore != null`,
+// is NON-FATAL (a provenance failure never affects recall results), and is
+// BYTE-IDENTICAL when provenanceStore is absent / no lcd_distilled result.
+//
+// W6 INVARIANT: the distilled summary itself (and any OTHER lcd_distilled entry)
+// is NEVER down-weighted — the predicate is fully parenthesized
+// (candidate.id !== summary.id AND !candidateIsDistilled, candidateIsDistilled a
+// separate boolean) so the &&/|| precedence trap cannot down-weight the summary.
+// ---------------------------------------------------------------------------
+
+/**
+ * A controllable LcdProvenanceReadStore spy. `getProvenanceForSummary` returns a
+ * canned row set keyed by summaryId and records every (scope, summaryId) call so
+ * the load-bearing call-site (the pass actually queries the port) is assertable.
+ */
+function fakeProvenanceStore(
+  rowsBySummaryId: Record<
+    string,
+    Array<{ provenanceId: string; memoryId: string; sourceSessionKey: string; supersededBy: string | null }>
+  > = {},
+  opts: { throwOnCall?: boolean } = {},
+): {
+  store: { getProvenanceForSummary: (scope: unknown, summaryId: string) => unknown };
+  calls: Array<{ scope: { tenantId: string; agentId: string; conversationId?: string; sessionKey?: string }; summaryId: string }>;
+} {
+  const calls: Array<{ scope: { tenantId: string; agentId: string; conversationId?: string; sessionKey?: string }; summaryId: string }> = [];
+  const store = {
+    getProvenanceForSummary(scope: unknown, summaryId: string) {
+      calls.push({ scope: scope as { tenantId: string; agentId: string; conversationId?: string; sessionKey?: string }, summaryId });
+      if (opts.throwOnCall) throw new Error("provenance store exploded");
+      return rowsBySummaryId[summaryId] ?? [];
+    },
+  };
+  return { store, calls };
+}
+
+/** Neutral scoring so the ONLY observable score delta in these tests is the pass's ×0.5. */
+const DIST_NEUTRAL_SCORING: ScoringAlphas = {
+  recencyAlpha: 0,
+  temporalAlpha: 0,
+  proofAlpha: 0,
+  trustAlpha: 0,
+  usefulnessAlpha: 0,
+};
+
+describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
+  // The two stable strings the fixtures share.
+  const CONV_SESSION = "telegram:chat_1:user_a"; // the distilled summary's source.sessionKey
+
+  it("down-weights a same-session paired memory (score × 0.5) when a lcd_distilled result is selected, never deleting it", async () => {
+    // The distilled summary + a paired conversation memory from the SAME session,
+    // plus an unrelated memory from a DIFFERENT session that must NOT be touched.
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1"],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("paired", {
+        base: 0.8,
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("other-session", {
+        base: 0.7,
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        sessionKey: "telegram:chat_9:user_z",
+      }),
+    ];
+    const { store } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+    // The paired same-session memory survives (NOT deleted) but is down-weighted.
+    expect(byId.has("paired")).toBe(true);
+    const pairedScore = byId.get("paired")!;
+    // The other-session memory keeps its score (≈0.7 base, neutral scoring → unchanged).
+    const otherScore = byId.get("other-session")!;
+    expect(pairedScore).toBeLessThan(otherScore);
+    // The distilled summary itself is never down-weighted (W6).
+    const distilledScore = byId.get("distilled")!;
+    expect(distilledScore).toBeGreaterThan(pairedScore);
+  });
+
+  it("CR-01: a down-weighted paired memory MOVES BELOW a non-downweighted peer it previously outranked (the demotion changes RANK, not just score)", async () => {
+    // The headline BLOCKER: applyProvenanceDownweighting multiplied `score` by 0.5
+    // but PRESERVED array position, and nothing downstream re-sorts (deduplicateResults
+    // preserves order; the hybrid injector consumes in order). So the demotion was a
+    // functional no-op for RANKING. This test asserts ORDER, not score.
+    //
+    // RED on pre-patch code: `paired` (base 0.8) enters ABOVE `peer` (base 0.6) in the
+    // fused/scored order. The pass halves paired → 0.4 (< peer's 0.6) but leaves it in
+    // slot 0. Pre-patch: got.value order is still [distilled, paired, peer] → the
+    // assertion `idx(paired) > idx(peer)` FAILS. GREEN (re-sort by descending score):
+    // the order becomes [distilled, peer, paired] → paired sinks below peer.
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1"],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("paired", {
+        base: 0.8, // OUTRANKS peer pre-pass (0.8 > 0.6); ×0.5 → 0.4 (< 0.6) post-pass
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        sessionKey: CONV_SESSION, // same session as the distilled summary → down-weighted
+      }),
+      makeResult("peer", {
+        base: 0.6, // a non-downweighted peer from a DIFFERENT session
+        trustLevel: "learned",
+        tags: ["conversation"],
+        sessionKey: "telegram:chat_OTHER:user_z",
+      }),
+    ];
+    const { store } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const order = got.value.map((r) => r.entry.id);
+    const idxPaired = order.indexOf("paired");
+    const idxPeer = order.indexOf("peer");
+    // Both survive (down-weight never deletes).
+    expect(idxPaired).toBeGreaterThanOrEqual(0);
+    expect(idxPeer).toBeGreaterThanOrEqual(0);
+    // The CONTRACT: the demoted paired row now ranks BELOW the peer it previously
+    // outranked — the demotion is observable in ORDER (not merely the score value).
+    expect(idxPaired).toBeGreaterThan(idxPeer);
+    // Sanity: the down-weighted score really is below the peer's (the cause of the move).
+    const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+    expect(byId.get("paired")!).toBeLessThan(byId.get("peer")!);
+  });
+
+  it("CR-01 STABLE re-sort: ties between two down-weighted rows preserve their relative input order (index tiebreaker)", async () => {
+    // Two same-session paired rows with EQUAL base → both ×0.5 → equal score. The
+    // re-sort MUST be STABLE: `pairedA` (input slot 1) stays ahead of `pairedB`
+    // (input slot 2). A non-stable sort could swap them. They both sink below the
+    // higher-scored peer, but keep their mutual order.
+    const input = [
+      makeResult("distilled", { base: 0.95, trustLevel: "learned", tags: ["lcd_distilled", "depth:1"], sessionKey: CONV_SESSION }),
+      makeResult("pairedA", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+      makeResult("pairedB", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+    ];
+    const { store } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const order = got.value.map((r) => r.entry.id);
+    // Stable: pairedA precedes pairedB (their equal scores resolve to input order).
+    expect(order.indexOf("pairedA")).toBeLessThan(order.indexOf("pairedB"));
+  });
+
+  it("IN-03: branch (2) does NOT over-demote a legitimately-distinct same-session memory once the precise summary:<id> tag is present", async () => {
+    // The IN-03 over-reach: when CR-01 makes the pass effective, the SESSION-HEURISTIC
+    // branch (2) — which down-weights EVERY non-distilled candidate sharing the
+    // summary's sessionKey — suppresses same-session memories the precise provenance
+    // branch (1) never linked. Once 173-04 stamps the summary:<id> tag, branch (1) is
+    // the primary selector; branch (2) must be GATED OFF so a distinct same-session
+    // row keeps its rank.
+    //
+    // RED on pre-patch code (branch 2 always runs): `distinct` shares CONV_SESSION but
+    // is NOT in the provenance row set, so the heuristic down-weights it anyway →
+    // demoted below `peer`. GREEN (branch 2 gated behind absence of a usable
+    // summary:<id> tag): the precise branch links only `linked`; `distinct` keeps its
+    // score and stays ABOVE peer.
+    const SUMMARY_ID = "sum-in03";
+    const input = [
+      makeResult("distilled", {
+        base: 0.95,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1", `summary:${SUMMARY_ID}`],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("linked", {
+        base: 0.8, // the genuinely-subsumed paired row (in the provenance set)
+        trustLevel: "learned",
+        tags: ["paired"],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("distinct", {
+        base: 0.7, // shares the session but is NOT in the provenance set — must NOT demote
+        trustLevel: "learned",
+        tags: ["conversation"],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("peer", {
+        base: 0.6, // a different-session peer `distinct` outranks pre-pass
+        trustLevel: "learned",
+        tags: ["conversation"],
+        sessionKey: "telegram:chat_OTHER:user_z",
+      }),
+    ];
+    const { store } = fakeProvenanceStore({
+      [SUMMARY_ID]: [{ provenanceId: "p1", memoryId: "linked", sourceSessionKey: CONV_SESSION, supersededBy: null }],
+    });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+    const order = got.value.map((r) => r.entry.id);
+    // The genuinely-linked row IS demoted (precise branch 1 fired) → below peer.
+    expect(byId.get("linked")!).toBeLessThan(byId.get("peer")!);
+    expect(order.indexOf("linked")).toBeGreaterThan(order.indexOf("peer"));
+    // The legitimately-distinct same-session row is NOT demoted → keeps its rank ABOVE peer.
+    expect(byId.get("distinct")!).toBeCloseTo(0.7, 10);
+    expect(order.indexOf("distinct")).toBeLessThan(order.indexOf("peer"));
+  });
+
+  it("IN-03: with NO usable summary:<id> tag, the session heuristic (branch 2) STILL fires (fallback preserved)", async () => {
+    // The complement of the test above: when the distilled summary carries NO precise
+    // summary:<id> tag, branch (1) cannot select anything, so branch (2) must remain the
+    // fallback selector — a same-session paired row is still demoted. This pins that the
+    // IN-03 gate scopes branch (2) to the no-precise-tag case rather than removing it.
+    const input = [
+      makeResult("distilled", { base: 0.95, trustLevel: "learned", tags: ["lcd_distilled", "depth:1"], sessionKey: CONV_SESSION }),
+      makeResult("paired", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+      makeResult("peer", { base: 0.6, trustLevel: "learned", tags: ["conversation"], sessionKey: "telegram:chat_OTHER:user_z" }),
+    ];
+    const { store } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const order = got.value.map((r) => r.entry.id);
+    // Fallback heuristic fired: the same-session paired row sank below the peer.
+    expect(order.indexOf("paired")).toBeGreaterThan(order.indexOf("peer"));
+  });
+
+  it("W6 PRECEDENCE: the distilled summary itself is NEVER down-weighted even when it is the only same-session entry besides another lcd_distilled row", async () => {
+    // Two lcd_distilled summaries from the same session: NEITHER may be down-weighted.
+    // The buggy `a && b || c` predicate would down-weight one distilled entry; the
+    // correct fully-parenthesized predicate leaves BOTH untouched.
+    const input = [
+      makeResult("d1", { base: 0.9, trustLevel: "learned", tags: ["lcd_distilled", "depth:2"], sessionKey: CONV_SESSION }),
+      makeResult("d2", { base: 0.85, trustLevel: "learned", tags: ["lcd_distilled", "depth:1"], sessionKey: CONV_SESSION }),
+    ];
+    const referenceById = new Map(
+      // Reference scores with NO provenance pass (the pass must leave distilled rows alone).
+      (await runReference(input)).map((r) => [r.entry.id, r.score ?? 1]),
+    );
+    const { store } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+    // Both distilled rows keep their reference (un-down-weighted) score.
+    expect(byId.get("d1")).toBeCloseTo(referenceById.get("d1")!, 10);
+    expect(byId.get("d2")).toBeCloseTo(referenceById.get("d2")!, 10);
+  });
+
+  it("LOAD-BEARING getProvenanceForSummary: a provenance-linked memoryId is down-weighted and the port is queried with the (tenant, agent) scope", async () => {
+    // The distilled summary carries a summary:<id> tag; the provenance store maps
+    // that summaryId → a paired memoryId. The pass MUST query the port and
+    // down-weight the EXACT returned memoryId.
+    const SUMMARY_ID = "sum-abc";
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1", `summary:${SUMMARY_ID}`],
+        sessionKey: CONV_SESSION,
+      }),
+      makeResult("prov-paired", {
+        base: 0.8,
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        // Deliberately a DIFFERENT sessionKey so ONLY the provenance row (not the
+        // session heuristic) can select it — proves getProvenanceForSummary is load-bearing.
+        sessionKey: "telegram:chat_other:user_a",
+      }),
+    ];
+    const referenceById = new Map((await runReference(input)).map((r) => [r.entry.id, r.score ?? 1]));
+    const { store, calls } = fakeProvenanceStore({
+      [SUMMARY_ID]: [
+        { provenanceId: "p1", memoryId: "prov-paired", sourceSessionKey: CONV_SESSION, supersededBy: null },
+      ],
+    });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // The port was queried for the distilled summary's id, scoped to (tenant, agent).
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.some((c) => c.summaryId === SUMMARY_ID)).toBe(true);
+    const scopedCall = calls.find((c) => c.summaryId === SUMMARY_ID)!;
+    expect(scopedCall.scope.tenantId).toBe("tenant_x"); // SESSION_KEY_OBJ.tenantId
+    expect(scopedCall.scope.agentId).toBe("agent_y");
+    // The provenance-linked memory was down-weighted below its reference score.
+    const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+    expect(byId.get("prov-paired")!).toBeLessThan(referenceById.get("prov-paired")!);
+  });
+
+  it("IN-02: the provenance scope carries the FORMATTED sessionKey (formatSessionKey), never String(sessionKey) → \"[object Object]\"", async () => {
+    // RED on pre-patch code: the scope built at the call site uses
+    // `String(sessionKey)` → "[object Object]" (harmless only while the pass was
+    // dormant; poisons ContextStoreScope.sessionKey the instant it activates).
+    // Phase 173 replaces it with formatSessionKey(sessionKey).
+    const SUMMARY_ID = "sum-in02";
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1", `summary:${SUMMARY_ID}`],
+        sessionKey: CONV_SESSION,
+      }),
+    ];
+    const { store, calls } = fakeProvenanceStore({
+      [SUMMARY_ID]: [{ provenanceId: "p", memoryId: "m", sourceSessionKey: CONV_SESSION, supersededBy: null }],
+    });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    const scopedCall = calls.find((c) => c.summaryId === SUMMARY_ID)!;
+    expect(scopedCall).toBeDefined();
+    // formatSessionKey(SESSION_KEY_OBJ) === "tenant_x:user_a:chat_1" (NOT "[object Object]").
+    expect(scopedCall.scope.sessionKey).toBe("tenant_x:user_a:chat_1");
+    expect(scopedCall.scope.sessionKey).not.toBe("[object Object]");
+  });
+
+  it("DEFAULT-OFF BYTE-IDENTITY: with provenanceStore ABSENT, recall output is byte-identical to today even when a lcd_distilled result is present", async () => {
+    const input = [
+      makeResult("distilled", { base: 0.9, trustLevel: "learned", tags: ["lcd_distilled", "depth:1"], sessionKey: CONV_SESSION }),
+      makeResult("paired", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+    ];
+    const expected = (await runReference(input)).map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+    // No provenanceStore injected.
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const actual = got.value.map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+    expect(actual).toEqual(expected);
+  });
+
+  it("NO-OP when NO lcd_distilled result is present: provenanceStore is NEVER queried and output is byte-identical", async () => {
+    const input = [
+      makeResult("a", { base: 0.9, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+      makeResult("b", { base: 0.8, trustLevel: "learned", tags: ["conversation"], sessionKey: CONV_SESSION }),
+    ];
+    const expected = (await runReference(input)).map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+    const { store, calls } = fakeProvenanceStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // Fast-path: no lcd_distilled entry → getProvenanceForSummary never called.
+    expect(calls.length).toBe(0);
+    const actual = got.value.map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+    expect(actual).toEqual(expected);
+  });
+
+  it("NON-FATAL: a provenanceStore that throws does NOT fail recall — results are returned unchanged with a WARN", async () => {
+    const input = [
+      // The summary:<id> tag makes the pass invoke getProvenanceForSummary (which throws here).
+      makeResult("distilled", { base: 0.9, trustLevel: "learned", tags: ["lcd_distilled", "depth:1", "summary:sum-throw"], sessionKey: CONV_SESSION }),
+      makeResult("paired", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
+    ];
+    const warnMock = vi.fn();
+    const { store } = fakeProvenanceStore({}, { throwOnCall: true });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: { info: vi.fn(), warn: warnMock, debug: vi.fn(), error: vi.fn() },
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "default");
+    // Recall STILL succeeds (non-fatal pass).
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.length).toBe(2);
+    // The failure was logged with an errorKind + hint (§2.7).
+    expect(warnMock).toHaveBeenCalled();
+    const payload = warnMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload).toHaveProperty("errorKind");
+    expect(payload).toHaveProperty("hint");
+  });
+});
+
+// ── DIST-03 LIVE-PATH integration: the CONCRETE adapter end-to-end ───────────
+//
+// The DIST-03 carry-in's central risk is "built-but-not-wired" — the milestone's
+// #1 recurring failure class. The fake-store tests above prove the pass LOGIC; this
+// block proves the WHOLE chain fires on the LIVE recall path with the REAL
+// @comis/memory adapter (buildProvenanceReadStore from Task 1) + the REAL provenance
+// write (appendProvenance) + the stamped summary:<id> tag: a distilled summary in the
+// ranked set → its provenance-linked paired row gets ×0.5; and it is a byte-identical
+// no-op when no provenance/distilled entry is present (the absent path preserved).
+describe("createMemoryRecall — DIST-03 live-path integration (concrete LcdProvenanceReadStore)", () => {
+  const SUMMARY_ID = "sum-live-1";
+  const PAIRED_ID = "mem-paired-live";
+
+  /** A real SQLite db with the LCD schema + a seeded memories row + a provenance row
+   *  (via the production write path appendProvenance), scoped to SESSION_KEY_OBJ's
+   *  (tenantId) + the agentId the recall is invoked with. */
+  function seedLiveProvenanceDb(tenantId: string, agentId: string): Database.Database {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536); // runs ensureLcdTables (lcd_memory_provenance DDL)
+    // The provenance row FKs memory_id → memories(id), so seed a real memories row.
+    db.prepare(
+      "INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_session_key, tags, created_at)" +
+        " VALUES (?, ?, ?, 'user_a', 'paired content', 'learned', 'episodic', 'agent', 'sess-live', '[]', 1)",
+    ).run(PAIRED_ID, tenantId, agentId);
+    const store = createLcdStore(db);
+    store.appendProvenance!({
+      provenanceId: "prov-live-1",
+      memoryId: PAIRED_ID,
+      summaryId: SUMMARY_ID,
+      sourceSessionKey: "sess-live",
+      conversationId: "conv-live",
+      agentId,
+      tenantId,
+      createdAt: 1,
+    });
+    return db;
+  }
+
+  it("FIRES on the live recall path: the provenance-linked paired row is down-weighted ×0.5 (present, NOT deleted) via the concrete adapter + stamped tag", async () => {
+    // The distilled summary carries the summary:<id> tag; the paired memory has a
+    // DIFFERENT sessionKey so ONLY the precise getProvenanceForSummary branch (not the
+    // session heuristic) can select it — proving the LIVE read is load-bearing.
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1", `summary:${SUMMARY_ID}`],
+        sessionKey: "telegram:chat_summary:user_a",
+      }),
+      makeResult(PAIRED_ID, {
+        base: 0.8,
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        sessionKey: "telegram:chat_DIFFERENT:user_a",
+      }),
+    ];
+    const referenceById = new Map((await runReference(input)).map((r) => [r.entry.id, r.score ?? 1]));
+
+    const db = seedLiveProvenanceDb("tenant_x", "agent_live"); // tenant_x = SESSION_KEY_OBJ.tenantId
+    try {
+      const provenanceStore = buildProvenanceReadStore(db); // the CONCRETE Task-1 adapter
+      const recall = createMemoryRecall(
+        {
+          memoryPort: fakeMemoryPort(input),
+          provenanceStore,
+          clock: fixedClock,
+          logger: noopLogger,
+        } as unknown as Parameters<typeof createMemoryRecall>[0],
+        baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+      );
+      const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_live");
+      expect(got.ok).toBe(true);
+      if (!got.ok) return;
+      const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+      // The paired row SURVIVES (down-weight never deletes) but is demoted to ×0.5.
+      expect(byId.has(PAIRED_ID)).toBe(true);
+      expect(byId.get(PAIRED_ID)!).toBeCloseTo(referenceById.get(PAIRED_ID)! * 0.5, 10);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("R4 fail-closed on the live path: a CROSS-AGENT recall does NOT down-weight (the concrete adapter returns zero rows for the wrong agent)", async () => {
+    // The provenance row is written under agent_live; recall as agent_OTHER must get
+    // ZERO rows from getProvenanceForSummary → no down-weight (R4 fail-closed end-to-end).
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1", `summary:${SUMMARY_ID}`],
+        sessionKey: "telegram:chat_summary:user_a",
+      }),
+      makeResult(PAIRED_ID, {
+        base: 0.8,
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        sessionKey: "telegram:chat_DIFFERENT:user_a",
+      }),
+    ];
+    const referenceById = new Map((await runReference(input)).map((r) => [r.entry.id, r.score ?? 1]));
+
+    const db = seedLiveProvenanceDb("tenant_x", "agent_live");
+    try {
+      const provenanceStore = buildProvenanceReadStore(db);
+      const recall = createMemoryRecall(
+        {
+          memoryPort: fakeMemoryPort(input),
+          provenanceStore,
+          clock: fixedClock,
+          logger: noopLogger,
+        } as unknown as Parameters<typeof createMemoryRecall>[0],
+        baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+      );
+      // Recall as a DIFFERENT agent — the precise branch reads zero rows; the paired row's
+      // sessionKey also differs from the distilled summary's, so the heuristic can't fire.
+      const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_OTHER");
+      expect(got.ok).toBe(true);
+      if (!got.ok) return;
+      const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+      expect(byId.get(PAIRED_ID)!).toBeCloseTo(referenceById.get(PAIRED_ID)!, 10); // unchanged
+    } finally {
+      db.close();
+    }
+  });
+
+  it("BYTE-IDENTICAL no-op when no provenance/distilled entry is present (live adapter still constructed)", async () => {
+    // A live adapter is wired, but NO ranked entry carries the lcd_distilled tag → the
+    // pass fast-paths (getProvenanceForSummary never called) and output is byte-identical.
+    const input = [
+      makeResult("a", { base: 0.9, trustLevel: "learned", tags: ["conversation"], sessionKey: "telegram:chat_1:user_a" }),
+      makeResult(PAIRED_ID, { base: 0.8, trustLevel: "learned", tags: ["conversation"], sessionKey: "telegram:chat_1:user_a" }),
+    ];
+    const expected = (await runReference(input)).map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+
+    const db = seedLiveProvenanceDb("tenant_x", "agent_live");
+    try {
+      const provenanceStore = buildProvenanceReadStore(db);
+      const recall = createMemoryRecall(
+        {
+          memoryPort: fakeMemoryPort(input),
+          provenanceStore,
+          clock: fixedClock,
+          logger: noopLogger,
+        } as unknown as Parameters<typeof createMemoryRecall>[0],
+        baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+      );
+      const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_live");
+      expect(got.ok).toBe(true);
+      if (!got.ok) return;
+      const actual = got.value.map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+      expect(actual).toEqual(expected); // byte-identical to the no-pass reference
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// ── RETR-04: security gates upstream of fusion (bypass-attempt) ──────────────
+//
+// The unified arbiter (Plan 03) ranks LTM T3/T4 candidates against history by FUSED
+// rank. RETR-04 requires that a trust-excluded or sub-floor candidate can NEVER be
+// resurrected by a high fused rank. These tests construct a malicious candidate at
+// rank-1 in BOTH lanes (the HIGHEST possible RRF fused rank) and assert it is still
+// dropped — proving the trust filter runs UPSTREAM of fuse() (no resurrection route)
+// and the baseFloor is fail-closed under the arbiter (design §17 S6, Pitfall 2).
+describe("createMemoryRecall — RETR-04: security gates upstream of fusion (bypass-attempt)", () => {
+  // Boosts neutralized so FUSION rank (not score() boosts) is the only ordering signal —
+  // the malicious candidate's rank-1-in-both-lanes gives it the top fused score.
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
+  const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
+
+  it("BYPASS-ATTEMPT (trust): an external-trust candidate at rank-1 in BOTH lanes is NEVER in the result (high fused rank cannot resurrect a trust-excluded memory)", async () => {
+    // EVIL is rank-1 in fts AND vector → the maximal RRF fused score. If the trust filter
+    // ran only DOWNSTREAM of an arbiter that fused across corpora, a high fused rank could
+    // surface it. The trust filter is upstream of the recall fuse, so EVIL never survives.
+    const fts = [
+      makeResult("EVIL", { base: 1, trustLevel: "external" }), // rank 1 fts
+      makeResult("good1", { base: 1, trustLevel: "learned" }),
+    ];
+    const vector = [
+      makeResult("EVIL", { base: 1, trustLevel: "external" }), // rank 1 vector too → max fused
+      makeResult("good2", { base: 1, trustLevel: "system" }),
+    ];
+    const port = fakeLaneMemoryPort({ fts, vector });
+    const recall = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        minScore: 0,
+        includeTrustLevels: ["system", "learned"], // external excluded
+        relevanceFirst: true,
+      } as unknown as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((r) => r.entry.id);
+    expect(ids).not.toContain("EVIL"); // trust-excluded — un-resurrectable by fused rank
+    expect(ids).toContain("good1");
+    expect(ids).toContain("good2");
+  });
+
+  it("BYPASS-ATTEMPT (baseFloor): a sub-floor candidate at rank-1 in BOTH lanes is NEVER in the result under relevanceFirst (high fused rank cannot resurrect a floor-dropped memory)", async () => {
+    // POISON has base=0.10 (< class default 0.15) but is rank-1 in both lanes (max fused
+    // rank). cfg.baseFloor is 0 (unconfigured) — under relevanceFirst the floor is enforced
+    // at the class default, so POISON is dropped despite its top fused rank.
+    const fts = [
+      makeResult("POISON", { base: 0.1, trustLevel: "learned" }), // sub-floor, rank 1 fts
+      makeResult("clean1", { base: 0.8, trustLevel: "learned" }),
+    ];
+    const vector = [
+      makeResult("POISON", { base: 0.1, trustLevel: "learned" }), // rank 1 vector → max fused
+      makeResult("clean2", { base: 0.8, trustLevel: "system" }),
+    ];
+    const port = fakeLaneMemoryPort({ fts, vector });
+    const recall = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        minScore: 0,
+        baseFloor: 0, // unconfigured — WR-02 fail-open trigger
+        relevanceFirst: true, // arbiter active → floor enforced at the class default
+      } as unknown as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((r) => r.entry.id);
+    expect(ids).not.toContain("POISON"); // sub-floor — un-resurrectable by fused rank
+    expect(ids).toContain("clean1");
+    expect(ids).toContain("clean2");
+  });
+
+  it("DEFENSE-IN-DEPTH: the downstream trust filter still drops an external candidate even on the recency-first path (gates retained, not removed)", async () => {
+    // relevanceFirst=false (frontier/mid). The upstream trust pre-filter and the downstream
+    // trust filter BOTH run; the external candidate is dropped by the retained gates — proving
+    // the upstream addition did not remove the existing defense-in-depth.
+    const fts = [
+      makeResult("ext", { base: 1, trustLevel: "external" }),
+      makeResult("keep", { base: 1, trustLevel: "learned" }),
+    ];
+    const vector = [makeResult("keep", { base: 1, trustLevel: "learned" })];
+    const port = fakeLaneMemoryPort({ fts, vector });
+    const recall = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        minScore: 0,
+        includeTrustLevels: ["system", "learned"],
+        relevanceFirst: false,
+      } as unknown as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((r) => r.entry.id);
+    expect(ids).not.toContain("ext");
+    expect(ids).toContain("keep");
+  });
+
+  it("FRONTIER byte-identical: the new pre-filter is a NO-OP for an all-allowed corpus (deep-equal to the pre-patch reference)", async () => {
+    // No trust-excluded, no sub-floor candidate, relevanceFirst=false. The reorder/new
+    // pre-filter must not change the result vs the documented reference pipeline.
+    const input = [
+      makeResult("f1", { base: 0.9, trustLevel: "learned", createdAt: NOW - 5 * 86_400_000 }),
+      makeResult("f2", { base: 0.6, trustLevel: "system", createdAt: NOW - 1 * 86_400_000 }),
+      makeResult("f3", { base: 0.4, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const reference = await runReference(input);
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"], relevanceFirst: false } as unknown as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // Deep-equal the full result (ids + order) to the pre-patch reference — the gate is
+    // that the new code is a no-op for frontier/mid, not that it happens to reorder the same.
+    expect(got.value.map((r) => r.entry.id)).toEqual(reference.map((r) => r.entry.id));
+  });
+});
+
+/**
+ * The documented default recall pipeline WITHOUT the provenance pass, used as the
+ * byte-identity / un-down-weighted reference. Mirrors the reference computation in
+ * the recall-trace DEFAULT-OFF test (fuse → score → trust-filter → dedup), with
+ * DIST_NEUTRAL_SCORING so the only score deltas a test can observe are the pass's ×0.5.
+ */
+async function runReference(input: MemorySearchResult[]): Promise<MemorySearchResult[]> {
+  const cfg = baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] });
+  const fused = fuse([{ results: input, weight: 1.0 }]);
+  const scored = score(fused, cfg.scoring, NOW);
+  const allowed = new Set<TrustLevel>(cfg.includeTrustLevels);
+  return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel)));
+}

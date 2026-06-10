@@ -31,7 +31,7 @@
  */
 
 import type Database from "better-sqlite3";
-import type { LcdMessagePart, LcdSearchHit } from "@comis/core";
+import type { LcdMessagePart, LcdSearchHit, LcdSearchResult } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
 import { LcdSearchHitRowSchema, LcdLikeHitRowSchema } from "./row-schemas.js";
 
@@ -120,6 +120,32 @@ export function isFtsAvailable(db: Database.Database): boolean {
 }
 
 /**
+ * Returns true if the query string contains CJK (Chinese/Japanese/Korean) codepoints.
+ * Used to detect queries that may need trigram FTS (§14.4 instrumented trigger — EFF-03).
+ *
+ * Coverage:
+ *   - CJK Unified Ideographs (4E00–9FFF) — common Chinese/Japanese kanji
+ *   - CJK Extension A (3400–4DBF) — rare kanji
+ *   - CJK Compatibility Ideographs (F900–FAFF)
+ *   - Hiragana (3040–309F) — Japanese kana
+ *   - Katakana (30A0–30FF) — Japanese kana
+ *   - Hangul Syllables (AC00–D7AF) — Korean
+ *
+ * Pure Unicode property regex — O(n) in query length, no ReDoS risk (T-170-05-02).
+ * Exported so tests can verify the detection independently (EFF-03-T-5).
+ */
+export function hasCjkCodepoints(query: string): boolean {
+  // Explicit \u escapes (NOT literal glyphs) so the boundaries are auditable and
+  // immune to glyph/codepoint confusion. Ranges (WR-01): CJK Unified (4E00–9FFF),
+  // Ext-A (3400–4DBF), Compatibility Ideographs (F900–FAFF — NOT the literal 豈
+  // U+8C48, which over-matched ~27k codepoints), Hiragana (3040–309F), Katakana
+  // (30A0–30FF), Hangul Syllables (AC00–D7AF).
+  return /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]/u.test(
+    query,
+  );
+}
+
+/**
  * Full-text search over THIS (conversation, agent)'s lossless store — FTS5 MATCH
  * when available, a LIKE scan otherwise. The `query` MUST already be sanitized by
  * the caller. Returns at most `opts.limit` hits across the requested scope. R4
@@ -128,6 +154,13 @@ export function isFtsAvailable(db: Database.Database): boolean {
  * conversation never recovers another agent's hits (WR-02, Pitfall 3); the
  * conversation_id prefix carries the tenant boundary. Never throws (degrades to
  * fewer/no hits).
+ *
+ * Returns an {@link LcdSearchResult} wrapper (EFF-03): `hits` is the FTS/LIKE
+ * result array; `cjkZeroHit` is true when the query contained CJK codepoints AND
+ * `hits.length === 0` — the §14.4 instrumented trigger for the deferred CJK-trigram
+ * path. The flag is content-free (boolean only). The infra-free boundary is
+ * preserved: @comis/memory has no logger import; the caller's logging boundary
+ * (skills/agent) emits the DEBUG event when cjkZeroHit is true (T-170-05-03).
  */
 export function searchLcdImpl(
   db: Database.Database,
@@ -135,14 +168,17 @@ export function searchLcdImpl(
   agentId: string,
   query: string,
   opts: { limit: number; scope?: LcdSearchScope },
-): LcdSearchHit[] {
+): LcdSearchResult {
   const scope: LcdSearchScope = opts.scope ?? "both";
   const limit = opts.limit;
-  if (limit <= 0) return [];
+  if (limit <= 0) return { hits: [], cjkZeroHit: false };
 
-  return isFtsAvailable(db)
+  const hits = isFtsAvailable(db)
     ? searchViaFts(db, conversationId, agentId, query, scope, limit)
     : searchViaLike(db, conversationId, agentId, query, scope, limit);
+
+  const cjkZeroHit = hits.length === 0 && hasCjkCodepoints(query);
+  return { hits, cjkZeroHit };
 }
 
 /** FTS5 MATCH path — BM25 `ORDER BY rank` (the in-tree recall-FTS query shape). */

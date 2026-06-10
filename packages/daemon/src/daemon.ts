@@ -972,6 +972,12 @@ function buildRpcDispatchDeps(deps: {
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
     defaultWorkspaceDir: c.defaultWorkspaceDir, workspaceDirs: c.workspaceDirs,
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
+    // DIST-05: thread the memory adapter as the MemoryPort for the
+    // session.reset_conversation --memory honest reset. SqliteMemoryAdapter
+    // implements MemoryPort (incl. deleteBySessionKey, Phase 172-03), so the
+    // SAME object satisfies SessionsApiDeps.memoryPort. consolidationStore (the
+    // unlink/purge surface) is already on the spread below.
+    memoryPort: c.memoryAdapter,
     // context.* operator-browse RPC deps (Context DAG browser): the LCD
     // ContextStorePort (context.tree reads getSummaries/getContextItems) + the
     // ContextBrowsePort (context.conversations). Both R4 agent+tenant scoped.
@@ -1551,7 +1557,7 @@ async function bootFoundation(
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
     summarizerSpendBreaker,
-    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters,
+    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters,
   } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1705,7 +1711,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
+    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -1764,6 +1770,7 @@ async function bootAgents(
     rerankerModelPresent, // model-present probe result; threaded into setupAgents -> per-agent effective rerank precedence (same value as the build gate)
     entityStore, // threaded into setupAgents -> createPiExecutor (recall read path) + the cron review (write path)
     lcdStore, // Phase 128 LCD store; threaded into setupAgents -> createPiExecutor (contextStore) -> setupContextEngine -> the `dag` branch (context-engine.ts). Opt-in (version: "dag"); default pipeline. The agent receives the core ContextStorePort TYPE only (agent↛memory cut)
+    provenanceStore, // Phase 173 DIST-03 read side; threaded into setupAgents -> createPiExecutor -> prompt-assembly -> createMemoryRecall's post-fusion provenance down-weighting pass (was BUILT but never injected in Phase 172). The agent receives the core LcdProvenanceReadStore TYPE only (agent↛memory cut)
     summarizerSpendBreaker, // R1 (132-05); daemon-owned per-tenant breaker; threaded into setupAgents -> createPiExecutor -> setupContextEngine so getSummarizerDeps gates the leaf seam per tenant (truncation-only degrade on open-breaker/over-cap)
     temporalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall temporal-spread read path); dormant until rag.lanes.temporal.enabled
     causalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
@@ -1902,7 +1909,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts,
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, summarizerSpendBreaker, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, summarizerSpendBreaker, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
@@ -2207,6 +2214,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // hoisted function threaded through ShutdownDeps.
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir,
+    // WR-04 (Phase 174-04): resolve the per-provider operator capabilityClass override so
+    // ctx_expand's walk depth honors a pinned tier (the same providers.entries source the
+    // executor's live ModelProfile uses). Undefined ⇒ provider-family heuristic.
+    getProviderCapabilityClass: (provider) =>
+      container.config.providers?.entries?.[provider ?? ""]?.capabilities?.capabilityClass,
     dataDir: container.config.dataDir || ".",
     secretManager: container.secretManager, platformSecretNames: container.platformSecretNames,
     eventBus: container.eventBus, skillsLogger, linkRunner,

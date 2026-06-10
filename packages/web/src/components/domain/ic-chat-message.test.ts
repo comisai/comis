@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, afterEach, vi } from "vitest";
 import type { IcChatMessage } from "./ic-chat-message.js";
-import { renderMarkdown, sanitizeHtml } from "./ic-chat-message.js";
+import { renderMarkdown } from "./ic-chat-message.js";
 
 // Side-effect import to register custom element
 import "./ic-chat-message.js";
@@ -156,20 +156,58 @@ describe("IcChatMessage", () => {
     expect(bubble?.innerHTML).not.toContain("<strong>");
   });
 
-  it("XSS: script tags are stripped from content", () => {
-    const result = sanitizeHtml('<script>alert("xss")</script>');
+  // XSS regression for the v2.20 review finding. renderMarkdown output is fed
+  // straight into Lit's unsafeHTML sink (ic-chat-message.ts _renderContent +
+  // pipeline-history-detail.ts) from UNTRUSTED agent/pipeline output. The old
+  // single-pass denylist (sanitizeHtml) could be defeated by nesting tags
+  // (`<ifr<iframe>ame …>` -> a live `<iframe>` after one replace pass). The
+  // renderer now HTML-escapes all raw markup, so no live tag survives — only
+  // the fixed safe tag set it generates from markdown is emitted.
+  it("XSS: a plain script tag never reaches the output as a live tag", () => {
+    const result = renderMarkdown('<script>alert("xss")</script>');
     expect(result).not.toContain("<script>");
     expect(result).not.toContain("</script>");
   });
 
-  it("XSS: on-event handlers are stripped from content", () => {
-    const result = sanitizeHtml('<img onerror="alert(1)" src="x">');
-    expect(result).not.toContain("onerror");
+  it("XSS: a nested-tag iframe srcdoc payload cannot reconstruct a live <iframe>", () => {
+    // The exact bypass class from the review: a single-pass tag-strip leaves a
+    // working <iframe srcdoc="…"> behind; srcdoc auto-executes with no click.
+    const payload = '<ifr<iframe>ame srcdoc="&lt;script&gt;alert(document.domain)&lt;/script&gt;">';
+    const result = renderMarkdown(payload);
+    expect(result).not.toContain("<iframe");
+    expect(result).toContain("&lt;iframe");
   });
 
-  it("XSS: javascript: URLs are stripped from content", () => {
-    const result = sanitizeHtml('<a href="javascript:alert(1)">click</a>');
+  it("XSS: an svg onload payload is neutralized (no live <svg> tag)", () => {
+    const result = renderMarkdown('<svg onload="alert(1)"></svg>');
+    expect(result).not.toContain("<svg");
+    expect(result).toContain("&lt;svg");
+  });
+
+  it("XSS: an img onerror payload is neutralized (no live <img> tag from message body)", () => {
+    const result = renderMarkdown('<img onerror="alert(1)" src="x">');
+    expect(result).not.toContain("<img");
+    expect(result).toContain("&lt;img");
+  });
+
+  it("XSS: a javascript: markdown link does not produce an executable href", () => {
+    const result = renderMarkdown("[click me](javascript:alert(1))");
     expect(result).not.toContain("javascript:");
+    expect(result).not.toContain("<a ");
+    // The link text is still shown (as inert, escaped text).
+    expect(result).toContain("click me");
+  });
+
+  it("XSS: a data: markdown link is rejected", () => {
+    const result = renderMarkdown("[x](data:text/html;base64,PHNjcmlwdD4=)");
+    expect(result).not.toContain("<a ");
+    expect(result).not.toContain("data:text/html");
+  });
+
+  it("XSS: a normal https markdown link still renders as an anchor", () => {
+    const result = renderMarkdown("[ok](https://example.com/path)");
+    expect(result).toContain('<a href="https://example.com/path"');
+    expect(result).toContain("ok</a>");
   });
 
   /* ==================== Per-Message Action Tests ==================== */

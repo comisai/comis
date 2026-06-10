@@ -58,6 +58,7 @@ import type { ContextEngineDeps } from "./types.js";
 import type { ModelProfile } from "../executor/model-profile.js";
 import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
 
 // The synthesized-placeholder marker transcript repair emits for an unpaired
 // tool_use (T-128-01). Its ABSENCE in the assembled array proves no pair split.
@@ -374,9 +375,13 @@ describe("LCD synthetic-session gate (Plan 05 Task 2 — C1/A3 headline)", () =>
     const engine = createLcdContextEngine(dagConfig(FRESH_TAIL_STEPS), makeDagDeps(store, CONTEXT_WINDOW));
     const out = await engine.transformContext(live);
 
-    // ---- (2) FRESH TAIL INTACT: the last FRESH_TAIL_STEPS steps of the LIVE
+    // ---- (2) FRESH TAIL INTACT: the last clamped-tail steps of the LIVE
     //         array are present verbatim (referential identity) at the END. ----
-    const tailStart = freshTailBoundaryIndex(live, FRESH_TAIL_STEPS);
+    // EFF-02: the assembler clamps FRESH_TAIL_STEPS to what CONTEXT_WINDOW can afford.
+    // Use the same clamped value to compute the expected tail so the assertion tracks
+    // the real assembler behavior (referential identity of the clamped tail).
+    const clampedTailSteps = resolveClampedFreshTailTurns(CONTEXT_WINDOW, FRESH_TAIL_STEPS);
+    const tailStart = freshTailBoundaryIndex(live, clampedTailSteps);
     const freshTail = live.slice(tailStart);
     expect(freshTail.length).toBeGreaterThan(0);
     const outTail = out.slice(out.length - freshTail.length);

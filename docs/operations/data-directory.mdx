@@ -115,20 +115,24 @@ The observability rows live in the `obs_diagnostics` table, grouped by a `catego
 | Layer | Tables | Durability |
 |-------|--------|------------|
 | **LCD store** | `lcd_messages`, `lcd_message_parts`, `lcd_context_items`, `lcd_summaries` | **Durable — the truth.** Every turn is persisted verbatim (auto-condensed past 75%). Survives daemon restarts, redeploys, and JSONL deletions. |
-| **RAG memory** | `memory_*` | **Durable.** Distilled facts learned from conversations. Cleared separately via `comis sessions reset --memory` (reserved — not yet implemented). |
+| **RAG memory** | `memory_*` | **Durable.** Distilled facts learned from conversations. Cleared per-session via `comis sessions reset --memory` (deletes paired + LCD-distilled memories by `source_session_key` and unlinks consolidated observations; `--purge-derived` also purges derived observations). |
 | **SDK session JSONL** | `~/.comis/workspace/sessions/.../<key>.jsonl` | **Disposable** — the SDK's per-session working transcript. Routinely deleted by the operator (housekeeping) and wiped by `comis sessions reset`. |
 
 <Note>
 The SDK session JSONL is **disposable**. Deleting it directly (for any reason — operator housekeeping, `rm`, daemon restart) is always treated as "continue": the LCD store keeps its full history and appends the fresh transcript as a continuation. The daemon cannot distinguish disk-space housekeeping from a deliberate reset, so it never infers forget from a file deletion — it always continues. To perform an explicit reset, use `comis sessions reset` which clears both layers atomically.
 </Note>
 
+**Bootstrap crash recovery.** Each turn's messages are written to the SDK session JSONL first and persisted to the durable LCD store at the end of the turn. If the daemon is killed mid-turn — after the JSONL write but before that end-of-turn persist — those last messages would otherwise never reach the durable store. To close that gap, on **session start** the daemon runs a crash-recovery sweep: it continue-appends any live-transcript messages that the previous turn did not persist, so the next turn sees the complete history. The sweep is **exactly once** — a durable per-conversation cursor records how far the store has caught up, so the message recovered at startup is never re-appended by the turn that follows (no gap, no duplicate, no sequence collision). It is a one-way catch-up: the LCD store is the source of truth and the disposable JSONL is only read, never used to overwrite stored history. If the transcript's identity is ambiguous (a malformed or mismatched session scope), the sweep **refuses the import** rather than risk re-attaching a transcript to the wrong conversation (fail-closed). There is no configuration key — the sweep always runs in dag mode.
+
 **Forgetting is explicit.** To clear a conversation so the model starts with a clean slate in **both dag and pipeline modes**, use the complete reset command:
 
 ```bash
 # Reset a conversation (clears LCD history + session transcript — irreversible):
 comis sessions reset <sessionKey> --yes
-# Also clear RAG memories (full-forget path — reserved, not yet implemented):
+# Also clear RAG memories for this session (the full-forget path):
 comis sessions reset <sessionKey> --memory --yes
+# Nuclear forget — also purge consolidated observations derived from this session:
+comis sessions reset <sessionKey> --memory --purge-derived --yes
 ```
 
 `sessions reset` clears two layers atomically: the LCD lossless-store history (dag mode) and the daemon sessionStore working transcript (both modes). A follow-up turn has no prior context regardless of which context engine the session uses.

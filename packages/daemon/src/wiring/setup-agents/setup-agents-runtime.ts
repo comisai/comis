@@ -318,8 +318,21 @@ export async function setupSingleAgent(
     perAgentLogger.debug({ debounceMs: skillsConfig.watchDebounceMs }, "Skill file watcher started");
   }
 
-  // OutputGuard + per-agent canary token
-  const outputGuard = createOutputGuard();
+  // OutputGuard + per-agent canary token.
+  // Bind the daemon's gateway token VALUES for exact-match redaction — closes the
+  // bare-secret gap (a high-entropy token with no `key=`/`token:` prefix that the
+  // regex patterns miss; live finding 2026-06-10). Resolve `${VAR}` refs via the
+  // UNSCOPED secret manager (the agent's scoped manager intentionally can't see
+  // the gateway token); literals are used as-is. Zero false-positive risk.
+  const gatewayTokenEnvRef = /^\$\{([A-Z_][A-Z0-9_]*)\}$/;
+  const gatewayTokenSecrets = (container.config.gateway?.tokens ?? [])
+    .map((t) => {
+      const raw = typeof t.secret === "string" ? t.secret.trim() : "";
+      const ref = gatewayTokenEnvRef.exec(raw);
+      return ref ? (container.secretManager.get(ref[1]!) ?? "") : raw;
+    })
+    .filter((s) => s.length > 0);
+  const outputGuard = createOutputGuard({ knownSecrets: gatewayTokenSecrets });
 
   // Prefer CANARY_SECRET from env, fall back to deterministic derivation
   const configuredCanarySecret = scopedManager.get("CANARY_SECRET");
@@ -443,7 +456,7 @@ export async function setupSingleAgent(
     mcpToolsInherited: deps.mcpToolsInherited,
     memoryPort: memoryAdapter,
     reranker: deps.rerankerPort,  // Cross-encoder reranker (built in setup-memory only when an agent enables rerank).
-    entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, tripleStore: deps.tripleStore, embeddingStore: deps.embeddingStore, usefulnessStore: deps.usefulnessStore, pinnedStore: deps.pinnedStore, userRepresentationStore: deps.userRepresentationStore, relationshipStore: deps.relationshipStore, tunedAlphaStore: deps.tunedAlphaStore,  // rag.entityLane + rag.lanes.temporal + rag.lanes.causal + rag.lanes.graphSpread + rag.mmr + rag.feedback + rag.pinned (R6 — the pinned-first lane; pinnedStore is the same memoryAdapter cast as MemoryPinnedStore) + memoryUserRepresentation + socialModeling + rag.onlineTuning (the buildScoringAlphas tuned-vector read) standing-block -> createMemoryRecall/prompt-assembly read (default-OFF; JSDoc on AgentSetupDeps).
+    entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, tripleStore: deps.tripleStore, embeddingStore: deps.embeddingStore, usefulnessStore: deps.usefulnessStore, pinnedStore: deps.pinnedStore, provenanceStore: deps.provenanceStore, userRepresentationStore: deps.userRepresentationStore, relationshipStore: deps.relationshipStore, tunedAlphaStore: deps.tunedAlphaStore,  // rag.entityLane + rag.lanes.temporal + rag.lanes.causal + rag.lanes.graphSpread + rag.mmr + rag.feedback + rag.pinned (R6 — the pinned-first lane; pinnedStore is the same memoryAdapter cast as MemoryPinnedStore) + DIST-03 provenance down-weighting (Phase 173; provenanceStore is the LcdProvenanceReadStore from buildProvenanceReadStore — the built-but-not-wired carry-in activation) + memoryUserRepresentation + socialModeling + rag.onlineTuning (the buildScoringAlphas tuned-vector read) standing-block -> createMemoryRecall/prompt-assembly read (default-OFF; JSDoc on AgentSetupDeps).
     contextStore: deps.lcdStore,  // Phase 128 LCD store (ContextStorePort) -> PiExecutorDeps.contextStore -> setupContextEngine -> the `dag` branch (context-engine.ts). The daemon-injected CONCRETE createLcdStore; the agent sees only the core port TYPE (agent↛memory cut). Opt-in (version: "dag"); default stays pipeline. Absent ⇒ pipeline fallback.
     summarizerSpendBreaker: deps.summarizerSpendBreaker,  // R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker -> PiExecutorDeps.summarizerSpendBreaker -> setupContextEngine (getSummarizerDeps wraps the leaf seam with gate(tenantId, inner) → truncation-only degrade on open-breaker/over-cap). ONE daemon instance, partitions by tenantId.
     secretManager: scopedManager,

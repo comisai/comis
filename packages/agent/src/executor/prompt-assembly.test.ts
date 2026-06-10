@@ -342,6 +342,33 @@ describe("assembleExecutionPrompt", () => {
     expect(recallDeps.tripleStore).toBe(tripleStore);
   });
 
+  it("threads deps.provenanceStore into createMemoryRecall so the DIST-03 provenance pass has its store (the built-but-not-wired guard, last link)", async () => {
+    // Production-wiring regression guard for the LAST link of the carry-in's
+    // 5-link composition chain: PromptAssemblyParams.deps.provenanceStore →
+    // createMemoryRecall's deps.provenanceStore. RED on pre-patch code: the
+    // createMemoryRecall deps object omitted provenanceStore, so the pass gate
+    // (`deps.provenanceStore != null`) was ALWAYS false in the live daemon — the
+    // DIST-03 down-weighting was BUILT but DORMANT (the milestone's #1 failure
+    // class). The store reaches here only when every prior link threads it.
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+      store: vi.fn(),
+    } as any;
+    const provenanceStore = {
+      getProvenanceForSummary: vi.fn(() => []),
+    } as unknown as import("@comis/core").LcdProvenanceReadStore;
+    mockRecall.mockResolvedValue({ ok: true, value: [] });
+    const params = makeParams({
+      config: makeConfig({ rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 } }),
+      deps: { workspaceDir: "/workspace", memoryPort, provenanceStore },
+    });
+    await assembleExecutionPrompt(params);
+
+    expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
+    const recallDeps = mockCreateMemoryRecall.mock.calls[0][0] as { provenanceStore?: unknown };
+    expect(recallDeps.provenanceStore).toBe(provenanceStore);
+  });
+
   it("threads deps.embeddingStore + config.rag.mmr/queryUnderstanding into createMemoryRecall so the MMR re-rank has its store and knobs", async () => {
     // Production-wiring regression guard for the LAST link of the chain:
     // PromptAssemblyParams.deps.embeddingStore → createMemoryRecall's deps.embeddingStore,

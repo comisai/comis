@@ -73,7 +73,7 @@ export type {
   SessionListEntry,
   SessionDetailedEntry,
 } from "./session-store-types.js";
-export type { ContextStorePort, ContextBrowsePort } from "./context-store.js";
+export type { ContextStorePort, ContextBrowsePort, LcdProvenanceReadStore } from "./context-store.js";
 export type {
   LcdMessage,
   LcdMessagePart,
@@ -90,8 +90,10 @@ export type {
   LcdContextItem,
   LcdRefKind,
   LcdSearchHit,
+  LcdSearchResult,
   AppendSummaryInput,
   AppendCondensedSummaryInput,
+  AppendProvenanceInput,
 } from "./context-store-types.js";
 export type { FileLockPort, LockOptions, LockError } from "./file-lock.js";
 export type { ClockPort } from "./clock.js";

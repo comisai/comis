@@ -23,9 +23,9 @@
 
 import { describe, it, expect, vi } from "vitest";
 
-import { wireContextTools } from "./setup-context-tools.js";
+import { wireContextTools, resolveCtxExpandDepth } from "./setup-context-tools.js";
 import { runWithContext } from "@comis/core";
-import type { ContextStorePort, LcdSearchHit } from "@comis/core";
+import type { ContextStorePort, LcdSearchHit, LcdSearchResult } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 type ToolLike = {
@@ -40,7 +40,7 @@ const THREE_NAMES = ["ctx_search", "ctx_inspect", "ctx_expand"];
  * implemented (AGENTS.md §2.5 hand-built `as unknown as` double). `searchLcd`
  * is a vi.fn so we can assert it was invoked through the injected reference.
  */
-function makeStubStore(searchLcd = vi.fn((): LcdSearchHit[] => [])): ContextStorePort {
+function makeStubStore(searchLcd = vi.fn((): LcdSearchResult => ({ hits: [], cjkZeroHit: false }))): ContextStorePort {
   return {
     searchLcd,
     getSummaries: vi.fn(() => []),
@@ -72,9 +72,10 @@ describe("wireContextTools — daemon composition root", () => {
   });
 
   it("threads the injected store and deps into each tool (ctx_search calls store.searchLcd)", async () => {
-    const searchLcd = vi.fn((): LcdSearchHit[] => [
-      { kind: "summary", refId: "s1", snippet: "recovered" },
-    ]);
+    const searchLcd = vi.fn((): LcdSearchResult => ({
+      hits: [{ kind: "summary", refId: "s1", snippet: "recovered" } as LcdSearchHit],
+      cjkZeroHit: false,
+    }));
     const tools: ToolLike[] = [];
     wireContextTools(tools as never, makeStubStore(searchLcd), "agent-a", makeDeps());
 
@@ -108,5 +109,48 @@ describe("wireContextTools — daemon composition root", () => {
       expect.any(String),
       expect.objectContaining({ limit: expect.any(Number) }),
     );
+  });
+});
+
+describe("resolveCtxExpandDepth — DEPTH-02 tier-gated multi-hop depth at wiring time", () => {
+  it("resolves an anthropic (frontier) agent model to depth 4", () => {
+    expect(resolveCtxExpandDepth("claude-sonnet-4-5-20250929", "anthropic")).toBe(4);
+  });
+  it("resolves an openai (frontier) agent model to depth 4", () => {
+    expect(resolveCtxExpandDepth("gpt-5", "openai")).toBe(4);
+  });
+  it("resolves a google (mid) agent model to depth 3", () => {
+    expect(resolveCtxExpandDepth("gemini-2.5-pro", "google")).toBe(3);
+  });
+  it("resolves an ollama (small) agent model to depth 2", () => {
+    expect(resolveCtxExpandDepth("qwen3.6:35b", "ollama")).toBe(2);
+  });
+  it("resolves an unknown / empty provider to the small fail-safe (depth 2), never frontier", () => {
+    // resolveModelProfile maps any non-anthropic/openai/google family to the
+    // fail-SAFE "small" class (model-profile.ts: a 256K ollama never resolves
+    // frontier). An empty provider is "small", so the multi-hop depth is 2 — a
+    // conservative middle, never the deepest (4) frontier walk for an unknown model.
+    expect(resolveCtxExpandDepth("", "")).toBe(2);
+    expect(resolveCtxExpandDepth("default", "default")).toBe(2);
+  });
+
+  // WR-04 (Phase 174-04): the operator capabilityClass override (the same
+  // providers.entries.<id>.capabilities.capabilityClass pin pi-executor honors) must govern
+  // the ctx_expand walk depth. Without threading it, a pinned model resolves depth purely
+  // from the provider-family heuristic — silently ignoring the operator pin.
+  it("WR-04: an operator capabilityClass override governs the depth (pinned 'mid' ollama → depth 3, not the small heuristic 2)", () => {
+    // An ollama model heuristically resolves "small" → depth 2. Pinning it "mid" must yield
+    // the mid tier's depth 3 — proving the override is threaded through to resolveModelProfile.
+    expect(resolveCtxExpandDepth("qwen3.6:35b", "ollama", "mid")).toBe(3);
+  });
+  it("WR-04: a 'frontier' override on a small-family model yields the frontier depth 4", () => {
+    expect(resolveCtxExpandDepth("qwen3.6:35b", "ollama", "frontier")).toBe(4);
+  });
+  it("WR-04: a 'nano' override locks the depth to 1 even for an anthropic (frontier-heuristic) model", () => {
+    // The override wins UNCONDITIONALLY over the provider family (model-profile.ts:158).
+    expect(resolveCtxExpandDepth("claude-sonnet-4-5-20250929", "anthropic", "nano")).toBe(1);
+  });
+  it("WR-04: an absent override preserves the provider-family heuristic (back-compat with the call site)", () => {
+    expect(resolveCtxExpandDepth("qwen3.6:35b", "ollama", undefined)).toBe(2);
   });
 });

@@ -19,7 +19,7 @@ import {
   systemNowMs,
 } from "@comis/core";
 import { sessionKeyToPath } from "@comis/agent";
-import type { SessionTrackerRegistry } from "@comis/agent";
+import type { SessionTrackerRegistry, CapabilityClass } from "@comis/agent";
 import { toolResultsDirFromSessionPath } from "./tool-results-dir.js";
 // Workspace helpers live in @comis/core.
 import {
@@ -70,7 +70,7 @@ import {
 // Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
 import { wireTerminalTools, buildTerminalEgressDeps, buildTerminalWiringDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
 // In-session expansion-loop (v2.12 Phase 131, E1/E2) dag-gated ctx_* wiring.
-import { wireContextTools } from "./setup-context-tools.js";
+import { maybeWireContextTools } from "./setup-context-tools.js";
 // Tool-audit DEBUG-line subscription extracted to setup-tool-audit.ts (file-size cap).
 import { setupToolAuditLogging } from "./setup-tool-audit.js";
 
@@ -98,6 +98,8 @@ export interface ToolsDeps {
   rpcCall: RpcCall;
   /** Per-agent config map (container.config.agents). */
   agents: Record<string, PerAgentConfig>;
+  /** WR-04 (Phase 174-04): resolve a provider's operator capabilityClass override (providers.entries.<id>.capabilities.capabilityClass) for ctx_expand's walk depth. */
+  getProviderCapabilityClass?: (provider: string | undefined) => CapabilityClass | undefined;
   /** Default agent ID from routing config. */
   defaultAgentId: string;
   /** Per-agent workspace directory paths. */
@@ -634,13 +636,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       const terminalBase = { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers };
       wireTerminalTools(tools, terminalRegistries, agentId, buildTerminalWiringDeps(terminalBase, skillsConfig.terminal));
 
-      // Context expansion tools (v2.12 Phase 131, E1/E2): in-session lossless-store recovery
-      // (ctx_*). Wired ONLY in dag mode AND with a store present (inert in pipeline mode).
-      // never-export, OUTSIDE the parity registry; store injected as the core port type.
-      if ((agentConfig?.contextEngine?.version ?? "pipeline") === "dag" && deps.lcdStore) {
-        const maxExpandTokens = agentConfig?.contextEngine?.maxExpandTokens ?? 4000;
-        wireContextTools(tools, deps.lcdStore, agentId, { skillsLogger, nowMs: systemNowMs, maxExpandTokens, getToolResultsDir, eventBus }); // O1: eventBus → ctx_* context:dag_expanded
-      }
+      // Context expansion tools (v2.12 Phase 131): dag-gated ctx_* wiring — gate + WR-04/WR-05 in maybeWireContextTools (file-size cap; see its doc).
+      maybeWireContextTools(tools, deps.lcdStore, agentId, agentConfig, {
+        skillsLogger, nowMs: systemNowMs, getToolResultsDir, eventBus,
+        capabilityClassOverride: deps.getProviderCapabilityClass?.(agentConfig?.provider),
+      });
 
       return tools;
     };

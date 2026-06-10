@@ -17,7 +17,7 @@ import * as fs from "node:fs/promises";
 import { Hono } from "hono";
 import { z } from "zod";
 import { safePath, PathTraversalError, systemNowMs } from "@comis/core";
-import { extractBearerToken } from "../auth/token-auth.js";
+import { extractBearerToken, checkScope } from "../auth/token-auth.js";
 import type { TokenStore } from "../auth/token-auth.js";
 
 /** Media ID validation pattern: letters, digits, dots, hyphens, underscores. */
@@ -85,8 +85,14 @@ export function createMediaRoutes(deps: MediaRoutesDeps): Hono {
       const token =
         extractBearerToken(c.req.header("authorization") ?? "") ??
         (c.req.query("token") || null);
-      if (!token || !tokenStore.verify(token)) {
+      const client = token ? tokenStore.verify(token) : null;
+      if (!client) {
         return c.json({ error: "Unauthorized" }, 401);
+      }
+      // Enforce scope: media is a web-dashboard surface — require "rpc" like the
+      // rest of the web API. A sole-scope "mcp-client" token must not fetch it.
+      if (!checkScope(client.scopes, "rpc")) {
+        return c.json({ error: "Forbidden: insufficient scope" }, 403);
       }
       return next();
     });

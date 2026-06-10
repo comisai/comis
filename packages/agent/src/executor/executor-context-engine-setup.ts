@@ -31,6 +31,7 @@ import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 // resolved via the SAME getCompactionDeps chain (no duplicate resolveProviderApiKey).
 import {
   buildLeafSummarizeFn,
+  wrapSummarizerWithFailover,
   type LeafSummarizerDeps,
   type CompactionModelSnapshot,
 } from "../context-engine/lcd-leaf-summarizer.js";
@@ -40,6 +41,8 @@ import {
 } from "../safety/summarizer-spend-breaker.js";
 import type { LeafSummarizer } from "../context-engine/lcd-leaf-summarizer.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
+import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
+import { scoreRelevance } from "../rag/relevance-scorer.js";
 import type { ExecutionOverrides } from "./types.js";
 import { resolveOperationModel, resolveProviderFamily } from "../model/operation-model-resolver.js";
 import type { OAuthTokenManager } from "../model/oauth-token-manager.js";
@@ -280,6 +283,16 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   // contextEngineOverrides removed from ExecutionOverrides -- compaction model resolved via operationModels chain
   const contextEngineConfig = config.contextEngine ?? ContextEngineConfigSchema.parse({});
 
+  // RETR-02/03 (Phase 173): resolve the relevance-first policy ONCE (the capability +
+  // supportsPromptCache gate; explicit > capability-default > off) and thread it to the
+  // dag assembler, which CONSUMES the boolean (it does NOT recompute the gate). Resolved
+  // here (mirrors prompt-assembly.ts's recall-side resolution) only when modelProfile is
+  // present; absent ⇒ undefined ⇒ the assembler takes the verbatim recency path (frontier/
+  // mid byte-identical). The small/nano DEFAULT-ON flip is measurement-gated (VALIDATION.md).
+  const relevanceFirst = modelProfile
+    ? resolveScaffoldDefaults(modelProfile, config).relevanceFirst
+    : undefined;
+
   // --- Replay drift memo ---------------------------------------------------
   // Memoized per-execute() so all pipeline runs in a single execute() see a
   // consistent decision (cleaner + scrubber must agree). The closure reads
@@ -434,6 +447,41 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   const getSummarizerDeps = (modelSnapshot?: CompactionModelSnapshot): LeafSummarizerDeps => {
     const chain = resolveCompactionModelChain(modelSnapshot);
     const inner = buildLeafSummarizeFn(chain);
+    // SUM-03: wrap the primary summarizer with the ordered failover list before the
+    // spend-breaker. The failover list tries each provider in sequence; only when ALL
+    // providers are exhausted does it throw — at which point the outer breaker records
+    // exactly ONE failure (Pitfall 4: throw-last, not throw-per-provider). Empty list
+    // (default) = zero behavioral change for existing deployments.
+    const fallbackProviders = contextEngineConfig.compaction?.summarizerFallbackProviders ?? [];
+    const fallbackSummarizers = fallbackProviders.map((providerModel: string) => {
+      // Each entry is "provider:modelId". Build a LeafSummarizer using the same
+      // model resolution pattern as strongerSummarizerModel (resolveCompactionModelChain
+      // with an override), falling back to the primary chain for unknown providers.
+      // For Phase 171, all fallback entries resolve via the existing registry lookup;
+      // if the model is not found in the registry, the fallback silently uses the
+      // primary chain (the outer failover wrapper will still catch any resulting error).
+      const [provider, modelId] = providerModel.split(":", 2) as [string, string];
+      try {
+        const fallbackModel = deps.modelRegistry?.find(provider, modelId ?? "");
+        if (fallbackModel) {
+          return buildLeafSummarizeFn({
+            getRealModel: () => fallbackModel,
+            getApiKey: async () =>
+              resolveProviderApiKey(provider, {
+                authStorage: deps.authStorage,
+                oauthManager: deps.oauthManager,
+                agentConfig: config,
+              }),
+            overrideModel: undefined,
+          });
+        }
+      } catch {
+        // Model not in registry — fall through to primary chain for this slot
+      }
+      // Fallback: use the primary chain (provider lookup failed or registry absent)
+      return buildLeafSummarizeFn(chain);
+    });
+    const innerWithFailover = wrapSummarizerWithFailover(inner, fallbackSummarizers, deps.logger);
     // R1 (132-05): wrap the leaf summarizer seam with the daemon-owned per-tenant
     // spend+breaker gate keyed on the LIVE tenantId (the SAME tenant the afterTurn
     // ingest scope uses). On open-breaker / over-cap the gate THROWS the degrade
@@ -445,11 +493,11 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // ⇒ the raw seam (non-daemon callers / tests).
     const summarize = deps.summarizerSpendBreaker
       ? wrapSummarizerWithDegradeObservability(
-          deps.summarizerSpendBreaker.gate(tenantId, inner),
+          deps.summarizerSpendBreaker.gate(tenantId, innerWithFailover),
           { eventBus: deps.eventBus, logger: deps.logger, clock: deps.clock,
             conversationId: formattedKey, agentId: agentId ?? "default", sessionKey: formattedKey },
         )
-      : inner;
+      : innerWithFailover;
     return {
       logger: deps.logger,
       summarize,
@@ -638,6 +686,18 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // C1 (Phase 165): the resolved ModelProfile for budget-aware eviction cap.
     // Absent ⇒ lcd-assembler applies the fail-closed nano cap + WARN.
     modelProfile,
+    // RETR-02/03 (Phase 173): the resolved relevance-first policy + the shared scorer for
+    // the margin arbiter. relevanceFirst undefined/false ⇒ the assembler takes the verbatim
+    // recency path (frontier/mid byte-identical, LOCKED #2).
+    relevanceFirst,
+    // RETR-02 / DEPTH-01: the injected shared relevance scorer. As of Phase 174 it has a LIVE
+    // caller — the DEPTH-01 within-history middle-band relevance pass (rankMiddleBandByRelevance,
+    // injected as marginArbitrate's middleBandRanker in lcd-arbiter-seam) calls it over the
+    // FTS-the-band lane to re-rank the evictable middle band cache-safely. It is injected here
+    // (executor/ may import rag/) so the context-engine never imports rag/ (the I2 cut). The
+    // cross-tier LTM/KG lanes remain EMPTY on the C2 assembly path, so the scorer's live use is
+    // the middle-band pass, not the cross-session tiers.
+    relevanceScorer: scoreRelevance,
     // Phase 166 T-S4: security-pin markers so the dag eviction never drops security context.
     securityPinMarkers: params.securityPinMarkers,
     onAssembledInputTokens: params.onAssembledInputTokens,

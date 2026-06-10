@@ -115,6 +115,9 @@ export {
   createCtxExpandTool,
   type ContextToolDeps,
   type ContextToolLogger,
+  // DEPTH-02: tier→multi-hop-depth map for the daemon wiring site.
+  depthForTier,
+  type WalkCapabilityClass,
 } from "./builtin/context-tools/index.js";
 
 // Built-in tools -- Exec sandbox types

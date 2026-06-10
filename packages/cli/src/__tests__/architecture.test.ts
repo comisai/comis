@@ -35,14 +35,16 @@ const SRC_ROOT = resolve(here, "..");
 // cli → @comis/agent imports have been retargeted to @comis/core.
 // @comis/agent is now in HARD_FORBIDDEN_PACKAGES (see below).
 
-// L11 re-opened for exactly one site: the CLI's offline secrets adapter.
-// This is the ONLY permitted @comis/cli → @comis/memory import site.
+// L11 re-opened for two sites:
+//   1. util/offline-secrets-store.ts — the CLI's offline secrets adapter (daemon-free bootstrap)
+//   2. doctor/repairs/repair-lcd.ts — the offline LCD repair path (DOC-03, Phase 171-04):
+//      the contentless lcd_messages_fts cannot use the FTS5 'rebuild' idiom; the repair
+//      re-derives FTS content via renderMessageFtsText (same render fn as the lcd-store adapter
+//      populate path). This is the only @comis/memory import in the repair layer.
 // All other CLI memory access routes through daemon RPC.
-// Rationale: the offline fallback path (daemon-free first-time bootstrap)
-// must open the encrypted SQLite store directly. A single bounded adapter
-// file contains all @comis/memory imports so future L11 closure is one deletion.
 const L11_ALLOWLIST: readonly string[] = [
   "util/offline-secrets-store.ts",
+  "doctor/repairs/repair-lcd.ts",
 ];
 
 // L12 (CLOSED): the previous 3-site allowlist is empty — all

@@ -11,6 +11,20 @@ export { createSessionStore } from "./session-store.js";
 // LCD lossless context store (ContextStorePort impl — Phase 127)
 export { createLcdStore, reconstructLcdMessage } from "./lcd-store.js";
 
+// LCD provenance READ adapter (LcdProvenanceReadStore impl — Phase 173, DIST-03
+// read side, the C1→C2 carry-in). The read-mirror of the write-side
+// buildProvenanceWrites; its own factory (NOT widened onto ContextStorePort) so
+// the recall import surface stays narrow. The daemon builds it on the same db
+// handle as createLcdStore and injects it as the core LcdProvenanceReadStore TYPE
+// (the agent↛memory cut) into createMemoryRecall's post-fusion provenance pass.
+export { buildProvenanceReadStore } from "./lcd-store-provenance-read.js";
+
+// LCD FTS text renderer — exported for the offline doctor repair path (DOC-03,
+// Phase 171). The contentless lcd_messages_fts has no external content table so
+// the 'rebuild' idiom does not apply; the doctor repair re-derives FTS rows from
+// lcd_message_parts using this same render fn (mirror of the adapter populate path).
+export { renderMessageFtsText } from "./lcd-fts.js";
+
 // LCD read-only operator-browse adapter (ContextBrowsePort impl — context.* RPCs).
 export { createLcdBrowseStore } from "./lcd-browse-store.js";
 

@@ -123,12 +123,12 @@ Execute an agent turn with the following request body.
 
 ## SSE Endpoints
 
-Server-Sent Events (SSE) endpoints provide real-time streaming. Both endpoints accept authentication via `Authorization` header or `?token=` query parameter.
+Server-Sent Events (SSE) endpoints provide real-time streaming. Both endpoints accept authentication via `Authorization` header or `?token=` query parameter, and — like the REST API — require at least the `rpc` scope. A narrowly-scoped `mcp-client` token is rejected with `403` (the event stream carries cross-session data and can drive agent turns, so it is out of bounds for the contained MCP credential).
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/events` | Bearer | SSE stream of system events (messages, sessions, skills, scheduler, approvals, graphs). |
-| GET | `/api/chat/stream` | Bearer | Streaming chat via SSE. Requires `?message=`. Accepts `?agentId=`. |
+| GET | `/api/events` | Bearer (`rpc`) | SSE stream of system events (messages, sessions, skills, scheduler, approvals, graphs). |
+| GET | `/api/chat/stream` | Bearer (`rpc`) | Streaming chat via SSE. Requires `?message=`. Accepts `?agentId=`. |
 
 ### SSE Connection Lifecycle
 
@@ -199,12 +199,12 @@ For detailed OpenAI-compatible API documentation, see [OpenAI API Reference](/re
 
 ## Media Routes
 
-Media routes serve stored media files (images, audio, video, documents). Authentication is optional and depends on gateway configuration.
+Media routes serve stored media files (images, audio, video, documents). Authentication is optional and depends on gateway configuration; when a token store is configured, requests require at least the `rpc` scope (a narrowly-scoped `mcp-client` token is rejected with `403`).
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/media/:id` | Bearer (optional) | Serve a media file with correct Content-Type. Returns 404 if not found, 410 if expired (TTL-based). |
-| GET | `/media/:id/meta` | Bearer (optional) | JSON metadata for a media file (content type, saved timestamp, size). |
+| GET | `/media/:id` | Bearer (`rpc`, optional) | Serve a media file with correct Content-Type. Returns 404 if not found, 410 if expired (TTL-based). |
+| GET | `/media/:id/meta` | Bearer (`rpc`, optional) | JSON metadata for a media file (content type, saved timestamp, size). |
 
 Media IDs are validated against a safe character pattern (letters, digits, dots, hyphens, underscores) to prevent path traversal. Content types are resolved from sidecar `.meta` files or file extension fallback.
 

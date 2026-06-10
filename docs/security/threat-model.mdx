@@ -31,8 +31,9 @@ The defining assumption is load-bearing: **the LLM agent is treated as a potenti
 | Secret exfiltration | No-enumeration `SecretManager`, the credential broker (agent holds only a placeholder), Pino redaction, output guard, memory-write validation |
 | Unauthorized gateway/RPC access | mTLS + scoped, `timingSafeEqual` tokens; loopback-by-default bind |
 | SSRF from web tools | `validateUrl()` (blocks private/loopback/link-local + cloud-metadata ranges) plus kernel broker-only egress |
+| SSRF via MCP server redirects | The in-process MCP client `validateUrl()`-checks every cross-host redirect target before following it (same-host redirects stay on the operator-configured server); a malicious server cannot bounce the daemon to metadata/localhost/RFC-1918 |
 | Memory poisoning | `validateMemoryWrite()` (block / downgrade-to-`external` / store) and trust-ranked recall |
-| Malicious or vulnerable MCP servers | OSV pre-spawn scan, sandboxed spawn, circuit breakers; default-deny MCP server endpoint |
+| Malicious or vulnerable MCP servers | OSV pre-spawn scan, sandboxed spawn, circuit breakers; default-deny MCP server endpoint; cross-host redirect SSRF guard (above) |
 | Supply-chain tampering | Exact-pinned deps, bundled private packages, sigstore provenance, `pnpm audit`, CodeQL |
 | Path traversal / symlink escape | `safePath()` (raw `path.join` is ESLint-banned) |
 

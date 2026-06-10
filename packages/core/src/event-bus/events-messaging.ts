@@ -219,6 +219,46 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** RETR-02 (Phase 173): the tiered margin arbiter allocated the discretionary
+   *  history pool across tiers by fused rank (relevance-first classes only —
+   *  frontier/mid never run the arbiter, so this event never fires for them).
+   *  CONTENT-FREE (AGENTS.md §2.2/§2.7; T-173-03-04): per-tier kept COUNTS
+   *  (`perTierKept` — e.g. { history, ltm, kg }), the discretionary pool TOKENS
+   *  (offered AND consumed) + the floor-token weight, a `relevanceFirst` BOOLEAN,
+   *  the kept LTM/KG ids + a timestamp ONLY. NEVER message, memory, or query content
+   *  (ids are opaque memory keys, §2.2-safe). The emitter reuses the entry-clock read
+   *  (no new ambient clock). A counts-only internal-health signal (same class as
+   *  context:compaction_routed) — NOT a turn-level trajectory step.
+   *
+   *  WR-03/WR-02 (Phase 173-05): the payload now distinguishes the pool OFFERED
+   *  (`discretionaryPoolTokens`) from the pool CONSUMED (`poolTokensUsed`) and carries
+   *  the unconditional `floorTokens` weight, so an operator diagnosing a small-model
+   *  context-exhaustion can see whether the S4-pinned floors dwarfed the pool. It also
+   *  carries the `keptLtmIds`/`keptKgIds` the arbiter computes — the cross-tier winners
+   *  an operator needs to reconstruct WHICH candidates won (the §2.7 reconstructable-from-
+   *  events bar; empty on the C2 history-only assembly path until Phase 174 flows LTM/KG). */
+  "context:arbitrated": {
+    agentId: string;
+    sessionKey: string;
+    /** Per-tier kept counts, e.g. { history, ltm, kg } — counts only, never content. */
+    perTierKept: Record<string, number>;
+    /** The discretionary pool OFFERED (budget.availableHistoryTokens) to the arbiter. */
+    discretionaryPoolTokens: number;
+    /** WR-03: the discretionary pool CONSUMED (non-floor tokens actually allocated) — always
+     *  ≤ discretionaryPoolTokens. Offered-vs-consumed is the small-model-exhaustion signal. */
+    poolTokensUsed: number;
+    /** WR-03: the UNCONDITIONAL floor weight (T0 fresh-tail + S4-pinned, step-atomic) that
+     *  rides ON TOP of the pool — surfaced so blown-past-pool pinned floors are visible. */
+    floorTokens: number;
+    /** WR-02: the kept LTM candidate ids (content-free memory keys; empty pre-Phase-174). */
+    keptLtmIds: string[];
+    /** WR-02: the kept KG candidate ids (content-free memory keys; empty pre-Phase-174). */
+    keptKgIds: string[];
+    /** Whether the relevance-first arbiter path ran (always true when this fires). */
+    relevanceFirst: boolean;
+    timestamp: number;
+  };
+
   /** Re-read detector found duplicate tool calls in session */
   "context:reread": {
     agentId: string;

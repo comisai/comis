@@ -12,6 +12,7 @@
 import type { Command } from "commander";
 import * as os from "node:os";
 import { existsSync, readFileSync } from "node:fs";
+import Database from "better-sqlite3";
 import { loadConfigFile, validateConfig } from "@comis/core";
 import type { AppConfig } from "@comis/core";
 import { success, error, info } from "../output/format.js";
@@ -24,14 +25,16 @@ import { gatewayHealthCheck } from "../doctor/checks/gateway-health.js";
 import { channelHealthCheck } from "../doctor/checks/channel-health.js";
 import { workspaceHealthCheck } from "../doctor/checks/workspace-health.js";
 import { oauthHealthCheck } from "../doctor/checks/oauth-health.js";
+import { lcdHealthCheck } from "../doctor/checks/lcd-health.js";
 import { secretsAuditHealthCheck } from "../doctor/checks/secrets-audit-health.js";
 import { repairConfig } from "../doctor/repairs/repair-config.js";
 import { repairDaemon } from "../doctor/repairs/repair-daemon.js";
 import { repairWorkspace } from "../doctor/repairs/repair-workspace.js";
 import { repairConfigAudit } from "../doctor/repairs/repair-config-audit.js";
+import { repairFtsDrift, repairContextItems } from "../doctor/repairs/repair-lcd.js";
 import type { DoctorContext } from "../doctor/types.js";
 
-/** All doctor checks in execution order (7 categories). */
+/** All doctor checks in execution order (8 categories). */
 const ALL_CHECKS = [
   configHealthCheck,
   daemonHealthCheck,
@@ -40,6 +43,7 @@ const ALL_CHECKS = [
   workspaceHealthCheck,
   oauthHealthCheck,
   secretsAuditHealthCheck,
+  lcdHealthCheck,
 ];
 
 /**
@@ -115,8 +119,8 @@ function buildDoctorContext(configPaths: string[]): DoctorContext {
  * Register the `doctor` command on the program.
  *
  * Provides:
- * - `comis doctor` -- run 6 health check categories (config, daemon, gateway,
- *   channel, workspace, OAuth)
+ * - `comis doctor` -- run 8 health check categories (config, daemon, gateway,
+ *   channel, workspace, OAuth, secrets-audit, LCD store)
  * - `comis doctor --repair` -- auto-fix repairable issues
  * - `comis doctor --refresh-test` -- opt-in refresh probe per profile.
  *   WARNING: rotates the refresh token at OpenAI.
@@ -207,6 +211,51 @@ export function registerDoctorCommand(program: Command): void {
         } else {
           // Daemon-down is the common non-error case; surface as info.
           info(`SKIPPED: Config-audit scrub: ${auditScrubResult.error.message}`);
+        }
+
+        // LCD store repairs: run when there are repairable lcd findings.
+        // Opens memory.db in READ-WRITE mode with busy_timeout=5000 to surface
+        // SQLITE_BUSY cleanly if the daemon is still running (operator must stop it first).
+        const hasLcdRepairable = findings.some(
+          (f) => f.category === "lcd" && f.repairable,
+        );
+        if (hasLcdRepairable) {
+          const dbPath = context.dataDir + "/memory.db";
+          if (existsSync(dbPath)) {
+            let lcdDb: Database.Database | undefined;
+            try {
+              lcdDb = new Database(dbPath, { timeout: 5000 });
+              lcdDb.pragma("busy_timeout = 5000");
+
+              const ftsDriftResult = await repairFtsDrift(lcdDb);
+              if (ftsDriftResult.ok) {
+                for (const action of ftsDriftResult.value) {
+                  success(`REPAIRED: ${action}`);
+                }
+              } else {
+                error(`FAILED: LCD FTS repair: ${ftsDriftResult.error.message}`);
+              }
+
+              const contextItemsResult = await repairContextItems(lcdDb);
+              if (contextItemsResult.ok) {
+                for (const action of contextItemsResult.value) {
+                  success(`REPAIRED: ${action}`);
+                }
+              } else {
+                error(`FAILED: LCD context-items repair: ${contextItemsResult.error.message}`);
+              }
+            } catch (lcdErr) {
+              const msg = lcdErr instanceof Error ? lcdErr.message : String(lcdErr);
+              error(
+                `FAILED: LCD repair could not open memory.db: ${msg}` +
+                  " — ensure the daemon is stopped before running --repair",
+              );
+            } finally {
+              lcdDb?.close();
+            }
+          } else {
+            info("SKIPPED: LCD repair — memory.db not found");
+          }
         }
 
         // Re-run diagnostics after repairs

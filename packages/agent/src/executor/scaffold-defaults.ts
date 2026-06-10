@@ -187,6 +187,28 @@ export interface ScaffoldDefaults {
    * tool result cannot blow a small model's window.
    */
   maxToolResultChars: number | undefined;
+  /**
+   * RETR-04 / WR-02 (Phase 173): the unified-arbiter-active signal.
+   *
+   * `true` when the relevance-first arbiter (Plan 03) ranks LTM T3/T4 candidates
+   * against history — small/nano on a non-caching model (design §14.1: the
+   * relevance-first vs recency-first choice gates on supportsPromptCache, NOT tier;
+   * a local model that doesn't cache reorders for free, a caching model pays a
+   * cache-break so it stays recency-first below the fence).
+   *
+   * frontier/mid (recency-first): `false` — the arbiter does NOT run, recall/assembly
+   * stay byte-identical to v2.14 (LOCKED #2).
+   *
+   * Explicit config.contextEngine.relevance.firstByDefault always wins (both ways).
+   *
+   * LOAD-BEARING for the WR-02 closure: when `true`, the recall baseFloor gate
+   * (memory-recall.ts) enforces the resolved {@link ScaffoldDefaults.baseFloor}
+   * (0.15 for small/nano) instead of silently skipping an unconfigured (0) floor —
+   * an arbiter that ranks LTM against history needs the floor actually enforced
+   * (design §17 S6). NOTE: the full contextEngine.relevance.* schema block + the
+   * RETR-03 policy gating land in Plan 03; THIS plan resolves only the minimal signal.
+   */
+  relevanceFirst: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -242,8 +264,32 @@ export function resolveScaffoldDefaults(
     configuredBaseFloor > 0
       ? configuredBaseFloor
       : isSmallNano
-        ? SMALL_NANO_DEFAULT_BASE_FLOOR
-        : 0;
+        ? SMALL_NANO_DEFAULT_BASE_FLOOR  // LOAD-BEARING under the arbiter (relevanceFirst): the
+        : 0;                             // recall gate enforces THIS floor, not a silent 0 (WR-02).
+
+  // -------------------------------------------------------------------------
+  // RETR-03 / RETR-04 / WR-02 (Phase 173): relevanceFirst — the full policy gate
+  // (the unified-arbiter-active signal AND the relevance-first vs recency-first policy).
+  //
+  // Copies the SD1 capability-gate shape EXACTLY: explicit config wins (both ways),
+  // else the capability default. The gate axis is supportsPromptCache (design §14.1),
+  // NOT a provider-string predicate: small/nano on a non-caching model (typical Ollama)
+  // reorders relevance-first for free; a caching model pays a cache-break so it stays
+  // recency-first (false) below the fence — frontier (Anthropic, caches) → false; mid
+  // (caching) → false. Frontier/mid recency-first is BYTE-IDENTICAL (LOCKED #2): the
+  // arbiter does not run for them. The small/nano DEFAULT-ON flip stays MEASUREMENT-GATED
+  // (the Phase-171 harness) — this resolves the mechanism; the live flip is an operator step.
+  //
+  // Pitfall 1 (the schema re-parse trap): read the relevance.firstByDefault field DIRECTLY
+  // via the optional chain below — the schema field (173-03) is OPTIONAL with NO `.default()`,
+  // so an omitted field stays `undefined` and the `??` falls through to the capability gate.
+  // Do NOT re-parse the sub-block through its schema (a `.default()` would collapse
+  // undefined→false and silently kill the capability gate). An explicit boolean (true OR
+  // false) is preserved — the load-bearing operator override.
+  // -------------------------------------------------------------------------
+  const relevanceFirst =
+    config.contextEngine?.relevance?.firstByDefault ??
+    (isSmallNano && !modelProfile.supportsPromptCache);
 
   // -------------------------------------------------------------------------
   // SD3: verification — explicit wins; otherwise cost-gated capability default
@@ -353,5 +399,5 @@ export function resolveScaffoldDefaults(
           ? SMALL_DEFAULT_MAX_TOOL_RESULT_CHARS
           : undefined;                                  // frontier/mid → consumer uses config (50_000)
 
-  return { goalAnchorEnabled, baseFloor, verificationEnabled, criticModel, bootstrapMaxChars, activeToolCeiling, bootstrapTotalMaxChars, maxToolResultChars };
+  return { goalAnchorEnabled, baseFloor, verificationEnabled, criticModel, bootstrapMaxChars, activeToolCeiling, bootstrapTotalMaxChars, maxToolResultChars, relevanceFirst };
 }

@@ -21,13 +21,14 @@
 import type {
   AppendCondensedSummaryInput,
   AppendMessageInput,
+  AppendProvenanceInput,
   AppendSummaryInput,
   ContextBrowseScope,
   ContextStoreScope,
   LcdContextItem,
   LcdConversationPage,
   LcdMessage,
-  LcdSearchHit,
+  LcdSearchResult,
   LcdSummary,
 } from "./context-store-types.js";
 
@@ -88,6 +89,40 @@ export interface ContextStorePort {
    */
   getSummaries(scope: ContextStoreScope): LcdSummary[];
   /**
+   * EFF-01: Bounded read path — fetch only the message rows whose ids are in
+   * the provided set. Scoped by (conversationId, agentId, tenantId) — R4 isolation
+   * identical to getMessages. Returns rows ordered by seq, same as getMessages.
+   *
+   * Returns [] when ids is empty (no DB query issued). Callers must collect
+   * refIds from getContextItems before calling this method.
+   */
+  getMessagesByIds(scope: ContextStoreScope, ids: string[]): LcdMessage[];
+
+  /**
+   * EFF-01: Bounded read path — fetch only the summary rows whose summaryIds are
+   * in the provided set. Scoped by (conversationId, agentId, tenantId) — R4 isolation
+   * identical to getSummaries. Returns rows ordered by created_at, summary_id.
+   *
+   * Returns [] when ids is empty (no DB query issued).
+   */
+  getSummariesByIds(scope: ContextStoreScope, ids: string[]): LcdSummary[];
+
+  /**
+   * EFF-01: the TOTAL count of persisted messages in the scope — a bounded
+   * `COUNT(*)` that returns a single integer WITHOUT materializing any rows, so
+   * it preserves the O(referenced-ids) read budget (no O(total-history) fetch).
+   *
+   * This is the authoritative `persistedMsgCount` the dag assembler needs for its
+   * fresh-tail / eviction overlap math: messages are never deleted by
+   * summarization (losslessness), so this total stays correct even after the
+   * oldest message-refs collapse into summary-refs — unlike `getMessagesByIds`,
+   * whose bounded result counts only the still-referenced subset. Scoped by
+   * (conversationId, agentId, tenantId) — full isolation (R4): a different agent
+   * sharing the conversation is never counted (WR-02). Returns 0 for an empty scope.
+   */
+  countMessages(scope: ContextStoreScope): number;
+
+  /**
    * E1 region walk: the immediate CHILD summaries of a condensed summary
    * (the lcd_summary_parents condensed→child edge). Returns [] when the
    * summary has no children (a leaf) or does not exist. Scoped by
@@ -111,12 +146,17 @@ export interface ContextStorePort {
    * (conversationId, agentId) — full isolation (R4): BOTH the FTS path AND the
    * LIKE fallback filter agent_id so a different agent's hits never leak (WR-02,
    * Pitfall 3). The conversation_id prefix carries the tenant boundary.
+   *
+   * Returns an {@link LcdSearchResult} wrapper: `hits` is the FTS/LIKE result
+   * array; `cjkZeroHit` is true when the query contained CJK codepoints AND
+   * `hits.length === 0` — the §14.4 instrumented trigger (EFF-03). The flag is
+   * content-free; the caller's logging boundary emits a DEBUG event when true.
    */
   searchLcd(
     scope: ContextStoreScope,
     query: string,
     opts: { limit: number; scope?: "messages" | "summaries" | "both" },
-  ): LcdSearchHit[];
+  ): LcdSearchResult;
   /**
    * Per-conversation single-flight (R3, Plan 132-04): run `fn` on the queue
    * dedicated to `conversationId`. Serializes the live ingest write and the
@@ -170,6 +210,70 @@ export interface ContextStorePort {
    * a cross-tenant or cross-agent wipe is impossible by construction.
    */
   deleteConversationLcd(scope: ContextStoreScope): number;
+
+  /**
+   * Phase 172 (DIST-01): Write a provenance row linking a distilled episodic
+   * memory to the LCD condensed summary it was distilled from.
+   *
+   * Synchronous (better-sqlite3). R4-scoped via input.conversationId /
+   * agentId / tenantId. No return value — the provenanceId is caller-supplied.
+   *
+   * OPTIONAL: existing ContextStorePort implementations (e.g. test stubs) do
+   * not need to implement this until 172-03 adds the concrete SQL in lcd-store.ts.
+   * The distillation runner gates on `deps.lcdStore.appendProvenance != null`.
+   */
+  appendProvenance?(input: AppendProvenanceInput): void;
+
+  /**
+   * Phase 172 (DIST-03): Mark an existing lcd_memory_provenance row as
+   * superseded by a newer distilled memory (the pyramid rule).
+   *
+   * Sets `superseded_by = supersededByMemoryId` WHERE `summary_id = summaryId`
+   * AND `tenant_id = tenantId` AND `agent_id = agentId` AND
+   * `superseded_by IS NULL`. Synchronous. No-op when no matching row.
+   *
+   * R4 (WR-01): the `tenantId`/`agentId` predicate is load-bearing — the UPDATE
+   * is on a multi-tenant table, so a summary_id collision under a different
+   * scope must be a fail-closed no-op (never flip another scope's row).
+   *
+   * OPTIONAL: see appendProvenance note above.
+   */
+  markProvenanceSuperseded?(
+    summaryId: string,
+    supersededByMemoryId: string,
+    tenantId: string,
+    agentId: string,
+  ): void;
+}
+
+/**
+ * Phase 172 (DIST-03/recall): TYPE-ONLY read port for the lcd_memory_provenance
+ * table, consumed by the post-fusion provenance down-weighting pass in
+ * createMemoryRecall (packages/agent/src/rag/memory-recall.ts).
+ *
+ * This is a SEPARATE, minimal read port — NOT a method on ContextStorePort —
+ * to keep the recall pipeline's import surface narrow (it already has
+ * MemoryEmbeddingStore, MemoryEntityStore, etc. as optional deps; this follows
+ * the same pattern). The concrete adapter is daemon-injected. TYPE-ONLY from
+ * @comis/core — the agent↛memory build cut holds.
+ *
+ * Synchronous (better-sqlite3).
+ */
+export interface LcdProvenanceReadStore {
+  /**
+   * Return all provenance rows where summary_id = summaryId, scoped to
+   * (tenant, agent) for R4 isolation. Used by the post-fusion pass to
+   * identify same-conversation paired memories to down-weight.
+   */
+  getProvenanceForSummary(
+    scope: ContextStoreScope,
+    summaryId: string,
+  ): Array<{
+    provenanceId: string;
+    memoryId: string;
+    sourceSessionKey: string;
+    supersededBy: string | null;
+  }>;
 }
 
 /**

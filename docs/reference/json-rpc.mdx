@@ -1217,8 +1217,8 @@ The operation is serialized against live LCD ingest (safe to call while the daem
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ session_key: string, memory?: boolean }` — `memory` defaults to `false`; when `true`, the request is accepted without error but **RAG memory is not yet cleared** (reserved and deferred). Only LCD history and session transcript are cleared regardless of this flag. |
-| **Returns** | `{ sessionKey: string, lcdRowsDeleted: number, sessionMessagesCleared: number, memoriesDeleted?: number }` — `memoriesDeleted` is **omitted** (`undefined`) in the current implementation, signalling that RAG memory clearing is not yet implemented. |
+| **Parameters** | `{ session_key: string, memory?: boolean, purge_derived?: boolean }` — `memory` defaults to `false`; when `true`, the conversation's RAG memories are also deleted by `source_session_key` (both paired-conversation **and** LCD-distilled episodic memories) for the agent + tenant scope, and the deleted sources are unlinked from consolidated observations (orphan observation → deleted; multi-source observation → kept with the reference removed). `purge_derived` (default `false`, only meaningful with `memory: true`) escalates to deleting **every** observation derived from this session, even those corroborated by other sessions. |
+| **Returns** | `{ sessionKey: string, lcdRowsDeleted: number, sessionMessagesCleared: number, memoriesDeleted?: number }` — `memoriesDeleted` is the count of deleted RAG memory rows when `memory: true` and a memory store is wired. It is **omitted** (`undefined`) only when `memory` was not requested, or when the daemon has no memory store wired (the LCD + session transcript are still cleared). |
 
 <CodeGroup>
 ```json Request
@@ -1227,7 +1227,7 @@ The operation is serialized against live LCD ingest (safe to call while the daem
   "method": "session.reset_conversation",
   "params": {
     "session_key": "default:user123:telegram",
-    "memory": false
+    "memory": true
   },
   "id": 1
 }
@@ -1238,7 +1238,8 @@ The operation is serialized against live LCD ingest (safe to call while the daem
   "result": {
     "sessionKey": "default:user123:telegram",
     "lcdRowsDeleted": 42,
-    "sessionMessagesCleared": 18
+    "sessionMessagesCleared": 18,
+    "memoriesDeleted": 5
   },
   "id": 1
 }
@@ -1246,7 +1247,7 @@ The operation is serialized against live LCD ingest (safe to call while the daem
 </CodeGroup>
 
 <Note>
-**`memory: true` is reserved and not yet implemented.** Passing it is accepted without error, but RAG memory is not cleared — only the LCD history and session transcript are deleted. The response will omit `memoriesDeleted` (`undefined`), signalling the not-implemented state. A future phase will wire the full conversation-scoped RAG-memory delete across all memory stores.
+A RAG-memory clear failure is non-fatal: if the memory delete fails, the LCD + session-transcript reset that already succeeded is preserved and the failure is logged (the response then reports `memoriesDeleted: 0`). `purge_derived` is destructive and cannot be undone — an observation learned from multiple sessions is deleted in full, not merely unlinked. `memory` / `purge_derived` are the only parameters that **delete** memories; on the recall side, paired-conversation memories overlapping a distilled LCD summary from the same session are automatically **down-weighted** (never deleted), so a distilled summary does not double-count with its own source rows.
 </Note>
 
 After a reset, the next conversation turn starts with a complete clean slate in both dag and pipeline modes. For the full durability model (LCD vs. JSONL vs. RAG memory), see [Data Directory](/operations/data-directory).

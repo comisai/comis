@@ -236,6 +236,11 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "context:compaction_routed",
   "context:pipeline:cache",
   "context:dag_degraded",
+  // context:arbitrated: RETR-02 margin-arbiter allocation signal (Phase 173) —
+  //   per-tier kept counts + discretionary-pool tokens + relevanceFirst boolean,
+  //   ids/counts only, content-free. A counts-only internal-health signal (same
+  //   class as context:compaction_routed above), NOT a turn-level trajectory step.
+  "context:arbitrated",
 
   // -------------------------------------------------------------------
   // Diagnostic counters — internal aggregation, not user-visible.

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: wrapSummarizerWithFailover (SUM-03) re-throws the last provider error after the fallback list is exhausted (lcd-leaf-summarizer.ts:746); consumed by the summarizer-spend-breaker safety boundary (packages/agent/src/safety/summarizer-spend-breaker.ts), which catches the throw and records EXACTLY ONE per-tenant breaker failure — the existing summarizer-failure contract (a throw is how a summarization failure is signalled to the breaker).
 /**
  * LCD leaf summarization unit (Phase 129, C1).
  *
@@ -46,6 +47,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
 import type { ComisLogger } from "@comis/core";
 import type { CapabilityClass } from "../executor/model-profile.js";
+import { buildDepthAwareInstructions } from "./summarize-prompt-style.js";
 import type { SecurityPinMarkers } from "./security-context-pinner.js";
 import {
   COMPACTION_MAX_RETRIES,
@@ -182,6 +184,8 @@ export interface LeafSummarizeOptions {
   previousSummary?: string;
   /** Aggressive (Level-2) hint — best-effort retry over the oversized-filtered set. */
   aggressive?: boolean;
+  /** Depth of the summary being built (0=leaf, 1=timeline, 2=trajectory, 3+=memory-node). Defaults to 0. */
+  depth?: number;
 }
 
 /**
@@ -644,26 +648,6 @@ function buildDeterministicFallback(messageCount: number, chunkTokens: number): 
 // ---------------------------------------------------------------------------
 
 /**
- * Build the leaf-specific summarization instructions appended to the SDK's base
- * prompt via `customInstructions`. A leaf is a finer-grained chunk summary than a
- * full compaction — it does NOT require the 9-section compaction schema (RESEARCH
- * §Pattern 1 difference #2); it asks for a faithful, compact prose summary that
- * preserves concrete details (ids, decisions, tool outcomes) so a later
- * expansion / recall pass can rely on it. Returns the instruction string.
- */
-function buildLeafSummaryInstructions(aggressive: boolean): string {
-  const base =
-    "Summarize the conversation chunk above into a faithful, compact summary. " +
-    "Preserve concrete details that later turns may rely on: file paths, ids, " +
-    "decisions made, tool calls and their outcomes (success/failure), and any " +
-    "open questions. Do NOT invent facts not present in the chunk. Write prose, " +
-    "not a section template.";
-  return aggressive
-    ? base + " Be as terse as possible while keeping the load-bearing facts."
-    : base;
-}
-
-/**
  * Construct the PRODUCTION {@link LeafSummarizer} — the seam that wraps the SDK
  * `generateSummary`. Phase 132 swaps THIS factory's output for a spend-governed /
  * circuit-broken variant; 129 calls `generateSummary` directly. The override
@@ -693,7 +677,7 @@ export function buildLeafSummarizeFn(
     const apiKey = deps.overrideModel
       ? await deps.overrideModel.getApiKey()
       : await deps.getApiKey();
-    const instructions = buildLeafSummaryInstructions(opts.aggressive ?? false);
+    const instructions = buildDepthAwareInstructions(opts.depth ?? 0, opts.aggressive ?? false);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK generateSummary takes an opaque Model<any>
     return generateSummary(
       messages,
@@ -706,5 +690,60 @@ export function buildLeafSummarizeFn(
       instructions,
       opts.previousSummary, // 8th param: prior leaf content for continuity
     );
+  };
+}
+
+/**
+ * SUM-03: wraps a primary {@link LeafSummarizer} with an ordered fallback list.
+ *
+ * On primary failure, tries each fallback in sequence (ordered by the caller's
+ * `fallbacks` array). Only when ALL providers in the list are exhausted does the
+ * wrapper throw the last error — so the per-tenant circuit breaker that wraps the
+ * OUTER spend-governed seam records exactly ONE failure per exhausted-list event
+ * (Pitfall 4 in 171-RESEARCH: throw-last, not throw-per-provider).
+ *
+ * Content-free: logs `providerIndex`, `totalProviders`, and `errorKind: "dependency"`
+ * only — NEVER message content, summary text, or provider credentials (T-171-09).
+ *
+ * @param primary - the primary LeafSummarizer (already spend-governed by the outer seam)
+ * @param fallbacks - ordered list of fallback LeafSummarizer callables
+ * @param logger - structured logger (content-free)
+ * @returns a LeafSummarizer that transparently tries all providers in order
+ */
+export function wrapSummarizerWithFailover(
+  primary: LeafSummarizer,
+  fallbacks: LeafSummarizer[],
+  logger: ComisLogger,
+): LeafSummarizer {
+  // Fast path: empty fallback list = zero behavior change (default []).
+  if (fallbacks.length === 0) return primary;
+  return async (messages: AgentMessage[], opts: LeafSummarizeOptions): Promise<string> => {
+    let lastError: unknown;
+    const all: LeafSummarizer[] = [primary, ...fallbacks];
+    for (let i = 0; i < all.length; i++) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        return await all[i]!(messages, opts);
+      } catch (err) {
+        lastError = err;
+        // Emit a content-free WARN for every failure — including the last one so
+        // the operator can see the full exhaustion trace. The outer breaker records
+        // a single failure after the throw below.
+        logger.warn(
+          {
+            errorKind: "dependency" as const,
+            step: "summarizer-failover",
+            providerIndex: i,
+            totalProviders: all.length,
+            hint:
+              i < all.length - 1
+                ? `Summarizer provider ${i} failed; trying next in fallback list`
+                : `Summarizer provider ${i} failed; all ${all.length} providers exhausted`,
+          },
+          `Summarizer failover: provider ${i} failed`,
+        );
+      }
+    }
+    throw lastError;
   };
 }

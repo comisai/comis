@@ -1287,7 +1287,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
       leafInput(0, 1, { content: "Q3 quarterly revenue grew sharply" }),
     );
 
-    const hits = store.searchLcd(SCOPE_A, "revenue", { limit: 10 });
+    const { hits } = store.searchLcd(SCOPE_A, "revenue", { limit: 10 });
     const hit = hits.find((h) => h.refId === summaryId);
     expect(hit).toBeDefined();
     expect(hit!.kind).toBe("summary");
@@ -1298,7 +1298,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
   it("searchLcd finds a message by rendered part text when FTS5 is available", () => {
     const messageId = appendTextMessage("we should deploy the canary build first", 0);
 
-    const hits = store.searchLcd(SCOPE_A, "canary", { limit: 10, scope: "messages" });
+    const { hits } = store.searchLcd(SCOPE_A, "canary", { limit: 10, scope: "messages" });
     const hit = hits.find((h) => h.refId === messageId);
     expect(hit).toBeDefined();
     expect(hit!.kind).toBe("message");
@@ -1312,7 +1312,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
     store.getContextItems(SCOPE_A);
     store.appendLeafSummary(leafInput(1, 1, { content: "alpha summary note" }));
 
-    const both = store.searchLcd(SCOPE_A, "alpha", { limit: 10, scope: "both" });
+    const { hits: both } = store.searchLcd(SCOPE_A, "alpha", { limit: 10, scope: "both" });
     const kinds = new Set(both.map((h) => h.kind));
     expect(kinds.has("message")).toBe(true);
     expect(kinds.has("summary")).toBe(true);
@@ -1322,7 +1322,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
     appendTextMessage("shared keyword zebra", 0, SCOPE_A);
     appendTextMessage("shared keyword zebra", 0, SCOPE_B);
 
-    const aHits = store.searchLcd(SCOPE_A, "zebra", { limit: 10, scope: "messages" });
+    const { hits: aHits } = store.searchLcd(SCOPE_A, "zebra", { limit: 10, scope: "messages" });
     expect(aHits.length).toBeGreaterThan(0);
     // Every hit belongs to conv-a — none of conv-b's message ids appear.
     const bIds = new Set(store.getMessages(SCOPE_B).map((m) => m.id));
@@ -1346,6 +1346,11 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
         token_count INTEGER NOT NULL, content TEXT NOT NULL, file_ids TEXT NOT NULL DEFAULT '[]',
         taint INTEGER NOT NULL DEFAULT 0, fallback INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
       );
+      -- Phase 172: lcd_memory_provenance (created by ensureLcdTables) FKs into
+      -- memories(id). The LCD store shares the memory DB in production
+      -- (createLcdStore(memoryAdapter.getDb())), so the FK target must exist for
+      -- createLcdStore's eager INSERT-provenance prepare to resolve. Minimal stub.
+      CREATE TABLE memories (id TEXT PRIMARY KEY);
     `);
     // Insert a summary row DIRECTLY (the index does not exist yet — this is the
     // pre-index history the rebuild backfill must cover).
@@ -1369,7 +1374,7 @@ describe("createLcdStore — E1 region walk + FTS5 search", () => {
       agentId: "a",
       sessionKey: "s",
     };
-    const hits = bareStore.searchLcd(preScope, "margin", { limit: 10, scope: "summaries" });
+    const { hits } = bareStore.searchLcd(preScope, "margin", { limit: 10, scope: "summaries" });
     expect(hits.some((h) => h.refId === "pre1")).toBe(true);
   });
 });
@@ -1778,5 +1783,327 @@ describe("Phase 164 — cursor + deleteConversationLcd", () => {
     // lcd_summary_messages rows BEFORE lcd_messages rows).
     expect(() => s.deleteConversationLcd(SCOPE_A)).not.toThrow();
     expect(store.getMessages(SCOPE_A)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EFF-01: bounded working-set reads — getMessagesByIds / getSummariesByIds
+// ---------------------------------------------------------------------------
+
+describe("EFF-01: getMessagesByIds / getSummariesByIds", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createLcdStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Append N messages to a scope, returning their ids in seq order. */
+  function appendMessages(scope: ContextStoreScope, n: number): string[] {
+    const ids: string[] = [];
+    for (let seq = 0; seq < n; seq++) {
+      store.append({
+        scope,
+        seq,
+        role: "user",
+        tokenCount: 1,
+        createdAt: 1000 + seq * 10,
+        parts: [{ kind: "text", metadata: { raw: { type: "text", text: `m${seq}` }, rawType: "text" } }],
+      });
+    }
+    return store.getMessages(scope).map((m) => m.id);
+  }
+
+  it("EFF-01-S-1: getMessagesByIds returns ONLY the rows whose ids are in the provided list", () => {
+    const ids = appendMessages(SCOPE_A, 5);
+    // Pick ids at index 0 and 2 (m1 and m3 by 0-based seq).
+    const wanted = [ids[0]!, ids[2]!];
+    const result = store.getMessagesByIds(SCOPE_A, wanted);
+    expect(result).toHaveLength(2);
+    expect(result.map((m) => m.id).sort()).toEqual([...wanted].sort());
+  });
+
+  it("EFF-01-S-2: getMessagesByIds with empty ids list returns [] without issuing any DB queries", () => {
+    appendMessages(SCOPE_A, 3);
+    const result = store.getMessagesByIds(SCOPE_A, []);
+    expect(result).toEqual([]);
+  });
+
+  it("EFF-01-S-3: getSummariesByIds returns ONLY the summaries whose summaryIds are in the list", () => {
+    // Seed 3 messages then create 3 leaf summaries (one per message slot via successive passes).
+    appendMessages(SCOPE_A, 3);
+    store.getContextItems(SCOPE_A); // seed context_items
+    const s1 = store.appendLeafSummary({
+      scope: SCOPE_A,
+      tokenCount: 5,
+      content: "summary-1",
+      descendantCount: 0,
+      earliestAt: 1000,
+      latestAt: 1000,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9000,
+      startOrdinal: 0,
+      endOrdinal: 0,
+    });
+    // After first collapse: items = [S, m1, m2]; do second collapse at ordinal 1.
+    const s2 = store.appendLeafSummary({
+      scope: SCOPE_A,
+      tokenCount: 5,
+      content: "summary-2",
+      descendantCount: 0,
+      earliestAt: 1010,
+      latestAt: 1010,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9001,
+      startOrdinal: 1,
+      endOrdinal: 1,
+    });
+    // After second collapse: items = [S, S, m2]; do third collapse at ordinal 2.
+    const s3 = store.appendLeafSummary({
+      scope: SCOPE_A,
+      tokenCount: 5,
+      content: "summary-3",
+      descendantCount: 0,
+      earliestAt: 1020,
+      latestAt: 1020,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 9002,
+      startOrdinal: 2,
+      endOrdinal: 2,
+    });
+    void s1; void s3; // suppress unused warning — we only request s2
+    const result = store.getSummariesByIds(SCOPE_A, [s2]);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.summaryId).toBe(s2);
+  });
+
+  it("EFF-01-S-4: getMessagesByIds respects R4 scope — messages from a different agentId are excluded", () => {
+    // Seed messages for both agents sharing the same conversationId.
+    const SCOPE_CROSS_A: ContextStoreScope = {
+      conversationId: "conv-cross",
+      tenantId: "tenant-cross",
+      agentId: "agentA",
+      sessionKey: "sess-cross",
+    };
+    const SCOPE_CROSS_B: ContextStoreScope = {
+      conversationId: "conv-cross",
+      tenantId: "tenant-cross",
+      agentId: "agentB",
+      sessionKey: "sess-cross",
+    };
+    // Append one message to agentB.
+    store.append({
+      scope: SCOPE_CROSS_B,
+      seq: 0,
+      role: "user",
+      tokenCount: 1,
+      createdAt: 1000,
+      parts: [{ kind: "text", metadata: { raw: { type: "text", text: "agentB msg" }, rawType: "text" } }],
+    });
+    const agentBIds = store.getMessages(SCOPE_CROSS_B).map((m) => m.id);
+    expect(agentBIds).toHaveLength(1);
+
+    // Looking up agentB's id through agentA's scope must return [].
+    const result = store.getMessagesByIds(SCOPE_CROSS_A, agentBIds);
+    expect(result).toEqual([]);
+  });
+
+  it("EFF-01-S-5: countMessages returns the FULL persisted scope count, distinct from the bounded getMessagesByIds subset", () => {
+    const ids = appendMessages(SCOPE_A, 5);
+    // countMessages reports the full persisted total — the value the dag
+    // assembler's `persistedMsgCount` / fresh-tail-overlap math depends on. It is
+    // NOT the size of any bounded fetch. The EFF-01 regression used the bounded
+    // `rows.length` (below) as persistedMsgCount, undercounting the total once the
+    // oldest message-refs were folded into summary-refs — which silently broke
+    // fresh-tail integrity and condensed-summary placement.
+    expect(store.countMessages(SCOPE_A)).toBe(5);
+    // Contrast: a bounded fetch of 2 ids returns 2 rows (≠ the persisted total).
+    expect(store.getMessagesByIds(SCOPE_A, [ids[0]!, ids[1]!])).toHaveLength(2);
+  });
+
+  it("EFF-01-S-6: countMessages respects R4 scope — a different agentId's messages are not counted", () => {
+    const SCOPE_CNT_A: ContextStoreScope = {
+      conversationId: "conv-cnt",
+      tenantId: "tenant-cnt",
+      agentId: "agentA",
+      sessionKey: "sess-cnt",
+    };
+    const SCOPE_CNT_B: ContextStoreScope = {
+      conversationId: "conv-cnt",
+      tenantId: "tenant-cnt",
+      agentId: "agentB",
+      sessionKey: "sess-cnt",
+    };
+    appendMessages(SCOPE_CNT_A, 3);
+    appendMessages(SCOPE_CNT_B, 7);
+    expect(store.countMessages(SCOPE_CNT_A)).toBe(3);
+    expect(store.countMessages(SCOPE_CNT_B)).toBe(7);
+  });
+
+  it("EFF-01-S-7: countMessages returns 0 for a scope with no persisted messages", () => {
+    expect(store.countMessages({ ...SCOPE_A, conversationId: "conv-none" })).toBe(0);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// createLcdStore — Phase 172 (DIST-01/DIST-03) provenance write surface
+// appendProvenance INSERTs an lcd_memory_provenance row (the distilled-memory ↔
+// LCD-summary link); markProvenanceSuperseded sets the pyramid supersession
+// pointer. Both are synchronous (better-sqlite3) and R4-scoped via the DTO.
+// The provenance row FKs into memories(id) ON DELETE CASCADE, so we seed a real
+// memory row first.
+// ───────────────────────────────────────────────────────────────────────────
+describe("createLcdStore — DIST-05 provenance write surface", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createLcdStore>;
+
+  /** Insert a minimal memories row so the provenance FK resolves. */
+  function seedMemoryRow(id: string, sessionKey = "sess-p"): void {
+    db.prepare(
+      "INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_session_key, tags, created_at)" +
+        " VALUES (?, 'tenant-p', 'agent-p', 'user-p', 'distilled content', 'learned', 'episodic', 'agent', ?, '[]', 1)",
+    ).run(id, sessionKey);
+  }
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("appendProvenance persists a row resolvable by summary_id and source_session_key", () => {
+    const memId = "mem-1";
+    seedMemoryRow(memId, "sess-p");
+    store.appendProvenance!({
+      provenanceId: "prov-1",
+      memoryId: memId,
+      summaryId: "sum-1",
+      sourceSessionKey: "sess-p",
+      conversationId: "conv-p",
+      agentId: "agent-p",
+      tenantId: "tenant-p",
+      createdAt: 123,
+    });
+
+    const row = db
+      .prepare(
+        "SELECT provenance_id, memory_id, summary_id, source_session_key, superseded_by FROM lcd_memory_provenance WHERE summary_id = ?",
+      )
+      .get("sum-1") as
+      | { provenance_id: string; memory_id: string; summary_id: string; source_session_key: string; superseded_by: string | null }
+      | undefined;
+    expect(row).toBeDefined();
+    expect(row!.provenance_id).toBe("prov-1");
+    expect(row!.memory_id).toBe(memId);
+    expect(row!.source_session_key).toBe("sess-p");
+    expect(row!.superseded_by).toBeNull();
+  });
+
+  it("ON DELETE CASCADE: deleting the memory row removes its provenance row", () => {
+    const memId = "mem-cascade";
+    seedMemoryRow(memId);
+    store.appendProvenance!({
+      provenanceId: "prov-c",
+      memoryId: memId,
+      summaryId: "sum-c",
+      sourceSessionKey: "sess-p",
+      conversationId: "conv-p",
+      agentId: "agent-p",
+      tenantId: "tenant-p",
+      createdAt: 1,
+    });
+    db.prepare("DELETE FROM memories WHERE id = ?").run(memId);
+    const row = db.prepare("SELECT 1 FROM lcd_memory_provenance WHERE provenance_id = ?").get("prov-c");
+    expect(row).toBeUndefined();
+  });
+
+  it("markProvenanceSuperseded sets superseded_by only on rows where it is NULL (first subsumer wins)", () => {
+    const mem1 = "mem-a";
+    const mem2 = "mem-b";
+    seedMemoryRow(mem1);
+    seedMemoryRow(mem2);
+    store.appendProvenance!({
+      provenanceId: "prov-x",
+      memoryId: mem1,
+      summaryId: "sum-x",
+      sourceSessionKey: "sess-p",
+      conversationId: "conv-p",
+      agentId: "agent-p",
+      tenantId: "tenant-p",
+      createdAt: 1,
+    });
+
+    // First supersede → sets the pointer.
+    store.markProvenanceSuperseded!("sum-x", mem2, "tenant-p", "agent-p");
+    let row = db.prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE summary_id = ?").get("sum-x") as
+      | { superseded_by: string | null }
+      | undefined;
+    expect(row!.superseded_by).toBe(mem2);
+
+    // Second supersede with a different memory → no-op (superseded_by IS NULL guard).
+    seedMemoryRow("mem-c");
+    store.markProvenanceSuperseded!("sum-x", "mem-c", "tenant-p", "agent-p");
+    row = db.prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE summary_id = ?").get("sum-x") as
+      | { superseded_by: string | null }
+      | undefined;
+    expect(row!.superseded_by).toBe(mem2); // unchanged — first subsumer won
+  });
+
+  it("markProvenanceSuperseded is a no-op when no matching summary row exists", () => {
+    // No throw, no rows affected.
+    expect(() => store.markProvenanceSuperseded!("sum-missing", "mem-z", "tenant-p", "agent-p")).not.toThrow();
+    const count = db.prepare("SELECT COUNT(*) AS c FROM lcd_memory_provenance").get() as { c: number };
+    expect(count.c).toBe(0);
+  });
+
+  // WR-01 (R4 fail-open write): the supersession UPDATE must be tenant+agent
+  // scoped. A summary_id collision (or a malicious/buggy caller) under a DIFFERENT
+  // tenant/agent must NOT flip another scope's provenance row. This fails on the
+  // pre-fix UPDATE that filtered on summary_id alone (no tenant_id/agent_id).
+  it("WR-01: markProvenanceSuperseded does NOT touch a row in a DIFFERENT tenant (R4 scoped UPDATE)", () => {
+    // Seed a memory + provenance row under tenant-p / agent-p, summary_id "sum-shared".
+    const memId = "mem-tenant-p";
+    seedMemoryRow(memId);
+    store.appendProvenance!({
+      provenanceId: "prov-tp",
+      memoryId: memId,
+      summaryId: "sum-shared",
+      sourceSessionKey: "sess-p",
+      conversationId: "conv-p",
+      agentId: "agent-p",
+      tenantId: "tenant-p",
+      createdAt: 1,
+    });
+
+    // A DIFFERENT tenant supersedes the SAME summary_id — must be a no-op.
+    store.markProvenanceSuperseded!("sum-shared", memId, "tenant-OTHER", "agent-p");
+    let row = db
+      .prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE provenance_id = ?")
+      .get("prov-tp") as { superseded_by: string | null } | undefined;
+    expect(row!.superseded_by).toBeNull(); // untouched — wrong tenant
+
+    // A DIFFERENT agent (same tenant) supersedes the SAME summary_id — also no-op.
+    store.markProvenanceSuperseded!("sum-shared", memId, "tenant-p", "agent-OTHER");
+    row = db
+      .prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE provenance_id = ?")
+      .get("prov-tp") as { superseded_by: string | null } | undefined;
+    expect(row!.superseded_by).toBeNull(); // untouched — wrong agent
+
+    // The CORRECT scope flips it.
+    store.markProvenanceSuperseded!("sum-shared", memId, "tenant-p", "agent-p");
+    row = db
+      .prepare("SELECT superseded_by FROM lcd_memory_provenance WHERE provenance_id = ?")
+      .get("prov-tp") as { superseded_by: string | null } | undefined;
+    expect(row!.superseded_by).toBe(memId);
   });
 });

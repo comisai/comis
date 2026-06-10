@@ -61,6 +61,43 @@ describe("scanConfigForSecrets", () => {
     expect(findings).toHaveLength(0);
   });
 
+  it("skips ${VAR} env-substitution references (properly configured)", () => {
+    // Live incident (v2.20 doctor surface validation, 2026-06-10): a correctly
+    // configured production config that references secrets via the documented
+    // ${VAR} env-substitution syntax was flagged PLAINTEXT_SECRET (severity
+    // error) with the misleading advice "consider using ... an environment
+    // variable" — when the operator had already done exactly that. A full-string
+    // ${VAR} reference is resolved by env-substitution.ts at load and is NOT a
+    // plaintext secret.
+    const config = {
+      gateway: {
+        tokens: [{ id: "default", secret: "${COMIS_GATEWAY_TOKEN}" }],
+      },
+      channels: {
+        telegram: {
+          botToken: "${TELEGRAM_BOT_TOKEN}",
+          enabled: true,
+        },
+      },
+    };
+
+    const findings = scanConfigForSecrets("/etc/comis/config.yaml", config);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("still flags a real plaintext secret that merely contains a $ char", () => {
+    // Guard: the env-ref skip must be a FULL-STRING match, not a substring —
+    // a raw secret that happens to contain "$" or a partial "${" must still flag.
+    const config = {
+      channels: {
+        telegram: { botToken: "123456:ABC$DEF-not-a-ref" },
+      },
+    };
+    const findings = scanConfigForSecrets("/etc/comis/config.yaml", config);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe("PLAINTEXT_SECRET");
+  });
+
   it("skips empty string values", () => {
     const config = {
       channels: {
@@ -178,7 +215,7 @@ describe("scanEnvForSecrets", () => {
     });
   });
 
-  it("skips PATH and HOME", () => {
+  it("skips non-secret PATH and HOME env vars", () => {
     const env = {
       PATH: "/usr/bin:/usr/local/bin",
       HOME: "/home/user",
@@ -209,7 +246,7 @@ describe("scanEnvForSecrets", () => {
     expect(findings[0].message).toContain("unknown");
   });
 
-  it("skips empty values", () => {
+  it("skips secret-named env vars with empty values", () => {
     const env = {
       OPENAI_API_KEY: "",
     };

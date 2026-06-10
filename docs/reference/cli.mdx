@@ -531,7 +531,9 @@ comis daemon logs -n 100
 
 ### `comis doctor`
 
-Run diagnostic health checks across six categories: configuration, daemon, gateway, channels, workspace, and oauth. Supports auto-repair mode for fixable issues. The `oauth` category covers JWT expiry, schema mismatch, ca-certificates, HTTPS_PROXY drift, and TLS preflight — see [OAuth concepts → Error classification](/security/oauth#error-classification).
+Run diagnostic health checks across eight categories: configuration, daemon, gateway, channels, workspace, oauth, secrets-audit, and LCD store. Supports auto-repair mode for fixable issues. The `oauth` category covers JWT expiry, schema mismatch, ca-certificates, HTTPS_PROXY drift, and TLS preflight — see [OAuth concepts → Error classification](/security/oauth#error-classification).
+
+**LCD Store checks** — when `memory.db` is present, six read-only scan classes run automatically against the lossless context store: orphaned summaries, dangling `context_items` references, fallback-marker summaries (quality debt), FTS row-count drift, R4 scope anomalies (NULL tenant/agent keys), and `lcd_ingest_cursor` over-count (a cursor claiming more ingested messages than the store holds). Output is content-free: findings carry only counts and row ids, never message text. Silently skipped on new installs where `memory.db` does not exist yet.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
@@ -547,6 +549,25 @@ comis doctor
 # Auto-repair fixable issues
 comis doctor --repair -c ~/.comis/config.yaml
 ```
+
+**`--repair` flag — LCD store repair actions**
+
+When `--repair` is passed, actionable findings are automatically repaired offline (no daemon required). Two LCD finding categories support offline repair:
+
+| Finding | Repair action |
+|---------|---------------|
+| Dangling `context_items` refs | Stale `lcd_context_items` entries whose `ref_id` points to a deleted summary or message are removed. |
+| FTS row-count drift | `lcd_summaries_fts` (external-content) is rebuilt via the FTS5 `rebuild` command. `lcd_messages_fts` (contentless — message text lives in `lcd_message_parts`, not a `content` column) is repopulated by re-rendering each message's parts into the index. |
+
+**Fallback-marker summaries (`fallback=1`) are not repairable offline.** They are quality debt produced when the LLM summarizer was unavailable — re-summarization requires the running daemon. The daemon re-summarizes fallback-marker summaries automatically during normal compaction as conversations are processed.
+
+Raw message history (`lcd_messages`) is **never modified** by any repair action — the lossless verbatim raw store is read-only from the repair path (F1 invariant).
+
+<Warning>
+**Doctor repair requires the daemon to be stopped.** The repair opens `memory.db` in read-write mode. If the daemon is running, the repair will return `SQLITE_BUSY`.
+
+**Always run `comis sessions backup` before `comis doctor --repair`** to ensure a recovery point exists before any writes to `memory.db`.
+</Warning>
 
 ---
 
@@ -1202,6 +1223,7 @@ Session management commands for listing, inspecting, and deleting conversation s
 | `sessions inspect <key>` | Display full details of a session |
 | `sessions delete <key>` | Delete a session |
 | `sessions reset <sessionKey>` | Reset a conversation to a clean slate: clears LCD history + working session transcript |
+| `sessions backup` | Create a timestamped backup of `memory.db` |
 
 #### `sessions list`
 
@@ -1230,12 +1252,17 @@ This is the correct command when you want the model to explicitly forget a conve
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--memory` | `boolean` | `false` | **Reserved — not yet implemented.** Accepted without error, but RAG memory is NOT cleared; only LCD history and session transcript are cleared. The CLI prints a warning when this flag is passed. A future phase will wire the full conversation-scoped RAG-memory clear. |
+| `--memory` | `boolean` | `false` | Also clear the conversation's RAG memories — the full-forget path. Deletes every memory row matching this session (both paired-conversation memories **and** LCD-distilled episodic memories) for the agent + tenant scope, then unlinks them from consolidated observations (an observation built only from this session is deleted; one corroborated by other sessions is kept with the reference removed). The CLI prints the deleted count. If the daemon has no memory store wired, the flag is reported as unavailable (a stderr warning) and only LCD history + the session transcript are cleared. |
+| `--purge-derived` | `boolean` | `false` | Only meaningful with `--memory`. Escalates to deleting **every** consolidated observation derived from this session — even those still corroborated by other sessions (nuclear forget). Destructive; use only when a complete erasure of anything learned from the session is required. |
 | `--yes` | `boolean` | `false` | Required — skip the confirmation prompt (the command exits with an error if omitted) |
 
 <Warning>
 Use `sessions reset` (not `sessions delete`) when you want the model to explicitly forget a conversation. Deletion only removes the session record; the LCD store keeps its full history and the model would resume from it. See [Data Directory](/operations/data-directory) for the full durability model.
 </Warning>
+
+<Note>
+`--memory` is the explicit **delete** side of the LCD→LTM loop. There is also an automatic, **non-deleting** complement on the recall side: when a conversation's condensed LCD summary has been distilled into a learned memory, recall **down-weights** (it does not remove) the overlapping paired-conversation memories from that same session, so the distilled summary and its own source rows do not double-count. That down-weighting needs no flag and never deletes anything — `--memory` / `--purge-derived` remain the only commands that actually remove memories.
+</Note>
 
 ```bash
 # List all sessions
@@ -1250,9 +1277,37 @@ comis sessions delete "default:user123:telegram" --yes
 # Full conversation reset (clears LCD history + session transcript — irreversible, requires --yes)
 comis sessions reset "default:user123:telegram" --yes
 
-# Pass --memory (reserved, not yet implemented — prints warning; only LCD + session are cleared)
+# Also clear RAG memories for this session (the full-forget path — prints deleted count)
 comis sessions reset "default:user123:telegram" --memory --yes
+
+# Nuclear forget — also purge consolidated observations derived from this session
+comis sessions reset "default:user123:telegram" --memory --purge-derived --yes
 ```
+
+#### `sessions backup`
+
+Creates a timestamped copy of `memory.db` using the SQLite Online Backup API. Safe to run while
+the daemon is running — the backup API handles concurrent writes atomically. The backup file is
+placed in the same directory as `memory.db` with restricted permissions (`0600`).
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--data-dir <dir>` | `string` | `~/.comis` | Override the data directory |
+
+```bash
+# Back up memory.db (safe while daemon is running)
+comis sessions backup
+
+# Back up from a custom data directory
+comis sessions backup --data-dir /var/comis
+```
+
+The backup filename includes an ISO timestamp: `memory.db.backup.20260610T120000000Z`.
+
+<Note>
+Run `comis sessions backup` before schema migrations or destructive operations. To restore,
+copy the backup file back to `memory.db` while the daemon is stopped.
+</Note>
 
 ---
 

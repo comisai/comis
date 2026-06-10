@@ -296,6 +296,116 @@ describe("R3 Memory Relevance Floor — exact-numbers gate (153-03)", () => {
     });
   });
 
+  // RETR-04 / WR-02 (Phase 173): the unconfigured-baseFloor fail-open under the arbiter.
+  //
+  // The defect: memory-recall.ts:613 gates the filter on `cfg.baseFloor > 0`, so an
+  // UNCONFIGURED floor (resolved to 0) silently SKIPS the filter. When the unified
+  // arbiter is active (relevanceFirst), it ranks LTM T3/T4 against history — a sub-floor
+  // poisoned memory must NOT survive just because the deployment never set a floor
+  // (design §17 S6: "an arbiter that ranks LTM against history needs the floor enforced").
+  //
+  // Fail-closed scope = ARBITER-ACTIVE (relevanceFirst), NOT global: frontier/mid
+  // (recency-first, arbiter off) keep the `> 0` skip → byte-identical (LOCKED #2).
+  describe("WR-02: unconfigured baseFloor is fail-closed UNDER the arbiter (relevanceFirst)", () => {
+    it("RED→GREEN: relevanceFirst + unconfigured floor (0) DROPS a sub-floor poisoned memory", async () => {
+      // base=0.10 < class default 0.15. cfg.baseFloor is 0 (unconfigured — the deployment
+      // never set rag.baseFloor). PRE-PATCH: the `> 0` gate skips the filter → the poisoned
+      // memory SURVIVES (RED). POST-PATCH: relevanceFirst resolves the unconfigured floor to
+      // the class default (0.15) and the filter runs → the memory is DROPPED (GREEN).
+      const input = [
+        makeResult("poison-low-base", { base: 0.1, trustLevel: "learned", createdAt: NOW }),
+        makeResult("legit-high-base", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+      ];
+      const cfg = baseConfig({
+        baseFloor: 0, // unconfigured — the WR-02 fail-open trigger
+        relevanceFirst: true, // the unified arbiter is active (small/nano)
+      } as unknown as Partial<MemoryRecallConfig>);
+
+      const recall = createMemoryRecall(
+        {
+          memoryPort: fakeMemoryPort(input),
+          reranker: undefined,
+          timers: fakeTimers().port,
+          clock: fixedClock,
+          logger: noopLogger,
+        },
+        cfg,
+      );
+      const result = await recall.recall("q", SESSION_KEY, "default");
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const ids = result.value.map((r) => r.entry.id);
+      // The poisoned sub-floor memory must NOT survive under the active arbiter.
+      expect(ids).not.toContain("poison-low-base");
+      expect(ids).toContain("legit-high-base");
+    });
+
+    it("FRONTIER byte-identical: relevanceFirst OFF + unconfigured floor (0) keeps the sub-floor memory (no filter — recency-first path unchanged)", async () => {
+      // The SAME fixture as the RED test, but relevanceFirst=false (frontier/mid, arbiter
+      // off). The unconfigured-floor resolution stays 0 → the `> 0` skip holds → the filter
+      // does NOT run → the memory survives, exactly as v2.14. This pins LOCKED #2: the
+      // fail-closed branch is arbiter-scoped, so frontier/mid take the unchanged path.
+      const input = [
+        makeResult("low-base-kept", { base: 0.1, trustLevel: "learned", createdAt: NOW }),
+        makeResult("high-base-kept", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+      ];
+      const cfg = baseConfig({
+        baseFloor: 0,
+        relevanceFirst: false, // arbiter OFF (frontier/mid)
+      } as unknown as Partial<MemoryRecallConfig>);
+
+      const recall = createMemoryRecall(
+        {
+          memoryPort: fakeMemoryPort(input),
+          reranker: undefined,
+          timers: fakeTimers().port,
+          clock: fixedClock,
+          logger: noopLogger,
+        },
+        cfg,
+      );
+      const result = await recall.recall("q", SESSION_KEY, "default");
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const ids = result.value.map((r) => r.entry.id);
+      // Byte-identical to v2.14: no floor enforced → BOTH memories survive.
+      expect(ids).toContain("low-base-kept");
+      expect(ids).toContain("high-base-kept");
+    });
+
+    it("EXPLICIT floor still wins under relevanceFirst: an explicit 0.3 drops base=0.2 (operator value > class default)", async () => {
+      // The arbiter-active default (0.15) must NEVER override an explicit operator floor.
+      const input = [
+        makeResult("below-explicit", { base: 0.2, trustLevel: "learned", createdAt: NOW }),
+        makeResult("above-explicit", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+      ];
+      const cfg = baseConfig({
+        baseFloor: 0.3, // explicit operator floor
+        relevanceFirst: true,
+      } as unknown as Partial<MemoryRecallConfig>);
+
+      const recall = createMemoryRecall(
+        {
+          memoryPort: fakeMemoryPort(input),
+          reranker: undefined,
+          timers: fakeTimers().port,
+          clock: fixedClock,
+          logger: noopLogger,
+        },
+        cfg,
+      );
+      const result = await recall.recall("q", SESSION_KEY, "default");
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const ids = result.value.map((r) => r.entry.id);
+      expect(ids).not.toContain("below-explicit"); // 0.2 < 0.3 explicit
+      expect(ids).toContain("above-explicit");
+    });
+  });
+
   // Verify that the filter uses breakdown.base (pre-boost), NOT the boosted r.score.
   // A memory with base=0.12 could get a boosted score above 0.3 (e.g., via recency),
   // but it should still be DROPPED because the floor gates on the RAW base.

@@ -161,7 +161,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelType = rawParams.channel_type as string;
       const channelId = rawParams.channel_id as string;
       const text = rawParams.text as string;
-      authorizeChannelAccess(rawParams._originChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
 
       const userParams = stripInternalFields(rawParams);
       MessageSendContract.request.parse(userParams);
@@ -189,7 +189,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelId = rawParams.channel_id as string;
       const text = rawParams.text as string;
       const messageId = resolveMessageId(deps.inboundMessageIdResolver, rawParams.message_id as string, channelType, channelId);
-      authorizeChannelAccess(rawParams._originChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
 
       const userParams = stripInternalFields(rawParams);
       MessageReplyContract.request.parse(userParams);
@@ -219,7 +219,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelId = rawParams.channel_id as string;
       const messageId = resolveMessageId(deps.inboundMessageIdResolver, rawParams.message_id as string, channelType, channelId);
       const emoji = rawParams.emoji as string;
-      authorizeChannelAccess(rawParams._originChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
 
       const userParams = stripInternalFields(rawParams);
       MessageReactContract.request.parse(userParams);
@@ -241,7 +241,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelId = rawParams.channel_id as string;
       const messageId = resolveMessageId(deps.inboundMessageIdResolver, rawParams.message_id as string, channelType, channelId);
       const text = rawParams.text as string;
-      authorizeChannelAccess(rawParams._originChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
 
       const userParams = stripInternalFields(rawParams);
       MessageEditContract.request.parse(userParams);
@@ -261,7 +261,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       assertCapability("message.delete", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
       const messageId = resolveMessageId(deps.inboundMessageIdResolver, rawParams.message_id as string, channelType, channelId);
-      authorizeChannelAccess(rawParams._originChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
 
       const userParams = stripInternalFields(rawParams);
       MessageDeleteContract.request.parse(userParams);
@@ -281,7 +281,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelId = rawParams.channel_id as string;
       const limit = (rawParams.limit as number) ?? 20;
       const before = rawParams.before as string | undefined;
-      authorizeChannelAccess(rawParams._originChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
 
       const userParams = stripInternalFields(rawParams);
       MessageFetchContract.request.parse(userParams);
@@ -299,7 +299,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelType = rawParams.channel_type as string;
       assertCapability("message.attach", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
-      authorizeChannelAccess(rawParams._originChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
 
       const userParams = stripInternalFields(rawParams);
       MessageAttachContract.request.parse(userParams);
@@ -424,7 +424,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
       if (rawParams.channel_id) {
         authorizeChannelAccess(
-          rawParams._originChannelId as string | undefined,
+          rawParams._callerChannelId as string | undefined,
           rawParams.channel_id as string,
           rawParams._trustLevel as string | undefined,
         );
@@ -446,7 +446,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
       if (rawParams.chat_id) {
         authorizeChannelAccess(
-          rawParams._originChannelId as string | undefined,
+          rawParams._callerChannelId as string | undefined,
           rawParams.chat_id as string,
           rawParams._trustLevel as string | undefined,
         );
@@ -468,7 +468,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
       if (rawParams.channel_id) {
         authorizeChannelAccess(
-          rawParams._originChannelId as string | undefined,
+          rawParams._callerChannelId as string | undefined,
           rawParams.channel_id as string,
           rawParams._trustLevel as string | undefined,
         );
@@ -490,7 +490,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
       if (rawParams.group_jid) {
         authorizeChannelAccess(
-          rawParams._originChannelId as string | undefined,
+          rawParams._callerChannelId as string | undefined,
           rawParams.group_jid as string,
           rawParams._trustLevel as string | undefined,
         );

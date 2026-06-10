@@ -27,13 +27,14 @@
  *       structured blocks (never reconstructed-from-text). Never evicted (A1).
  *  4.   BUDGET + EVICTION (A3) — compute H = W − S − O − M − R via the profile-aware
  *       `computeTokenBudgetForProfile` (C1: 8K-starvation fix + 256K-overfill cap for
- *       small/nano; byte-identical to `computeTokenBudget` for frontier/mid), then
- *       `evictHistoryUnderBudget` trims ONLY the
- *       evictable prefix (resolved history minus the items the fresh tail covers)
- *       to fit H; the fresh tail is concatenated UNCONDITIONALLY (A1/A3 — always
- *       included, even when it alone exceeds H). The prefix/fresh-tail boundary is
- *       drop-free and double-free for both L>H (mid-turn, the store lags the live
- *       array — CR-01) and L<=H (a heal shrank the live array — WR-01); transcript
+ *       small/nano; byte-identical to `computeTokenBudget` for frontier/mid), then trim
+ *       ONLY the evictable prefix (resolved history minus the items the fresh tail covers)
+ *       to fit H via `evictHistoryUnderBudget` (recency, frontier/mid) OR the RETR-02
+ *       margin arbiter `evictUnderArbiter` (relevance-first small/nano — fused-rank
+ *       allocation with T0/S4 floors); the fresh tail is concatenated UNCONDITIONALLY
+ *       (A1/A3 — always included, even when it alone exceeds H). The prefix/fresh-tail
+ *       boundary is drop-free and double-free for both L>H (mid-turn, the store lags the
+ *       live array — CR-01) and L<=H (a heal shrank the live array — WR-01); transcript
  *       repair (step 6) re-pairs the seam regardless.
  *  5.   NORMALIZE — assistant string content -> `[{ type: "text", text }]`
  *       (pure, non-mutating; tool blocks untouched).
@@ -41,9 +42,9 @@
  *       provider can never receive an unpaired/out-of-order pairing even if the
  *       history/fresh-tail seam landed mid-pair.
  *
- * Keep the body THIN (Pitfall 7): the eviction logic is Plan 04's pure module
- * (`lcd-budget-eviction.ts`) and the leaf summarization is Plan 03's; this
- * assembler only RESOLVES + CALLS them.
+ * Keep the body THIN (Pitfall 7): the eviction logic lives in pure modules
+ * (`lcd-budget-eviction.ts`, `margin-arbiter.ts` / `lcd-arbiter-seam.ts`) and the leaf
+ * summarization in Plan 03's; this assembler only RESOLVES + CALLS them.
  *
  * Architecture cut (agent↛memory): this file imports ONLY the core
  * `ContextStorePort`/`LcdMessage`/`LcdContextItem`/`LcdSummary` TYPES + the core
@@ -55,7 +56,7 @@
  * @module
  */
 
-import { partsToMessage, scrubSecretsFromText, systemDateFrom, systemNowMs, wrapExternalContent } from "@comis/core";
+import { partsToMessage, systemNowMs } from "@comis/core";
 import type {
   ContextStorePort,
   ContextStoreScope,
@@ -66,15 +67,14 @@ import type {
 import type { ContextEngineConfig } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
+import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
 import { computeTokenBudgetForProfile } from "./budget-capacity-cap.js";
 import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import { runPreflightFitCheck } from "./lcd-preflight.js";
-import {
-  CHARS_PER_TOKEN_RATIO,
-  LCD_FALLBACK_HEADER_MARKER,
-  LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS,
-} from "./constants.js";
+import { LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS } from "./constants.js";
+import { summaryRefToMessage } from "./lcd-summary-render.js";
 import { evictHistoryUnderBudget, type BudgetItem } from "./lcd-budget-eviction.js";
+import { evictUnderArbiter, emitEvictedEvent } from "./lcd-arbiter-seam.js";
 import {
   createToolResultSizeGuard,
   type ContentBlock,
@@ -178,10 +178,33 @@ export function createLcdContextEngine(
         );
       }
       const contextItems: LcdContextItem[] = readScope ? store.getContextItems(readScope) : [];
-      const rows: LcdMessage[] = readScope ? store.getMessages(readScope) : [];
+      // EFF-01: collect the refId sets from contextItems FIRST so we can issue
+      // bounded IN-clause reads instead of fetching ALL rows for the scope.
+      // An empty set short-circuits to [] without any DB query (zero wasted I/O).
+      // These bounded `rows`/summaries are used ONLY as the resolve-time lookup
+      // maps (rowById/summaryById) — every message-ref/summary-ref in contextItems
+      // is in the collected id set by construction, so the maps are complete for
+      // resolution. The TOTAL persisted-message count (persistedMsgCount, used by
+      // the fresh-tail/eviction overlap math) is read SEPARATELY via the bounded
+      // `countMessages` COUNT below — it must NOT be derived from rows.length, which
+      // counts only the still-referenced subset. T-170-01-01/02: R4 scope triple is
+      // always passed through to getMessagesByIds / getSummariesByIds.
+      const messageRefIds = contextItems
+        .filter((ci) => ci.refKind === "message")
+        .map((ci) => ci.refId);
+      const summaryRefIds = contextItems
+        .filter((ci) => ci.refKind === "summary")
+        .map((ci) => ci.refId);
+      const rows: LcdMessage[] =
+        readScope && messageRefIds.length > 0
+          ? store.getMessagesByIds(readScope, messageRefIds)
+          : [];
       const rowById = new Map<string, LcdMessage>(rows.map((row) => [row.id, row]));
       const summaryById = new Map<string, LcdSummary>(
-        (readScope ? store.getSummaries(readScope) : []).map((s) => [s.summaryId, s]),
+        (readScope && summaryRefIds.length > 0
+          ? store.getSummariesByIds(readScope, summaryRefIds)
+          : []
+        ).map((s) => [s.summaryId, s]),
       );
       let resolved: BudgetItem[] = [];
       // Parallel to `resolved`: the ref kind of each resolved item, used by the
@@ -236,12 +259,20 @@ export function createLcdContextEngine(
 
       // 3. FRESH TAIL: the last N STEPS of the LIVE array, VERBATIM (original
       //    structured blocks — never reconstructed-from-text). A1.
-      const tailStart = freshTailBoundaryIndex(liveMessages, config.freshTailTurns);
+      // EFF-02: clamp freshTailTurns to what the effective window can afford.
+      // deps.modelProfile?.contextWindow is Infinity for frontier/mid — clamp never fires.
+      const effectiveWindow = deps.modelProfile?.contextWindow ?? Infinity;
+      const clampedFreshTailTurns = resolveClampedFreshTailTurns(
+        effectiveWindow,
+        config.freshTailTurns,
+      );
+      const tailStart = freshTailBoundaryIndex(liveMessages, clampedFreshTailTurns);
       const rawFreshTail = liveMessages.slice(tailStart);
       deps.logger.debug(
         {
           step: "lcd-fresh-tail",
-          freshTailSteps: config.freshTailTurns,
+          freshTailSteps: clampedFreshTailTurns,
+          configuredFreshTailSteps: config.freshTailTurns,
           freshTailCount: rawFreshTail.length,
           tailStart,
           agentId: deps.agentId,
@@ -307,9 +338,11 @@ export function createLcdContextEngine(
       //    those map to RAW message-refs at the END of `context_items` (summaries
       //    collapse the OLDEST run, so the tail of the view is raw).
       //
-      //    WR-01 robustness: `rawOverlap` is a RAW-message count (`rows.length`),
-      //    while the slice indexes into the COLLAPSED `resolved` view
-      //    (`resolved.length ≤ rows.length` once any leaf/condense pass has run).
+      //    WR-01 robustness: `rawOverlap` is a RAW-message count (`persistedMsgCount`,
+      //    the bounded COUNT(*) total — NOT `rows.length`, which is the referenced
+      //    working-set subset post EFF-01), while the slice indexes into the COLLAPSED
+      //    `resolved` view (`resolved.length ≤ persistedMsgCount` once any leaf/condense
+      //    pass has run).
       //    Subtracting `rawOverlap` from `resolved.length` directly is correct ONLY
       //    under the oldest-run-collapse invariant; if the fresh-tail window reaches
       //    back further than the trailing raw run (a large `freshTailTurns`, or a
@@ -326,7 +359,16 @@ export function createLcdContextEngine(
       //    Drop-free + double-free for BOTH L>H (mid-turn: the store lags the live
       //    array by the in-flight delta, so the in-flight tail rides only via
       //    `freshTail` — CR-01) and L<=H (a heal shrank the live array — WR-01).
-      const persistedMsgCount = rows.length;
+      // EFF-01 (regression fix): persistedMsgCount is the TOTAL count of persisted
+      // messages in scope — NOT `rows.length`. `rows` is now the BOUNDED working
+      // set (message-refs only); once the oldest messages fold into summary-refs,
+      // `rows.length` undercounts the total and corrupts the fresh-tail/eviction
+      // overlap below (this was the lcd-synthetic-session gate failure: a broken
+      // fresh tail + a mis-placed condensed summary). `countMessages` is a bounded
+      // COUNT(*) — one integer, NO O(total-history) row fetch — so assembly is
+      // byte-identical to the pre-EFF-01 `getMessages(readScope).length` while the
+      // row fetch stays O(referenced-ids). Fail-closed: no read scope ⇒ 0.
+      const persistedMsgCount = readScope ? store.countMessages(readScope) : 0;
       const rawOverlap = Math.max(0, persistedMsgCount - tailStart);
       let trailingMessageRefs = 0;
       for (let i = resolvedKinds.length - 1; i >= 0 && resolvedKinds[i] === "message"; i--) {
@@ -384,7 +426,15 @@ export function createLcdContextEngine(
         config.budget?.effectiveContextCapSmall,
         config.budget?.effectiveContextCapNano,
       );
-      const budgeted = evictHistoryUnderBudget(evictable, budget.availableHistoryTokens);
+
+      // RETR-02/03/05 eviction seam (step 4 above). Frontier/mid (relevanceFirst falsy) take
+      // the EXISTING recency call VERBATIM — same call, same args → referentially the
+      // pre-patch AgentMessage[], BYTE-IDENTICAL (LOCKED #2; the arbiter does NOT run for
+      // them). Relevance-first → the margin arbiter over the SAME availableHistoryTokens.
+      const budgeted: AgentMessage[] =
+        deps.relevanceFirst === true
+          ? evictUnderArbiter(deps, evictable, budget.availableHistoryTokens, liveMessages, startMs).budgeted
+          : evictHistoryUnderBudget(evictable, budget.availableHistoryTokens);
       const droppedCount = evictable.length - budgeted.length;
       deps.logger.debug(
         {
@@ -402,29 +452,10 @@ export function createLcdContextEngine(
         "lcd history evicted under budget",
       );
 
-      // O1: emit the EXISTING `context:evicted` event from the LCD path (parity with
-      // the pipeline engine's guard at context-engine.ts:663-672) when eviction
-      // actually dropped history. CONTENT-FREE (AGENTS.md §2.2 / the lossless store):
-      // `evictedChars` is derived ONLY from each dropped item's pre-computed `tokens`
-      // field (× CHARS_PER_TOKEN_RATIO) — the message text is NEVER read or emitted.
-      // Reuse the entry-clock read `startMs` for `timestamp` (no new clock read; the
-      // globals gate bans ambient time). Reuse the existing event name — do NOT invent
-      // a `context:lcd_evicted`.
-      if (droppedCount > 0) {
-        const droppedItems = evictable.slice(budgeted.length);
-        const evictedChars = droppedItems.reduce(
-          (sum, it) => sum + Math.round(it.tokens * CHARS_PER_TOKEN_RATIO),
-          0,
-        );
-        deps.eventBus?.emit("context:evicted", {
-          agentId: deps.agentId ?? "",
-          sessionKey: deps.sessionKey ?? "",
-          evictedCount: droppedCount,
-          evictedChars,
-          categories: { lcd_history: droppedCount },
-          timestamp: startMs,
-        });
-      }
+      // O1: emit the content-free `context:evicted` event (parity with the pipeline engine)
+      // when eviction dropped history — extracted to lcd-arbiter-seam.ts (keeps this body
+      // THIN). Shared by both the recency and arbiter paths; reuses startMs (no new clock).
+      emitEvictedEvent(deps, evictable, budgeted.length, startMs);
 
       // The fresh tail is concatenated UNCONDITIONALLY (A1/A3) — never evicted.
       const assembled = [...budgeted, ...freshTail];
@@ -654,7 +685,11 @@ function resolveContextItem(
     case "message": {
       const row = rowById.get(item.refId);
       if (row === undefined) return undefined; // dangling message-ref (drift) — skip.
-      return { msg: partsToMessage(row) as AgentMessage, tokens: row.tokenCount };
+      // WR-01 (Phase 174-04): carry the durable lcd_messages.id so the DEPTH-01 relevance
+      // pass (rankMiddleBandByRelevance) can match a searchLcd hit by its stable `refId`
+      // (= row.id) instead of a fragile snippet substring. row.id IS the refId every hit
+      // carries — so a pure tool_use/tool_result message (empty block-text render) now ranks.
+      return { msg: partsToMessage(row) as AgentMessage, tokens: row.tokenCount, lcdId: row.id };
     }
     case "summary": {
       const summary = summaryById.get(item.refId);
@@ -666,91 +701,6 @@ function resolveContextItem(
       return _exhaustive;
     }
   }
-}
-
-/**
- * Render a summary as an HONEST, TAINT-SAFE `user`-role message (P1) — the ONE
- * seam Phase 130 swaps from the plain text passthrough Phase 129 left here.
- *
- * The honesty markers (depth / descendant_count / ISO time-range / trust, plus
- * R2's `fallback=emergency-truncation` when `summary.fallback`) are computed from
- * the STORE ROW (`summary.depth`/`descendantCount`/`earliestAt`/`latestAt`/
- * `fallback`), NEVER parsed from `content`, and placed in the TRUSTED header +
- * footer OUTSIDE the `wrapExternalContent` untrusted region. A poisoned summary
- * body therefore cannot forge them: the per-session random hex delimiter is
- * unpredictable, and `replaceMarkers` neutralizes any injected `<<<UNTRUSTED_…>>>`
- * / `<<<END_UNTRUSTED_…>>>` marker the content tries to smuggle in (RED-proven:
- * a body forging `trust=trusted` / `fallback=emergency-truncation` + a fake
- * end-delimiter still renders the real `trust=untrusted` + the real fallback flag
- * and the forged delimiter collapses to `[[END_MARKER_SANITIZED]]`).
- *
- * Role stays `"user"` — the documented ceiling (T-129-14): a summary derived from
- * possibly-untrusted history is carried untrusted-by-role, NEVER `system`/
- * `assistant`. The body is wrapped via `wrapExternalContent` (the AGENTS.md §2.2
- * taint primitive) rather than hand-rolled XML escaping.
- *
- * The expand footer is an honest ADVERTISEMENT of WHAT was compressed (depth +
- * count + time-range); the recovery TOOLS (`ctx_*`) are Phase 131 — DECISION
- * GATE #3 / RESEARCH A4: do NOT name them here. Keep this the single resolution
- * point so future swaps touch one function.
- */
-function summaryRefToMessage(summary: LcdSummary): AgentMessage {
-  // `trust` is ALWAYS "untrusted" (the row is untrusted-by-derivation; the value
-  // is derived, never widened to "trusted"). R2 (Phase 132): when the row's
-  // `fallback` flag is set — the breaker/spend-cap bypass or the deterministic
-  // Level-3 floor produced this summary with NO LLM — append the unspoofable
-  // `LCD_FALLBACK_HEADER_MARKER` so the model is honestly told the summary is a
-  // degraded emergency truncation. The marker lives in the TRUSTED header here,
-  // OUTSIDE the `wrapExternalContent` region below, so a poisoned body can neither
-  // forge it (the per-session random hex delimiter is unpredictable +
-  // `replaceMarkers` sanitizes spoofed delimiters) nor strip it (only the real
-  // `summary.fallback` row flag — never the content — drives it).
-  const trust = "untrusted";
-  const range = isoRange(summary.earliestAt, summary.latestAt);
-  const fallbackMarker = summary.fallback ? `, ${LCD_FALLBACK_HEADER_MARKER}` : "";
-  const header =
-    `[LCD summary — depth=${summary.depth}, ` +
-    `descendant_count=${summary.descendantCount}, ` +
-    `${range}, trust=${trust}${fallbackMarker}]`;
-  // The body is UNTRUSTED — scrub secrets, THEN wrap it. `source: "unknown"`
-  // (label "External") is the generic untrusted-text source; the
-  // `ExternalContentSource` union has no `lcd_summary` label and a P1 plan does not
-  // edit the core security enum. The honesty markers live OUTSIDE this wrapped
-  // region (the trusted header/footer), so no `includeWarning` wall is needed per
-  // summary — the header + the P2 system clause carry the policy.
-  //
-  // Egress scrub (FIX 2c): a summary is DERIVED from a region that can legitimately
-  // contain a credential (the F1 lossless store keeps the raw conversation). The
-  // summary re-enters the model context every turn it is assembled, so the derived
-  // body must never carry the secret verbatim — scrub this egress copy (the base
-  // store stays lossless), mirroring the ctx_expand / ctx_search egress scrub.
-  const safeBody = wrapExternalContent(scrubSecretsFromText(summary.content).text, {
-    source: "unknown",
-    includeWarning: false,
-  });
-  const footer =
-    `Expand for details about: the ${summary.descendantCount} compressed ` +
-    `message(s) at depth ${summary.depth} spanning ${range}.`;
-  const text = `${header}\n${safeBody}\n${footer}`;
-  return {
-    role: "user",
-    content: [{ type: "text", text }],
-  } as unknown as AgentMessage;
-}
-
-/**
- * Format the inclusive `[earliestAtMs, latestAtMs]` epoch-millisecond span as an
- * ISO date range `YYYY-MM-DD..YYYY-MM-DD`, collapsing to a single `YYYY-MM-DD`
- * when both ends fall on the same day. Pure formatting of already-known values —
- * NOT a clock read — but the globals classifier flags `new Date(arg)` regardless
- * of its argument, so the conversion goes through the sanctioned-root
- * `systemDateFrom` indirection (the AGENTS.md §1 helper for `new Date(stored)`
- * display formatting; the `rag-retriever.ts` precedent).
- */
-function isoRange(earliestAtMs: number, latestAtMs: number): string {
-  const start = systemDateFrom(earliestAtMs).toISOString().slice(0, 10);
-  const end = systemDateFrom(latestAtMs).toISOString().slice(0, 10);
-  return start === end ? start : `${start}..${end}`;
 }
 
 /**
