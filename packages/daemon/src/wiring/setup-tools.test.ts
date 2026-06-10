@@ -1818,6 +1818,39 @@ describe("setupTools", () => {
         expect(toolNames).not.toContain(name);
       }
     });
+
+    // WR-05 (Phase 174-04): a BARE agent config (no explicit contextEngine.version) writes
+    // the LCD store by default (shouldRunLcdStorePasses defaults missing version → "dag"), so
+    // the ctx_* recovery tools MUST be wired under the SAME default — otherwise the agent
+    // writes durable history it can never read back in-session. Aligns the ctx-tool gate
+    // default to "dag" to match the store-writes default. Fails on the pre-patch
+    // `?? "pipeline"` default (tools not wired for a bare config).
+    it("WR-05: wires the ctx_* tools for a BARE agent config (no contextEngine.version) when a store is present", async () => {
+      const deps = createMinimalDeps({
+        agents: {
+          "agent-1": {
+            skills: {
+              builtinTools: { browser: false, exec: false, process: false },
+              toolPolicy: { profile: "default" },
+              discoveryPaths: [],
+              execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+            },
+            // NO contextEngine block — the bare-config default story.
+          } as any,
+        },
+        lcdStore: makeFakeLcdStore() as any,
+      });
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+
+      await assembleToolsForAgent("agent-1");
+
+      const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      const toolNames = tools.map((t: any) => t.name);
+      for (const name of CTX_NAMES) {
+        expect(toolNames).toContain(name);
+      }
+    });
   });
 
 });
