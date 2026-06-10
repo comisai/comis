@@ -35,6 +35,7 @@ import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js
 import type { LastKnownModelTracker } from "../model/last-known-model.js";
 import { withPromptTimeout, withResettablePromptTimeout, PromptTimeoutError } from "./prompt-timeout.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
+import { classifyError } from "./error-classifier.js";
 
 // ---------------------------------------------------------------------------
 // Cache-aware short retry constants
@@ -257,6 +258,24 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
       },
       "Primary model prompt error",
     );
+
+    // GBNF-02: a grammar-compile/schema 400 is deterministic — rotating auth or
+    // burning fallback models cannot fix a schema the provider can't compile.
+    // Short-circuit the ladder; the executor's withSession-scoped strip-retry
+    // (silent-failure-handlers.ts) owns the single repair attempt. The raw body
+    // already rode the WARN above via the `err` serializer — not repeated here.
+    if (classifyError(primaryError).category === "tool_schema_unsupported") {
+      logger.warn(
+        {
+          step: "retry",
+          model: displayModel,
+          hint: "Tool schema rejected by provider (grammar-compile failure); skipping fallback ladder — the executor performs one strip-pattern/format retry, durable fix: models[].comisCompat.toolSchemaProfile: \"gbnf\"",
+          errorKind: "validation" as ErrorKind,
+        },
+        "Schema-unsupported error: fallback ladder skipped",
+      );
+      return { succeeded: false, error: primaryError };
+    }
 
     // Emit prompt timeout event for observability
     if (primaryError instanceof PromptTimeoutError) {

@@ -33,6 +33,16 @@ export type ErrorCategory =
    * stored signed state in place and re-enters the model retry chain.
    */
   | "client_request_signed_replay"
+  /**
+   * Provider rejected the tool JSON Schema at grammar-compile/unmarshal time
+   * (llama.cpp "JSON schema conversion failed"/"Unrecognized schema"/
+   * grammar-parse, Ollama Go-side tools unmarshal). Deterministic
+   * schema-shape problem, NOT a model failure: self-healable once — the
+   * runner strips pattern/format from the offending toolset and retries a
+   * single time (see silent-failure-handlers.ts), then fails honestly. The
+   * model-retry ladder must never burn fallback models on it.
+   */
+  | "tool_schema_unsupported"
   | "client_request"
   | "prompt_timeout"
   /**
@@ -119,6 +129,21 @@ const ERROR_PATTERNS: ErrorPattern[] = [
     category: "client_request_signed_replay",
     userMessage:
       "Your request couldn't be processed due to a formatting issue. The AI agent will try again automatically.",
+    retryable: true,
+  },
+  // llama.cpp-family grammar-compile + Ollama tools-unmarshal failures: must be
+  // tested BEFORE the plain client_request pattern because llama-server wraps
+  // grammar bodies in `"type":"invalid_request_error"` — first match wins, so
+  // this more-specific subcategory has to be checked first (same rationale as
+  // the signed-replay entry above). Scope guard: the Go-unmarshal alternative
+  // only matches under `.tools.function.parameters` so unrelated unmarshal
+  // errors keep their current classification. Retryable=true because the
+  // runner performs exactly one strip-pattern/format-and-retry per session.
+  {
+    test: /json schema conversion failed|unrecognized schema|error parsing grammar|json-schema-to-grammar|unable to generate parser|cannot unmarshal \S+ into Go struct field \.?tools\.function\.parameters/i,
+    category: "tool_schema_unsupported",
+    userMessage:
+      "The AI provider couldn't compile one of the available tools. The agent will simplify the tool definition and try again automatically.",
     retryable: true,
   },
   // Client-side validation (Anthropic 400 invalid_request_error, 422, malformed)
