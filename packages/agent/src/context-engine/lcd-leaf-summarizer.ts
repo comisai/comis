@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: wrapSummarizerWithFailover (SUM-03) re-throws the last provider error after the fallback list is exhausted (lcd-leaf-summarizer.ts:746); consumed by the summarizer-spend-breaker safety boundary (packages/agent/src/safety/summarizer-spend-breaker.ts), which catches the throw and records EXACTLY ONE per-tenant breaker failure — the existing summarizer-failure contract (a throw is how a summarization failure is signalled to the breaker).
 /**
  * LCD leaf summarization unit (Phase 129, C1).
  *
