@@ -23777,7 +23777,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("pro
                     "toolSchemaProfile": {
                       "enum": [
                         "default",
-                        "xai"
+                        "xai",
+                        "gbnf"
                       ],
                       "type": "string"
                     }
@@ -35930,7 +35931,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                         "toolSchemaProfile": {
                           "enum": [
                             "default",
-                            "xai"
+                            "xai",
+                            "gbnf"
                           ],
                           "type": "string"
                         }
