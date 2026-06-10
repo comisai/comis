@@ -11,6 +11,8 @@ import { createObservationMaskerLayer, type ObservationMaskerConfig } from "./ob
 /** Minimal token budget (observation masker ignores it, uses char estimation). */
 const BUDGET: TokenBudget = {
   windowTokens: 128_000,
+  rawContextWindowTokens: 128_000,
+  windowCapSource: "none",
   systemTokens: 5_000,
   outputReserveTokens: 8_192,
   safetyMarginTokens: 6_400,

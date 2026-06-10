@@ -17,11 +17,11 @@
  */
 
 import { computeOutputHeadroom, downshiftThinkingLevel } from "./output-headroom.js";
-import { ContextExhaustionError } from "./errors.js";
+import { ContextExhaustionError, describeWindowCap } from "./errors.js";
 import { isSecurityRelevantMessage } from "./security-context-pinner.js";
 import { evictHistoryUnderBudget, type BudgetItem } from "./lcd-budget-eviction.js";
 import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
-import type { ContextEngineDeps } from "./types.js";
+import type { ContextEngineDeps, ContextWindowCapInfo } from "./types.js";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 /** Valid thinking-level union (mirrors output-headroom.ts). */
@@ -41,6 +41,10 @@ const VALID_LEVELS: readonly TLevel[] = ["off", "minimal", "low", "medium", "hig
  *                            The NEWEST keptCount items from evictable were kept.
  * @param freshTail         - The unconditional fresh-tail messages.
  * @param reasoningStyle    - profile.reasoningStyle ("none" | "native").
+ * @param capInfo           - W1 cap provenance (budget.rawContextWindowTokens +
+ *                            budget.windowCapSource). When the effective window was
+ *                            clamped by a capability-class cap, the exhaustion throw
+ *                            and WARN name the raw window and the exact config knob.
  *
  * Throws ContextExhaustionError if infeasible even at the thinking-level floor.
  * Emits onEffectiveWindow, onThinkingDownshifted, onAssembledInputTokens callbacks as side effects.
@@ -52,6 +56,7 @@ export function runPreflightFitCheck(
   keptCount: number,
   freshTail: AgentMessage[],
   reasoningStyle: "none" | "native",
+  capInfo?: ContextWindowCapInfo,
 ): void {
   // Emit effectiveWindow callback so Plan 04 can clamp max_tokens dynamically.
   deps.onEffectiveWindow?.(effectiveWindow);
@@ -174,15 +179,21 @@ export function runPreflightFitCheck(
         {
           step: "lcd-pre-flight",
           errorKind: "resource" as const,
-          hint: "context exhausted: assembled input exceeds effective window minus headroom even at minimal thinking",
+          hint:
+            "context exhausted: assembled input exceeds effective window minus headroom even at minimal thinking" +
+            describeWindowCap(effectiveWindow, capInfo),
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
           assembledInputTokens,
           effectiveWindow,
+          ...(capInfo !== undefined && {
+            rawContextWindowTokens: capInfo.rawContextWindowTokens,
+            windowCapSource: capInfo.windowCapSource,
+          }),
         },
         "pre-flight fit check: context exhausted",
       );
-      throw new ContextExhaustionError(effectiveWindow, assembledInputTokens);
+      throw new ContextExhaustionError(effectiveWindow, assembledInputTokens, capInfo);
     }
   }
 

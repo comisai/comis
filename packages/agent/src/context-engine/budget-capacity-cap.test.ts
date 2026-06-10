@@ -88,4 +88,55 @@ describe("computeTokenBudgetForProfile — C1", () => {
       expect(budget8K.availableHistoryTokens).toBeLessThanOrEqual(budget16K.availableHistoryTokens);
     });
   });
+
+  // W1 (obs-llm-troubleshooting): cap provenance — the budget must say WHICH knob
+  // clamped the window so the exhaustion error / logs / trajectory can name it.
+  // Live incident: config declared contextWindow=131072 but the guard aborted at
+  // "effective window 32000" with nothing pointing at effectiveContextCapSmall.
+  describe("cap provenance (rawContextWindowTokens + windowCapSource)", () => {
+    it("small-class capped budget reports the raw declared window and the small-cap knob as source", () => {
+      const budget = computeTokenBudgetForProfile(SMALL_256K_PROFILE, S, P, -1);
+      expect(budget.windowTokens).toBe(32_000);
+      expect(budget.rawContextWindowTokens).toBe(256_000);
+      expect(budget.windowCapSource).toBe("effectiveContextCapSmall");
+    });
+
+    it("nano-class capped budget attributes the nano knob as the cap source", () => {
+      const nanoProfile: ModelProfile = {
+        ...SMALL_256K_PROFILE,
+        capabilityClass: "nano",
+        maxOutputTokens: 4_096,
+      };
+      const budget = computeTokenBudgetForProfile(nanoProfile, S, P, -1);
+      expect(budget.windowTokens).toBe(16_000);
+      expect(budget.rawContextWindowTokens).toBe(256_000);
+      expect(budget.windowCapSource).toBe("effectiveContextCapNano");
+    });
+
+    it("frontier budget is uncapped: raw equals effective and source is none", () => {
+      const budget = computeTokenBudgetForProfile(FRONTIER_PROFILE, S, P, -1);
+      expect(budget.rawContextWindowTokens).toBe(256_000);
+      expect(budget.windowTokens).toBe(256_000);
+      expect(budget.windowCapSource).toBe("none");
+    });
+
+    it("explicit effectiveContextCapSmall=0 disables the cap and reports source none", () => {
+      const budget = computeTokenBudgetForProfile(SMALL_256K_PROFILE, S, P, -1, 0);
+      expect(budget.windowTokens).toBe(256_000);
+      expect(budget.rawContextWindowTokens).toBe(256_000);
+      expect(budget.windowCapSource).toBe("none");
+    });
+
+    it("small model whose declared window already fits under the cap reports source none (8K-starvation path)", () => {
+      const profile: ModelProfile = {
+        ...SMALL_256K_PROFILE,
+        contextWindow: 8_000,
+        maxOutputTokens: 4_096,
+      };
+      const budget = computeTokenBudgetForProfile(profile, 2_000, 500);
+      expect(budget.windowTokens).toBe(8_000);
+      expect(budget.rawContextWindowTokens).toBe(8_000);
+      expect(budget.windowCapSource).toBe("none");
+    });
+  });
 });

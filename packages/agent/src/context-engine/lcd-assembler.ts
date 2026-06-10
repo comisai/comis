@@ -450,6 +450,12 @@ export function createLcdContextEngine(
         budgeted.length,
         freshTail,
         (profile.reasoningStyle ?? "none") as "none" | "native",
+        // W1 cap provenance: lets the exhaustion throw/WARN name the raw
+        // declared window and the contextEngine.budget.* knob that clamped it.
+        {
+          rawContextWindowTokens: budget.rawContextWindowTokens,
+          windowCapSource: budget.windowCapSource,
+        },
       );
 
       deps.logger.info(

@@ -119,6 +119,86 @@ describe("OF-01: pre-flight counts systemTokens in the assembled-input fit check
 });
 
 // ---------------------------------------------------------------------------
+// W1 (obs-llm-troubleshooting): capped-window provenance must reach the throw
+// and the exhaustion WARN. Live incident: the WARN said effectiveWindow=32000
+// while config declared 131072 — the clamp (effectiveContextCapSmall) was
+// invisible from the log line and the error string.
+// ---------------------------------------------------------------------------
+describe("capped-window provenance in the exhaustion throw and WARN", () => {
+  it("the thrown error names the cap knob when capInfo reports a capped window", () => {
+    const deps = makeDeps({
+      getThinkingLevel: () => "high",
+      getSystemTokensEstimate: () => 25_584,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      onThinkingDownshifted: vi.fn(),
+      eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
+    });
+    const freshTail = [{ role: "user", content: "x".repeat(21_000) }]; // ~6000 tokens
+    let thrown: unknown;
+    try {
+      runPreflightFitCheck(deps, 32_000, [], 0, freshTail as never, "native", {
+        rawContextWindowTokens: 131_072,
+        windowCapSource: "effectiveContextCapSmall",
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ContextExhaustionError);
+    const message = (thrown as Error).message;
+    expect(message).toContain("131072");
+    expect(message).toContain("contextEngine.budget.effectiveContextCapSmall");
+  });
+
+  it("the exhaustion WARN payload carries rawContextWindowTokens and windowCapSource", () => {
+    const logger = makeLogger();
+    const deps = makeDeps({
+      logger: logger as unknown as ContextEngineDeps["logger"],
+      getThinkingLevel: () => "high",
+      getSystemTokensEstimate: () => 25_584,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      onThinkingDownshifted: vi.fn(),
+      eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
+    });
+    const freshTail = [{ role: "user", content: "x".repeat(21_000) }];
+    expect(() =>
+      runPreflightFitCheck(deps, 32_000, [], 0, freshTail as never, "native", {
+        rawContextWindowTokens: 131_072,
+        windowCapSource: "effectiveContextCapSmall",
+      }),
+    ).toThrow(ContextExhaustionError);
+    const exhaustionWarn = logger.warn.mock.calls.find(
+      (c) => c[1] === "pre-flight fit check: context exhausted",
+    );
+    expect(exhaustionWarn).toBeDefined();
+    const payload = exhaustionWarn?.[0] as Record<string, unknown>;
+    expect(payload.rawContextWindowTokens).toBe(131_072);
+    expect(payload.windowCapSource).toBe("effectiveContextCapSmall");
+  });
+
+  it("omitting capInfo keeps the throw message in the uncapped form (no knob mention)", () => {
+    const deps = makeDeps({
+      getThinkingLevel: () => "high",
+      getSystemTokensEstimate: () => 25_584,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      onThinkingDownshifted: vi.fn(),
+      eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
+    });
+    const freshTail = [{ role: "user", content: "x".repeat(21_000) }];
+    let thrown: unknown;
+    try {
+      runPreflightFitCheck(deps, 32_000, [], 0, freshTail as never, "native");
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ContextExhaustionError);
+    expect((thrown as Error).message).not.toContain("effectiveContextCapSmall");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WR-01: errorKind "resource" in WARN calls
 // ---------------------------------------------------------------------------
 
