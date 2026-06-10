@@ -1997,3 +1997,38 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     // No ContextExhaustionError thrown — frontier turns never reach the governor
   });
 });
+
+// ---------------------------------------------------------------------------
+// W5 (obs-llm-troubleshooting): the per-turn INFO line must carry the budget
+// equation. The live incident's budget numbers lived only on DEBUG lines, so a
+// daemon at the default info level had NO record of why a turn exhausted.
+// ---------------------------------------------------------------------------
+describe("lcd-assemble INFO budget line (W5)", () => {
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("logs the budget equation fields on the INFO 'lcd context assembled' line", async () => {
+    const live: AgentMessage[] = [userMsg("u0") as AgentMessage];
+    append(store, live[0] as Message, 0);
+
+    const { deps, logger } = makeDeps(store);
+    const engine = createLcdContextEngine(dagConfig(8), deps);
+    await engine.transformContext(live);
+
+    const infoCall = logger.info.mock.calls.find((c) => c[1] === "lcd context assembled");
+    expect(infoCall).toBeDefined();
+    const payload = infoCall?.[0] as Record<string, unknown>;
+    expect(typeof payload.windowTokens).toBe("number");
+    expect(typeof payload.rawContextWindowTokens).toBe("number");
+    expect(typeof payload.windowCapSource).toBe("string");
+    expect(typeof payload.systemTokens).toBe("number");
+    expect(typeof payload.freshTailPreambleTokens).toBe("number");
+    expect(typeof payload.availableHistoryTokens).toBe("number");
+    expect(typeof payload.assembledInputTokens).toBe("number");
+  });
+});

@@ -602,3 +602,21 @@ describe("runPreflightFitCheck escalation ladder", () => {
     expect(() => runPreflightFitCheck(deps, 2_000, evictable, 4, [], "none")).toThrow(ContextExhaustionError);
   });
 });
+
+// ---------------------------------------------------------------------------
+// W5 (obs-llm-troubleshooting): the fit check returns the ORIGINAL assembled
+// count so the assembler's INFO line can log the full budget equation.
+// ---------------------------------------------------------------------------
+describe("runPreflightFitCheck return value (W5)", () => {
+  it("returns the original assembled input token count for the INFO budget line", () => {
+    const deps = makeDeps({
+      getThinkingLevel: () => "high",
+      getSystemTokensEstimate: () => 1_000,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+    });
+    const evictable = makeBudgetItems(2, 100); // 200 history tokens
+    const assembled = runPreflightFitCheck(deps, 32_000, evictable, 2, [], "native");
+    expect(assembled).toBe(1_200);
+  });
+});

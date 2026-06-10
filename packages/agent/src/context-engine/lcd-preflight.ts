@@ -48,6 +48,8 @@ const VALID_LEVELS: readonly TLevel[] = ["off", "minimal", "low", "medium", "hig
  *
  * Throws ContextExhaustionError if infeasible even at the thinking-level floor.
  * Emits onEffectiveWindow, onThinkingDownshifted, onAssembledInputTokens callbacks as side effects.
+ * Returns the ORIGINAL assembled input token count (CR-03 — what is actually
+ * dispatched) so the assembler's INFO line can log the budget equation (W5).
  */
 export function runPreflightFitCheck(
   deps: ContextEngineDeps,
@@ -57,7 +59,7 @@ export function runPreflightFitCheck(
   freshTail: AgentMessage[],
   reasoningStyle: "none" | "native",
   capInfo?: ContextWindowCapInfo,
-): void {
+): number {
   // Emit effectiveWindow callback so Plan 04 can clamp max_tokens dynamically.
   deps.onEffectiveWindow?.(effectiveWindow);
 
@@ -236,4 +238,6 @@ export function runPreflightFitCheck(
   // the governor fired (the loop reassigns it), so the event reports the headroom
   // the dispatch will actually run with.
   emitBudgetComputed(governorFired ? "downshifted" : "fits", originalAssembledInputTokens, outputHeadroom);
+
+  return originalAssembledInputTokens;
 }
