@@ -262,6 +262,15 @@ export interface IncidentSignals {
   hasMisclassificationSignal: boolean; // ≥N success:true co-existing with ≥N "Tool execution failed" + "status"/"403"/"200" substring in an errorText
   misclassifiedTool?: string;
   misclassifiedToken?: string; // e.g. "403"|"status"|"200"
+  /** GBNF-02: derived from `execution.tool_schema_unsupported` trajectory records
+   *  (last record wins — one strip-retry per session means at most a handful).
+   *  Content-free by construction: tool + keyword NAMES only. */
+  toolSchemaUnsupported?: {
+    toolNames: string[];
+    strippedKeywords: string[];
+    retried: boolean;
+    succeeded: boolean;
+  };
   /**
    * The mapped terminal `endReason` (the NAMED degradation cause — QT2/QT3 Glass
    * Box degradation detectors). Metadata-derived (NOT from the trajectory record

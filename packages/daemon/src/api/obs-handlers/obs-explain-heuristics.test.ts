@@ -341,3 +341,103 @@ describe("context_exhausted with budget evidence (W3)", () => {
     expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// GBNF-02 (Phase 175): tool_schema_unsupported — an acute, deterministic
+// provider-schema rejection (grammar-compile/unmarshal 400). Placement is the
+// ordering contract: AFTER the two X3-mandated codes (their frozen 678/503
+// fixtures carry no schema-rejection records, so they cannot regress), BEFORE
+// the insurance codes, and out-ranking the terminal-state explainers. Fires
+// only when the one-shot strip-retry did NOT recover — a recovered repair is
+// evidence, not a verdict.
+// ---------------------------------------------------------------------------
+
+describe("tool_schema_unsupported (GBNF-02)", () => {
+  const UNRECOVERED = {
+    toolNames: ["schedule_task"],
+    strippedKeywords: ["pattern", "format"],
+    retried: true,
+    succeeded: false,
+  };
+
+  it("an unrecovered strip-retry names the tool, the attempted strip-retry, and the toolSchemaProfile knob", () => {
+    const r = rootCause(makeSignals({ toolSchemaUnsupported: UNRECOVERED }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("tool_schema_unsupported");
+    expect(r!.detail).toContain("schedule_task");
+    expect(r!.detail).toContain("strip-pattern/format-retry");
+    expect(r!.suggestedNextSteps[0]).toContain("comisCompat.toolSchemaProfile");
+  });
+
+  it("a RECOVERED repair (succeeded:true) does not fire — the repair is evidence, not the session's root cause", () => {
+    const r = rootCause(makeSignals({ toolSchemaUnsupported: { ...UNRECOVERED, succeeded: true } }));
+    expect(r).toBeNull();
+  });
+
+  it("retried:false explains that nothing was strippable so no retry was attempted", () => {
+    const r = rootCause(makeSignals({ toolSchemaUnsupported: { ...UNRECOVERED, retried: false } }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("tool_schema_unsupported");
+    expect(r!.detail).toContain("nothing strippable");
+  });
+
+  it("PRIORITY: the misclassification signal out-ranks tool_schema_unsupported (below X3 code #1)", () => {
+    const r = rootCause(
+      makeSignals({
+        toolSchemaUnsupported: UNRECOVERED,
+        hasMisclassificationSignal: true,
+        misclassifiedTool: "web_fetch",
+        misclassifiedToken: "403",
+      }),
+    );
+    expect(r!.code).toBe("content_heuristic_misclassification");
+  });
+
+  it("PRIORITY: the breaker rule out-ranks tool_schema_unsupported (below X3 code #2)", () => {
+    const r = rootCause(
+      makeSignals({
+        toolSchemaUnsupported: UNRECOVERED,
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: "web_fetch",
+        repeatedFailureCount: { web_fetch: 5 },
+        mostFailedTool: "web_fetch",
+      }),
+    );
+    expect(r!.code).toBe("breaker_opened_repeated_failure");
+  });
+
+  it("PRIORITY: tool_schema_unsupported out-ranks the terminal-state explainer (acute cause over endReason)", () => {
+    const r = rootCause(
+      makeSignals({ toolSchemaUnsupported: UNRECOVERED, endReason: "context_exhausted" }),
+    );
+    expect(r!.code).toBe("tool_schema_unsupported");
+  });
+
+  it("PRIORITY: tool_schema_unsupported out-ranks the insurance codes (sits before provider_timeout)", () => {
+    const r = rootCause(
+      makeSignals({
+        toolSchemaUnsupported: UNRECOVERED,
+        failures: [
+          {
+            seq: 0,
+            toolName: "llm_call",
+            classifiedFailureBy: "",
+            transportOk: false,
+            errorKind: "timeout",
+            resultDigest: "d",
+            resultBytes: 1,
+            errorPreview: "timed out",
+          },
+        ],
+      }),
+    );
+    expect(r!.code).toBe("tool_schema_unsupported");
+  });
+
+  it("empty toolNames degrades the detail to [unknown] instead of an empty bracket pair", () => {
+    const r = rootCause(makeSignals({ toolSchemaUnsupported: { ...UNRECOVERED, toolNames: [] } }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("tool_schema_unsupported");
+    expect(r!.detail).toContain("[unknown]");
+  });
+});
