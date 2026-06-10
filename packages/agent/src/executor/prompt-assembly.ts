@@ -360,6 +360,12 @@ export interface PromptAssemblyParams {
      *  no query runs and the pipeline is byte-identical to pre-pinning. Passed from PiExecutorDeps
      *  → PromptAssemblyParams.deps → createMemoryRecall. TYPE-only (the agent↛memory build cut). */
     pinnedStore?: import("@comis/core").MemoryPinnedStore;
+    /** Optional LCD provenance read store for createMemoryRecall's post-fusion
+     *  provenance down-weighting pass (Phase 173, DIST-03 read side — the C1→C2
+     *  carry-in). DEFAULT-OFF BYTE-IDENTITY: absent OR no lcd_distilled result → no
+     *  read, recall order unchanged. Passed from PiExecutorDeps → PromptAssemblyParams.deps
+     *  → createMemoryRecall. TYPE-only (the agent↛memory build cut). */
+    provenanceStore?: import("@comis/core").LcdProvenanceReadStore;
     /** Optional learned-alpha store for the deterministic apply overlay
      *  (default-OFF via config.rag.onlineTuning). Gated read → buildScoringAlphas overlays
      *  the four non-trust weights; absent / off / no-row ⇒ no read, the static
@@ -926,6 +932,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           // PiExecutorDeps.pinnedStore → PromptAssemblyParams.deps.pinnedStore. Default-OFF
           // byte-identity: with `rag.pinned.enabled=false` (the default) no query runs.
           ...(deps.pinnedStore !== undefined ? { pinnedStore: deps.pinnedStore } : {}),
+          // DIST-03 (Phase 173, the C1→C2 carry-in): thread the provenance read
+          // store so createMemoryRecall's post-fusion down-weighting pass can fire
+          // live. The daemon composition root threads it here through
+          // PiExecutorDeps.provenanceStore → PromptAssemblyParams.deps.provenanceStore.
+          // DEFAULT-OFF byte-identity: absent OR no lcd_distilled result → no read.
+          ...(deps.provenanceStore !== undefined ? { provenanceStore: deps.provenanceStore } : {}),
           timers: deps.timers,
           clock: deps.clock,
           logger,

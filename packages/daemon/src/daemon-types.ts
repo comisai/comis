@@ -405,6 +405,12 @@ export interface BootContext {
    *  engine is opt-in (`contextEngine.version: "dag"`); the default stays pipeline,
    *  so absent/unselected this is dormant. */
   lcdStore: Awaited<ReturnType<typeof setupMemory>>["lcdStore"];
+  /** LCD provenance READ store (Phase 173, DIST-03 read side) — threaded into
+   *  setupAgents → createPiExecutor → prompt-assembly → createMemoryRecall's
+   *  post-fusion provenance down-weighting pass. Built in setup-memory on the
+   *  shared db (`buildProvenanceReadStore(db)`); the agent receives the core
+   *  LcdProvenanceReadStore TYPE only (the agent↛memory cut). */
+  provenanceStore: Awaited<ReturnType<typeof setupMemory>>["provenanceStore"];
   /** LCD read-only operator-browse store (ContextBrowsePort) — threaded into the
    *  context.* RPC dispatch deps to back the Context DAG browser's
    *  context.conversations. Built in setup-memory on the shared db

@@ -118,11 +118,11 @@ export interface MemoryRecallDeps {
    * Absent / no lcd_distilled result → NO-OP (byte-identical; getProvenanceForSummary is
    * never called). A FAILED pass is NON-FATAL (WARN + recall results unaffected). DEFAULT-OFF.
    *
-   * ⚠ NOT INJECTED IN PRODUCTION AS OF PHASE 172 (C1). No concrete LcdProvenanceReadStore
-   * adapter is constructed or threaded at the composition root yet — Phase 172 is
-   * write-side-only with a HARD zero-assembly-path-diff guarantee. Injection (+ the
-   * `summary:<id>` tag on distilled memories) is DEFERRED TO PHASE 173 (C2, which owns the
-   * assembly risk) per design §6.2 + the Phase-C split. Built + test-pinned here, dormant live.
+   * INJECTED AT THE COMPOSITION ROOT IN PHASE 173 (C2): the daemon builds the concrete
+   * LcdProvenanceReadStore (setup-memory's buildProvenanceReadStore) and threads it here,
+   * and the distillation runner stamps the `summary:<id>` tag — so the precise-provenance
+   * branch is the primary selector. The pass is live but stays a byte-identical no-op when
+   * this store is absent (e.g. a unit harness that omits it).
    */
   provenanceStore?: LcdProvenanceReadStore;
   /** Timer port for the rerank wall-clock deadline. Absent -> no timeout wrap. */

@@ -24,6 +24,7 @@ import type {
   MemoryEmbeddingStore,
   MemoryUsefulnessStore,
   MemoryPinnedStore,
+  LcdProvenanceReadStore,
   TunedAlphaStore,
   UserRepresentationStore,
   RelationshipStore,
@@ -157,6 +158,17 @@ export interface PiExecutorDeps {
    *  (the R6 blocker). DEFAULT-OFF BYTE-IDENTITY: with `rag.pinned.enabled=false` or absent,
    *  no pinnedStore query runs. TYPE-only from @comis/core (the agent↛memory cut). */
   pinnedStore?: MemoryPinnedStore;
+  /** Optional LCD provenance read store (Phase 173, DIST-03 read side — the C1→C2
+   *  carry-in). Built in the daemon on the shared memory db handle
+   *  (buildProvenanceReadStore); threaded into prompt-assembly's createMemoryRecall.
+   *  When present AND a recalled distilled summary carries the `summary:<id>` tag, the
+   *  post-fusion provenance pass down-weights (×0.5, NEVER deletes) the EXACT
+   *  provenance-linked paired memories. Without this forward the pass gate
+   *  (`deps.provenanceStore != null`) is always false and the pass is a silent no-op —
+   *  the "built-but-not-wired" blocker the milestone hit 3×. DEFAULT-OFF BYTE-IDENTITY:
+   *  absent OR no lcd_distilled result -> no read, recall order unchanged. TYPE-only from
+   *  @comis/core — the agent never imports the memory package (the agent↛memory cut). */
+  provenanceStore?: LcdProvenanceReadStore;
   /** Optional learned-alpha store. Built in the daemon on the shared memory db handle;
    *  threaded into prompt-assembly's deterministic apply overlay (the gated buildScoringAlphas read)
    *  via ToolAssemblyDeps. Absent or flag-off -> no read, the static config.rag.scoring alphas pass

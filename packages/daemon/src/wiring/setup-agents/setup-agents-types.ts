@@ -124,6 +124,13 @@ export interface SingleAgentDeps {
    *  query runs even when the store is injected. The segregated port TYPE is from @comis/core
    *  (the agent↛memory cut) — the agent package never imports @comis/memory. */
   pinnedStore?: import("@comis/core").MemoryPinnedStore;
+  /** LCD provenance READ store (Phase 173, DIST-03 read side). Supplied to each
+   *  per-agent createPiExecutor so createMemoryRecall's post-fusion provenance
+   *  down-weighting pass fires (gate `deps.provenanceStore != null`) — it was BUILT
+   *  but never injected in Phase 172 (the built-but-not-wired class the milestone
+   *  hit 3×). Byte-identical no-op when absent OR when no lcd_distilled result is
+   *  present. The core LcdProvenanceReadStore TYPE only (the agent↛memory cut). */
+  provenanceStore?: import("@comis/core").LcdProvenanceReadStore;
   /** Per-user representation store. Threaded into each per-agent
    *  createPiExecutor (the executor recall read path -> prompt-assembly's LLM-free `<user_profile>`
    *  standing-block injection). Built in setup-memory on the shared db handle; the segregated port

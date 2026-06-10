@@ -21,11 +21,11 @@
  * Architecture cut (agent↛memory): TYPE-only imports from @comis/core. This file NEVER
  * imports @comis/memory.
  *
- * ⚠ DORMANT IN PRODUCTION AS OF PHASE 172 (C1): the caller's `provenanceStore` is not
- * injected at the composition root and no concrete LcdProvenanceReadStore adapter exists
- * yet, so this helper is BUILT + test-pinned but never runs live. Phase 172 is
- * write-side-only with a HARD zero-assembly-path-diff guarantee; wiring this recall pass
- * is DEFERRED TO PHASE 173 (C2) per design §6.2 + the Phase-C split.
+ * LIVE AS OF PHASE 173 (C2): the caller's `provenanceStore` is now injected at the
+ * composition root (setup-memory builds the concrete LcdProvenanceReadStore and threads it
+ * to createMemoryRecall) and the distillation runner stamps the `summary:<id>` tag, so the
+ * PROVENANCE-PRECISE branch is the primary selector. The helper itself is UNCHANGED — it
+ * remains a byte-identical no-op when no lcd_distilled result is present.
  *
  * @module
  */

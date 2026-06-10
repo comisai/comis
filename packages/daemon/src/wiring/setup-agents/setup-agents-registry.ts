@@ -206,8 +206,7 @@ export async function setupAgents(deps: {
   /** Embedding read store. Threaded into each per-agent createPiExecutor like
    *  entityStore (the recall MMR diversity re-rank's scoped embedding read). Built in setup-memory on the shared db. */
   embeddingStore?: import("@comis/core").MemoryEmbeddingStore;
-  /** Usefulness store. Threaded into each per-agent createPiExecutor
-   *  like entityStore (the recall usefulness read path). Built in setup-memory on the shared db. */
+  /** Usefulness store. Threaded into each per-agent createPiExecutor like entityStore (the recall usefulness read path). Built in setup-memory on the shared db. */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
   /** Pinned-memory store (the `MemoryPinnedStore` face of `memoryAdapter`). Threaded into
    *  each per-agent createPiExecutor so the recall pipeline's Step-0 pinned-first lane can fire.
@@ -216,6 +215,7 @@ export async function setupAgents(deps: {
    *  implements `MemoryPinnedStore`; the daemon supplies it here as the segregated port TYPE.
    *  Built in setup-memory on the shared db. */
   pinnedStore?: import("@comis/core").MemoryPinnedStore;
+  provenanceStore?: import("@comis/core").LcdProvenanceReadStore; // LCD provenance READ store (Phase 173, DIST-03) → createPiExecutor → createMemoryRecall down-weighting (built-but-not-wired fix); built in setup-memory; core TYPE only (agent↛memory cut)
   /** Per-user representation store. Threaded into each per-agent
    *  createPiExecutor like entityStore (the recall LLM-free `<user_profile>` injection read path).
    *  Built in setup-memory on the shared db. */
@@ -470,6 +470,7 @@ export async function setupAgents(deps: {
     embeddingStore: deps.embeddingStore,
     usefulnessStore: deps.usefulnessStore,
     pinnedStore: deps.pinnedStore,
+    provenanceStore: deps.provenanceStore,
     userRepresentationStore: deps.userRepresentationStore,
     relationshipStore: deps.relationshipStore,
     tunedAlphaStore: deps.tunedAlphaStore,

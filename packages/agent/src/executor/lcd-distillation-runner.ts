@@ -278,7 +278,12 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
         who: "lcd_distillation",
         sessionKey: scope.sessionKey,
       },
-      tags: ["lcd_distilled", `depth:${depth}`],
+      // The summary:<id> tag (Phase 173, DIST-03 carry-in) keys the recall
+      // provenance pass's PROVENANCE-PRECISE branch (recall-provenance.ts:88,
+      // SUMMARY_TAG_PREFIX="summary:") so it can query getProvenanceForSummary for
+      // the EXACT linked memoryIds this distilled summary subsumes. It adds an id
+      // only — NO content (Security Domain V8).
+      tags: ["lcd_distilled", `depth:${depth}`, `summary:${summaryId}`],
       createdAt: now,
     });
     if (!storeResult.ok) {

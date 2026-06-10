@@ -31,6 +31,7 @@
 // @comis/core types it uses DIRECTLY in the pipeline body (the usefulness side-map +
 // the trust-filter set); the agent↛memory cut holds (every store is a @comis/core port TYPE).
 import type { UsefulnessSignal, TrustLevel, ContextStoreScope } from "@comis/core";
+import { formatSessionKey } from "@comis/core";
 import { ok, withTimeout, TimeoutError } from "@comis/shared";
 import { fuse, type FusionLane } from "./fuse.js";
 import { scoreWithBreakdown, type ScoreBreakdown } from "./score.js";
@@ -695,17 +696,13 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       //     WARN — recall results are NEVER affected. TYPE-only provenanceStore port
       //     (the agent↛memory build cut).
       //
-      //     ⚠ NOT WIRED IN PRODUCTION AS OF PHASE 172 (C1). This pass is BUILT and
-      //     test-pinned here, but `provenanceStore` is INTENTIONALLY not injected at the
-      //     composition root — Phase 172 (C1) is write-side-only with a HARD
-      //     zero-assembly-path-diff guarantee, so activating a recall-altering pass here
-      //     would violate it. Per design `design/lcd-v3-unified-substrate.md` §6.2 + the
-      //     Phase-C split, activation — provenanceStore injection + a concrete
-      //     LcdProvenanceReadStore adapter (getProvenanceForSummary) + stamping the
-      //     `summary:<id>` tag on distilled memories + the formatSessionKey fix on the
-      //     scope below (currently String(sessionKey) → "[object Object]", harmless only
-      //     while dormant) — is DEFERRED TO PHASE 173 (C2), which owns the assembly risk.
-      //     Until then this `if` is dead in production (provenanceStore == null).
+      //     LIVE AS OF PHASE 173 (C2): provenanceStore is now injected at the
+      //     composition root (setup-memory builds the concrete LcdProvenanceReadStore
+      //     and threads it daemon → setup-agents → pi-executor → prompt-assembly →
+      //     here), and the distillation runner stamps the `summary:<id>` tag, so the
+      //     PROVENANCE-PRECISE branch is the primary selector. The pass still
+      //     down-weights only (×0.5, NEVER deletes) and is a byte-identical no-op
+      //     when the store is absent OR no lcd_distilled result is present.
       if (deps.provenanceStore != null) {
         try {
           const provenanceScope: ContextStoreScope = {
@@ -714,8 +711,9 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
             // conversationId/sessionKey are not load-bearing for the (tenant, agent)-scoped
             // getProvenanceForSummary read, but the port takes a full scope — fill them from
             // the session key so the adapter's R4 filter has the complete context.
+            // IN-02 fix: formatSessionKey (not String(sessionKey) → "[object Object]").
             conversationId: sessionKey.channelId ?? "",
-            sessionKey: String(sessionKey),
+            sessionKey: formatSessionKey(sessionKey),
           };
           ranked = applyProvenanceDownweighting(ranked, deps.provenanceStore, provenanceScope);
         } catch (err) {

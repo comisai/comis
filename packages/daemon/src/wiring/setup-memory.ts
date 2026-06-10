@@ -19,6 +19,7 @@ import {
   SqliteMemoryAdapter,
   createSessionStore,
   createLcdStore,
+  buildProvenanceReadStore,
   createLcdBrowseStore, createMemoryApi,
   createEmbeddingProvider,
   createCachedEmbeddingPort,
@@ -65,6 +66,7 @@ export interface MemoryResult {
   sessionStore: ReturnType<typeof createSessionStore>;
   /** LCD lossless context store (Phase 127); the live append-on-turn write-path is wired in Phase 128. */
   lcdStore: ReturnType<typeof createLcdStore>;
+  provenanceStore: ReturnType<typeof buildProvenanceReadStore>; // LCD provenance READ store (Phase 173, DIST-03) → createMemoryRecall's down-weighting pass; core TYPE only (agent↛memory cut)
   contextBrowse: ReturnType<typeof createLcdBrowseStore>; // ContextBrowsePort — backs context.conversations
   /** High-level memory query/store API. */
   memoryApi: MemoryApi;
@@ -76,10 +78,7 @@ export interface MemoryResult {
   embeddingCacheStats?: () => import("@comis/memory").EmbeddingCacheStats;
   /** Embedding circuit breaker state accessor for memory persistence operations. */
   embeddingCircuitBreakerState?: () => import("@comis/agent").CircuitState;
-  /** R1 (132-05): the daemon-owned per-tenant summarizer spend+breaker. ONE
-   *  instance (mirrors the embedding breaker) injected through setupAgents ->
-   *  createPiExecutor -> setupContextEngine so the leaf seam is gated per tenant
-   *  and bounds AGGREGATE summarizer spend across a tenant's sessions/agents. */
+  /** R1 (132-05): daemon-owned per-tenant summarizer spend+breaker. ONE instance (mirrors the embedding breaker) injected setupAgents -> createPiExecutor -> setupContextEngine; gated per tenant, bounds AGGREGATE spend. */
   summarizerSpendBreaker: SummarizerSpendBreaker;
   /** Cross-encoder reranker port. Defined only when at least one agent has
    *  `rag.rerank.enabled === true` AND the model loaded — otherwise undefined and recall
@@ -741,6 +740,7 @@ export async function setupMemory(deps: {
 
   const sessionStore = createSessionStore(db);
   const lcdStore = createLcdStore(db);
+  const provenanceStore = buildProvenanceReadStore(db); // DIST-03 read side (Phase 173 carry-in); same db handle; threaded to createMemoryRecall's down-weighting pass (built-but-not-wired fix)
   const contextBrowse = createLcdBrowseStore(db); // ContextBrowsePort (context.conversations)
   const memoryApi: MemoryApi = createMemoryApi(db, memoryAdapter, sessionStore, memoryConfig);
   memoryLogger.debug(
@@ -772,7 +772,7 @@ export async function setupMemory(deps: {
     memoryAdapter,
     db,
     sessionStore,
-    lcdStore, contextBrowse,
+    lcdStore, provenanceStore, contextBrowse,
     memoryApi,
     embeddingQueue,
     backgroundIndexingPromise,
