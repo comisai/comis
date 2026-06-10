@@ -2481,9 +2481,22 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     const arb = emit.mock.calls.find(([n]) => n === "context:arbitrated");
     expect(arb).toBeDefined();
     const payload = arb![1] as Record<string, unknown>;
-    // CONTENT-FREE: exactly the counts/ids/boolean/timestamp keys — nothing else.
+    // CONTENT-FREE: exactly the counts/ids/tokens/boolean/timestamp keys — nothing else.
+    // WR-03 adds poolTokensUsed + floorTokens (consumed vs offered + the floor weight).
+    // WR-02 adds keptLtmIds + keptKgIds (the content-free ids the type doc promises).
     expect(Object.keys(payload).sort()).toEqual(
-      ["agentId", "discretionaryPoolTokens", "perTierKept", "relevanceFirst", "sessionKey", "timestamp"].sort(),
+      [
+        "agentId",
+        "discretionaryPoolTokens",
+        "floorTokens",
+        "keptKgIds",
+        "keptLtmIds",
+        "perTierKept",
+        "poolTokensUsed",
+        "relevanceFirst",
+        "sessionKey",
+        "timestamp",
+      ].sort(),
     );
     expect(payload.relevanceFirst).toBe(true);
     expect(typeof payload.discretionaryPoolTokens).toBe("number");
@@ -2493,6 +2506,48 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
     // perTierKept is a counts map (history/ltm/kg) — no content strings.
     const perTier = payload.perTierKept as Record<string, unknown>;
     expect(typeof perTier.history).toBe("number");
+    // WR-03: poolTokensUsed (CONSUMED) + floorTokens are numeric and content-free.
+    expect(typeof payload.poolTokensUsed).toBe("number");
+    expect(typeof payload.floorTokens).toBe("number");
+    // poolTokensUsed (consumed) never exceeds discretionaryPoolTokens (offered).
+    expect(payload.poolTokensUsed as number).toBeLessThanOrEqual(payload.discretionaryPoolTokens as number);
+    // WR-02: keptLtmIds/keptKgIds are id arrays (empty on the C2 history-only path) — ids only.
+    expect(Array.isArray(payload.keptLtmIds)).toBe(true);
+    expect(Array.isArray(payload.keptKgIds)).toBe(true);
+  });
+
+  it("Test 8 (WR-03 observability): context:arbitrated surfaces poolTokensUsed (consumed), distinct from discretionaryPoolTokens (offered)", async () => {
+    // The small-model context-exhaustion bar (§2.7): an operator must be able to tell the
+    // budget OFFERED from the budget CONSUMED. Pre-patch the event only carried
+    // discretionaryPoolTokens (the input pool) and dropped poolTokensUsed entirely, so the
+    // S4-pinned floors blowing past the pool was invisible. RED on pre-patch: the payload
+    // has no poolTokensUsed / floorTokens / keptLtmIds / keptKgIds keys.
+    seedTurns(8, 600);
+    const live: AgentMessage[] = [];
+    for (let i = 0; i < 8; i++) {
+      live.push(userMsg(`u${i}`) as AgentMessage);
+      live.push(assistantText(`a${i}`) as AgentMessage);
+    }
+    const emit = vi.fn<[string, unknown], void>();
+    const { deps } = makeDeps(store);
+    await createLcdContextEngine(dagConfig(1), {
+      ...deps,
+      getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
+      modelProfile: smallNoCacheProfile,
+      getThinkingLevel: () => "medium",
+      relevanceFirst: true,
+      eventBus: { emit },
+    }).transformContext(live);
+
+    const arb = emit.mock.calls.find(([n]) => n === "context:arbitrated");
+    expect(arb).toBeDefined();
+    const payload = arb![1] as Record<string, unknown>;
+    expect(payload).toHaveProperty("poolTokensUsed");
+    expect(payload).toHaveProperty("floorTokens");
+    expect(typeof payload.poolTokensUsed).toBe("number");
+    expect(typeof payload.floorTokens).toBe("number");
+    // Consumed ≤ offered (the budget non-regression invariant, now observable).
+    expect(payload.poolTokensUsed as number).toBeLessThanOrEqual(payload.discretionaryPoolTokens as number);
   });
 
   it("Test 7 (no over-allocate composes with Fix-3): assembled history tokens ≤ budget.availableHistoryTokens on the arbiter path", async () => {
