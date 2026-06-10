@@ -62,9 +62,9 @@ import {
   type NormalizedMessage,
   type PerAgentConfig,
 } from "@comis/core";
-import type { ErrorKind } from "@comis/core";
+import type { ErrorKind, ContextStoreScope } from "@comis/core";
 import { suppressError } from "@comis/shared";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { CommandDirectives } from "../command-directive-types.js";
 import type { StepCounter } from "../step-counter.js";
 import { createToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
@@ -85,6 +85,7 @@ import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
 import { wrapToolResultWithGuide } from "../jit-guide-injector.js";
 import { postExecution } from "../executor-post-execution.js";
+import { bootstrapLcdSweep } from "../lcd-bootstrap-sweep.js";
 import { assembleTools } from "../executor-tool-assembly.js";
 import {
   getDeliveredGuides,
@@ -1024,6 +1025,42 @@ async function runSessionLocked(
     // Re-assign to session.agent so the SDK calls the wrapped version
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (session.agent as any).transformContext = ceSetup.contextEngine.transformContext;
+  }
+
+  // DEPTH-03 (Plan 174-03): bootstrap crash-recovery sweep. Runs ONCE here at
+  // session start — after the context engine is wired, BEFORE the first turn's
+  // afterTurn ingest — so a mid-turn crash gap (messages written to the JSONL
+  // trajectory but never ingested into the durable LCD store because the daemon
+  // was killed before afterTurn) is continue-appended EXACTLY ONCE. The recovery
+  // is the EXISTING ingestTurnGuarded path (epoch cursor + fail-closed identity
+  // guard); this is only the bootstrap trigger. Exactly-once vs the first turn's
+  // afterTurn holds because the sweep bumps the durable cursor to live.length
+  // BEFORE the first turn runs (Pitfall 6 — the cursor is the guard). Gated on
+  // contextStore presence; bootstrapLcdSweep itself re-checks shouldRunLcdStorePasses
+  // (a pipeline agent / store-absent session does no sweep work). The scope is
+  // built exactly as the afterTurn block does so read scope == write scope
+  // (DAG-CRIT-1 / WR-02): conversationId === sessionKey === formattedKey,
+  // agentId === `agentId ?? "default"`.
+  if (frozenDeps.contextStore) {
+    const bootstrapScope: ContextStoreScope = {
+      conversationId: formattedKey,
+      tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
+      agentId: agentId ?? "default",
+      sessionKey: formattedKey,
+    };
+    // The JSONL-loaded live array (same ref executor-post-execution reads at the
+    // afterTurn site). Typed unknown on AgentSession — no public SDK type for it.
+    const bootstrapLive = ((session.agent as unknown as { state?: { messages?: unknown[] } }).state
+      ?.messages ?? []) as AgentMessage[];
+    await bootstrapLcdSweep({
+      store: frozenDeps.contextStore,
+      scope: bootstrapScope,
+      live: bootstrapLive,
+      clock: frozenDeps.clock,
+      logger: frozenDeps.logger,
+      eventBus: frozenDeps.eventBus,
+      config,
+    });
   }
 
   // Align register/deregister key shape with
