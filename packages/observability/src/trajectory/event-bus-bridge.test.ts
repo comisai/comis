@@ -797,6 +797,15 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       succeeded: true,
       timestamp: 0,
     },
+    "execution:tool_schema_unsupported": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern", "format"],
+      retried: true,
+      succeeded: true,
+      timestamp: 0,
+    },
     // scanned subset
     "security:injection_detected": {
       source: "user_input",
@@ -1423,6 +1432,49 @@ describe("queue + execution + sender bridge", () => {
     expect(data.blocksRemoved).toBe(2);
     expect(data.thoughtSignaturesStripped).toBe(1);
     expect(data.succeeded).toBe(true);
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  // GBNF-02 (Phase 175 Plan 05): the strip-retry self-heal event must be
+  // registered + bridged BEFORE the executor emit lands so the architecture
+  // test (trajectory-event-types-known) can never catch an unmapped emit.
+  // Payload is content-free per I7: tool + keyword NAMES only — never schema
+  // bodies and never the raw provider error body.
+  it("execution_tool_schema_unsupported_maps_to_execution.tool_schema_unsupported with toolNames/strippedKeywords/retried/succeeded; agentId/sessionKey stripped", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    // Mapping entry locked: "execution:tool_schema_unsupported" →
+    // "execution.tool_schema_unsupported" (full name — NOT shortened like
+    // signed_replay_recovered → replay_recovered).
+    expect(
+      (TRAJECTORY_BRIDGE_MAPPING as Record<string, string>)["execution:tool_schema_unsupported"],
+    ).toBe("execution.tool_schema_unsupported");
+    // The canonical record kind must be in the closed TrajectoryEventType union.
+    expect(TRAJECTORY_EVENT_TYPES).toContain("execution.tool_schema_unsupported");
+
+    bus.emit("execution:tool_schema_unsupported" as keyof EventMap, {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern", "format"],
+      retried: true,
+      succeeded: false,
+      timestamp: Date.now(),
+    } as never);
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.tool_schema_unsupported");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // All 4 payload fields survive translation (Plan 06's explain heuristic input).
+    expect(data.toolNames).toEqual(["schedule_task"]);
+    expect(data.strippedKeywords).toEqual(["pattern", "format"]);
+    expect(data.retried).toBe(true);
+    expect(data.succeeded).toBe(false);
+    // Envelope-only correlation keys are stripped from data.
     expect(data.agentId).toBeUndefined();
     expect(data.sessionKey).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
