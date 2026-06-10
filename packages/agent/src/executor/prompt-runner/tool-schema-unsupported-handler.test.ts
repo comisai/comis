@@ -21,6 +21,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { hostileMcpTool, wellFormedTool } from "../../provider/tool-schema/gbnf-hostile-fixtures.js";
+import { setSessionStateClock } from "../executor-session-state.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 import type { BridgeSnapshot, InvokeRetry, RetryState } from "./silent-failure-handlers.js";
 // Pre-patch this import crashes the suite (module missing) — intended RED
@@ -29,6 +30,10 @@ import {
   handleToolSchemaUnsupported,
   resetToolSchemaStripGateForTest,
 } from "./tool-schema-unsupported-handler.js";
+
+// Module-level clock for executor-session-state's bounded session map (the
+// CR-02 session-lifetime once-gate lives there now).
+setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
 
 // ---------------------------------------------------------------------------
 // Fakes (hand-built partials per AGENTS.md §2.5 — only what the SUT calls)

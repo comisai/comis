@@ -35,6 +35,11 @@ import { formatSessionKey } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
+import {
+  armReactiveSchemaStrip,
+  clearAllReactiveSchemaStripForTest,
+  isReactiveSchemaStripArmed,
+} from "../executor-session-state.js";
 import type { ModelRetryResult } from "../model-retry.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 import { applyReactiveSchemaStripInPlace } from "./tool-schema-strip.js";
@@ -55,16 +60,20 @@ type RetryInvoker = (
 ) => Promise<ModelRetryResult>;
 
 /**
- * Session-keyed once-gate (via `formatSessionKey`; the schema-snapshot /
- * deliveredGuides session-keyed store precedent). Bounded — one string per
- * session per process. The key is added BEFORE the retry fires so re-entry
- * during the retry cannot loop (T-175-14).
+ * The once-gate lives in executor-session-state.ts as a SESSION-LIFETIME
+ * flag (`sessionReactiveSchemaStrip`, keyed by `formatSessionKey` — the
+ * schema-snapshot / deliveredGuides precedent), NOT a process-lifetime Set
+ * (175-REVIEW CR-02): clearSessionState (session:expired +
+ * session.reset_conversation / session.delete) clears it so a reset session
+ * gets a fresh repair attempt, and the SAME flag drives the per-turn
+ * persisted strip (`applyPersistedReactiveStrip`) so a heal survives the
+ * snapshot→normalize rebuild on later turns. The key is armed BEFORE the
+ * retry fires so re-entry during the retry cannot loop (T-175-14).
  */
-const toolSchemaStripAttemptedSessions = new Set<string>();
 
-/** Test hook: clears the module-level once-gate between test cases. */
+/** Test hook: clears the session-keyed once-gate between test cases. */
 export function resetToolSchemaStripGateForTest(): void {
-  toolSchemaStripAttemptedSessions.clear();
+  clearAllReactiveSchemaStripForTest();
 }
 
 /** Terminal state shape mirroring handleClientRequest: honest classified
@@ -91,10 +100,12 @@ export async function handleToolSchemaUnsupported(
   const provider = params.resolvedModel?.provider;
   const modelId = params.resolvedModel?.id;
 
-  // Gate check FIRST: one strip-retry per session, ever. A second
-  // grammar-400 in the same session is honest classified failure with zero
-  // additional retries and zero fallback-model burn.
-  if (toolSchemaStripAttemptedSessions.has(key)) {
+  // Gate check FIRST: one strip-retry per session lifetime (cleared on
+  // session expiry/reset/delete). The persisted per-turn strip means a 400
+  // recurring behind the closed gate is a genuinely different schema problem
+  // — honest classified failure with zero additional retries and zero
+  // fallback-model burn.
+  if (isReactiveSchemaStripArmed(key)) {
     deps.logger.warn(
       {
         provider,
@@ -118,8 +129,10 @@ export async function handleToolSchemaUnsupported(
   }
 
   // Close the gate BEFORE invoking the retry — re-entry during the retry
-  // cannot loop back into the strip branch.
-  toolSchemaStripAttemptedSessions.add(key);
+  // cannot loop back into the strip branch. The same flag makes the per-turn
+  // assembly re-apply the strip on every later turn of this session
+  // (applyPersistedReactiveStrip), so the heal outlives this turn.
+  armReactiveSchemaStrip(key);
 
   const { strippedToolNames, strippedKeywords } = applyReactiveSchemaStripInPlace(
     params.mergedCustomTools,

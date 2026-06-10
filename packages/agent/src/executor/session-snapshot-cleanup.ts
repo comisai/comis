@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Session state cleanup: wires `session:expired` event to all 17
+ * Session state cleanup: wires `session:expired` event to the
  * module-level `clearSession*()` functions in prompt-assembly.ts,
- * pi-executor.ts, tool-lifecycle.ts, discovery-tracker.ts,
+ * executor-session-state.ts, tool-lifecycle.ts, discovery-tracker.ts,
  * cache-detection/, ttl-guard.ts, stream-wrappers.ts,
  * and block-stability-tracker.ts.
  *
@@ -16,7 +16,7 @@
 
 import { formatSessionKey, type SessionKey } from "@comis/core";
 import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearCacheSafeParams } from "./prompt-assembly.js";
-import { clearSessionDeliveredGuides, clearSessionToolSchemaSnapshot, clearSessionToolSchemaSnapshotHash, clearSessionBreakpointIndex, clearSessionCacheWarm, clearSessionLatches, clearSessionEvictionCooldown, clearSessionCacheSavings } from "./executor-session-state.js";
+import { clearSessionDeliveredGuides, clearSessionToolSchemaSnapshot, clearSessionToolSchemaSnapshotHash, clearSessionBreakpointIndex, clearSessionCacheWarm, clearSessionLatches, clearSessionEvictionCooldown, clearSessionCacheSavings, clearSessionReactiveSchemaStrip } from "./executor-session-state.js";
 import { clearSessionTracker } from "./tool-lifecycle.js";
 import { clearDiscoveryTracker } from "./discovery-tracker.js";
 import { clearCacheBreakDetectorSession } from "./cache-detection/index.js";
@@ -38,6 +38,7 @@ export function clearSessionState(formattedKey: string): void {
   clearSessionDeliveredGuides(formattedKey);
   clearSessionToolSchemaSnapshot(formattedKey);
   clearSessionToolSchemaSnapshotHash(formattedKey);
+  clearSessionReactiveSchemaStrip(formattedKey);
   clearSessionBreakpointIndex(formattedKey);
   clearSessionCacheWarm(formattedKey);
   clearSessionTracker(formattedKey);

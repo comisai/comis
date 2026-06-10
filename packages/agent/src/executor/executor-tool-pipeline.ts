@@ -22,10 +22,15 @@ import {
   setToolSchemaSnapshotHash,
   deleteToolSchemaSnapshots,
   computeToolCompositionHash,
+  isReactiveSchemaStripArmed,
 } from "./executor-session-state.js";
 import { createJitGuideWrapper } from "./jit-guide-injector.js";
 import { pruneToolSchemas } from "../safety/tool-schema-safety.js";
 import { normalizeToolSchemasForProvider } from "../provider/tool-schema/normalize.js";
+import {
+  stripSchemaKeywordsDeep,
+  REACTIVE_STRIP_KEYWORDS,
+} from "./prompt-runner/tool-schema-strip.js";
 import { createMutationSerializer, isConcurrencySafe } from "./tool-parallelism.js";
 
 // ---------------------------------------------------------------------------
@@ -249,6 +254,44 @@ export function applyProviderNormalization(params: ProviderNormalizeParams): Too
   }
 
   return tools;
+}
+
+// ---------------------------------------------------------------------------
+// Persisted reactive schema strip (GBNF-02 / 175-REVIEW CR-02)
+// ---------------------------------------------------------------------------
+
+/** Parameters for the persisted reactive strip. */
+export interface PersistedReactiveStripParams {
+  tools: ToolDefinition[];
+  /** FORMATTED session key — the same key the schema snapshot uses. */
+  sessionKey: string;
+}
+
+/**
+ * Re-apply the session's reactive pattern/format strip AFTER provider
+ * normalization (CR-02). The strip-retry handler
+ * (tool-schema-unsupported-handler.ts) mutates THIS turn's wire objects for
+ * the in-flight retry, but every subsequent turn rebuilds `parameters` from
+ * the pre-strip schema snapshot — and gbnf normalization constructs
+ * brand-new parameter objects each turn — so without this step the
+ * unstripped `pattern`/`format` go back on the wire, the provider 400s
+ * again deterministically, and the closed once-gate declares terminal
+ * failure: one heal would permanently brick the session.
+ *
+ * Pure: returns new tool objects when something is stripped (never mutates
+ * the snapshot-held parameters). Identity no-op when the session never
+ * armed the strip — the common path costs one bounded-map lookup.
+ */
+export function applyPersistedReactiveStrip(params: PersistedReactiveStripParams): ToolDefinition[] {
+  if (!isReactiveSchemaStripArmed(params.sessionKey)) return params.tools;
+
+  return params.tools.map((tool) => {
+    const p = tool.parameters;
+    if (p === null || p === undefined || typeof p !== "object" || Array.isArray(p)) return tool;
+    const { schema, stripped } = stripSchemaKeywordsDeep(p, REACTIVE_STRIP_KEYWORDS);
+    if (stripped.length === 0) return tool;
+    return { ...tool, parameters: schema } as ToolDefinition;
+  });
 }
 
 /**

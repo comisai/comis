@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => ({
   applySchemasPruningMock: vi.fn(),
   applySchemaSnapshotMock: vi.fn(),
   applyProviderNormalizationMock: vi.fn(),
+  applyPersistedReactiveStripMock: vi.fn(),
   applyMutationSerializerMock: vi.fn(),
 }));
 
@@ -103,6 +104,7 @@ vi.mock("./executor-tool-pipeline.js", () => ({
   applySchemasPruning: mocks.applySchemasPruningMock,
   applySchemaSnapshot: mocks.applySchemaSnapshotMock,
   applyProviderNormalization: mocks.applyProviderNormalizationMock,
+  applyPersistedReactiveStrip: mocks.applyPersistedReactiveStripMock,
   applyMutationSerializer: mocks.applyMutationSerializerMock,
 }));
 
@@ -245,6 +247,7 @@ beforeEach(() => {
   mocks.applySchemasPruningMock.mockImplementation((params: { tools: unknown[] }) => params.tools);
   mocks.applySchemaSnapshotMock.mockImplementation((params: { tools: unknown[] }) => params.tools);
   mocks.applyProviderNormalizationMock.mockImplementation((params: { tools: unknown[] }) => params.tools);
+  mocks.applyPersistedReactiveStripMock.mockImplementation((params: { tools: unknown[] }) => params.tools);
   mocks.applyMutationSerializerMock.mockImplementation((tools: unknown[]) => tools);
 });
 

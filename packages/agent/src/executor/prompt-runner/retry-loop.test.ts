@@ -17,9 +17,14 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { hostileMcpTool } from "../../provider/tool-schema/gbnf-hostile-fixtures.js";
+import { setSessionStateClock } from "../executor-session-state.js";
 import { runWithModelRetry } from "../model-retry.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 import { runRetryLoop, stuckSessionResult } from "./retry-loop.js";
+
+// Module-level clock for executor-session-state's bounded session map (the
+// CR-02 session-lifetime strip once-gate lives there).
+setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
 
 // Mock ONLY runWithModelRetry (the behavioral dispatch tests below drive the
 // REAL classifier + REAL silent-failure handlers); isAuthError and the rest

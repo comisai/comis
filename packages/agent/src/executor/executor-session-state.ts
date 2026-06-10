@@ -263,6 +263,53 @@ export function clearSessionBreakpointIndex(sessionKey: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Session-scoped reactive tool-schema strip state (GBNF-02 / 175-REVIEW CR-02)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-session flag: a grammar-400 triggered the reactive pattern/format
+ * strip-retry (tool-schema-unsupported-handler.ts). ONE flag serves BOTH
+ * roles:
+ *
+ *   - once-gate: a second grammar-400 in the same session is terminal — the
+ *     single repair attempt already ran (T-175-14);
+ *   - next-turn constraint memory: per-turn assembly re-applies the strip
+ *     AFTER provider normalization (`applyPersistedReactiveStrip` in
+ *     executor-tool-pipeline.ts), so a heal survives the snapshot→normalize
+ *     rebuild that constructs fresh parameter objects every turn. With the
+ *     strip persisted, a recurring 400 behind the closed gate means a
+ *     genuinely different schema problem — terminal failure is then honest.
+ *
+ * Keyed by formatted session key (the schema-snapshot / deliveredGuides
+ * precedent). The bounded map gives TTL+LRU lifecycle, and clearSessionState
+ * (session:expired + session.reset_conversation / session.delete) clears it
+ * so a reset session genuinely gets a fresh repair attempt.
+ */
+const sessionReactiveSchemaStrip = createBoundedSessionMap<boolean>();
+
+/** True when the session already consumed its one reactive strip-retry. */
+export function isReactiveSchemaStripArmed(sessionKey: string): boolean {
+  return sessionReactiveSchemaStrip.get(sessionKey) === true;
+}
+
+/** Arm the per-session strip (set BEFORE the retry fires — T-175-14). */
+export function armReactiveSchemaStrip(sessionKey: string): void {
+  sessionReactiveSchemaStrip.set(sessionKey, true);
+}
+
+/** Clear the per-session reactive strip state. Exported for session cleanup
+ *  (wired into clearSessionState alongside clearSessionDeliveredGuides /
+ *  clearSessionToolSchemaSnapshot). */
+export function clearSessionReactiveSchemaStrip(sessionKey: string): void {
+  sessionReactiveSchemaStrip.delete(sessionKey);
+}
+
+/** Test hook: clears ALL reactive-strip entries (cross-session). */
+export function clearAllReactiveSchemaStripForTest(): void {
+  sessionReactiveSchemaStrip.clear();
+}
+
+// ---------------------------------------------------------------------------
 // Per-session eviction cooldown state
 // ---------------------------------------------------------------------------
 

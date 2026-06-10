@@ -152,6 +152,7 @@ import {
 import {
   createActiveRunRegistry,
   createBackgroundSessionResolver,
+  clearSessionState,
   createGeminiCacheManager,
   createSessionTrackerRegistry,
   probeAllOllamaProviders,
@@ -978,6 +979,12 @@ function buildRpcDispatchDeps(deps: {
     // SAME object satisfies SessionsApiDeps.memoryPort. consolidationStore (the
     // unlink/purge surface) is already on the spread below.
     memoryPort: c.memoryAdapter,
+    // CR-02 (175-REVIEW): session.reset_conversation / session.delete drop
+    // the executor's session-scoped state (tool-schema snapshots, GBNF-02
+    // strip-retry once-gate, JIT-guide delivery, cache latches) through the
+    // agent's single authoritative cleanup path — the same function the
+    // session:expired listener uses (wireSessionStateCleanup above).
+    clearAgentSessionState: clearSessionState,
     // context.* operator-browse RPC deps (Context DAG browser): the LCD
     // ContextStorePort (context.tree reads getSummaries/getContextItems) + the
     // ContextBrowsePort (context.conversations). Both R4 agent+tenant scoped.

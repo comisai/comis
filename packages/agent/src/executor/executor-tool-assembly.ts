@@ -38,6 +38,7 @@ import {
   applySchemasPruning,
   applySchemaSnapshot,
   applyProviderNormalization,
+  applyPersistedReactiveStrip,
   applyMutationSerializer,
 } from "./executor-tool-pipeline.js";
 import { assembleExecutionPrompt } from "./prompt-assembly.js";
@@ -640,6 +641,16 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       compat: modelCompat,
     });
   }
+
+  // GBNF-02 / CR-02: re-apply the session's reactive pattern/format strip
+  // AFTER normalization — the per-turn snapshot→normalize rebuild constructs
+  // fresh parameter objects, so a strip that healed turn N must be re-applied
+  // here or turn N+1 re-sends the rejected keywords and (with the once-gate
+  // closed) permanently bricks the session. Identity no-op when never armed.
+  mergedCustomTools = applyPersistedReactiveStrip({
+    tools: mergedCustomTools,
+    sessionKey: schemaSnapshotKey,
+  });
 
   // Mutation serializer
   mergedCustomTools = applyMutationSerializer(mergedCustomTools, deps.logger);
