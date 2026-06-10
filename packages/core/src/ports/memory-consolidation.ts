@@ -217,34 +217,50 @@ export interface MemoryConsolidationStore {
    * source id no longer present in `memories` for this tenant is treated as
    * deleted. See the adapter for the exact predicate.
    *
-   * Tenant-scoped: a cross-tenant id is a fail-closed no-op (never crosses
-   * tenants). Returns the count of orphan observations deleted.
+   * R4 (WR-05): scoped on `tenant_id` AND `agent_id` — matching
+   * `deleteBySessionKey`'s (tenant, agent) scope exactly. A cross-tenant OR
+   * cross-agent observation is a fail-closed no-op (never touched). Returns the
+   * count of orphan observations deleted.
    *
    * @param sessionKey - The session key whose memories were deleted (source_session_key match)
    * @param tenantId - Tenant scope (never crosses tenants)
+   * @param agentId - Agent scope (never crosses agents) — matches the delete scope
    * @returns Count of orphan observations deleted, or an error
    */
   unlinkDeletedSources(
     sessionKey: string,
     tenantId: string,
+    agentId: string,
   ): Promise<Result<number, Error>>;
 
   /**
-   * Phase 172 (DIST-05): Nuclear escalation — delete ALL consolidated
-   * observations where ANY source memory was derived from the given session.
-   * Use ONLY when `--purge-derived` is explicitly requested — it is destructive
-   * (an observation corroborated by other sessions is STILL deleted) and cannot
-   * be undone.
+   * Phase 172 (DIST-05): Nuclear escalation — delete EVERY consolidated
+   * observation derived from THIS session's deleted memory ids. Use ONLY when
+   * `--purge-derived` is explicitly requested — it is destructive (an observation
+   * corroborated by OTHER sessions is STILL deleted when it also cites a
+   * this-session source) and cannot be undone.
    *
-   * Tenant-scoped: a cross-tenant id is a fail-closed no-op. Returns the count
-   * of observations deleted.
+   * WR-02 (session-scoped, not coarse): the predicate is
+   * `source_ids ∩ thisSessionIds ≠ ∅` — an observation is purged ONLY if it
+   * references one of THIS session's memory ids (captured BEFORE the delete via
+   * `MemoryPort.listMemoryIdsBySessionKey`). An UNRELATED observation that merely
+   * has a PRIOR dangling source id (from an earlier admin delete / TTL / another
+   * session's purge) is NOT touched. When `thisSessionIds` is empty, nothing is
+   * purged.
    *
-   * @param sessionKey - The session key to purge derived observations for
+   * R4 (WR-05): scoped on `tenant_id` AND `agent_id` — a cross-tenant or
+   * cross-agent observation is a fail-closed no-op. Returns the count purged.
+   *
+   * @param sessionKey - The session key to purge derived observations for (audit)
    * @param tenantId - Tenant scope (never crosses tenants)
+   * @param agentId - Agent scope (never crosses agents) — matches the delete scope
+   * @param thisSessionIds - The memory ids deleted for THIS session (the purge oracle)
    * @returns Count of observations deleted, or an error
    */
   purgeConsolidatedDerivedFrom(
     sessionKey: string,
     tenantId: string,
+    agentId: string,
+    thisSessionIds: string[],
   ): Promise<Result<number, Error>>;
 }

@@ -24,13 +24,16 @@ import type Database from "better-sqlite3";
 import { hybridSearch, searchByText, searchByVector } from "./hybrid-search.js";
 import { initSchema } from "./schema.js";
 import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags, createRowMapper } from "./row-mapper.js";
-import { MemoryRowSchema } from "./row-schemas.js";
+import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
 import { truncateForEmbedding } from "./embedding-batch-indexer.js";
 import { openSqliteDatabase } from "./sqlite-adapter-base.js";
 import { systemNowMs } from "@comis/core";
 
 // Row mappers
 const memoryRowMapper = createRowMapper(MemoryRowSchema);
+// DIST-05 (WR-02) id-projection mapper — the sanctioned typed-read path for the
+// session-scoped id capture (no `as Foo[]` cast — untyped-sqlite gate).
+const idProjectionRowMapper = createRowMapper(IdProjectionRowSchema);
 
 /** Minimal pino-compatible logger interface for memory subsystem logging. */
 interface MemoryLogger {
@@ -429,6 +432,38 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       const durationMs = systemNowMs() - startMs;
       this.logger?.debug({ durationMs, op: "delete" }, "Memory delete complete");
       return ok(result.changes > 0);
+    } catch (e: unknown) {
+      return err(e instanceof Error ? e : new Error(String(e)));
+    }
+  }
+
+  // ── listMemoryIdsBySessionKey (DIST-05, WR-02) ─────────────────────
+
+  /**
+   * Phase 172 (DIST-05, WR-02): Read the memory ids for a (sessionKey, tenant,
+   * agent) scope WITHOUT deleting. Used by the session-reset handler to capture
+   * THIS session's ids BEFORE `deleteBySessionKey`, so `--purge-derived` can be
+   * session-scoped (source_ids ∩ thisSessionIds) instead of the coarse
+   * "any dangling source id" sweep.
+   *
+   * R4 isolation: filters on `source_session_key` AND `tenant_id` AND `agent_id`
+   * — the SAME scope as `deleteBySessionKey`. Typed read via the row mapper (no
+   * `as Foo[]` cast — untyped-sqlite gate). Returns the ids (possibly empty).
+   */
+  async listMemoryIdsBySessionKey(
+    sessionKey: string,
+    scope: { tenantId: string; agentId: string },
+  ): Promise<Result<string[], Error>> {
+    try {
+      const parsed = idProjectionRowMapper.parseRows(
+        this.db
+          .prepare(
+            "SELECT id FROM memories WHERE source_session_key = ? AND tenant_id = ? AND agent_id = ?",
+          )
+          .all(sessionKey, scope.tenantId, scope.agentId),
+      );
+      if (!parsed.ok) return err(new Error(parsed.error.message));
+      return ok(parsed.value.map((r) => r.id));
     } catch (e: unknown) {
       return err(e instanceof Error ? e : new Error(String(e)));
     }

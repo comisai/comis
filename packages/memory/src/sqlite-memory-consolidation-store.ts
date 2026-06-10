@@ -538,45 +538,51 @@ export function createSqliteMemoryConsolidationStore(
     async unlinkDeletedSources(
       _sessionKey: string,
       tenantId: string,
+      agentId: string,
     ): Promise<Result<number, Error>> {
       // DIST-05: called AFTER the raw memories were deleted by
       // deleteBySessionKey, so the source rows are already gone. We re-scan each
       // in-scope observation's source_ids and treat any id no longer present in
-      // `memories` (for this tenant) as a deleted source. Orphan (every source
-      // gone) → DELETE the observation; multi-source (some sources survive) →
-      // KEEP with the reduced source_ids (unlink-only — never over-delete).
+      // `memories` (for this tenant+agent) as a deleted source. Orphan (every
+      // source gone) → DELETE the observation; multi-source (some sources
+      // survive) → KEEP with the reduced source_ids (unlink-only — never
+      // over-delete).
       //
       // `_sessionKey` is part of the port signature for symmetry with the
       // --purge path + a future provenance-joined variant; the
       // delete-already-happened semantics mean the load-bearing predicate is
-      // "source id absent from memories" — sessionKey-agnostic but TENANT-scoped
-      // (fail-closed isolation), so the param is intentionally unused here.
+      // "source id absent from memories" — sessionKey-agnostic but
+      // (tenant, agent)-SCOPED (WR-05: matches deleteBySessionKey's scope exactly,
+      // fail-closed isolation), so the param is intentionally unused here.
       const startMs = systemNowMs();
       try {
-        // The set of live memory ids for this tenant — the membership oracle for
-        // "still exists". Scoped on tenant_id (fail-closed: a cross-tenant id is
-        // never in this set, so it can never be treated as "surviving"). Typed
-        // read via the sanctioned mapper (no `as Foo[]` cast — untyped-sqlite).
+        // The set of live memory ids for this tenant+agent — the membership oracle
+        // for "still exists". Scoped on tenant_id AND agent_id (WR-05, fail-closed:
+        // a cross-scope id is never in this set, so it can never be treated as
+        // "surviving"). Typed read via the sanctioned mapper (untyped-sqlite).
         const liveIdsParsed = idProjectionMapper.parseRows(
-          db.prepare("SELECT id FROM memories WHERE tenant_id = ?").all(tenantId),
+          db.prepare("SELECT id FROM memories WHERE tenant_id = ? AND agent_id = ?").all(tenantId, agentId),
         );
         if (!liveIdsParsed.ok) return err(new Error(liveIdsParsed.error.message));
         const liveIds = new Set(liveIdsParsed.value.map((r) => r.id));
 
-        // All observations (proof_count IS NOT NULL) in this tenant carry the
+        // All observations (proof_count IS NOT NULL) in this tenant+agent carry the
         // source_ids array. Read the full rows through the existing memoryRowMapper
         // (SELECT *) so source_ids is parsed for us by rowToEntry (no new schema,
-        // no manual JSON.parse). Scoped on tenant_id (isolation).
+        // no manual JSON.parse). Scoped on tenant_id AND agent_id (WR-05) — mirrors
+        // the agent-scoped selectObservations/selectCandidates in this file.
         const observationsParsed = memoryRowMapper.parseRows(
-          db.prepare("SELECT * FROM memories WHERE proof_count IS NOT NULL AND tenant_id = ?").all(tenantId),
+          db
+            .prepare("SELECT * FROM memories WHERE proof_count IS NOT NULL AND tenant_id = ? AND agent_id = ?")
+            .all(tenantId, agentId),
         );
         if (!observationsParsed.ok) return err(new Error(observationsParsed.error.message));
         const observations = observationsParsed.value.map((row) => rowToEntry(row));
 
         let orphansDeleted = 0;
-        const deleteSingle = db.prepare("DELETE FROM memories WHERE id = ? AND tenant_id = ?");
+        const deleteSingle = db.prepare("DELETE FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?");
         const updateSourceIds = db.prepare(
-          "UPDATE memories SET source_ids = ? WHERE id = ? AND tenant_id = ?",
+          "UPDATE memories SET source_ids = ? WHERE id = ? AND tenant_id = ? AND agent_id = ?",
         );
 
         const tx = db.transaction(() => {
@@ -587,11 +593,11 @@ export function createSqliteMemoryConsolidationStore(
             if (surviving.length === ids.length) continue; // no deleted sources — untouched
             if (surviving.length === 0) {
               // Orphan: every source gone → delete the observation.
-              deleteSingle.run(obs.id, tenantId);
+              deleteSingle.run(obs.id, tenantId, agentId);
               orphansDeleted++;
             } else {
               // Multi-source: keep with reduced source_ids (unlink only).
-              updateSourceIds.run(JSON.stringify(surviving), obs.id, tenantId);
+              updateSourceIds.run(JSON.stringify(surviving), obs.id, tenantId, agentId);
             }
           }
           return orphansDeleted;
@@ -622,45 +628,58 @@ export function createSqliteMemoryConsolidationStore(
     async purgeConsolidatedDerivedFrom(
       sessionKey: string,
       tenantId: string,
+      agentId: string,
+      thisSessionIds: string[],
     ): Promise<Result<number, Error>> {
-      // DIST-05 nuclear escalation: delete EVERY observation that was derived
-      // (even partially) from this session's memories. Called via the opt-in
-      // --purge-derived flag ONLY. Like unlinkDeletedSources, this runs AFTER
-      // the raw memories were deleted, so we re-derive "was a source from this
-      // session" from the lcd_memory_provenance rows IF any survive — but the
-      // provenance rows are CASCADE-deleted with the memory rows, so instead we
-      // delete any observation whose source_ids reference a now-absent memory id
-      // (the same deleted-source oracle as unlinkDeletedSources, but DELETE the
-      // whole observation regardless of surviving multi-source corroboration).
+      // DIST-05 nuclear escalation: delete EVERY observation derived from THIS
+      // session's deleted memory ids. Called via the opt-in --purge-derived flag
+      // ONLY. Runs AFTER the raw memories were deleted, but the purge oracle is
+      // the explicit `thisSessionIds` set (captured BEFORE the delete via
+      // MemoryPort.listMemoryIdsBySessionKey), NOT "any source id now absent".
       //
-      // `sessionKey` is retained in the signature for the audit log + future
-      // provenance-joined variant; the predicate is tenant-scoped (fail-closed).
+      // WR-02 (session-scoped, not coarse): an observation is purged ONLY if its
+      // source_ids INTERSECT thisSessionIds. A prior unrelated dangling source id
+      // in an UNRELATED observation (from an earlier admin delete / TTL / another
+      // session's purge) is left alone — the bug the "any absent id" oracle had.
+      // It still nukes a multi-source observation when one of its sources WAS a
+      // this-session id (nuclear regardless of surviving corroboration).
+      //
+      // WR-05: scoped on tenant_id AND agent_id (matches deleteBySessionKey).
+      // `sessionKey` is retained for the audit log. An empty thisSessionIds set
+      // purges nothing (fast-path).
       const startMs = systemNowMs();
       try {
-        const liveIdsParsed = idProjectionMapper.parseRows(
-          db.prepare("SELECT id FROM memories WHERE tenant_id = ?").all(tenantId),
-        );
-        if (!liveIdsParsed.ok) return err(new Error(liveIdsParsed.error.message));
-        const liveIds = new Set(liveIdsParsed.value.map((r) => r.id));
+        if (thisSessionIds.length === 0) {
+          logger?.debug(
+            { step: "consolidation-purge-derived", durationMs: systemNowMs() - startMs, observationsDeleted: 0, sessionKey },
+            "purgeConsolidatedDerivedFrom: no this-session ids — nothing to purge",
+          );
+          return ok(0);
+        }
+        const sessionIdSet = new Set(thisSessionIds);
 
         const observationsParsed = memoryRowMapper.parseRows(
-          db.prepare("SELECT * FROM memories WHERE proof_count IS NOT NULL AND tenant_id = ?").all(tenantId),
+          db
+            .prepare("SELECT * FROM memories WHERE proof_count IS NOT NULL AND tenant_id = ? AND agent_id = ?")
+            .all(tenantId, agentId),
         );
         if (!observationsParsed.ok) return err(new Error(observationsParsed.error.message));
         const observations = observationsParsed.value.map((row) => rowToEntry(row));
 
         let deletedCount = 0;
-        const deleteObs = db.prepare("DELETE FROM memories WHERE id = ? AND tenant_id = ?");
+        const deleteObs = db.prepare("DELETE FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?");
 
         const tx = db.transaction(() => {
           for (const obs of observations) {
             const ids = obs.sourceIds ?? [];
             if (ids.length === 0) continue;
-            // If ANY source id is now absent (deleted from this session's wipe),
-            // purge the whole observation — nuclear, ignores surviving sources.
-            const hasDeletedSource = ids.some((id) => !liveIds.has(id));
-            if (hasDeletedSource) {
-              deleteObs.run(obs.id, tenantId);
+            // Purge ONLY when a source id was one of THIS session's deleted ids
+            // (source_ids ∩ thisSessionIds ≠ ∅) — nuclear regardless of surviving
+            // corroboration, but session-scoped (WR-02): unrelated observations
+            // with a prior dangling id are untouched.
+            const derivedFromThisSession = ids.some((id) => sessionIdSet.has(id));
+            if (derivedFromThisSession) {
+              deleteObs.run(obs.id, tenantId, agentId);
               deletedCount++;
             }
           }

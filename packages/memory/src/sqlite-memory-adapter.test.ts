@@ -556,6 +556,64 @@ describe("SqliteMemoryAdapter", () => {
     });
   });
 
+  // ── listMemoryIdsBySessionKey (DIST-05, WR-02) ───────────────
+
+  describe("listMemoryIdsBySessionKey (DIST-05, WR-02)", () => {
+    it("returns the ids for a (sessionKey, tenant, agent) scope WITHOUT deleting them", async () => {
+      const a = makeEntry({ content: "a", source: { who: "u", channel: "c", sessionKey: "sess-list" } });
+      const b = makeEntry({ content: "b", source: { who: "u", channel: "c", sessionKey: "sess-list" } });
+      await adapter.store(a);
+      await adapter.store(b);
+      await adapter.store(makeEntry({ content: "c", source: { who: "u", channel: "c", sessionKey: "sess-other" } }));
+
+      const r = await adapter.listMemoryIdsBySessionKey!("sess-list", {
+        tenantId: "default",
+        agentId: "default",
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(new Set(r.value)).toEqual(new Set([a.id, b.id]));
+      // Non-destructive: the rows still exist.
+      const count = adapter
+        .getDb()
+        .prepare("SELECT COUNT(*) AS c FROM memories WHERE source_session_key = ?")
+        .get("sess-list") as { c: number };
+      expect(count.c).toBe(2);
+    });
+
+    it("is R4-scoped: excludes ids from a different tenant or agent (matches the delete scope)", async () => {
+      const mine = makeEntry({
+        tenantId: "t-a",
+        agentId: "ag-a",
+        source: { who: "u", channel: "c", sessionKey: "sess-iso" },
+      });
+      await adapter.store(mine);
+      // Same session key, different tenant — excluded.
+      await adapter.store(
+        makeEntry({ tenantId: "t-b", agentId: "ag-a", source: { who: "u", channel: "c", sessionKey: "sess-iso" } }),
+      );
+      // Same session key + tenant, different agent — excluded.
+      await adapter.store(
+        makeEntry({ tenantId: "t-a", agentId: "ag-b", source: { who: "u", channel: "c", sessionKey: "sess-iso" } }),
+      );
+
+      const r = await adapter.listMemoryIdsBySessionKey!("sess-iso", { tenantId: "t-a", agentId: "ag-a" });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toEqual([mine.id]);
+    });
+
+    it("returns an empty array when no rows match (no error)", async () => {
+      const r = await adapter.listMemoryIdsBySessionKey!("sess-none", {
+        tenantId: "default",
+        agentId: "default",
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value).toEqual([]);
+    });
+  });
+
   // ── multi-agent memory isolation ─────────────────────────────
 
   describe("multi-agent memory isolation", () => {

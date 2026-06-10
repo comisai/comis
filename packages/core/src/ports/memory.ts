@@ -130,4 +130,26 @@ export interface MemoryPort {
     sessionKey: string,
     scope: { tenantId: string; agentId: string },
   ): Promise<Result<number, Error>>;
+
+  /**
+   * Phase 172 (DIST-05, WR-02): List the memory ids for a (sessionKey, tenant,
+   * agent) scope WITHOUT deleting them. Called by the
+   * `session.reset_conversation --memory` handler BEFORE `deleteBySessionKey`
+   * runs, so the captured ids can be passed to
+   * `purgeConsolidatedDerivedFrom(..., thisSessionIds)` — making the
+   * `--purge-derived` sweep match "observations derived from THIS session" rather
+   * than the coarse "any observation with a dangling source id" (which would
+   * over-delete unrelated observations that already had a prior dangling source).
+   *
+   * R4-scoped: filters on `source_session_key` AND `tenant_id` AND `agent_id`,
+   * matching `deleteBySessionKey`'s scope exactly. Returns the ids (possibly
+   * empty), or an error.
+   *
+   * OPTIONAL: the handler gates on `deps.memoryPort.listMemoryIdsBySessionKey`;
+   * when absent, the purge falls back to its coarse session-agnostic behavior.
+   */
+  listMemoryIdsBySessionKey?(
+    sessionKey: string,
+    scope: { tenantId: string; agentId: string },
+  ): Promise<Result<string[], Error>>;
 }

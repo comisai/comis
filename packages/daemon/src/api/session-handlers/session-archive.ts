@@ -228,6 +228,36 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
           // A real delete is attempted — report 0 even on failure (an honest
           // "attempted, nothing deleted"), never undefined.
           memoriesDeleted = 0;
+
+          // WR-02: capture THIS session's memory ids BEFORE the destructive
+          // delete, so --purge-derived can be session-scoped (source_ids ∩
+          // thisSessionIds) instead of the coarse "any dangling source id" sweep
+          // that would over-delete unrelated observations. Non-fatal: if the
+          // capture fails (or the optional read method is absent), the purge falls
+          // back to an empty set (purges nothing) rather than over-deleting.
+          let thisSessionIds: string[] = [];
+          if (deps.memoryPort.listMemoryIdsBySessionKey) {
+            const idsResult = await deps.memoryPort.listMemoryIdsBySessionKey(sessionKey, {
+              tenantId: scope.tenantId,
+              agentId: scope.agentId,
+            });
+            if (idsResult.ok) {
+              thisSessionIds = idsResult.value;
+            } else {
+              deps.logger.warn(
+                {
+                  method: SessionResetConversationContract.method,
+                  conversationId: scope.conversationId,
+                  submodule: "session-reset-conversation",
+                  hint: "could not capture this-session memory ids before delete — --purge-derived will purge nothing (conservative); check DB",
+                  errorKind: "dependency" as const,
+                  err: idsResult.error.message,
+                },
+                "this-session memory id capture failed (non-fatal; purge falls back to empty)",
+              );
+            }
+          }
+
           const memoriesResult = await deps.memoryPort.deleteBySessionKey(sessionKey, {
             tenantId: scope.tenantId,
             agentId: scope.agentId,
@@ -251,9 +281,13 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
             // sources — orphan→delete, multi-source→keep. Only when something was
             // deleted (nothing to unlink otherwise). Non-fatal.
             if (memoriesDeleted > 0 && deps.consolidationStore) {
+              // WR-05: thread agentId so the unlink scope matches the delete's
+              // (tenant, agent) scope exactly (a different agent's observation is
+              // never touched).
               const unlinkResult = await deps.consolidationStore.unlinkDeletedSources(
                 sessionKey,
                 scope.tenantId,
+                scope.agentId,
               );
               if (!unlinkResult.ok) {
                 deps.logger.warn(
@@ -285,9 +319,15 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
           // corroboration). Only fires when explicitly requested. Non-fatal.
           const purgeDerived = (rawParams.purge_derived ?? false) as boolean;
           if (purgeDerived && deps.consolidationStore) {
+            // WR-05: agentId scopes the purge to this agent. WR-02: thisSessionIds
+            // (captured before the delete) makes the purge match
+            // source_ids ∩ thisSessionIds — only observations derived from THIS
+            // session, never an unrelated observation with a prior dangling id.
             const purgeResult = await deps.consolidationStore.purgeConsolidatedDerivedFrom(
               sessionKey,
               scope.tenantId,
+              scope.agentId,
+              thisSessionIds,
             );
             if (!purgeResult.ok) {
               deps.logger.warn(
