@@ -39,6 +39,7 @@ import {
   buildLeafSummarizeFn,
   selectLeafChunk,
   summarizeLeafChunk,
+  wrapSummarizerWithFailover,
   type LeafChunkItem,
   type LeafSummarizer,
   type LeafSummarizerDeps,
@@ -753,5 +754,127 @@ describe("summarizeLeafChunk does not spuriously floor a small chunk — bounds 
     // authority is the stored before-size) and bounded by the fallback target.
     expect(summaryTokens(result.content)).toBeLessThan(before);
     expect(summaryTokens(result.content)).toBeLessThanOrEqual(LEAF_FALLBACK_TARGET_TOKENS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SUM-03: wrapSummarizerWithFailover — provider failover (Phase 171-03)
+// ---------------------------------------------------------------------------
+
+describe("wrapSummarizerWithFailover — SUM-03", () => {
+  // Minimal message fixtures for failover tests
+  const msgs: AgentMessage[] = [userMsg("hello") as unknown as AgentMessage];
+  const opts = { reserveTokens: 200 };
+
+  function makeLogger() {
+    return {
+      warn: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      trace: vi.fn(),
+      child: vi.fn(),
+      fatal: vi.fn(),
+    } as unknown as import("@comis/core").ComisLogger;
+  }
+
+  it("failover tries second provider when primary throws synchronous error", async () => {
+    const primary: LeafSummarizer = vi.fn(async () => {
+      throw new Error("primary failed");
+    });
+    const fallback: LeafSummarizer = vi.fn(async () => "fallback summary");
+    const logger = makeLogger();
+
+    const wrapped = wrapSummarizerWithFailover(primary, [fallback], logger);
+    const result = await wrapped(msgs, opts);
+
+    expect(result).toBe("fallback summary");
+    expect(primary).toHaveBeenCalledTimes(1);
+    expect(fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("failover tries providers in list order, not all at once", async () => {
+    const primary: LeafSummarizer = vi.fn(async () => {
+      throw new Error("primary failed");
+    });
+    const fallback1: LeafSummarizer = vi.fn(async () => {
+      throw new Error("fallback1 failed");
+    });
+    const fallback2: LeafSummarizer = vi.fn(async () => "third summary");
+    const logger = makeLogger();
+
+    const wrapped = wrapSummarizerWithFailover(primary, [fallback1, fallback2], logger);
+    const result = await wrapped(msgs, opts);
+
+    expect(result).toBe("third summary");
+    expect(primary).toHaveBeenCalledTimes(1);
+    expect(fallback1).toHaveBeenCalledTimes(1);
+    expect(fallback2).toHaveBeenCalledTimes(1);
+  });
+
+  it("all providers fail — wrapper throws the last error from exhausted list", async () => {
+    const primary: LeafSummarizer = vi.fn(async () => {
+      throw new Error("primary failed");
+    });
+    const fb1: LeafSummarizer = vi.fn(async () => {
+      throw new Error("fb1 failed");
+    });
+    const fb2: LeafSummarizer = vi.fn(async () => {
+      throw new Error("fb2 last");
+    });
+    const logger = makeLogger();
+
+    const wrapped = wrapSummarizerWithFailover(primary, [fb1, fb2], logger);
+    await expect(wrapped(msgs, opts)).rejects.toThrow("fb2 last");
+  });
+
+  it("WARN with errorKind dependency emitted on each failover attempt — primary fails then fallback succeeds", async () => {
+    const primary: LeafSummarizer = vi.fn(async () => {
+      throw new Error("primary failed");
+    });
+    const fallback: LeafSummarizer = vi.fn(async () => "fallback ok");
+    const logger = makeLogger();
+
+    const wrapped = wrapSummarizerWithFailover(primary, [fallback], logger);
+    await wrapped(msgs, opts);
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "dependency" }),
+      expect.any(String),
+    );
+  });
+
+  it("WARN with errorKind dependency emitted for each failing attempt before success", async () => {
+    const primary: LeafSummarizer = vi.fn(async () => {
+      throw new Error("p");
+    });
+    const fallback1: LeafSummarizer = vi.fn(async () => {
+      throw new Error("f1");
+    });
+    const fallback2: LeafSummarizer = vi.fn(async () => "last ok");
+    const logger = makeLogger();
+
+    const wrapped = wrapSummarizerWithFailover(primary, [fallback1, fallback2], logger);
+    await wrapped(msgs, opts);
+
+    // Two failures (primary + fallback1) before fallback2 succeeds
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+    const calls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    for (const [firstArg] of calls) {
+      expect((firstArg as { errorKind: string }).errorKind).toBe("dependency");
+    }
+  });
+
+  it("empty failover list returns primary seam unchanged with no warn emitted", async () => {
+    const primary: LeafSummarizer = vi.fn(async () => "ok");
+    const logger = makeLogger();
+
+    const wrapped = wrapSummarizerWithFailover(primary, [], logger);
+    const result = await wrapped(msgs, opts);
+
+    expect(result).toBe("ok");
+    expect(primary).toHaveBeenCalledTimes(1);
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });
