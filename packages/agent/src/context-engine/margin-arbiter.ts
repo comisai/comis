@@ -11,7 +11,11 @@
  *     — always kept, NEVER relevance candidates, regardless of fused rank or pool
  *     contention. They mirror the `lcd-preflight.ts:114-121` harder-eviction exclusion:
  *     a security-pinned item survives even when it dwarfs the pool (the Fix-3 pre-flight
- *     already reserved room for it; the arbiter must not drop it).
+ *     already reserved room for it; the arbiter must not drop it). WR-04 (Phase 173-05):
+ *     floors are STEP-ATOMIC — a floor flagged on one message in a step (a pinned
+ *     `tool_use` whose `toolResult` is not separately pinned, or vice-versa) promotes the
+ *     WHOLE step to a floor, so the inseparable pair is never split and `poolTokensUsed`
+ *     bills only the genuinely-discretionary (non-floor) middle band.
  *   - The middle history band (T1/T2) + the cross-session LTM (T3) + KG (T4) candidate
  *     lanes share the remaining DISCRETIONARY pool, allocated by FUSED RANK (RRF via the
  *     Plan-02 scorer — `scoreRelevance`/`fuse`, injected as the `scorer` dep; per-tier
@@ -201,15 +205,28 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
   // do NOT consume the DISCRETIONARY pool budget (poolTokensUsed), so the discretionary
   // fill below stays bounded ≤ poolTokens (no over-allocate-then-reclaim).
   // -------------------------------------------------------------------------
-  const isFloor = (it: BudgetItem): boolean =>
+  const isMessageFloor = (it: BudgetItem): boolean =>
     isMember(it, floors.freshTailItems) || isMember(it, floors.pinnedItems);
+
+  // WR-04 (Phase 173-05): expand floors to STEP granularity. A floor flagged on a single
+  // message inside a step (e.g. a pinned assistant `tool_use` whose `toolResult` is NOT
+  // separately pinned, or a pinned `toolResult` whose `tool_use` is not) would otherwise
+  // leave the rest of that step in the relevance-evictable middle band, where the step
+  // grouper (lcd-budget-eviction.groupIntoSteps) mis-binds the orphaned half to the
+  // neighbouring message — splitting the inseparable pair and mis-billing poolTokensUsed.
+  // Mirror lcd-preflight.ts:114-121: when ANY message in a step is a floor, the WHOLE step
+  // is a floor (kept unconditionally, never a relevance candidate). stepFloorIds holds the
+  // identity of every BudgetItem in a floor-containing step.
+  const stepFloorIds = expandFloorsToStepIds(historyItems, isMessageFloor);
+  const isFloor = (it: BudgetItem): boolean => stepFloorIds.has(it);
 
   // The non-floor history band (the relevance-evictable middle, T1/T2) — fed to the
   // step-atomic recency fill within its slot. NB (C2 boundary / Open Question 3): the
   // WITHIN-history relevance eviction of this middle band is Phase 174 (DEPTH-01); here
   // the arbiter ALLOCATES the discretionary pool across tiers by fused rank with the
   // floors guaranteed and keeps the history slot RECENCY-ordered. Do NOT relevance-evict
-  // the middle band here.
+  // the middle band here. Because floors are STEP-atomic (above), middleBand contains only
+  // WHOLE non-floor steps — groupIntoSteps over it reproduces the true history grouping.
   const middleBand = historyItems.filter((it) => !isFloor(it));
 
   // -------------------------------------------------------------------------
@@ -272,7 +289,16 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
   // History is the FINAL tier — it consumes whatever pool the LTM/KG tiers left, so
   // `remainingPool` is not decremented again after this (it is the last reader).
   const keptMiddle = evictHistoryUnderBudget(middleBand, remainingPool);
-  const keptMiddleTokens = sumKeptTokens(middleBand, keptMiddle.length);
+  // WR-04 (Phase 173-05): bill the kept middle band from ACTUAL set membership, not the
+  // positional `sumKeptTokens(band, count)` shortcut. With STEP-atomic floors (above) the
+  // two now agree, but membership is the honest accounting (it sums the tokens of the exact
+  // BudgetItems whose msg is in keptMiddle) and cannot drift if step boundaries ever shift —
+  // so `poolTokensUsed` always equals the true discretionary consumption (the RETR-02 claim).
+  const keptMiddleSetForTokens = new Set<AgentMessage>(keptMiddle);
+  const keptMiddleTokens = middleBand.reduce(
+    (sum, it) => (keptMiddleSetForTokens.has(it.msg) ? sum + it.tokens : sum),
+    0,
+  );
   poolTokensUsed += keptMiddleTokens;
 
   // -------------------------------------------------------------------------
@@ -305,16 +331,47 @@ export function marginArbitrate(input: MarginArbitrateInput): MarginArbitrateRes
 }
 
 /**
- * The token sum of the NEWEST `keptCount` items of `band` — mirrors how
- * `evictHistoryUnderBudget` keeps the newest contiguous suffix (the kept array is the
- * tail `band.slice(band.length - keptCount)`). Pure read; no mutation.
+ * Read a message's `role` without widening to the concrete pi-ai union (mirrors
+ * `lcd-budget-eviction.roleOf` — the step grouper's role accessor).
  */
-function sumKeptTokens(band: BudgetItem[], keptCount: number): number {
-  if (keptCount <= 0) return 0;
-  const start = Math.max(0, band.length - keptCount);
-  let sum = 0;
-  for (let i = start; i < band.length; i++) {
-    sum += band[i]!.tokens;
+function roleOf(it: BudgetItem): string | undefined {
+  return (it.msg as unknown as { role?: string }).role;
+}
+
+/**
+ * WR-04 (Phase 173-05): expand a per-MESSAGE floor predicate to STEP granularity. Walks
+ * `historyItems` into the SAME steps the eviction step grouper uses (a step starts at any
+ * non-`toolResult` message and absorbs the immediately-following `toolResult`s — the
+ * inseparable result tail of an assistant `tool_use`), and returns the identity set of EVERY
+ * BudgetItem belonging to a step that contains at least one message-level floor. Mirrors
+ * `lcd-preflight.ts:114-121` (a pinned item makes its whole step survive harder eviction)
+ * and `lcd-budget-eviction.groupIntoSteps`. Pure: reads the input, mutates nothing.
+ */
+function expandFloorsToStepIds(
+  historyItems: BudgetItem[],
+  isMessageFloor: (it: BudgetItem) => boolean,
+): Set<BudgetItem> {
+  const stepFloorIds = new Set<BudgetItem>();
+  let i = 0;
+  while (i < historyItems.length) {
+    const start = i;
+    i++;
+    // Absorb the trailing toolResults bound to this step's leading message.
+    while (i < historyItems.length && roleOf(historyItems[i]!) === "toolResult") {
+      i++;
+    }
+    // The step spans [start, i). If ANY message in it is a message-level floor, the
+    // WHOLE step is a floor (kept whole; never a relevance candidate).
+    let stepHasFloor = false;
+    for (let j = start; j < i; j++) {
+      if (isMessageFloor(historyItems[j]!)) {
+        stepHasFloor = true;
+        break;
+      }
+    }
+    if (stepHasFloor) {
+      for (let j = start; j < i; j++) stepFloorIds.add(historyItems[j]!);
+    }
   }
-  return sum;
+  return stepFloorIds;
 }
