@@ -315,7 +315,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "preferEvictionByCapability": true,
-      "strongerSummarizerModel": ""
+      "strongerSummarizerModel": "",
+      "summarizerFallbackProviders": []
     },
     "immutable": true,
     "path": "agents.contextEngine.compaction",
@@ -332,6 +333,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.contextEngine.compaction.strongerSummarizerModel",
     "type": "string"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "agents.contextEngine.compaction.summarizerFallbackProviders",
+    "type": "array"
   },
   {
     "default": 5,
@@ -15018,7 +15025,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "additionalProperties": false,
           "default": {
             "preferEvictionByCapability": true,
-            "strongerSummarizerModel": ""
+            "strongerSummarizerModel": "",
+            "summarizerFallbackProviders": []
           },
           "properties": {
             "preferEvictionByCapability": {
@@ -15028,11 +15036,19 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "strongerSummarizerModel": {
               "default": "",
               "type": "string"
+            },
+            "summarizerFallbackProviders": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             }
           },
           "required": [
             "preferEvictionByCapability",
-            "strongerSummarizerModel"
+            "strongerSummarizerModel",
+            "summarizerFallbackProviders"
           ],
           "type": "object"
         },
@@ -25321,7 +25337,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "additionalProperties": false,
                 "default": {
                   "preferEvictionByCapability": true,
-                  "strongerSummarizerModel": ""
+                  "strongerSummarizerModel": "",
+                  "summarizerFallbackProviders": []
                 },
                 "properties": {
                   "preferEvictionByCapability": {
@@ -25331,11 +25348,19 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "strongerSummarizerModel": {
                     "default": "",
                     "type": "string"
+                  },
+                  "summarizerFallbackProviders": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
                   }
                 },
                 "required": [
                   "preferEvictionByCapability",
-                  "strongerSummarizerModel"
+                  "strongerSummarizerModel",
+                  "summarizerFallbackProviders"
                 ],
                 "type": "object"
               },

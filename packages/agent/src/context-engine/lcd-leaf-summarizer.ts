@@ -691,3 +691,58 @@ export function buildLeafSummarizeFn(
     );
   };
 }
+
+/**
+ * SUM-03: wraps a primary {@link LeafSummarizer} with an ordered fallback list.
+ *
+ * On primary failure, tries each fallback in sequence (ordered by the caller's
+ * `fallbacks` array). Only when ALL providers in the list are exhausted does the
+ * wrapper throw the last error — so the per-tenant circuit breaker that wraps the
+ * OUTER spend-governed seam records exactly ONE failure per exhausted-list event
+ * (Pitfall 4 in 171-RESEARCH: throw-last, not throw-per-provider).
+ *
+ * Content-free: logs `providerIndex`, `totalProviders`, and `errorKind: "dependency"`
+ * only — NEVER message content, summary text, or provider credentials (T-171-09).
+ *
+ * @param primary - the primary LeafSummarizer (already spend-governed by the outer seam)
+ * @param fallbacks - ordered list of fallback LeafSummarizer callables
+ * @param logger - structured logger (content-free)
+ * @returns a LeafSummarizer that transparently tries all providers in order
+ */
+export function wrapSummarizerWithFailover(
+  primary: LeafSummarizer,
+  fallbacks: LeafSummarizer[],
+  logger: ComisLogger,
+): LeafSummarizer {
+  // Fast path: empty fallback list = zero behavior change (default []).
+  if (fallbacks.length === 0) return primary;
+  return async (messages: AgentMessage[], opts: LeafSummarizeOptions): Promise<string> => {
+    let lastError: unknown;
+    const all: LeafSummarizer[] = [primary, ...fallbacks];
+    for (let i = 0; i < all.length; i++) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        return await all[i]!(messages, opts);
+      } catch (err) {
+        lastError = err;
+        // Emit a content-free WARN for every failure — including the last one so
+        // the operator can see the full exhaustion trace. The outer breaker records
+        // a single failure after the throw below.
+        logger.warn(
+          {
+            errorKind: "dependency" as const,
+            step: "summarizer-failover",
+            providerIndex: i,
+            totalProviders: all.length,
+            hint:
+              i < all.length - 1
+                ? `Summarizer provider ${i} failed; trying next in fallback list`
+                : `Summarizer provider ${i} failed; all ${all.length} providers exhausted`,
+          },
+          `Summarizer failover: provider ${i} failed`,
+        );
+      }
+    }
+    throw lastError;
+  };
+}

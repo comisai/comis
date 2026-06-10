@@ -31,6 +31,7 @@ import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 // resolved via the SAME getCompactionDeps chain (no duplicate resolveProviderApiKey).
 import {
   buildLeafSummarizeFn,
+  wrapSummarizerWithFailover,
   type LeafSummarizerDeps,
   type CompactionModelSnapshot,
 } from "../context-engine/lcd-leaf-summarizer.js";
@@ -434,6 +435,41 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   const getSummarizerDeps = (modelSnapshot?: CompactionModelSnapshot): LeafSummarizerDeps => {
     const chain = resolveCompactionModelChain(modelSnapshot);
     const inner = buildLeafSummarizeFn(chain);
+    // SUM-03: wrap the primary summarizer with the ordered failover list before the
+    // spend-breaker. The failover list tries each provider in sequence; only when ALL
+    // providers are exhausted does it throw — at which point the outer breaker records
+    // exactly ONE failure (Pitfall 4: throw-last, not throw-per-provider). Empty list
+    // (default) = zero behavioral change for existing deployments.
+    const fallbackProviders = contextEngineConfig.compaction?.summarizerFallbackProviders ?? [];
+    const fallbackSummarizers = fallbackProviders.map((providerModel: string) => {
+      // Each entry is "provider:modelId". Build a LeafSummarizer using the same
+      // model resolution pattern as strongerSummarizerModel (resolveCompactionModelChain
+      // with an override), falling back to the primary chain for unknown providers.
+      // For Phase 171, all fallback entries resolve via the existing registry lookup;
+      // if the model is not found in the registry, the fallback silently uses the
+      // primary chain (the outer failover wrapper will still catch any resulting error).
+      const [provider, modelId] = providerModel.split(":", 2) as [string, string];
+      try {
+        const fallbackModel = deps.modelRegistry?.find(provider, modelId ?? "");
+        if (fallbackModel) {
+          return buildLeafSummarizeFn({
+            getRealModel: () => fallbackModel,
+            getApiKey: async () =>
+              resolveProviderApiKey(provider, {
+                authStorage: deps.authStorage,
+                oauthManager: deps.oauthManager,
+                agentConfig: config,
+              }),
+            overrideModel: undefined,
+          });
+        }
+      } catch {
+        // Model not in registry — fall through to primary chain for this slot
+      }
+      // Fallback: use the primary chain (provider lookup failed or registry absent)
+      return buildLeafSummarizeFn(chain);
+    });
+    const innerWithFailover = wrapSummarizerWithFailover(inner, fallbackSummarizers, deps.logger);
     // R1 (132-05): wrap the leaf summarizer seam with the daemon-owned per-tenant
     // spend+breaker gate keyed on the LIVE tenantId (the SAME tenant the afterTurn
     // ingest scope uses). On open-breaker / over-cap the gate THROWS the degrade
@@ -445,11 +481,11 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // ⇒ the raw seam (non-daemon callers / tests).
     const summarize = deps.summarizerSpendBreaker
       ? wrapSummarizerWithDegradeObservability(
-          deps.summarizerSpendBreaker.gate(tenantId, inner),
+          deps.summarizerSpendBreaker.gate(tenantId, innerWithFailover),
           { eventBus: deps.eventBus, logger: deps.logger, clock: deps.clock,
             conversationId: formattedKey, agentId: agentId ?? "default", sessionKey: formattedKey },
         )
-      : inner;
+      : innerWithFailover;
     return {
       logger: deps.logger,
       summarize,

@@ -369,7 +369,13 @@ export const ContextEngineConfigSchema = z.strictObject({
     /** Optional "provider:modelId" string for a stronger summarizer for small/nano.
      *  Empty string (default) = pure eviction/deterministic fallback. */
     strongerSummarizerModel: z.string().default(""),
-  }).default({ preferEvictionByCapability: true, strongerSummarizerModel: "" }),
+    /** SUM-03: ordered list of fallback "provider:modelId" strings for the summarizer
+     *  seam. When the primary summarizer throws, each entry is tried in sequence.
+     *  The per-tenant breaker wraps the OUTER seam and records a failure only when
+     *  ALL providers in the list are exhausted. Default [] = zero behavior change
+     *  for existing deployments. */
+    summarizerFallbackProviders: z.array(z.string()).default([]),
+  }).default({ preferEvictionByCapability: true, strongerSummarizerModel: "", summarizerFallbackProviders: [] }),
 
   /** C2/S1: Compact-secure prompt for small/nano. Retains safety core + sender-trust +
    *  config-secret; drops interactive-only sections. NEVER uses buildSafetySection(true). */
