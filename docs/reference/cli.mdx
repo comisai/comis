@@ -552,13 +552,14 @@ comis doctor --repair -c ~/.comis/config.yaml
 
 **`--repair` flag — LCD store repair actions**
 
-When `--repair` is passed, actionable findings are automatically repaired. Three LCD finding categories support repair:
+When `--repair` is passed, actionable findings are automatically repaired offline (no daemon required). Two LCD finding categories support offline repair:
 
 | Finding | Repair action |
 |---------|---------------|
-| Fallback-marker summaries (`fallback=1`) | Re-summarized via the compaction queue seam (spend-governed, per-tenant breaker applies). If the circuit breaker is open, repair is skipped and the fallback marker remains. |
 | Dangling `context_items` refs | Stale `lcd_context_items` entries whose `ref_id` points to a deleted summary or message are removed. |
-| FTS row-count drift | The `lcd_messages_fts` and `lcd_summaries_fts` full-text search indexes are rebuilt from the base tables using the FTS5 `rebuild` command. |
+| FTS row-count drift | `lcd_summaries_fts` (external-content) is rebuilt via the FTS5 `rebuild` command. `lcd_messages_fts` (contentless — message text lives in `lcd_message_parts`, not a `content` column) is repopulated by re-rendering each message's parts into the index. |
+
+**Fallback-marker summaries (`fallback=1`) are not repairable offline.** They are quality debt produced when the LLM summarizer was unavailable — re-summarization requires the running daemon. The daemon re-summarizes fallback-marker summaries automatically during normal compaction as conversations are processed.
 
 Raw message history (`lcd_messages`) is **never modified** by any repair action — the lossless verbatim raw store is read-only from the repair path (F1 invariant).
 

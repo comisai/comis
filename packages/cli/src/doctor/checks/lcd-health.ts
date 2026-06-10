@@ -112,8 +112,11 @@ function scanFallbackMarkers(db: Database.Database): DoctorFinding[] {
       check: "Fallback summaries",
       status: "warn",
       message: `${c} fallback-marker lcd_summaries (quality debt — model truncated without LLM)`,
-      suggestion: "Re-run compaction on affected conversations to replace fallback summaries",
-      repairable: true,
+      suggestion:
+        "Fallback summaries are re-summarized by the daemon during normal compaction. " +
+        "No offline repair is possible (requires the LLM summarizer, which is unavailable " +
+        "when the daemon is stopped). Run the daemon to allow normal compaction to replace them.",
+      repairable: false,
     },
   ];
 }
