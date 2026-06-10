@@ -50,6 +50,11 @@ import { createMemoryRecall, type MemoryRecallConfig } from "./memory-recall.js"
 import { appendCausalLane } from "./recall-causal-lane.js";
 import { expandSynonyms, parseTemporalRange } from "./query-understanding.js";
 import type { FusionLane } from "./fuse.js";
+// DIST-03 live-path integration (Task 3): the CONCRETE @comis/memory adapters,
+// imported as a devDependency in the TEST only (the agent↛memory cut forbids this
+// in src/, NOT in .test.ts — verified by architecture.test.ts excludeFileSuffixes).
+import Database from "better-sqlite3";
+import { initSchema, createLcdStore, buildProvenanceReadStore } from "@comis/memory";
 
 // The binding constraint — the recall hot path is deterministic +
 // LLM-FREE. memory-recall.ts must NEVER reach the query-time LLM surface. We mock the
@@ -3631,6 +3636,164 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
     const payload = warnMock.mock.calls[0][0] as Record<string, unknown>;
     expect(payload).toHaveProperty("errorKind");
     expect(payload).toHaveProperty("hint");
+  });
+});
+
+// ── DIST-03 LIVE-PATH integration: the CONCRETE adapter end-to-end ───────────
+//
+// The DIST-03 carry-in's central risk is "built-but-not-wired" — the milestone's
+// #1 recurring failure class. The fake-store tests above prove the pass LOGIC; this
+// block proves the WHOLE chain fires on the LIVE recall path with the REAL
+// @comis/memory adapter (buildProvenanceReadStore from Task 1) + the REAL provenance
+// write (appendProvenance) + the stamped summary:<id> tag: a distilled summary in the
+// ranked set → its provenance-linked paired row gets ×0.5; and it is a byte-identical
+// no-op when no provenance/distilled entry is present (the absent path preserved).
+describe("createMemoryRecall — DIST-03 live-path integration (concrete LcdProvenanceReadStore)", () => {
+  const SUMMARY_ID = "sum-live-1";
+  const PAIRED_ID = "mem-paired-live";
+
+  /** A real SQLite db with the LCD schema + a seeded memories row + a provenance row
+   *  (via the production write path appendProvenance), scoped to SESSION_KEY_OBJ's
+   *  (tenantId) + the agentId the recall is invoked with. */
+  function seedLiveProvenanceDb(tenantId: string, agentId: string): Database.Database {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536); // runs ensureLcdTables (lcd_memory_provenance DDL)
+    // The provenance row FKs memory_id → memories(id), so seed a real memories row.
+    db.prepare(
+      "INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_session_key, tags, created_at)" +
+        " VALUES (?, ?, ?, 'user_a', 'paired content', 'learned', 'episodic', 'agent', 'sess-live', '[]', 1)",
+    ).run(PAIRED_ID, tenantId, agentId);
+    const store = createLcdStore(db);
+    store.appendProvenance!({
+      provenanceId: "prov-live-1",
+      memoryId: PAIRED_ID,
+      summaryId: SUMMARY_ID,
+      sourceSessionKey: "sess-live",
+      conversationId: "conv-live",
+      agentId,
+      tenantId,
+      createdAt: 1,
+    });
+    return db;
+  }
+
+  it("FIRES on the live recall path: the provenance-linked paired row is down-weighted ×0.5 (present, NOT deleted) via the concrete adapter + stamped tag", async () => {
+    // The distilled summary carries the summary:<id> tag; the paired memory has a
+    // DIFFERENT sessionKey so ONLY the precise getProvenanceForSummary branch (not the
+    // session heuristic) can select it — proving the LIVE read is load-bearing.
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1", `summary:${SUMMARY_ID}`],
+        sessionKey: "telegram:chat_summary:user_a",
+      }),
+      makeResult(PAIRED_ID, {
+        base: 0.8,
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        sessionKey: "telegram:chat_DIFFERENT:user_a",
+      }),
+    ];
+    const referenceById = new Map((await runReference(input)).map((r) => [r.entry.id, r.score ?? 1]));
+
+    const db = seedLiveProvenanceDb("tenant_x", "agent_live"); // tenant_x = SESSION_KEY_OBJ.tenantId
+    try {
+      const provenanceStore = buildProvenanceReadStore(db); // the CONCRETE Task-1 adapter
+      const recall = createMemoryRecall(
+        {
+          memoryPort: fakeMemoryPort(input),
+          provenanceStore,
+          clock: fixedClock,
+          logger: noopLogger,
+        } as unknown as Parameters<typeof createMemoryRecall>[0],
+        baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+      );
+      const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_live");
+      expect(got.ok).toBe(true);
+      if (!got.ok) return;
+      const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+      // The paired row SURVIVES (down-weight never deletes) but is demoted to ×0.5.
+      expect(byId.has(PAIRED_ID)).toBe(true);
+      expect(byId.get(PAIRED_ID)!).toBeCloseTo(referenceById.get(PAIRED_ID)! * 0.5, 10);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("R4 fail-closed on the live path: a CROSS-AGENT recall does NOT down-weight (the concrete adapter returns zero rows for the wrong agent)", async () => {
+    // The provenance row is written under agent_live; recall as agent_OTHER must get
+    // ZERO rows from getProvenanceForSummary → no down-weight (R4 fail-closed end-to-end).
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1", `summary:${SUMMARY_ID}`],
+        sessionKey: "telegram:chat_summary:user_a",
+      }),
+      makeResult(PAIRED_ID, {
+        base: 0.8,
+        trustLevel: "learned",
+        tags: ["conversation", "paired"],
+        sessionKey: "telegram:chat_DIFFERENT:user_a",
+      }),
+    ];
+    const referenceById = new Map((await runReference(input)).map((r) => [r.entry.id, r.score ?? 1]));
+
+    const db = seedLiveProvenanceDb("tenant_x", "agent_live");
+    try {
+      const provenanceStore = buildProvenanceReadStore(db);
+      const recall = createMemoryRecall(
+        {
+          memoryPort: fakeMemoryPort(input),
+          provenanceStore,
+          clock: fixedClock,
+          logger: noopLogger,
+        } as unknown as Parameters<typeof createMemoryRecall>[0],
+        baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+      );
+      // Recall as a DIFFERENT agent — the precise branch reads zero rows; the paired row's
+      // sessionKey also differs from the distilled summary's, so the heuristic can't fire.
+      const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_OTHER");
+      expect(got.ok).toBe(true);
+      if (!got.ok) return;
+      const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
+      expect(byId.get(PAIRED_ID)!).toBeCloseTo(referenceById.get(PAIRED_ID)!, 10); // unchanged
+    } finally {
+      db.close();
+    }
+  });
+
+  it("BYTE-IDENTICAL no-op when no provenance/distilled entry is present (live adapter still constructed)", async () => {
+    // A live adapter is wired, but NO ranked entry carries the lcd_distilled tag → the
+    // pass fast-paths (getProvenanceForSummary never called) and output is byte-identical.
+    const input = [
+      makeResult("a", { base: 0.9, trustLevel: "learned", tags: ["conversation"], sessionKey: "telegram:chat_1:user_a" }),
+      makeResult(PAIRED_ID, { base: 0.8, trustLevel: "learned", tags: ["conversation"], sessionKey: "telegram:chat_1:user_a" }),
+    ];
+    const expected = (await runReference(input)).map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+
+    const db = seedLiveProvenanceDb("tenant_x", "agent_live");
+    try {
+      const provenanceStore = buildProvenanceReadStore(db);
+      const recall = createMemoryRecall(
+        {
+          memoryPort: fakeMemoryPort(input),
+          provenanceStore,
+          clock: fixedClock,
+          logger: noopLogger,
+        } as unknown as Parameters<typeof createMemoryRecall>[0],
+        baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+      );
+      const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_live");
+      expect(got.ok).toBe(true);
+      if (!got.ok) return;
+      const actual = got.value.map((r) => ({ id: r.entry.id, score: r.score ?? 1 }));
+      expect(actual).toEqual(expected); // byte-identical to the no-pass reference
+    } finally {
+      db.close();
+    }
   });
 });
 
