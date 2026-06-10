@@ -114,10 +114,15 @@ export interface MemoryRecallDeps {
    * ×0.5, NEVER deleted — the memory stays accessible). It also queries
    * `getProvenanceForSummary(scope, summaryId)` for any distilled summary that carries
    * a `summary:<id>` tag, down-weighting the EXACT provenance-linked memoryIds. TYPE-only
-   * from @comis/core — the agent never imports @comis/memory (the agent↛memory build cut);
-   * the daemon injects the concrete adapter (the composition root). Absent / no
-   * lcd_distilled result → NO-OP (byte-identical; getProvenanceForSummary is never called).
-   * A FAILED pass is NON-FATAL (WARN + recall results unaffected). DEFAULT-OFF.
+   * from @comis/core — the agent never imports @comis/memory (the agent↛memory build cut).
+   * Absent / no lcd_distilled result → NO-OP (byte-identical; getProvenanceForSummary is
+   * never called). A FAILED pass is NON-FATAL (WARN + recall results unaffected). DEFAULT-OFF.
+   *
+   * ⚠ NOT INJECTED IN PRODUCTION AS OF PHASE 172 (C1). No concrete LcdProvenanceReadStore
+   * adapter is constructed or threaded at the composition root yet — Phase 172 is
+   * write-side-only with a HARD zero-assembly-path-diff guarantee. Injection (+ the
+   * `summary:<id>` tag on distilled memories) is DEFERRED TO PHASE 173 (C2, which owns the
+   * assembly risk) per design §6.2 + the Phase-C split. Built + test-pinned here, dormant live.
    */
   provenanceStore?: LcdProvenanceReadStore;
   /** Timer port for the rerank wall-clock deadline. Absent -> no timeout wrap. */

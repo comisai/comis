@@ -670,7 +670,19 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       //     lcd_distilled result, applyProvenanceDownweighting returns `ranked` unchanged
       //     and getProvenanceForSummary is never called. A pass failure is swallowed to a
       //     WARN — recall results are NEVER affected. TYPE-only provenanceStore port
-      //     (the agent↛memory build cut); the daemon injects the concrete adapter.
+      //     (the agent↛memory build cut).
+      //
+      //     ⚠ NOT WIRED IN PRODUCTION AS OF PHASE 172 (C1). This pass is BUILT and
+      //     test-pinned here, but `provenanceStore` is INTENTIONALLY not injected at the
+      //     composition root — Phase 172 (C1) is write-side-only with a HARD
+      //     zero-assembly-path-diff guarantee, so activating a recall-altering pass here
+      //     would violate it. Per design `design/lcd-v3-unified-substrate.md` §6.2 + the
+      //     Phase-C split, activation — provenanceStore injection + a concrete
+      //     LcdProvenanceReadStore adapter (getProvenanceForSummary) + stamping the
+      //     `summary:<id>` tag on distilled memories + the formatSessionKey fix on the
+      //     scope below (currently String(sessionKey) → "[object Object]", harmless only
+      //     while dormant) — is DEFERRED TO PHASE 173 (C2), which owns the assembly risk.
+      //     Until then this `if` is dead in production (provenanceStore == null).
       if (deps.provenanceStore != null) {
         try {
           const provenanceScope: ContextStoreScope = {
