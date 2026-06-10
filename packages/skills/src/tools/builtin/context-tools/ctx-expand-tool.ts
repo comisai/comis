@@ -1,17 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `ctx_expand` — recover the underlying messages of a compressed summary region
+ * `ctx_expand` — recover the underlying detail of a compressed summary region
  * of THIS conversation, via the injected `ContextStorePort`.
+ *
+ * DEPTH-02: a bounded in-process MULTI-HOP walk. Where the v2.12 tool recovered a
+ * single leaf summary's messages, this descends the summary-parent (T2)
+ * hierarchy (condensed → child summaries → leaf summaries → messages) with
+ * depth/token/node-visit caps, returning a RANKED CITED evidence bundle. The
+ * walk runs READ-ONLY inside the single-flight `runOnConversation` serializer and
+ * delegates the BFS to `ctxExpandWalk` (`ctx-expand-walk.ts`). It is NOT a
+ * sub-agent (EXPF-01 deferred). When the knowledge graph is empty/default-off
+ * (no `spreadLane` threaded), the walk runs T2-only (the live floor).
  *
  * Walk + reconstruct + taint + budget-cap (the read-tool + exec-externalization
  * blueprint):
  *   1. SCOPE: conversation derived per-call from `tryGetContext().sessionKey`
  *      (fail-closed `permission_denied` with no live session) — never cached,
  *      never a caller-supplied id (E2 isolation).
- *   2. WALK: `getSummaryMessages(summaryId)` → message ids; re-join via the
- *      existing `getMessages` (id-keyed map). A drifted (missing) id is SKIPPED,
- *      never thrown — the result reports an `unrecoverable` count so the model
- *      knows coverage is partial (mirrors the assembler's per-row drift skip).
+ *   2. WALK: a bounded BFS over `getSummaryChildren` (T2 descent) +
+ *      `getSummaryMessages` (leaf → message ids), re-joined via `getMessages`
+ *      (id-keyed map). Depth is tier-gated (`maxExpandDepth`); the bundle is
+ *      bounded by `maxExpandTokens` + a node-visit cap; a visited-set makes it
+ *      cycle-safe. A drifted (missing) id is SKIPPED, never thrown — the result
+ *      reports an `unrecoverable` count so the model knows coverage is partial.
  *   3. BUDGET + SPILL: when the recovered body exceeds `maxExpandTokens`, the
  *      detail is `scrubSecretsFromText`-scrubbed (the externalized file is the
  *      broadest egress surface — defense-in-depth) and written to the session
@@ -28,10 +39,14 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { wrapExternalContent, scrubSecretsFromText, safePath, type LcdMessage } from "@comis/core";
+import { wrapExternalContent, scrubSecretsFromText, safePath } from "@comis/core";
 
 import { jsonResult, readStringParam } from "../../../platform-tools/tool-helpers.js";
-import { emitExpansionMetric, estimateTokens, renderMessageText, requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
+import { emitExpansionMetric, estimateTokens, requireCtxScope, type ContextToolDeps } from "./context-tools-shared.js";
+import { ctxExpandWalk } from "./ctx-expand-walk.js";
+
+/** A sane node-visit bound for the multi-hop walk (caps a pathological wide DAG). */
+const MAX_WALK_NODES = 64;
 
 const CtxExpandParams = Type.Object({
   summaryId: Type.String({ description: "The summaryId (from ctx_search / ctx_inspect) whose covered messages to recover." }),
@@ -63,23 +78,29 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       const summaryId = readStringParam(params, "summaryId", true)!;
       const t0 = deps.nowMs();
 
-      // (2) WALK + RECONSTRUCT — id-keyed map; skip a drifted id, never throw.
-      //     Agent-scoped reads (R4) — a different agent's covered ids / messages
-      //     are unreachable within a shared conversation (WR-02).
-      const messageIds = deps.store.getSummaryMessages(ctxScope, summaryId);
-      const byId = new Map<string, LcdMessage>(
-        deps.store.getMessages(ctxScope).map((r) => [r.id, r]),
+      // (2) WALK + RECONSTRUCT — DEPTH-02 bounded multi-hop BFS over the
+      //     summary-parent (T2) hierarchy (condensed → child summaries → leaf
+      //     summaries → messages), depth/token/node-visit capped, returning a
+      //     RANKED CITED evidence bundle. T2-only floor: no spreadLane is threaded
+      //     into the tool deps today, so the KG (T4) lane is absent and the walk
+      //     runs T2-only (the live default — §15 degradation). A drifted id is
+      //     SKIPPED (counted unrecoverable), never thrown.
+      //
+      //     The walk is READ-ONLY and runs INSIDE the single-flight
+      //     `runOnConversation` serializer (Pitfall 5) so a deferred compaction
+      //     write cannot rewrite the DAG ordinals mid-walk. R4 scope-inheritance:
+      //     EVERY edge read passes `ctxScope` (an out-of-scope node is unreachable
+      //     by construction, WR-02) — the depth cap is a wiring-time CAPACITY knob,
+      //     but scope is ALWAYS per-call.
+      const bundle = await deps.store.runOnConversation(conversationId, () =>
+        ctxExpandWalk(deps.store, ctxScope, summaryId, {
+          maxDepth: deps.maxExpandDepth ?? 1,
+          maxTokens: deps.maxExpandTokens,
+          maxNodes: MAX_WALK_NODES,
+        }),
       );
-      const parts: string[] = [];
-      let unrecoverable = 0;
-      for (const id of messageIds) {
-        const row = byId.get(id);
-        if (!row) {
-          unrecoverable++;
-          continue;
-        }
-        parts.push(renderMessageText(row));
-      }
+      const parts = bundle.items.map((it) => it.text);
+      const unrecoverable = bundle.unrecoverable;
       const rawBody = parts.join(BODY_SEPARATOR);
 
       // (3) BUDGET + SPILL — oversized regions are ALWAYS secret-scrubbed, then

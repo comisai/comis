@@ -34,8 +34,13 @@ import {
   createCtxSearchTool,
   createCtxInspectTool,
   createCtxExpandTool,
+  depthForTier,
   type ContextToolDeps,
 } from "@comis/skills/tools";
+// DEPTH-02: the capability-axis resolver (frontier/mid/small/nano) — the same
+// minimal {id, provider} the memory-ops capability resolver uses. The capability
+// axis ignores contextWindow (K2 invariant), so a bare model object is correct.
+import { resolveModelProfile } from "@comis/agent";
 
 /** The daemon tool-assembly array element type (an `AgentTool`), via skills. */
 type AgentToolArray = ReturnType<PlatformToolProvider>;
@@ -54,6 +59,13 @@ export interface ContextWiringDeps {
   readonly nowMs: () => number;
   /** Inline-output cap before `ctx_expand` spills to a file (from `ContextEngineConfig`, default 4000). */
   readonly maxExpandTokens: number;
+  /**
+   * DEPTH-02: tier-gated max BFS hop depth for the `ctx_expand` multi-hop walk
+   * (nano1/small2/mid3/frontier4). The daemon resolves it from the agent's
+   * `ModelProfile` at `setup-tools.ts` (a capacity knob — wiring-time is correct;
+   * R4 scope stays per-call). Absent ⇒ a conservative single-hop depth of 1.
+   */
+  readonly maxExpandDepth?: number;
   /** Per-call session tool-results dir resolver (the hoisted exec-tool precedent). */
   readonly getToolResultsDir: () => string | undefined;
   /**
@@ -91,6 +103,9 @@ export function wireContextTools(
     logger: deps.skillsLogger,
     nowMs: deps.nowMs,
     maxExpandTokens: deps.maxExpandTokens,
+    // DEPTH-02: the tier-gated multi-hop depth cap (resolved wiring-time from the
+    // agent's ModelProfile). A capacity knob — R4 scope is still per-call.
+    maxExpandDepth: deps.maxExpandDepth,
     getToolResultsDir: deps.getToolResultsDir,
     // O1: the daemon's real bus (structurally assignable) so each ctx_* hit
     // emits a content-free context:dag_expanded. `undefined` ⇒ silent no-op.
@@ -101,4 +116,24 @@ export function wireContextTools(
     createCtxInspectTool(shared),
     createCtxExpandTool(shared),
   );
+}
+
+/**
+ * DEPTH-02: resolve the tier-gated `ctx_expand` multi-hop walk depth
+ * (nano1/small2/mid3/frontier4) from an agent's `model`/`provider`.
+ *
+ * `RequestContext` carries NO `capabilityClass` (Pitfall 3), so the cap is
+ * resolved HERE at wiring time from the agent's `ModelProfile`. The DEPTH cap is
+ * a CAPACITY knob, NOT a scope — wiring-time resolution is correct even when one
+ * `wireContextTools` call serves multiple agents per channel (A3); the R4 read
+ * scope still comes per-call from `requireCtxScope()` inside each tool. The
+ * capability axis ignores `contextWindow`, so the minimal `{ id, provider }` the
+ * memory-ops resolver uses is correct here too (resolve-memory-ops-capability.ts).
+ *
+ * `model`/`provider` default to "default" on a parsed agent config; an undefined
+ * or unknown model fails closed to the most-locked profile (nano → depth 1).
+ */
+export function resolveCtxExpandDepth(model: string | undefined, provider: string | undefined): number {
+  const profile = resolveModelProfile({ id: model ?? "", provider: provider ?? "" });
+  return depthForTier(profile.capabilityClass);
 }

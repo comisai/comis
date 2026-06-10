@@ -23,7 +23,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 
-import { wireContextTools } from "./setup-context-tools.js";
+import { wireContextTools, resolveCtxExpandDepth } from "./setup-context-tools.js";
 import { runWithContext } from "@comis/core";
 import type { ContextStorePort, LcdSearchHit, LcdSearchResult } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
@@ -109,5 +109,28 @@ describe("wireContextTools — daemon composition root", () => {
       expect.any(String),
       expect.objectContaining({ limit: expect.any(Number) }),
     );
+  });
+});
+
+describe("resolveCtxExpandDepth — DEPTH-02 tier-gated multi-hop depth at wiring time", () => {
+  it("resolves an anthropic (frontier) agent model to depth 4", () => {
+    expect(resolveCtxExpandDepth("claude-sonnet-4-5-20250929", "anthropic")).toBe(4);
+  });
+  it("resolves an openai (frontier) agent model to depth 4", () => {
+    expect(resolveCtxExpandDepth("gpt-5", "openai")).toBe(4);
+  });
+  it("resolves a google (mid) agent model to depth 3", () => {
+    expect(resolveCtxExpandDepth("gemini-2.5-pro", "google")).toBe(3);
+  });
+  it("resolves an ollama (small) agent model to depth 2", () => {
+    expect(resolveCtxExpandDepth("qwen3.6:35b", "ollama")).toBe(2);
+  });
+  it("resolves an unknown / empty provider to the small fail-safe (depth 2), never frontier", () => {
+    // resolveModelProfile maps any non-anthropic/openai/google family to the
+    // fail-SAFE "small" class (model-profile.ts: a 256K ollama never resolves
+    // frontier). An empty provider is "small", so the multi-hop depth is 2 — a
+    // conservative middle, never the deepest (4) frontier walk for an unknown model.
+    expect(resolveCtxExpandDepth("", "")).toBe(2);
+    expect(resolveCtxExpandDepth("default", "default")).toBe(2);
   });
 });

@@ -70,7 +70,7 @@ import {
 // Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
 import { wireTerminalTools, buildTerminalEgressDeps, buildTerminalWiringDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
 // In-session expansion-loop (v2.12 Phase 131, E1/E2) dag-gated ctx_* wiring.
-import { wireContextTools } from "./setup-context-tools.js";
+import { wireContextTools, resolveCtxExpandDepth } from "./setup-context-tools.js";
 // Tool-audit DEBUG-line subscription extracted to setup-tool-audit.ts (file-size cap).
 import { setupToolAuditLogging } from "./setup-tool-audit.js";
 
@@ -635,11 +635,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       wireTerminalTools(tools, terminalRegistries, agentId, buildTerminalWiringDeps(terminalBase, skillsConfig.terminal));
 
       // Context expansion tools (v2.12 Phase 131, E1/E2): in-session lossless-store recovery
-      // (ctx_*). Wired ONLY in dag mode AND with a store present (inert in pipeline mode).
-      // never-export, OUTSIDE the parity registry; store injected as the core port type.
+      // (ctx_*). Wired ONLY in dag mode WITH a store; never-export, OUTSIDE the parity registry.
       if ((agentConfig?.contextEngine?.version ?? "pipeline") === "dag" && deps.lcdStore) {
         const maxExpandTokens = agentConfig?.contextEngine?.maxExpandTokens ?? 4000;
-        wireContextTools(tools, deps.lcdStore, agentId, { skillsLogger, nowMs: systemNowMs, maxExpandTokens, getToolResultsDir, eventBus }); // O1: eventBus → ctx_* context:dag_expanded
+        const maxExpandDepth = resolveCtxExpandDepth(agentConfig?.model, agentConfig?.provider); // DEPTH-02: tier-gated multi-hop depth (capacity knob → wiring-time; R4 per-call)
+        wireContextTools(tools, deps.lcdStore, agentId, { skillsLogger, nowMs: systemNowMs, maxExpandTokens, maxExpandDepth, getToolResultsDir, eventBus }); // O1: eventBus → ctx_* context:dag_expanded
       }
 
       return tools;

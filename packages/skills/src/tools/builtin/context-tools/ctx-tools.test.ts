@@ -147,6 +147,8 @@ interface StoreStub {
   getSummaryChildrenReturn: LcdSummary[];
   getSummaryMessagesReturn: string[];
   getMessagesReturn: LcdMessage[];
+  /** Records the conversationId of every runOnConversation call (DEPTH-02 single-flight proof). */
+  serializedConversationIds: string[];
 }
 
 function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: ContextStorePort } {
@@ -159,6 +161,7 @@ function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: Con
     getSummaryChildrenReturn: [],
     getSummaryMessagesReturn: [],
     getMessagesReturn: [],
+    serializedConversationIds: [],
     ...over,
   };
   const store = {
@@ -181,6 +184,13 @@ function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: Con
     getMessages(scope: ContextStoreScope): LcdMessage[] {
       stub.readScopes.push(scope);
       return stub.getMessagesReturn;
+    },
+    // DEPTH-02: ctx_expand now runs its multi-hop walk INSIDE the single-flight
+    // serializer (Pitfall 5). The stub runs `fn` immediately (no real queue) and
+    // records the conversationId so the wrap is asserted at the tool level.
+    async runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T> {
+      stub.serializedConversationIds.push(conversationId);
+      return fn();
     },
   } as unknown as ContextStorePort;
   return { stub, store };
@@ -573,6 +583,42 @@ describe("ctx_expand tool", () => {
     const fields = logger.logs.flatMap((l) => Object.keys(l.obj));
     expect(fields).toContain("conversationId");
     expect(fields).toContain("step");
+  });
+
+  it("ctx_expand (DEPTH-02) descends a condensed seed multi-hop INSIDE runOnConversation", async () => {
+    // A condensed seed (sum-root) → one condensed child (sum-a) → a leaf
+    // (sum-a-leaf) → a message. The pre-DEPTH-02 single-hop tool would recover
+    // ZERO (the seed is condensed, getSummaryMessages(seed) is empty); the
+    // multi-hop walk recovers the deep message. Keyed children drive the descent.
+    const childrenByParent = new Map<string, LcdSummary[]>([
+      ["sum-root", [makeSummary({ summaryId: "sum-a", kind: "condensed", depth: 1 })]],
+      ["sum-a", [makeSummary({ summaryId: "sum-a-leaf", kind: "leaf", depth: 0 })]],
+    ]);
+    const messagesByLeaf = new Map<string, string[]>([["sum-a-leaf", ["deep-m1"]]]);
+    const serialized: string[] = [];
+    const store = {
+      getSummaryChildren(_s: ContextStoreScope, parentId: string): LcdSummary[] {
+        return childrenByParent.get(parentId) ?? [];
+      },
+      getSummaryMessages(_s: ContextStoreScope, summaryId: string): string[] {
+        return messagesByLeaf.get(summaryId) ?? [];
+      },
+      getMessages(_s: ContextStoreScope): LcdMessage[] {
+        return [makeMessage("deep-m1", 1, "deep recovered multi-hop detail")];
+      },
+      async runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T> {
+        serialized.push(conversationId);
+        return fn();
+      },
+    } as unknown as ContextStorePort;
+    const { deps } = makeDeps(store, { maxExpandDepth: 3 });
+    const tool = createCtxExpandTool(deps);
+    const result = (await runExecute(tool, "deep-call-1", { summaryId: "sum-root" }, liveCtx())) as {
+      details: { body?: string };
+    };
+    expect(result.details.body).toContain("deep recovered multi-hop detail");
+    // The walk ran inside the single-flight serializer for THIS conversation.
+    expect(serialized).toContain("default:user_a:chan_a");
   });
 });
 

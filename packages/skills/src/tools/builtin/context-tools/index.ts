@@ -21,3 +21,6 @@ export {
   type ContextToolDeps,
   type ToolLogger as ContextToolLogger,
 } from "./context-tools-shared.js";
+// DEPTH-02: the tier→multi-hop-depth map, consumed by the daemon wiring site to
+// resolve `maxExpandDepth` from the agent's ModelProfile capabilityClass.
+export { depthForTier, type WalkCapabilityClass } from "./ctx-expand-walk.js";
