@@ -9,14 +9,19 @@
  * (× {@link PROVENANCE_DOWNWEIGHT_FACTOR}) the same-conversation paired/source memories
  * the distilled summary subsumes — so the lossy summary does not double-count with its
  * own paired source rows in the recall budget. The memory is DEMOTED, never deleted:
- * it stays accessible, just ranked lower.
+ * it stays accessible, just ranked lower. CR-01 (Phase 173-05): the demotion RE-SORTS the
+ * returned array by descending score (STABLE — index tiebreaker) so it is observable in
+ * RANK, not merely in the `score` field — nothing downstream re-sorts (deduplicateResults
+ * preserves order; the hybrid injector consumes the array in order), so without the re-sort
+ * a halved row kept its exact slot and the demotion was a no-op for ranking.
  *
  * The CALLER (memory-recall.ts) owns the precondition gate (`deps.provenanceStore != null`)
  * and the NON-FATAL try/catch — this helper assumes an active provenance store and is pure.
  *
  * DEFAULT-OFF BYTE-IDENTITY: no `lcd_distilled` entry in `ranked` → returns the input
  * array reference unchanged and never queries the store; an empty down-weight set → also
- * returns `ranked` unchanged.
+ * returns `ranked` unchanged (NO re-sort). The re-sort runs ONLY when ≥1 row was actually
+ * down-weighted, so a no-op pass never perturbs the established rank.
  *
  * Architecture cut (agent↛memory): TYPE-only imports from @comis/core. This file NEVER
  * imports @comis/memory.
@@ -57,8 +62,16 @@ export const PROVENANCE_DOWNWEIGHT_FACTOR = 0.5;
  *  1. PROVENANCE-PRECISE (load-bearing `getProvenanceForSummary`): for any distilled
  *     summary that carries a `summary:<id>` tag, query the provenance read store for
  *     that summaryId and down-weight the returned `memoryId`s that appear in `ranked`.
- *  2. SESSION HEURISTIC: down-weight every NON-distilled candidate sharing the distilled
- *     summary's `source.sessionKey` (the covered conversation range).
+ *     PRIMARY as of 173-04 (the distillation runner stamps the tag).
+ *  2. SESSION HEURISTIC (FALLBACK ONLY — IN-03, Phase 173-05): down-weight every
+ *     NON-distilled candidate sharing the distilled summary's `source.sessionKey`. This is
+ *     over-broad (it cannot distinguish a legitimately-distinct same-session memory from a
+ *     genuinely-subsumed one — neither MemorySource nor the provenance row carries the
+ *     covered time range), so it is GATED behind the ABSENCE of a usable `summary:<id>` tag:
+ *     when branch (1) can select precisely it OWNS the selection and branch (2) is SKIPPED;
+ *     the heuristic fires only for a distilled row that has no precise tag (older rows / a
+ *     write that skipped it). This stops the now-effective re-sort (CR-01) from suppressing
+ *     legitimately-distinct same-session recall.
  *
  * W6 PRECEDENCE FIX: `candidateIsDistilled` is computed as a SEPARATE boolean BEFORE
  * the `&&`-chain, so the predicate `candidate.id !== summary.id && !candidateIsDistilled`
@@ -85,27 +98,39 @@ export function applyProvenanceDownweighting(
   const downweightSet = new Set<string>();
   for (const summary of distilledSummaries) {
     // (1) PROVENANCE-PRECISE — only when the distilled summary carries its summaryId tag.
+    //     This is the PRIMARY selector as of 173-04: the distillation runner now stamps
+    //     `summary:<id>`, so a precise provenance read links the EXACT subsumed rows.
     const summaryTag = (summary.entry.tags ?? []).find((t) => t.startsWith(SUMMARY_TAG_PREFIX));
-    if (summaryTag !== undefined) {
-      const summaryId = summaryTag.slice(SUMMARY_TAG_PREFIX.length);
-      if (summaryId.length > 0) {
-        const rows = provenanceStore.getProvenanceForSummary(scope, summaryId);
-        const linkedMemoryIds = new Set(rows.map((row) => row.memoryId));
-        for (const candidate of ranked) {
-          const candidateIsDistilled = isDistilled(candidate);
-          // Same W6-safe predicate: never the summary itself, never another distilled row.
-          if (
-            candidate.entry.id !== summary.entry.id &&
-            !candidateIsDistilled &&
-            linkedMemoryIds.has(candidate.entry.id)
-          ) {
-            downweightSet.add(candidate.entry.id);
-          }
+    const summaryId = summaryTag !== undefined ? summaryTag.slice(SUMMARY_TAG_PREFIX.length) : "";
+    const hasUsablePreciseTag = summaryId.length > 0;
+    if (hasUsablePreciseTag) {
+      const rows = provenanceStore.getProvenanceForSummary(scope, summaryId);
+      const linkedMemoryIds = new Set(rows.map((row) => row.memoryId));
+      for (const candidate of ranked) {
+        const candidateIsDistilled = isDistilled(candidate);
+        // Same W6-safe predicate: never the summary itself, never another distilled row.
+        if (
+          candidate.entry.id !== summary.entry.id &&
+          !candidateIsDistilled &&
+          linkedMemoryIds.has(candidate.entry.id)
+        ) {
+          downweightSet.add(candidate.entry.id);
         }
       }
     }
 
-    // (2) SESSION HEURISTIC — same-conversation paired rows (the covered range).
+    // (2) SESSION HEURISTIC — same-conversation paired rows (the covered conversation).
+    //     IN-03 SCOPING (Phase 173-05): this branch down-weights EVERY non-distilled
+    //     candidate sharing the summary's sessionKey, which over-demotes a long-lived
+    //     session (it cannot tell a legitimately-distinct same-session memory from a
+    //     genuinely-subsumed one — neither the MemorySource nor the provenance row
+    //     carries the summary's covered time range to scope it precisely). Now that the
+    //     pass is EFFECTIVE (CR-01 re-sort below makes the demotion change rank), that
+    //     over-reach would suppress relevant recall. So branch (2) is GATED behind the
+    //     ABSENCE of a usable `summary:<id>` tag: when branch (1) can select precisely it
+    //     OWNS the selection; the heuristic only fires as the fallback for a distilled
+    //     row that carries no precise tag (older rows / a write that skipped the tag).
+    if (hasUsablePreciseTag) continue; // branch (1) is authoritative for this summary
     const sourceSessionKey = summary.entry.source?.sessionKey;
     if (sourceSessionKey !== undefined && sourceSessionKey.length > 0) {
       for (const candidate of ranked) {
@@ -127,9 +152,22 @@ export function applyProvenanceDownweighting(
   if (downweightSet.size === 0) return ranked;
 
   // Apply the multiplier — NEVER delete. A row with no score defaults to 1.0 first.
-  return ranked.map((r) =>
+  const downweighted = ranked.map((r) =>
     downweightSet.has(r.entry.id)
       ? { ...r, score: (r.score ?? 1.0) * PROVENANCE_DOWNWEIGHT_FACTOR }
       : r,
   );
+
+  // CR-01 (Phase 173-05): the demotion must be observable in RANK, not just the `score`
+  // field. The down-weighting previously changed `score` but PRESERVED array position,
+  // and nothing downstream re-sorts (deduplicateResults preserves order; the hybrid
+  // injector consumes the array IN ORDER) — so a halved row kept its exact slot and the
+  // "don't double-count the lossy summary" intent was a no-op for ranking. Re-sort by
+  // DESCENDING score so the demoted rows actually sink. The sort is STABLE (index
+  // tiebreaker) — it mirrors how scoreWithBreakdown/fuse establish rank and keeps the
+  // relative order of equal-scored (incl. non-down-weighted) rows identical to the input.
+  return downweighted
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => (b.r.score ?? 0) - (a.r.score ?? 0) || a.i - b.i)
+    .map((x) => x.r);
 }
