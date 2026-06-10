@@ -64,6 +64,7 @@ import {
   buildAppendCondensedSummaryTxn,
   buildAppendLeafSummaryTxn,
 } from "./lcd-store-writes.js";
+import { createBoundedReads } from "./lcd-store-reads.js";
 import {
   messageRowMapper,
   partRowMapper,
@@ -248,15 +249,6 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
   );
 
-  // EFF-01: bounded total-message COUNT for the assembler's `persistedMsgCount` —
-  // a single integer, NO row materialization, so it keeps the O(referenced-ids)
-  // read budget (never an O(total-history) row fetch). R4: scoped by agent_id +
-  // tenant_id (WR-02). The count read goes through ctxCountRowMapper, not a raw
-  // count cast (§6.8 untyped-sqlite) — same { c } shape as countCtxItems.
-  const countMsgs = db.prepare(
-    "SELECT COUNT(*) AS c FROM lcd_messages WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
-  );
-
   // CRIT-2: the highest ordinal currently in the (conversation, agent, tenant)
   // view — the per-append insert lands at MAX(ordinal)+1 (0 for the first row).
   // `MAX` over zero rows is SQL NULL (the nullable mapper handles it). R4: scoped
@@ -429,6 +421,11 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   };
   const appendLeafSummaryTxn = buildAppendLeafSummaryTxn(db, summaryWriteDeps);
   const appendCondensedSummaryTxn = buildAppendCondensedSummaryTxn(db, summaryWriteDeps);
+
+  // EFF-01 bounded reads: extracted to ./lcd-store-reads.ts to keep this file
+  // under the 800-line cap (mirrors the lcd-store-writes.ts extraction pattern).
+  // `selectParts` is passed in so the prepare-once discipline is preserved.
+  const boundedReads = createBoundedReads(db, selectParts);
 
   // R3 (132-04): the per-conversation single-flight serializer the store
   // exposes via runOnConversation. The store is the single writer BOTH the live
@@ -669,104 +666,18 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     },
 
     getMessagesByIds(scope: ContextStoreScope, ids: string[]): LcdMessage[] {
-      // EFF-01: bounded fetch — short-circuit immediately on empty set so zero
-      // DB queries are issued (the IN() SQL with zero placeholders is also an
-      // error in most SQLite builds, making the guard doubly necessary).
-      if (ids.length === 0) return [];
-      // Variable-length IN — built at call time (NOT a cached prepare).
-      // Documented deviation from the prepare-once rule: the working set is
-      // bounded by context_items cardinality (max ~100 items per turn), so the
-      // extra statement-prepare cost is negligible and avoids a placeholder-count
-      // mismatch at the boundary. T-170-01-01: ids are always bound as '?'
-      // parameters — never string-interpolated — so SQL injection is structurally
-      // impossible. T-170-01-02: the three-column R4 scope triple
-      // (conversation_id, agent_id, tenant_id) is always present so a cross-agent
-      // id lookup returns [] (EFF-01-S-4).
-      const placeholders = ids.map(() => "?").join(",");
-      const stmt = db.prepare(
-        `SELECT * FROM lcd_messages
-         WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?
-           AND id IN (${placeholders})
-         ORDER BY seq`,
-      );
-      const out: LcdMessage[] = [];
-      for (const rawMsg of stmt.all(scope.conversationId, scope.agentId, scope.tenantId, ...ids)) {
-        const parsedMsg = messageRowMapper.parseOptionalRow(rawMsg);
-        if (!parsedMsg.ok || !parsedMsg.value) continue;
-        const row = parsedMsg.value;
-        const parts: LcdMessagePart[] = [];
-        for (const rawPart of selectParts.all(row.id)) {
-          const parsedPart = partRowMapper.parseOptionalRow(rawPart);
-          if (!parsedPart.ok || !parsedPart.value) continue;
-          const p = parsedPart.value;
-          parts.push({
-            kind: p.kind as LcdPartKind,
-            toolCallId: p.tool_call_id ?? undefined,
-            toolName: p.tool_name ?? undefined,
-            toolInput: parseJsonColumn(p.tool_input),
-            toolOutput: parseJsonColumn(p.tool_output),
-            isError: intToBool(p.is_error),
-            metadata: parseMetadata(p.metadata),
-          });
-        }
-        out.push({
-          id: row.id,
-          conversationId: row.conversation_id,
-          seq: row.seq,
-          role: row.role as LcdRole,
-          tokenCount: row.token_count,
-          createdAt: row.created_at,
-          parts,
-        });
-      }
-      return out;
+      // EFF-01: extracted to ./lcd-store-reads.ts (byte-identical relocation).
+      return boundedReads.getMessagesByIds(scope, ids);
     },
 
     countMessages(scope: ContextStoreScope): number {
-      // EFF-01: single-integer COUNT — no row materialization, so it preserves the
-      // O(referenced-ids) read budget (the assembler's persistedMsgCount no longer
-      // forces an O(total-history) getMessages fetch). Routed through
-      // ctxCountRowMapper, not a raw count cast (§6.8 untyped-sqlite). A scope with
-      // no rows yields { c: 0 }; a parse failure (corruption/drift) degrades to 0
-      // rather than throwing — a missing count must never break live assembly.
-      const countRow = ctxCountRowMapper.parseOptionalRow(
-        countMsgs.get(scope.conversationId, scope.agentId, scope.tenantId),
-      );
-      return countRow.ok && countRow.value ? countRow.value.c : 0;
+      // EFF-01: extracted to ./lcd-store-reads.ts (byte-identical relocation).
+      return boundedReads.countMessages(scope);
     },
 
     getSummariesByIds(scope: ContextStoreScope, ids: string[]): LcdSummary[] {
-      // EFF-01: bounded fetch — short-circuit on empty set (zero DB queries).
-      if (ids.length === 0) return [];
-      const placeholders = ids.map(() => "?").join(",");
-      const stmt = db.prepare(
-        `SELECT * FROM lcd_summaries
-         WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?
-           AND summary_id IN (${placeholders})
-         ORDER BY created_at, summary_id`,
-      );
-      const out: LcdSummary[] = [];
-      for (const raw of stmt.all(scope.conversationId, scope.agentId, scope.tenantId, ...ids)) {
-        const parsed = summaryRowMapper.parseOptionalRow(raw);
-        if (!parsed.ok || !parsed.value) continue;
-        const row = parsed.value;
-        out.push({
-          summaryId: row.summary_id,
-          conversationId: row.conversation_id,
-          kind: row.kind as LcdSummaryKind,
-          depth: row.depth,
-          earliestAt: row.earliest_at,
-          latestAt: row.latest_at,
-          descendantCount: row.descendant_count,
-          tokenCount: row.token_count,
-          content: row.content,
-          fileIds: parseFileIds(row.file_ids),
-          taint: row.taint !== 0,
-          fallback: row.fallback !== 0,
-          createdAt: row.created_at,
-        });
-      }
-      return out;
+      // EFF-01: extracted to ./lcd-store-reads.ts (byte-identical relocation).
+      return boundedReads.getSummariesByIds(scope, ids);
     },
 
     getSummaryChildren(scope: ContextStoreScope, parentSummaryId: string): LcdSummary[] {
