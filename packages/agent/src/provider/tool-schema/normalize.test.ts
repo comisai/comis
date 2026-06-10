@@ -576,6 +576,53 @@ describe("normalizeToolSchemasForProvider", () => {
 
       expect((result[0].parameters as Record<string, unknown>).type).toBe("object");
     });
+
+    // CR-01 (175-REVIEW): Layer 3.5 runs BEFORE Layer 4, and T4 infers
+    // "string" for a typeless top level with no properties/required/
+    // additionalProperties/items — `parameters: {}` (a real no-arg-tool shape
+    // from sloppy MCP servers) and `parameters: {description}` became
+    // top-level {"type":"string"}, making llama.cpp compile the whole
+    // arguments payload as a JSON string. Layer 4 then no-ops because a type
+    // is present. Every other provider path produces type "object" for the
+    // same input — these pins force the gbnf path onto the same contract.
+    it("CR-01: a bare no-arg top-level schema ({}) becomes type object under the gbnf profile — never type string", () => {
+      const tool = makeTool("noarg_bare", {});
+
+      const result = normalizeToolSchemasForProvider([tool], gbnfCtx);
+
+      expect(result[0].parameters).toEqual({ type: "object", properties: {} });
+    });
+
+    it("CR-01: a description-only top-level schema becomes type object under the gbnf profile, matching the no-compat path's contract", () => {
+      const descOnly = { description: "No-arg tool from a sloppy MCP server" };
+      const gbnfResult = normalizeToolSchemasForProvider(
+        [makeTool("noarg_desc_only", { ...descOnly })],
+        gbnfCtx,
+      );
+      const noCompatResult = normalizeToolSchemasForProvider(
+        [makeTool("noarg_desc_only", { ...descOnly })],
+        { provider: "my-ollama", modelId: "qwen3.6:35b" },
+      );
+
+      const gbnfParams = gbnfResult[0].parameters as Record<string, unknown>;
+      expect(gbnfParams.type).toBe("object");
+      // The no-compat path (early-return L0+L4) yields type "object" for the
+      // same input — the gbnf profile must agree on the top-level contract.
+      expect((noCompatResult[0].parameters as Record<string, unknown>).type).toBe("object");
+      expect(gbnfParams.description).toBe(descOnly.description);
+    });
+
+    it("CR-01: typeless top-level normalization stays idempotent under the gbnf profile (twice = once, byte-identical)", () => {
+      const tools = [
+        makeTool("noarg_bare", {}),
+        makeTool("noarg_desc_only", { description: "No-arg tool" }),
+      ];
+
+      const first = normalizeToolSchemasForProvider(tools, gbnfCtx);
+      const second = normalizeToolSchemasForProvider(first, gbnfCtx);
+
+      expect(JSON.stringify(second)).toBe(JSON.stringify(first));
+    });
   });
 
   describe("I3 — non-local providers byte-identical (expected literals)", () => {
