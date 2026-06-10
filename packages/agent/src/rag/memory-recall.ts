@@ -30,7 +30,7 @@
 // recall-types.ts — see the re-export below. memory-recall.ts itself imports only the
 // @comis/core types it uses DIRECTLY in the pipeline body (the usefulness side-map +
 // the trust-filter set); the agent↛memory cut holds (every store is a @comis/core port TYPE).
-import type { UsefulnessSignal, TrustLevel } from "@comis/core";
+import type { UsefulnessSignal, TrustLevel, ContextStoreScope } from "@comis/core";
 import { ok, withTimeout, TimeoutError } from "@comis/shared";
 import { fuse, type FusionLane } from "./fuse.js";
 import { scoreWithBreakdown, type ScoreBreakdown } from "./score.js";
@@ -46,6 +46,7 @@ import { mmrRerank } from "./mmr.js";
 import { appendCausalLane } from "./recall-causal-lane.js";
 import { appendGraphSpreadLane } from "./recall-graph-spread-lane.js";
 import { captureRecallObservability } from "./recall-observability.js";
+import { applyProvenanceDownweighting } from "./recall-provenance.js";
 import {
   vectorLaneCouldContribute,
   type RecallDegradation,
@@ -655,6 +656,43 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
               hint: "embedding read failed; ranking without MMR diversity",
             },
             "mmr embedding read fallback",
+          );
+        }
+      }
+
+      // 5c. POST-FUSION PROVENANCE PASS (DIST-03). Optional, NON-FATAL, DEFAULT-OFF.
+      //     Runs AFTER mmrRerank (the rerank order has committed) and BEFORE dedup +
+      //     observability capture. When a distilled summary (tag "lcd_distilled") is in
+      //     the ranked set, down-weight same-conversation paired memories whose covered
+      //     range overlaps — score multiplier ×0.5, NEVER delete (the memory stays
+      //     accessible, just demoted so the lossy summary doesn't double-count with its
+      //     own paired source rows). BYTE-IDENTITY: with provenanceStore absent OR no
+      //     lcd_distilled result, applyProvenanceDownweighting returns `ranked` unchanged
+      //     and getProvenanceForSummary is never called. A pass failure is swallowed to a
+      //     WARN — recall results are NEVER affected. TYPE-only provenanceStore port
+      //     (the agent↛memory build cut); the daemon injects the concrete adapter.
+      if (deps.provenanceStore != null) {
+        try {
+          const provenanceScope: ContextStoreScope = {
+            tenantId: sessionKey.tenantId,
+            agentId: agentId ?? sessionKey.agentId ?? "default",
+            // conversationId/sessionKey are not load-bearing for the (tenant, agent)-scoped
+            // getProvenanceForSummary read, but the port takes a full scope — fill them from
+            // the session key so the adapter's R4 filter has the complete context.
+            conversationId: sessionKey.channelId ?? "",
+            sessionKey: String(sessionKey),
+          };
+          ranked = applyProvenanceDownweighting(ranked, deps.provenanceStore, provenanceScope);
+        } catch (err) {
+          // Non-fatal: the provenance pass must NEVER fail the recall hot path.
+          deps.logger.warn(
+            {
+              agentId,
+              err: err instanceof Error ? err.message : String(err),
+              errorKind: "dependency" as const,
+              hint: "provenance down-weighting failed; recall results returned unaffected",
+            },
+            "provenance pass fallback",
           );
         }
       }

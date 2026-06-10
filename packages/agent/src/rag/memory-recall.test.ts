@@ -3571,7 +3571,8 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
 
   it("NON-FATAL: a provenanceStore that throws does NOT fail recall — results are returned unchanged with a WARN", async () => {
     const input = [
-      makeResult("distilled", { base: 0.9, trustLevel: "learned", tags: ["lcd_distilled", "depth:1"], sessionKey: CONV_SESSION }),
+      // The summary:<id> tag makes the pass invoke getProvenanceForSummary (which throws here).
+      makeResult("distilled", { base: 0.9, trustLevel: "learned", tags: ["lcd_distilled", "depth:1", "summary:sum-throw"], sessionKey: CONV_SESSION }),
       makeResult("paired", { base: 0.8, trustLevel: "learned", tags: ["paired"], sessionKey: CONV_SESSION }),
     ];
     const warnMock = vi.fn();

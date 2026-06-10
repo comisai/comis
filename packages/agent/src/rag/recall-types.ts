@@ -31,6 +31,7 @@ import type {
   TripleStorePort,
   MemorySearchResult,
   SessionKey,
+  LcdProvenanceReadStore,
 } from "@comis/core";
 import type { RecallTrace } from "@comis/observability";
 import type { Result } from "@comis/shared";
@@ -105,6 +106,20 @@ export interface MemoryRecallDeps {
    * agent↛memory build cut); the daemon injects the concrete adapter.
    */
   pinnedStore?: MemoryPinnedStore;
+  /**
+   * Optional LCD provenance read store (DIST-03). When present AND a selected recall
+   * result carries the "lcd_distilled" tag, the post-fusion provenance pass (after
+   * mmrRerank, before observability capture) down-weights same-conversation paired
+   * memories whose covered range overlaps the distilled summary's (score multiplier
+   * ×0.5, NEVER deleted — the memory stays accessible). It also queries
+   * `getProvenanceForSummary(scope, summaryId)` for any distilled summary that carries
+   * a `summary:<id>` tag, down-weighting the EXACT provenance-linked memoryIds. TYPE-only
+   * from @comis/core — the agent never imports @comis/memory (the agent↛memory build cut);
+   * the daemon injects the concrete adapter (the composition root). Absent / no
+   * lcd_distilled result → NO-OP (byte-identical; getProvenanceForSummary is never called).
+   * A FAILED pass is NON-FATAL (WARN + recall results unaffected). DEFAULT-OFF.
+   */
+  provenanceStore?: LcdProvenanceReadStore;
   /** Timer port for the rerank wall-clock deadline. Absent -> no timeout wrap. */
   timers?: TimerPort;
   /** Wall-clock reads for the recency boost (never Date.now()). */
