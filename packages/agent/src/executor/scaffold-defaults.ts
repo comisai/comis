@@ -216,20 +216,6 @@ export interface ScaffoldDefaults {
 // ---------------------------------------------------------------------------
 
 /**
- * Narrow view of the (Plan-03) `contextEngine.relevance` policy sub-block.
- *
- * The full `contextEngine.relevance.*` Zod schema lands in Plan 03 (RETR-03). Until
- * then `ContextEngineConfig` (a `z.strictObject`) has no `relevance` field, so the
- * resolver reads it through this optional lens — an OPTIONAL-CHAIN read, never a schema
- * re-parse (Pitfall 1: re-parsing the sub-block collapses undefined→false via .default()
- * and kills the `??` capability gate). When the field is absent the chain yields
- * `undefined` and the gate falls through to the capability default.
- */
-interface RelevancePolicyView {
-  relevance?: { firstByDefault?: boolean };
-}
-
-/**
  * Resolve capability-gated defaults for a single agent execution.
  *
  * Pure — no I/O, no side effects, deterministic for equal inputs.
@@ -282,29 +268,27 @@ export function resolveScaffoldDefaults(
         : 0;                             // recall gate enforces THIS floor, not a silent 0 (WR-02).
 
   // -------------------------------------------------------------------------
-  // RETR-04 / WR-02 (Phase 173): relevanceFirst — the unified-arbiter-active signal.
+  // RETR-03 / RETR-04 / WR-02 (Phase 173): relevanceFirst — the full policy gate
+  // (the unified-arbiter-active signal AND the relevance-first vs recency-first policy).
   //
   // Copies the SD1 capability-gate shape EXACTLY: explicit config wins (both ways),
   // else the capability default. The gate axis is supportsPromptCache (design §14.1),
   // NOT a provider-string predicate: small/nano on a non-caching model (typical Ollama)
   // reorders relevance-first for free; a caching model pays a cache-break so it stays
-  // recency-first (false) below the fence — frontier (Anthropic, caches) → false.
+  // recency-first (false) below the fence — frontier (Anthropic, caches) → false; mid
+  // (caching) → false. Frontier/mid recency-first is BYTE-IDENTICAL (LOCKED #2): the
+  // arbiter does not run for them. The small/nano DEFAULT-ON flip stays MEASUREMENT-GATED
+  // (the Phase-171 harness) — this resolves the mechanism; the live flip is an operator step.
   //
-  // The optional-chain read of config.contextEngine?.relevance?.firstByDefault is
-  // DEFENSIVE: the relevance.* schema block lands in Plan 03, so today the field is
-  // absent → the chain is `undefined` → the `??` falls through to the capability gate.
-  // It is read THROUGH RelevancePolicyView (a narrow optional lens), NEVER re-parsed
-  // through a schema — re-parsing would .default() undefined→false and kill the gate
-  // (Pitfall 1, documented for SD1 above). When the field DOES exist (Plan 03), an
-  // explicit boolean (true OR false) is preserved — the load-bearing operator override.
+  // Pitfall 1 (the schema re-parse trap): read the relevance.firstByDefault field DIRECTLY
+  // via the optional chain below — the schema field (173-03) is OPTIONAL with NO `.default()`,
+  // so an omitted field stays `undefined` and the `??` falls through to the capability gate.
+  // Do NOT re-parse the sub-block through its schema (a `.default()` would collapse
+  // undefined→false and silently kill the capability gate). An explicit boolean (true OR
+  // false) is preserved — the load-bearing operator override.
   // -------------------------------------------------------------------------
-  // Read the (Plan-03) policy field through the narrow lens so the optional chain
-  // `config.contextEngine?.relevance?.firstByDefault` type-checks against today's schema.
-  // `as unknown as` (the sanctioned partial-view cast, AGENTS.md §2.5) because the live
-  // ContextEngineConfig (a z.strictObject) has no `relevance` field YET — Plan 03 adds it.
-  const contextEngine = config.contextEngine as unknown as RelevancePolicyView | undefined;
   const relevanceFirst =
-    contextEngine?.relevance?.firstByDefault ??
+    config.contextEngine?.relevance?.firstByDefault ??
     (isSmallNano && !modelProfile.supportsPromptCache);
 
   // -------------------------------------------------------------------------

@@ -366,19 +366,32 @@ describe("resolveScaffoldDefaults — RETR-04: relevanceFirst (arbiter-active si
   });
 
   it("explicit config.contextEngine.relevance.firstByDefault=true wins for frontier (operator opt-in)", () => {
-    // The optional-chain read of the (Plan-03) schema block: explicit true overrides the
-    // capability gate's false for a frontier profile. Cast because the schema block does not
-    // exist on PerAgentConfig yet (Plan 03 adds it); the resolver reads it defensively.
-    const config = { contextEngine: { relevance: { firstByDefault: true } } } as unknown as PerAgentConfig;
+    // The TYPED read of the (Plan-03 / 173-03) schema block: explicit true overrides the
+    // capability gate's false for a frontier profile. `as PerAgentConfig` (a partial-config
+    // cast — the field is now a REAL typed member of ContextEngineConfig, so NO `as unknown`
+    // bypass is needed; the resolver reads config.contextEngine?.relevance?.firstByDefault directly).
+    const config = { contextEngine: { relevance: { firstByDefault: true } } } as PerAgentConfig;
     const result = resolveScaffoldDefaults(frontierProfile, config);
     expect(result.relevanceFirst).toBe(true);
   });
 
   it("explicit config.contextEngine.relevance.firstByDefault=false wins for small (operator force-off)", () => {
     // Explicit false must be preserved (NOT collapsed by ??) — the load-bearing force-off path.
-    const config = { contextEngine: { relevance: { firstByDefault: false } } } as unknown as PerAgentConfig;
+    const config = { contextEngine: { relevance: { firstByDefault: false } } } as PerAgentConfig;
     const result = resolveScaffoldDefaults(smallProfile, config);
     expect(result.relevanceFirst).toBe(false);
+  });
+
+  it("OMITTED firstByDefault on a non-caching small profile still resolves relevanceFirst=true (undefined falls through the ?? gate — Pitfall 1 / no schema re-parse)", () => {
+    // The keystone Pitfall-1 proof: an explicit `relevance: {}` block with firstByDefault
+    // OMITTED must leave the field `undefined` so the resolver's `?? (isSmallNano &&
+    // !supportsPromptCache)` capability gate FIRES. If the resolver re-parsed the sub-block
+    // through its schema, a `.default()` would collapse undefined→false and this would
+    // wrongly resolve to false. The schema (173-03) keeps firstByDefault OPTIONAL with NO
+    // .default(), and the resolver reads it via the optional chain — so undefined survives.
+    const config = { contextEngine: { relevance: {} } } as PerAgentConfig;
+    const result = resolveScaffoldDefaults(smallProfile, config); // small + ollama (no cache)
+    expect(result.relevanceFirst).toBe(true);
   });
 });
 
