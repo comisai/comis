@@ -97,6 +97,18 @@ function shouldSkipEnvKey(key: string): boolean {
 // ── Config scanner ─────────────────────────────────────────────────
 
 /**
+ * A full-string `${VAR}` env-substitution reference. Values of this exact shape
+ * are resolved by `config/env-substitution.ts` (via `getSecret`) before any
+ * adapter runs, so a secret-named field holding one is a *properly configured
+ * reference*, NOT a plaintext secret — exactly like a structured `SecretRef`
+ * object. Anchored to the WHOLE value (mirrors `ENV_VAR_PATTERN`'s grammar): a
+ * partial/templated value like `prefix-${VAR}` or a raw secret that merely
+ * contains a `$` still flags. (Surfaced 2026-06-10 validating the `comis doctor`
+ * ops surface: `secret: ${COMIS_GATEWAY_TOKEN}` was mis-flagged PLAINTEXT_SECRET.)
+ */
+const FULL_ENV_VAR_REFERENCE = /^\$\{[A-Z_][A-Z0-9_]*\}$/;
+
+/**
  * Scan a parsed config object for plaintext secrets.
  *
  * Walks the raw parsed config recursively. For each leaf string value whose
@@ -146,6 +158,12 @@ function walkConfig(
     if (isSecretFieldName(key)) {
       // Check if value is a SecretRef (properly configured -- skip)
       if (isSecretRef(value)) {
+        continue;
+      }
+
+      // A full-string ${VAR} env-substitution reference is a properly configured
+      // reference (resolved at load), not a plaintext secret -- skip like SecretRef.
+      if (typeof value === "string" && FULL_ENV_VAR_REFERENCE.test(value.trim())) {
         continue;
       }
 
