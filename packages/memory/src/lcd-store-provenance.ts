@@ -16,10 +16,12 @@
  *     R4 scope columns come straight from the DTO; the store never reads the
  *     clock (createdAt is caller-supplied). The row FKs into `memories(id)`
  *     ON DELETE CASCADE — deleting the memory drops the provenance row.
- *   - `markProvenanceSuperseded(summaryId, supersededByMemoryId)` — the pyramid
- *     rule: set `superseded_by` on a descendant summary's row, ONLY when not
- *     already set (`superseded_by IS NULL`), so the FIRST subsumer wins and a
- *     re-run is a harmless no-op.
+ *   - `markProvenanceSuperseded(summaryId, supersededByMemoryId, tenantId,
+ *     agentId)` — the pyramid rule: set `superseded_by` on a descendant
+ *     summary's row, ONLY when not already set (`superseded_by IS NULL`), so the
+ *     FIRST subsumer wins and a re-run is a harmless no-op. R4-scoped on
+ *     tenant_id + agent_id (WR-01): a cross-scope summary_id collision is a
+ *     fail-closed no-op.
  *
  * Static SQL, bound params, no interpolated identifiers (T-127-09). The store
  * NEVER logs summary/memory content (lossless store; @comis/memory is infra-free
@@ -34,7 +36,12 @@ import type { AppendProvenanceInput } from "@comis/core";
 /** The two provenance write methods returned by {@link buildProvenanceWrites}. */
 export interface ProvenanceWrites {
   appendProvenance(input: AppendProvenanceInput): void;
-  markProvenanceSuperseded(summaryId: string, supersededByMemoryId: string): void;
+  markProvenanceSuperseded(
+    summaryId: string,
+    supersededByMemoryId: string,
+    tenantId: string,
+    agentId: string,
+  ): void;
 }
 
 /**
@@ -55,8 +62,12 @@ export function buildProvenanceWrites(db: Database.Database): ProvenanceWrites {
 
   // First-subsumer-wins: only set the pointer when not already set, so re-runs
   // are no-ops and a later (different) subsumer never overwrites the first.
+  // R4 (WR-01): tenant_id + agent_id are load-bearing — the UPDATE runs on a
+  // multi-tenant table, so a summary_id collision under a different scope is a
+  // fail-closed no-op (mirrors the INSERT's scope columns + every other LCD SQL).
   const updateProvenanceSuperseded = db.prepare(
-    "UPDATE lcd_memory_provenance SET superseded_by = ? WHERE summary_id = ? AND superseded_by IS NULL",
+    "UPDATE lcd_memory_provenance SET superseded_by = ?" +
+      " WHERE summary_id = ? AND tenant_id = ? AND agent_id = ? AND superseded_by IS NULL",
   );
 
   return {
@@ -73,8 +84,13 @@ export function buildProvenanceWrites(db: Database.Database): ProvenanceWrites {
       );
     },
 
-    markProvenanceSuperseded(summaryId: string, supersededByMemoryId: string): void {
-      updateProvenanceSuperseded.run(supersededByMemoryId, summaryId);
+    markProvenanceSuperseded(
+      summaryId: string,
+      supersededByMemoryId: string,
+      tenantId: string,
+      agentId: string,
+    ): void {
+      updateProvenanceSuperseded.run(supersededByMemoryId, summaryId, tenantId, agentId);
     },
   };
 }

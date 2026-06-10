@@ -229,11 +229,21 @@ export interface ContextStorePort {
    * superseded by a newer distilled memory (the pyramid rule).
    *
    * Sets `superseded_by = supersededByMemoryId` WHERE `summary_id = summaryId`
-   * AND `superseded_by IS NULL`. Synchronous. No-op when no matching row.
+   * AND `tenant_id = tenantId` AND `agent_id = agentId` AND
+   * `superseded_by IS NULL`. Synchronous. No-op when no matching row.
+   *
+   * R4 (WR-01): the `tenantId`/`agentId` predicate is load-bearing — the UPDATE
+   * is on a multi-tenant table, so a summary_id collision under a different
+   * scope must be a fail-closed no-op (never flip another scope's row).
    *
    * OPTIONAL: see appendProvenance note above.
    */
-  markProvenanceSuperseded?(summaryId: string, supersededByMemoryId: string): void;
+  markProvenanceSuperseded?(
+    summaryId: string,
+    supersededByMemoryId: string,
+    tenantId: string,
+    agentId: string,
+  ): void;
 }
 
 /**

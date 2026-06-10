@@ -413,7 +413,13 @@ async function markDescendantsSuperseded(
     const children = deps.lcdStore.getSummaryChildren(scope, id);
     for (const child of children) {
       // markProvenanceSuperseded is optional (172-03 adds concrete SQL impl).
-      deps.lcdStore.markProvenanceSuperseded?.(child.summaryId, supersededByMemoryId);
+      // WR-01: thread scope.tenantId/agentId — the UPDATE is R4-scoped fail-closed.
+      deps.lcdStore.markProvenanceSuperseded?.(
+        child.summaryId,
+        supersededByMemoryId,
+        scope.tenantId,
+        scope.agentId,
+      );
       queue.push(child.summaryId);
     }
   }
