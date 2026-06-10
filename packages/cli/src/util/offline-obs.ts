@@ -29,11 +29,6 @@ import * as os from "node:os";
 import { safePath, systemNowDate, systemNowMs } from "@comis/core";
 import type { ClockPort, FleetHealthReport, IncidentReport } from "@comis/core";
 import {
-  assembleFleetHealthReport,
-  assembleIncidentReportFromSources,
-  makeRealReader,
-} from "@comis/daemon";
-import {
   createObservabilityStore,
   openSqliteDatabase,
   type ObservabilityStore,
@@ -78,11 +73,23 @@ function openObsStoreIfPresent(dataDir: string): {
   }
 }
 
+/**
+ * LAZY daemon import: @comis/daemon's index pulls the whole runtime graph
+ * (channels, skills, orchestrator, …). A static import would load it on EVERY
+ * CLI start just to register the commands — the offline path pays the cost
+ * only when it actually runs. (Still the single L18 import site; the arch
+ * test scans dynamic import specifiers too.)
+ */
+async function loadDaemonAssemblers(): Promise<typeof import("@comis/daemon")> {
+  return import("@comis/daemon");
+}
+
 /** Assemble an IncidentReport from the local data dir without a daemon. */
 export async function assembleIncidentReportOffline(
   dataDir: string,
   params: { sessionKey?: string; traceId?: string; depth?: "summary" | "full" },
 ): Promise<IncidentReport> {
+  const { assembleIncidentReportFromSources, makeRealReader } = await loadDaemonAssemblers();
   const { store, close } = openObsStoreIfPresent(dataDir);
   try {
     return await assembleIncidentReportFromSources(makeRealReader(dataDir, store), dataDir, params);
@@ -96,6 +103,7 @@ export async function assembleFleetHealthReportOffline(
   dataDir: string,
   sinceHours: number,
 ): Promise<FleetHealthReport> {
+  const { assembleFleetHealthReport } = await loadDaemonAssemblers();
   const { store, close } = openObsStoreIfPresent(dataDir);
   try {
     return await assembleFleetHealthReport(

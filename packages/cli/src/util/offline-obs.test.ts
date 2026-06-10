@@ -121,7 +121,10 @@ function buildLiveShapedSession(dataDir: string): string {
 }
 
 describe("assembleIncidentReportOffline — real nested layout, no daemon, no memory.db", () => {
-  it("assembles the numbers-backed context_exhausted post-mortem from disk alone", async () => {
+  // Generous timeout: the FIRST offline call lazy-loads the whole @comis/daemon
+  // graph (the deliberate W14 trade — CLI startup stays light; the offline
+  // path pays once). Under vitest's transform that load can take ~10s cold.
+  it("assembles the numbers-backed context_exhausted post-mortem from disk alone", { timeout: 30_000 }, async () => {
     const dataDir = tmpDataDir();
     buildLiveShapedSession(dataDir);
 
@@ -162,7 +165,7 @@ describe("assembleIncidentReportOffline — real nested layout, no daemon, no me
 });
 
 describe("assembleFleetHealthReportOffline — local day files, no daemon, no memory.db", () => {
-  it("returns an honest report with coverage gaps when memory.db is absent", async () => {
+  it("returns an honest report with coverage gaps when memory.db is absent", { timeout: 30_000 }, async () => {
     const dataDir = tmpDataDir();
     const logsDir = path.join(dataDir, "logs");
     fs.mkdirSync(logsDir, { recursive: true });
