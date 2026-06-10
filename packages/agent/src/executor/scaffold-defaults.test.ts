@@ -330,6 +330,89 @@ describe("resolveScaffoldDefaults — F5: frontier/mid byte-identical after F1+F
 });
 
 // ---------------------------------------------------------------------------
+// RETR-04 / WR-02 (Phase 173): relevanceFirst resolution + arbiter-scoped baseFloor.
+//
+// The unified arbiter (Plan 03) ranks LTM T3/T4 against history; when it is active
+// (relevance-first), an unconfigured baseFloor must be ENFORCED, not silently 0 (the
+// WR-02 fail-open). `relevanceFirst` is the arbiter-active signal threaded to the recall
+// gate. It is resolved with the SD1 capability-gate shape — NEVER re-parsed through a
+// schema (Pitfall 1: .default() collapses undefined→false and kills the ?? gate). The
+// gate axes are ModelProfile.scaffoldLevel==="max" (small/nano) AND !supportsPromptCache
+// (design §14.1, line 144 — a non-caching local model reorders for free; a caching model
+// pays a cache-break so it stays recency-first below the fence). Frontier/mid stay
+// recency-first → byte-identical baseFloor=0 (LOCKED #2).
+// ---------------------------------------------------------------------------
+describe("resolveScaffoldDefaults — RETR-04: relevanceFirst (arbiter-active signal)", () => {
+  it("small ollama (no prompt-cache) with no relevance config → relevanceFirst=true (capability gate)", () => {
+    // BASE_OLLAMA_INPUT has no prompt-cache capability → supportsPromptCache=false →
+    // the small/nano capability gate fires.
+    const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
+    expect(result.relevanceFirst).toBe(true);
+  });
+
+  it("nano ollama (no prompt-cache) with no relevance config → relevanceFirst=true", () => {
+    const result = resolveScaffoldDefaults(nanoProfile, emptyConfig);
+    expect(result.relevanceFirst).toBe(true);
+  });
+
+  it("frontier with no relevance config → relevanceFirst=false (recency-first, arbiter off — byte-identical)", () => {
+    const result = resolveScaffoldDefaults(frontierProfile, emptyConfig);
+    expect(result.relevanceFirst).toBe(false);
+  });
+
+  it("mid with no relevance config → relevanceFirst=false (recency-first, arbiter off — byte-identical)", () => {
+    const result = resolveScaffoldDefaults(midProfile, emptyConfig);
+    expect(result.relevanceFirst).toBe(false);
+  });
+
+  it("explicit config.contextEngine.relevance.firstByDefault=true wins for frontier (operator opt-in)", () => {
+    // The optional-chain read of the (Plan-03) schema block: explicit true overrides the
+    // capability gate's false for a frontier profile. Cast because the schema block does not
+    // exist on PerAgentConfig yet (Plan 03 adds it); the resolver reads it defensively.
+    const config = { contextEngine: { relevance: { firstByDefault: true } } } as unknown as PerAgentConfig;
+    const result = resolveScaffoldDefaults(frontierProfile, config);
+    expect(result.relevanceFirst).toBe(true);
+  });
+
+  it("explicit config.contextEngine.relevance.firstByDefault=false wins for small (operator force-off)", () => {
+    // Explicit false must be preserved (NOT collapsed by ??) — the load-bearing force-off path.
+    const config = { contextEngine: { relevance: { firstByDefault: false } } } as unknown as PerAgentConfig;
+    const result = resolveScaffoldDefaults(smallProfile, config);
+    expect(result.relevanceFirst).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RETR-04 / WR-02: baseFloor stays arbiter-scoped (the resolver is the contract pin;
+// the behavioral fail-open proof lives on the recall path in memory-recall-floor.test.ts).
+//
+// small/nano relevance-first: an UNCONFIGURED baseFloor (schema-default 0) resolves to the
+// class default 0.15 — the floor the arbiter enforces. frontier/mid: unconfigured stays 0
+// (byte-identical). Explicit config always wins for every class.
+// ---------------------------------------------------------------------------
+describe("resolveScaffoldDefaults — RETR-04: baseFloor fail-closed under the arbiter (contract pin)", () => {
+  it("small relevance-first + unconfigured baseFloor → 0.15 AND relevanceFirst=true (the load-bearing floor)", () => {
+    const result = resolveScaffoldDefaults(smallProfile, emptyConfig);
+    expect(result.baseFloor).toBe(0.15);
+    expect(result.relevanceFirst).toBe(true);
+  });
+
+  it("frontier + unconfigured baseFloor → 0 AND relevanceFirst=false (byte-identical, arbiter off)", () => {
+    const result = resolveScaffoldDefaults(frontierProfile, emptyConfig);
+    expect(result.baseFloor).toBe(0);
+    expect(result.relevanceFirst).toBe(false);
+  });
+
+  it("explicit config.rag.baseFloor=0.3 always wins for every class (regression — explicit > capability > off)", () => {
+    const config = { rag: { baseFloor: 0.3 } } as PerAgentConfig;
+    expect(resolveScaffoldDefaults(smallProfile, config).baseFloor).toBe(0.3);
+    expect(resolveScaffoldDefaults(nanoProfile, config).baseFloor).toBe(0.3);
+    expect(resolveScaffoldDefaults(frontierProfile, config).baseFloor).toBe(0.3);
+    expect(resolveScaffoldDefaults(midProfile, config).baseFloor).toBe(0.3);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cross-file parity: KEYLESS_CRITIC_PROVIDERS in scaffold-defaults.ts must
 // equal the exported Set from verification-gate.ts (Plan 02 assertion, deferred
 // from Plan 01).
