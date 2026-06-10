@@ -318,8 +318,21 @@ export async function setupSingleAgent(
     perAgentLogger.debug({ debounceMs: skillsConfig.watchDebounceMs }, "Skill file watcher started");
   }
 
-  // OutputGuard + per-agent canary token
-  const outputGuard = createOutputGuard();
+  // OutputGuard + per-agent canary token.
+  // Bind the daemon's gateway token VALUES for exact-match redaction — closes the
+  // bare-secret gap (a high-entropy token with no `key=`/`token:` prefix that the
+  // regex patterns miss; live finding 2026-06-10). Resolve `${VAR}` refs via the
+  // UNSCOPED secret manager (the agent's scoped manager intentionally can't see
+  // the gateway token); literals are used as-is. Zero false-positive risk.
+  const gatewayTokenEnvRef = /^\$\{([A-Z_][A-Z0-9_]*)\}$/;
+  const gatewayTokenSecrets = (container.config.gateway?.tokens ?? [])
+    .map((t) => {
+      const raw = typeof t.secret === "string" ? t.secret.trim() : "";
+      const ref = gatewayTokenEnvRef.exec(raw);
+      return ref ? (container.secretManager.get(ref[1]!) ?? "") : raw;
+    })
+    .filter((s) => s.length > 0);
+  const outputGuard = createOutputGuard({ knownSecrets: gatewayTokenSecrets });
 
   // Prefer CANARY_SECRET from env, fall back to deterministic derivation
   const configuredCanarySecret = scopedManager.get("CANARY_SECRET");

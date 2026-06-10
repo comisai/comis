@@ -47,20 +47,39 @@ const PROMPT_EXTRACTION_PATTERNS_LOCAL: ReadonlyArray<{ name: string; regex: Reg
   { name: "instructions_label", regex: INSTRUCTIONS_LABEL },
 ];
 
+/** Minimum length for a bound known-secret to be eligible for exact-match
+ *  redaction — guards against a short/empty value redacting ordinary text. */
+const KNOWN_SECRET_MIN_LENGTH = 8;
+
 /**
  * Create an OutputGuard adapter that scans LLM responses.
  *
  * Checks for:
  * 1. Secret patterns (API keys, tokens, private keys)
- * 2. Canary token leakage (if canaryToken provided in context)
- * 3. System prompt extraction attempts
+ * 2. Bound known-secret values (exact-match — the daemon's own credentials)
+ * 3. Canary token leakage (if canaryToken provided in context)
+ * 4. System prompt extraction attempts
  *
  * Critical findings (severity: "critical") are blocked and redacted in the
  * `sanitized` field using `[REDACTED:{pattern_name}]` format.
  *
+ * @param opts.knownSecrets - Exact secret VALUES the daemon knows must never
+ *   appear in output (e.g. resolved gateway tokens, the master key). Redacted by
+ *   EXACT MATCH regardless of surrounding context — this closes the bare-secret
+ *   gap (a high-entropy token with no `key=`/`token:` prefix that the regex
+ *   patterns miss) with ZERO false-positive risk (no entropy heuristic that would
+ *   over-redact git SHAs / hashes). Empty or sub-`KNOWN_SECRET_MIN_LENGTH` values
+ *   are ignored so a misconfigured short value can never redact ordinary text.
+ *
  * Uses Result<T,E> pattern.
  */
-export function createOutputGuard(): OutputGuardPort {
+export function createOutputGuard(opts?: { knownSecrets?: readonly string[] }): OutputGuardPort {
+  // Bind + dedupe the eligible known secrets ONCE at creation (longest-first so a
+  // secret that is a substring of another is handled deterministically).
+  const boundKnownSecrets = Array.from(
+    new Set((opts?.knownSecrets ?? []).filter((s) => typeof s === "string" && s.trim().length >= KNOWN_SECRET_MIN_LENGTH)),
+  ).sort((a, b) => b.length - a.length);
+
   return {
     scan(response: string, context?: { canaryToken?: string }): Result<OutputGuardResult, Error> {
       const findings: OutputGuardFinding[] = [];
@@ -87,7 +106,23 @@ export function createOutputGuard(): OutputGuardPort {
         }
       }
 
-      // 2. Check canary token leakage -- always critical, redact in sanitized
+      // 2. Bound known-secret values -- exact-match redaction (the daemon's own
+      // credentials). Catches BARE high-entropy secrets the prefix-gated regex
+      // patterns miss, with zero false-positive risk. Position references the
+      // ORIGINAL response.
+      for (const secret of boundKnownSecrets) {
+        if (response.includes(secret)) {
+          sanitized = sanitized.replaceAll(secret, "[REDACTED:known_secret]");
+          findings.push({
+            type: "secret_leak",
+            pattern: "known_secret",
+            position: response.indexOf(secret),
+            severity: "critical",
+          });
+        }
+      }
+
+      // 3. Check canary token leakage -- always critical, redact in sanitized
       if (context?.canaryToken && response.includes(context.canaryToken)) {
         sanitized = sanitized.replaceAll(context.canaryToken, "[REDACTED:canary]");
         findings.push({
@@ -98,7 +133,7 @@ export function createOutputGuard(): OutputGuardPort {
         });
       }
 
-      // 3. Check prompt extraction patterns -- warning severity, detect-only
+      // 4. Check prompt extraction patterns -- warning severity, detect-only
       for (const pattern of PROMPT_EXTRACTION_PATTERNS_LOCAL) {
         pattern.regex.lastIndex = 0;
         let match: RegExpExecArray | null;
