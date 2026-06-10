@@ -319,3 +319,111 @@ describe("classifyError — Silent LLM failure", () => {
     expect(result.userMessage).not.toContain("finishReason");
   });
 });
+
+// ---------------------------------------------------------------------------
+// tool_schema_unsupported classification (GBNF-02)
+// ---------------------------------------------------------------------------
+//
+// llama.cpp-family local providers (llama-server, LM Studio embeds llama.cpp,
+// Ollama) reject tool JSON Schemas at grammar-compile/unmarshal time with 400
+// bodies that today either classify client_request (llama-server wraps grammar
+// bodies in `"type":"invalid_request_error"`, so the plain client_request
+// pattern steals the match) or match nothing (Ollama Go-side unmarshal →
+// unknown → the model-retry ladder burns fallback models on a deterministic
+// schema problem). These tests pin the first-class category.
+
+describe("classifyError — tool_schema_unsupported (GBNF-02)", () => {
+  // Verbatim grammar-400 bodies from live upstream issues:
+  // Source: github.com/ggml-org/llama.cpp/issues/19716 (exact llama-server
+  // body, including the `"type":"invalid_request_error"` wrapper).
+  const llamaServerBody =
+    '{"error":{"code":400,"message":"JSON schema conversion failed:\\nUnrecognized schema: {\\"description\\":\\"Value for add/replace/test operations\\"}","type":"invalid_request_error"}}';
+  // Source: github.com/ollama/ollama/issues/10164 (exact Go-side tools
+  // unmarshal string — matches NOTHING in the pattern table pre-GBNF-02).
+  const ollamaGoBody =
+    "json: cannot unmarshal number into Go struct field .tools.function.parameters.properties.enum of type string";
+  // Source: github.com/ggml-org/llama.cpp/issues/22314 (grammar-parse stage,
+  // PCRE shorthand surviving conversion).
+  const grammarParseBody = 'parse: error parsing grammar: unknown escape at \\d]+ "." [\\d]+)';
+
+  it("classifies the full verbatim llama-server grammar body (invalid_request_error wrapper included) as tool_schema_unsupported, not client_request", () => {
+    // Load-bearing: pre-GBNF-02 the wrapper's `invalid_request_error` made
+    // this classify client_request — the more-specific grammar subcategory
+    // must win (first-match-wins ordering).
+    const result = classifyError(new Error(llamaServerBody));
+    expect(result.category).toBe("tool_schema_unsupported");
+  });
+
+  it("classifies the Ollama Go-side tools.function.parameters unmarshal error as tool_schema_unsupported", () => {
+    // Pre-GBNF-02 this matched nothing → unknown → handleSilentRetryDefault
+    // re-entered the FULL model-retry ladder (the fallback-burn path).
+    const result = classifyError(new Error(ollamaGoBody));
+    expect(result.category).toBe("tool_schema_unsupported");
+  });
+
+  it("classifies the llama.cpp grammar-parse failure string as tool_schema_unsupported", () => {
+    const result = classifyError(new Error(grammarParseBody));
+    expect(result.category).toBe("tool_schema_unsupported");
+  });
+
+  it("classifies bare json-schema-to-grammar and unable-to-generate-parser strings case-insensitively as tool_schema_unsupported", () => {
+    expect(
+      classifyError(new Error("json-schema-to-grammar failure in converter")).category,
+    ).toBe("tool_schema_unsupported");
+    expect(
+      classifyError(new Error("Unable to generate parser for tool template")).category,
+    ).toBe("tool_schema_unsupported");
+  });
+
+  it("returns retryable:true with a canned userMessage that never embeds schema content", () => {
+    const result = classifyError(new Error(llamaServerBody));
+    // Retryable because the executor performs exactly one strip-pattern/format
+    // retry per session (Plan 05 builds the repair on this category).
+    expect(result.retryable).toBe(true);
+    // Canned generic text only — the raw body embeds the offending schema
+    // dump and must never reach the user (threat T-175-04).
+    expect(result.userMessage).not.toContain("{");
+    expect(result.userMessage).not.toContain("Unrecognized schema");
+  });
+
+  // -------------------------------------------------------------------------
+  // Negative controls — existing categories must keep their classification
+  // -------------------------------------------------------------------------
+
+  it("regression: a plain Anthropic 400 invalid_request_error without grammar keywords stays client_request", () => {
+    // Deliberately avoids `max_tokens` in the message (that keyword belongs
+    // to the context_too_long pattern).
+    const error = new Error(
+      '{"type":"error","error":{"type":"invalid_request_error","message":"messages.0.content: unexpected field"}}',
+    );
+    expect(classifyError(error).category).toBe("client_request");
+  });
+
+  it("regression: a billing body containing credit-balance text stays credit_exhausted", () => {
+    const error = new Error(
+      '400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the API."}}',
+    );
+    expect(classifyError(error).category).toBe("credit_exhausted");
+  });
+
+  it("regression: a 401 invalid x-api-key authentication error stays auth_invalid", () => {
+    const error = new Error("401 authentication_error: invalid x-api-key");
+    expect(classifyError(error).category).toBe("auth_invalid");
+  });
+
+  it("regression: a context-overflow message stays context_too_long", () => {
+    const error = new Error(
+      "prompt is too long: 210000 tokens > maximum context length",
+    );
+    expect(classifyError(error).category).toBe("context_too_long");
+  });
+
+  it("regression: a Go unmarshal error outside the tools.function.parameters path stays unknown (scope guard holds)", () => {
+    // The Go-unmarshal alternation is scoped to `.tools.function.parameters`
+    // so unrelated unmarshal errors keep their current classification.
+    const error = new Error(
+      "json: cannot unmarshal string into Go struct field .options.temperature of type float64",
+    );
+    expect(classifyError(error).category).toBe("unknown");
+  });
+});
