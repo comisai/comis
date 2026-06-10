@@ -261,6 +261,41 @@ describe("probeAllOllamaProviders", () => {
     expect(fetchCalls.length).toBe(0);
   });
 
+  it("CWF-03-modelid: resolves the probe model id from models[0].id when defaultModel is absent (real config shape)", async () => {
+    // Live incident (v2.20 distillation validation, 2026-06-10): ProviderEntrySchema
+    // has NO `defaultModel` field — the model lives under `models[].id`. The probe
+    // read `entry.defaultModel ?? ""`, so modelId was ALWAYS "" → at cold-start (no
+    // model loaded → /api/ps empty → /api/show fallback) Ollama returned HTTP 400
+    // ("verify the model '' exists") and the daemon NEVER discovered the served
+    // num_ctx. The probe must resolve the model id from models[0].id. (Earlier tests
+    // rigged `defaultModel`, which the real config never sets — masking the bug.)
+    const seenShowNames: string[] = [];
+    const providerEntries = {
+      myOllama: {
+        type: "ollama",
+        baseUrl: "http://localhost:11434",
+        models: [{ id: "qwen3.6:35b" }],
+        // NO defaultModel — exactly how providers.entries.* is shaped in production
+      },
+    };
+    const fetchFn = makeFetchFn(async (url, init) => {
+      if (url.endsWith("/api/ps")) return jsonResponse({ models: [] }); // cold start
+      if (url.endsWith("/api/show")) {
+        const name = (JSON.parse(String(init.body ?? "{}")) as { name?: string }).name ?? "";
+        seenShowNames.push(name);
+        // Ollama rejects an empty model name with HTTP 400 (the live failure).
+        if (!name) return new Response("model name required", { status: 400 });
+        return jsonResponse({ details: { context_length: 65536 } });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const result = await probeAllOllamaProviders({ providerEntries, fetchFn, timeoutMs: 5000, logger: mockLogger });
+
+    expect(seenShowNames).toContain("qwen3.6:35b"); // NOT "" — the model id was resolved
+    expect(result.get("myOllama")).toBe(65536); // served window discovered (no fall-through to configured)
+  });
+
   it("W12: an HTTP-status probe failure hints at the model/payload, not 'start Ollama' (the server responded)", async () => {
     // Live: HTTP 400 from /api/show while Ollama was up — the hint said
     // "start Ollama", pointing the operator away from the actual cause.
