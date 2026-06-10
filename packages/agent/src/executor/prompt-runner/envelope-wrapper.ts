@@ -259,8 +259,12 @@ function emitPreambleDebug(
       deferredContextTokens,
       fullPreambleTokens,
       clusterCount: capabilityIndexResult.clusterCount,
-      activeToolCount: capabilityIndexResult.activeToolCount,
-      deferredToolCount: capabilityIndexResult.deferredToolCount,
+      // W6 (obs-llm-troubleshooting): cluster-view counts get their OWN payload
+      // names — the bare activeToolCount/deferredToolCount keys collided with the
+      // executor-wide counts (agent-execute logs activeToolCount=83 while this
+      // cluster view logs 24), making the two lines read as contradictory.
+      capabilityIndexActiveTools: capabilityIndexResult.activeToolCount,
+      capabilityIndexDeferredTools: capabilityIndexResult.deferredToolCount,
       promptSkillCount: capabilityIndexResult.promptSkillCount,
     },
     "Dynamic preamble assembled",

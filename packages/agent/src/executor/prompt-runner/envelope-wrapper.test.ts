@@ -50,8 +50,14 @@ describe("envelope-wrapper.ts — capability-index threading", () => {
     expect(source).toMatch(/deferredContextTokens/);
     expect(source).toMatch(/fullPreambleTokens/);
     expect(source).toMatch(/clusterCount/);
-    expect(source).toMatch(/activeToolCount/);
-    expect(source).toMatch(/deferredToolCount/);
+    // W6 (obs-llm-troubleshooting): the cluster-view counts must NOT reuse the
+    // executor-wide activeToolCount/deferredCount payload names — four same-named
+    // counts over different universes (ceiling-filter 53, channels 82, executor 83,
+    // cluster-view 24) made the live incident's logs read as contradictory.
+    expect(source).toMatch(/capabilityIndexActiveTools\s*:/);
+    expect(source).toMatch(/capabilityIndexDeferredTools\s*:/);
+    expect(source).not.toMatch(/^\s*activeToolCount\s*:/m);
+    expect(source).not.toMatch(/^\s*deferredToolCount\s*:/m);
     expect(source).toMatch(/promptSkillCount/);
     // Message text matches expected placement verbatim.
     expect(source).toMatch(/"Dynamic preamble assembled"/);
