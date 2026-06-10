@@ -52,6 +52,7 @@
     "@clack/core": "1.4.1",
     "@clack/prompts": "1.5.1",
     "@comis/core": "workspace:*",
+    "@comis/daemon": "workspace:*",
     "@comis/memory": "workspace:*",
     "@comis/observability": "workspace:*",
     "@comis/shared": "workspace:*",

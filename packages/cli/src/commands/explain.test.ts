@@ -40,9 +40,16 @@ vi.mock("../output/spinner.js", () => ({
   withSpinner: vi.fn(async (_text: string, fn: () => Promise<unknown>) => fn()),
 }));
 
+// W14: mock the offline assembler so fallback tests run without a data dir.
+vi.mock("../util/offline-obs.js", () => ({
+  assembleIncidentReportOffline: vi.fn(),
+  resolveOfflineDataDir: vi.fn(() => "/fake/.comis"),
+}));
+
 // Dynamic imports after mocks.
 const { registerExplainCommand } = await import("./explain.js");
 const { withClient } = await import("../client/rpc-client.js");
+const { assembleIncidentReportOffline } = await import("../util/offline-obs.js");
 
 /**
  * A minimal-but-valid IncidentReport — must satisfy IncidentReportSchema
@@ -358,5 +365,82 @@ describe("comis explain with an RPC error prints error and exits with code 1", (
     const errorOutput = getSpyOutput(consoleSpy.error);
     expect(errorOutput).toContain("explain failed");
     expect(exitSpy.spy).toHaveBeenCalledWith(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W14 (obs-llm-troubleshooting): offline fallback wiring.
+// ---------------------------------------------------------------------------
+
+describe("comis explain offline fallback (W14)", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    vi.mocked(assembleIncidentReportOffline).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("falls back to the offline assembler when the gateway is unreachable", async () => {
+    vi.mocked(withClient).mockRejectedValue(
+      new Error("Cannot connect to daemon at ws://localhost:4766/ws."),
+    );
+    vi.mocked(assembleIncidentReportOffline).mockResolvedValue(FAKE_REPORT as never);
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "default:user123:telegram:1717000000"]);
+
+    expect(assembleIncidentReportOffline).toHaveBeenCalledWith("/fake/.comis", {
+      sessionKey: "default:user123:telegram:1717000000",
+      depth: "summary",
+    });
+    expect(exitSpy.spy).not.toHaveBeenCalled();
+  });
+
+  it("--offline assembles locally without touching the gateway", async () => {
+    vi.mocked(assembleIncidentReportOffline).mockResolvedValue(FAKE_REPORT as never);
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync([
+      "node",
+      "test",
+      "explain",
+      "default:user123:telegram:1717000000",
+      "--offline",
+    ]);
+
+    expect(withClient).not.toHaveBeenCalled();
+    expect(assembleIncidentReportOffline).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT fall back on a gateway token rejection — the daemon is up; surface the auth error", async () => {
+    vi.mocked(withClient).mockRejectedValue(
+      new Error(
+        "Gateway rejected the token (WS close 4001 Unauthorized) — the daemon IS running and listening. " +
+          "Set COMIS_GATEWAY_TOKEN (env var or ~/.comis/.env) to a token matching a gateway.tokens entry.",
+      ),
+    );
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    // The exit spy throws to halt the action (test-helpers contract).
+    await program
+      .parseAsync(["node", "test", "explain", "default:user123:telegram:1717000000"])
+      .catch(() => undefined);
+
+    expect(assembleIncidentReportOffline).not.toHaveBeenCalled();
+    expect(exitSpy.spy).toHaveBeenCalledWith(1);
+    const stderr = consoleSpy.error.mock.calls.flat().map(String).join("\n");
+    expect(stderr).toContain("COMIS_GATEWAY_TOKEN");
+    expect(stderr).toContain("--offline");
   });
 });

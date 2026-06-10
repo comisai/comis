@@ -51,6 +51,18 @@ const L11_ALLOWLIST: readonly string[] = [
 // @comis/infra is now in HARD_FORBIDDEN_PACKAGES.
 const L12_INFRA_ALLOWLIST = [] as const;
 
+// L18 (W14 obs-llm-troubleshooting): @comis/daemon re-opened for exactly one
+// site — the CLI's OFFLINE obs adapter. `comis explain --offline` /
+// `comis fleet --offline` (and the automatic unreachable-gateway fallback)
+// reuse the daemon's exported PURE report assemblers over the local ~/.comis
+// files; requiring a live daemon to read local telemetry defeated the
+// post-mortem tool exactly when it was needed. A single bounded adapter file
+// contains all @comis/daemon imports so a future closure is one deletion.
+// Live-daemon access still routes through RPC.
+const L18_DAEMON_ALLOWLIST: readonly string[] = [
+  "util/offline-obs.ts",
+];
+
 const HARD_FORBIDDEN_PACKAGES = [
   // L17 closure: @comis/agent promoted to HARD_FORBIDDEN after every
   // CLI agent-import site retargeted to @comis/core.
@@ -62,7 +74,6 @@ const HARD_FORBIDDEN_PACKAGES = [
   "@comis/skills",
   "@comis/scheduler",
   "@comis/gateway",
-  "@comis/daemon",
   "@comis/orchestrator",
 ] as const;
 
@@ -116,6 +127,34 @@ describe("@comis/cli -- architecture invariants", () => {
         suggestedFix:
           "L12 is CLOSED. Retarget the import to @comis/core: { createConsoleLogger } replaces { createLogger } (the Pino-free logger); { isDocker } also lives in @comis/core.",
         allowlistRef: "L12 (CLOSED)",
+      }),
+    ).toEqual([]);
+    expect(
+      checkedFiles,
+      "sanity: findForbiddenImports walked at least one cli/src file",
+    ).toBeGreaterThan(0);
+  });
+
+  it("production source does NOT import @comis/daemon (outside the L18 offline-obs allowlist)", () => {
+    const { violations, checkedFiles } = findForbiddenImports({
+      rootDir: SRC_ROOT,
+      forbiddenPackage: "@comis/daemon",
+      allowlistPaths: [...L18_DAEMON_ALLOWLIST],
+    });
+    expect(
+      violations,
+      formatViolations({
+        description:
+          "@comis/cli production source must not import @comis/daemon (outside the L18 offline-obs allowlist).",
+        violations: violations.map((v) => ({
+          file: v.file,
+          line: v.line,
+          column: v.column,
+          snippet: v.snippet,
+        })),
+        suggestedFix:
+          "Live-daemon access routes through RPC (callTyped). Only the offline obs fallback (util/offline-obs.ts) may import the daemon's exported pure assemblers.",
+        allowlistRef: "L18",
       }),
     ).toEqual([]);
     expect(
