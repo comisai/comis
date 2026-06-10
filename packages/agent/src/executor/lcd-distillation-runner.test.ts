@@ -816,6 +816,99 @@ describe("runDistillationPassAfterTurn — WR-03 write-path observability", () =
 });
 
 // ---------------------------------------------------------------------------
+// WR-05 — the supersession BFS must NOT silently optional-chain past a missing
+// markProvenanceSuperseded. The audited appendProvenance sibling branches on
+// `== null` + emits a content-free DEBUG (so a partial-wire is diagnosable); the
+// supersession walk did `markProvenanceSuperseded?.(...)` — a silent no-op when the
+// method is absent, which would let the pyramid-rule supersession fail with ZERO
+// operator signal (recall down-weighting then double-counts across condense levels).
+// ---------------------------------------------------------------------------
+
+describe("runDistillationPassAfterTurn — WR-05 supersession partial-wire observability", () => {
+  it("WR-05: a descendant exists but markProvenanceSuperseded is ABSENT → a DEBUG/WARN with errorKind+hint (no silent ?. no-op)", async () => {
+    const logger = makeLogger();
+    const memoryPort = makeMemoryPort();
+    // A realistic partial-wire: appendProvenance is present (the write links), the BFS
+    // finds a descendant to supersede, but markProvenanceSuperseded is NOT implemented.
+    // Pre-patch: `markProvenanceSuperseded?.(...)` silently no-ops → no log → RED here.
+    const lcdStore = {
+      appendProvenance: vi.fn(),
+      getSummaryChildren: vi
+        .fn()
+        .mockReturnValueOnce([{ summaryId: "child-1", depth: 1, content: "child" }])
+        .mockReturnValue([]),
+      // markProvenanceSuperseded intentionally omitted
+    } as unknown as ContextStorePort;
+    const params = makeParams({
+      depth: 2,
+      deps: {
+        ...makeParams().deps,
+        memoryPort,
+        lcdStore,
+        logger,
+        distillConfig: { enabled: true, minDepth: 1, dedupCosineThreshold: 0.92 },
+        isSubagentSession: false,
+      },
+    });
+    await runDistillationPassAfterTurn(params);
+
+    expect(memoryPort.store).toHaveBeenCalledOnce();
+    // The supersession-skip must be observable: a DEBUG or WARN carrying an errorKind +
+    // an operator-actionable hint (mirror the appendProvenance-absent branch), not silence.
+    const debugCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls;
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const observed = [...debugCalls, ...warnCalls].some(
+      (c) =>
+        typeof c[0] === "object" &&
+        c[0] !== null &&
+        "errorKind" in (c[0] as object) &&
+        "hint" in (c[0] as object) &&
+        // The signal must specifically name the supersession method (not the
+        // appendProvenance branch, which is present in this fixture).
+        String((c[1] ?? "")).toLowerCase().includes("supersed"),
+    );
+    expect(observed).toBe(true);
+  });
+
+  it("WR-05: the missing-impl signal fires AT MOST ONCE even when the BFS visits many descendants (content-free, not per-node spam)", async () => {
+    const logger = makeLogger();
+    const memoryPort = makeMemoryPort();
+    // The BFS visits several descendants; the missing-impl DEBUG must be emitted once,
+    // not once per node (the §2.7 "N-per-request aggregate" discipline).
+    const lcdStore = {
+      appendProvenance: vi.fn(),
+      getSummaryChildren: vi
+        .fn()
+        .mockReturnValueOnce([
+          { summaryId: "child-1", depth: 1, content: "c1" },
+          { summaryId: "child-2", depth: 1, content: "c2" },
+        ])
+        .mockReturnValueOnce([{ summaryId: "grandchild-1", depth: 0, content: "g1" }])
+        .mockReturnValue([]),
+      // markProvenanceSuperseded intentionally omitted
+    } as unknown as ContextStorePort;
+    const params = makeParams({
+      depth: 2,
+      deps: {
+        ...makeParams().deps,
+        memoryPort,
+        lcdStore,
+        logger,
+        distillConfig: { enabled: true, minDepth: 1, dedupCosineThreshold: 0.92 },
+        isSubagentSession: false,
+      },
+    });
+    await runDistillationPassAfterTurn(params);
+
+    const supersedSignals = [
+      ...(logger.debug as ReturnType<typeof vi.fn>).mock.calls,
+      ...(logger.warn as ReturnType<typeof vi.fn>).mock.calls,
+    ].filter((c) => String((c[1] ?? "")).toLowerCase().includes("supersed"));
+    expect(supersedSignals).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // IN-04 — validation/secret-egress skip must be fleet-observable
 // GATE 7 (validateMemoryWrite non-clean) previously only WARNed; the documented
 // reason:"validation" was never emitted on the bus. The skip must emit
