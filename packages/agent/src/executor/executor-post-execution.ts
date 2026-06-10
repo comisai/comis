@@ -1232,7 +1232,14 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     );
   }
   if (effectiveFinishReason === "context_exhausted") {
-    result.response = buildContextExhaustedReply();
+    // W4 (obs-llm-troubleshooting): name the exact cap knob for small/nano and
+    // append the incident traceId so `comis explain <traceId>` is one step away
+    // from the chat message itself.
+    const incidentTraceId = tryGetContext()?.traceId;
+    result.response = buildContextExhaustedReply({
+      ...(capabilityClass !== undefined ? { capabilityClass } : {}),
+      ...(incidentTraceId !== undefined ? { traceId: incidentTraceId } : {}),
+    });
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "context_exhausted synthesized reply" },
       "CWF-05: context_exhausted — synthesized honest reply delivered",
