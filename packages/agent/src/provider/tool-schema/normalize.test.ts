@@ -3,7 +3,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   normalizeToolSchemasForProvider,
   setToolNormalizationLogger,
+  type ToolNormalizationContext,
 } from "./normalize.js";
+import {
+  hostileMcpTool,
+  hostileMcpToolset,
+  type HostileMcpTool,
+} from "./gbnf-hostile-fixtures.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ComisLogger } from "@comis/core";
 
@@ -19,6 +25,15 @@ function makeTool(
     parameters: parameters ?? { type: "object" },
     execute: async () => ({ resultForAssistant: "ok" }),
   } as unknown as ToolDefinition;
+}
+
+/**
+ * The hostile fixtures are inert data (name/description/parameters, no
+ * execute) — cast to the SDK shape the pipeline reads (per the Plan-01
+ * fixture contract: consumers cast where a full ToolDefinition is required).
+ */
+function asToolDefs(tools: readonly HostileMcpTool[]): ToolDefinition[] {
+  return tools as unknown as ToolDefinition[];
 }
 
 describe("normalizeToolSchemasForProvider", () => {
@@ -463,6 +478,185 @@ describe("normalizeToolSchemasForProvider", () => {
       });
 
       expect(traceFn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("GBNF profile (Layer 3.5) — local providers", () => {
+    // These tests drive the FULL public pipeline (never the transform fn in
+    // isolation — that is clean-for-gbnf.test.ts's job). They pin the GATE:
+    // the early-return at the no-provider-cleaning branch must learn the gbnf
+    // profile or local providers silently skip the layer (RESEARCH Pitfall 3).
+    const gbnfCtx: ToolNormalizationContext = {
+      provider: "my-ollama",
+      modelId: "qwen3.6:35b",
+      compat: { toolSchemaProfile: "gbnf" },
+    };
+
+    it("applies all four gbnf transforms through the public pipeline for a gbnf-profile provider", () => {
+      const result = normalizeToolSchemasForProvider(
+        asToolDefs([hostileMcpTool]),
+        gbnfCtx,
+      );
+
+      expect(result[0].parameters).toEqual({
+        type: "object",
+        properties: {
+          // pattern/format survive — the proactive profile never strips them
+          due: { type: "string", pattern: "\\d{4}-\\d{2}-\\d{2}", format: "date" },
+          // nullable anyOf collapsed to the non-null branch + guarded hint
+          assignee: { type: "string", description: "who (nullable)" },
+          // ["integer","null"] type array collapsed to the scalar type
+          retries: { type: "integer", description: "(nullable)" },
+          // free-form object gains an explicit empty properties map
+          metadata: { type: "object", properties: {} },
+          // bare description-only node gains an inferred type
+          note: { description: "Value for add/replace/test operations", type: "string" },
+          // nullable oneOf collapsed, enum branch preserved
+          mode: { type: "string", enum: ["a", "b"], description: "(nullable)" },
+        },
+        required: ["due"],
+      });
+    });
+
+    it("preserves pattern and format under the proactive gbnf profile (reactive strip is GBNF-02)", () => {
+      const result = normalizeToolSchemasForProvider(
+        asToolDefs([hostileMcpTool]),
+        gbnfCtx,
+      );
+
+      const schema = result[0].parameters as Record<string, unknown>;
+      const props = schema.properties as Record<string, Record<string, unknown>>;
+      expect(props.due.pattern).toBe("\\d{4}-\\d{2}-\\d{2}");
+      expect(props.due.format).toBe("date");
+    });
+
+    it("re-running the pipeline on its own output is byte-identical (pipeline-level idempotency)", () => {
+      const first = normalizeToolSchemasForProvider(
+        asToolDefs(hostileMcpToolset),
+        gbnfCtx,
+      );
+      const second = normalizeToolSchemasForProvider(first, gbnfCtx);
+
+      // Byte-identity (not just deep-equality) pins key-order stability too —
+      // schema snapshots/caches can re-feed normalized schemas through the
+      // pipeline, so twice MUST equal once at the pipeline level (L0/L4
+      // interplay included).
+      expect(JSON.stringify(second)).toBe(JSON.stringify(first));
+    });
+
+    it("does not mutate the input toolset: deep-equals its pre-call JSON snapshot", () => {
+      const inputTools = asToolDefs(hostileMcpToolset);
+      const snapshot = JSON.stringify(inputTools);
+
+      normalizeToolSchemasForProvider(inputTools, gbnfCtx);
+
+      expect(JSON.stringify(inputTools)).toBe(snapshot);
+    });
+
+    it("forces top-level type object when a gbnf-profile schema lacks one (Layer 4 still applies)", () => {
+      const tool = makeTool("gbnf_missing_top_type", {
+        properties: { x: { type: "string" } },
+      });
+
+      const result = normalizeToolSchemasForProvider([tool], gbnfCtx);
+
+      expect((result[0].parameters as Record<string, unknown>).type).toBe("object");
+    });
+  });
+
+  describe("I3 — non-local providers byte-identical (expected literals)", () => {
+    // Expected literals derived by running the PRE-PATCH pipeline (base
+    // efd87538, before the gbnf layer existed) once per provider on
+    // hostileMcpTool and inlining the output verbatim. NEVER compare the
+    // pipeline to itself in these assertions — self-comparison pins can't
+    // fail (RESEARCH Pitfall 7). These four pins must pass pre- AND
+    // post-patch: the gbnf layer must not perturb any non-gbnf provider.
+
+    it("anthropic: hostile fixture normalizes to the pinned pre-phase literal (keyword strip + L0 + L4)", () => {
+      const result = normalizeToolSchemasForProvider(
+        asToolDefs([hostileMcpTool]),
+        { provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
+      );
+
+      expect(result[0].parameters).toEqual({
+        type: "object",
+        properties: {
+          // anthropic PROVIDER_UNSUPPORTED_KEYWORDS strips pattern + format
+          due: { type: "string" },
+          assignee: { anyOf: [{ type: "string" }, { type: "null" }], description: "who" },
+          retries: { type: ["integer", "null"] },
+          metadata: { type: "object" },
+          note: { description: "Value for add/replace/test operations" },
+          mode: { oneOf: [{ type: "string", enum: ["a", "b"] }, { type: "null" }] },
+        },
+        required: ["due"],
+      });
+    });
+
+    it("openai: hostile fixture normalizes to the pinned pre-phase literal (L0 + L4 only)", () => {
+      const result = normalizeToolSchemasForProvider(
+        asToolDefs([hostileMcpTool]),
+        { provider: "openai", modelId: "gpt-4o" },
+      );
+
+      expect(result[0].parameters).toEqual({
+        type: "object",
+        properties: {
+          due: { type: "string", pattern: "\\d{4}-\\d{2}-\\d{2}", format: "date" },
+          assignee: { anyOf: [{ type: "string" }, { type: "null" }], description: "who" },
+          retries: { type: ["integer", "null"] },
+          metadata: { type: "object" },
+          note: { description: "Value for add/replace/test operations" },
+          mode: { oneOf: [{ type: "string", enum: ["a", "b"] }, { type: "null" }] },
+        },
+        required: ["due"],
+      });
+    });
+
+    it("google: hostile fixture normalizes to the pinned pre-phase literal (gemini cleaning + keyword strip + L0 + L4)", () => {
+      const result = normalizeToolSchemasForProvider(
+        asToolDefs([hostileMcpTool]),
+        { provider: "google", modelId: "gemini-2.0-flash" },
+      );
+
+      // Coincides with the anthropic literal for THIS fixture: the google
+      // keyword set also strips pattern/format, and the gemini deep-clean has
+      // nothing to remove here (no $ref/$defs/additionalProperties present).
+      expect(result[0].parameters).toEqual({
+        type: "object",
+        properties: {
+          due: { type: "string" },
+          assignee: { anyOf: [{ type: "string" }, { type: "null" }], description: "who" },
+          retries: { type: ["integer", "null"] },
+          metadata: { type: "object" },
+          note: { description: "Value for add/replace/test operations" },
+          mode: { oneOf: [{ type: "string", enum: ["a", "b"] }, { type: "null" }] },
+        },
+        required: ["due"],
+      });
+    });
+
+    it("my-ollama without gbnf compat: pinned L0+L4-only literal proves no name sniffing (D-08)", () => {
+      const result = normalizeToolSchemasForProvider(
+        asToolDefs([hostileMcpTool]),
+        { provider: "my-ollama", modelId: "qwen3.6:35b" },
+      );
+
+      // No compat → the gbnf layer must NEVER apply, regardless of the
+      // ollama-ish provider name: the gate derives solely from
+      // compat.toolSchemaProfile (D-08: no baseUrl/name sniffing).
+      expect(result[0].parameters).toEqual({
+        type: "object",
+        properties: {
+          due: { type: "string", pattern: "\\d{4}-\\d{2}-\\d{2}", format: "date" },
+          assignee: { anyOf: [{ type: "string" }, { type: "null" }], description: "who" },
+          retries: { type: ["integer", "null"] },
+          metadata: { type: "object" },
+          note: { description: "Value for add/replace/test operations" },
+          mode: { oneOf: [{ type: "string", enum: ["a", "b"] }, { type: "null" }] },
+        },
+        required: ["due"],
+      });
     });
   });
 });
