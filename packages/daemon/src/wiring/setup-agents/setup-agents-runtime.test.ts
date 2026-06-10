@@ -331,6 +331,49 @@ describe("setupSingleAgent recall-trace config wiring", () => {
   });
 });
 
+describe("setupSingleAgent GBNF compat threading (175-04 wiring guard)", () => {
+  const source = readRuntimeSource();
+
+  it("passes getProviderType and getModelCompat resolvers in createPiExecutor deps", () => {
+    // Production-wiring regression guard (GBNF-01). RED on pre-patch code:
+    // providers.entries.<key>.models[].comisCompat validated in config but
+    // was consumed by NOTHING -- pi-executor's normalizeModelCompat call
+    // received only {provider, id}, so the explicit gbnf opt-in and the
+    // type:"ollama" auto-detect signal were structurally unreachable from
+    // operator YAML. Scoped to the deps block (not the whole file) so a
+    // stray mention elsewhere cannot satisfy it.
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    expect(depsStart).toBeGreaterThan(-1);
+    expect(depsEnd).toBeGreaterThan(depsStart);
+
+    const depsBlock = source.slice(depsStart, depsEnd);
+    expect(depsBlock).toContain("getProviderType:");
+    expect(depsBlock).toContain("getModelCompat:");
+  });
+
+  it("pins the resolver bodies so the deps keys cannot be wired to stubs", () => {
+    // The milestone's #1 failure class is built-but-not-wired: a key present
+    // but resolving nothing. getProviderType must read the provider entry's
+    // declared config `type`; getModelCompat must look the model up in
+    // models[] and return its comisCompat.
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    const depsBlock = source.slice(depsStart, depsEnd);
+
+    const gptIdx = depsBlock.indexOf("getProviderType:");
+    expect(gptIdx).toBeGreaterThan(-1);
+    const gptWindow = depsBlock.slice(gptIdx, gptIdx + 120);
+    expect(gptWindow).toContain("?.type");
+
+    const gmcIdx = depsBlock.indexOf("getModelCompat:");
+    expect(gmcIdx).toBeGreaterThan(-1);
+    const gmcWindow = depsBlock.slice(gmcIdx, gmcIdx + 200);
+    expect(gmcWindow).toContain("?.models?.find(");
+    expect(gmcWindow).toContain("?.comisCompat");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Per-agent effective rag.rerank.enabled precedence +
 // the modelPresent threading daemon -> registry -> types -> runtime (Pitfall 4).

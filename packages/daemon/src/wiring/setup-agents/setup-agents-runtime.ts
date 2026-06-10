@@ -551,6 +551,12 @@ export async function setupSingleAgent(
     storeCompletions: effectiveConfig.storeCompletions,
     providerCapabilities: container.config.providers?.entries?.[resolved.provider]?.capabilities,
     servedContextWindow: deps.servedWindowByProvider?.get(resolved.provider),  // CWF-03: Ollama served-window
+    // GBNF-01: resolver form (not static values) because per-execution model
+    // overrides can switch providers mid-agent — a static agent-primary type
+    // would mis-gate (WR-04 getProviderCapabilityClass precedent).
+    getProviderType: (p: string) => container.config.providers?.entries?.[p]?.type,
+    getModelCompat: (p: string, id: string) =>
+      container.config.providers?.entries?.[p]?.models?.find((m) => m.id === id)?.comisCompat,
     maxSendsPerExecution: container.config.messages?.maxSendsPerExecution,
     // Runtime adapter ports threaded into the executor.
     clock: deps.clock,

@@ -284,6 +284,13 @@ export interface PiExecutorDeps {
   /** Discovered Ollama served num_ctx from the boot-time capacity probe.
    *  undefined = not probed (non-Ollama provider or probe failed — falls back to configured). */
   servedContextWindow?: number;
+  /** Resolve a provider entry's declared config `type` (free string, e.g. "ollama", "xai").
+   *  Consumer: normalizeModelCompat auto-detection (GBNF-01). Resolver form (not a static
+   *  value) because per-execution model overrides can switch providers mid-agent. */
+  getProviderType?: (provider: string) => string | undefined;
+  /** Resolve a model's user-declared comisCompat from providers.entries.<provider>.models[].
+   *  Consumer: normalizeModelCompat (closes the built-but-not-wired comisCompat gap). */
+  getModelCompat?: (provider: string, modelId: string) => import("@comis/core").ModelCompatConfig | undefined;
   /** Optional Gemini CachedContent lifecycle manager for explicit cache reuse. */
   geminiCacheManager?: GeminiCacheManager;
   /** Resolve platform message character limit for a channel type.
