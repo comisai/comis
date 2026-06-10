@@ -655,8 +655,9 @@ Controls whether within-conversation history is assembled **relevance-first** (t
 > untrusted-content delimiters, safety reinforcement, sender-trust markers) — those items are
 > **unconditional floors**, excluded from relevance candidacy and always kept, exactly as the
 > recency path's pre-flight already protects them. A content-free `context:arbitrated` event
-> (per-tier kept counts + pool tokens + a `relevanceFirst` boolean) fires only on the
-> relevance-first path; it carries no message, memory, or query content.
+> (per-tier kept counts; the discretionary pool **offered** and **consumed** plus the
+> unconditional floor-token weight; the kept LTM/KG ids; and a `relevanceFirst` boolean)
+> fires only on the relevance-first path; it carries no message, memory, or query content.
 
 #### Memory Consolidation (agents.*.memoryConsolidation)
 
