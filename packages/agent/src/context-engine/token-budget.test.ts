@@ -36,6 +36,14 @@ describe("computeTokenBudget", () => {
     expect(budget.availableHistoryTokens).toBe(10_760);
   });
 
+  it("reports an uncapped window as its own raw window with cap source none (W1 provenance)", () => {
+    // The profile-unaware base function never applies a class cap, so the
+    // provenance fields must say so: raw == W and source "none".
+    const budget = computeTokenBudget(200_000, 5_000);
+    expect(budget.rawContextWindowTokens).toBe(200_000);
+    expect(budget.windowCapSource).toBe("none");
+  });
+
   it("clamps negative budget to zero", () => {
     // Very small context window with large system prompt overhead
     const budget = computeTokenBudget(4_000, 3_000);

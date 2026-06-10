@@ -1647,6 +1647,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 durationMs: llmLatencyMs ?? 0,
                 inputTokens: usage.input,
                 outputTokens: usage.output,
+                // W7 (obs-llm-troubleshooting): make degraded turns greppable from
+                // the index alone. stopReason is the RELIABLE per-turn signal
+                // (captured at :1231 in this same turn_end); finishReason mirrors
+                // the model.completed WR-151-01 guard — forwarded only once it has
+                // settled away from the init default "stop" (the HR-01 mapping for
+                // THIS turn runs after this append, so it lands on later rows).
+                ...(m.lastStopReason !== undefined && { stopReason: m.lastStopReason }),
+                ...(m.finishReason !== "stop" && { finishReason: m.finishReason }),
                 lastError: null, // populated by error paths in a follow-up plan; null here
                 source: "runtime" as const, // D9 provenance stamp (production rows)
               },

@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { generateMasterKey } from "@comis/core";
-import { offlineSecretSet, offlineSecretsList } from "./offline-secrets-write.js";
+import { offlineSecretGet, offlineSecretSet, offlineSecretsList } from "./offline-secrets-write.js";
 import { setupSecrets } from "./setup-secrets.js";
 import { createSqliteSecretStore } from "./sqlite-secret-store.js";
 
@@ -192,5 +192,47 @@ describe("offlineSecretsList", () => {
         expect(entry.createdAt).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W15 (obs-llm-troubleshooting): offlineSecretGet — the daemon-free read that
+// breaks the gateway-token chicken-and-egg (`secrets get COMIS_GATEWAY_TOKEN`
+// needed the daemon RPC, which needed the token).
+// ---------------------------------------------------------------------------
+
+describe("offlineSecretGet (W15)", () => {
+  it("round-trips a value written by offlineSecretSet without a daemon", () => {
+    const { dataDir, envFilePath } = makeTmpDir();
+    const masterKey = generateMasterKey();
+    fs.writeFileSync(envFilePath, `SECRETS_MASTER_KEY=${masterKey}\n`, { mode: 0o600 });
+
+    const setResult = offlineSecretSet({ name: "GATEWAY_TOKEN_TEST", value: "test-key", dataDir, envFilePath });
+    expect(setResult.ok).toBe(true);
+
+    const got = offlineSecretGet({ name: "GATEWAY_TOKEN_TEST", dataDir, envFilePath });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.value).toBe("test-key");
+  });
+
+  it("returns ok(undefined) for a name that is not in the store", () => {
+    const { dataDir, envFilePath } = makeTmpDir();
+    const masterKey = generateMasterKey();
+    fs.writeFileSync(envFilePath, `SECRETS_MASTER_KEY=${masterKey}\n`, { mode: 0o600 });
+    // Seed the store so the db exists.
+    offlineSecretSet({ name: "OTHER", value: "test-key", dataDir, envFilePath });
+
+    const got = offlineSecretGet({ name: "MISSING_NAME", dataDir, envFilePath });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.value).toBeUndefined();
+  });
+
+  it("errs with the init guidance when SECRETS_MASTER_KEY is absent", () => {
+    const { dataDir, envFilePath } = makeTmpDir();
+    fs.writeFileSync(envFilePath, "", { mode: 0o600 });
+
+    const got = offlineSecretGet({ name: "ANYTHING", dataDir, envFilePath });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error.message).toContain("SECRETS_MASTER_KEY");
   });
 });

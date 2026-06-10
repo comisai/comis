@@ -14,6 +14,8 @@ import {
   safePath,
   generateStrongToken,
   systemNowMs,
+  runWithContext,
+  formatSessionKey,
 } from "@comis/core";
 import {
   extractBearerToken,
@@ -312,7 +314,23 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         channelId: sessionKey?.channelId ?? "openai",
       };
       const tools = await assembleToolsForAgent(defaultAgentId);
-      const result = await getExecutor(defaultAgentId).execute(msg, sk, tools, onDelta, defaultAgentId);
+      // §2.6 (live finding 2026-06-10): this route closure IS the channel entry
+      // for the openai-compatible chat API — without runWithContext every executor log line is
+      // traceId-less (no trace stitching) and the degraded reply cannot carry
+      // its incident ref. One context per inbound request, minted here.
+      const result = await runWithContext(
+        {
+          traceId: randomUUID(),
+          tenantId: sk.tenantId,
+          userId: sk.userId,
+          sessionKey: formatSessionKey(sk),
+          startedAt: systemNowMs(),
+          // Token-authenticated caller, but the message CONTENT is user input.
+          trustLevel: "user",
+          channelType: "openai",
+        },
+        () => getExecutor(defaultAgentId).execute(msg, sk, tools, onDelta, defaultAgentId),
+      );
       return {
         response: result.response,
         tokensUsed: result.tokensUsed,
@@ -364,7 +382,23 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         channelId: sessionKey?.channelId ?? "responses",
       };
       const tools = await assembleToolsForAgent(defaultAgentId);
-      const result = await getExecutor(defaultAgentId).execute(msg, sk, tools, onDelta, defaultAgentId);
+      // §2.6 (live finding 2026-06-10): this route closure IS the channel entry
+      // for the OpenResponses API — without runWithContext every executor log line is
+      // traceId-less (no trace stitching) and the degraded reply cannot carry
+      // its incident ref. One context per inbound request, minted here.
+      const result = await runWithContext(
+        {
+          traceId: randomUUID(),
+          tenantId: sk.tenantId,
+          userId: sk.userId,
+          sessionKey: formatSessionKey(sk),
+          startedAt: systemNowMs(),
+          // Token-authenticated caller, but the message CONTENT is user input.
+          trustLevel: "user",
+          channelType: "responses",
+        },
+        () => getExecutor(defaultAgentId).execute(msg, sk, tools, onDelta, defaultAgentId),
+      );
       return {
         response: result.response,
         tokensUsed: result.tokensUsed,

@@ -60,7 +60,7 @@ function getLastWs(): MockWebSocket {
 }
 
 // Dynamic import after mock is registered
-const { createRpcClient, withClient, checkTransportSecurity, InsecureTransportError } = await import("./rpc-client.js");
+const { createRpcClient, withClient, checkTransportSecurity, InsecureTransportError, isGatewayAuthRejection } = await import("./rpc-client.js");
 
 /**
  * Schedule the mock WebSocket 'open' event to fire once the WebSocket is constructed.
@@ -77,6 +77,51 @@ function connectLastWsAsync(): void {
     }
   }, 1);
 }
+
+describe("gateway auth rejection (W13 obs-llm-troubleshooting)", () => {
+  beforeEach(() => {
+    MockWebSocket.instances = [];
+  });
+
+  it("a 4001 close rejects pending calls with a token-naming auth error, not 'Connection closed unexpectedly'", async () => {
+    // Live: the gateway closes 4001 Unauthorized on a bad token; the CLI said
+    // "Connection closed unexpectedly" and the operator chased a dead daemon.
+    const clientPromise = createRpcClient("ws://localhost:3100/ws", "bad-token");
+    connectLastWsAsync();
+    const client = await clientPromise;
+    const callPromise = client.call("system.ping", {});
+    getLastWs().emit("close", 4001, Buffer.from("Unauthorized"));
+    await expect(callPromise).rejects.toThrow(/COMIS_GATEWAY_TOKEN/);
+    await expect(callPromise).rejects.toThrow(/daemon IS running/);
+  });
+
+  it("a 4001 close BEFORE open rejects the connection promise with the auth error instead of hanging to timeout", async () => {
+    const clientPromise = createRpcClient("ws://localhost:3100/ws", "bad-token");
+    const interval = setInterval(() => {
+      const ws = getLastWs();
+      if (ws) {
+        ws.emit("close", 4001, Buffer.from("Unauthorized"));
+        clearInterval(interval);
+      }
+    }, 1);
+    await expect(clientPromise).rejects.toThrow(/COMIS_GATEWAY_TOKEN/);
+  });
+
+  it("a non-auth close keeps the generic connection-closed message", async () => {
+    const clientPromise = createRpcClient("ws://localhost:3100/ws");
+    connectLastWsAsync();
+    const client = await clientPromise;
+    const callPromise = client.call("system.ping", {});
+    getLastWs().emit("close", 1006, Buffer.from(""));
+    await expect(callPromise).rejects.toThrow("Connection closed unexpectedly");
+  });
+
+  it("isGatewayAuthRejection matches the auth error and rejects unrelated errors", () => {
+    expect(isGatewayAuthRejection(new Error("Gateway rejected the token (WS close 4001 Unauthorized) — x"))).toBe(true);
+    expect(isGatewayAuthRejection(new Error("Connection closed unexpectedly"))).toBe(false);
+    expect(isGatewayAuthRejection(undefined)).toBe(false);
+  });
+});
 
 describe("createRpcClient", () => {
   beforeEach(() => {

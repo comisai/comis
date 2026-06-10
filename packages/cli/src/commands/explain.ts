@@ -22,9 +22,11 @@
 
 import type { Command } from "commander";
 import { ObsExplainContract } from "@comis/core";
-import { callTyped, withClient } from "../client/rpc-client.js";
+import type { IncidentReport } from "@comis/core";
+import { callTyped, isGatewayAuthRejection, withClient } from "../client/rpc-client.js";
 import { info, error, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
+import { assembleIncidentReportOffline, resolveOfflineDataDir } from "../util/offline-obs.js";
 
 /**
  * Register the `explain` command on the program.
@@ -43,8 +45,12 @@ export function registerExplainCommand(program: Command): void {
     )
     .option("--format <format>", "Output format: table | json", "table")
     .option("--depth <depth>", "Report depth: summary | full", "summary")
+    .option(
+      "--offline",
+      "Assemble from the local ~/.comis files without contacting the daemon",
+    )
     .action(
-      async (idArg: string, options: { format: string; depth: string }) => {
+      async (idArg: string, options: { format: string; depth: string; offline?: boolean }) => {
         try {
           const depth = options.depth as "summary" | "full";
           // Route by arg shape: a sessionKey is tenant:user:channel:ts (has ':');
@@ -52,13 +58,35 @@ export function registerExplainCommand(program: Command): void {
           const params = idArg.includes(":")
             ? { sessionKey: idArg, depth }
             : { traceId: idArg, depth };
-          const report = await withSpinner(
-            "Assembling incident report...",
-            () =>
-              withClient((client) =>
-                callTyped(client, ObsExplainContract, params),
-              ),
+          // W14 (obs-llm-troubleshooting): the telemetry lives on LOCAL disk —
+          // a post-mortem must not require a live gateway. --offline assembles
+          // locally; an UNREACHABLE gateway falls back automatically. An
+          // AUTH-REJECTED gateway does NOT auto-fall-back (the daemon is up;
+          // masking the token problem hides a misconfiguration) — the error
+          // names COMIS_GATEWAY_TOKEN and --offline remains the explicit out.
+          let assembledOffline = options.offline === true;
+          const report: IncidentReport = await withSpinner(
+            assembledOffline
+              ? "Assembling incident report (offline)..."
+              : "Assembling incident report...",
+            async () => {
+              if (options.offline === true) {
+                return assembleIncidentReportOffline(resolveOfflineDataDir(), params);
+              }
+              try {
+                return await withClient((client) =>
+                  callTyped(client, ObsExplainContract, params),
+                );
+              } catch (e) {
+                if (isGatewayAuthRejection(e)) throw e;
+                assembledOffline = true;
+                return assembleIncidentReportOffline(resolveOfflineDataDir(), params);
+              }
+            },
           );
+          if (assembledOffline && options.offline !== true && options.format !== "json") {
+            info("daemon unreachable — report assembled offline from the local data dir");
+          }
           if (options.format === "json") {
             json(report);
             return;
@@ -86,6 +114,9 @@ export function registerExplainCommand(program: Command): void {
           }
         } catch (e) {
           error(`explain failed: ${e instanceof Error ? e.message : String(e)}`);
+          if (isGatewayAuthRejection(e)) {
+            error("tip: `comis explain --offline` assembles from the local files without the daemon");
+          }
           process.exit(1);
         }
       },

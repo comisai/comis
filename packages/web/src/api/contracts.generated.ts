@@ -7706,6 +7706,64 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "additionalProperties": false
           }
         },
+        "contextBudget": {
+          "type": "object",
+          "properties": {
+            "windowTokens": {
+              "type": "number"
+            },
+            "rawContextWindowTokens": {
+              "type": "number"
+            },
+            "windowCapSource": {
+              "type": "string",
+              "enum": [
+                "effectiveContextCapSmall",
+                "effectiveContextCapNano",
+                "none"
+              ]
+            },
+            "systemTokens": {
+              "type": "number"
+            },
+            "freshTailTokens": {
+              "type": "number"
+            },
+            "budgetedHistoryTokens": {
+              "type": "number"
+            },
+            "keptCount": {
+              "type": "number"
+            },
+            "assembledInputTokens": {
+              "type": "number"
+            },
+            "outputHeadroom": {
+              "type": "number"
+            },
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "fits",
+                "downshifted",
+                "exhausted"
+              ]
+            }
+          },
+          "required": [
+            "windowTokens",
+            "rawContextWindowTokens",
+            "windowCapSource",
+            "systemTokens",
+            "freshTailTokens",
+            "budgetedHistoryTokens",
+            "keptCount",
+            "assembledInputTokens",
+            "outputHeadroom",
+            "verdict"
+          ],
+          "additionalProperties": false
+        },
         "summary": {
           "type": "string"
         },

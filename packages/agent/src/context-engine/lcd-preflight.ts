@@ -17,11 +17,11 @@
  */
 
 import { computeOutputHeadroom, downshiftThinkingLevel } from "./output-headroom.js";
-import { ContextExhaustionError } from "./errors.js";
+import { ContextExhaustionError, describeWindowCap } from "./errors.js";
 import { isSecurityRelevantMessage } from "./security-context-pinner.js";
 import { evictHistoryUnderBudget, type BudgetItem } from "./lcd-budget-eviction.js";
 import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
-import type { ContextEngineDeps } from "./types.js";
+import type { ContextEngineDeps, ContextWindowCapInfo } from "./types.js";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 /** Valid thinking-level union (mirrors output-headroom.ts). */
@@ -41,9 +41,15 @@ const VALID_LEVELS: readonly TLevel[] = ["off", "minimal", "low", "medium", "hig
  *                            The NEWEST keptCount items from evictable were kept.
  * @param freshTail         - The unconditional fresh-tail messages.
  * @param reasoningStyle    - profile.reasoningStyle ("none" | "native").
+ * @param capInfo           - W1 cap provenance (budget.rawContextWindowTokens +
+ *                            budget.windowCapSource). When the effective window was
+ *                            clamped by a capability-class cap, the exhaustion throw
+ *                            and WARN name the raw window and the exact config knob.
  *
  * Throws ContextExhaustionError if infeasible even at the thinking-level floor.
  * Emits onEffectiveWindow, onThinkingDownshifted, onAssembledInputTokens callbacks as side effects.
+ * Returns the ORIGINAL assembled input token count (CR-03 — what is actually
+ * dispatched) so the assembler's INFO line can log the budget equation (W5).
  */
 export function runPreflightFitCheck(
   deps: ContextEngineDeps,
@@ -52,7 +58,8 @@ export function runPreflightFitCheck(
   keptCount: number,
   freshTail: AgentMessage[],
   reasoningStyle: "none" | "native",
-): void {
+  capInfo?: ContextWindowCapInfo,
+): number {
   // Emit effectiveWindow callback so Plan 04 can clamp max_tokens dynamically.
   deps.onEffectiveWindow?.(effectiveWindow);
 
@@ -109,6 +116,32 @@ export function runPreflightFitCheck(
   const originalAssembledInputTokens = systemTokens + budgetedTokens + freshTailTokens;
   let assembledInputTokens = originalAssembledInputTokens;
 
+  // W2 (obs-llm-troubleshooting): emit the budget equation once per fit check —
+  // "fits"/"downshifted" at the end, "exhausted" right before the throw — so the
+  // trajectory carries the numbers obs.explain needs to explain a degraded turn
+  // (they previously existed only as daemon-log DEBUG lines).
+  let governorFired = false;
+  const emitBudgetComputed = (
+    verdict: "fits" | "downshifted" | "exhausted",
+    assembled: number,
+    headroom: number,
+  ): void => {
+    deps.eventBus?.emit("context:budget_computed", {
+      agentId: deps.agentId ?? "",
+      sessionKey: deps.sessionKey ?? "",
+      windowTokens: effectiveWindow,
+      rawContextWindowTokens: capInfo?.rawContextWindowTokens ?? effectiveWindow,
+      windowCapSource: capInfo?.windowCapSource ?? "none",
+      systemTokens,
+      freshTailTokens,
+      budgetedHistoryTokens: budgetedTokens,
+      keptCount,
+      assembledInputTokens: assembled,
+      outputHeadroom: headroom,
+      verdict,
+    });
+  };
+
   if (assembledInputTokens > headroomBound) {
     // (a) Evict harder with security-pinned messages excluded (T-S4).
     const markers = deps.securityPinMarkers;
@@ -160,6 +193,7 @@ export function runPreflightFitCheck(
             originalThinkingLevel: thinkingLevelInput,
           });
           deps.onThinkingDownshifted?.(effectiveThinkingLevel);
+          governorFired = true;
           break;
         }
         downshifted = downshiftThinkingLevel(effectiveThinkingLevel);
@@ -174,15 +208,22 @@ export function runPreflightFitCheck(
         {
           step: "lcd-pre-flight",
           errorKind: "resource" as const,
-          hint: "context exhausted: assembled input exceeds effective window minus headroom even at minimal thinking",
+          hint:
+            "context exhausted: assembled input exceeds effective window minus headroom even at minimal thinking" +
+            describeWindowCap(effectiveWindow, capInfo),
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
           assembledInputTokens,
           effectiveWindow,
+          ...(capInfo !== undefined && {
+            rawContextWindowTokens: capInfo.rawContextWindowTokens,
+            windowCapSource: capInfo.windowCapSource,
+          }),
         },
         "pre-flight fit check: context exhausted",
       );
-      throw new ContextExhaustionError(effectiveWindow, assembledInputTokens);
+      emitBudgetComputed("exhausted", assembledInputTokens, finalHeadroom);
+      throw new ContextExhaustionError(effectiveWindow, assembledInputTokens, capInfo);
     }
   }
 
@@ -192,4 +233,11 @@ export function runPreflightFitCheck(
   // lcd-assembler.ts). Reporting the simulated count would give config-resolver a
   // stale undercount → dynamicMax set too high → silent LLM truncation.
   deps.onAssembledInputTokens?.(originalAssembledInputTokens);
+
+  // W2: the non-throw outcomes. `outputHeadroom` holds the downshifted value when
+  // the governor fired (the loop reassigns it), so the event reports the headroom
+  // the dispatch will actually run with.
+  emitBudgetComputed(governorFired ? "downshifted" : "fits", originalAssembledInputTokens, outputHeadroom);
+
+  return originalAssembledInputTokens;
 }

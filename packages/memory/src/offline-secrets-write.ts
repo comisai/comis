@@ -79,6 +79,45 @@ export function offlineSecretSet(opts: {
  *
  * @returns ok(SecretMetadata[]) on success, err(Error) when key absent or store fails
  */
+/**
+ * W15 (obs-llm-troubleshooting): daemon-free decrypted read of ONE secret.
+ *
+ * Breaks the gateway-token chicken-and-egg: `comis secrets get
+ * COMIS_GATEWAY_TOKEN` previously required the daemon RPC, which required the
+ * very token being fetched. Same trust model as the store itself — the caller
+ * must hold SECRETS_MASTER_KEY (read from `envFilePath`, never process.env).
+ * Returns ok(undefined) when the name is absent.
+ */
+export function offlineSecretGet(opts: {
+  name: string;
+  dataDir: string;
+  envFilePath: string;
+}): Result<string | undefined, Error> {
+  const freshEnv: Record<string, string | undefined> = {};
+  loadEnvFile(opts.envFilePath, freshEnv);
+
+  const setupResult = setupSecrets({ env: freshEnv, dataDir: opts.dataDir });
+  if (!setupResult.ok) {
+    return err(setupResult.error);
+  }
+  if (setupResult.value === null) {
+    return err(
+      new Error(
+        "SECRETS_MASTER_KEY is absent in ~/.comis/.env. " +
+          "Run `comis secrets init --write` first to generate the master encryption key.",
+      ),
+    );
+  }
+
+  const { crypto, dbPath } = setupResult.value;
+  const store = createSqliteSecretStore(dbPath, crypto);
+  try {
+    return store.getDecrypted(opts.name);
+  } finally {
+    store.close();
+  }
+}
+
 export function offlineSecretsList(opts: {
   dataDir: string;
   envFilePath: string;

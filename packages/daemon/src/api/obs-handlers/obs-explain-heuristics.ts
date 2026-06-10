@@ -231,8 +231,47 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //    tool-failure rules above (a misclassification/breaker/dependency/timeout
   //    cause is upstream of, and out-ranks, the terminal state). Fires only when
   //    the run's mapped endReason IS the context-exhaustion cause.
+  //
+  //    W3 (obs-llm-troubleshooting): when the trajectory carries the per-call
+  //    budget equation (`signals.contextBudget`, from the W2 context.budget
+  //    event), the verdict is NUMBERS-BACKED — assembled vs window, the exact
+  //    contextEngine.budget.* knob that clamped the window, the system+tools
+  //    share, and the kept-history count. The old static text speculated about
+  //    the summarizer/compaction and pointed at summarizerSpend, which actively
+  //    misdirected the live qwen3.6 incident (the real cause was the small-class
+  //    32K cap + 83 tool schemas at 80% of the window). The generic text remains
+  //    ONLY as the fallback for pre-W2 sessions with no budget evidence.
   (s) => {
     if (s.endReason !== "context_exhausted") return null;
+    const b = s.contextBudget;
+    if (b !== undefined) {
+      const capped = b.windowCapSource !== "none";
+      const systemSharePct =
+        b.windowTokens > 0 ? Math.round((b.systemTokens / b.windowTokens) * 100) : 0;
+      const capClause = capped
+        ? ` (model contextWindow ${String(b.rawContextWindowTokens)} capped by contextEngine.budget.${b.windowCapSource})`
+        : "";
+      return {
+        code: "context_exhausted",
+        detail:
+          "context exhausted — the pre-flight guard aborted before the model could run: assembled " +
+          `${String(b.assembledInputTokens)} tokens of effective window ${String(b.windowTokens)}${capClause}; ` +
+          `system prompt + tool schemas = ${String(b.systemTokens)} tokens (${String(systemSharePct)}% of the window); ` +
+          `history kept: ${String(b.keptCount)}`,
+        suggestedNextSteps: [
+          ...(capped
+            ? [
+                `raise contextEngine.budget.${b.windowCapSource} (0 = uncapped) — the model declares ` +
+                  `${String(b.rawContextWindowTokens)} tokens but the effective window was ${String(b.windowTokens)}`,
+              ]
+            : []),
+          systemSharePct >= 50
+            ? "reduce the active tool surface (disable unused builtin tool groups / MCP servers) — tool schemas dominate the window"
+            : "check the agent's context window vs. its working-set size (long tool outputs / large history)",
+          "obs.explain depth=full",
+        ],
+      };
+    }
     return {
       code: "context_exhausted",
       detail:

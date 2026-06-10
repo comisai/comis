@@ -16,7 +16,7 @@
  * @module
  */
 import { computeTokenBudget } from "./token-budget.js";
-import type { TokenBudget } from "./types.js";
+import type { TokenBudget, WindowCapSource } from "./types.js";
 import { OUTPUT_RESERVE_TOKENS } from "./constants.js";
 import type { ModelProfile } from "../executor/model-profile.js";
 
@@ -62,12 +62,16 @@ export function computeTokenBudgetForProfile(
 ): TokenBudget {
   // Effective context window: cap for small/nano to prevent 256K-overfill degradation.
   // frontier/mid: Infinity → Math.min(contextWindow, Infinity) = contextWindow (byte-identical).
-  const classCap = resolveEffectiveCap(
+  const { cap: classCap, source: capKnob } = resolveEffectiveCap(
     profile.capabilityClass,
     effectiveContextCapSmall,
     effectiveContextCapNano,
   );
   const effectiveWindow = Math.min(profile.contextWindow, classCap);
+  // W1 cap provenance: the source is reported ONLY when the cap actually bit —
+  // a small model whose declared window already fits under the cap is "none".
+  const windowCapSource: WindowCapSource =
+    effectiveWindow < profile.contextWindow ? capKnob : "none";
 
   // 8K-starvation fix: cap O at maxOutputTokens so it cannot consume the whole window.
   // On an 8K window with OUTPUT_RESERVE_TOKENS=8192, uncapped O leaves H=0.
@@ -90,6 +94,8 @@ export function computeTokenBudgetForProfile(
     return {
       ...rawBudget,
       windowTokens: effectiveWindow,
+      rawContextWindowTokens: profile.contextWindow,
+      windowCapSource,
       outputReserveTokens: effectiveO,
       availableHistoryTokens: Math.max(0, rawBudget.availableHistoryTokens + oReduction),
     };
@@ -97,23 +103,43 @@ export function computeTokenBudgetForProfile(
 
   // Standard path (frontier/mid/small with window ≥ OUTPUT_RESERVE_TOKENS): just cap the window.
   // For frontier: effectiveWindow == contextWindow (Infinity cap) → byte-identical.
-  return computeTokenBudget(effectiveWindow, systemTokensEstimate, cacheFenceIndex, freshTailPreambleTokensEstimate);
+  return {
+    ...computeTokenBudget(effectiveWindow, systemTokensEstimate, cacheFenceIndex, freshTailPreambleTokensEstimate),
+    rawContextWindowTokens: profile.contextWindow,
+    windowCapSource,
+  };
 }
 
+/**
+ * Resolve the class cap AND the knob it came from. `source` names the
+ * `contextEngine.budget.*` knob that produced the cap so the budget can report
+ * WHICH setting to raise (W1 cap provenance). The unknown-class `?? 32_000`
+ * safety net is attributed to the small knob — it mirrors that knob's default
+ * and only non-schema callers can reach it.
+ */
 function resolveEffectiveCap(
   capabilityClass: string,
   effectiveContextCapSmall: number | undefined,
   effectiveContextCapNano: number | undefined,
-): number {
+): { cap: number; source: Exclude<WindowCapSource, "none"> } {
   if (capabilityClass === "small") {
     if (effectiveContextCapSmall !== undefined) {
-      return effectiveContextCapSmall > 0 ? effectiveContextCapSmall : Infinity;
+      return {
+        cap: effectiveContextCapSmall > 0 ? effectiveContextCapSmall : Infinity,
+        source: "effectiveContextCapSmall",
+      };
     }
   }
   if (capabilityClass === "nano") {
     if (effectiveContextCapNano !== undefined) {
-      return effectiveContextCapNano > 0 ? effectiveContextCapNano : Infinity;
+      return {
+        cap: effectiveContextCapNano > 0 ? effectiveContextCapNano : Infinity,
+        source: "effectiveContextCapNano",
+      };
     }
   }
-  return DEFAULT_EFFECTIVE_CAP_BY_CLASS[capabilityClass] ?? 32_000;
+  return {
+    cap: DEFAULT_EFFECTIVE_CAP_BY_CLASS[capabilityClass] ?? 32_000,
+    source: capabilityClass === "nano" ? "effectiveContextCapNano" : "effectiveContextCapSmall",
+  };
 }

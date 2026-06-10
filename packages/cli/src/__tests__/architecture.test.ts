@@ -51,6 +51,18 @@ const L11_ALLOWLIST: readonly string[] = [
 // @comis/infra is now in HARD_FORBIDDEN_PACKAGES.
 const L12_INFRA_ALLOWLIST = [] as const;
 
+// L18 (W14 obs-llm-troubleshooting): @comis/daemon re-opened for exactly one
+// site — the CLI's OFFLINE obs adapter. `comis explain --offline` /
+// `comis fleet --offline` (and the automatic unreachable-gateway fallback)
+// reuse the daemon's exported PURE report assemblers over the local ~/.comis
+// files; requiring a live daemon to read local telemetry defeated the
+// post-mortem tool exactly when it was needed. A single bounded adapter file
+// contains all @comis/daemon imports so a future closure is one deletion.
+// Live-daemon access still routes through RPC.
+const L18_DAEMON_ALLOWLIST: readonly string[] = [
+  "util/offline-obs.ts",
+];
+
 const HARD_FORBIDDEN_PACKAGES = [
   // L17 closure: @comis/agent promoted to HARD_FORBIDDEN after every
   // CLI agent-import site retargeted to @comis/core.
@@ -62,7 +74,6 @@ const HARD_FORBIDDEN_PACKAGES = [
   "@comis/skills",
   "@comis/scheduler",
   "@comis/gateway",
-  "@comis/daemon",
   "@comis/orchestrator",
 ] as const;
 
@@ -124,6 +135,34 @@ describe("@comis/cli -- architecture invariants", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("production source does NOT import @comis/daemon (outside the L18 offline-obs allowlist)", () => {
+    const { violations, checkedFiles } = findForbiddenImports({
+      rootDir: SRC_ROOT,
+      forbiddenPackage: "@comis/daemon",
+      allowlistPaths: [...L18_DAEMON_ALLOWLIST],
+    });
+    expect(
+      violations,
+      formatViolations({
+        description:
+          "@comis/cli production source must not import @comis/daemon (outside the L18 offline-obs allowlist).",
+        violations: violations.map((v) => ({
+          file: v.file,
+          line: v.line,
+          column: v.column,
+          snippet: v.snippet,
+        })),
+        suggestedFix:
+          "Live-daemon access routes through RPC (callTyped). Only the offline obs fallback (util/offline-obs.ts) may import the daemon's exported pure assemblers.",
+        allowlistRef: "L18",
+      }),
+    ).toEqual([]);
+    expect(
+      checkedFiles,
+      "sanity: findForbiddenImports walked at least one cli/src file",
+    ).toBeGreaterThan(0);
+  });
+
   for (const forbidden of HARD_FORBIDDEN_PACKAGES) {
     it(`production source does NOT import ${forbidden}`, () => {
       const { violations, checkedFiles } = findForbiddenImports({
@@ -159,7 +198,10 @@ describe("@comis/cli -- architecture invariants", () => {
 // Source-grep approach (simpler than rendering Commander help).
 //
 // Fallback-capable (set, list, import): daemon RPC when up; direct store when down.
-// Daemon-required  (get, delete):       always require daemon — no offline fallback.
+// Daemon-default w/ explicit offline (get): daemon RPC by default (audit-logged);
+//   `--offline` reads the local store directly (W15 — breaks the gateway-token
+//   chicken-and-egg where fetching COMIS_GATEWAY_TOKEN required the token).
+// Daemon-required  (delete):            always require daemon — no offline fallback.
 // Daemon-free      (init, audit):       never mention daemon as required.
 // ---------------------------------------------------------------------------
 
@@ -180,10 +222,12 @@ describe("daemon-required help-text patterns", () => {
     ).toMatch(SECRETS_FALLBACK_PATTERN);
   });
 
-  it("secrets get description contains the daemon-required precondition string", () => {
+  it("secrets get description documents the daemon default AND the explicit --offline escape (W15)", () => {
     const contents = readFileSync(SECRETS_FILE, "utf8");
     const sec = extractSubcommandDescription(contents, "get <name>");
-    expect(sec).toMatch(SECRETS_REQUIRED_PATTERN);
+    expect(sec).toMatch(/Requires the comis daemon to be running/);
+    expect(sec).toMatch(/--offline/);
+    expect(sec).toMatch(/SECRETS_MASTER_KEY/);
   });
 
   it("secrets list description contains the daemon-fallback precondition string", () => {

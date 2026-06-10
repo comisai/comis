@@ -141,13 +141,22 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // gateway: no agent OAuth-helpers back-edge — OAuth helpers live in
   // @comis/core.
   gateway: new Set(["shared", "core"]),
-  // cli: depends on shared, core, observability, and memory.
+  // cli: depends on shared, core, observability, memory, and daemon.
   // config-write hook in sync-tooling needs the config-audit JSONL append
   // helpers (observability). The @comis/memory edge is re-opened for the
   // offline secrets bootstrap path (daemon-free first-time setup, L11 re-open):
   // `util/offline-secrets-store.ts` is the single allowed import site; all
   // other CLI memory access still routes through daemon RPC.
-  cli: new Set(["shared", "core", "observability", "memory"]),
+  //
+  // @comis/daemon edge (W14 obs-llm-troubleshooting): the OFFLINE obs fallback.
+  // `comis explain`/`comis fleet` reuse the daemon's exported pure assemblers
+  // (assembleIncidentReportFromSources / makeRealReader /
+  // assembleFleetHealthReport) to build the post-mortem directly from the
+  // local ~/.comis files when the gateway is unreachable — the session data
+  // is on local disk and must not require a live daemon to read. Single
+  // bounded import site: `util/offline-obs.ts`. Acyclic (daemon has no cli
+  // edge); live-daemon access still routes through RPC.
+  cli: new Set(["shared", "core", "observability", "memory", "daemon"]),
   daemon: new Set([
     "shared",
     "core",

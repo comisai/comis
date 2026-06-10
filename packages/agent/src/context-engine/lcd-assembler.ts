@@ -443,13 +443,19 @@ export function createLcdContextEngine(
       // Extracted to lcd-preflight.ts to keep this file ≤ 820 lines.
       // Pass evictable (BudgetItem[]) + keptCount so the helper can recompute token sums
       // (evictHistoryUnderBudget returns AgentMessage[] which carries no token metadata).
-      runPreflightFitCheck(
+      const assembledInputTokens = runPreflightFitCheck(
         deps,
         budget.windowTokens,
         evictable,
         budgeted.length,
         freshTail,
         (profile.reasoningStyle ?? "none") as "none" | "native",
+        // W1 cap provenance: lets the exhaustion throw/WARN name the raw
+        // declared window and the contextEngine.budget.* knob that clamped it.
+        {
+          rawContextWindowTokens: budget.rawContextWindowTokens,
+          windowCapSource: budget.windowCapSource,
+        },
       );
 
       deps.logger.info(
@@ -459,6 +465,16 @@ export function createLcdContextEngine(
           historyCount: budgeted.length,
           freshTailCount: freshTail.length,
           assembledCount: repaired.length,
+          // W5 (obs-llm-troubleshooting): the budget equation at INFO — the live
+          // incident was diagnosable only because logLevel happened to be debug
+          // (the lcd-evict budget fields are DEBUG). One line per LLM call.
+          windowTokens: budget.windowTokens,
+          rawContextWindowTokens: budget.rawContextWindowTokens,
+          windowCapSource: budget.windowCapSource,
+          systemTokens: budget.systemTokens,
+          freshTailPreambleTokens: budget.freshTailPreambleTokens,
+          availableHistoryTokens: budget.availableHistoryTokens,
+          assembledInputTokens,
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
         },

@@ -118,6 +118,11 @@ export function computeTokenBudget(
 
   return {
     windowTokens: W,
+    // Profile-unaware base: no capability-class cap is applied here, so the
+    // window IS the raw window. computeTokenBudgetForProfile overrides these
+    // two when its class cap actually clamps W (W1 cap provenance).
+    rawContextWindowTokens: W,
+    windowCapSource: "none",
     systemTokens: S,
     outputReserveTokens: O,
     safetyMarginTokens: M,

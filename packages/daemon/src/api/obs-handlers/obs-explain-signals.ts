@@ -29,8 +29,8 @@
  * @module
  */
 
-import { fingerprint, sanitizeLogString } from "@comis/core";
-import type { IncidentFailure, IncidentSignals } from "@comis/core";
+import { fingerprint, sanitizeLogString, IncidentContextBudgetSchema } from "@comis/core";
+import type { IncidentContextBudget, IncidentFailure, IncidentSignals } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Tunable thresholds (module-top constants per the naming contract).
@@ -88,6 +88,15 @@ interface Acc {
   synthesizedBreakerTools: Set<string>;
   /** Per-tool: did any failure body carry a status/200/403 token? */
   misclassTokenByTool: Map<string, string>;
+  /** W3: the LAST context.budget trajectory record (the terminal fit check). */
+  contextBudget?: IncidentContextBudget;
+  /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
+   *  call must not count twice if its result event is duplicated across sources). */
+  seenToolResultCallIds: Set<string>;
+  /** W8: agentId from the first record envelope that carries one. */
+  agentId?: string;
+  /** W8: channel identity from the session.started record's data. */
+  channel?: { type: string; id: string };
   sessionKey: string;
   seq: number;
 }
@@ -231,8 +240,24 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
   const tool = asString(data.toolName);
 
   switch (type) {
+    case "session.started": {
+      // W8: channel identity rides the session.started data (channelType/channelId).
+      const channelType = asString(data.channelType);
+      const channelId = asString(data.channelId);
+      if (acc.channel === undefined && (channelType !== undefined || channelId !== undefined)) {
+        acc.channel = { type: channelType ?? "", id: channelId ?? "" };
+      }
+      return;
+    }
     case "tool.result": {
       if (!tool) return;
+      // W8: dedupe by toolCallId — the live ctx_search counted twice when its
+      // result appeared in more than one telemetry source.
+      const toolCallId = asString(data.toolCallId);
+      if (toolCallId !== undefined) {
+        if (acc.seenToolResultCallIds.has(toolCallId)) return;
+        acc.seenToolResultCallIds.add(toolCallId);
+      }
       const success = data.success === true;
       const entry = ensureTool(acc, tool);
       if (success) {
@@ -280,6 +305,15 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       acc.breakerEvents.push({ seq: asNumber(rec.seq) ?? acc.seq++, event: "reset", toolName: tool });
       return;
     }
+    case "context.budget": {
+      // W3 (obs-llm-troubleshooting): the per-call budget equation emitted by
+      // the LCD pre-flight (W2). LAST record wins — the terminal fit check
+      // explains the end state. Validated wholesale against the shared wire
+      // schema; a malformed/partial record is ignored (forward-compatible).
+      const parsed = IncidentContextBudgetSchema.safeParse(data);
+      if (parsed.success) acc.contextBudget = parsed.data;
+      return;
+    }
     case "tool.result_offloaded": {
       if (!tool) return;
       acc.offloads.push({
@@ -321,13 +355,25 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     hasDoNotRetrySignal: false,
     synthesizedBreakerTools: new Set(),
     misclassTokenByTool: new Map(),
+    seenToolResultCallIds: new Set(),
     sessionKey: "",
     seq: 0,
   };
 
   for (const rec of records) {
+    // W8: envelope agentId (first seen) — the metadata rollup often lacks it.
+    if (acc.agentId === undefined) {
+      const envelopeAgentId = asString(rec.agentId);
+      if (envelopeAgentId !== undefined && envelopeAgentId.length > 0) acc.agentId = envelopeAgentId;
+    }
     if (rec.traceSchema === "comis-trajectory") {
       handleEventRecord(acc, rec);
+    } else if (rec.traceSchema === "comis-cache-trace") {
+      // W8: cache-layer telemetry — NOT tool evidence. Its tool:before/tool:after
+      // stage records carry toolName + success and previously fell into the
+      // log-shape handler, double-counting every tool call (live ctx_search ok:2
+      // for one call). Skipped until a dedicated cache-stage handler exists.
+      continue;
     } else {
       handleLogRecord(acc, rec);
     }
@@ -390,5 +436,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     hasMisclassificationSignal,
     ...(misclassifiedTool !== undefined ? { misclassifiedTool } : {}),
     ...(misclassifiedToken !== undefined ? { misclassifiedToken } : {}),
+    ...(acc.contextBudget !== undefined ? { contextBudget: acc.contextBudget } : {}),
+    ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
+    ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
   };
 }

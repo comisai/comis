@@ -1099,6 +1099,7 @@ Encrypted secret management using AES-256-GCM. All operations work offline witho
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--yes` | `boolean` | `false` | Skip confirmation prompt |
+| `--offline` | `boolean` | `false` | Read the local encrypted store directly (no daemon RPC). Needs `SECRETS_MASTER_KEY` in `~/.comis/.env`. Use when the daemon is down or the gateway token itself is the secret you need (`comis secrets get COMIS_GATEWAY_TOKEN --offline`) — daemon-side reads are audit-logged, so the RPC path stays the default |
 
 #### `secrets list`
 
@@ -1321,6 +1322,7 @@ The positional argument is routed automatically: a **session key** (`tenant:user
 |------|------|---------|-------------|
 | `--format <format>` | `table` \| `json` | `table` | Output format |
 | `--depth <depth>` | `summary` \| `full` | `summary` | `summary` bounds the report to roughly 6 KB (about 1,500 tokens) and caps the failure list; `full` relaxes the array caps. Both depths are digest-only — no raw tool-output body is ever inlined |
+| `--offline` | `boolean` | `false` | Assemble from the local `~/.comis` files without contacting the daemon (same pure assembler the RPC handler runs) |
 
 ```bash
 # Explain a session by session key
@@ -1331,9 +1333,12 @@ comis explain 6ba7b810-9dad-11d1-80b4-00c04fd430c8 --depth full
 
 # Machine-readable output
 comis explain "default:user123:telegram:1717000000" --format json
+
+# No daemon required — assemble from the local files
+comis explain "default:user123:telegram:1717000000" --offline
 ```
 
-Requires an admin-scoped gateway token (same as `comis trace`).
+Requires an admin-scoped gateway token (same as `comis trace`) — unless `--offline`. When the gateway is **unreachable** (daemon down / wrong port) the command automatically falls back to the offline assembly with a notice. When the gateway **rejects the token** it does NOT silently fall back — the daemon is demonstrably running, so the error names `COMIS_GATEWAY_TOKEN` (env var or `~/.comis/.env`) and suggests `--offline` as the explicit out.
 
 ---
 
@@ -1349,6 +1354,7 @@ This is the cross-session **sibling** of `comis explain` (single-session). It is
 |------|------|---------|-------------|
 | `--since <hours>` | `number` | `24` | Aggregation window in hours |
 | `--format <format>` | `table` \| `json` | `table` | Output format |
+| `--offline` | `boolean` | `false` | Assemble from the local `~/.comis` files without contacting the daemon. Without `memory.db` access the session-summary half degrades and `coverage.sessionSummary.found` reports it honestly |
 
 ```bash
 # Fleet-health triage over the last 24h (default window)
@@ -1359,9 +1365,12 @@ comis fleet --since 72
 
 # Machine-readable output
 comis fleet --since 24 --format json
+
+# No daemon required — assemble from the local files
+comis fleet --since 24 --offline
 ```
 
-Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`).
+Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`) — unless `--offline`. Unreachable-gateway calls fall back to the offline assembly automatically; a token rejection surfaces the auth error (with the `--offline` tip) instead of masking the misconfiguration.
 
 ---
 

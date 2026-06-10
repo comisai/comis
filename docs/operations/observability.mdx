@@ -258,9 +258,13 @@ Three event kinds:
   "sessionKey": "...", "channelType": "telegram", "chatId": "...",
   "agentId": "...", "traceIds": ["..."], "source": "runtime" }
 
-// turn_completed — one per agent turn
+// turn_completed — one per agent turn. stopReason is the reliable per-turn
+// SDK stop signal ("error" marks an aborted call); finishReason appears only
+// once the execution-level disposition has settled away from "stop"
+// (e.g. "context_exhausted"), so degraded turns are greppable from this index.
 { "event": "turn_completed", "ts": "...", "sessionId": "...",
   "traceId": "...", "durationMs": 0, "inputTokens": 0, "outputTokens": 0,
+  "stopReason": "error", "finishReason": "context_exhausted",
   "lastError": null, "source": "runtime" }
 
 // session_ended — one per session close

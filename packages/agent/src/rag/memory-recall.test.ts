@@ -455,6 +455,33 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(String((loggedErr as Error)?.message ?? loggedErr)).toContain("reranker boom");
   });
 
+  it("rerank fallback WARN carries the err message only — the stack rides a DEBUG line (W11)", async () => {
+    // §2.2: stack traces at DEBUG only. The live fallback WARN inlined a full
+    // multi-KB stack for a classified, hinted, recovered degradation.
+    const input = [makeResult("a", { base: 0.9 })];
+    const warn = vi.fn();
+    const debug = vi.fn();
+    const logger = { ...noopLogger, warn, debug } as unknown as ComisLogger;
+    const { port } = mockReranker({ rank: async () => err(new Error("reranker boom")) });
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger },
+      baseConfig({
+        rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
+      }),
+    );
+    await recall.recall("q", SESSION_KEY);
+    const warnArg = warn.mock.calls.find((c) => c[1] === "rerank fallback");
+    expect(warnArg).toBeDefined();
+    const loggedErr = (warnArg![0] as { err?: unknown }).err;
+    expect(typeof loggedErr).toBe("string");
+    expect(loggedErr).toContain("reranker boom");
+    // The full Error (with stack) is preserved on a DEBUG line.
+    const dbg = debug.mock.calls.find((c) => c[1] === "rerank fallback detail");
+    expect(dbg).toBeDefined();
+    expect(((dbg![0] as { err?: Error }).err as Error)?.stack).toBeDefined();
+  });
+
   it("trust tie-break: at EQUAL reranked relevance, system outranks learned/external", async () => {
     const input = [
       makeResult("learned", { trustLevel: "learned", base: 0.5 }),

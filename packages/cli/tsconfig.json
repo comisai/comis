@@ -6,5 +6,5 @@
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [{ "path": "../shared" }, { "path": "../core" }, { "path": "../memory" }, { "path": "../observability" }]
+  "references": [{ "path": "../shared" }, { "path": "../core" }, { "path": "../memory" }, { "path": "../observability" }, { "path": "../daemon" }]
 }

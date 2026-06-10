@@ -925,6 +925,20 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       timestamp: 0,
     },
     // context events
+    "context:budget_computed": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      windowTokens: 32_000,
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "effectiveContextCapSmall",
+      systemTokens: 25_694,
+      freshTailTokens: 5_272,
+      budgetedHistoryTokens: 0,
+      keptCount: 0,
+      assembledInputTokens: 31_572,
+      outputHeadroom: 768,
+      verdict: "exhausted",
+    },
     "context:evicted": {
       agentId: "agent-1",
       sessionKey: "t1:u1:c1",
@@ -2060,6 +2074,47 @@ describe("security + compaction + context + approval bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
+  it("context_budget_computed_maps_to_context.budget forwarding the budget equation; envelope stripped", () => {
+    // W2 (obs-llm-troubleshooting): the per-call budget equation must land in the
+    // trajectory so obs.explain can report WHY a context_exhausted turn aborted
+    // (live incident: the numbers existed only as daemon-log DEBUG lines).
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("context:budget_computed", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      windowTokens: 32_000,
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "effectiveContextCapSmall",
+      systemTokens: 25_694,
+      freshTailTokens: 5_272,
+      budgetedHistoryTokens: 0,
+      keptCount: 0,
+      assembledInputTokens: 31_572,
+      outputHeadroom: 768,
+      verdict: "exhausted",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("context.budget");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+
+    expect(data.windowTokens).toBe(32_000);
+    expect(data.rawContextWindowTokens).toBe(131_072);
+    expect(data.windowCapSource).toBe("effectiveContextCapSmall");
+    expect(data.systemTokens).toBe(25_694);
+    expect(data.freshTailTokens).toBe(5_272);
+    expect(data.budgetedHistoryTokens).toBe(0);
+    expect(data.keptCount).toBe(0);
+    expect(data.assembledInputTokens).toBe(31_572);
+    expect(data.outputHeadroom).toBe(768);
+    expect(data.verdict).toBe("exhausted");
+    expect(data.agentId).toBeUndefined();
+    expect(data.sessionKey).toBeUndefined();
+  });
+
   it("context_masked_maps_to_context.masked with maskedCount/totalChars/persistedToDisk; envelope stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -2422,10 +2477,10 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 59 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152)", () => {
+  it("bridge entry count is exactly 60 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
     // + session:summary (F2/D5, Phase 152).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(59);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(60);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

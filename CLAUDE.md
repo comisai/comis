@@ -144,6 +144,20 @@ Only drop to the raw data when you're debugging the **observability layer itself
 node -e 'const{assembleIncidentReportFromSources,makeRealReader}=require("./packages/daemon/dist/index.js");assembleIncidentReportFromSources(makeRealReader(process.env.HOME+"/.comis"),process.env.HOME+"/.comis",{sessionKey:"<key>",depth:"summary"}).then(r=>console.log(JSON.stringify(r,null,1)))'
 ```
 
+## Troubleshooting Feedback Loop (mandatory after every investigation)
+
+**Every troubleshooting session ends with an observability retro, and every friction found becomes an improvement.** An investigation is not done when the root cause is found — it is done when the NEXT occurrence of that incident class is diagnosable in one or two obs calls. After any debugging/triage work (yours or a user-reported incident), replay your own diagnostic path and convert each point of friction into a change, test-first like any other fix, citing the live incident in the test/commit:
+
+- **You grepped raw logs or hand-joined files** because `obs.explain`/`obs.fleet.health` lacked the data → thread that data into the trajectory (event-bus event → `TRAJECTORY_BRIDGE_MAPPING` → translator) and onto the `IncidentReport`/`FleetHealthReport`, then make the heuristic verdict consume it. (Precedent: the budget equation lived only on DEBUG lines; now `context.budget` → `IncidentReport.contextBudget` → a numbers-backed `context_exhausted` verdict.)
+- **An error/hint told you WHAT but not WHICH KNOB** → make the message name the exact config key and the actual values that conflicted. (Precedent: "effective window 32000" vs configured 131072 — the error now names `contextEngine.budget.effectiveContextCapSmall` and both numbers.)
+- **A message pointed you the WRONG way** → branch it by failure class so each class gets the hint that fits. (Precedents: "daemon not running" on an auth-rejected WS — close code 4001 now maps to a token-naming error and counts as liveness proof; "start Ollama" on an HTTP 400 from a running Ollama.)
+- **Load-bearing evidence was DEBUG-only** (invisible at the default level) → promote a once-per-operation summary to INFO, or flight-record it on the degraded path. Diagnosability must not depend on `logLevel: debug` having been set before the incident.
+- **The same field name meant different things on different lines** (e.g. four `activeToolCount` universes) or **two lenses double-counted** (e.g. cache-trace `tool:after` re-counting tool results) → rename/dedupe so the numbers reconcile.
+- **A tool you needed was unreachable in the failure mode it exists to diagnose** (daemon down, token broken) → give it an offline/local path with honest `coverage` degradation, never a silent empty.
+- **The verdict ranked chronic noise over the acute event**, or routine events inflated warning counts → fix the heuristic ordering / severity classification (`BENIGN_DAG_DEGRADED_REASONS` precedent).
+
+Scope guard: do these in the same change-set when small (string/hint/severity fixes), or as an immediate follow-up branch when structural (new trajectory events, report sections) — but never silently drop them. If you genuinely must defer, leave a dated TODO naming the incident. The §2.7 litmus test extends to incidents: if you cannot say "next time, `comis explain <ref>` answers this in one call," the loop is not closed.
+
 ## Git & Branching
 
 **Branch-first — never commit directly to the default branch (`main`).** Before the first change, cut a working branch off `main` (`feature/<desc>`, `fix/<desc>`, `docs/<desc>` — see AGENTS.md §9) and land the work through a PR. Commit or push only when the user asks: approval to *make* a change is not approval to push it, and approval in one turn doesn't carry to the next. If you discover you're already on `main` with uncommitted work, branch before committing — don't add to `main`'s history.

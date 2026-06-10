@@ -103,3 +103,57 @@ describe("buildContextExhaustedReply — vocabulary + security invariants", () =
     expect(buildContextExhaustedReply()).toBe(buildContextExhaustedReply());
   });
 });
+
+// ---------------------------------------------------------------------------
+// W4 (obs-llm-troubleshooting): the reply must name the exact cap knob for
+// small/nano models and carry an incident ref. The live incident's reply said
+// "raise the agent's context engine settings" — no knob, no pointer — so
+// root-causing started from a chat message with zero handles.
+// ---------------------------------------------------------------------------
+
+describe("buildContextExhaustedReply — knob naming + incident ref (W4)", () => {
+  it("small capability class names the small cap knob with the 0-uncapped hint", () => {
+    const reply = buildContextExhaustedReply({ capabilityClass: "small" });
+    expect(reply).toContain("contextEngine.budget.effectiveContextCapSmall");
+    expect(reply).toContain("0 = uncapped");
+    expect(reply.toLowerCase()).toContain("context window");
+    expect(reply).not.toContain("[Stopped:");
+    expect(reply.toLowerCase()).not.toContain("too large");
+    expect(reply.toLowerCase()).not.toContain("session reset");
+  });
+
+  it("nano capability class names the nano cap knob", () => {
+    const reply = buildContextExhaustedReply({ capabilityClass: "nano" });
+    expect(reply).toContain("contextEngine.budget.effectiveContextCapNano");
+  });
+
+  it("frontier class keeps the generic settings wording without naming a cap knob", () => {
+    const reply = buildContextExhaustedReply({ capabilityClass: "frontier" });
+    expect(reply).not.toContain("effectiveContextCap");
+    expect(reply.toLowerCase()).toContain("context window");
+  });
+
+  it("a no-opts call returns the unchanged base reply (callers without profile context)", () => {
+    const reply = buildContextExhaustedReply();
+    expect(reply).toBe(
+      "I was unable to process your request — the context window was exhausted " +
+        "before the model could run. Try raising the agent's context engine settings " +
+        "or narrowing the ask.",
+    );
+  });
+
+  it("appends the full incident traceId so the operator can run comis explain on it", () => {
+    const reply = buildContextExhaustedReply({ traceId: "ea72ef66-9497-46c2-a7bb-46f5ba92732e" });
+    expect(reply).toContain("ea72ef66-9497-46c2-a7bb-46f5ba92732e");
+    expect(reply.toLowerCase()).toContain("incident");
+  });
+
+  it("buildDegradedReply threads knob + incident opts through for context_exhausted", () => {
+    const reply = buildDegradedReply("context_exhausted", {
+      capabilityClass: "small",
+      traceId: "abc-123",
+    });
+    expect(reply).toContain("effectiveContextCapSmall");
+    expect(reply).toContain("abc-123");
+  });
+});

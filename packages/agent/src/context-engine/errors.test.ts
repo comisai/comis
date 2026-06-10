@@ -43,3 +43,40 @@ describe("ContextExhaustionError message contract", () => {
     expect(isContextExhaustionErrorMessage("")).toBe(false);
   });
 });
+
+// W1 (obs-llm-troubleshooting): when the effective window was CAPPED below the
+// model's declared contextWindow (capabilityClass small/nano), the error must
+// name the raw window AND the exact config knob. Live incident: the operator's
+// config said contextWindow=131072, the error said "effective window 32000",
+// and nothing connected the two — root-causing required reading
+// budget-capacity-cap.ts. The message itself must carry that link.
+describe("ContextExhaustionError capped-window provenance", () => {
+  it("names the raw declared window and the small-cap knob when the window was capped", () => {
+    const e = new ContextExhaustionError(32_000, 31_572, {
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "effectiveContextCapSmall",
+    });
+    expect(e.message.startsWith(CONTEXT_EXHAUSTION_MESSAGE_PREFIX)).toBe(true);
+    expect(isContextExhaustionErrorMessage(e.message)).toBe(true);
+    expect(e.message).toContain("131072");
+    expect(e.message).toContain("contextEngine.budget.effectiveContextCapSmall");
+  });
+
+  it("names the nano knob when the nano-class cap clamped the window", () => {
+    const e = new ContextExhaustionError(16_000, 15_900, {
+      rawContextWindowTokens: 65_536,
+      windowCapSource: "effectiveContextCapNano",
+    });
+    expect(e.message).toContain("65536");
+    expect(e.message).toContain("contextEngine.budget.effectiveContextCapNano");
+  });
+
+  it("an uncapped capInfo (source none) leaves the message byte-identical to the no-capInfo form", () => {
+    const plain = new ContextExhaustionError(32_000, 31_572);
+    const uncapped = new ContextExhaustionError(32_000, 31_572, {
+      rawContextWindowTokens: 32_000,
+      windowCapSource: "none",
+    });
+    expect(uncapped.message).toBe(plain.message);
+  });
+});
