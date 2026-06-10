@@ -67,6 +67,44 @@ describe("createSseEndpoint", () => {
     });
   });
 
+  describe("scope enforcement", () => {
+    // Security regression for the v2.20 review finding: the SSE middleware
+    // only verified the token, never its scope — unlike REST (`rpc`) and the
+    // MCP endpoint (`mcp-client`). A sole-scope `mcp-client` token (the most
+    // contained external credential) was therefore accepted on the
+    // cross-session event firehose (/api/events) and could drive agent turns
+    // (/api/chat/stream), bypassing the MCP session-allowlist + rate limits.
+    function mcpClientDeps(): SseEndpointDeps {
+      return createSseDeps({
+        tokenStore: createTokenStore([
+          { id: "mcp-only", secret: "mcp-client-token-padded-to-meet-32ch", scopes: ["mcp-client"] },
+        ]),
+      });
+    }
+    const mcpHeaders: HeadersInit = { Authorization: "Bearer mcp-client-token-padded-to-meet-32ch" };
+
+    it("rejects an mcp-client scoped token on /api/events with 403", async () => {
+      const sse = createSseEndpoint(mcpClientDeps());
+      const res = await sse.request("/api/events", { headers: mcpHeaders });
+      expect(res.status).toBe(403);
+    });
+
+    it("rejects an mcp-client scoped token on /api/chat/stream with 403", async () => {
+      const deps = mcpClientDeps();
+      const sse = createSseEndpoint(deps);
+      const res = await sse.request("/api/chat/stream?message=hello", { headers: mcpHeaders });
+      expect(res.status).toBe(403);
+      // The agent must never run for an out-of-scope token.
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
+    it("still accepts an rpc-scoped token on /api/events", async () => {
+      const sse = createSseEndpoint(createSseDeps());
+      const res = await sse.request("/api/events", { headers: authHeaders() });
+      expect(res.status).toBe(200);
+    });
+  });
+
   describe("GET /api/events", () => {
     it("returns text/event-stream content type", async () => {
       const sse = createSseEndpoint(createSseDeps());
