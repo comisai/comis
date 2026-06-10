@@ -89,6 +89,23 @@ export async function runRetryLoop(
         retryResult.effectiveModel.model,
       );
     }
+
+    // WR-01 (175-REVIEW): grammar-400s can also surface on the THROWN path —
+    // session.prompt() throws and runWithModelRetry's GBNF-02 ladder guard
+    // returns { succeeded: false, error } immediately. Without this dispatch
+    // the failure went straight to output-escalation, where the canned
+    // tool_schema_unsupported userMessage PROMISED an automatic retry that
+    // never happened (and no execution:tool_schema_unsupported event fired,
+    // blinding obs-explain). Route it through the same strip-retry handler
+    // the silent path uses — its session-lifetime once-gate bounds re-entry.
+    if (
+      !retryState.promptSucceeded &&
+      classifyError(retryState.promptError).category === "tool_schema_unsupported"
+    ) {
+      await handleToolSchemaUnsupported(
+        params, messageText, promptImages, bridge.getResult(), retryState, invokeRetry,
+      );
+    }
   }
 
   // Detect zero-LLM-call stuck session.

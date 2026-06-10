@@ -95,7 +95,14 @@ export async function handleToolSchemaUnsupported(
   invokeRetry: RetryInvoker,
 ): Promise<void> {
   const { session, sessionKey, agentId, bridge, deps } = params;
-  const llmErrSource = earlyBridgeResult.lastLlmErrorMessage ?? "";
+  // Silent path: the bridge recorded the in-stream provider error. THROWN
+  // path (WR-01): the error never reached the bridge — fall back to the
+  // thrown error already captured in retryState so terminal failures keep a
+  // classifiable source (an empty string would classify "unknown" and lose
+  // the canned tool_schema_unsupported userMessage).
+  const llmErrSource =
+    earlyBridgeResult.lastLlmErrorMessage ??
+    (retryState.promptError instanceof Error ? retryState.promptError.message : "");
   const key = formatSessionKey(sessionKey);
   const provider = params.resolvedModel?.provider;
   const modelId = params.resolvedModel?.id;
