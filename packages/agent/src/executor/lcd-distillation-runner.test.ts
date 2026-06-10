@@ -466,14 +466,22 @@ describe("runDistillationPassAfterTurn — DIST-03 supersession BFS", () => {
     });
     await runDistillationPassAfterTurn(params);
 
+    // WR-01: the call carries the R4 scope (tenantId, agentId) too.
     expect(lcdStore.markProvenanceSuperseded).toHaveBeenCalledWith(
       childSummaryId,
       expect.any(String), // the new memoryId
+      "tenant-a",
+      "agent-a",
     );
 
     // The memoryId passed to markProvenanceSuperseded must match what was stored
     if (storedMemoryId !== undefined) {
-      expect(lcdStore.markProvenanceSuperseded).toHaveBeenCalledWith(childSummaryId, storedMemoryId);
+      expect(lcdStore.markProvenanceSuperseded).toHaveBeenCalledWith(
+        childSummaryId,
+        storedMemoryId,
+        "tenant-a",
+        "agent-a",
+      );
     }
   });
 });
