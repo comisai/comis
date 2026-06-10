@@ -436,6 +436,69 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     expect(report.windowHours).toBe(24);
   });
 
+  it("HEURISTIC (W9): acute named degradation outranks chronic config posture below the rate threshold", async () => {
+    // Live incident shape: 3 sessions, 1 degraded (rate 0.33 < HIGH threshold)
+    // with a NAMED cause, plus a standing TLS-off posture row. The verdict must
+    // point at the acute degradation, not the chronic posture.
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 100,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s-degraded",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, costUsd: 0, turnCount: 2, endReason: "context_exhausted" }),
+    });
+    for (const key of ["s-clean-1", "s-clean-2"]) {
+      store.insertDiagnostic({
+        timestamp: now - 100,
+        category: "session_summary",
+        severity: "info",
+        sessionKey: key,
+        message: "session:summary",
+        details: summaryDetails({ degraded: false, costUsd: 0, turnCount: 1 }),
+      });
+    }
+    store.insertDiagnostic({
+      timestamp: now - 200,
+      category: "config_posture",
+      severity: "warning",
+      message: "gateway TLS disabled",
+      details: JSON.stringify({ tlsEnabled: false }),
+    });
+    const dataDir = makeDataDirWithActivity();
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir, clock: createFakeClock(now) }, 24);
+
+    expect(report.likelyRootCause?.code).toBe("fleet_acute_degradation");
+    expect(report.likelyRootCause?.detail).toContain("context_exhausted");
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).toContain("comis explain");
+  });
+
+  it("HEURISTIC (W9): chronic config posture still wins when no session degraded", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 100,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "s-clean",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0, turnCount: 1 }),
+    });
+    store.insertDiagnostic({
+      timestamp: now - 200,
+      category: "config_posture",
+      severity: "warning",
+      message: "gateway TLS disabled",
+      details: JSON.stringify({ tlsEnabled: false }),
+    });
+    const dataDir = makeDataDirWithActivity();
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir, clock: createFakeClock(now) }, 24);
+
+    expect(report.likelyRootCause?.code).toBe("fleet_config_posture");
+  });
+
   it("HEURISTIC: a high degraded rate yields a deterministic likelyRootCause verdict", async () => {
     const now = systemNowMs();
     const store = makeStore();
