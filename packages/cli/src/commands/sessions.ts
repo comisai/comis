@@ -15,7 +15,7 @@ import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import Database from "better-sqlite3";
-import { existsSync, chmodSync } from "node:fs";
+import { existsSync, chmodSync, rmSync } from "node:fs";
 import os from "node:os";
 import {
   SessionListContract,
@@ -299,19 +299,29 @@ export function registerSessionsCommand(program: Command): void {
         process.exit(1);
       }
       // Timestamped destination: memory.db.backup.20260610T120000000Z
-      const ts = new Date().toISOString().replace(/[:.]/g, "").replace("T", "T");
+      const ts = new Date().toISOString().replace(/[:.]/g, "");
       const destPath = dbPath + ".backup." + ts;
       const db = new Database(dbPath, { readonly: true });
+      // WR-02: tighten the umask so db.backup() creates the file 0600 FROM THE START.
+      // The session database is sensitive; a chmod-after-write pattern leaves a brief
+      // world-readable window between backup completion and chmod. Restored in finally.
+      const prevUmask = process.umask(0o077);
       try {
         await db.backup(destPath);
-        // chmod 0600 immediately — db.backup creates a world-readable file by default
-        chmodSync(destPath, 0o600);
+        chmodSync(destPath, 0o600); // belt-and-suspenders (also re-tightens a pre-existing dest)
         success("Backup created: " + destPath);
       } catch (err) {
+        // Remove any partial / unprotected backup so a failure can't leak the DB.
+        try {
+          rmSync(destPath, { force: true });
+        } catch {
+          /* best-effort cleanup */
+        }
         const msg = err instanceof Error ? err.message : String(err);
         error("Backup failed: " + msg);
         process.exit(1);
       } finally {
+        process.umask(prevUmask);
         db.close();
       }
     });

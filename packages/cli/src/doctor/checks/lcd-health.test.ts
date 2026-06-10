@@ -258,33 +258,6 @@ describe("lcdHealthCheck", () => {
     expect(f!.repairable).toBe(false);
   });
 
-  // DOC-01-T-6: scan class 4 — lcd_ingest_cursor inconsistencies
-  it("DOC-01-T-6: detects lcd_ingest_cursor rows with ingested_live_len=0 when messages exist for that scope", async () => {
-    const { dataDir, db } = makeTempDb();
-    // Seed 3 messages for the same conversation/agent/tenant scope
-    seedMessage(db, { id: "m1", seq: 1 });
-    seedMessage(db, { id: "m2", seq: 2 });
-    seedMessage(db, { id: "m3", seq: 3 });
-    // Seed a cursor with ingested_live_len=0 for that same scope
-    db.prepare(`INSERT INTO lcd_ingest_cursor
-      (conversation_id, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(
-      "conv-001",
-      "agent-001",
-      "tenant-001",
-      "user:1000000:abc",
-      0,
-      1000000,
-    );
-    db.close();
-
-    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
-    const f = findings.find((x) => x.message.includes("cursor") || x.message.includes("ingest_cursor"));
-    expect(f).toBeDefined();
-    expect(f!.status).toBe("warn");
-    expect(f!.repairable).toBe(false);
-  });
-
   // DOC-01-T-7: scan class 5 — FTS row-count drift (FTS may or may not be available)
   it("DOC-01-T-7: detects FTS row-count drift when lcd_messages_fts has fewer rows than lcd_messages", async () => {
     const { dataDir, db } = makeTempDb();

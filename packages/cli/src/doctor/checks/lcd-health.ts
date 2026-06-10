@@ -118,47 +118,7 @@ function scanFallbackMarkers(db: Database.Database): DoctorFinding[] {
   ];
 }
 
-// ── Scan class 4: lcd_ingest_cursor inconsistencies ───────────────────────────
-
-/**
- * Detect lcd_ingest_cursor rows with ingested_live_len=0 while messages
- * exist for that scope.
- *
- * A zero cursor with non-zero messages suggests the cursor was reset or
- * never populated — the afterTurn ingest will re-ingest duplicates on the
- * next turn.
- */
-function scanCursorInconsistencies(db: Database.Database): DoctorFinding[] {
-  const rows = db
-    .prepare(`
-      SELECT c.conversation_id, c.agent_id, c.ingested_live_len,
-             (SELECT COUNT(*) FROM lcd_messages m
-              WHERE m.conversation_id = c.conversation_id
-                AND m.agent_id = c.agent_id
-                AND m.tenant_id = c.tenant_id) AS msg_count
-      FROM lcd_ingest_cursor c
-      WHERE c.ingested_live_len = 0
-      LIMIT 20
-    `)
-    .all() as Array<{ conversation_id: string; agent_id: string; ingested_live_len: number; msg_count: number }>;
-
-  // Only report rows where messages actually exist (cursor=0 but msgs>0)
-  const problematic = rows.filter((r) => r.msg_count > 0);
-  if (problematic.length === 0) return [];
-
-  return [
-    {
-      category: CATEGORY,
-      check: "Cursor inconsistency",
-      status: "warn",
-      message: `${problematic.length} lcd_ingest_cursor rows with ingested_live_len=0 but messages present`,
-      suggestion: "Reset or recalculate cursor for affected conversation scopes",
-      repairable: false,
-    },
-  ];
-}
-
-// ── Scan class 5: FTS row-count drift ────────────────────────────────────────
+// ── Scan class 4: FTS row-count drift ────────────────────────────────────────
 
 /**
  * Detect drift between lcd_messages / lcd_summaries row counts and their
@@ -184,8 +144,13 @@ function scanFtsDrift(db: Database.Database): DoctorFinding[] {
     `)
     .get() as { msg_drift: number; sum_drift: number } | undefined;
 
-  const msgDrift = row?.msg_drift ?? 0;
-  const sumDrift = row?.sum_drift ?? 0;
+  // WR-03: negative drift = orphaned contentless FTS shadow rows, which are
+  // EXPECTED after a Phase-164 deleteConversationLcd / `sessions reset` (the
+  // contentless FTS5 table has no FK and is not pruned on message delete). Only
+  // POSITIVE drift — messages/summaries present but not yet indexed — is the real
+  // corruption signal. Floor at 0 so a healthy post-reset store stays clean.
+  const msgDrift = Math.max(0, row?.msg_drift ?? 0);
+  const sumDrift = Math.max(0, row?.sum_drift ?? 0);
 
   if (msgDrift === 0 && sumDrift === 0) return [];
 
@@ -201,7 +166,7 @@ function scanFtsDrift(db: Database.Database): DoctorFinding[] {
   ];
 }
 
-// ── Scan class 6: R4 scope anomalies ─────────────────────────────────────────
+// ── Scan class 5: R4 scope anomalies ─────────────────────────────────────────
 
 /**
  * Detect lcd_messages or lcd_summaries rows with NULL tenant_id or agent_id.
@@ -272,11 +237,10 @@ export const lcdHealthCheck: DoctorCheck = {
       findings.push(...scanOrphanedSummaries(db));
       findings.push(...scanDanglingRefs(db));
       findings.push(...scanFallbackMarkers(db));
-      findings.push(...scanCursorInconsistencies(db));
       findings.push(...scanFtsDrift(db));
       findings.push(...scanR4Anomalies(db));
 
-      // If all six scan classes came back clean, report healthy
+      // If all five scan classes came back clean, report healthy
       if (findings.length === 0) {
         findings.push({
           category: CATEGORY,

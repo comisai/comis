@@ -117,8 +117,8 @@ function buildDoctorContext(configPaths: string[]): DoctorContext {
  * Register the `doctor` command on the program.
  *
  * Provides:
- * - `comis doctor` -- run 6 health check categories (config, daemon, gateway,
- *   channel, workspace, OAuth)
+ * - `comis doctor` -- run 8 health check categories (config, daemon, gateway,
+ *   channel, workspace, OAuth, secrets-audit, LCD store)
  * - `comis doctor --repair` -- auto-fix repairable issues
  * - `comis doctor --refresh-test` -- opt-in refresh probe per profile.
  *   WARNING: rotates the refresh token at OpenAI.
