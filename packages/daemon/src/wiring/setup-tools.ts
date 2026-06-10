@@ -19,7 +19,7 @@ import {
   systemNowMs,
 } from "@comis/core";
 import { sessionKeyToPath } from "@comis/agent";
-import type { SessionTrackerRegistry } from "@comis/agent";
+import type { SessionTrackerRegistry, CapabilityClass } from "@comis/agent";
 import { toolResultsDirFromSessionPath } from "./tool-results-dir.js";
 // Workspace helpers live in @comis/core.
 import {
@@ -98,6 +98,14 @@ export interface ToolsDeps {
   rpcCall: RpcCall;
   /** Per-agent config map (container.config.agents). */
   agents: Record<string, PerAgentConfig>;
+  /**
+   * WR-04 (Phase 174-04): resolve the operator capabilityClass override for a provider
+   * (container.config.providers.entries.<id>.capabilities.capabilityClass) — the same source
+   * pi-executor threads into the live ModelProfile. Used to give `ctx_expand`'s tier-gated
+   * walk depth the operator's pinned tier, not the provider-family heuristic alone. Absent or
+   * returning undefined ⇒ the heuristic (back-compat). Keyed by the agent's `provider`.
+   */
+  getProviderCapabilityClass?: (provider: string | undefined) => CapabilityClass | undefined;
   /** Default agent ID from routing config. */
   defaultAgentId: string;
   /** Per-agent workspace directory paths. */
@@ -638,7 +646,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // (ctx_*). Wired ONLY in dag mode WITH a store; never-export, OUTSIDE the parity registry.
       if ((agentConfig?.contextEngine?.version ?? "pipeline") === "dag" && deps.lcdStore) {
         const maxExpandTokens = agentConfig?.contextEngine?.maxExpandTokens ?? 4000;
-        const maxExpandDepth = resolveCtxExpandDepth(agentConfig?.model, agentConfig?.provider); // DEPTH-02: tier-gated multi-hop depth (capacity knob → wiring-time; R4 per-call)
+        // WR-04: thread the operator capabilityClass override (providers.entries.<id>.
+        // capabilities.capabilityClass) so a pinned tier governs the walk depth — same
+        // source pi-executor uses; absent ⇒ provider-family heuristic.
+        const ctxCapabilityOverride = deps.getProviderCapabilityClass?.(agentConfig?.provider);
+        const maxExpandDepth = resolveCtxExpandDepth(agentConfig?.model, agentConfig?.provider, ctxCapabilityOverride); // DEPTH-02: tier-gated multi-hop depth (capacity knob → wiring-time; R4 per-call)
         wireContextTools(tools, deps.lcdStore, agentId, { skillsLogger, nowMs: systemNowMs, maxExpandTokens, maxExpandDepth, getToolResultsDir, eventBus }); // O1: eventBus → ctx_* context:dag_expanded
       }
 

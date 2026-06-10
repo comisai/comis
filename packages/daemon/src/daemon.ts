@@ -2214,6 +2214,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // hoisted function threaded through ShutdownDeps.
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir,
+    // WR-04 (Phase 174-04): resolve the per-provider operator capabilityClass override so
+    // ctx_expand's walk depth honors a pinned tier (the same providers.entries source the
+    // executor's live ModelProfile uses). Undefined ⇒ provider-family heuristic.
+    getProviderCapabilityClass: (provider) =>
+      container.config.providers?.entries?.[provider ?? ""]?.capabilities?.capabilityClass,
     dataDir: container.config.dataDir || ".",
     secretManager: container.secretManager, platformSecretNames: container.platformSecretNames,
     eventBus: container.eventBus, skillsLogger, linkRunner,

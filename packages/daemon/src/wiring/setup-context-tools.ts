@@ -41,6 +41,7 @@ import {
 // minimal {id, provider} the memory-ops capability resolver uses. The capability
 // axis ignores contextWindow (K2 invariant), so a bare model object is correct.
 import { resolveModelProfile } from "@comis/agent";
+import type { CapabilityClass } from "@comis/agent";
 
 /** The daemon tool-assembly array element type (an `AgentTool`), via skills. */
 type AgentToolArray = ReturnType<PlatformToolProvider>;
@@ -132,8 +133,26 @@ export function wireContextTools(
  *
  * `model`/`provider` default to "default" on a parsed agent config; an undefined
  * or unknown model fails closed to the most-locked profile (nano → depth 1).
+ *
+ * WR-04 (Phase 174-04): `capabilityClassOverride` is the operator's per-provider
+ * `providers.entries.<id>.capabilities.capabilityClass` pin (the same source pi-executor
+ * threads into the live ModelProfile). When supplied it wins over the provider-family
+ * heuristic, so an operator who pins a large quantized ollama model "mid" gets the mid
+ * walk depth (3) here too — not the ollama→small→2 heuristic. Absent ⇒ heuristic.
  */
-export function resolveCtxExpandDepth(model: string | undefined, provider: string | undefined): number {
-  const profile = resolveModelProfile({ id: model ?? "", provider: provider ?? "" });
+export function resolveCtxExpandDepth(
+  model: string | undefined,
+  provider: string | undefined,
+  capabilityClassOverride?: CapabilityClass,
+): number {
+  // WR-04 (Phase 174-04): thread the operator capabilityClass override (the same
+  // providers.entries.<id>.capabilities.capabilityClass pin pi-executor.ts:359-364 honors)
+  // into resolveModelProfile so a pinned tier governs the ctx_expand walk depth consistently
+  // with the rest of the platform — not the provider-family heuristic alone. Absent ⇒ the
+  // heuristic (back-compat). The override wins unconditionally (model-profile.ts:158).
+  const profile = resolveModelProfile(
+    { id: model ?? "", provider: provider ?? "" },
+    capabilityClassOverride,
+  );
   return depthForTier(profile.capabilityClass);
 }
