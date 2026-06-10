@@ -21,11 +21,17 @@
  *      failure (HTTP 503 → "overloaded") repeated until the per-tool breaker
  *      opened. The 503 has NO misclassification signal, so it falls through to
  *      here.
- *   3. context_bloat / exec_dependency / provider_timeout — three low-risk
+ *   3. tool_schema_unsupported (GBNF-02, Phase 175) — an acute, deterministic
+ *      provider-schema rejection: upstream of any terminal state (out-ranks
+ *      context_exhausted/output_starved) but downstream of the two X3-mandated
+ *      codes, whose frozen fixtures carry no schema-rejection records (cannot
+ *      regress them). Fires only when the one-shot strip-retry did NOT
+ *      recover — a recovered repair is evidence, not a verdict.
+ *   4. context_bloat / exec_dependency / provider_timeout — three low-risk
  *      "insurance" codes that broaden 156/G1 corpus coverage. They never fire on
  *      the two X3 fixtures (the two above match first), so they cannot regress
  *      the phase-done gate.
- *   4. context_exhausted / output_starved (QT2/QT3 — the Glass Box degradation
+ *   5. context_exhausted / output_starved (QT2/QT3 — the Glass Box degradation
  *      detectors) — the two NAMED terminal-state causes. They key on the
  *      metadata-derived `endReason` (threaded onto the signals by the handler),
  *      NOT a tool failure, so they sit LAST: a tool-failure cause is upstream of
@@ -161,7 +167,26 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 3) context_bloat (insurance — large-result offloads + a token spike).
+  // 3) tool_schema_unsupported (GBNF-02 — acute provider-schema rejection at
+  //    grammar-compile/unmarshal time). Fires ONLY on an UNRECOVERED one-shot
+  //    strip-retry: a recovered repair is evidence, not a verdict (T-175-19).
+  //    Detail is assembled solely from Comis-registry tool names + the closed
+  //    keyword names — the signal carries no body fields by construction
+  //    (T-175-17).
+  (s) => {
+    if (!s.toolSchemaUnsupported || s.toolSchemaUnsupported.succeeded) return null;
+    const { toolNames, strippedKeywords, retried } = s.toolSchemaUnsupported;
+    return {
+      code: "tool_schema_unsupported",
+      detail: `provider rejected the tool JSON Schema at grammar-compile (GBNF) — tool(s) [${toolNames.join(", ") || "unknown"}]${retried ? `, one strip-${strippedKeywords.join("/")}-retry already attempted` : ", nothing strippable so no retry was attempted"}, still failing`,
+      suggestedNextSteps: [
+        'set providers.entries.<provider>.models[].comisCompat.toolSchemaProfile: "gbnf" (auto-enabled only for provider type "ollama"; LM Studio/llama.cpp/vLLM need the explicit value)',
+        "obs.explain depth=full for the raw failure rows",
+      ],
+    };
+  },
+
+  // 4) context_bloat (insurance — large-result offloads + a token spike).
   (s) => {
     if (s.offloads.length < CONTEXT_BLOAT_MIN_OFFLOADS) return null;
     const spike = s.offloads.some((o) => o.originalChars >= TOKEN_SPIKE_CHARS);
@@ -185,7 +210,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 4) exec_dependency (insurance — ModuleNotFound-class exec failure).
+  // 5) exec_dependency (insurance — ModuleNotFound-class exec failure).
   (s) => {
     if (!hasModuleNotFound(s)) return null;
     const failure = s.failures.find(
@@ -208,7 +233,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 5) provider_timeout (insurance — any timeout-kind failure).
+  // 6) provider_timeout (insurance — any timeout-kind failure).
   (s) => {
     const failure = s.failures.find((f) => f.errorKind === "timeout");
     if (failure === undefined) return null;
@@ -226,7 +251,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 6) context_exhausted (QT2 — the NAMED terminal degradation cause). Keyed on
+  // 7) context_exhausted (QT2 — the NAMED terminal degradation cause). Keyed on
   //    the metadata-derived endReason, NOT a tool failure — so it sits BELOW the
   //    tool-failure rules above (a misclassification/breaker/dependency/timeout
   //    cause is upstream of, and out-ranks, the terminal state). Fires only when
@@ -284,7 +309,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 7) output_starved (QT3 — the NAMED terminal output-truncation cause). Same
+  // 8) output_starved (QT3 — the NAMED terminal output-truncation cause). Same
   //    lowest-priority placement as context_exhausted: it explains the terminal
   //    state, so any tool-failure cause out-ranks it. Fires only when the mapped
   //    endReason IS the output-starvation cause (a terminal output-cap truncation
