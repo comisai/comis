@@ -934,4 +934,39 @@ describe("ObsTrace contracts", () => {
     };
     expect(() => ObsExplainContract.response.parse(sample)).not.toThrow();
   });
+
+  it("obs.explain: response accepts the optional contextBudget section (W3)", () => {
+    const sample = {
+      schemaVersion: 1,
+      sessionKey: "sk-1",
+      traceId: "t-1",
+      agentId: "agent-1",
+      channel: { type: "telegram", id: "chan-1" },
+      outcome: { endReason: "context_exhausted", degraded: true, severity: "degraded" },
+      cost: { costUsd: 0, totalTokens: 51_145, cacheReadRatio: 0 },
+      timing: { durationMs: 5_853, turnCount: 2 },
+      toolStats: {},
+      failures: [],
+      breakerTimeline: [],
+      offloads: [],
+      contextBudget: {
+        windowTokens: 32_000,
+        rawContextWindowTokens: 131_072,
+        windowCapSource: "effectiveContextCapSmall",
+        systemTokens: 25_694,
+        freshTailTokens: 5_272,
+        budgetedHistoryTokens: 0,
+        keptCount: 0,
+        assembledInputTokens: 31_572,
+        outputHeadroom: 768,
+        verdict: "exhausted",
+      },
+      summary: "context exhausted",
+      likelyRootCause: null,
+      suggestedNextSteps: [],
+      truncations: [],
+    };
+    const parsed = ObsExplainContract.response.parse(sample);
+    expect((parsed as { contextBudget?: { verdict: string } }).contextBudget?.verdict).toBe("exhausted");
+  });
 });

@@ -32,6 +32,40 @@ import { defineContract } from "./types.js";
  * `likelyRootCause` (matching the heuristic `RootCause` 1:1) and at the report
  * root (report-level guidance); both are required-or-default.
  */
+/**
+ * W3 (obs-llm-troubleshooting): the per-LLM-call context budget equation,
+ * extracted from the trajectory's `context.budget` records (last record wins —
+ * the terminal fit check explains the end state). Carried on the report so a
+ * `context_exhausted` abort is explainable with numbers (assembled vs window,
+ * cap knob, tool-schema share, kept history) instead of speculation. Bounded
+ * by construction: ten numbers/enums, no free text.
+ */
+export const IncidentContextBudgetSchema = z.object({
+  /** The EFFECTIVE window the fit check ran against (post capability-class cap). */
+  windowTokens: z.number(),
+  /** The model's declared contextWindow before any cap (== windowTokens when uncapped). */
+  rawContextWindowTokens: z.number(),
+  /** Which contextEngine.budget.* knob clamped the window. */
+  windowCapSource: z.enum(["effectiveContextCapSmall", "effectiveContextCapNano", "none"]),
+  /** S: system prompt + tool schemas estimate. */
+  systemTokens: z.number(),
+  /** Estimated fresh-tail tokens (latest user message + preamble + pending tool results). */
+  freshTailTokens: z.number(),
+  /** Token sum of the history items kept by budget eviction. */
+  budgetedHistoryTokens: z.number(),
+  /** Count of history items kept by budget eviction (0 = model saw no history). */
+  keptCount: z.number(),
+  /** S + kept history + fresh tail — what was actually dispatched. */
+  assembledInputTokens: z.number(),
+  /** Output headroom reserved at the final effective thinking level. */
+  outputHeadroom: z.number(),
+  /** Fit-check outcome. */
+  verdict: z.enum(["fits", "downshifted", "exhausted"]),
+});
+
+/** The per-call context budget equation (see {@link IncidentContextBudgetSchema}). */
+export type IncidentContextBudget = z.infer<typeof IncidentContextBudgetSchema>;
+
 export const IncidentReportSchema = z.object({
   schemaVersion: z.literal(1),
   sessionKey: z.string(),
@@ -94,6 +128,10 @@ export const IncidentReportSchema = z.object({
       pointer: z.string(),
     }),
   ),
+  /** W3: the terminal per-call budget equation (optional — present only when the
+   *  session's trajectory carries `context.budget` records; additive, schemaVersion
+   *  stays 1). */
+  contextBudget: IncidentContextBudgetSchema.optional(),
   summary: z.string(),
   likelyRootCause: z
     .object({
@@ -228,6 +266,13 @@ export interface IncidentSignals {
    * them. Absent ⇒ those rules do not fire (a clean session names no cause).
    */
   endReason?: string;
+  /**
+   * W3: the terminal per-call budget equation from the trajectory's
+   * `context.budget` records (last wins). Lets the `context_exhausted`
+   * heuristic produce a numbers-backed verdict naming the cap knob and the
+   * tool-schema share instead of the generic speculation.
+   */
+  contextBudget?: IncidentContextBudget;
 }
 
 /**

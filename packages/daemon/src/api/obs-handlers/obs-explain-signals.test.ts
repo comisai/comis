@@ -413,3 +413,57 @@ describe("toIncidentSignals — misc", () => {
     expect(s.toolStats.web_fetch?.ok).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// W3 (obs-llm-troubleshooting): context.budget extraction — the per-call budget
+// equation emitted by the LCD pre-flight (W2) must reach IncidentSignals so the
+// heuristic can explain a context_exhausted abort with numbers.
+// ---------------------------------------------------------------------------
+
+function budgetEvent(verdict: string, assembled: number, seq: number): Record<string, unknown> {
+  return {
+    traceSchema: "comis-trajectory",
+    schemaVersion: 1,
+    type: "context.budget",
+    seq,
+    data: {
+      windowTokens: 32_000,
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "effectiveContextCapSmall",
+      systemTokens: 25_694,
+      freshTailTokens: 5_272,
+      budgetedHistoryTokens: 0,
+      keptCount: 0,
+      assembledInputTokens: assembled,
+      outputHeadroom: 768,
+      verdict,
+    },
+  };
+}
+
+describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
+  it("extracts the full budget equation from a context.budget trajectory event", () => {
+    const s = toIncidentSignals([budgetEvent("exhausted", 31_572, 1)]);
+    expect(s.contextBudget).toBeDefined();
+    expect(s.contextBudget?.verdict).toBe("exhausted");
+    expect(s.contextBudget?.assembledInputTokens).toBe(31_572);
+    expect(s.contextBudget?.windowTokens).toBe(32_000);
+    expect(s.contextBudget?.rawContextWindowTokens).toBe(131_072);
+    expect(s.contextBudget?.windowCapSource).toBe("effectiveContextCapSmall");
+    expect(s.contextBudget?.systemTokens).toBe(25_694);
+    expect(s.contextBudget?.keptCount).toBe(0);
+  });
+
+  it("the LAST context.budget record wins — the terminal fit check explains the end state", () => {
+    const s = toIncidentSignals([budgetEvent("fits", 29_391, 1), budgetEvent("exhausted", 31_572, 2)]);
+    expect(s.contextBudget?.verdict).toBe("exhausted");
+    expect(s.contextBudget?.assembledInputTokens).toBe(31_572);
+  });
+
+  it("ignores a malformed context.budget record missing its numeric fields", () => {
+    const s = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "context.budget", data: { verdict: "exhausted" } },
+    ]);
+    expect(s.contextBudget).toBeUndefined();
+  });
+});

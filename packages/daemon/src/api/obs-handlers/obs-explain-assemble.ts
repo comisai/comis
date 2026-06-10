@@ -365,6 +365,8 @@ export function assembleIncidentReport(
     failures,
     breakerTimeline,
     offloads,
+    // W3: the terminal per-call budget equation (absent for pre-W2 sessions).
+    ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
     summary,
     // Plan 05 fills likelyRootCause; Plan 04 fills truncations; Plan 05 fills
     // the report-level suggestedNextSteps.

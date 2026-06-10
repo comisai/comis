@@ -29,8 +29,8 @@
  * @module
  */
 
-import { fingerprint, sanitizeLogString } from "@comis/core";
-import type { IncidentFailure, IncidentSignals } from "@comis/core";
+import { fingerprint, sanitizeLogString, IncidentContextBudgetSchema } from "@comis/core";
+import type { IncidentContextBudget, IncidentFailure, IncidentSignals } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Tunable thresholds (module-top constants per the naming contract).
@@ -88,6 +88,8 @@ interface Acc {
   synthesizedBreakerTools: Set<string>;
   /** Per-tool: did any failure body carry a status/200/403 token? */
   misclassTokenByTool: Map<string, string>;
+  /** W3: the LAST context.budget trajectory record (the terminal fit check). */
+  contextBudget?: IncidentContextBudget;
   sessionKey: string;
   seq: number;
 }
@@ -280,6 +282,15 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       acc.breakerEvents.push({ seq: asNumber(rec.seq) ?? acc.seq++, event: "reset", toolName: tool });
       return;
     }
+    case "context.budget": {
+      // W3 (obs-llm-troubleshooting): the per-call budget equation emitted by
+      // the LCD pre-flight (W2). LAST record wins — the terminal fit check
+      // explains the end state. Validated wholesale against the shared wire
+      // schema; a malformed/partial record is ignored (forward-compatible).
+      const parsed = IncidentContextBudgetSchema.safeParse(data);
+      if (parsed.success) acc.contextBudget = parsed.data;
+      return;
+    }
     case "tool.result_offloaded": {
       if (!tool) return;
       acc.offloads.push({
@@ -390,5 +401,6 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     hasMisclassificationSignal,
     ...(misclassifiedTool !== undefined ? { misclassifiedTool } : {}),
     ...(misclassifiedToken !== undefined ? { misclassifiedToken } : {}),
+    ...(acc.contextBudget !== undefined ? { contextBudget: acc.contextBudget } : {}),
   };
 }

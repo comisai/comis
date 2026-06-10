@@ -623,3 +623,37 @@ describe("assembleIncidentReport — coverage (READ-coverage)", () => {
     expect(full.coverage).toEqual(report.coverage);
   });
 });
+
+// ---------------------------------------------------------------------------
+// W3 (obs-llm-troubleshooting): the report carries the signals contextBudget.
+// ---------------------------------------------------------------------------
+
+describe("assembleIncidentReport — contextBudget threading (W3)", () => {
+  it("carries signals.contextBudget into the report verbatim", () => {
+    const contextBudget = {
+      windowTokens: 32_000,
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "effectiveContextCapSmall" as const,
+      systemTokens: 25_694,
+      freshTailTokens: 5_272,
+      budgetedHistoryTokens: 0,
+      keptCount: 0,
+      assembledInputTokens: 31_572,
+      outputHeadroom: 768,
+      verdict: "exhausted" as const,
+    };
+    const report = assembleIncidentReport(
+      makeSignals({ contextBudget }),
+      makeMetadata({ sessionEnd: { endReason: "context_exhausted" } }),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+    expect(report.contextBudget).toEqual(contextBudget);
+  });
+
+  it("omits contextBudget when the signals carry none (pre-W2 session)", () => {
+    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
+    expect(report.contextBudget).toBeUndefined();
+  });
+});
