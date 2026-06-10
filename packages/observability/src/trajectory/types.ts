@@ -134,6 +134,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   "compaction.recommended",
 
   // Context engine
+  "context.budget",
   "context.evicted",
   "context.masked",
   "context.reread",

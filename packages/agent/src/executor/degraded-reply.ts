@@ -31,10 +31,32 @@ const OUTPUT_STARVED_ANNOTATION =
 // User-facing register: first-person, references "context window".
 // Must NOT contain "[Stopped:", "too large", or "session reset".
 // ---------------------------------------------------------------------------
-const CONTEXT_EXHAUSTED_REPLY =
+const CONTEXT_EXHAUSTED_BASE =
   "I was unable to process your request — the context window was exhausted " +
-  "before the model could run. Try raising the agent's context engine settings " +
-  "or narrowing the ask.";
+  "before the model could run. ";
+
+const CONTEXT_EXHAUSTED_GENERIC_ADVICE =
+  "Try raising the agent's context engine settings or narrowing the ask.";
+
+/**
+ * W4 (obs-llm-troubleshooting): small/nano classes name the EXACT cap knob —
+ * the generic "context engine settings" wording gave the operator nothing to
+ * act on in the live qwen3.6 incident. Other classes keep the generic advice
+ * (no class cap applies to them).
+ */
+const CAP_KNOB_BY_CLASS: Record<string, string> = {
+  small: "contextEngine.budget.effectiveContextCapSmall",
+  nano: "contextEngine.budget.effectiveContextCapNano",
+};
+
+/** Optional context for the synthesized context-exhausted reply (W4). */
+export interface ContextExhaustedReplyOpts {
+  /** The model's capabilityClass — "small"/"nano" name the exact cap knob to raise. */
+  capabilityClass?: string;
+  /** The turn's traceId — appended as an incident ref so the operator (or an LLM
+   *  agent) can run `comis explain <traceId>` directly from the chat message. */
+  traceId?: string;
+}
 
 /**
  * Returns the annotation string to APPEND for an output_starved turn.
@@ -47,10 +69,20 @@ export function buildOutputStarvedAnnotation(): string {
 /**
  * Returns the synthesized honest reply to REPLACE result.response for a
  * context_exhausted turn (the model never ran; the prior content was either
- * the Phase-166 canned message or the operator-facing redirect).
+ * the Phase-166 canned message or the operator-facing redirect). Still PURE —
+ * same opts → same string. With no opts the historical reply is returned
+ * byte-identical.
  */
-export function buildContextExhaustedReply(): string {
-  return CONTEXT_EXHAUSTED_REPLY;
+export function buildContextExhaustedReply(opts?: ContextExhaustedReplyOpts): string {
+  const knob =
+    opts?.capabilityClass !== undefined ? CAP_KNOB_BY_CLASS[opts.capabilityClass] : undefined;
+  const advice =
+    knob !== undefined
+      ? `Try raising ${knob} (0 = uncapped), reducing the agent's active tools, or narrowing the ask.`
+      : CONTEXT_EXHAUSTED_GENERIC_ADVICE;
+  const incidentRef =
+    opts?.traceId !== undefined && opts.traceId.length > 0 ? ` (incident ${opts.traceId})` : "";
+  return CONTEXT_EXHAUSTED_BASE + advice + incidentRef;
 }
 
 /**
@@ -58,8 +90,11 @@ export function buildContextExhaustedReply(): string {
  * reply (context_exhausted). Returns undefined for any other endReason so that
  * healthy turns are strict no-ops.
  */
-export function buildDegradedReply(endReason: string): string | undefined {
+export function buildDegradedReply(
+  endReason: string,
+  opts?: ContextExhaustedReplyOpts,
+): string | undefined {
   if (endReason === "output_starved") return buildOutputStarvedAnnotation();
-  if (endReason === "context_exhausted") return buildContextExhaustedReply();
+  if (endReason === "context_exhausted") return buildContextExhaustedReply(opts);
   return undefined;
 }

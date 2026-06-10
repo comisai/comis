@@ -283,3 +283,61 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).not.toContain("${");
   });
 });
+
+// ---------------------------------------------------------------------------
+// W3 (obs-llm-troubleshooting): budget-evidence-specific context_exhausted
+// verdict. The generic summarizer-speculation text actively misdirected the
+// live incident (the real cause was the small-class window cap + tool-schema
+// dominance — summarizerSpend would have done nothing).
+// ---------------------------------------------------------------------------
+
+describe("context_exhausted with budget evidence (W3)", () => {
+  const BUDGET = {
+    windowTokens: 32_000,
+    rawContextWindowTokens: 131_072,
+    windowCapSource: "effectiveContextCapSmall" as const,
+    systemTokens: 25_694,
+    freshTailTokens: 5_272,
+    budgetedHistoryTokens: 0,
+    keptCount: 0,
+    assembledInputTokens: 31_572,
+    outputHeadroom: 768,
+    verdict: "exhausted" as const,
+  };
+
+  it("names the assembled/window numbers, the raw window, the system share, and kept history in the detail", () => {
+    const r = rootCause(makeSignals({ endReason: "context_exhausted", contextBudget: BUDGET }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("context_exhausted");
+    expect(r!.detail).toContain("31572");
+    expect(r!.detail).toContain("32000");
+    expect(r!.detail).toContain("131072");
+    expect(r!.detail).toContain("80%");
+    expect(r!.detail).toContain("history kept: 0");
+  });
+
+  it("suggests raising the named cap knob and reducing the tool surface when capped and schema-dominated", () => {
+    const r = rootCause(makeSignals({ endReason: "context_exhausted", contextBudget: BUDGET }));
+    const steps = r!.suggestedNextSteps.join(" | ");
+    expect(steps).toContain("contextEngine.budget.effectiveContextCapSmall");
+    expect(steps).toContain("tool");
+  });
+
+  it("uncapped budget evidence does not point at a cap knob", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "context_exhausted",
+        contextBudget: { ...BUDGET, rawContextWindowTokens: 32_000, windowCapSource: "none" as const },
+      }),
+    );
+    expect(r!.code).toBe("context_exhausted");
+    expect(r!.suggestedNextSteps.join(" | ")).not.toContain("effectiveContextCapSmall");
+  });
+
+  it("falls back to the generic terminal verdict when no budget evidence exists (pre-W2 session)", () => {
+    const r = rootCause(makeSignals({ endReason: "context_exhausted" }));
+    expect(r!.code).toBe("context_exhausted");
+    expect(r!.detail).toContain("context exhausted");
+    expect(r!.suggestedNextSteps.length).toBeGreaterThan(0);
+  });
+});

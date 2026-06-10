@@ -223,7 +223,7 @@ export { setupSecrets } from "./setup-secrets.js";
 export type { SecretsBootResult } from "./setup-secrets.js";
 
 // Offline secrets write helpers (CLI daemon-free bootstrap path)
-export { offlineSecretSet, offlineSecretsList } from "./offline-secrets-write.js";
+export { offlineSecretSet, offlineSecretsList, offlineSecretGet } from "./offline-secrets-write.js";
 export { offlineOAuthProfileSet } from "./offline-oauth-write.js";
 
 // Named graph store (server-side pipeline persistence)

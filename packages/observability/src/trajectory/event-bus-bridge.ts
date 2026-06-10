@@ -154,6 +154,9 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // Context engine internals (events-messaging.ts; emitters in packages/agent — arch-scanned)
   // 5 of 6 are in EVENTS_NOT_TRAJECTORY_MAPPED and must be removed when bridged.
   // context:integrity uses optional chaining (?.emit) — not in arch-test scope; no allowlist change needed.
+  // W2 (obs-llm-troubleshooting): per-LLM-call budget equation from the LCD
+  // pre-flight — lets obs.explain reconstruct a context_exhausted abort.
+  "context:budget_computed": "context.budget",
   "context:evicted": "context.evicted",
   "context:masked": "context.masked",
   "context:reread": "context.reread",

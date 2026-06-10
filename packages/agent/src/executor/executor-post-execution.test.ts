@@ -1991,6 +1991,12 @@ describe("CWF-05: degraded-reply wiring", () => {
     expect(delivered.trim().length).toBeGreaterThan(0);
   });
 
+  it("W4: the context_exhausted reply is built with capabilityClass + traceId wiring", () => {
+    const stripped = readStripped();
+    expect(stripped).toMatch(/buildContextExhaustedReply\(\s*\{[\s\S]*?capabilityClass/);
+    expect(stripped).toMatch(/buildContextExhaustedReply\(\s*\{[\s\S]*?traceId/);
+  });
+
   it("no-regression — buildDegradedReply returns undefined for healthy reasons (strict no-op)", () => {
     expect(buildDegradedReply("stop")).toBeUndefined();
     expect(buildDegradedReply("end_turn")).toBeUndefined();

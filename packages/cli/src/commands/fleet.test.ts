@@ -39,12 +39,19 @@ vi.mock("../client/rpc-client.js", async (importOriginal) => {
 });
 
 // Mock withSpinner to pass-through (no ora spinner in tests).
+// W14: mock the offline assembler so fallback tests run without a data dir.
+vi.mock("../util/offline-obs.js", () => ({
+  assembleFleetHealthReportOffline: vi.fn(),
+  resolveOfflineDataDir: vi.fn(() => "/fake/.comis"),
+}));
+
 vi.mock("../output/spinner.js", () => ({
   withSpinner: vi.fn(async (_text: string, fn: () => Promise<unknown>) => fn()),
 }));
 
 // Dynamic imports after mocks.
 const { registerFleetCommand } = await import("./fleet.js");
+const { assembleFleetHealthReportOffline } = await import("../util/offline-obs.js");
 const { withClient } = await import("../client/rpc-client.js");
 
 /**
@@ -406,5 +413,55 @@ describe("registerFleetCommand registers a command named 'fleet', DISTINCT from 
     expect(names).toContain("fleet");
     // The new command must NOT overload the existing local-doctor `comis health`.
     expect(names).not.toContain("health");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W14 (obs-llm-troubleshooting): offline fallback wiring.
+// ---------------------------------------------------------------------------
+
+describe("comis fleet offline fallback (W14)", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    vi.mocked(assembleFleetHealthReportOffline).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("falls back to the offline assembler when the gateway is unreachable", async () => {
+    vi.mocked(withClient).mockRejectedValue(
+      new Error("Cannot connect to daemon at ws://localhost:4766/ws."),
+    );
+    vi.mocked(assembleFleetHealthReportOffline).mockResolvedValue(FAKE_REPORT as never);
+
+    const program = createTestProgram();
+    registerFleetCommand(program);
+    await program.parseAsync(["node", "test", "fleet", "--since", "48"]);
+
+    expect(assembleFleetHealthReportOffline).toHaveBeenCalledWith("/fake/.comis", 48);
+    expect(exitSpy.spy).not.toHaveBeenCalled();
+  });
+
+  it("does NOT fall back on a gateway token rejection — surfaces the auth error with the --offline tip", async () => {
+    vi.mocked(withClient).mockRejectedValue(
+      new Error("Gateway rejected the token (WS close 4001 Unauthorized) — set COMIS_GATEWAY_TOKEN."),
+    );
+
+    const program = createTestProgram();
+    registerFleetCommand(program);
+    await program.parseAsync(["node", "test", "fleet"]).catch(() => undefined);
+
+    expect(assembleFleetHealthReportOffline).not.toHaveBeenCalled();
+    expect(exitSpy.spy).toHaveBeenCalledWith(1);
+    const stderr = consoleSpy.error.mock.calls.flat().map(String).join("\n");
+    expect(stderr).toContain("--offline");
   });
 });

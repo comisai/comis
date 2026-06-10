@@ -274,6 +274,39 @@ export function checkTransportSecurity(url: string, token: string | undefined, a
  * @returns A connected RpcClient ready for calls
  * @throws Error if connection times out or is refused
  */
+/**
+ * Stable prefix of the gateway token-rejection error (W13 obs-llm-troubleshooting).
+ * The gateway closes an unauthorized WebSocket with code 4001 (hono-server.ts);
+ * mapping that close onto this named error lets `isDaemonRunning` treat an
+ * auth-rejection as PROOF the daemon is up — the old path collapsed it into
+ * "Connection closed unexpectedly" and the liveness probe reported a healthy
+ * daemon as "not running".
+ */
+export const GATEWAY_AUTH_REJECTED_PREFIX = "Gateway rejected the token";
+
+/** True when an error is the gateway token-rejection (WS close 4001/4003). */
+export function isGatewayAuthRejection(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith(GATEWAY_AUTH_REJECTED_PREFIX);
+}
+
+/** Map a WebSocket close code onto the user-facing rejection error. */
+function closeCodeError(code: number | undefined, reason: string): Error {
+  if (code === 4001) {
+    return new Error(
+      GATEWAY_AUTH_REJECTED_PREFIX +
+        " (WS close 4001 Unauthorized) — the daemon IS running and listening. " +
+        "Set COMIS_GATEWAY_TOKEN (env var or ~/.comis/.env) to a token matching a gateway.tokens entry.",
+    );
+  }
+  if (code === 4003) {
+    return new Error(
+      GATEWAY_AUTH_REJECTED_PREFIX +
+        ` (WS close 4003) — ${reason.length > 0 ? reason : "this token's scope must use POST /mcp/v1, not /ws"}.`,
+    );
+  }
+  return new Error("Connection closed unexpectedly");
+}
+
 export async function createRpcClient(url: string, token?: string): Promise<RpcClient> {
   return new Promise<RpcClient>((resolve, reject) => {
     const headers: Record<string, string> = {};
@@ -301,8 +334,11 @@ export async function createRpcClient(url: string, token?: string): Promise<RpcC
       );
     }, CONNECTION_TIMEOUT_MS);
 
+    let opened = false;
+
     ws.on("open", () => {
       systemClearTimeout(timeout);
+      opened = true;
 
       resolve({
         call(method: string, params?: unknown): Promise<unknown> {
@@ -388,12 +424,21 @@ export async function createRpcClient(url: string, token?: string): Promise<RpcC
       }
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code?: number, reason?: Buffer) => {
       systemClearTimeout(timeout);
       closed = true;
+      // W13: surface WHY. The gateway closes 4001/4003 for token problems —
+      // collapsing those into the generic message sent operators (and the
+      // live investigation) chasing a daemon that was up the whole time.
+      const closeErr = closeCodeError(code, reason?.toString() ?? "");
+      // A close BEFORE open (handshake-stage rejection) must reject the
+      // connection promise instead of hanging until the timeout.
+      if (!opened) {
+        reject(closeErr);
+      }
       // Reject all pending requests on unexpected close
       for (const [, p] of pending) {
-        p.reject(new Error("Connection closed unexpectedly"));
+        p.reject(closeErr);
       }
       pending.clear();
     });

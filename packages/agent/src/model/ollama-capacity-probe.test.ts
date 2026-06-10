@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   deriveOllamaNativeBase,
   probeOllamaServedWindow,
@@ -259,6 +259,41 @@ describe("probeAllOllamaProviders", () => {
     await probeAllOllamaProviders({ providerEntries, fetchFn, timeoutMs: 5000, logger: mockLogger });
 
     expect(fetchCalls.length).toBe(0);
+  });
+
+  it("W12: an HTTP-status probe failure hints at the model/payload, not 'start Ollama' (the server responded)", async () => {
+    // Live: HTTP 400 from /api/show while Ollama was up — the hint said
+    // "start Ollama", pointing the operator away from the actual cause.
+    const warn = vi.fn();
+    const logger = { info: () => {}, warn, debug: () => {}, error: () => {}, child() { return this; } } as any;
+    const providerEntries = {
+      myOllama: { type: "ollama", baseUrl: "http://localhost:11434", defaultModel: "qwen3.6:35b" },
+    };
+    const fetchFn = makeFetchFn(async () => new Response("bad request", { status: 400 }));
+    await probeAllOllamaProviders({ providerEntries, fetchFn, timeoutMs: 5000, logger });
+
+    const warnCall = warn.mock.calls.find((c) => c[1] === "Ollama capacity probe failed — using configured contextWindow");
+    expect(warnCall).toBeDefined();
+    const hint = (warnCall![0] as { hint: string }).hint;
+    expect(hint).not.toContain("start Ollama");
+    expect(hint).toContain("reachable");
+    expect(hint).toContain("model");
+  });
+
+  it("W12: a network-level probe failure keeps the start-Ollama hint", async () => {
+    const warn = vi.fn();
+    const logger = { info: () => {}, warn, debug: () => {}, error: () => {}, child() { return this; } } as any;
+    const providerEntries = {
+      myOllama: { type: "ollama", baseUrl: "http://localhost:11434", defaultModel: "qwen3.6:35b" },
+    };
+    const fetchFn = makeFetchFn(async () => {
+      throw new Error("fetch failed: ECONNREFUSED");
+    });
+    await probeAllOllamaProviders({ providerEntries, fetchFn, timeoutMs: 5000, logger });
+
+    const warnCall = warn.mock.calls.find((c) => c[1] === "Ollama capacity probe failed — using configured contextWindow");
+    expect(warnCall).toBeDefined();
+    expect((warnCall![0] as { hint: string }).hint).toContain("start Ollama");
   });
 
   it("CWF-03-F: type='lm-studio' → not probed (no fetchFn call)", async () => {

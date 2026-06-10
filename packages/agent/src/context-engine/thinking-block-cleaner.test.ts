@@ -58,6 +58,8 @@ function makeUserMsg(text: string): AgentMessage {
 /** Stub budget -- thinking cleaner ignores budget so values don't matter. */
 const stubBudget: TokenBudget = {
   windowTokens: 200_000,
+  rawContextWindowTokens: 200_000,
+  windowCapSource: "none",
   systemTokens: 5_000,
   outputReserveTokens: 8_192,
   safetyMarginTokens: 10_000,

@@ -413,3 +413,132 @@ describe("toIncidentSignals — misc", () => {
     expect(s.toolStats.web_fetch?.ok).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// W3 (obs-llm-troubleshooting): context.budget extraction — the per-call budget
+// equation emitted by the LCD pre-flight (W2) must reach IncidentSignals so the
+// heuristic can explain a context_exhausted abort with numbers.
+// ---------------------------------------------------------------------------
+
+function budgetEvent(verdict: string, assembled: number, seq: number): Record<string, unknown> {
+  return {
+    traceSchema: "comis-trajectory",
+    schemaVersion: 1,
+    type: "context.budget",
+    seq,
+    data: {
+      windowTokens: 32_000,
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "effectiveContextCapSmall",
+      systemTokens: 25_694,
+      freshTailTokens: 5_272,
+      budgetedHistoryTokens: 0,
+      keptCount: 0,
+      assembledInputTokens: assembled,
+      outputHeadroom: 768,
+      verdict,
+    },
+  };
+}
+
+describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
+  it("extracts the full budget equation from a context.budget trajectory event", () => {
+    const s = toIncidentSignals([budgetEvent("exhausted", 31_572, 1)]);
+    expect(s.contextBudget).toBeDefined();
+    expect(s.contextBudget?.verdict).toBe("exhausted");
+    expect(s.contextBudget?.assembledInputTokens).toBe(31_572);
+    expect(s.contextBudget?.windowTokens).toBe(32_000);
+    expect(s.contextBudget?.rawContextWindowTokens).toBe(131_072);
+    expect(s.contextBudget?.windowCapSource).toBe("effectiveContextCapSmall");
+    expect(s.contextBudget?.systemTokens).toBe(25_694);
+    expect(s.contextBudget?.keptCount).toBe(0);
+  });
+
+  it("the LAST context.budget record wins — the terminal fit check explains the end state", () => {
+    const s = toIncidentSignals([budgetEvent("fits", 29_391, 1), budgetEvent("exhausted", 31_572, 2)]);
+    expect(s.contextBudget?.verdict).toBe("exhausted");
+    expect(s.contextBudget?.assembledInputTokens).toBe(31_572);
+  });
+
+  it("ignores a malformed context.budget record missing its numeric fields", () => {
+    const s = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "context.budget", data: { verdict: "exhausted" } },
+    ]);
+    expect(s.contextBudget).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W8 (obs-llm-troubleshooting): toolStats fidelity. The live explain reported
+// ctx_search ok:2 for ONE call — the cache-trace tool:after record (traceSchema
+// comis-cache-trace, carrying toolName + success:true) fell into the log-shape
+// handler and re-counted the trajectory's tool.result.
+// ---------------------------------------------------------------------------
+
+describe("toolStats fidelity (W8)", () => {
+  it("a comis-cache-trace tool:after record does not count as a tool success", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-cache-trace",
+        schemaVersion: 1,
+        stage: "tool:after",
+        seq: 6,
+        toolName: "ctx_search",
+        toolCallId: "call_1",
+        success: true,
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 13,
+        data: { toolName: "ctx_search", toolCallId: "call_1", success: true },
+      },
+    ]);
+    expect(s.toolStats.ctx_search?.ok).toBe(1);
+  });
+
+  it("duplicate event-shape tool.result records with the same toolCallId count once", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 1,
+        data: { toolName: "web_fetch", toolCallId: "tc-1", success: true },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 2,
+        data: { toolName: "web_fetch", toolCallId: "tc-1", success: true },
+      },
+    ]);
+    expect(s.toolStats.web_fetch?.ok).toBe(1);
+  });
+
+  it("log-shape success lines without a toolCallId keep per-line counting (frozen-fixture behavior)", () => {
+    const s = toIncidentSignals([log678Success(), log678Success()]);
+    expect(s.toolStats.web_fetch?.ok).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W8: agentId + channel extraction — the live report printed agentId:"" and
+// channel {type:"",id:""} although every trajectory record carries agentId and
+// session.started carries channelType/channelId.
+// ---------------------------------------------------------------------------
+
+describe("agentId + channel extraction (W8)", () => {
+  it("extracts agentId from the record envelope and channel from session.started data", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "session.started",
+        agentId: "default",
+        seq: 2,
+        data: { channelType: "telegram", channelId: "678314278" },
+      },
+    ]);
+    expect(s.agentId).toBe("default");
+    expect(s.channel).toEqual({ type: "telegram", id: "678314278" });
+  });
+});

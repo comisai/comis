@@ -6,6 +6,8 @@
  * can map them to the correct finishReason without inspecting string messages.
  */
 
+import type { ContextWindowCapInfo } from "./types-core.js";
+
 /**
  * Stable prefix of every ContextExhaustionError message.
  *
@@ -19,6 +21,29 @@
  */
 export const CONTEXT_EXHAUSTION_MESSAGE_PREFIX = "Context exhausted: assembled" as const;
 
+/**
+ * Maps a WindowCapSource onto the exact `contextEngine.budget.*` config key —
+ * the message must name the KNOB, not just the number, so an operator (or an
+ * LLM agent reading the log) can fix it without reading budget-capacity-cap.ts
+ * (W1 obs-llm-troubleshooting; the live incident reported "effective window
+ * 32000" against a configured contextWindow of 131072 with no link between them).
+ */
+const CAP_KNOB_BY_SOURCE: Record<"effectiveContextCapSmall" | "effectiveContextCapNano", string> = {
+  effectiveContextCapSmall: "contextEngine.budget.effectiveContextCapSmall",
+  effectiveContextCapNano: "contextEngine.budget.effectiveContextCapNano",
+};
+
+/** Returns the capped-window suffix for the exhaustion message, or "" when
+ *  uncapped/unknown. Exported for reuse by the pre-flight WARN hint. */
+export function describeWindowCap(effectiveWindow: number, capInfo?: ContextWindowCapInfo): string {
+  if (capInfo === undefined || capInfo.windowCapSource === "none") return "";
+  const knob = CAP_KNOB_BY_SOURCE[capInfo.windowCapSource];
+  return (
+    ` (model contextWindow ${capInfo.rawContextWindowTokens} capped to ${effectiveWindow}` +
+    ` by ${knob} — raise it (0 = uncapped) or reduce active tool schemas)`
+  );
+}
+
 /** Thrown by lcd-assembler.transformContext when assembled input cannot fit in the
  *  effective window even after eviction, preamble trimming, and thinking down-shift.
  *  Caught by the executor and mapped to finishReason: "context_exhausted".
@@ -28,9 +53,11 @@ export class ContextExhaustionError extends Error {
   constructor(
     public readonly effectiveWindow: number,
     public readonly assembledTokens: number,
+    capInfo?: ContextWindowCapInfo,
   ) {
     super(
-      `${CONTEXT_EXHAUSTION_MESSAGE_PREFIX} ${assembledTokens} tokens leaves no room in effective window ${effectiveWindow}`,
+      `${CONTEXT_EXHAUSTION_MESSAGE_PREFIX} ${assembledTokens} tokens leaves no room in effective window ${effectiveWindow}` +
+        describeWindowCap(effectiveWindow, capInfo),
     );
   }
 }

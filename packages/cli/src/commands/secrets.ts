@@ -40,7 +40,7 @@ import type { AuditFinding } from "@comis/core";
 import { withClient, callTyped } from "../client/rpc-client.js";
 import { requireDaemonOrExit, DAEMON_PROBE_TIMEOUT_MS } from "../util/daemon-required.js";
 import { isDaemonRunning } from "../sync-tooling/daemon-guard.js";
-import { offlineSecretSet, offlineSecretsList } from "../util/offline-secrets-store.js";
+import { offlineSecretSet, offlineSecretsList, offlineSecretGet } from "../util/offline-secrets-store.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { renderTable } from "../output/table.js";
 import { formatRelativeTime } from "./sessions.js";
@@ -269,10 +269,14 @@ export function registerSecretsCommand(program: Command): void {
   secrets
     .command("get <name>")
     .description(
-      "Decrypt and display a secret. Requires the comis daemon to be running.",
+      "Decrypt and display a secret. Requires the comis daemon to be running, or pass --offline to read the local store directly (needs SECRETS_MASTER_KEY in ~/.comis/.env).",
     )
     .option("--yes", "Skip confirmation prompt")
-    .action(async (name: string, options: { yes?: boolean }) => {
+    .option(
+      "--offline",
+      "Read the local encrypted store directly (no daemon RPC). Breaks the gateway-token chicken-and-egg.",
+    )
+    .action(async (name: string, options: { yes?: boolean; offline?: boolean }) => {
       // Confirmation guard
       if (!options.yes && process.stdout.isTTY) {
         const confirmed = await p.confirm({
@@ -284,6 +288,31 @@ export function registerSecretsCommand(program: Command): void {
           info("Cancelled");
           return;
         }
+      }
+
+      // W15 (obs-llm-troubleshooting): explicit offline read. Without it,
+      // `secrets get COMIS_GATEWAY_TOKEN` required the daemon RPC — which
+      // required the very token being fetched. The daemon path stays the
+      // default (RPC reads are audit-logged daemon-side); --offline is the
+      // operator's deliberate, local, master-key-gated escape hatch.
+      if (options.offline === true) {
+        const dataDir = safePath(os.homedir(), ".comis");
+        const result = offlineSecretGet({
+          name,
+          dataDir,
+          envFilePath: safePath(dataDir, ".env"),
+        });
+        if (!result.ok) {
+          error(result.error.message);
+          process.exit(1);
+        }
+        if (result.value === undefined) {
+          error(`Secret '${name}' not found`);
+          process.exit(1);
+        }
+        // Raw output for pipe-ability
+        console.log(result.value);
+        return;
       }
 
       await requireDaemonOrExit();

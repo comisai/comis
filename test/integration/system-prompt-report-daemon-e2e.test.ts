@@ -177,7 +177,13 @@ describe("SystemPromptReport — daemon-level E2E wiring", () => {
 
     // (b) executor-context-engine-setup.ts: modelProfile is forwarded into the
     // createLcdContextEngine deps object (the C1 annotation marks the intent).
+    // Anchored to the deps-object C1 comment rather than the closing `})` so the
+    // guard survives sibling fields being added after `modelProfile,` (e.g. the
+    // Phase 166 securityPinMarkers/onAssembledInputTokens forwards) while still
+    // going RED if the `modelProfile` forwarding leg under C1 is dropped.
     expect(ceSetupSrc).toMatch(/\/\/ C1 \(Phase 165\)/);
-    expect(ceSetupSrc).toMatch(/modelProfile,\s*\n\s*\}\)/);
+    expect(ceSetupSrc).toMatch(
+      /C1 \(Phase 165\): the resolved ModelProfile for budget-aware eviction cap[\s\S]*?\n\s*modelProfile,/,
+    );
   });
 });

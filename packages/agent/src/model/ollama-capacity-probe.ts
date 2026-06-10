@@ -303,13 +303,21 @@ export async function probeAllOllamaProviders(
             "Ollama served context window discovered",
           );
         } else {
+          // W12 (obs-llm-troubleshooting): branch the hint by failure class. An
+          // HTTP status means Ollama responded — "start Ollama" points the
+          // operator away from the real cause (live: HTTP 400 from /api/show
+          // while the server was up; the model name/payload was the suspect).
+          const isHttpStatusFailure = result.error.message.startsWith("HTTP ");
+          const hint = isHttpStatusFailure
+            ? `Ollama is reachable but rejected the probe — verify the model '${modelId}' exists (ollama list) and the /api/show payload; falling back to configured contextWindow`
+            : "Falling back to configured contextWindow; start Ollama or set capabilities.probeServedWindow: false to suppress";
           logger.warn(
             {
               provider: providerId,
               err: result.error.message,
               errorKind: result.error.errorKind,
               durationMs: result.error.durationMs,
-              hint: "Falling back to configured contextWindow; start Ollama or set capabilities.probeServedWindow: false to suppress",
+              hint,
               submodule: "ollama-capacity-probe",
             },
             "Ollama capacity probe failed — using configured contextWindow",

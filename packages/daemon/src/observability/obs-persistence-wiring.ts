@@ -195,19 +195,25 @@ export function sessionSummaryEventToRow(
 }
 
 /**
- * The `context:dag_degraded` reasons that are NOT genuine degrades. Today only
- * `serialized_wait` qualifies: it is the bounded-wait back-pressure signal (an
- * ingest/compaction write queued on the per-conversation single-flight
- * serializer — events-messaging.ts), a normal operating event, not a robustness
- * fault. Stamping it `warning` would inflate the Phase-161 fleet lens's degrade
- * count with benign back-pressure (IN-01). Everything else in the closed union
- * (the `*_divergence` skips, `fail_closed_rollover`, `breaker_open`, `spend_cap`)
+ * The `context:dag_degraded` reasons that are NOT genuine degrades:
+ *  - `serialized_wait`: the bounded-wait back-pressure signal (an
+ *    ingest/compaction write queued on the per-conversation single-flight
+ *    serializer — events-messaging.ts), a normal operating event, not a
+ *    robustness fault (IN-01).
+ *  - `session_rebase` (W10 obs-llm-troubleshooting): Phase 164 RR6 — a fresh/
+ *    disjoint live transcript continued at the store's max seq, i.e.
+ *    "continued after restart". The union member's own doc says NOT a
+ *    degradation; at `warning` it fired once per session start and became the
+ *    live fleet's TOP finding (9 rows), drowning the real signals.
+ * Stamping either `warning` would inflate the Phase-161 fleet lens's degrade
+ * count with benign events. Everything else in the closed union (the
+ * `*_divergence` skips, `fail_closed_rollover`, `breaker_open`, `spend_cap`)
  * is a real degrade. This is an explicit allow-set, NOT an open default: a future
  * reason added to the union is treated as a degrade (`warning`) until it is
  * deliberately listed here — fail-safe toward operator visibility.
  */
 const BENIGN_DAG_DEGRADED_REASONS: ReadonlySet<EventMap["context:dag_degraded"]["reason"]> =
-  new Set(["serialized_wait"]);
+  new Set(["serialized_wait", "session_rebase"]);
 
 /**
  * Map a `context:dag_degraded` event payload (Phase 160 I1 — the LCD-divergence

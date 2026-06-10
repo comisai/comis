@@ -179,6 +179,11 @@ interface FleetRootCause {
 interface FleetSignals {
   degradedRate: number;
   sessionCount: number;
+  /** W9: count of degraded sessions in the window (acute events). */
+  degradedCount: number;
+  /** W9: the dominant named endReason cause among degraded sessions
+   *  (highest count; ties broken lexicographically for determinism). */
+  topDegradedCause?: string;
   healthSignalCount: number;
   configPostureCount: number;
   topErrorKind?: string;
@@ -205,7 +210,24 @@ const FLEET_HEURISTICS: ReadonlyArray<(s: FleetSignals) => FleetRootCause | null
       ],
     };
   },
-  // 2) Recurring config-posture signal — an insecure/drifted config across the fleet.
+  // 2) Acute named degradation (W9 obs-llm-troubleshooting) — ANY degraded
+  //    session with a named cause outranks the chronic rules below. Posture is
+  //    standing state; a degraded session is an event the operator must explain
+  //    first. The live fleet verdict pointed at TLS-off (chronic, known) while
+  //    1 of 3 sessions had aborted on context_exhausted (acute, actionable).
+  (s) => {
+    if (s.degradedCount === 0) return null;
+    const cause = s.topDegradedCause ?? "a named cause";
+    return {
+      code: "fleet_acute_degradation",
+      detail: `${s.degradedCount} of ${s.sessionCount} session(s) degraded over the window (top cause: ${cause})`,
+      suggestedNextSteps: [
+        "run `comis explain` on the worst degraded session for the per-session verdict",
+        `address the dominant degradation cause (${cause}) before the chronic posture findings`,
+      ],
+    };
+  },
+  // 3) Recurring config-posture signal — an insecure/drifted config across the fleet.
   (s) => {
     if (s.configPostureCount === 0) return null;
     return {
@@ -217,7 +239,7 @@ const FLEET_HEURISTICS: ReadonlyArray<(s: FleetSignals) => FleetRootCause | null
       ],
     };
   },
-  // 3) Recurring health signal — repeated health WARNs without a degradation spike.
+  // 4) Recurring health signal — repeated health WARNs without a degradation spike.
   (s) => {
     if (s.healthSignalCount === 0) return null;
     return {
@@ -349,9 +371,15 @@ export async function assembleFleetHealthReport(
   const topErrorKinds = Object.entries(fleet.topErrorKinds).map(([kind, count]) => ({ kind, count }));
 
   // The deterministic verdict (PURE, ordered first-match-wins).
+  // W9: dominant named degradation cause (highest count; lexicographic tiebreak).
+  const topDegradedCause = Object.entries(fleet.degradedByCause).sort(
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+  )[0]?.[0];
   const likelyRootCause = fleetRootCause({
     degradedRate: fleet.degradedRate,
     sessionCount: fleet.sessionCount,
+    degradedCount: degraded,
+    ...(topDegradedCause !== undefined ? { topDegradedCause } : {}),
     healthSignalCount: healthSignals.length,
     configPostureCount: configPosture.length,
     topErrorKind: topErrorKinds[0]?.kind,

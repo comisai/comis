@@ -20,7 +20,7 @@
  */
 
 import { SystemPingContract, systemSetTimeout } from "@comis/core";
-import { withClient, callTyped } from "../client/rpc-client.js";
+import { withClient, callTyped, isGatewayAuthRejection } from "../client/rpc-client.js";
 
 /**
  * Probe the daemon and return whether it is reachable.
@@ -53,8 +53,15 @@ export async function isDaemonRunning(timeoutMs = 1000): Promise<boolean> {
     }
     // probe resolved (rather than rejected) → daemon is reachable.
     return true;
-  } catch {
-    // Any RPC error (ECONNREFUSED, method-not-found, parse error,
+  } catch (e) {
+    // W13: a gateway token-rejection (WS close 4001) is PROOF the daemon is up
+    // — it answered the upgrade. Returning false here made the CLI print
+    // "daemon ... is not running" against a live daemon, hiding the real
+    // (auth) problem. The follow-up RPC then fails with the token-naming error.
+    if (isGatewayAuthRejection(e)) {
+      return true;
+    }
+    // Any other RPC error (ECONNREFUSED, method-not-found, parse error,
     // InsecureTransportError, etc.) means we cannot prove the daemon
     // is live → fail-closed.
     return false;

@@ -30,9 +30,33 @@ export type { TokenAnchor };
  * - P = freshTailPreambleTokens (the WHOLE fresh-tail preamble estimate; I1/WR-01)
  * - H = availableHistoryTokens (remaining budget for conversation history)
  */
+/**
+ * Which config knob clamped the effective window below the model's declared
+ * contextWindow. "none" = no cap applied (frontier/mid, explicit 0 = uncapped,
+ * or the declared window already fits under the class cap). Closed union —
+ * the literal member names ARE the `contextEngine.budget.*` knob names so
+ * error strings and log lines can name the exact setting to raise.
+ */
+export type WindowCapSource = "effectiveContextCapSmall" | "effectiveContextCapNano" | "none";
+
+/**
+ * Capped-window provenance carried into the exhaustion throw / WARN / events
+ * (W1 obs-llm-troubleshooting). A strict subset of TokenBudget so call sites
+ * can pass the budget's own fields without re-deriving anything.
+ */
+export type ContextWindowCapInfo = Pick<TokenBudget, "rawContextWindowTokens" | "windowCapSource">;
+
 export interface TokenBudget {
   /** W: model context window size in tokens. */
   windowTokens: number;
+  /** The model's DECLARED contextWindow before any capability-class cap was
+   *  applied (== windowTokens when no cap bit). Lets the exhaustion error and
+   *  budget logs name the clamp instead of reporting a window the operator
+   *  never configured (W1 obs-llm-troubleshooting). */
+  rawContextWindowTokens: number;
+  /** Which knob clamped windowTokens below rawContextWindowTokens ("none" when
+   *  uncapped). See WindowCapSource. */
+  windowCapSource: WindowCapSource;
   /** S: estimated tokens consumed by system prompt and tool definitions. */
   systemTokens: number;
   /** O: tokens reserved for model output generation. */

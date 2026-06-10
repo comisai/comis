@@ -35,6 +35,8 @@ vi.mock("../client/rpc-client.js", async () => {
   return {
     withClient: vi.fn(),
     callTyped: actual.callTyped,
+    // W13: forward the real predicate — daemon-guard keys liveness on it.
+    isGatewayAuthRejection: actual.isGatewayAuthRejection,
   };
 });
 
@@ -75,6 +77,21 @@ describe("isDaemonRunning", () => {
     const running = await isDaemonRunning();
 
     expect(running).toBe(false);
+  });
+
+  // W13: an auth-rejected upgrade PROVES the daemon answered — "not running"
+  // was a lie that sent the live investigation chasing a healthy process.
+  it("returns true when the gateway rejects the token — the daemon demonstrably answered (W13)", async () => {
+    vi.mocked(withClient).mockRejectedValue(
+      new Error(
+        "Gateway rejected the token (WS close 4001 Unauthorized) — the daemon IS running and listening. " +
+          "Set COMIS_GATEWAY_TOKEN (env var or ~/.comis/.env) to a token matching a gateway.tokens entry.",
+      ),
+    );
+
+    const running = await isDaemonRunning();
+
+    expect(running).toBe(true);
   });
 
   // returns false on "method not found" (regression / fail-closed)

@@ -25,7 +25,9 @@
 
 import type { Command } from "commander";
 import { ObsFleetHealthContract } from "@comis/core";
-import { callTyped, withClient } from "../client/rpc-client.js";
+import type { FleetHealthReport } from "@comis/core";
+import { assembleFleetHealthReportOffline, resolveOfflineDataDir } from "../util/offline-obs.js";
+import { callTyped, isGatewayAuthRejection, withClient } from "../client/rpc-client.js";
 import { info, error, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 
@@ -47,16 +49,40 @@ export function registerFleetCommand(program: Command): void {
     )
     .option("--since <hours>", "Window in hours", "24")
     .option("--format <format>", "Output format: table | json", "table")
-    .action(async (options: { since: string; format: string }) => {
+    .option(
+      "--offline",
+      "Assemble from the local ~/.comis files without contacting the daemon",
+    )
+    .action(async (options: { since: string; format: string; offline?: boolean }) => {
       try {
         const sinceHours = Number.parseFloat(options.since);
-        const report = await withSpinner(
-          "Assembling fleet health report...",
-          () =>
-            withClient((client) =>
-              callTyped(client, ObsFleetHealthContract, { sinceHours }),
-            ),
+        // W14: same offline contract as `comis explain` — explicit --offline, or
+        // automatic fallback when the gateway is UNREACHABLE; an auth-rejection
+        // surfaces (the daemon is up — masking the token problem hides a
+        // misconfiguration).
+        let assembledOffline = options.offline === true;
+        const report: FleetHealthReport = await withSpinner(
+          assembledOffline
+            ? "Assembling fleet health report (offline)..."
+            : "Assembling fleet health report...",
+          async () => {
+            if (options.offline === true) {
+              return assembleFleetHealthReportOffline(resolveOfflineDataDir(), sinceHours);
+            }
+            try {
+              return await withClient((client) =>
+                callTyped(client, ObsFleetHealthContract, { sinceHours }),
+              );
+            } catch (e) {
+              if (isGatewayAuthRejection(e)) throw e;
+              assembledOffline = true;
+              return assembleFleetHealthReportOffline(resolveOfflineDataDir(), sinceHours);
+            }
+          },
         );
+        if (assembledOffline && options.offline !== true && options.format !== "json") {
+          info("daemon unreachable — report assembled offline from the local data dir");
+        }
         if (options.format === "json") {
           json(report);
           return;
@@ -115,6 +141,9 @@ export function registerFleetCommand(program: Command): void {
         }
       } catch (e) {
         error(`fleet failed: ${e instanceof Error ? e.message : String(e)}`);
+        if (isGatewayAuthRejection(e)) {
+          error("tip: `comis fleet --offline` assembles from the local files without the daemon");
+        }
         process.exit(1);
       }
     });

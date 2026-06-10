@@ -562,11 +562,16 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
                 rerankCandidates: docs.length,
                 errorKind: "dependency" as const,
                 // §2.7: carry the underlying reranker cause so a real outage is
-                // diagnosable (was dropped — only errorKind+hint were logged).
-                err: scored.error,
+                // diagnosable. §2.2 (W11): MESSAGE at WARN — the full Error
+                // (with stack) rides the DEBUG line below, not this WARN.
+                err: scored.error.message,
                 hint,
               },
               "rerank fallback",
+            );
+            deps.logger.debug(
+              { agentId, err: scored.error },
+              "rerank fallback detail",
             );
             // ranked stays = fused order; global score() below applies boosts.
             rerankOutcome = "fell_back";

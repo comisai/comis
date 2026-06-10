@@ -344,6 +344,38 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** Per-LLM-call context budget equation from the LCD pre-flight fit check
+   *  (W2 obs-llm-troubleshooting). Emitted once per runPreflightFitCheck —
+   *  verdict "fits" | "downshifted" (thinking governor fired) | "exhausted"
+   *  (ContextExhaustionError thrown right after). Bridged to the trajectory as
+   *  `context.budget` so obs.explain can reconstruct WHY a context_exhausted
+   *  turn aborted without grepping daemon-log DEBUG lines. Payload is
+   *  identifiers + token counts + closed unions only — NO message text. */
+  "context:budget_computed": {
+    agentId: string;
+    sessionKey: string;
+    /** The EFFECTIVE window the fit check ran against (post capability-class cap). */
+    windowTokens: number;
+    /** The model's declared contextWindow before any cap (== windowTokens when uncapped). */
+    rawContextWindowTokens: number;
+    /** Which contextEngine.budget.* knob clamped the window (closed union — never an open string). */
+    windowCapSource: "effectiveContextCapSmall" | "effectiveContextCapNano" | "none";
+    /** S: system prompt + tool schemas estimate. */
+    systemTokens: number;
+    /** Estimated fresh-tail tokens (latest user message + preamble + pending tool results). */
+    freshTailTokens: number;
+    /** Token sum of the history items kept by budget eviction. */
+    budgetedHistoryTokens: number;
+    /** Count of history items kept by budget eviction (0 = model sees no history). */
+    keptCount: number;
+    /** S + kept history + fresh tail — what is actually dispatched to the LLM. */
+    assembledInputTokens: number;
+    /** Output headroom reserved at the final effective thinking level. */
+    outputHeadroom: number;
+    /** Fit-check outcome (closed union — never an open string). */
+    verdict: "fits" | "downshifted" | "exhausted";
+  };
+
   /** Context engine mode switched between pipeline and dag (one-time import cost).
    *  Carries the switch DIRECTION + the one-time reconciliation cost. Emitted on
    *  an ACTUAL direction change (not on a brand-new DAG-default conversation) from
