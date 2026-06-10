@@ -164,6 +164,20 @@ describe("assembleIncidentReportOffline — real nested layout, no daemon, no me
   });
 });
 
+describe("assembleFleetHealthReportOffline — memory.db present but missing obs tables", () => {
+  it("degrades to file-only sources when the db lacks the obs schema (post-reset live state)", { timeout: 30_000 }, async () => {
+    const dataDir = tmpDataDir();
+    fs.mkdirSync(path.join(dataDir, "logs"), { recursive: true });
+    // An empty SQLite db — exactly what an operator reset can leave behind.
+    fs.writeFileSync(path.join(dataDir, "memory.db"), "", "utf-8");
+
+    const report = await assembleFleetHealthReportOffline(dataDir, 24);
+
+    expect(report.windowHours).toBe(24);
+    expect(report.coverage?.sessionSummary.found).toBe(false);
+  });
+});
+
 describe("assembleFleetHealthReportOffline — local day files, no daemon, no memory.db", () => {
   it("returns an honest report with coverage gaps when memory.db is absent", { timeout: 30_000 }, async () => {
     const dataDir = tmpDataDir();

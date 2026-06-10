@@ -52,23 +52,32 @@ function openObsStoreIfPresent(dataDir: string): {
 } {
   const dbPath = safePath(dataDir, "memory.db");
   if (!fs.existsSync(dbPath)) return { store: undefined, close: () => undefined };
+  // No-op initSchema: the offline path only ever opens an EXISTING db; the
+  // daemon owns schema creation. A db whose obs tables are missing (observed
+  // live after an operator reset recreated memory.db) throws at
+  // createObservabilityStore's eager statement-prepare — close the handle and
+  // degrade to file-only sources (the report's coverage block says so honestly).
+  let db: ReturnType<typeof openSqliteDatabase> | undefined;
   try {
-    // No-op initSchema: the offline path only ever opens an EXISTING db; the
-    // daemon owns schema creation. Missing obs tables surface as query errors
-    // inside the assembler's soft-fail reads, not as a write here.
-    const db = openSqliteDatabase({ dbPath, initSchema: () => undefined });
+    db = openSqliteDatabase({ dbPath, initSchema: () => undefined });
+    const store = createObservabilityStore(db);
+    const opened = db;
     return {
-      store: createObservabilityStore(db),
+      store,
       close: () => {
         try {
-          db.close();
+          opened.close();
         } catch {
           // close() after the assembler finished — a double-close is harmless.
         }
       },
     };
   } catch {
-    // Unreadable store (permissions, corruption) — degrade to file-only sources.
+    try {
+      db?.close();
+    } catch {
+      // The open itself failed — nothing to release.
+    }
     return { store: undefined, close: () => undefined };
   }
 }
