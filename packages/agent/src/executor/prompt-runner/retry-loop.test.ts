@@ -11,12 +11,23 @@
  * AgentSession + ModelRegistry + the deps surface — same cost barrier as
  * the orchestrator test. The branch dispatch is pinned structurally.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
+import { hostileMcpTool } from "../../provider/tool-schema/gbnf-hostile-fixtures.js";
+import { runWithModelRetry } from "../model-retry.js";
+import type { RunPromptParams } from "./prompt-runner-types.js";
 import { runRetryLoop, stuckSessionResult } from "./retry-loop.js";
+
+// Mock ONLY runWithModelRetry (the behavioral dispatch tests below drive the
+// REAL classifier + REAL silent-failure handlers); isAuthError and the rest
+// of model-retry stay real for the handlers that import them.
+vi.mock("../model-retry.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../model-retry.js")>();
+  return { ...actual, runWithModelRetry: vi.fn() };
+});
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sourcePath = resolve(here, "retry-loop.ts");
@@ -71,5 +82,139 @@ describe("retry-loop.ts — silent-failure delegation (dependency-direction)", (
 
   it("imports types only from prompt-runner-types.ts", () => {
     expect(source).toMatch(/from\s+"\.\/prompt-runner-types\.js"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Behavioral dispatch — tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
+//
+// Drives the REAL detectSilentFailure cascade (real classifyError, real
+// silent-failure handlers) through runRetryLoop with only runWithModelRetry
+// mocked. RED on pre-patch code: Plan 02's classifier already labels the
+// llama-server body `tool_schema_unsupported`, but with no dispatch branch
+// the category falls into handleSilentRetryDefault — the retry fires with
+// UNSTRIPPED tools (the fallback-burn wrong-remedy) and no
+// execution:tool_schema_unsupported event is emitted.
+// ---------------------------------------------------------------------------
+
+describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
+  // FULL verbatim llama-server body (llama.cpp #19716) — re-inlined per plan
+  // (no cross-test-file imports). Carries the `invalid_request_error` wrapper
+  // that used to make client_request steal the match.
+  const LLAMA_SERVER_GRAMMAR_400 =
+    '{"error":{"code":400,"message":"JSON schema conversion failed:\\nUnrecognized schema: {\\"description\\":\\"Value for add/replace/test operations\\"}","type":"invalid_request_error"}}';
+
+  function makeHostileTools(): Array<{ name: string; description?: string; parameters?: unknown }> {
+    return [
+      {
+        name: hostileMcpTool.name,
+        description: hostileMcpTool.description,
+        parameters: structuredClone(hostileMcpTool.parameters),
+      },
+    ];
+  }
+
+  function makeDispatchParams(
+    tools: Array<{ name: string; description?: string; parameters?: unknown }>,
+    llmErrorBody: string,
+    channelId: string,
+  ): { params: RunPromptParams; emit: ReturnType<typeof vi.fn> } {
+    const emit = vi.fn();
+    const logger = {
+      trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+    };
+    const params = {
+      session: {
+        messages: [],
+        getLastAssistantText: vi.fn(() => "recovered visible text"),
+        followUp: vi.fn(async () => undefined),
+      },
+      sessionKey: { tenantId: "t1", userId: "u1", channelId },
+      agentId: "agent-1",
+      bridge: {
+        getResult: vi.fn(() => ({
+          llmCalls: 1,
+          stepsExecuted: 1,
+          textEmitted: false,
+          finishReason: "error",
+          lastLlmErrorMessage: llmErrorBody,
+        })),
+      },
+      mergedCustomTools: tools,
+      resolvedModel: { id: "qwen3.6:35b", provider: "my-ollama" },
+      config: { provider: "my-ollama", model: "qwen3.6:35b" },
+      effectiveTimeout: { promptTimeoutMs: 1000, retryPromptTimeoutMs: 1000 },
+      onResetTimer: () => {},
+      deps: {
+        logger,
+        eventBus: { emit },
+        clock: { now: () => 5678 },
+        timers: {
+          setTimeout: (fn: () => void) => {
+            fn();
+            return { cancelled: false, cancel: () => {}, unref: () => {} };
+          },
+        },
+        modelRegistry: { find: vi.fn(() => undefined) },
+      },
+    } as unknown as RunPromptParams;
+    return { params, emit };
+  }
+
+  beforeEach(async () => {
+    vi.mocked(runWithModelRetry).mockReset();
+    // Optional pre-patch (export missing) — post-patch resets the module
+    // once-gate between tests.
+    const sfh = (await import("./silent-failure-handlers.js")) as Record<string, unknown>;
+    (sfh.resetToolSchemaStripGateForTest as undefined | (() => void))?.();
+  });
+
+  it("grammar-400 on the SILENT path dispatches to the strip-retry handler: the single retry fires with STRIPPED tools and emits execution:tool_schema_unsupported", async () => {
+    const tools = makeHostileTools();
+    const capturedAtInvocation: string[] = [];
+    vi.mocked(runWithModelRetry).mockImplementation(async () => {
+      capturedAtInvocation.push(JSON.stringify(tools));
+      return { succeeded: true };
+    });
+    const { params, emit } = makeDispatchParams(tools, LLAMA_SERVER_GRAMMAR_400, "c-dispatch-strip");
+
+    const outcome = await runRetryLoop(params, "hello", undefined, false);
+
+    // Initial prompt + exactly ONE strip-retry — never the full-ladder
+    // re-entry shape and never a terminal generic failure.
+    expect(vi.mocked(runWithModelRetry)).toHaveBeenCalledTimes(2);
+    // The strip happened BEFORE the retry invocation (boundary observation;
+    // pre-patch the default branch retries with the hostile schema intact).
+    expect(capturedAtInvocation[1]).not.toContain('"pattern"');
+    expect(capturedAtInvocation[1]).not.toContain('"format"');
+    // handleClientRequest's terminal state did NOT occur.
+    expect(String(outcome.promptError ?? "")).not.toContain("Client request rejected by provider");
+    expect(outcome.promptSucceeded).toBe(true);
+    // The obs chain input exists (Plan 06's explain heuristic consumes it).
+    const events = emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported");
+    expect(events).toHaveLength(1);
+    expect(events[0][1]).toMatchObject({
+      toolNames: ["schedule_task"],
+      strippedKeywords: ["pattern", "format"],
+      retried: true,
+      succeeded: true,
+    });
+  });
+
+  it("regression: a plain client_request body still takes the client_request terminal branch (byte-identical dispatch for existing categories)", async () => {
+    vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
+    const { params, emit } = makeDispatchParams(
+      makeHostileTools(),
+      "unprocessable_entity: the request shape is invalid",
+      "c-dispatch-client",
+    );
+
+    const outcome = await runRetryLoop(params, "hello", undefined, false);
+
+    // No silent retry for deterministic client errors — one initial call only.
+    expect(vi.mocked(runWithModelRetry)).toHaveBeenCalledTimes(1);
+    expect(outcome.promptSucceeded).toBe(false);
+    expect(String(outcome.promptError)).toContain("Client request rejected by provider");
+    expect(emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported")).toHaveLength(0);
   });
 });

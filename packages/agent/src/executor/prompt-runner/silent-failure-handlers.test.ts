@@ -76,3 +76,24 @@ describe("silent-failure-handlers.ts — rate_limited branch", () => {
     expect(source).toMatch(/Client-request error — skipping silent-retry and declaring terminal failure/);
   });
 });
+
+describe("silent-failure-handlers.ts — tool_schema_unsupported facade (GBNF-02)", () => {
+  // Dynamic imports so these tests fail INDIVIDUALLY pre-patch without
+  // crashing the pre-existing structural suites in this file. The handler
+  // body lives in tool-schema-unsupported-handler.ts (the prompt-runner
+  // directory has a 500-line file cap) and is re-exported here so the
+  // dispatch in retry-loop.ts imports the whole silent-failure cascade from
+  // one module. Behavioral coverage: tool-schema-unsupported-handler.test.ts.
+
+  it("re-exports handleToolSchemaUnsupported and resetToolSchemaStripGateForTest for the retry-loop dispatch", async () => {
+    const facade = (await import("./silent-failure-handlers.js")) as Record<string, unknown>;
+    expect(typeof facade.handleToolSchemaUnsupported).toBe("function");
+    expect(typeof facade.resetToolSchemaStripGateForTest).toBe("function");
+  });
+
+  it("facade and handler module expose the SAME handleToolSchemaUnsupported function identity (no divergent copies)", async () => {
+    const facade = (await import("./silent-failure-handlers.js")) as Record<string, unknown>;
+    const handlerModule = (await import("./tool-schema-unsupported-handler.js")) as Record<string, unknown>;
+    expect(facade.handleToolSchemaUnsupported).toBe(handlerModule.handleToolSchemaUnsupported);
+  });
+});
