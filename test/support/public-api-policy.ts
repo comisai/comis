@@ -2123,6 +2123,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // parts-codec); its consumer is Phase-128 assembly, so it is a planned
       // orphan until that wiring lands (mirrors the SessionStorePort pattern).
       "reconstructLcdMessage",
+      // LCD provenance READ adapter (v2.20, Phase 173, DIST-03 read side — the
+      // C1→C2 carry-in). buildProvenanceReadStore is the sole
+      // LcdProvenanceReadStore adapter; the daemon composition root constructs it
+      // on the shared memory db handle (setup-memory) and injects it into
+      // createMemoryRecall's provenance pass. Surfaced HERE in the Task-1 memory
+      // commit AHEAD of the Task-2 daemon wiring — a TEMPORARY planned orphan the
+      // same plan (173-04) REMOVES once setup-memory.ts name-imports it (the
+      // factory-orphan dance; allowlist-shrink enforces shrink-only).
+      "buildProvenanceReadStore",
       "SessionData",
       "SessionListEntry",
       "InspectFilters",
