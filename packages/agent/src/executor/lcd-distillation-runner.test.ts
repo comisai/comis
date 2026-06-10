@@ -418,6 +418,34 @@ describe("runDistillationPassAfterTurn — DIST-01 closed-loop", () => {
     expect(provenanceCall.tenantId).toBe("tenant-a");
     expect(provenanceCall.conversationId).toBe("conv-1");
   });
+
+  it("DIST-03 carry-in: stamps a `summary:<id>` tag on the distilled memory so the precise-provenance recall branch can key on it", async () => {
+    // RED on pre-patch code: the runner writes tags ["lcd_distilled", "depth:N"]
+    // only — the recall provenance pass's PROVENANCE-PRECISE branch
+    // (recall-provenance.ts:88, SUMMARY_TAG_PREFIX="summary:") never fires because
+    // no distilled memory carries the summaryId tag. Phase 173 stamps it so the
+    // pass can query getProvenanceForSummary for the EXACT linked memoryIds.
+    // The tag adds an id only — no content (Security Domain V8).
+    const memoryPort = makeMemoryPort();
+    const lcdStore = makeLcdStore();
+    const params = makeParams({
+      depth: 2,
+      deps: {
+        ...makeParams().deps,
+        memoryPort,
+        lcdStore: lcdStore as unknown as ContextStorePort,
+        distillConfig: { enabled: true, minDepth: 1, dedupCosineThreshold: 0.92 },
+        isSubagentSession: false,
+      },
+    });
+    await runDistillationPassAfterTurn(params);
+
+    expect(memoryPort.store).toHaveBeenCalledOnce();
+    const stored = (memoryPort.store as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { tags: string[] };
+    expect(stored.tags).toContain("lcd_distilled");
+    expect(stored.tags).toContain("depth:2");
+    expect(stored.tags).toContain("summary:summary-1"); // summaryId from the fixture
+  });
 });
 
 // ---------------------------------------------------------------------------

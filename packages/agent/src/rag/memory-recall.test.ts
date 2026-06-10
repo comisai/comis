@@ -3371,12 +3371,12 @@ function fakeProvenanceStore(
   opts: { throwOnCall?: boolean } = {},
 ): {
   store: { getProvenanceForSummary: (scope: unknown, summaryId: string) => unknown };
-  calls: Array<{ scope: { tenantId: string; agentId: string; conversationId?: string }; summaryId: string }>;
+  calls: Array<{ scope: { tenantId: string; agentId: string; conversationId?: string; sessionKey?: string }; summaryId: string }>;
 } {
-  const calls: Array<{ scope: { tenantId: string; agentId: string; conversationId?: string }; summaryId: string }> = [];
+  const calls: Array<{ scope: { tenantId: string; agentId: string; conversationId?: string; sessionKey?: string }; summaryId: string }> = [];
   const store = {
     getProvenanceForSummary(scope: unknown, summaryId: string) {
-      calls.push({ scope: scope as { tenantId: string; agentId: string; conversationId?: string }, summaryId });
+      calls.push({ scope: scope as { tenantId: string; agentId: string; conversationId?: string; sessionKey?: string }, summaryId });
       if (opts.throwOnCall) throw new Error("provenance store exploded");
       return rowsBySummaryId[summaryId] ?? [];
     },
@@ -3524,6 +3524,41 @@ describe("createMemoryRecall — DIST-03 provenance down-weighting", () => {
     // The provenance-linked memory was down-weighted below its reference score.
     const byId = new Map(got.value.map((r) => [r.entry.id, r.score ?? 1]));
     expect(byId.get("prov-paired")!).toBeLessThan(referenceById.get("prov-paired")!);
+  });
+
+  it("IN-02: the provenance scope carries the FORMATTED sessionKey (formatSessionKey), never String(sessionKey) → \"[object Object]\"", async () => {
+    // RED on pre-patch code: the scope built at the call site uses
+    // `String(sessionKey)` → "[object Object]" (harmless only while the pass was
+    // dormant; poisons ContextStoreScope.sessionKey the instant it activates).
+    // Phase 173 replaces it with formatSessionKey(sessionKey).
+    const SUMMARY_ID = "sum-in02";
+    const input = [
+      makeResult("distilled", {
+        base: 0.9,
+        trustLevel: "learned",
+        tags: ["lcd_distilled", "depth:1", `summary:${SUMMARY_ID}`],
+        sessionKey: CONV_SESSION,
+      }),
+    ];
+    const { store, calls } = fakeProvenanceStore({
+      [SUMMARY_ID]: [{ provenanceId: "p", memoryId: "m", sourceSessionKey: CONV_SESSION, supersededBy: null }],
+    });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        provenanceStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: DIST_NEUTRAL_SCORING, includeTrustLevels: ["system", "learned"] }),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    const scopedCall = calls.find((c) => c.summaryId === SUMMARY_ID)!;
+    expect(scopedCall).toBeDefined();
+    // formatSessionKey(SESSION_KEY_OBJ) === "tenant_x:user_a:chat_1" (NOT "[object Object]").
+    expect(scopedCall.scope.sessionKey).toBe("tenant_x:user_a:chat_1");
+    expect(scopedCall.scope.sessionKey).not.toBe("[object Object]");
   });
 
   it("DEFAULT-OFF BYTE-IDENTITY: with provenanceStore ABSENT, recall output is byte-identical to today even when a lcd_distilled result is present", async () => {
