@@ -189,4 +189,54 @@ describe("createAuthStorageAdapter", () => {
     expect(await storage.getApiKey("nvidia")).toBeUndefined();
     expect(storage.hasAuth("nvidia")).toBe(false);
   });
+
+  // Live incident (v2.20 distillation flagship validation, 2026-06-10): a keyless
+  // local Ollama provider (type "ollama", no apiKeyName) got NO runtime key, so
+  // resolveProviderApiKey -> authStorage.getApiKey returned "" and the LCD
+  // summarizer's SDK call threw "No API key for provider: <id>", tripping the
+  // summarizer breaker -> every summary degraded to a truncation fallback ->
+  // distillation could never fire (fallback markers are never distilled). The
+  // main LLM path worked because the model-registry-adapter bakes the
+  // "ollama-no-auth" sentinel; the summarizer key path bypassed it. Populate the
+  // sentinel here so EVERY path resolves a key uniformly for keyless providers.
+  it("registers a keyless-type provider with the ollama-no-auth sentinel when apiKeyName is empty", async () => {
+    const secretManager = createSecretManager({});
+
+    const storage = createAuthStorageAdapter({
+      secretManager,
+      customProviderEntries: {
+        "qwen36-local": { type: "ollama", apiKeyName: "", enabled: true },
+        "lmstudio-local": { type: "lm-studio", apiKeyName: "", enabled: true },
+      },
+    });
+
+    expect(await storage.getApiKey("qwen36-local")).toBe("ollama-no-auth");
+    expect(await storage.getApiKey("lmstudio-local")).toBe("ollama-no-auth");
+  });
+
+  it("prefers a real configured key over the keyless sentinel for a keyless-type provider", async () => {
+    const secretManager = createSecretManager({ OLLAMA_API_KEY: "real-ollama-key" });
+
+    const storage = createAuthStorageAdapter({
+      secretManager,
+      customProviderEntries: {
+        "qwen36-local": { type: "ollama", apiKeyName: "OLLAMA_API_KEY", enabled: true },
+      },
+    });
+
+    expect(await storage.getApiKey("qwen36-local")).toBe("real-ollama-key");
+  });
+
+  it("does NOT apply the keyless sentinel to a non-keyless type with empty apiKeyName", async () => {
+    const secretManager = createSecretManager({});
+
+    const storage = createAuthStorageAdapter({
+      secretManager,
+      customProviderEntries: {
+        nvidia: { type: "openai", apiKeyName: "", enabled: true },
+      },
+    });
+
+    expect(await storage.getApiKey("nvidia")).toBeUndefined();
+  });
 });

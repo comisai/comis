@@ -620,7 +620,7 @@ Controls how the context engine handles LLM summarization for low-capability mod
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `agents.<id>.contextEngine.compaction.preferEvictionByCapability` | `boolean` | `true` | When `true`: `small`/`nano` capabilityClass → eviction-first (or `strongerSummarizerModel` if set) instead of same-model LLM summarization. Prevents degraded summaries from a weak model. A `context:compaction_routed` event fires when routing occurs. |
-| `agents.<id>.contextEngine.compaction.strongerSummarizerModel` | `string` | `""` | Optional `"provider:modelId"` for a stronger summarizer when `small`/`nano` models are detected. Empty string = pure eviction/deterministic fallback. Example: `"anthropic:claude-haiku-4-5-20250929"`. |
+| `agents.<id>.contextEngine.compaction.strongerSummarizerModel` | `string` | `""` | Optional `"provider:modelId"` for a stronger summarizer when `small`/`nano` models are detected. Empty string = pure eviction/deterministic fallback. Example: `"anthropic:claude-haiku-4-5-20250929"`. A keyless local provider (Ollama / LM Studio) is also valid (e.g. `"qwen36-local:qwen3.6:35b"`) — no API key required. |
 
 > **Security (S4):** Eviction never drops security-relevant context (sender-trust, safety reinforcement, untrusted-content markers, canary token). The `security-context-pinner` enforces this fail-closed.
 
