@@ -26,7 +26,7 @@ import {
   PROVIDER_UNSUPPORTED_KEYWORDS,
 } from "../../safety/tool-schema-safety.js";
 import { resolveProviderCapabilities } from "../capabilities.js";
-import { cleanSchemaForGbnf } from "./clean-for-gbnf.js";
+import { cleanSchemaForGbnf, type GbnfTransformKeyword } from "./clean-for-gbnf.js";
 import { cleanSchemaForGemini } from "./clean-for-gemini.js";
 import { stripXaiUnsupportedKeywords } from "./clean-for-xai.js";
 import { normalizeAnyOfToEnum } from "./normalize-enums.js";
@@ -43,6 +43,25 @@ let logger: ComisLogger | undefined;
  */
 export function setToolNormalizationLogger(l: ComisLogger): void {
   logger = l;
+}
+
+/**
+ * Once-per-boot-per-provider INFO latch (GBNF-03). A boot-time SNAPSHOT
+ * summary, not a recurring event: the daemon process IS the boot, so a
+ * module-level latch gives once-per-boot semantics with zero new wiring
+ * (the logger is latched at boot via setToolNormalizationLogger, wired in
+ * setup-agents-registry.ts). Counts + names only — never schema bodies
+ * (I7). Per-turn detail stays at trace.
+ */
+const gbnfSummaryLoggedForProvider = new Set<string>();
+
+/**
+ * Test-only reset for the module-level gbnf boot-summary latch — without it,
+ * test order breaks (same rationale as the logger reset in the test suite's
+ * beforeEach).
+ */
+export function resetGbnfBootSummaryForTest(): void {
+  gbnfSummaryLoggedForProvider.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +163,14 @@ export function normalizeToolSchemasForProvider(
     return ensureTopLevelObject(tools);
   }
 
-  return tools.map((tool) => {
+  // (tool name, transform keywords) pairs collected during the Layer 3.5
+  // map pass — consumed by the once-per-boot INFO summary below.
+  const gbnfTransformedTools: Array<{
+    name: string;
+    keywords: GbnfTransformKeyword[];
+  }> = [];
+
+  const normalized = tools.map((tool) => {
     if (!tool.parameters || typeof tool.parameters !== "object") return tool;
     let schema: unknown = tool.parameters;
 
@@ -197,9 +223,10 @@ export function normalizeToolSchemasForProvider(
           },
           "Tool schema structurally transformed for GBNF compatibility",
         );
-        // Accumulation seam for the once-per-boot INFO summary (GBNF-03):
-        // collect (tool.name, keywords) pairs here; the post-map emit
-        // consumes them.
+        gbnfTransformedTools.push({
+          name: tool.name,
+          keywords: gbnfResult.transformedKeywords,
+        });
       }
     }
 
@@ -208,4 +235,30 @@ export function normalizeToolSchemasForProvider(
 
     return { ...tool, parameters: schema } as ToolDefinition;
   });
+
+  // Once-per-boot INFO summary (GBNF-03): the FIRST transforming call per
+  // provider emits one content-free summary line (counts + names + the
+  // closed transform vocabulary, never schema bodies — I7); subsequent
+  // calls stay at the per-tool trace above.
+  if (
+    isGbnf &&
+    gbnfTransformedTools.length > 0 &&
+    !gbnfSummaryLoggedForProvider.has(ctx.provider)
+  ) {
+    gbnfSummaryLoggedForProvider.add(ctx.provider);
+    const keywords = [
+      ...new Set(gbnfTransformedTools.flatMap((entry) => entry.keywords)),
+    ];
+    logger?.info(
+      {
+        provider: ctx.provider,
+        toolCount: gbnfTransformedTools.length,
+        transformedTools: gbnfTransformedTools.map((entry) => entry.name),
+        keywords,
+      },
+      "GBNF tool-schema transforms applied for local provider",
+    );
+  }
+
+  return normalized;
 }
