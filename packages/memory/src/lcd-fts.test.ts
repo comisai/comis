@@ -464,6 +464,21 @@ describe("EFF-03 — hasCjkCodepoints detects standard CJK Unicode blocks", () =
   it("returns false for an empty string", () => {
     expect(hasCjkCodepoints("")).toBe(false);
   });
+
+  // WR-01 boundary guard: the compat-ideograph range must be F900–FAFF, NOT the
+  // literal glyph 豈 (U+8C48), which compiled to U+8C48–U+FBFF and wrongly matched
+  // ~27k codepoints incl. Yi/Vai/Hangul-Jamo. These pin the corrected boundaries.
+  it("returns false for a Yi Syllable (U+A000) — NOT CJK (WR-01 over-match guard)", () => {
+    expect(hasCjkCodepoints(String.fromCodePoint(0xa000))).toBe(false);
+  });
+
+  it("returns false for a Hangul Jamo leading consonant (U+1100) — not a syllable block", () => {
+    expect(hasCjkCodepoints(String.fromCodePoint(0x1100))).toBe(false);
+  });
+
+  it("returns true for a CJK Compatibility Ideograph (U+F900) — the INTENDED compat range", () => {
+    expect(hasCjkCodepoints(String.fromCodePoint(0xf900))).toBe(true);
+  });
 });
 
 describe("EFF-03-T-1 — CJK query with zero FTS hits returns cjkZeroHit=true", () => {
