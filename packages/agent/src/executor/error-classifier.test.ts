@@ -361,6 +361,23 @@ describe("classifyError — tool_schema_unsupported (GBNF-02)", () => {
     expect(result.category).toBe("tool_schema_unsupported");
   });
 
+  it("WR-02: classifies the standard Go struct-type-name prefix form (ChatRequest.tools.function.parameters) as tool_schema_unsupported", () => {
+    // Go's encoding/json normally formats these as
+    // `Go struct field <StructTypeName>.<path>` — ollama#10164 pinned the
+    // empty-type-name variant, but Ollama versions/paths emitting the type
+    // name fell through to unknown → full fallback-ladder burn (175-REVIEW
+    // WR-02). Verbatim shape with the ChatRequest prefix:
+    const prefixed =
+      "json: cannot unmarshal array into Go struct field ChatRequest.tools.function.parameters.properties.type of type string";
+    expect(classifyError(new Error(prefixed)).category).toBe("tool_schema_unsupported");
+  });
+
+  it("WR-02: a type-name-prefixed Go unmarshal error OUTSIDE the tools path stays unmatched (negative control)", () => {
+    const offPath =
+      "json: cannot unmarshal string into Go struct field ChatRequest.options.temperature of type float64";
+    expect(classifyError(new Error(offPath)).category).toBe("unknown");
+  });
+
   it("classifies the llama.cpp grammar-parse failure string as tool_schema_unsupported", () => {
     const result = classifyError(new Error(grammarParseBody));
     expect(result.category).toBe("tool_schema_unsupported");

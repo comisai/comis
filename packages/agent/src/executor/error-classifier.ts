@@ -136,11 +136,15 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   // grammar bodies in `"type":"invalid_request_error"` — first match wins, so
   // this more-specific subcategory has to be checked first (same rationale as
   // the signed-replay entry above). Scope guard: the Go-unmarshal alternative
-  // only matches under `.tools.function.parameters` so unrelated unmarshal
-  // errors keep their current classification. Retryable=true because the
-  // runner performs exactly one strip-pattern/format-and-retry per session.
+  // only matches under `tools.function.parameters` so unrelated unmarshal
+  // errors keep their current classification — the optional `(?:\w+\.)?`
+  // accepts Go's standard `Go struct field <StructTypeName>.<path>` form
+  // (e.g. `ChatRequest.tools.function.parameters...`) alongside the
+  // empty-type-name variant from ollama#10164 (175-REVIEW WR-02).
+  // Retryable=true because the runner performs exactly one
+  // strip-pattern/format-and-retry per session.
   {
-    test: /json schema conversion failed|unrecognized schema|error parsing grammar|json-schema-to-grammar|unable to generate parser|cannot unmarshal \S+ into Go struct field \.?tools\.function\.parameters/i,
+    test: /json schema conversion failed|unrecognized schema|error parsing grammar|json-schema-to-grammar|unable to generate parser|cannot unmarshal \S+ into Go struct field (?:\w+\.)?\.?tools\.function\.parameters/i,
     category: "tool_schema_unsupported",
     userMessage:
       "The AI provider couldn't compile one of the available tools. The agent will simplify the tool definition and try again automatically.",
