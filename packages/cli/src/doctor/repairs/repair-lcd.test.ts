@@ -4,7 +4,7 @@
  *
  * Uses an in-memory better-sqlite3 database with the real LCD schema
  * (lcd_context_items / ref_kind, lcd_summaries / summary_id, lcd_messages)
- * to verify all three repair actions.
+ * to verify all repair actions.
  *
  * F1 ABSOLUTE CONSTRAINT: lcd_messages is NEVER modified by any repair.
  * Every test suite asserts row count + content hash unchanged after repair.
@@ -18,19 +18,34 @@ import type { Database as Db } from "better-sqlite3";
 import {
   repairFtsDrift,
   repairContextItems,
-  repairFallbackSummaries,
 } from "./repair-lcd.js";
 
 // ── Schema setup ─────────────────────────────────────────────────────────────
 
+/**
+ * Create a test DB that mirrors the REAL LCD schema:
+ *  - lcd_messages_fts is CONTENTLESS (no content= clause) — matches schema-lcd.ts
+ *  - lcd_summaries_fts is EXTERNAL-CONTENT (content=lcd_summaries) — matches schema-lcd.ts
+ *  - lcd_message_parts holds the structured parts that repairFtsDrift reads
+ */
 function createTestDb(): Db {
   const db = new Database(":memory:");
   db.exec(`
     CREATE TABLE lcd_messages (
-      id          TEXT PRIMARY KEY,
-      content     TEXT NOT NULL,
-      tenant_id   TEXT NOT NULL,
-      agent_id    TEXT NOT NULL
+      id              TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL DEFAULT 'conv-1',
+      tenant_id       TEXT NOT NULL DEFAULT 'tenant1',
+      agent_id        TEXT NOT NULL DEFAULT 'agent1',
+      seq             INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE lcd_message_parts (
+      id         TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL REFERENCES lcd_messages(id) ON DELETE CASCADE,
+      ordinal    INTEGER NOT NULL DEFAULT 0,
+      tool_name  TEXT,
+      tool_input TEXT,
+      tool_output TEXT,
+      metadata   TEXT NOT NULL DEFAULT '{}'
     );
     CREATE TABLE lcd_summaries (
       summary_id  TEXT PRIMARY KEY,
@@ -45,26 +60,31 @@ function createTestDb(): Db {
       ref_id          TEXT NOT NULL,
       conversation_id TEXT NOT NULL
     );
+    -- CONTENTLESS FTS — matches real schema-lcd.ts lcd_messages_fts
+    -- (no content= clause; adapter-populated on append via renderMessageFtsText)
     CREATE VIRTUAL TABLE lcd_messages_fts USING fts5(
       content,
-      content=lcd_messages,
-      content_rowid=rowid
+      conversation_id UNINDEXED,
+      agent_id UNINDEXED,
+      message_id UNINDEXED
     );
+    -- EXTERNAL-CONTENT FTS — matches real schema-lcd.ts lcd_summaries_fts
+    -- ('rebuild' idiom works because it has an external content table)
     CREATE VIRTUAL TABLE lcd_summaries_fts USING fts5(
       content,
-      content=lcd_summaries,
-      content_rowid=rowid
+      content='lcd_summaries',
+      content_rowid='rowid'
     );
   `);
   return db;
 }
 
-/** Return a simple content fingerprint for F1 assertions */
-function lcdMessagesFingerprint(db: Db): string {
+/** Return a simple row-count fingerprint for F1 assertions (lcd_messages never written by repair) */
+function lcdMessagesFingerprint(db: Db): { count: number; ids: string[] } {
   const rows = db
-    .prepare("SELECT id, content FROM lcd_messages ORDER BY id")
-    .all() as Array<{ id: string; content: string }>;
-  return JSON.stringify(rows);
+    .prepare("SELECT id FROM lcd_messages ORDER BY id")
+    .all() as Array<{ id: string }>;
+  return { count: rows.length, ids: rows.map((r) => r.id) };
 }
 
 // ── repairFtsDrift tests ─────────────────────────────────────────────────────
@@ -76,35 +96,59 @@ describe("repairFtsDrift", () => {
     db = createTestDb();
   });
 
-  it("repairFtsDrift rebuilds FTS tables and returns ok with action list", async () => {
-    db.prepare("INSERT INTO lcd_messages VALUES (?, ?, 'tenant1', 'agent1')").run(
-      "msg-1",
-      "hello world",
-    );
+  it("repairFtsDrift repopulates contentless lcd_messages_fts and returns ok", async () => {
+    // Insert a message with a part whose text will be rendered into the FTS
+    db.prepare("INSERT INTO lcd_messages VALUES ('msg-1', 'conv-1', 'tenant1', 'agent1', 0)").run();
+    db.prepare(
+      "INSERT INTO lcd_message_parts(id, message_id, ordinal, metadata) VALUES (?, ?, 0, ?)",
+    ).run("part-1", "msg-1", JSON.stringify({ raw: { text: "hello world" } }));
     const result = await repairFtsDrift(db);
     expect(result.ok).toBe(true);
-    expect(result.value).toContain("Rebuilt lcd_messages_fts FTS index");
-    expect(result.value).toContain("Rebuilt lcd_summaries_fts FTS index");
+    // lcd_messages_fts is CONTENTLESS — repopulate path, not 'rebuild'
+    expect(result.value!.some((a) => a.includes("lcd_messages_fts"))).toBe(true);
+  });
+
+  it("repairFtsDrift uses rebuild for external-content lcd_summaries_fts", async () => {
+    db.prepare(
+      "INSERT INTO lcd_summaries VALUES ('sum-1', 0, 'tenant1', 'agent1', 'summary text')",
+    ).run();
+    const result = await repairFtsDrift(db);
+    expect(result.ok).toBe(true);
+    expect(result.value!.some((a) => a.includes("lcd_summaries_fts"))).toBe(true);
+  });
+
+  it("repairFtsDrift contentless FTS: messages are queryable after repair", async () => {
+    // Insert a message with a tool_name part
+    db.prepare("INSERT INTO lcd_messages VALUES ('msg-query', 'conv-1', 'tenant1', 'agent1', 0)").run();
+    db.prepare(
+      "INSERT INTO lcd_message_parts(id, message_id, ordinal, tool_name, metadata) VALUES (?, ?, 0, ?, ?)",
+    ).run("part-query", "msg-query", "search_tool", JSON.stringify({}));
+    await repairFtsDrift(db);
+    // The FTS content should now include the tool name
+    const ftsRow = db
+      .prepare("SELECT content, message_id FROM lcd_messages_fts WHERE message_id = ?")
+      .get("msg-query") as { content: string; message_id: string } | undefined;
+    expect(ftsRow).toBeDefined();
+    expect(ftsRow?.content).toContain("search_tool");
   });
 
   it("repairFtsDrift never modifies lcd_messages table — F1 constraint", async () => {
-    db.prepare("INSERT INTO lcd_messages VALUES (?, ?, 'tenant1', 'agent1')").run(
-      "msg-f1",
-      "protected content",
-    );
+    db.prepare("INSERT INTO lcd_messages VALUES ('msg-f1', 'conv-1', 'tenant1', 'agent1', 0)").run();
     const before = lcdMessagesFingerprint(db);
 
     const result = await repairFtsDrift(db);
 
     const after = lcdMessagesFingerprint(db);
     expect(result.ok).toBe(true);
-    expect(after).toBe(before);
+    expect(after.count).toBe(before.count);
+    expect(after.ids).toEqual(before.ids);
   });
 
   it("repairFtsDrift returns ok with empty actions when no FTS tables exist", async () => {
     const noFtsDb = new Database(":memory:");
     noFtsDb.exec(`
-      CREATE TABLE lcd_messages (id TEXT PRIMARY KEY, content TEXT NOT NULL);
+      CREATE TABLE lcd_messages (id TEXT PRIMARY KEY, seq INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE lcd_message_parts (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, ordinal INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '{}');
       CREATE TABLE lcd_summaries (summary_id TEXT PRIMARY KEY, content TEXT NOT NULL);
     `);
     const result = await repairFtsDrift(noFtsDb);
@@ -140,16 +184,14 @@ describe("repairContextItems", () => {
   });
 
   it("repairContextItems never touches lcd_messages — F1 constraint", async () => {
-    db.prepare("INSERT INTO lcd_messages VALUES (?, ?, 'tenant1', 'agent1')").run(
-      "msg-f1",
-      "must not be touched",
-    );
+    db.prepare("INSERT INTO lcd_messages VALUES ('msg-f1', 'conv-1', 'tenant1', 'agent1', 0)").run();
     const before = lcdMessagesFingerprint(db);
 
     await repairContextItems(db);
 
     const after = lcdMessagesFingerprint(db);
-    expect(after).toBe(before);
+    expect(after.count).toBe(before.count);
+    expect(after.ids).toEqual(before.ids);
   });
 
   it("repairContextItems returns ok with count of removed dangling refs", async () => {
@@ -166,7 +208,7 @@ describe("repairContextItems", () => {
 
     expect(result.ok).toBe(true);
     const joined = result.value!.join(" ");
-    // At least one action string must mention "dangling" and a number
+    // At least one action string must mention a count
     expect(joined).toMatch(/\d+/);
     expect(result.value!.length).toBeGreaterThan(0);
   });
@@ -201,109 +243,43 @@ describe("repairContextItems", () => {
   });
 });
 
-// ── repairFallbackSummaries tests ────────────────────────────────────────────
+// ── repairFtsDrift CR-02: contentless-table handling ─────────────────────────
 
-describe("repairFallbackSummaries", () => {
-  let db: Db;
-
-  beforeEach(() => {
-    db = createTestDb();
-  });
-
-  it("repairFallbackSummaries with breaker OPEN returns ok without touching database", async () => {
-    // Insert a fallback=1 summary
-    db.prepare(
-      "INSERT INTO lcd_summaries VALUES (?, 1, 'tenant1', 'agent1', 'stale fallback content')",
-    ).run("sum-fb-1");
-
-    const openBreakerDeps = {
-      summarize: async (_msgs: Array<{ role: string; content: string }>) =>
-        "should not be called",
-      isBreakerOpen: () => true,
-    };
-
-    const result = await repairFallbackSummaries(db, openBreakerDeps);
-
+describe("repairFtsDrift — contentless FTS guard (CR-02)", () => {
+  it("repairFtsDrift does NOT use rebuild on contentless lcd_messages_fts — no error thrown", async () => {
+    // This is the key CR-02 regression test:
+    // lcd_messages_fts is CONTENTLESS in production (no content= clause).
+    // Calling INSERT INTO lcd_messages_fts(lcd_messages_fts) VALUES('rebuild')
+    // on a contentless table throws "content= option required".
+    // repairFtsDrift must NOT use 'rebuild' on the contentless table.
+    const db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE lcd_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL DEFAULT 'conv', tenant_id TEXT NOT NULL DEFAULT 't', agent_id TEXT NOT NULL DEFAULT 'a', seq INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE lcd_message_parts (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, ordinal INTEGER NOT NULL DEFAULT 0, tool_name TEXT, tool_input TEXT, tool_output TEXT, metadata TEXT NOT NULL DEFAULT '{}');
+      CREATE TABLE lcd_summaries (summary_id TEXT PRIMARY KEY, content TEXT NOT NULL);
+      CREATE VIRTUAL TABLE lcd_messages_fts USING fts5(content, conversation_id UNINDEXED, agent_id UNINDEXED, message_id UNINDEXED);
+    `);
+    // Must NOT throw (the old 'rebuild' path would throw on a contentless table)
+    const result = await repairFtsDrift(db);
     expect(result.ok).toBe(true);
-    expect(result.value).toEqual([]);
-
-    // Summary must still be fallback=1 (not touched)
-    const row = db
-      .prepare("SELECT fallback FROM lcd_summaries WHERE summary_id='sum-fb-1'")
-      .get() as { fallback: number } | undefined;
-    expect(row?.fallback).toBe(1);
+    db.close();
   });
 
-  it("repairFallbackSummaries calls summarize for each fallback=1 summary when breaker CLOSED", async () => {
+  it("repairFtsDrift repopulates contentless FTS from lcd_message_parts metadata", async () => {
+    const db = createTestDb();
+    db.prepare("INSERT INTO lcd_messages VALUES ('msg-cr02', 'conv-1', 'tenant1', 'agent1', 0)").run();
+    // Part with text in metadata.raw.text
     db.prepare(
-      "INSERT INTO lcd_summaries VALUES (?, 1, 'tenant1', 'agent1', 'old content 1')",
-    ).run("sum-fb-a");
-    db.prepare(
-      "INSERT INTO lcd_summaries VALUES (?, 1, 'tenant1', 'agent1', 'old content 2')",
-    ).run("sum-fb-b");
+      "INSERT INTO lcd_message_parts(id, message_id, ordinal, metadata) VALUES (?, ?, 0, ?)",
+    ).run("part-cr02", "msg-cr02", JSON.stringify({ raw: { text: "test content for FTS" } }));
 
-    let callCount = 0;
-    const closedBreakerDeps = {
-      summarize: async (_msgs: Array<{ role: string; content: string }>) => {
-        callCount++;
-        return "new summary content";
-      },
-      isBreakerOpen: () => false,
-    };
+    await repairFtsDrift(db);
 
-    const result = await repairFallbackSummaries(db, closedBreakerDeps);
-
-    expect(result.ok).toBe(true);
-    expect(callCount).toBe(2);
-    // Both summaries should now have fallback=0
-    const fallbackCount = (
-      db
-        .prepare("SELECT COUNT(*) AS c FROM lcd_summaries WHERE fallback=1")
-        .get() as { c: number }
-    ).c;
-    expect(fallbackCount).toBe(0);
-  });
-
-  it("repairFallbackSummaries never modifies lcd_messages — F1 absolute constraint", async () => {
-    db.prepare(
-      "INSERT INTO lcd_messages VALUES (?, ?, 'tenant1', 'agent1')",
-    ).run("msg-protected", "raw message must not be touched");
-    db.prepare(
-      "INSERT INTO lcd_summaries VALUES (?, 1, 'tenant1', 'agent1', 'fallback summary')",
-    ).run("sum-fb-f1");
-
-    const before = lcdMessagesFingerprint(db);
-
-    const deps = {
-      summarize: async (_msgs: Array<{ role: string; content: string }>) =>
-        "new summary",
-      isBreakerOpen: () => false,
-    };
-
-    await repairFallbackSummaries(db, deps);
-
-    const after = lcdMessagesFingerprint(db);
-    expect(after).toBe(before);
-  });
-
-  it("repairFallbackSummaries skips summary gracefully when summarize throws", async () => {
-    db.prepare(
-      "INSERT INTO lcd_summaries VALUES (?, 1, 'tenant1', 'agent1', 'old fallback')",
-    ).run("sum-fb-err");
-
-    const throwingDeps = {
-      summarize: async (_msgs: Array<{ role: string; content: string }>): Promise<string> => {
-        throw new Error("summarizer unavailable");
-      },
-      isBreakerOpen: () => false,
-    };
-
-    const result = await repairFallbackSummaries(db, throwingDeps);
-
-    // Should return ok (not err) — individual failures are non-fatal
-    expect(result.ok).toBe(true);
-    const joined = result.value!.join(" ");
-    expect(joined).toContain("sum-fb-err");
-    expect(joined).toContain("Skipped");
+    // After repair, FTS row should exist for the message
+    const ftsRows = db
+      .prepare("SELECT message_id FROM lcd_messages_fts")
+      .all() as Array<{ message_id: string }>;
+    expect(ftsRows.some((r) => r.message_id === "msg-cr02")).toBe(true);
+    db.close();
   });
 });

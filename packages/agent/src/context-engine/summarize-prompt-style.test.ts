@@ -84,4 +84,37 @@ describe("buildDepthAwareInstructions — SUM-01 depth-keyed prompt styles", () 
       expect(instructions.size).toBe(4);
     });
   });
+
+  describe("WR-01: aggressive directive preserved for all depths", () => {
+    it("d1 aggressive instruction differs from d1 non-aggressive — not a byte-identical wasted round-trip", () => {
+      // WR-01: depth>=1 aggressive=true must differ from depth>=1 aggressive=false
+      // so the Level-2 aggressive condense retry is not identical to the first pass
+      const nonAggressive = buildDepthAwareInstructions(1, false);
+      const aggressive = buildDepthAwareInstructions(1, true);
+      expect(aggressive).not.toBe(nonAggressive);
+    });
+
+    it("d2 aggressive instruction differs from d2 non-aggressive", () => {
+      const nonAggressive = buildDepthAwareInstructions(2, false);
+      const aggressive = buildDepthAwareInstructions(2, true);
+      expect(aggressive).not.toBe(nonAggressive);
+    });
+
+    it("d3 aggressive instruction differs from d3 non-aggressive", () => {
+      const nonAggressive = buildDepthAwareInstructions(3, false);
+      const aggressive = buildDepthAwareInstructions(3, true);
+      expect(aggressive).not.toBe(nonAggressive);
+    });
+
+    it("aggressive directive for depth>=1 contains terse brevity hint", () => {
+      // The aggressive directive should be a recognizable brevity instruction
+      const aggressive1 = buildDepthAwareInstructions(1, true);
+      const aggressive2 = buildDepthAwareInstructions(2, true);
+      const aggressive3 = buildDepthAwareInstructions(3, true);
+      // All aggressive variants must contain a brevity signal
+      expect(aggressive1.toLowerCase()).toMatch(/terse|brief|concise|shorter/);
+      expect(aggressive2.toLowerCase()).toMatch(/terse|brief|concise|shorter/);
+      expect(aggressive3.toLowerCase()).toMatch(/terse|brief|concise|shorter/);
+    });
+  });
 });
