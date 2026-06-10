@@ -35,26 +35,26 @@ export function buildDepthAwareInstructions(depth: number, aggressive: boolean):
 
   // d1: chronological timeline — mark decisions that were later superseded
   if (depth === 1) {
-    return (
+    const base =
       "Summarize the following sequence of conversation summaries as a chronological timeline. " +
       "Mark decisions that were later superseded (e.g. '[SUPERSEDED]'). Preserve all concrete " +
-      "outcomes, file paths, and open questions."
-    );
+      "outcomes, file paths, and open questions.";
+    return aggressive ? base + " Be as terse as possible while keeping the load-bearing facts." : base;
   }
 
   // d2: trajectory — what was the goal, key decisions, final state; drop per-session minutiae
   if (depth === 2) {
-    return (
+    const base =
       "Produce a trajectory summary: what was the overall goal, what key decisions were made, " +
       "what was the final state? Drop per-session minutiae (individual tool calls, retries). " +
-      "Focus on durable information a future session would need."
-    );
+      "Focus on durable information a future session would need.";
+    return aggressive ? base + " Be as terse as possible while keeping the load-bearing facts." : base;
   }
 
   // d3+: durable memory node — milestones, architectural decisions, long-lived constraints
-  return (
+  const base =
     "Distill the following into a durable memory node: milestones, architectural decisions, " +
     "and constraints that would still be relevant months from now. Omit transient details. " +
-    "Write as a dense, factual paragraph."
-  );
+    "Write as a dense, factual paragraph.";
+  return aggressive ? base + " Be as terse as possible while keeping the load-bearing facts." : base;
 }
