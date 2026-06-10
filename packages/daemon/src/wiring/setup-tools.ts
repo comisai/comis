@@ -70,7 +70,7 @@ import {
 // Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
 import { wireTerminalTools, buildTerminalEgressDeps, buildTerminalWiringDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
 // In-session expansion-loop (v2.12 Phase 131, E1/E2) dag-gated ctx_* wiring.
-import { wireContextTools, resolveCtxExpandDepth } from "./setup-context-tools.js";
+import { maybeWireContextTools } from "./setup-context-tools.js";
 // Tool-audit DEBUG-line subscription extracted to setup-tool-audit.ts (file-size cap).
 import { setupToolAuditLogging } from "./setup-tool-audit.js";
 
@@ -98,13 +98,7 @@ export interface ToolsDeps {
   rpcCall: RpcCall;
   /** Per-agent config map (container.config.agents). */
   agents: Record<string, PerAgentConfig>;
-  /**
-   * WR-04 (Phase 174-04): resolve the operator capabilityClass override for a provider
-   * (container.config.providers.entries.<id>.capabilities.capabilityClass) — the same source
-   * pi-executor threads into the live ModelProfile. Used to give `ctx_expand`'s tier-gated
-   * walk depth the operator's pinned tier, not the provider-family heuristic alone. Absent or
-   * returning undefined ⇒ the heuristic (back-compat). Keyed by the agent's `provider`.
-   */
+  /** WR-04 (Phase 174-04): resolve a provider's operator capabilityClass override (providers.entries.<id>.capabilities.capabilityClass) for ctx_expand's walk depth. */
   getProviderCapabilityClass?: (provider: string | undefined) => CapabilityClass | undefined;
   /** Default agent ID from routing config. */
   defaultAgentId: string;
@@ -642,24 +636,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       const terminalBase = { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers };
       wireTerminalTools(tools, terminalRegistries, agentId, buildTerminalWiringDeps(terminalBase, skillsConfig.terminal));
 
-      // Context expansion tools (v2.12 Phase 131, E1/E2): in-session lossless-store recovery
-      // (ctx_*). Wired in dag mode WITH a store; never-export, OUTSIDE the parity registry.
-      // WR-05 (Phase 174-04): the missing-version default is "dag" — ALIGNED with
-      // shouldRunLcdStorePasses (executor-post-execution.ts: `version ?? "dag"`), which gates
-      // the LCD store WRITES (ingest + leaf/condense + the DEPTH-03 bootstrap sweep). The two
-      // halves of the feature must fire under the SAME default: a bare agent config that
-      // writes durable history must also wire the ctx_* tools that read it back, else it
-      // writes history it can never recover in-session. (Was `?? "pipeline"` — a pre-existing
-      // skew this milestone closes.)
-      if ((agentConfig?.contextEngine?.version ?? "dag") === "dag" && deps.lcdStore) {
-        const maxExpandTokens = agentConfig?.contextEngine?.maxExpandTokens ?? 4000;
-        // WR-04: thread the operator capabilityClass override (providers.entries.<id>.
-        // capabilities.capabilityClass) so a pinned tier governs the walk depth — same
-        // source pi-executor uses; absent ⇒ provider-family heuristic.
-        const ctxCapabilityOverride = deps.getProviderCapabilityClass?.(agentConfig?.provider);
-        const maxExpandDepth = resolveCtxExpandDepth(agentConfig?.model, agentConfig?.provider, ctxCapabilityOverride); // DEPTH-02: tier-gated multi-hop depth (capacity knob → wiring-time; R4 per-call)
-        wireContextTools(tools, deps.lcdStore, agentId, { skillsLogger, nowMs: systemNowMs, maxExpandTokens, maxExpandDepth, getToolResultsDir, eventBus }); // O1: eventBus → ctx_* context:dag_expanded
-      }
+      // Context expansion tools (v2.12 Phase 131): dag-gated ctx_* wiring — gate + WR-04/WR-05 in maybeWireContextTools (file-size cap; see its doc).
+      maybeWireContextTools(tools, deps.lcdStore, agentId, agentConfig, {
+        skillsLogger, nowMs: systemNowMs, getToolResultsDir, eventBus,
+        capabilityClassOverride: deps.getProviderCapabilityClass?.(agentConfig?.provider),
+      });
 
       return tools;
     };
