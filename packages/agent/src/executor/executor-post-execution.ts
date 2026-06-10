@@ -1585,6 +1585,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
                   memoryPort: deps.memoryPort!,
                   lcdStore: store,
                   embeddingEnqueue: deps.embeddingEnqueue,
+                  // WR-03: a clock CALLABLE so the runner times its write boundary
+                  // (entry → completion) for the durationMs INFO line. Bound to the
+                  // injected ClockPort — never Date.now().
+                  nowFn: () => deps.clock.now(),
                   logger: deps.logger,
                   eventBus: deps.eventBus,
                   distillConfig: config.contextEngine?.memory?.distillFromLcd,

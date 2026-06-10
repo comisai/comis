@@ -64,6 +64,13 @@ export interface RunDistillationPassParams {
     lcdStore: ContextStorePort;
     /** Fire-and-forget embedding queue. Optional — absent ⇒ no embedding. */
     embeddingEnqueue?: (entryId: string, content: string) => void;
+    /**
+     * WR-03: optional injected clock CALLABLE for the write-path completion
+     * timing (entry → emit two reads → durationMs). Bound to the daemon's
+     * ClockPort — NEVER Date.now(). Absent ⇒ durationMs is omitted from the INFO
+     * line (timing degrades, the pass still runs).
+     */
+    nowFn?: () => number;
     /** Logger — content-free, ids/counts/errorKinds only. */
     logger: ComisLogger;
     /** Optional event bus for observable skip + complete events. */
@@ -183,6 +190,10 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
   }
 
   // All gates passed — enter the write path (non-fatal).
+  // WR-03: time the whole write boundary via the injected clock (entry read);
+  // the completion read happens at the INFO line below. `now` is the entry value
+  // when no clock callable is injected (durationMs then degrades to 0/omitted).
+  const startMs = deps.nowFn ? deps.nowFn() : now;
   try {
     // GATE 7: validateMemoryWrite (secret-egress firewall — mirrors
     // storePairedConversationMemory:496-511 EXACTLY). A non-clean verdict
@@ -204,27 +215,40 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
         },
         "LCD distillation skipped: failed the memory-write security scan",
       );
+      // IN-04: emit the documented reason:"validation" skip so the
+      // security-relevant secret-egress block is fleet-observable (consistent
+      // with every other gate). CONTENT-FREE: ids/agentId/sessionKey only —
+      // NEVER the matched secret text or the verdict patterns.
+      deps.eventBus?.emit("memory:distillation_skipped", {
+        reason: "validation",
+        summaryId,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+      });
       return;
     }
 
     // GATE 8: dedup check (DIST-02) — cosine when vec present, FTS/lexical fallback.
-    // Uses memoryPort.search with a SessionKey scoped to the agent for R4 isolation.
-    // The SessionKey carries tenantId + agentId so search returns ONLY this agent's
-    // memories (not cross-agent or cross-tenant rows).
+    // R4 read-isolation (CR-02): SqliteMemoryAdapter.search() filters rows by
+    // sessionKey.tenantId for the TENANT boundary, but applies the load-bearing
+    // `agent_id = ?` AGENT predicate ONLY when options.agentId is set (it ignores
+    // sessionKey.agentId/.userId/.channelId entirely). So the agent filter MUST
+    // ride in the options object — passing it on the SessionKey alone is a no-op
+    // and would let a different agent's near-duplicate in the same tenant suppress
+    // this agent's write (a cross-agent dedup false positive + R4 read gap).
     const dedupThreshold = deps.distillConfig?.dedupCosineThreshold ?? 0.92;
-    // Construct a synthetic SessionKey from the ContextStoreScope. The search
-    // path uses tenantId + agentId for row filtering; userId and channelId are
-    // required fields so we use the agentId as a stable proxy channel identifier.
+    // The SessionKey only carries the tenant filter into search(); userId and
+    // channelId are required-by-type fields the adapter does NOT consume here.
     const searchSessionKey: SessionKey = {
       tenantId: scope.tenantId,
-      userId: scope.agentId,         // stable tenant-agent scoping identity
-      channelId: scope.conversationId, // scopes to this conversation's memories
-      agentId: scope.agentId,
+      userId: scope.agentId, // unused by search() — kept only to satisfy the type
+      channelId: scope.conversationId, // unused by search()
+      agentId: scope.agentId, // unused by search() — the real filter is the option below
     };
     const searchResult = await deps.memoryPort.search(
       searchSessionKey,
       content,
-      { limit: 1, minScore: dedupThreshold },
+      { limit: 1, minScore: dedupThreshold, agentId: scope.agentId }, // <-- the actual R4 agent filter
     );
     if (searchResult.ok && searchResult.value.length > 0) {
       const topScore = searchResult.value[0]?.score ?? 0;
@@ -287,14 +311,49 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
       tenantId: scope.tenantId,
       createdAt: now,
     };
-    deps.lcdStore.appendProvenance?.(provenanceInput);
+    if (deps.lcdStore.appendProvenance == null) {
+      // WR-03: a write occurred but provenance cannot be linked (a realistic
+      // partial-wire: memoryPort present, appendProvenance not implemented). Do
+      // NOT silently optional-chain past it — surface it so an operator can see
+      // the distilled memory has no provenance row (recall down-weighting will be
+      // unavailable for it). DEBUG (not WARN): the memory write itself succeeded.
+      deps.logger.debug(
+        {
+          summaryId,
+          memoryId: entryId,
+          agentId: scope.agentId,
+          sessionKey: scope.sessionKey,
+          errorKind: "precondition" as ErrorKind,
+          hint: "lcdStore.appendProvenance not implemented — provenance row skipped (recall down-weighting unavailable for this memory); wire the concrete LCD provenance write adapter",
+        },
+        "LCD distillation provenance write skipped (no impl)",
+      );
+    } else {
+      deps.lcdStore.appendProvenance(provenanceInput);
+    }
 
     // STEP 12: SUPERSESSION BFS — mark descendant provenance rows superseded by
     // the new distilled memory (pyramid rule). Do NOT walk the rootSummaryId
     // itself — only its descendants. See markDescendantsSuperseded below.
     await markDescendantsSuperseded(summaryId, entryId, scope, deps);
 
-    // STEP 13: emit completion event (content-free, ids/counts/depth only).
+    // STEP 13: completion. WR-03: an INFO line carrying durationMs (the §2.7
+    // boundary-completion requirement) — content-free, ids/depth only — PLUS the
+    // bus event. durationMs is from the injected clock (nowFn); 0 when no clock
+    // callable was injected (timing degrades, never Date.now()).
+    const durationMs = (deps.nowFn ? deps.nowFn() : now) - startMs;
+    deps.logger.info(
+      {
+        step: "distillation",
+        summaryId,
+        memoryId: entryId,
+        depth,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        durationMs,
+      },
+      "LCD distillation memory persisted",
+    );
     deps.eventBus?.emit("memory:distillation_complete", {
       summaryId,
       memoryId: entryId,
