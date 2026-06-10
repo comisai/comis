@@ -209,6 +209,15 @@ export function normalizeToolSchemasForProvider(
     // survive; reactive stripping on grammar-400 lives in the executor,
     // GBNF-02).
     if (isGbnf) {
+      // CR-01 (175-REVIEW): force the Layer-4 top-level object contract
+      // BEFORE the gbnf transforms. T4 (missing-type injection) fires on
+      // typeless nodes and infers "string" for a bare/description-only TOP
+      // LEVEL (`parameters: {}` — a real no-arg-tool shape from sloppy MCP
+      // servers); Layer 4 below then no-ops because a type is present,
+      // shipping a top-level {"type":"string"} arguments payload only on
+      // gbnf providers. Pre-forcing is idempotent ({} → {type:"object"} →
+      // T3 adds properties:{}) and byte-stable on re-runs.
+      schema = ensureTopLevelObjectSingle(schema);
       const gbnfResult = cleanSchemaForGbnf(schema);
       schema = gbnfResult.schema;
       if (gbnfResult.transformedKeywords.length > 0) {
