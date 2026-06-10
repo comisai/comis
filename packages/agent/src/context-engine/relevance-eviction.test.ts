@@ -24,6 +24,15 @@
  *  - step atomic: a tool_use/tool_result pair is kept-or-dropped together.
  *  - degrade floor: no scorer / no store / empty band / degraded query → identical to
  *    evictHistoryUnderBudget; never throws.
+ *  - WR-01 (Phase 174-04) — id-based match (DE-MASKED): the pass associates a band message
+ *    with its FTS hit by the STABLE `refId` (= lcd_messages.id) the hit carries, NOT by a
+ *    snippet substring. The WR-01 fixtures use a stored snippet that DIFFERS from the live
+ *    block-text render (a pure tool_use/tool_result message + a non-FTS5 LIKE metadata-JSON
+ *    snippet) — the exact cases the old `snippet.includes(renderMessageText(msg))` silently
+ *    dropped to the recency tail. They assert MEMBERSHIP (tool messages participate), and FAIL
+ *    on the pre-patch snippet-substring code. The earlier `fakeStoreRanking` snippet==render
+ *    fixtures (the rigged-test masking WR-01 flagged) are retained ONLY for the
+ *    cache-stable/chronological/pinned/degrade invariants, which are render-agnostic.
  *
  * @module
  */
@@ -47,15 +56,50 @@ function msg(text: string, role: "user" | "assistant" | "toolResult" = "user"): 
   return { role, content: text } as unknown as AgentMessage;
 }
 
-/** A history BudgetItem: a message + its supplied token count. */
-function item(text: string, tokens: number, role: "user" | "assistant" = "user"): BudgetItem {
-  return { msg: msg(text, role), tokens };
+/** A pure tool_use message: an assistant turn whose content is a single tool_use block (NO
+ *  text block), so {@link renderMessageText} (block .text join) renders to "" — the WR-01
+ *  divergence: its stored FTS snippet (renderMessageFtsText = toolName + JSON(args)) can never
+ *  contain that empty render, so the snippet-substring match silently drops it. `marker` is a
+ *  test-only identifier carried on the block so keptTexts can name the kept message. */
+function toolUseMsg(marker: string): AgentMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "tool_use", id: marker, name: marker, input: { marker } }],
+  } as unknown as AgentMessage;
+}
+
+/** A pure tool_result message (NO text block) — same divergence as {@link toolUseMsg}. */
+function toolResultMsg(marker: string): AgentMessage {
+  return {
+    role: "toolResult",
+    content: [{ type: "tool_result", tool_use_id: marker, content: { marker } }],
+  } as unknown as AgentMessage;
+}
+
+/** A history BudgetItem: a message + its supplied token count. Optional `lcdId` carries the
+ *  store id the assembler now threads (WR-01) so the relevance pass can match a hit by `refId`
+ *  rather than snippet substring. */
+function item(text: string, tokens: number, role: "user" | "assistant" = "user", lcdId?: string): BudgetItem {
+  return { msg: msg(text, role), tokens, lcdId };
 }
 
 /** A `toolResult`-role BudgetItem: the inseparable result tail of an assistant `tool_use`.
  *  The step grouper binds a trailing toolResult to the preceding non-toolResult message. */
-function toolResultItem(text: string, tokens: number): BudgetItem {
-  return { msg: msg(text, "toolResult"), tokens };
+function toolResultItem(text: string, tokens: number, lcdId?: string): BudgetItem {
+  return { msg: msg(text, "toolResult"), tokens, lcdId };
+}
+
+/** A BudgetItem wrapping an arbitrary message + its store id (WR-01 id-based match). */
+function itemWithId(message: AgentMessage, tokens: number, lcdId: string): BudgetItem {
+  return { msg: message, tokens, lcdId };
+}
+
+/** Read a tool message's test marker (the `name` of the tool_use block / the toolResult id). */
+function markerOf(m: AgentMessage): string | undefined {
+  const content = (m as unknown as { content?: unknown }).content;
+  if (!Array.isArray(content)) return undefined;
+  const block = content[0] as { name?: string; tool_use_id?: string } | undefined;
+  return block?.name ?? block?.tool_use_id;
 }
 
 /** Read a message's identifying text back (the builder stores it on `content`). */
@@ -101,6 +145,67 @@ function fakeStoreRanking(rankedTexts: string[]): ContextStorePort {
 /** A store whose searchLcd returns ZERO hits (degrade-to-recency floor). */
 function fakeStoreEmpty(): ContextStorePort {
   return { searchLcd: () => ({ hits: [], cjkZeroHit: false }) } as unknown as ContextStorePort;
+}
+
+/**
+ * WR-01 DE-MASK — a fake ContextStorePort whose hits are matched by the STABLE `refId`
+ * (= lcd_messages.id), with a `snippet` that DELIBERATELY DIFFERS from the live block-text
+ * render. This reproduces production: the FTS path stores `renderMessageFtsText` (text +
+ * toolName + JSON(toolInput/toolOutput), lcd-fts.ts:61) which is NOT a substring of the live
+ * `renderMessageText` for a pure tool_use/tool_result message (no text block → live render is
+ * ""). The old snippet-substring match therefore returns the unmatched sentinel for these and
+ * sorts them to the recency tail; a correct id-based match associates the hit by `refId`.
+ *
+ * @param rankedIds - the band item lcd ids in DESCENDING relevance (most relevant first).
+ */
+function fakeStoreRankingByIdFts(rankedIds: string[]): ContextStorePort {
+  const searchLcd = (): LcdSearchResult => ({
+    hits: rankedIds.map((id, i) => ({
+      kind: "message" as const,
+      refId: id,
+      // The stored FTS snippet is NOT the live block-text render — for a tool message it is
+      // the renderMessageFtsText JSON envelope, which the live `""` render can never match.
+      snippet: `FTS_RENDER(${id}) name=tool args={"k":"v"} <<< diverges from live block text`,
+      rank: -1 - i, // BM25 ranks negative; best (most relevant) closest to 0
+    })),
+    cjkZeroHit: false,
+  });
+  return new Proxy({ searchLcd } as unknown as ContextStorePort, {
+    get(target, prop) {
+      if (prop === "searchLcd") return (target as { searchLcd: typeof searchLcd }).searchLcd;
+      throw new Error(`relevance-eviction must not call ContextStorePort.${String(prop)}`);
+    },
+  });
+}
+
+/**
+ * WR-01 DE-MASK — the NON-FTS5-host LIKE fallback: `searchLcd` returns each message hit with a
+ * `snippet` of the matched part's `metadata` JSON envelope (lcd-fts.ts:356), NOT rendered text,
+ * AND `rank: undefined` (the LIKE path has no BM25 ranking). Under the old snippet-substring
+ * match this metadata JSON contains the live render of essentially nothing, so the ENTIRE pass
+ * degraded to recency. The id-based match keys on `refId`, so the LIKE fallback still ranks.
+ *
+ * @param rankedIds - the band item lcd ids in scan order (LIKE returns no ranking; the order is
+ *                    the SELECT order, which the id-based match uses as the relevance ordinal).
+ */
+function fakeStoreRankingByIdLike(rankedIds: string[]): ContextStorePort {
+  const searchLcd = (): LcdSearchResult => ({
+    hits: rankedIds.map((id, i) => ({
+      kind: "message" as const,
+      refId: id,
+      // Metadata-JSON envelope that does NOT contain the message's live render — keyed only by
+      // an OPAQUE ordinal so the old snippet-substring match can never accidentally hit it.
+      snippet: `{"raw":{"kind":"text"},"part":"opaque-metadata-blob-#${i}"}`,
+      rank: undefined, // LIKE fallback: no BM25 rank
+    })),
+    cjkZeroHit: false,
+  });
+  return new Proxy({ searchLcd } as unknown as ContextStorePort, {
+    get(target, prop) {
+      if (prop === "searchLcd") return (target as { searchLcd: typeof searchLcd }).searchLcd;
+      throw new Error(`relevance-eviction must not call ContextStorePort.${String(prop)}`);
+    },
+  });
 }
 
 const cachingProfile: ModelProfile = { ...FAIL_CLOSED_PROFILE, supportsPromptCache: true };
@@ -267,5 +372,109 @@ describe("rankMiddleBandByRelevance — DEPTH-01 cache-stable relevance eviction
     ).toEqual(recency);
     // (e) empty band → [] (never throws).
     expect(rankMiddleBandByRelevance(makeDeps(), [], pool, LIVE, HEALTHY_QUERY)).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-01 (Phase 174-04) — DE-MASKED match: the relevance pass associates a band
+  // message with its FTS hit by the STABLE refId (= lcd_messages.id) the hit carries,
+  // NOT by snippet substring. The fixtures below use a stored snippet that DIFFERS from
+  // the live block-text render (a pure tool_use/tool_result message + a LIKE-fallback
+  // metadata-JSON snippet) — the EXACT cases the old snippet-substring match silently
+  // dropped to the recency tail. These FAIL on the pre-patch code (a tool message's live
+  // render is "" / a JSON shape that is not a substring of the snippet → unmatched
+  // sentinel → recency), and the assertion is MEMBERSHIP (the tool message participates),
+  // not a numeric score.
+  // -------------------------------------------------------------------------
+
+  it("WR-01: a pure tool_use message participates in relevance selection via refId (snippet ≠ live render)", () => {
+    // Band: [tool_use("call0"), text "new1", text "new2"], 40 tokens each; pool fits 1 (40).
+    // The OLDEST is a PURE tool_use message (renderMessageText → "") that the FTS hit ranks
+    // MOST relevant by its lcd id. A snippet-substring match would drop it (empty render is
+    // never a substring of the FTS snippet) and keep the newest text message by recency.
+    const band: BudgetItem[] = [
+      itemWithId(toolUseMsg("call0"), 40, "id-call0"),
+      item("new1", 40, "user", "id-new1"),
+      item("new2", 40, "user", "id-new2"),
+    ];
+    const pool = 40;
+    const deps = makeDeps({
+      modelProfile: nonCachingProfile,
+      // Rank the tool_use's lcd id MOST relevant; the two text messages least relevant.
+      contextStore: fakeStoreRankingByIdFts(["id-call0", "id-new1", "id-new2"]),
+    });
+
+    const kept = rankMiddleBandByRelevance(deps, band, pool, LIVE, HEALTHY_QUERY);
+    const keptMarkers = kept.map((m) => markerOf(m) ?? textOf(m));
+
+    // The PURE tool_use message is the most-relevant by FTS rank → it MUST be kept even
+    // though its live render is "". This is the WR-01 fix: tool messages participate.
+    expect(keptMarkers).toContain("call0");
+    // And this DIFFERS from pure recency (which would have kept the NEWEST text message):
+    expect(keptTexts(evictHistoryUnderBudget(band, pool))).toEqual(["new2"]);
+    expect(keptMarkers).not.toContain("new2");
+  });
+
+  it("WR-01: a tool_use/tool_result PAIR both participate via refId and stay step-atomic", () => {
+    // Step 0: assistant tool_use("call0") + toolResult("res0") = one inseparable step (80).
+    // Step 1: text "u1" (40). Pool = 80 fits the WHOLE pair OR u1. The FTS hit ranks the
+    // tool_use's lcd id MOST relevant — a snippet-substring match would drop BOTH tool
+    // messages (empty live render) and keep u1; the id-based match keeps the pair.
+    const band: BudgetItem[] = [
+      itemWithId(toolUseMsg("call0"), 40, "id-call0"),
+      itemWithId(toolResultMsg("res0"), 40, "id-res0"),
+      item("u1", 40, "user", "id-u1"),
+    ];
+    const pool = 80;
+    const deps = makeDeps({
+      modelProfile: nonCachingProfile,
+      contextStore: fakeStoreRankingByIdFts(["id-call0", "id-res0", "id-u1"]),
+    });
+
+    const kept = rankMiddleBandByRelevance(deps, band, pool, LIVE, HEALTHY_QUERY);
+    const markers = new Set(kept.map((m) => markerOf(m) ?? textOf(m)));
+
+    // The most-relevant tool_use is kept AND its toolResult rides with it (step atomic) —
+    // both tool messages participated in selection (pre-patch: neither did → u1 kept).
+    expect(markers.has("call0")).toBe(true);
+    expect(markers.has("res0")).toBe(true);
+    expect(markers.has("u1")).toBe(false);
+    // Never a lone toolResult at the head.
+    if (kept.length > 0) {
+      expect((kept[0] as unknown as { role: string }).role).not.toBe("toolResult");
+    }
+  });
+
+  it("WR-01: the non-FTS5 LIKE fallback (metadata-JSON snippet, no rank) still ranks by refId", () => {
+    // On a SQLite build without FTS5, searchLcd returns p.metadata AS snippet (NOT rendered
+    // text) and rank=undefined. Under the old snippet-substring match the ENTIRE pass degraded
+    // to recency. The LIKE ranking is INTERLEAVED (oldest + newest most relevant, the two
+    // middle items least relevant) so a correct id-based match yields a NON-CONTIGUOUS,
+    // NON-CHRONOLOGICAL selection that NEITHER recency NOR the unmatched-everything
+    // chronological fallback can reproduce — the spurious-pass guard.
+    const band: BudgetItem[] = [
+      item("old0", 40, "user", "id-old0"),
+      item("mid1", 40, "user", "id-mid1"),
+      item("mid2", 40, "user", "id-mid2"),
+      item("new3", 40, "user", "id-new3"),
+    ];
+    const pool = 80;
+    const deps = makeDeps({
+      modelProfile: nonCachingProfile,
+      // LIKE scan order ranks the OLDEST and the NEWEST most relevant; the two middle least.
+      contextStore: fakeStoreRankingByIdLike(["id-old0", "id-new3", "id-mid1", "id-mid2"]),
+    });
+
+    const kept = rankMiddleBandByRelevance(deps, band, pool, LIVE, HEALTHY_QUERY);
+    const keptSet = new Set(keptTexts(kept));
+
+    // SELECTION by id-rank despite the metadata-JSON snippet: the OLDEST + the NEWEST are
+    // kept, the two middle dropped. This is impossible under recency (newest-contiguous →
+    // [mid2,new3]) AND under the pre-patch unmatched-everything chronological fallback
+    // (oldest-contiguous → [old0,mid1]).
+    expect(keptSet.has("old0")).toBe(true);
+    expect(keptSet.has("new3")).toBe(true);
+    expect(keptSet.has("mid1")).toBe(false);
+    expect(keptSet.has("mid2")).toBe(false);
+    expect(keptTexts(evictHistoryUnderBudget(band, pool))).toEqual(["mid2", "new3"]);
   });
 });
