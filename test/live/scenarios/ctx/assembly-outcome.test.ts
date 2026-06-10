@@ -115,3 +115,20 @@ describe.skipIf(!isLive)(
     );
   },
 );
+
+// Stage-B skeleton preserved for Phase-173 wire-in:
+// import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
+// import { buildCtxConfig } from "../../harness/ctx-config.js";
+// import { mkdtempSync } from "node:fs";
+// import { tmpdir } from "node:os";
+//
+// describe.skipIf(!isLive)("HARN-01 Stage-B — live assembly outcome (COMIS_LIVE required)", () => {
+//   it("seeded conversation about known facts scores ≥ 0.6 on factual recall question", async () => {
+//     const dataDir = mkdtempSync(tmpdir() + "/assembly-outcome-");
+//     const configPath = buildCtxConfig({ version: "dag", label: "assembly-outcome", filePrefix: "ao" });
+//     const driver = new ConversationDriver({ agentId: "ao-test", provider: "anthropic", timeoutMs: 5 * 60_000 });
+//     // ... seed known facts via driver, query, capture modelAnswer ...
+//     // const score = assemblyOutcomeScore(modelAnswer, referenceAnswer, keyFacts);
+//     // assertAssemblyOutcome({ score, threshold: 0.6, scenarioId: "harn-01-live", modelAnswer });
+//   });
+// });
