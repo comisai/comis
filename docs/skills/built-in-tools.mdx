@@ -493,6 +493,8 @@ action: screenshot
 
 Context tools help your agent search and recall information from the current conversation session. In the default **DAG** (LCD) mode the available tools are three **in-session** expansion tools -- `ctx_search`, `ctx_inspect`, and `ctx_expand` -- that recover detail the summary hierarchy compressed away within the current conversation. They are active only in DAG mode (`contextEngine.version` defaults to `"dag"`), `never-export`, and distinct from cross-session recall (`memory_search`, `session_search`). In the opt-in **pipeline** mode the available tool is `session_search` instead. See [Context expansion tools](/agent-tools/sessions#context-expansion-tools) and [Compaction](/agents/compaction) for how the engines work.
 
+`ctx_expand` performs a bounded in-process **multi-hop walk**: starting from a summary, it descends the summary-parent hierarchy (condensed summary -> child summaries -> leaf summaries -> the underlying messages) and -- when the knowledge graph is populated -- fuses bounded KG hops, returning a **ranked, cited evidence bundle**. The walk is **depth-capped per model tier** (nano 1 / small 2 / mid 3 / frontier 4 hops), token-capped (`maxExpandTokens`), and node-visit capped, so it can never run away on a deep or cyclic hierarchy. It is **read-only**, runs inside the per-conversation single-flight serializer, secret-scrubs and taint-wraps every recovered region on re-entry, and spills oversized output to a session file. It is **not** a sub-agent -- the walk is deterministic and in-process. When the knowledge graph is empty (the default), the walk degrades cleanly to summary-parent edges only.
+
 ### Availability
 
 | Tool | Pipeline Mode | DAG Mode | Description |
@@ -500,7 +502,7 @@ Context tools help your agent search and recall information from the current con
 | `session_search` | Yes | Yes | Search current session history |
 | `ctx_search` | No | Yes | Full-text search over this conversation's compressed history |
 | `ctx_inspect` | No | Yes | Inspect a compressed summary's metadata and children |
-| `ctx_expand` | No | Yes | Recover a compressed region back to its underlying messages |
+| `ctx_expand` | No | Yes | Bounded multi-hop walk that recovers a compressed region's underlying detail (depth-capped per model tier) as a ranked, cited bundle |
 
 <AccordionGroup>
 
@@ -519,6 +521,32 @@ Searches through the current conversation session history using case-insensitive
 **Notes:**
 - Search results are protected from observation masking, so recovered content remains visible
 - This tool is registered as a protected tool name -- its results survive compaction
+
+</Accordion>
+
+<Accordion title="ctx_expand -- Multi-hop recover a compressed region (DAG mode)">
+
+Recovers the underlying detail of a compressed summary region of the current conversation via a **bounded in-process multi-hop walk**. Given a summary id (from `ctx_search` / `ctx_inspect`), it descends the summary-parent hierarchy -- a condensed summary's child summaries, then their leaf summaries, then the underlying messages -- and returns a **ranked, cited evidence bundle**. Available in DAG mode only.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `summaryId` | `string` | Yes | The summary id (from `ctx_search` / `ctx_inspect`) whose compressed region to recover |
+
+**Caps (the walk is always bounded):**
+
+| Cap | Bound |
+|-----|-------|
+| Depth | Tier-gated per the agent's model: nano 1, small 2, mid 3, frontier 4 hops |
+| Tokens | `contextEngine.maxExpandTokens` (default 4000) -- oversized output spills to a session file with a handle |
+| Node visits | Capped so a wide or cyclic hierarchy can never run away (a visited-set makes it cycle-safe) |
+
+**Notes:**
+- **Read-only** and runs inside the per-conversation single-flight serializer, so it never interleaves with a concurrent compaction write.
+- Every recovered region is **secret-scrubbed** and **taint-wrapped** on re-entry (untrusted content), and large bundles spill to a session file you can read with the file tools.
+- The knowledge-graph (KG) hop is optional: when the KG is empty or disabled (the default), the walk degrades cleanly to **summary-parent edges only** -- the KG is never a precondition.
+- It is **not** a sub-agent: the walk is deterministic and in-process. A drifted (missing) message id is skipped, never fatal -- the result reports a partial-coverage count.
 
 </Accordion>
 
