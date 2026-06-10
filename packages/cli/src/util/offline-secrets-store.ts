@@ -13,6 +13,7 @@
 import {
   offlineSecretSet as _offlineSecretSet,
   offlineSecretsList as _offlineSecretsList,
+  offlineSecretGet as _offlineSecretGet,
   offlineOAuthProfileSet as _offlineOAuthProfileSet,
   openSqliteDatabase as _openSqliteDatabase,
   createObservabilityStore as _createObservabilityStore,
@@ -27,6 +28,9 @@ export type { ObservabilityStore };
 
 export const offlineSecretSet = _offlineSecretSet;
 export const offlineSecretsList = _offlineSecretsList;
+// W15: daemon-free decrypted read — breaks the gateway-token chicken-and-egg
+// (`secrets get COMIS_GATEWAY_TOKEN` needed the RPC that needed the token).
+export const offlineSecretGet = _offlineSecretGet;
 // OAuth profiles collected during `comis init` (encrypted mode, daemon down)
 // are sealed into secrets.db through this same L11-allowed re-open site.
 export const offlineOAuthProfileSet = _offlineOAuthProfileSet;

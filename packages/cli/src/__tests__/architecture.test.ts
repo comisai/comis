@@ -198,7 +198,10 @@ describe("@comis/cli -- architecture invariants", () => {
 // Source-grep approach (simpler than rendering Commander help).
 //
 // Fallback-capable (set, list, import): daemon RPC when up; direct store when down.
-// Daemon-required  (get, delete):       always require daemon — no offline fallback.
+// Daemon-default w/ explicit offline (get): daemon RPC by default (audit-logged);
+//   `--offline` reads the local store directly (W15 — breaks the gateway-token
+//   chicken-and-egg where fetching COMIS_GATEWAY_TOKEN required the token).
+// Daemon-required  (delete):            always require daemon — no offline fallback.
 // Daemon-free      (init, audit):       never mention daemon as required.
 // ---------------------------------------------------------------------------
 
@@ -219,10 +222,12 @@ describe("daemon-required help-text patterns", () => {
     ).toMatch(SECRETS_FALLBACK_PATTERN);
   });
 
-  it("secrets get description contains the daemon-required precondition string", () => {
+  it("secrets get description documents the daemon default AND the explicit --offline escape (W15)", () => {
     const contents = readFileSync(SECRETS_FILE, "utf8");
     const sec = extractSubcommandDescription(contents, "get <name>");
-    expect(sec).toMatch(SECRETS_REQUIRED_PATTERN);
+    expect(sec).toMatch(/Requires the comis daemon to be running/);
+    expect(sec).toMatch(/--offline/);
+    expect(sec).toMatch(/SECRETS_MASTER_KEY/);
   });
 
   it("secrets list description contains the daemon-fallback precondition string", () => {
