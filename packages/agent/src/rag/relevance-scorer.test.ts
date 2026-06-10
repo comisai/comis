@@ -116,11 +116,12 @@ describe("scoreRelevance — BM25 floor, RRF lift, deterministic low-signal fall
   });
 
   it("RRF LIFT: two lanes reorder by k=60 fused rank, never raw score", () => {
-    // FTS ranks: a(1), b(2). Vector ranks: b(1), a(2). RRF with equal weights:
-    //   a: 1/(60+1) + 1/(60+2) = 0.016393 + 0.016129 = 0.032522
-    //   b: 1/(60+2) + 1/(60+1) = same 0.032522  → TIE → first-seen (a) wins.
-    // A THIRD doc present only in the vector lane at rank 1 must out-rank both
-    // (it has the strongest single-lane rank where the others split).
+    // FTS ranks: a(1), b(2). Vector ranks: c(1), b(2), a(3). RRF (equal weight, k=60):
+    //   a: 1/(60+1) + 1/(60+3) = 0.0163934 + 0.0158730 = 0.0322664
+    //   b: 1/(60+2) + 1/(60+2) = 0.0161290 + 0.0161290 = 0.0322580
+    //   c: 1/(60+1)            = 0.0163934
+    // → fused order a > b > c. The decisive proof: c has the HIGHEST raw score (0.99)
+    //   yet RRF demotes it BELOW b (which appears in both lanes) — rank fusion, not raw.
     const fts = [makeResult("a", 0.95), makeResult("b", 0.10)];
     const vector = [makeResult("c", 0.99), makeResult("b", 0.50), makeResult("a", 0.40)];
     const lanes: FusionLane[] = [
@@ -132,13 +133,15 @@ describe("scoreRelevance — BM25 floor, RRF lift, deterministic low-signal fall
     const out = scoreRelevance(lanes, query, { logger: noopLogger });
     const order = out.map((r) => r.entry.id);
 
-    // b appears in BOTH lanes (rank2 + rank1) → highest fused score → first.
-    expect(order[0]).toBe("b");
-    // a (rank1 fts + rank2 vector) and c (rank1 vector only) follow; both present.
-    expect(order).toContain("a");
-    expect(order).toContain("c");
+    // Fused rank order (a just edges b on the k=60 math; both beat c).
+    expect(order).toEqual(["a", "b", "c"]);
+    // b appears in BOTH lanes → its fused rank LIFTS it above c despite c's higher raw score.
+    expect(order.indexOf("b")).toBeLessThan(order.indexOf("c"));
     // It is NOT the raw-score order (raw would be c(0.99) > a(0.95) > b...): fused rank wins.
     expect(order).not.toEqual(["c", "a", "b"]);
+    // Scores are RRF-normalized to (0,1], not the raw input scores.
+    expect(out.every((r) => (r.score ?? 0) > 0 && (r.score ?? 0) <= 1)).toBe(true);
+    expect(out.map((r) => r.score)).not.toEqual([0.95, 0.10, 0.99]);
   });
 
   it("LOW-SIGNAL FALLBACK: a degraded query returns recency-first (input order unchanged), deterministic", () => {
