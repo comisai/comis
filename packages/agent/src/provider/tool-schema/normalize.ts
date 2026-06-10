@@ -2,12 +2,14 @@
 /**
  * Per-provider tool schema normalization pipeline.
  *
- * 5-layer architecture applied sequentially per tool:
- *   0. Universal anyOf/const-to-enum normalization (all providers)
- *   1. Provider keyword stripping (reuses existing schema-normalizer.ts)
- *   2. Gemini-specific deep cleaning ($ref, $defs, $schema, if/then/else, etc.)
- *   3. xAI constraint stripping (minLength, maxLength, minimum, maximum, etc.)
- *   4. OpenAI top-level type: "object" forcing (universal)
+ * Layered architecture applied sequentially per tool:
+ *   0.   Universal anyOf/const-to-enum normalization (all providers)
+ *   1.   Provider keyword stripping (reuses existing schema-normalizer.ts)
+ *   2.   Gemini-specific deep cleaning ($ref, $defs, $schema, if/then/else, etc.)
+ *   3.   xAI constraint stripping (minLength, maxLength, minimum, maximum, etc.)
+ *   3.5. GBNF structural transforms for llama.cpp-family local providers
+ *        (gated on compat.toolSchemaProfile === "gbnf"; removal/relaxation only)
+ *   4.   OpenAI top-level type: "object" forcing (universal)
  *
  * Entry point: `normalizeToolSchemasForProvider(tools, ctx)` accepts
  * `ToolDefinition[]` and returns normalized `ToolDefinition[]` (new objects,
@@ -24,6 +26,7 @@ import {
   PROVIDER_UNSUPPORTED_KEYWORDS,
 } from "../../safety/tool-schema-safety.js";
 import { resolveProviderCapabilities } from "../capabilities.js";
+import { cleanSchemaForGbnf, type GbnfTransformKeyword } from "./clean-for-gbnf.js";
 import { cleanSchemaForGemini } from "./clean-for-gemini.js";
 import { stripXaiUnsupportedKeywords } from "./clean-for-xai.js";
 import { normalizeAnyOfToEnum } from "./normalize-enums.js";
@@ -40,6 +43,25 @@ let logger: ComisLogger | undefined;
  */
 export function setToolNormalizationLogger(l: ComisLogger): void {
   logger = l;
+}
+
+/**
+ * Once-per-boot-per-provider INFO latch (GBNF-03). A boot-time SNAPSHOT
+ * summary, not a recurring event: the daemon process IS the boot, so a
+ * module-level latch gives once-per-boot semantics with zero new wiring
+ * (the logger is latched at boot via setToolNormalizationLogger, wired in
+ * setup-agents-registry.ts). Counts + names only — never schema bodies
+ * (I7). Per-turn detail stays at trace.
+ */
+const gbnfSummaryLoggedForProvider = new Set<string>();
+
+/**
+ * Test-only reset for the module-level gbnf boot-summary latch — without it,
+ * test order breaks (same rationale as the logger reset in the test suite's
+ * beforeEach).
+ */
+export function resetGbnfBootSummaryForTest(): void {
+  gbnfSummaryLoggedForProvider.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -92,11 +114,13 @@ function ensureTopLevelObject(tools: ToolDefinition[]): ToolDefinition[] {
 /**
  * Normalize tool schemas for a specific provider.
  *
- * Applies up to 5 layers based on provider family and compat config:
+ * Applies up to 6 layers based on provider family and compat config:
  *   - Layer 0: Convert anyOf/const patterns to enum arrays (all providers)
  *   - Layer 1: Strip provider-specific unsupported keywords (anthropic, google)
  *   - Layer 2: Gemini deep cleaning (google family only)
  *   - Layer 3: xAI constraint stripping (toolSchemaProfile === "xai")
+ *   - Layer 3.5: GBNF structural transforms (toolSchemaProfile === "gbnf" --
+ *     llama.cpp-family local providers; removal/relaxation only)
  *   - Layer 4: Force top-level `type: "object"` (all providers)
  *
  * Returns new ToolDefinition objects -- never mutates the input.
@@ -116,6 +140,10 @@ export function normalizeToolSchemasForProvider(
   const caps = resolveProviderCapabilities(ctx.provider);
   const isGemini = caps.providerFamily === "google";
   const isXai = ctx.compat?.toolSchemaProfile === "xai";
+  // GBNF gate derives SOLELY from the explicit compat profile — never from
+  // the provider name or baseUrl (D-08). Threading the profile from config
+  // is Plan 175-04's job; this pipeline only honors what arrives in ctx.
+  const isGbnf = ctx.compat?.toolSchemaProfile === "gbnf";
   const providerLower = ctx.provider.toLowerCase();
 
   // Determine keyword stripping: exact match first, then Gemini family fallback
@@ -127,12 +155,22 @@ export function normalizeToolSchemasForProvider(
     ? providerLower
     : (isGemini ? "google" : providerLower);
 
-  // Early return: if no provider-specific cleaning needed, just apply Layer 4
-  if (!isGemini && !isXai && !hasKeywordStripping) {
+  // Early return: if no provider-specific cleaning needed, just apply Layer 4.
+  // `!isGbnf` is load-bearing: local providers (no keyword set, not gemini,
+  // not xai) are EXACTLY the providers the gbnf layer exists for — without it
+  // they short-circuit here and silently skip Layer 3.5.
+  if (!isGemini && !isXai && !isGbnf && !hasKeywordStripping) {
     return ensureTopLevelObject(tools);
   }
 
-  return tools.map((tool) => {
+  // (tool name, transform keywords) pairs collected during the Layer 3.5
+  // map pass — consumed by the once-per-boot INFO summary below.
+  const gbnfTransformedTools: Array<{
+    name: string;
+    keywords: GbnfTransformKeyword[];
+  }> = [];
+
+  const normalized = tools.map((tool) => {
     if (!tool.parameters || typeof tool.parameters !== "object") return tool;
     let schema: unknown = tool.parameters;
 
@@ -166,9 +204,61 @@ export function normalizeToolSchemasForProvider(
     // Layer 3: xAI constraint stripping
     if (isXai) schema = stripXaiUnsupportedKeywords(schema);
 
+    // Layer 3.5: GBNF structural transforms for llama.cpp-family local
+    // providers (removal/relaxation only — pattern/format deliberately
+    // survive; reactive stripping on grammar-400 lives in the executor,
+    // GBNF-02).
+    if (isGbnf) {
+      const gbnfResult = cleanSchemaForGbnf(schema);
+      schema = gbnfResult.schema;
+      if (gbnfResult.transformedKeywords.length > 0) {
+        // Mirror the keyword-strip trace shape above: per-tool, trace level
+        // (deterministic per (provider, tool) pair — trace recovers the
+        // detail without dominating debug-mode logs).
+        logger?.trace(
+          {
+            toolName: tool.name,
+            provider: ctx.provider,
+            transformed: gbnfResult.transformedKeywords,
+          },
+          "Tool schema structurally transformed for GBNF compatibility",
+        );
+        gbnfTransformedTools.push({
+          name: tool.name,
+          keywords: gbnfResult.transformedKeywords,
+        });
+      }
+    }
+
     // Layer 4: OpenAI top-level type forcing
     schema = ensureTopLevelObjectSingle(schema);
 
     return { ...tool, parameters: schema } as ToolDefinition;
   });
+
+  // Once-per-boot INFO summary (GBNF-03): the FIRST transforming call per
+  // provider emits one content-free summary line (counts + names + the
+  // closed transform vocabulary, never schema bodies — I7); subsequent
+  // calls stay at the per-tool trace above.
+  if (
+    isGbnf &&
+    gbnfTransformedTools.length > 0 &&
+    !gbnfSummaryLoggedForProvider.has(ctx.provider)
+  ) {
+    gbnfSummaryLoggedForProvider.add(ctx.provider);
+    const keywords = [
+      ...new Set(gbnfTransformedTools.flatMap((entry) => entry.keywords)),
+    ];
+    logger?.info(
+      {
+        provider: ctx.provider,
+        toolCount: gbnfTransformedTools.length,
+        transformedTools: gbnfTransformedTools.map((entry) => entry.name),
+        keywords,
+      },
+      "GBNF tool-schema transforms applied for local provider",
+    );
+  }
+
+  return normalized;
 }
