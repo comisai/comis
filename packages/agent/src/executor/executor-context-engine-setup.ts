@@ -41,6 +41,8 @@ import {
 } from "../safety/summarizer-spend-breaker.js";
 import type { LeafSummarizer } from "../context-engine/lcd-leaf-summarizer.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
+import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
+import { scoreRelevance } from "../rag/relevance-scorer.js";
 import type { ExecutionOverrides } from "./types.js";
 import { resolveOperationModel, resolveProviderFamily } from "../model/operation-model-resolver.js";
 import type { OAuthTokenManager } from "../model/oauth-token-manager.js";
@@ -280,6 +282,16 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
 
   // contextEngineOverrides removed from ExecutionOverrides -- compaction model resolved via operationModels chain
   const contextEngineConfig = config.contextEngine ?? ContextEngineConfigSchema.parse({});
+
+  // RETR-02/03 (Phase 173): resolve the relevance-first policy ONCE (the capability +
+  // supportsPromptCache gate; explicit > capability-default > off) and thread it to the
+  // dag assembler, which CONSUMES the boolean (it does NOT recompute the gate). Resolved
+  // here (mirrors prompt-assembly.ts's recall-side resolution) only when modelProfile is
+  // present; absent ⇒ undefined ⇒ the assembler takes the verbatim recency path (frontier/
+  // mid byte-identical). The small/nano DEFAULT-ON flip is measurement-gated (VALIDATION.md).
+  const relevanceFirst = modelProfile
+    ? resolveScaffoldDefaults(modelProfile, config).relevanceFirst
+    : undefined;
 
   // --- Replay drift memo ---------------------------------------------------
   // Memoized per-execute() so all pipeline runs in a single execute() see a
@@ -674,6 +686,12 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // C1 (Phase 165): the resolved ModelProfile for budget-aware eviction cap.
     // Absent ⇒ lcd-assembler applies the fail-closed nano cap + WARN.
     modelProfile,
+    // RETR-02/03 (Phase 173): the resolved relevance-first policy + the shared scorer for
+    // the margin arbiter. relevanceFirst undefined/false ⇒ the assembler takes the verbatim
+    // recency path (frontier/mid byte-identical, LOCKED #2). The scorer is threaded for the
+    // fused-rank cross-tier allocation (unused on the C2 history-only path — empty LTM/KG).
+    relevanceFirst,
+    relevanceScorer: scoreRelevance,
     // Phase 166 T-S4: security-pin markers so the dag eviction never drops security context.
     securityPinMarkers: params.securityPinMarkers,
     onAssembledInputTokens: params.onAssembledInputTokens,

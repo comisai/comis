@@ -27,13 +27,14 @@
  *       structured blocks (never reconstructed-from-text). Never evicted (A1).
  *  4.   BUDGET + EVICTION (A3) — compute H = W − S − O − M − R via the profile-aware
  *       `computeTokenBudgetForProfile` (C1: 8K-starvation fix + 256K-overfill cap for
- *       small/nano; byte-identical to `computeTokenBudget` for frontier/mid), then
- *       `evictHistoryUnderBudget` trims ONLY the
- *       evictable prefix (resolved history minus the items the fresh tail covers)
- *       to fit H; the fresh tail is concatenated UNCONDITIONALLY (A1/A3 — always
- *       included, even when it alone exceeds H). The prefix/fresh-tail boundary is
- *       drop-free and double-free for both L>H (mid-turn, the store lags the live
- *       array — CR-01) and L<=H (a heal shrank the live array — WR-01); transcript
+ *       small/nano; byte-identical to `computeTokenBudget` for frontier/mid), then trim
+ *       ONLY the evictable prefix (resolved history minus the items the fresh tail covers)
+ *       to fit H via `evictHistoryUnderBudget` (recency, frontier/mid) OR the RETR-02
+ *       margin arbiter `evictUnderArbiter` (relevance-first small/nano — fused-rank
+ *       allocation with T0/S4 floors); the fresh tail is concatenated UNCONDITIONALLY
+ *       (A1/A3 — always included, even when it alone exceeds H). The prefix/fresh-tail
+ *       boundary is drop-free and double-free for both L>H (mid-turn, the store lags the
+ *       live array — CR-01) and L<=H (a heal shrank the live array — WR-01); transcript
  *       repair (step 6) re-pairs the seam regardless.
  *  5.   NORMALIZE — assistant string content -> `[{ type: "text", text }]`
  *       (pure, non-mutating; tool blocks untouched).
@@ -41,9 +42,9 @@
  *       provider can never receive an unpaired/out-of-order pairing even if the
  *       history/fresh-tail seam landed mid-pair.
  *
- * Keep the body THIN (Pitfall 7): the eviction logic is Plan 04's pure module
- * (`lcd-budget-eviction.ts`) and the leaf summarization is Plan 03's; this
- * assembler only RESOLVES + CALLS them.
+ * Keep the body THIN (Pitfall 7): the eviction logic lives in pure modules
+ * (`lcd-budget-eviction.ts`, `margin-arbiter.ts` / `lcd-arbiter-seam.ts`) and the leaf
+ * summarization in Plan 03's; this assembler only RESOLVES + CALLS them.
  *
  * Architecture cut (agent↛memory): this file imports ONLY the core
  * `ContextStorePort`/`LcdMessage`/`LcdContextItem`/`LcdSummary` TYPES + the core
@@ -71,11 +72,11 @@ import { computeTokenBudgetForProfile } from "./budget-capacity-cap.js";
 import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import { runPreflightFitCheck } from "./lcd-preflight.js";
 import {
-  CHARS_PER_TOKEN_RATIO,
   LCD_FALLBACK_HEADER_MARKER,
   LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS,
 } from "./constants.js";
 import { evictHistoryUnderBudget, type BudgetItem } from "./lcd-budget-eviction.js";
+import { evictUnderArbiter, emitEvictedEvent } from "./lcd-arbiter-seam.js";
 import {
   createToolResultSizeGuard,
   type ContentBlock,
@@ -427,7 +428,15 @@ export function createLcdContextEngine(
         config.budget?.effectiveContextCapSmall,
         config.budget?.effectiveContextCapNano,
       );
-      const budgeted = evictHistoryUnderBudget(evictable, budget.availableHistoryTokens);
+
+      // RETR-02/03/05 eviction seam (step 4 above). Frontier/mid (relevanceFirst falsy) take
+      // the EXISTING recency call VERBATIM — same call, same args → referentially the
+      // pre-patch AgentMessage[], BYTE-IDENTICAL (LOCKED #2; the arbiter does NOT run for
+      // them). Relevance-first → the margin arbiter over the SAME availableHistoryTokens.
+      const budgeted: AgentMessage[] =
+        deps.relevanceFirst === true
+          ? evictUnderArbiter(deps, evictable, budget.availableHistoryTokens, liveMessages, startMs).budgeted
+          : evictHistoryUnderBudget(evictable, budget.availableHistoryTokens);
       const droppedCount = evictable.length - budgeted.length;
       deps.logger.debug(
         {
@@ -445,29 +454,10 @@ export function createLcdContextEngine(
         "lcd history evicted under budget",
       );
 
-      // O1: emit the EXISTING `context:evicted` event from the LCD path (parity with
-      // the pipeline engine's guard at context-engine.ts:663-672) when eviction
-      // actually dropped history. CONTENT-FREE (AGENTS.md §2.2 / the lossless store):
-      // `evictedChars` is derived ONLY from each dropped item's pre-computed `tokens`
-      // field (× CHARS_PER_TOKEN_RATIO) — the message text is NEVER read or emitted.
-      // Reuse the entry-clock read `startMs` for `timestamp` (no new clock read; the
-      // globals gate bans ambient time). Reuse the existing event name — do NOT invent
-      // a `context:lcd_evicted`.
-      if (droppedCount > 0) {
-        const droppedItems = evictable.slice(budgeted.length);
-        const evictedChars = droppedItems.reduce(
-          (sum, it) => sum + Math.round(it.tokens * CHARS_PER_TOKEN_RATIO),
-          0,
-        );
-        deps.eventBus?.emit("context:evicted", {
-          agentId: deps.agentId ?? "",
-          sessionKey: deps.sessionKey ?? "",
-          evictedCount: droppedCount,
-          evictedChars,
-          categories: { lcd_history: droppedCount },
-          timestamp: startMs,
-        });
-      }
+      // O1: emit the content-free `context:evicted` event (parity with the pipeline engine)
+      // when eviction dropped history — extracted to lcd-arbiter-seam.ts (keeps this body
+      // THIN). Shared by both the recency and arbiter paths; reuses startMs (no new clock).
+      emitEvictedEvent(deps, evictable, budgeted.length, startMs);
 
       // The fresh tail is concatenated UNCONDITIONALLY (A1/A3) — never evicted.
       const assembled = [...budgeted, ...freshTail];

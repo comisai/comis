@@ -47,7 +47,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { MemorySearchResult } from "@comis/core";
+import type { MemorySearchResult, ComisLogger } from "@comis/core";
 import type { BudgetItem } from "./lcd-budget-eviction.js";
 import { evictHistoryUnderBudget } from "./lcd-budget-eviction.js";
 
@@ -77,9 +77,11 @@ export interface ArbiterRelevanceQuery {
   degraded: boolean;
 }
 
-/** The minimal STRUCTURAL options shape the scorer accepts (content-free logger + id). */
+/** The minimal STRUCTURAL options shape the scorer accepts — matches
+ *  `rag/relevance-scorer.ts`'s `ScoreRelevanceOptions` (content-free logger + id) so the
+ *  real `scoreRelevance` is assignable to {@link RelevanceScorerFn} (parameter variance). */
 export interface ArbiterScorerOptions {
-  logger?: unknown;
+  logger?: ComisLogger;
   agentId?: string;
 }
 

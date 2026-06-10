@@ -279,6 +279,15 @@ export interface ContextEngineDeps {
    *  or ABSENT (frontier/mid + caching) the existing recency-first eviction runs VERBATIM
    *  — frontier/mid byte-identical (LOCKED #2: the arbiter does not run for them). */
   relevanceFirst?: boolean;
+
+  /** RETR-02 (Phase 173): the shared relevance scorer (scoreRelevance) injected for the
+   *  margin arbiter's FUSED-RANK cross-tier allocation. INJECTED from setupContextEngine
+   *  (executor/, which may import the rag layer) so the context-engine never imports `rag/`
+   *  (the I2 cut). On the C2 assembly path the LTM/KG candidate lanes are EMPTY, so the
+   *  scorer is never actually invoked (the history band is recency-ordered within its slot);
+   *  it is threaded for forward-compat (Phase 174 flows LTM candidates to assembly). Absent
+   *  ⇒ the arbiter uses a no-op identity scorer (safe — never called with empty lanes). */
+  relevanceScorer?: import("./margin-arbiter.js").RelevanceScorerFn;
 }
 
 // ---------------------------------------------------------------------------
