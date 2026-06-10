@@ -2529,10 +2529,11 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 60 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2)", () => {
+  it("bridge entry count is exactly 61 (+2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175)", () => {
     // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
-    // + session:summary (F2/D5, Phase 152).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(60);
+    // + session:summary (F2/D5, Phase 152)
+    // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(61);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

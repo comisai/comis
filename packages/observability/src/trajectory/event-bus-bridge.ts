@@ -112,6 +112,9 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // Maps to "execution.replay_recovered" (NOT "execution.signed_replay_recovered")
   // per canonical name.
   "execution:signed_replay_recovered": "execution.replay_recovered",
+  // GBNF-02 strip-retry self-heal (Phase 175). Payload is already content-free
+  // (tool + keyword NAMES only, I7) — translator forwards all 4 data fields.
+  "execution:tool_schema_unsupported": "execution.tool_schema_unsupported",
 
   // Security + Sender (scanned subset)
   // patterns[] and senderId are intentionally omitted in translatePayload.
