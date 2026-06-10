@@ -1259,6 +1259,10 @@ This is the correct command when you want the model to explicitly forget a conve
 Use `sessions reset` (not `sessions delete`) when you want the model to explicitly forget a conversation. Deletion only removes the session record; the LCD store keeps its full history and the model would resume from it. See [Data Directory](/operations/data-directory) for the full durability model.
 </Warning>
 
+<Note>
+`--memory` is the explicit **delete** side of the LCD→LTM loop. There is also an automatic, **non-deleting** complement on the recall side: when a conversation's condensed LCD summary has been distilled into a learned memory, recall **down-weights** (it does not remove) the overlapping paired-conversation memories from that same session, so the distilled summary and its own source rows do not double-count. That down-weighting needs no flag and never deletes anything — `--memory` / `--purge-derived` remain the only commands that actually remove memories.
+</Note>
+
 ```bash
 # List all sessions
 comis sessions list
