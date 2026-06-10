@@ -314,6 +314,23 @@ describe("dagDegradedEventToRow", () => {
   // closed union is documented (events-messaging.ts) as the bounded-wait signal
   // — normal back-pressure, NOT a degrade. Stamping it `warning` would inflate
   // the fleet lens's degrade count with a benign event.
+  it("maps the benign session_rebase reason to severity info, not warning (W10)", () => {
+    // Phase 164 RR6: session_rebase = "continued after restart" — the comment on
+    // the union member itself says NOT a degradation. The live fleet showed 9
+    // warning-severity rebase rows (one per session start) as its TOP finding.
+    const row = dagDegradedEventToRow({
+      conversationId: "c1",
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      reason: "session_rebase",
+      durationMs: 9,
+      timestamp: 1717171717,
+    });
+    expect(row.severity).toBe("info");
+    const details = JSON.parse(row.details) as { reason: string };
+    expect(details.reason).toBe("session_rebase");
+  });
+
   it("maps the benign serialized_wait reason to severity info, not warning", () => {
     const row = dagDegradedEventToRow({
       conversationId: "conv-2",
