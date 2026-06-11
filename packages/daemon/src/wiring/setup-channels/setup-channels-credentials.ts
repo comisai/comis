@@ -313,7 +313,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         );
       }
 
-      // Resolve cron operation model via 5-level priority chain
+      // Resolve cron operation model via 5-level priority chain. LAT-01: cronOverrides.promptTimeout is materialized UNCONDITIONALLY, so it must carry resolution.timeoutSource — without the label, decode would treat the 150s cron default as an explicit operator override (the provenance-collapse trap).
       const agentConfig = agents[payload.agentId];
       let cronOverrides: { model: string; operationType: "cron"; promptTimeout: { promptTimeoutMs: number; source: OperationModelResolution["timeoutSource"] }; cacheRetention?: "none" | "short" | "long" } | undefined;
       if (agentConfig) {
@@ -329,10 +329,6 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         cronOverrides = {
           model: resolution.model,
           operationType: "cron",
-          // LAT-01: this override is materialized UNCONDITIONALLY, so the
-          // resolver's binding label must ride along — without it, decode
-          // would treat the 150s cron default as an explicit operator
-          // override (the provenance-collapse trap, Critical Finding 1).
           promptTimeout: { promptTimeoutMs: resolution.timeoutMs, source: resolution.timeoutSource },
           cacheRetention: payload.cacheRetention ?? resolution.cacheRetention,
         };
