@@ -24,13 +24,20 @@ export interface DeltaResetState {
 }
 
 /**
- * Build the ALWAYS-DEFINED bridge `onDelta`: forwards the delta to the
- * channel callback (when present) and resets the stall timer, throttled.
+ * Build the ALWAYS-DEFINED bridge `onDelta`: resets the stall timer
+ * (throttled) and forwards the delta to the channel callback (when present)
+ * — in that order.
  *
  * - ALWAYS-DEFINED — the bridge presence-gates on `deps.onDelta`
  *   (pi-event-bridge.ts `message_update` case), so a missing channel
  *   callback must not silently disable delta→reset. Channel-less runs
  *   (cron, graph subagents) stream deltas too.
+ * - RESET BEFORE FORWARD (177-REVIEW WR-03) — the reset is the
+ *   safety-relevant half of the composition and must not be hostage to the
+ *   forwarding half: a throwing channel callback propagates to the bridge's
+ *   message_update catch (swallowed there), so forwarding first would skip
+ *   the reset on EVERY delta and a visibly-streaming turn would die at the
+ *   stall budget despite continuous activity.
  * - LIVE ref — `getResetTimer` reads the reset fn at call time
  *   (`currentResetTimer` is assigned later, at the `onResetTimer` hand-off
  *   when the prompt race starts). A delta arriving before assignment is a
@@ -55,11 +62,11 @@ export function createDeltaResetComposer(
   const throttleMs = args.throttleMs ?? 1_000;
   let lastResetAtMs = Number.NEGATIVE_INFINITY; // first delta always resets
   return (delta, kind) => {
-    args.channelOnDelta?.(delta, kind);
     const now = args.clock.now();
     if (now - lastResetAtMs >= throttleMs) {
       lastResetAtMs = now;
       args.getResetTimer()?.();
     }
+    args.channelOnDelta?.(delta, kind);
   };
 }

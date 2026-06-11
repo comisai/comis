@@ -109,4 +109,31 @@ describe("createDeltaResetComposer (LAT-02)", () => {
   // LAT-02-W-4 intentionally omitted: 177-01 DECISION gate_scope =
   // all-providers — the composer has no `enabled` flag (no local-gated branch
   // exists to fixture). See 177-01-SUMMARY.md DECISION block.
+
+  it("177-REVIEW WR-03: a THROWING channel callback cannot disable the stall reset — the reset fires BEFORE the forward on every delta", () => {
+    const clock = makeManualClock();
+    const reset = vi.fn();
+    const throwingChannel = vi.fn(() => {
+      throw new Error("channel streaming callback broke");
+    });
+    const onDelta = createDeltaResetComposer({}, {
+      channelOnDelta: throwingChannel,
+      getResetTimer: () => reset,
+      clock,
+    });
+
+    // The channel throw still propagates (the bridge's message_update catch
+    // owns the swallow) — but the reset MUST already have fired. Pre-patch
+    // the forward ran FIRST, so its throw skipped the reset on EVERY delta:
+    // a turn streaming visibly (text-only, no tool calls) then died at the
+    // stall budget despite continuous activity — the false-kill class LAT-02
+    // exists to eliminate, re-opened by one faulty channel callback.
+    expect(() => { onDelta("tok", "text"); }).toThrow("channel streaming callback broke");
+    expect(reset).toHaveBeenCalledTimes(1);
+
+    // Next throttle window: still resetting — no latched breakage.
+    clock.advance(1_000);
+    expect(() => { onDelta("tok2", "text"); }).toThrow("channel streaming callback broke");
+    expect(reset).toHaveBeenCalledTimes(2);
+  });
 });
