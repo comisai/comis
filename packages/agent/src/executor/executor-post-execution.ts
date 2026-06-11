@@ -251,6 +251,16 @@ export interface PostExecutionParams {
   geminiCachedTokens: number;
   capabilityClass: CapabilityClass | undefined;
   /**
+   * SUMW-02: the turn's budget window — computeTokenBudgetForProfile().windowTokens
+   * = min(reconciled contextWindow, capability class cap). MUST be computed
+   * UPSTREAM (pi-executor threads it off the tool-assembly result): this module
+   * has no real ModelProfile (only a synthetic scaffold profile), so it can never
+   * re-derive the value. Threaded into BOTH LCD after-turn triggers as the
+   * REQUIRED utilization denominator — a captured number, dispose-safe on the
+   * deferred (C4) path by construction.
+   */
+  budgetWindowTokens: number;
+  /**
    * Provider used for this execution. Sourced from `resolvedModel.provider` in
    * pi-executor when available; falls back to `config.provider` when the
    * misconfig silent-fallback path triggers (resolvedModel undefined). The
@@ -1564,6 +1574,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         scope,
         contextEngine: config.contextEngine,
         getSummarizerDeps: summarizerGetter,
+        // SUMW-02: the turn's budget window — the utilization denominator (a
+        // captured number; dispose-safe on the deferred path).
+        budgetWindowTokens: params.budgetWindowTokens,
         now: deps.clock.now(),
         // O1: a clock CALLABLE so the trigger times the pass with two reads
         // (entry → emit). Bound to the injected ClockPort — never Date.now().
@@ -1576,6 +1589,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         scope,
         contextEngine: config.contextEngine,
         getCondenseSummarizerDeps: summarizerGetter,
+        // SUMW-02: same denominator as the leaf pass (one window truth) — also
+        // feeds the condense pressureHigh hard-fanout gate.
+        budgetWindowTokens: params.budgetWindowTokens,
         now: deps.clock.now(),
         // O1: clock CALLABLE for the two-read pass timing (entry → emit).
         nowFn: () => deps.clock.now(),

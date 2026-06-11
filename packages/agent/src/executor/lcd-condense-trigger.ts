@@ -342,6 +342,13 @@ export interface RunCondensePassAfterTurnParams {
    * condense pass is gated off cleanly (no trigger, no summary).
    */
   getCondenseSummarizerDeps: (() => LeafSummarizerDeps) | undefined;
+  /** SUMW-02: the turn's budget window — `computeTokenBudgetForProfile().windowTokens`
+   *  = min(reconciled contextWindow, capability class cap), captured at the executor
+   *  BEFORE any dispose (a plain number — dispose-safe on the deferred C4 path). The
+   *  utilization + pressureHigh denominator: one window truth with assembly +
+   *  preflight. REQUIRED — an optional-with-fallback would silently restore the
+   *  configured-window denominator (the DIST-01 4×-late-arming bug class). */
+  budgetWindowTokens: number;
   /** Injected wall-clock ms (`deps.clock.now()`) — never the ambient time global. Stamps `timestamp`. */
   now: number;
   /** Injected clock CALLABLE (`deps.clock.now`) for the O1 two-read pass timing. Absent ⇒ durationMs 0. */
@@ -367,8 +374,10 @@ export interface RunCondensePassAfterTurnParams {
  * Thin afterTurn call-site wiring for the condense pass: resolve the condense
  * summarizer deps, gate on their presence, build {@link CondensePassOptions} from
  * `config.contextEngine` (defaulted via `ContextEngineConfigSchema`) with
- * `windowTokens` taken from the summarizer's `getModel().contextWindow`, then
- * delegate to {@link maybeRunCondensePass}. Clones `runLeafPassAfterTurn`.
+ * `windowTokens` taken from the threaded per-turn `budgetWindowTokens` (SUMW-02 —
+ * the SAME budget window the assembler + preflight use, NOT the session model's
+ * configured window), then delegate to {@link maybeRunCondensePass}. Clones
+ * `runLeafPassAfterTurn`.
  *
  * This is the single call `executor-post-execution.ts` adds AFTER
  * `runLeafPassAfterTurn` inside its existing `if (deps.contextStore)` block — so a
@@ -378,7 +387,7 @@ export interface RunCondensePassAfterTurnParams {
  * @param params - the minimal afterTurn inputs (see {@link RunCondensePassAfterTurnParams}).
  */
 export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnParams): Promise<void> {
-  const { store, scope, contextEngine, getCondenseSummarizerDeps, now, nowFn, logger, eventBus, onCondensed } = params;
+  const { store, scope, contextEngine, getCondenseSummarizerDeps, budgetWindowTokens, now, nowFn, logger, eventBus, onCondensed } = params;
   // Gate: no summarizer-deps getter ⇒ the condense pass is off (clean skip).
   if (getCondenseSummarizerDeps === undefined) return;
   const summarizerDeps = getCondenseSummarizerDeps();
@@ -388,9 +397,6 @@ export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnP
   // block resolves to the schema defaults (condensedMinFanout 4,
   // condensedTargetTokens 2_000).
   const cfg = contextEngine ?? ContextEngineConfigSchema.parse({});
-  // The window W is the model's context window from the summarizer deps (the live
-  // model getter), NOT a config knob.
-  const windowTokens = summarizerDeps.getModel().contextWindow;
 
   await maybeRunCondensePass(
     store,
@@ -400,7 +406,12 @@ export async function runCondensePassAfterTurn(params: RunCondensePassAfterTurnP
       condensedMinFanoutHard: cfg.condensedMinFanoutHard,
       contextThreshold: cfg.contextThreshold,
       condensedTargetTokens: cfg.condensedTargetTokens,
-      windowTokens,
+      // SUMW-02: the utilization + pressureHigh denominator W is the threaded
+      // per-turn budget window (min(reconciled contextWindow, class cap)) —
+      // never the summarizer snapshot's configured window, which kept the hard
+      // fanout from ever firing on capped small models (DIST-01). The
+      // maybeRunCondensePass finite-positive gate is unchanged.
+      windowTokens: budgetWindowTokens,
     },
     summarizerDeps,
     now,

@@ -601,7 +601,7 @@ async function runSessionLocked(
   } = toolAssembly;
   const {
     deferralResult, deferredContext, capabilityIndexResult,
-    capabilityClass, discoveryTracker, settingsManager,
+    capabilityClass, budgetWindowTokens, discoveryTracker, settingsManager,
     resourceLoaderOptions, promptResult, cachedSystemTokensEstimate, cachedFreshTailPreambleTokens,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
@@ -1676,7 +1676,7 @@ async function runSessionLocked(
       contextEngineRef, ceSetup, streamSetup,
       getTruncationSummary, getTurnBudgetSummary,
       executionPlanRef, isOnboarding,
-      geminiCacheHit, geminiCachedTokens, capabilityClass,
+      geminiCacheHit, geminiCachedTokens, capabilityClass, budgetWindowTokens,
       provider: resolvedModel?.provider ?? config.provider,
       providerFamily: resolveProviderCapabilities(resolvedModel?.provider ?? config.provider).providerFamily,
       deferralResult, mergedCustomTools, deliveredGuides,
