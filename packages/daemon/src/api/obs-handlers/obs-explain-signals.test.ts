@@ -727,3 +727,69 @@ describe("toolSchemaUnsupported derivation (GBNF-02)", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// LAT-04 (Phase 177): execution.prompt_timeout derivation — the terminal
+// prompt-timeout attribution record must land on IncidentSignals.promptTimeout
+// (the silent-drop gate: pre-patch, toIncidentSignals IGNORED these rows, so a
+// timeout-killed session carried ZERO evidence into the verdict — research
+// Critical Finding 7 point 6 / Pitfall 5, the Phase-176 safeParse-drop lesson).
+// ---------------------------------------------------------------------------
+
+describe("promptTimeout derivation (LAT-04)", () => {
+  it("LAT-04-O-3: an execution.prompt_timeout record with the full field set survives onto signals.promptTimeout", () => {
+    const s = toIncidentSignals([
+      event("execution.prompt_timeout", 9, {
+        timeoutMs: 180_000,
+        durationMs: 195_000,
+        limit: "stall",
+        source: "agent_config",
+        bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+        stallBudgetMs: 180_000,
+        makespanMs: 1_800_000,
+      }),
+    ]);
+    expect(s.promptTimeout).toBeDefined();
+    expect(s.promptTimeout?.limit).toBe("stall");
+    expect(s.promptTimeout?.bindingKnob).toBe("agents.my-agent.promptTimeout.promptTimeoutMs");
+    expect(s.promptTimeout?.stallBudgetMs).toBe(180_000);
+    expect(s.promptTimeout?.timeoutMs).toBe(180_000);
+    expect(s.promptTimeout?.durationMs).toBe(195_000);
+    expect(s.promptTimeout?.makespanMs).toBe(1_800_000);
+  });
+
+  it("LAT-04-O-4: the LAST execution.prompt_timeout record wins (the terminal kill explains the end state)", () => {
+    const s = toIncidentSignals([
+      // A retry-path kill first (whole-turn semantics: no limit discriminator).
+      event("execution.prompt_timeout", 4, {
+        timeoutMs: 60_000,
+        durationMs: 60_000,
+        source: "agent_config",
+        bindingKnob: "agents.my-agent.promptTimeout.retryPromptTimeoutMs",
+      }),
+      // …then the terminal stall kill — the SECOND record must win.
+      event("execution.prompt_timeout", 7, {
+        timeoutMs: 180_000,
+        durationMs: 195_000,
+        limit: "stall",
+        source: "agent_config",
+        bindingKnob: "agents.my-agent.promptTimeout.promptTimeoutMs",
+        stallBudgetMs: 180_000,
+      }),
+    ]);
+    expect(s.promptTimeout?.limit).toBe("stall");
+    expect(s.promptTimeout?.timeoutMs).toBe(180_000);
+    expect(s.promptTimeout?.bindingKnob).toBe("agents.my-agent.promptTimeout.promptTimeoutMs");
+  });
+
+  it("LAT-04-O-5: a malformed record (timeoutMs not a number) is rejected WHOLESALE — promptTimeout stays undefined, no throw", () => {
+    // Forward-compatible tolerance (green pre-patch by design): the wholesale
+    // safeParse (the contextBudget discipline) drops a malformed/partial row
+    // instead of partially trusting it (T-177-17 — trajectory rows are
+    // untrusted persisted data).
+    const s = toIncidentSignals([
+      event("execution.prompt_timeout", 2, { timeoutMs: "garbage", limit: "stall" }),
+    ]);
+    expect(s.promptTimeout).toBeUndefined();
+  });
+});

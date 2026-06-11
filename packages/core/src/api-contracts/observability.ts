@@ -36,8 +36,8 @@ import { defineContract } from "./types.js";
 // for the OBSERVABILITY_CONTRACTS array below; re-export so the `@comis/core`
 // public surface + registered RPC set are unchanged.
 import { ObsExplainContract } from "./incident-report.js";
-export { ObsExplainContract, IncidentReportSchema, IncidentContextBudgetSchema } from "./incident-report.js";
-export type { IncidentReport, IncidentFailure, IncidentSignals, IncidentContextBudget } from "./incident-report.js";
+export { ObsExplainContract, IncidentReportSchema, IncidentContextBudgetSchema, IncidentPromptTimeoutSchema } from "./incident-report.js";
+export type { IncidentReport, IncidentFailure, IncidentSignals, IncidentContextBudget, IncidentPromptTimeout } from "./incident-report.js";
 // The `obs.fleet.health` contract + wire schema (v2.15 R2, Phase 161) live in the
 // sibling `fleet-health-report.ts` (file-size split, mirroring incident-report.ts
 // which holds BOTH IncidentReportSchema + ObsExplainContract). Import the contract
