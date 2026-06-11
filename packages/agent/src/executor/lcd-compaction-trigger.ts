@@ -709,6 +709,13 @@ export interface RunLeafPassAfterTurnParams {
    * — the wiring gate, mirroring how the ingest gates on `deps.contextStore`.
    */
   getSummarizerDeps: (() => LeafSummarizerDeps) | undefined;
+  /** SUMW-02: the turn's budget window — `computeTokenBudgetForProfile().windowTokens`
+   *  = min(reconciled contextWindow, capability class cap), captured at the executor
+   *  BEFORE any dispose (a plain number — dispose-safe on the deferred C4 path). The
+   *  utilization denominator: one window truth with assembly + preflight. REQUIRED —
+   *  an optional-with-fallback would silently restore the configured-window
+   *  denominator (the DIST-01 4×-late-arming bug class). */
+  budgetWindowTokens: number;
   /** Injected wall-clock ms (`deps.clock.now()`) — never the ambient time global. Stamps `timestamp`. */
   now: number;
   /** Injected clock CALLABLE (`deps.clock.now`) for the O1 two-read pass timing. Absent ⇒ durationMs 0. */
@@ -723,7 +730,9 @@ export interface RunLeafPassAfterTurnParams {
  * Thin afterTurn call-site wiring for the leaf pass: resolve the summarizer deps,
  * gate on their presence, build {@link LeafPassOptions} from `config.contextEngine`
  * (defaulted via `ContextEngineConfigSchema`) with `windowTokens` taken from the
- * summarizer's `getModel().contextWindow`, then delegate to {@link maybeRunLeafPass}.
+ * threaded per-turn `budgetWindowTokens` (SUMW-02 — the SAME budget window the
+ * assembler + preflight use, NOT the session model's configured window), then
+ * delegate to {@link maybeRunLeafPass}.
  *
  * This is the single call `executor-post-execution.ts` adds inside its existing
  * `if (deps.contextStore)` block (after `ingestTurnGuarded`) — the body stays in
@@ -734,7 +743,7 @@ export interface RunLeafPassAfterTurnParams {
  * @param params - the minimal afterTurn inputs (see {@link RunLeafPassAfterTurnParams}).
  */
 export async function runLeafPassAfterTurn(params: RunLeafPassAfterTurnParams): Promise<void> {
-  const { store, scope, contextEngine, getSummarizerDeps, now, nowFn, logger, eventBus } = params;
+  const { store, scope, contextEngine, getSummarizerDeps, budgetWindowTokens, now, nowFn, logger, eventBus } = params;
   // Gate: no summarizer-deps getter ⇒ the leaf pass is off (clean skip).
   if (getSummarizerDeps === undefined) return;
   const summarizerDeps = getSummarizerDeps();
@@ -744,9 +753,6 @@ export async function runLeafPassAfterTurn(params: RunLeafPassAfterTurnParams): 
   // absent contextEngine block resolves to the schema defaults (contextThreshold
   // 0.75, leafChunkTokens 20_000, leafTargetTokens 1_200, freshTailTurns 8).
   const cfg = contextEngine ?? ContextEngineConfigSchema.parse({});
-  // The utilization denominator W is the model's context window from the
-  // summarizer deps (the live model getter), NOT a config knob.
-  const windowTokens = summarizerDeps.getModel().contextWindow;
 
   await maybeRunLeafPass(
     store,
@@ -756,7 +762,11 @@ export async function runLeafPassAfterTurn(params: RunLeafPassAfterTurnParams): 
       leafChunkTokens: cfg.leafChunkTokens,
       leafTargetTokens: cfg.leafTargetTokens,
       freshTailTurns: cfg.freshTailTurns,
-      windowTokens,
+      // SUMW-02: the utilization denominator W is the threaded per-turn budget
+      // window (min(reconciled contextWindow, class cap)) — never the summarizer
+      // snapshot's configured window, which armed ~4× late on capped small
+      // models (DIST-01). The maybeRunLeafPass finite-positive gate is unchanged.
+      windowTokens: budgetWindowTokens,
     },
     summarizerDeps,
     now,

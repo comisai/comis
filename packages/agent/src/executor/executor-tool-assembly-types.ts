@@ -186,6 +186,12 @@ export interface ToolAssemblyResult {
   deliveredGuides: Set<string>;
   /** Capability class from ModelProfile (resolved once per execution in pi-executor). */
   capabilityClass: CapabilityClass;
+  /** SUMW-02: the turn's budget window — computeTokenBudgetForProfile().windowTokens
+   *  = min(reconciled contextWindow, capability class cap). The ONE utilization
+   *  denominator shared with assembly + CWF-02 preflight; threaded through
+   *  postExecution to the LCD after-turn triggers (REQUIRED — a fallback would
+   *  silently restore the configured-window denominator, the DIST-01 bug class). */
+  budgetWindowTokens: number;
   /** Discovery tracker for deferred tool discovery state. */
   discoveryTracker: DiscoveryTracker;
   /** Mutable ref for compaction deps to serialize discovered tools. */

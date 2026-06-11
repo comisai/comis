@@ -670,6 +670,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     capabilityIndexResult,
     deliveredGuides,
     capabilityClass,
+    // SUMW-02: the per-turn budget window (min(reconciled contextWindow, class
+    // cap)) — windowTokens is input-independent of the systemTokens args, so
+    // this carries the same value every budget computation this turn reports.
+    budgetWindowTokens: profileBudget.windowTokens,
     discoveryTracker,
     currentDiscoveryTracker,
     lifecycleDemotedNames,

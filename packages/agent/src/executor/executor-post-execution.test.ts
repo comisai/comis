@@ -1182,6 +1182,10 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
         freshTailTurns: 8,
       },
       getSummarizerDeps,
+      // SUMW-02: the threaded budget window — set EQUAL to the summarizer's
+      // getModel().contextWindow (the no-cap I3 identity) so the fixture's
+      // arming arithmetic is unchanged.
+      budgetWindowTokens: 1_000,
       now: 7000,
       logger,
       eventBus: undefined,
@@ -1241,6 +1245,9 @@ describe("LCD afterTurn leaf-pass wiring (Plan 129-06)", () => {
         scope,
         contextEngine: undefined,
         getSummarizerDeps: undefined,
+        // SUMW-02: required at the params layer; unused here (the gate returns
+        // before the denominator is read — no summarizer deps).
+        budgetWindowTokens: 1_000,
         now: 7000,
         logger,
         eventBus: undefined,
@@ -1590,6 +1597,10 @@ describe("LCD afterTurn C4 deferral + R3 serializer interlock (Plan 132-04)", ()
           freshTailTurns: 8,
         },
         getSummarizerDeps: deferredGetter,
+        // SUMW-02: the threaded budget window — a captured NUMBER, dispose-safe
+        // by construction (set EQUAL to the snapshot model's contextWindow, the
+        // no-cap I3 identity, so the arming arithmetic is unchanged).
+        budgetWindowTokens: 1_000,
         now: 9000,
         logger,
         eventBus: undefined,
