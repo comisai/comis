@@ -595,6 +595,27 @@ Context engine configuration. Controls the system that manages what your agent s
   The DAG cross-agent isolation adds an `agent_id` column to the full-text search index, created once on a fresh database (no migration — sessions start fresh on the LCD engine). A pre-existing development `~/.comis` database created before this release may need to be wiped to pick up the isolated index; a fresh install needs nothing. See [Compaction](/agents/compaction#per-tenant-agent-session-isolation).
 </Note>
 
+<Note>
+  **Engine scope — served-window honesty and the viable floor (the recorded pipeline-parity verdict).**
+  The turn-time pre-flight fit check, output-headroom enforcement, and the served/cap
+  `context_exhausted` provenance (the exhaustion text that names `OLLAMA_CONTEXT_LENGTH` /
+  `PARAMETER num_ctx` / `contextEngine.budget.effectiveContextCapSmall` — see the
+  [served-window section](#local-model-context-window)) apply to the DEFAULT
+  `version: "dag"` engine only. The `"pipeline"` engine's fit guard is its budget-aware
+  compaction trigger — it compacts when the estimated context exceeds 85% of the budget
+  window, computed against the UNCAPPED configured `contextWindow` (no served reconcile, no
+  capability-class cap) — plus reactive provider-side `context_too_long` classification when
+  the provider rejects an oversized request. (The trigger behavior is test-pinned.)
+
+  Recorded decision: the boot viable-floor WARN (the `minViable` equation) is deliberately
+  ENGINE-AGNOSTIC — it fires for dag AND pipeline agents alike, because the minViable
+  arithmetic (bootstrap + tool schemas + output headroom + fresh-tail reserve + safety margin
+  vs the effective window) holds regardless of engine. What differs per engine is which
+  TURN-TIME guard backs it up — dag: the pre-flight with knob-named exhaustion; pipeline: the
+  85% compaction trigger + reactive classification. An operator running a pipeline agent
+  should read the boot WARN as applying to them, while the per-turn preflight surfaces do not.
+</Note>
+
 #### Capacity Cap (agents.\*.contextEngine.budget)
 
 Prevents 256K context-window models from over-provisioning when running a small executive (e.g., qwen3.6:27b). Applied in `computeTokenBudgetForProfile` before history budget computation. `frontier` and `mid` classes always receive the full `contextWindow`.
@@ -2339,6 +2360,58 @@ providers:
       capabilities:
         probeServedWindow: false
 ```
+
+**Boot WARN — served below configured:** When the probe discovers a served window smaller than
+the configured `contextWindow`, Comis logs exactly **one WARN per provider per boot** —
+`"Ollama served context window below configured"` — naming both numbers and the probed model
+(the probe checks ONE model per provider: `defaultModel`, else the first `models[]` entry —
+per-model probing is a known limitation). The hint names the fixes:
+`OLLAMA_CONTEXT_LENGTH=131072 ollama serve` (substituting your configured window), or Modelfile
+`PARAMETER num_ctx 131072` (see the VRAM caveat above), and the opt-out
+(`providers.entries.<id>.capabilities.probeServedWindow: false`). Healthy boots stay silent:
+served at or above configured, equal windows, non-Ollama providers, and providers the probe
+skipped all log nothing.
+
+**Exhaustion provenance — the served bind names its knobs:** When a turn exhausts a
+served-bound window, the `context_exhausted` error text carries the suffix
+`(model contextWindow 131072 but Ollama serves only 8192 — fix: OLLAMA_CONTEXT_LENGTH=131072 ollama serve, or Modelfile 'PARAMETER num_ctx 131072')`
+— both Ollama knobs plus the TRUE configured window. In logs and `comis explain`,
+`rawContextWindowTokens` reports the **configured** window with `windowCapSource: "served"`
+(previously the served value masqueraded as the model's declared window with source `"none"`).
+When both the served window and a capability-class cap clamp, the message names the full chain:
+`(model contextWindow 131072, Ollama serves 50000, capped to 32000 by contextEngine.budget.effectiveContextCapSmall — raise it (0 = uncapped) or reduce active tool schemas)`.
+The reconcile line — `"Context window reconciled (served or capability cap bound)"`, with
+`source` / `effectiveWindow` / `configured` / `served` / `capabilityCap` fields — logs at INFO
+**once per session** (the first reconciled turn; a session reset grants a fresh INFO) and at
+DEBUG per turn. A session whose configured window simply wins logs no reconcile line at any
+level (nothing was reconciled).
+
+**Boot viable floor (minViable):** At boot, per agent, Comis computes
+`minViable = bootstrapTotalTokens + toolSchemaTokens + outputHeadroomFloor + freshTailReserve + safetyMargin`
+— each term single-sourced from its turn-time preflight home (the scaffold bootstrap budget,
+the tool-schema overhead estimate, the output headroom at the post-downshift minimum thinking
+level, the per-class preamble reserve, and the token-budget safety margin) — and WARNs when the
+effective window cannot fit even that floor:
+`"Boot viable-floor check: effective window below minViable — agent will degrade on real turns (WARN-only, boot continues)"`.
+The hint spells the full equation with every term's value, e.g.
+`minViable = bootstrapTotalTokens(1429) + toolSchemaTokens(9714) + outputHeadroomFloor(1792) + freshTailReserve(2000) + safetyMargin(2048) = 16983 exceeds effectiveWindow 8192 [source: served]`,
+followed by the knob for the binding window source — served: the two Ollama knobs above;
+capability: `contextEngine.budget.effectiveContextCapSmall` / `effectiveContextCapNano`
+(`0` = uncapped) or a higher `providers.entries.<id>.capabilities.capabilityClass` pin;
+configured: `providers.entries.<id>.models[].contextWindow`. When tool schemas dominate the
+floor, the hint adds the active-tool-ceiling lever: pin `capabilityClass` (the `small` class
+defers to a 24-tool active ceiling via `discover_tools`) or disable unused MCP servers /
+builtin tool groups. WARN-only: Comis **never** refuses to boot below the floor (the adapt-down
+posture) — and because the boot floor and the turn-time preflight share one source module, the
+same numbers re-appear in any later turn-time `context_exhausted` for that agent.
+
+The boot viable-floor WARN is engine-AGNOSTIC — it fires for `"dag"` and `"pipeline"` agents
+alike (the minViable arithmetic holds regardless of engine); the per-turn preflight surfaces
+are dag-only — see the engine-scope note in the
+[Context Engine section](#context-engine-agents-contextengine). Fleet-wide, under-served
+providers surface as the `config_posture:served_below_configured` finding in
+[`comis fleet`](/reference/cli#comis-fleet) and the `obs.fleet.health` RPC (see the
+[JSON-RPC reference](/reference/json-rpc)).
 
 ## UX Features
 
