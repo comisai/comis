@@ -227,7 +227,13 @@ describe("evaluateViableFloorForAgent — WARN emission", () => {
     expect(warnCalls).toHaveLength(0);
   });
 
-  it("FLOOR-01-7: capability-bound window names the effectiveContextCap knobs, not the Ollama served knobs", () => {
+  it("FLOOR-01-7 (IN-06): capability-bound window leads with the capabilityClass pin lever, never the inert budget-knob remedy or the Ollama knobs", () => {
+    // IN-06 (Phase 176 review, iteration 2): for a capability-bound window the
+    // boot resolver (like the executor reconcile) reads only
+    // DEFAULT_EFFECTIVE_CAP_BY_CLASS[pinned class] — the contextEngine.budget.*
+    // caps can only clamp FURTHER, never raise this bind, so leading with
+    // "Raise contextEngine.budget.effectiveContextCapSmall ... (0 = uncapped)"
+    // is the WR-01 dead-knob misdirection on the boot WARN surface.
     const { logger, warnCalls } = makeRecordingLogger();
     evaluateViableFloorForAgent({
       info: makeInfo({ windowSource: "capability" }),
@@ -236,7 +242,11 @@ describe("evaluateViableFloorForAgent — WARN emission", () => {
     });
     expect(warnCalls).toHaveLength(1);
     const hint = warnCalls[0].obj.hint as string;
-    expect(hint).toContain("contextEngine.budget.effectiveContextCapSmall");
+    expect(hint).toContain(
+      "Pin a higher class (or remove the pin) via providers.entries.qwen-local.capabilities.capabilityClass",
+    );
+    expect(hint).toContain("contextEngine.budget.* caps do not move this bind");
+    expect(hint).not.toContain("(0 = uncapped)");
     expect(hint).not.toContain("OLLAMA_CONTEXT_LENGTH");
   });
 

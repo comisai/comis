@@ -312,11 +312,16 @@ export function evaluateViableFloorForAgent(params: {
 
   // Per-source knob sentence — fixed-string templates + numbers + knob names
   // only (I7/T-176-08: no schema bodies, no message content, no env values).
+  // IN-06 (WR-01 principle): the capability branch leads with the PIN — the
+  // boot resolver (like the executor reconcile) reads only
+  // DEFAULT_EFFECTIVE_CAP_BY_CLASS[pinned class]; the contextEngine.budget.*
+  // caps can only clamp FURTHER and cannot raise this bind, so they are a
+  // dead lever here (named only as a does-not-move note).
   const knobSentence =
     info.windowSource === "served"
       ? `Raise the served window: OLLAMA_CONTEXT_LENGTH=${info.configuredWindow} ollama serve, or Modelfile 'PARAMETER num_ctx ${info.configuredWindow}'. `
       : info.windowSource === "capability"
-        ? `Raise contextEngine.budget.effectiveContextCapSmall / effectiveContextCapNano (0 = uncapped) or pin a higher class via providers.entries.${info.providerId}.capabilities.capabilityClass. `
+        ? `Pin a higher class (or remove the pin) via providers.entries.${info.providerId}.capabilities.capabilityClass — the contextEngine.budget.* caps do not move this bind. `
         : `Raise the model's configured window: providers.entries.${info.providerId}.models[].contextWindow. `;
   const dominanceSentence =
     eq.dominantTerm === "toolSchemaTokens"

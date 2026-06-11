@@ -2412,9 +2412,10 @@ effective window cannot fit even that floor:
 The hint spells the full equation with every term's value, e.g.
 `minViable = bootstrapTotalTokens(1429) + toolSchemaTokens(9714) + outputHeadroomFloor(1792) + freshTailReserve(2000) + safetyMargin(2048) = 16983 exceeds effectiveWindow 8192 [source: served]`,
 followed by the knob for the binding window source — served: the two Ollama knobs above;
-capability: `contextEngine.budget.effectiveContextCapSmall` / `effectiveContextCapNano`
-(`0` = uncapped) or a higher `providers.entries.<id>.capabilities.capabilityClass` pin;
-configured: `providers.entries.<id>.models[].contextWindow`. When tool schemas dominate the
+capability: pin a higher class (or remove the pin) via
+`providers.entries.<id>.capabilities.capabilityClass` (the `contextEngine.budget.*` caps cannot
+raise this bind); configured: `providers.entries.<id>.models[].contextWindow`. When tool schemas
+dominate the
 floor, the hint adds the active-tool-ceiling lever: pin `capabilityClass` (the `small` class
 defers to a 24-tool active ceiling via `discover_tools`) or disable unused MCP servers /
 builtin tool groups. WARN-only: Comis **never** refuses to boot below the floor (the adapt-down
