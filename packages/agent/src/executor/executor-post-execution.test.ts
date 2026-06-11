@@ -237,12 +237,25 @@ describe("buildSessionEndMetadata", () => {
     expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "session_reset" }).sessionEnd?.endReason).toBe("error");
   });
 
-  it("WR-02: END_REASON_MAP never produces the dead 'timeout' endReason literal", () => {
-    // The SessionMetadata.sessionEnd.endReason union still declares "timeout",
-    // but no source finishReason maps to it — assert the writer cannot emit it so
-    // the dead literal is documented as unreachable from THIS path (not silently
-    // re-introduced via a stray mapping).
-    expect(Object.values(END_REASON_MAP)).not.toContain("timeout");
+  it("LAT-04-E-1: END_REASON_MAP maps prompt_timeout → the (formerly dead) 'timeout' endReason — the WR-02 pin deliberately flipped", () => {
+    // The WR-02 negative pin (`expect(Object.values(END_REASON_MAP)).not.toContain("timeout")`)
+    // existed to prevent ACCIDENTAL re-introduction of the dead literal. LAT-04
+    // (Phase 177) is the deliberate one — the QT2/QT3 named-cause un-flattening
+    // precedent: a PromptTimeoutError terminal now carries its OWN named cause
+    // instead of flattening into generic "error", so a timeout-heavy session
+    // attributes correctly in obs.explain / obs.fleet.health
+    // (HARD_FAILURE_END_REASONS and fleet degradedByCause are pre-wired).
+    expect(END_REASON_MAP["prompt_timeout"]).toBe("timeout");
+    // "timeout" reaches the map through EXACTLY this one entry — no stray
+    // mapping re-introduces it for any other finishReason.
+    const timeoutSources = Object.entries(END_REASON_MAP).filter(([, v]) => v === "timeout");
+    expect(timeoutSources).toEqual([["prompt_timeout", "timeout"]]);
+  });
+
+  it("LAT-04-E-2: a sessionEnd write with finishReason 'prompt_timeout' produces endReason 'timeout' and degraded:true", () => {
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "prompt_timeout" }).sessionEnd?.endReason).toBe("timeout");
+    // degraded := endReason !== "success" — the named cause is degraded by construction.
+    expect(buildSessionHealthRollup({}, "timeout").degraded).toBe(true);
   });
 
   it("QT2: un-flattens the context-exhaustion cause — context_exhausted and context_loop both name it (not generic error)", () => {
@@ -289,7 +302,7 @@ describe("buildSessionEndMetadata", () => {
       "stop", "end_turn", "error", "max_steps",
       "budget_exceeded", "budget_exhausted", "circuit_open", "provider_degraded",
       "context_loop", "context_exhausted", "output_starved", "session_reset", "loop_detected",
-      "completed_with_tool_errors",
+      "completed_with_tool_errors", "prompt_timeout",
     ];
     for (const reason of ALL_FINISH_REASONS) {
       const mappedEndReason = END_REASON_MAP[reason] ?? "error";
