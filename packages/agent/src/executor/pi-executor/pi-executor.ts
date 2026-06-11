@@ -121,6 +121,7 @@ import { randomUUID } from "node:crypto";
 
 // Closure-extracted helpers (state-first)
 import { installCompactionTrigger } from "./compaction-trigger.js";
+import { createDeltaResetComposer } from "./delta-reset.js";
 import { bootstrapSession, decodeExecutionOverrides, type MutableRef, type EffectiveTimeout } from "./session-bootstrap.js";
 import { runSafetyGates } from "./safety-gate.js";
 import { maybeRunBootstrapSweep } from "./maybe-run-bootstrap-sweep.js";
@@ -1279,6 +1280,14 @@ async function runSessionLocked(
   const executionId = randomUUID();
   // Budget trajectory warning: shared mutable ref between bridge (writer) and prompt runner (reader)
   const budgetWarningRef = { current: false };
+  // LAT-02 (177-03): deltas (text + thinking) reset the stall budget — ALWAYS-
+  // defined (the bridge presence-gates on deps.onDelta), live-ref
+  // (currentResetTimer is assigned later at onResetTimer), throttled ~1/s.
+  const onDeltaWithStallReset = createDeltaResetComposer({}, {
+    channelOnDelta: onDelta,
+    getResetTimer: () => currentResetTimer,
+    clock: deps.clock,
+  });
   const bridge = createPiEventBridge({
     eventBus: deps.eventBus,
     budgetGuard: deps.budgetGuard,
@@ -1300,7 +1309,7 @@ async function runSessionLocked(
     // os.homedir() sanctioned-root pattern already used in this file for the
     // trajectory-confinement base.
     homeDir: os.homedir(),
-    onDelta,
+    onDelta: onDeltaWithStallReset,
     memoryPort: deps.memoryPort,
     onAbort: () => {
       session.abortCompaction();

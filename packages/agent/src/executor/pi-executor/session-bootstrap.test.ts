@@ -377,4 +377,46 @@ describe("decodeExecutionOverrides", () => {
       expect(out.effectiveTimeout.operationType).toBeUndefined();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // LAT-02 (177-03): stallCeilingMultiplier rides EffectiveTimeout so the
+  // retry loop derives the makespan ceiling (promptTimeoutMs × multiplier) at
+  // the race call site — never a standalone ms knob (design §7; 177-01
+  // DECISION: makespan non-optional wherever stall semantics apply).
+  // -------------------------------------------------------------------------
+  describe("LAT-02 stallCeilingMultiplier threading (177-03)", () => {
+    function decodeConfig(config: PerAgentConfig) {
+      const cacheRetentionRef = makeRef<CacheRetention | undefined>(undefined);
+      const adaptiveRetentionRef = makeRef<AdaptiveCacheRetention | undefined>(undefined);
+      const minTokensOverrideRef = makeRef<number | undefined>(undefined);
+      const deps = {
+        logger: makeNoopLogger(),
+        clock: { now: () => 0, nowDate: () => new Date(0) },
+      } as unknown as PiExecutorDeps;
+      return decodeExecutionOverrides({}, deps, {
+        config,
+        sessionKey,
+        overrides: undefined,
+        operationDefaults: {},
+        cacheRetentionRef,
+        adaptiveRetentionRef,
+        minTokensOverrideRef,
+      });
+    }
+
+    it("LAT-02-W-7: decode lands config.promptTimeout.stallCeilingMultiplier on EffectiveTimeout (4 → 4)", () => {
+      const withMultiplier = {
+        ...baseConfig,
+        promptTimeout: { promptTimeoutMs: 60_000, retryPromptTimeoutMs: 30_000, stallCeilingMultiplier: 4 },
+      } as unknown as PerAgentConfig;
+
+      expect(decodeConfig(withMultiplier).effectiveTimeout.stallCeilingMultiplier).toBe(4);
+    });
+
+    it("LAT-02-W-7: a config without the key decodes to the schema default 10 (hand-built carriers bypass the zod parse)", () => {
+      // Post-parse the schema's .default(10) guarantees presence; decode's
+      // `?? 10` covers hand-built fixtures/legacy carriers like baseConfig.
+      expect(decodeConfig(baseConfig).effectiveTimeout.stallCeilingMultiplier).toBe(10);
+    });
+  });
 });

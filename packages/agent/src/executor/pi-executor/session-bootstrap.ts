@@ -78,6 +78,13 @@ export interface SessionBootstrapResult {
 export interface EffectiveTimeout {
   promptTimeoutMs: number;
   retryPromptTimeoutMs: number;
+  /**
+   * LAT-02 (177-03): makespan = promptTimeoutMs × stallCeilingMultiplier —
+   * R-1 non-optional wherever stall semantics apply (177-01 DECISION). The
+   * ceiling is DERIVED at the race call site (model-retry), never a
+   * standalone ms knob.
+   */
+  stallCeilingMultiplier: number;
   source: TimeoutSource;
   operationType?: ModelOperationType;
 }
@@ -223,6 +230,10 @@ export function decodeExecutionOverrides(
     retryPromptTimeoutMs:
       overrides?.promptTimeout?.retryPromptTimeoutMs
       ?? config.promptTimeout.retryPromptTimeoutMs,
+    // LAT-02: the schema's .default(10) guarantees presence post-parse; the
+    // `?? 10` covers hand-built configs (tests/legacy carriers) that bypass
+    // the zod parse.
+    stallCeilingMultiplier: config.promptTimeout.stallCeilingMultiplier ?? 10,
     source,
     operationType: overrides?.operationType,
   };

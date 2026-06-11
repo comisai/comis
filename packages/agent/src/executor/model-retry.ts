@@ -33,7 +33,9 @@ import { tryGetContext } from "@comis/core";
 import type { AuthRotationAdapter } from "../model/auth-rotation-adapter.js";
 import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js";
 import type { LastKnownModelTracker } from "../model/last-known-model.js";
+import type { TimeoutSource } from "../model/operation-model-resolver.js";
 import { withPromptTimeout, withResettablePromptTimeout, PromptTimeoutError } from "./prompt-timeout.js";
+import { describeTimeoutKnob } from "./timeout-knob.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import { classifyError } from "./error-classifier.js";
 
@@ -63,6 +65,16 @@ export interface ModelRetryParams {
   timeoutConfig: {
     promptTimeoutMs: number;
     retryPromptTimeoutMs: number;
+    /**
+     * LAT-02 (177-03): makespan = promptTimeoutMs × stallCeilingMultiplier
+     * threaded into the primary race (R-1 — non-optional wherever stall
+     * semantics apply; production callers always pass it). Optional on the
+     * carrier so legacy direct constructions keep compiling.
+     */
+    stallCeilingMultiplier?: number;
+    /** LAT-01 binding provenance — feeds bindingKnob on timeout emits. */
+    source?: TimeoutSource;
+    operationType?: string;
   };
   deps: {
     eventBus: TypedEventBus;
@@ -223,8 +235,9 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
   let effectiveModel: { provider: string; model: string } | undefined;
 
   try {
-    // Primary prompt uses resettable timeout so tool completions can reset the
-    // deadline. Retry/fallback paths use the original withPromptTimeout (fresh timeout).
+    // Primary prompt uses resettable timeout so tool completions (and, since
+    // LAT-02, stream deltas) can reset the deadline. Retry/fallback paths use
+    // the original withPromptTimeout (fresh whole-turn timeout).
     const resettable = withResettablePromptTimeout(
       session.prompt(messageText, {
         expandPromptTemplates: false,
@@ -233,6 +246,18 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
       timeoutConfig.promptTimeoutMs,
       () => session.abort(),
       timers,
+      {
+        // LAT-02 (177-01 DECISION): the makespan ceiling is non-optional
+        // wherever stall semantics apply — DERIVED here from the multiplier,
+        // never a standalone ms knob. A delta-resetting runaway generation is
+        // bounded at promptTimeoutMs × stallCeilingMultiplier (T-177-08).
+        // initialBudgetMs deliberately NOT wired (first_activity_scaling:
+        // none — wiring it would re-open the LAT-02-5 hang-detection cost
+        // without a decision record).
+        ...(timeoutConfig.stallCeilingMultiplier !== undefined && {
+          makespanMs: timeoutConfig.promptTimeoutMs * timeoutConfig.stallCeilingMultiplier,
+        }),
+      },
     );
     // Expose resetTimer to the caller (pi-executor) for wiring to tool execution events
     deps.onResetTimer?.(resettable.resetTimer);
@@ -254,7 +279,9 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         maxRetries,
         totalElapsedMs: clock.now() - retryStartMs,
         hint: "Primary model failed, attempting fallback",
-        errorKind: "dependency" as ErrorKind,
+        // LAT-04: timeouts are their own failure class — booking them as
+        // "dependency" misclassified every prompt timeout in fleet rollups.
+        errorKind: (primaryError instanceof PromptTimeoutError ? "timeout" : "dependency") as ErrorKind,
       },
       "Primary model prompt error",
     );
@@ -277,18 +304,45 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
       return { succeeded: false, error: primaryError };
     }
 
-    // Emit prompt timeout event for observability
+    // Emit prompt timeout event for observability (LAT-04: full attribution —
+    // numbers + enum + the pre-rendered config-KEY string only, never delta
+    // content or env values; T-177-11).
     if (primaryError instanceof PromptTimeoutError) {
       eventBus.emit("execution:prompt_timeout", {
         agentId: deps.agentId ?? "unknown",
         sessionKey: deps.sessionKey ?? "unknown",
         timeoutMs: primaryError.timeoutMs,
         timestamp: clock.now(),
+        durationMs: clock.now() - retryStartMs,
+        ...(primaryError.limit !== undefined && { limit: primaryError.limit }),
+        ...(timeoutConfig.source !== undefined && { source: timeoutConfig.source }),
+        bindingKnob: describeTimeoutKnob(timeoutConfig.source ?? "agent_config", deps.agentId, timeoutConfig.operationType),
+        ...(timeoutConfig.operationType !== undefined && { operationType: timeoutConfig.operationType }),
+        ...(primaryError.stallBudgetMs !== undefined && { stallBudgetMs: primaryError.stallBudgetMs }),
+        ...(primaryError.makespanMs !== undefined && { makespanMs: primaryError.makespanMs }),
       });
     }
 
-    // Feed failure into provider health monitor
-    deps.providerHealth?.recordFailure(config.provider, deps.agentId ?? "unknown");
+    // Feed failure into provider health monitor — EXCEPT makespan-kills.
+    // LAT-04: a makespan-kill is the model streaming forever (runaway), not
+    // the provider failing; booking it would let slow-prefill turns trip the
+    // safety gate into provider_degraded skips. Stall-kills (indistinguishable
+    // from a hung provider) still record (Pitfall 6 both-directions).
+    const isPrimaryMakespanKill =
+      primaryError instanceof PromptTimeoutError && primaryError.limit === "makespan";
+    if (isPrimaryMakespanKill) {
+      logger.debug(
+        {
+          step: "retry",
+          provider: config.provider,
+          errorKind: "timeout" as ErrorKind,
+          hint: "makespan kill suppressed from providerHealth (model runaway, not provider failure)",
+        },
+        "Provider-health recording suppressed for makespan kill",
+      );
+    } else {
+      deps.providerHealth?.recordFailure(config.provider, deps.agentId ?? "unknown");
+    }
 
     // Cache-aware short retry -- preserve model string for cache hit.
     // If the error is a rate limit (429/529) with a short retry-after,
@@ -304,6 +358,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           );
           await new Promise<void>(r => { const h = timers.setTimeout(() => r(), retryAfterMs); void h; });
           try {
+            // LAT-02 scope decision (177 Open Q2): retry/fallback prompts KEEP
+            // whole-turn retryPromptTimeoutMs semantics (non-resettable) — pinned
+            // by LAT-02-W-6; extend only if local retries die spuriously in
+            // practice. Applies to ALL withPromptTimeout sites in this function.
             await withPromptTimeout(
               session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
               timeoutConfig.retryPromptTimeoutMs,
@@ -366,21 +424,47 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
               maxRetries,
               totalElapsedMs: clock.now() - retryStartMs,
               hint: "Rotated key also failed, proceeding to model fallback",
-              errorKind: "auth" as ErrorKind,
+              // LAT-04: a timeout on the rotated-key retry is a timeout, not
+              // an auth failure — keep "auth" only for non-timeout errors.
+              errorKind: (rotatedKeyError instanceof PromptTimeoutError ? "timeout" : "auth") as ErrorKind,
             },
             "Rotated key retry failed",
           );
-          // Emit prompt timeout event on rotation retry timeout
+          // Emit prompt timeout event on rotation retry timeout (LAT-04
+          // attribution; `limit` absent ⇒ whole-turn retry semantics).
           if (rotatedKeyError instanceof PromptTimeoutError) {
             eventBus.emit("execution:prompt_timeout", {
               agentId: deps.agentId ?? "unknown",
               sessionKey: deps.sessionKey ?? "unknown",
               timeoutMs: rotatedKeyError.timeoutMs,
               timestamp: clock.now(),
+              durationMs: clock.now() - retryStartMs,
+              ...(rotatedKeyError.limit !== undefined && { limit: rotatedKeyError.limit }),
+              ...(timeoutConfig.source !== undefined && { source: timeoutConfig.source }),
+              bindingKnob: describeTimeoutKnob(timeoutConfig.source ?? "agent_config", deps.agentId, timeoutConfig.operationType),
+              ...(timeoutConfig.operationType !== undefined && { operationType: timeoutConfig.operationType }),
+              ...(rotatedKeyError.stallBudgetMs !== undefined && { stallBudgetMs: rotatedKeyError.stallBudgetMs }),
+              ...(rotatedKeyError.makespanMs !== undefined && { makespanMs: rotatedKeyError.makespanMs }),
             });
           }
-          // Feed rotation failure into provider health monitor
-          deps.providerHealth?.recordFailure(config.provider, deps.agentId ?? "unknown");
+          // Feed rotation failure into provider health monitor — makespan-kill
+          // suppression mirrors the primary site (LAT-04; structurally dead on
+          // this whole-turn path today, but the gate keeps the split uniform).
+          const isRotatedMakespanKill =
+            rotatedKeyError instanceof PromptTimeoutError && rotatedKeyError.limit === "makespan";
+          if (isRotatedMakespanKill) {
+            logger.debug(
+              {
+                step: "retry",
+                provider: config.provider,
+                errorKind: "timeout" as ErrorKind,
+                hint: "makespan kill suppressed from providerHealth (model runaway, not provider failure)",
+              },
+              "Provider-health recording suppressed for makespan kill",
+            );
+          } else {
+            deps.providerHealth?.recordFailure(config.provider, deps.agentId ?? "unknown");
+          }
           // Fall through to model fallback loop below
         }
       }
@@ -451,21 +535,46 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             maxRetries,
             totalElapsedMs: clock.now() - retryStartMs,
             hint: "Fallback model also failed",
-            errorKind: "dependency" as ErrorKind,
+            // LAT-04: timeout class for PromptTimeoutError (fleet rollups).
+            errorKind: (fallbackError instanceof PromptTimeoutError ? "timeout" : "dependency") as ErrorKind,
           },
           "Fallback model prompt error",
         );
-        // Emit prompt timeout event on fallback timeout
+        // Emit prompt timeout event on fallback timeout (LAT-04 attribution;
+        // `limit` absent ⇒ whole-turn retry semantics).
         if (fallbackError instanceof PromptTimeoutError) {
           eventBus.emit("execution:prompt_timeout", {
             agentId: deps.agentId ?? "unknown",
             sessionKey: deps.sessionKey ?? "unknown",
             timeoutMs: fallbackError.timeoutMs,
             timestamp: clock.now(),
+            durationMs: clock.now() - retryStartMs,
+            ...(fallbackError.limit !== undefined && { limit: fallbackError.limit }),
+            ...(timeoutConfig.source !== undefined && { source: timeoutConfig.source }),
+            bindingKnob: describeTimeoutKnob(timeoutConfig.source ?? "agent_config", deps.agentId, timeoutConfig.operationType),
+            ...(timeoutConfig.operationType !== undefined && { operationType: timeoutConfig.operationType }),
+            ...(fallbackError.stallBudgetMs !== undefined && { stallBudgetMs: fallbackError.stallBudgetMs }),
+            ...(fallbackError.makespanMs !== undefined && { makespanMs: fallbackError.makespanMs }),
           });
         }
-        // Feed fallback failure into provider health monitor
-        deps.providerHealth?.recordFailure(config.provider, deps.agentId ?? "unknown");
+        // Feed fallback failure into provider health monitor — makespan-kill
+        // suppression mirrors the primary site (LAT-04; structurally dead on
+        // this whole-turn path today, but the gate keeps the split uniform).
+        const isFallbackMakespanKill =
+          fallbackError instanceof PromptTimeoutError && fallbackError.limit === "makespan";
+        if (isFallbackMakespanKill) {
+          logger.debug(
+            {
+              step: "retry",
+              provider: config.provider,
+              errorKind: "timeout" as ErrorKind,
+              hint: "makespan kill suppressed from providerHealth (model runaway, not provider failure)",
+            },
+            "Provider-health recording suppressed for makespan kill",
+          );
+        } else {
+          deps.providerHealth?.recordFailure(config.provider, deps.agentId ?? "unknown");
+        }
         // Continue to next fallback
       }
     }
@@ -535,7 +644,8 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
               lkwProvider: lkw.provider,
               lkwModel: lkw.model,
               hint: "Last-known-working model also failed",
-              errorKind: "dependency" as ErrorKind,
+              // LAT-04: timeout class for PromptTimeoutError (fleet rollups).
+              errorKind: (lkwError instanceof PromptTimeoutError ? "timeout" : "dependency") as ErrorKind,
             },
             "Last-known-working model fallback failed",
           );
