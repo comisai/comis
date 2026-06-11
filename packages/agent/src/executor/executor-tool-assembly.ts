@@ -42,6 +42,7 @@ import {
   applyMutationSerializer,
 } from "./executor-tool-pipeline.js";
 import { assembleExecutionPrompt } from "./prompt-assembly.js";
+import { toolDefOverheadChars } from "./tool-overhead.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
 import type {
@@ -58,8 +59,12 @@ import type {
  * Warn when cachedFreshTailPreambleTokens exceeds this fraction of the
  * effective context window. frontier: Infinity (never warn). small/nano:
  * tight budget (~10% of effective window is a notable preamble spend).
+ *
+ * Exported (A1, Phase 176 FLOOR-01): context-engine/viable-floor.ts consumes
+ * this table as the freshTailReserve term of the boot minViable equation —
+ * the codebase's single per-class number for expected preamble size.
  */
-const PREAMBLE_WARN_THRESHOLD_BY_CLASS: Readonly<Record<CapabilityClass, number>> = {
+export const PREAMBLE_WARN_THRESHOLD_BY_CLASS: Readonly<Record<CapabilityClass, number>> = {
   frontier: Infinity,
   mid: 8_000,
   small: 3_200,   // ~10% of 32K effective window
@@ -337,13 +342,11 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // -------------------------------------------------------------------
   // 5. System token estimate
   // -------------------------------------------------------------------
-  const toolDefOverheadChars = mergedCustomTools.reduce((sum, t) => {
-    const descLen = t.description?.length ?? 0;
-    const paramLen = t.parameters ? JSON.stringify(t.parameters).length : 0;
-    return sum + (t.name?.length ?? 0) + descLen + paramLen;
-  }, 0);
+  // I8 (Phase 176 FLOOR-01): the char-overhead reduce lives in tool-overhead.ts —
+  // shared with the boot viable-floor so the two estimates cannot drift.
+  const toolDefOverheadCharsValue = toolDefOverheadChars(mergedCustomTools);
   const cachedSystemTokensEstimate = Math.ceil(
-    (promptResult.systemPrompt.length + toolDefOverheadChars) / CHARS_PER_TOKEN_RATIO,
+    (promptResult.systemPrompt.length + toolDefOverheadCharsValue) / CHARS_PER_TOKEN_RATIO,
   );
   // I1 / WR-01: the WHOLE fresh-tail preamble token estimate — the entire
   // dynamicPreamble + inlineMemory blob envelope-wrapper prepends into the latest

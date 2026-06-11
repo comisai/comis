@@ -69,8 +69,10 @@ describe("recall ↔ DAG-budget partition: recalled memory is budgeted as HISTOR
     // → cachedSystemTokensEstimate). It deliberately does not see the dynamic
     // preamble / inline memory, because those are budgeted as history instead.
     expect(toolAssemblySource).toContain("const cachedSystemTokensEstimate = Math.ceil(");
+    // toolDefOverheadCharsValue = toolDefOverheadChars(mergedCustomTools) — the
+    // shared tool-overhead.ts reduce (FLOOR-01/I8 extraction); still tool overhead ONLY.
     expect(toolAssemblySource).toContain(
-      "(promptResult.systemPrompt.length + toolDefOverheadChars) / CHARS_PER_TOKEN_RATIO",
+      "(promptResult.systemPrompt.length + toolDefOverheadCharsValue) / CHARS_PER_TOKEN_RATIO",
     );
   });
 
