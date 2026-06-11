@@ -25,10 +25,15 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
 import { initSchema, createLcdStore } from "@comis/memory";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { maybeRunLeafPass, type LeafPassOptions } from "./lcd-compaction-trigger.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+import { maybeRunLeafPass, runLeafPassAfterTurn, type LeafPassOptions } from "./lcd-compaction-trigger.js";
 import type { LeafSummarizer, LeafSummarizerDeps } from "../context-engine/lcd-leaf-summarizer.js";
 import { MIN_SHRINKABLE_LEAF_CHUNK_TOKENS } from "../context-engine/lcd-leaf-summarizer.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Fixtures (mirror lcd-assembler.test.ts / lcd-leaf-summarizer.test.ts)
@@ -1058,5 +1063,160 @@ describe("maybeRunLeafPass — ordinal-window divergence emits context:dag_degra
     expect(Object.keys(degraded[0]!.payload).sort()).toEqual(
       ["agentId", "conversationId", "durationMs", "reason", "sessionKey", "timestamp"].sort(),
     );
+  });
+});
+
+// ===========================================================================
+// SUMW-02 (Phase 178): trigger denominator = budget window
+// ===========================================================================
+//
+// WHY THIS EXISTS — the v2.20 DIST-01 live incident: tool assembly budgets the
+// turn against budget.windowTokens = min(reconciled contextWindow, capability
+// class cap) (= 32_000 for a capped small model), but the afterTurn triggers
+// ratioed utilization against summarizerDeps.getModel().contextWindow — the
+// session model's CONFIGURED window (131_072 live). A small-class agent
+// therefore assembled at 32_000 while the leaf/condense triggers armed only at
+// 0.75 × 131_072 ≈ 98_304 stored tokens — ~4× late, making condensation look
+// "intermittent". SUMW-02 threads ONE captured budgetWindowTokens (the turn's
+// computeTokenBudgetForProfile().windowTokens) from the tool-assembly result
+// through postExecution into BOTH afterTurn params objects as the REQUIRED
+// utilization denominator — one window truth with assembly + preflight (the
+// pipeline trigger already ratios correctly: llm-compaction.ts thresholdTokens
+// derives from budget.windowTokens, FLOOR-02-pinned).
+//
+// These tests drive the afterTurn wrapper (runLeafPassAfterTurn) — the seam
+// where the denominator lives:
+//   - L1 (DIST-01 fixture) is RED on pre-patch code (the wrapper still reads
+//     the configured 131_072 → 0.198 ≤ 0.75 → inert).
+//   - L2 (frontier parity pin) passes pre+post BY DESIGN: when no cap binds,
+//     budgetWindowTokens == getModel().contextWindow (I3 byte-identical).
+//   - L3 (wiring source-lock) pins the postExecution → trigger threading and
+//     the ABSENCE of the legacy getModel-based denominator read — preventing
+//     the regression class where an optional param with a fallback (or the
+//     Infinity-initialized streamSetup.effectiveWindowRef carrier: utilization
+//     ÷ Infinity = 0) silently DISARMS both triggers (research Pitfall 1).
+
+describe("SUMW-02: trigger denominator = budget window", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  /** Summarizer deps whose getModel() plants the CONFIGURED window the legacy read used. */
+  function depsWithConfiguredWindow(
+    contextWindow: number,
+    logger: ReturnType<typeof createMockLogger>,
+  ): LeafSummarizerDeps {
+    return {
+      logger: logger as unknown as LeafSummarizerDeps["logger"],
+      summarize: shortSummarizer(),
+      getModel: () => ({ provider: "ollama", contextWindow, reasoning: false }),
+      getApiKey: async () => "test-key",
+    };
+  }
+
+  it("SUMW-02-L1 (DIST-01): arms at 0.75 × the BUDGET window on a capability-capped small model (configured 131072, budget 32000, ~26K stored)", async () => {
+    // 26 msgs × 1_000 stored tokens = 26_000 total. contextEngine: undefined →
+    // schema defaults (contextThreshold 0.75, freshTailTurns 8) — 13 assistant
+    // steps leave the oldest ~11 messages out-of-tail (a selectable leaf chunk).
+    // Pre-patch: utilization = 26_000 / getModel().contextWindow (131_072)
+    //   = 0.198 ≤ 0.75 → inert → NO summary → FAILS (RED).
+    // Post-patch: utilization = 26_000 / budgetWindowTokens (32_000) = 0.8125
+    //   > 0.75 → the leaf pass arms → ≥1 leaf summary persists.
+    seedHistory(store, 26, 1_000);
+    const logger = createMockLogger();
+    const deps = depsWithConfiguredWindow(131_072, logger);
+
+    await runLeafPassAfterTurn({
+      store,
+      scope: SCOPE,
+      contextEngine: undefined,
+      getSummarizerDeps: () => deps,
+      budgetWindowTokens: 32_000, // the turn's budget window: min(131_072, class cap 32_000)
+      now: FIXED_NOW,
+      nowFn: undefined,
+      logger: logger as unknown as LeafSummarizerDeps["logger"],
+    });
+
+    const summaries = store.getSummaries(SCOPE);
+    expect(summaries.length).toBeGreaterThanOrEqual(1);
+    expect(summaries.every((s) => s.kind === "leaf")).toBe(true);
+  });
+
+  it("SUMW-02-L2 (frontier parity pin): equal budget and configured window (no cap binds) arms byte-identically to the legacy denominator", async () => {
+    // I3: for frontier/mid no capability cap binds, so budgetWindowTokens ==
+    // getModel().contextWindow — this test passes pre- AND post-patch BY DESIGN,
+    // pinning that equal-values behavior is identical to the legacy read.
+    // (a) stored 26_000 vs 200_000 → utilization 0.13 ≤ 0.75 → inert (no summary).
+    seedHistory(store, 26, 1_000);
+    const logger = createMockLogger();
+    const deps = depsWithConfiguredWindow(200_000, logger);
+
+    await runLeafPassAfterTurn({
+      store,
+      scope: SCOPE,
+      contextEngine: undefined,
+      getSummarizerDeps: () => deps,
+      budgetWindowTokens: 200_000, // == getModel().contextWindow — the no-cap condition
+      now: FIXED_NOW,
+      nowFn: undefined,
+      logger: logger as unknown as LeafSummarizerDeps["logger"],
+    });
+    expect(store.getSummaries(SCOPE).length).toBe(0);
+
+    // (b) stored ~160_000 vs 200_000 → utilization 0.8 > 0.75 → arms (a leaf
+    // summary persists) — the same equal-values denominator on the arming side.
+    const db2 = new Database(":memory:");
+    initSchema(db2, 1536);
+    const store2 = createLcdStore(db2);
+    seedHistory(store2, 32, 5_000); // 160_000 stored tokens
+    const logger2 = createMockLogger();
+    const deps2 = depsWithConfiguredWindow(200_000, logger2);
+
+    await runLeafPassAfterTurn({
+      store: store2,
+      scope: SCOPE,
+      contextEngine: undefined,
+      getSummarizerDeps: () => deps2,
+      budgetWindowTokens: 200_000,
+      now: FIXED_NOW,
+      nowFn: undefined,
+      logger: logger2 as unknown as LeafSummarizerDeps["logger"],
+    });
+    const summaries = store2.getSummaries(SCOPE);
+    expect(summaries.length).toBeGreaterThanOrEqual(1);
+    expect(summaries.every((s) => s.kind === "leaf")).toBe(true);
+  });
+
+  it("SUMW-02-L3 (wiring source-lock): postExecution threads params.budgetWindowTokens into BOTH afterTurn passes; neither trigger reads the legacy getModel window", () => {
+    // Structural locks (recall-dag-budget-partition.test.ts precedent). The
+    // threading chain is compiler-enforced hop-by-hop (required field at every
+    // hop), but the runDeferredPasses call objects are plain literals a refactor
+    // could silently drop — restoring the old denominator via a fallback, or
+    // (worse) the Infinity-initialized streamSetup.effectiveWindowRef carrier,
+    // where utilization ÷ Infinity = 0 silently DISARMS both triggers. Lock the
+    // two coupled sites:
+    //   1. executor-post-execution.ts passes `budgetWindowTokens:
+    //      params.budgetWindowTokens` in EXACTLY the leaf + condense call
+    //      objects (×2 — one per afterTurn pass).
+    //   2. NEITHER trigger contains the legacy code read of the summarizer
+    //      snapshot window as the denominator (deleted by SUMW-02; the
+    //      summarize seam's model identity still flows through summarizerDeps —
+    //      only the utilization DENOMINATOR moved to the threaded budget value).
+    const postExecSource = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const threaded = postExecSource.match(/budgetWindowTokens: params\.budgetWindowTokens/g) ?? [];
+    expect(threaded.length).toBe(2);
+
+    // Code-only literal (the JSDoc prose uses a different phrasing): the exact
+    // legacy denominator expression must be GONE from both trigger sources.
+    const legacyRead = "summarizerDeps.getModel().contextWindow";
+    const leafTriggerSource = readFileSync(resolve(here, "lcd-compaction-trigger.ts"), "utf-8");
+    const condenseTriggerSource = readFileSync(resolve(here, "lcd-condense-trigger.ts"), "utf-8");
+    expect(leafTriggerSource).not.toContain(legacyRead);
+    expect(condenseTriggerSource).not.toContain(legacyRead);
   });
 });
