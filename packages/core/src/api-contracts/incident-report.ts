@@ -71,6 +71,35 @@ export const IncidentContextBudgetSchema = z.object({
 /** The per-call context budget equation (see {@link IncidentContextBudgetSchema}). */
 export type IncidentContextBudget = z.infer<typeof IncidentContextBudgetSchema>;
 
+/**
+ * LAT-04 (177): the terminal prompt-timeout attribution record — the LAST
+ * `execution.prompt_timeout` trajectory row. Content-free: numbers + closed
+ * enums + the pre-rendered config-KEY string (`bindingKnob` — knob NAME + ids
+ * only, never values/bodies). Wholesale-validated by the signals normalizer
+ * (the contextBudget discipline); a malformed/partial record is ignored
+ * (forward-compatible). Signals-only — NOT on `IncidentReportSchema`
+ * (mirroring the GBNF-02 `toolSchemaUnsupported` precedent: the heuristic
+ * verdict carries what the operator needs).
+ */
+export const IncidentPromptTimeoutSchema = z.object({
+  /** The configured ms value of the limit that FIRED. */
+  timeoutMs: z.number(),
+  /** Elapsed wall-clock ms at kill. */
+  durationMs: z.number().optional(),
+  /** Which limit fired: stall budget vs makespan ceiling. Absent = whole-turn (retry-path/pre-LAT-02 rows). */
+  limit: z.enum(["stall", "makespan"]).optional(),
+  /** Binding resolution level (LAT-01 — the agent-side TimeoutSource union). */
+  source: z.string().optional(),
+  /** Pre-rendered config-key string from the agent-side source→knob table. */
+  bindingKnob: z.string().optional(),
+  operationType: z.string().optional(),
+  stallBudgetMs: z.number().optional(),
+  makespanMs: z.number().optional(),
+});
+
+/** The terminal prompt-timeout attribution record (see {@link IncidentPromptTimeoutSchema}). */
+export type IncidentPromptTimeout = z.infer<typeof IncidentPromptTimeoutSchema>;
+
 export const IncidentReportSchema = z.object({
   schemaVersion: z.literal(1),
   sessionKey: z.string(),
@@ -297,6 +326,15 @@ export interface IncidentSignals {
    * tool-schema share instead of the generic speculation.
    */
   contextBudget?: IncidentContextBudget;
+  /**
+   * LAT-04 (177): the LAST `execution.prompt_timeout` trajectory record (the
+   * terminal kill explains the end state). Lets the `prompt_timeout` heuristic
+   * produce a numbers-backed verdict naming the binding knob (stall) or
+   * `stallCeilingMultiplier` (makespan) instead of falling through to NO
+   * verdict. Absent ⇒ pre-extension session (the rule degrades to a generic
+   * knob suggestion when `endReason` is "timeout").
+   */
+  promptTimeout?: IncidentPromptTimeout;
 }
 
 /**

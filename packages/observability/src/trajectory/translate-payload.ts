@@ -326,8 +326,21 @@ export function translatePayload(
       };
 
     case "execution:prompt_timeout":
+      // LAT-04 (177): stall/makespan attribution fields forward verbatim — the
+      // emit site is content-free (numbers + closed enums + the config-KEY
+      // bindingKnob string, never delta text or env values; I7). The signals
+      // reader (obs-explain-signals.ts) safeParses the row wholesale, so the
+      // explain verdict can name the binding knob with the actual numbers.
+      // agentId/sessionKey/timestamp are envelope-only and stripped.
       return {
         timeoutMs: payload.timeoutMs,
+        ...(payload.durationMs !== undefined ? { durationMs: payload.durationMs } : {}),
+        ...(payload.limit !== undefined ? { limit: payload.limit } : {}),
+        ...(payload.source !== undefined ? { source: payload.source } : {}),
+        ...(payload.bindingKnob !== undefined ? { bindingKnob: payload.bindingKnob } : {}),
+        ...(payload.operationType !== undefined ? { operationType: payload.operationType } : {}),
+        ...(payload.stallBudgetMs !== undefined ? { stallBudgetMs: payload.stallBudgetMs } : {}),
+        ...(payload.makespanMs !== undefined ? { makespanMs: payload.makespanMs } : {}),
       };
 
     case "execution:output_escalated":

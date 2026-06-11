@@ -29,8 +29,8 @@
  * @module
  */
 
-import { fingerprint, sanitizeLogString, IncidentContextBudgetSchema } from "@comis/core";
-import type { IncidentContextBudget, IncidentFailure, IncidentSignals } from "@comis/core";
+import { fingerprint, sanitizeLogString, IncidentContextBudgetSchema, IncidentPromptTimeoutSchema } from "@comis/core";
+import type { IncidentContextBudget, IncidentFailure, IncidentPromptTimeout, IncidentSignals } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Tunable thresholds (module-top constants per the naming contract).
@@ -90,6 +90,10 @@ interface Acc {
   misclassTokenByTool: Map<string, string>;
   /** W3: the LAST context.budget trajectory record (the terminal fit check). */
   contextBudget?: IncidentContextBudget;
+  /** LAT-04: the LAST execution.prompt_timeout record (the terminal kill
+   *  explains the end state — a retry-path kill earlier in the session is
+   *  superseded by the kill that actually ended it). */
+  promptTimeout?: IncidentPromptTimeout;
   /** GBNF-02: the LAST `execution.tool_schema_unsupported` record — the
    *  strip-retry self-heal outcome (one strip-retry per session means at most
    *  a handful; the terminal repair state explains the end). */
@@ -325,6 +329,18 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       if (parsed.success) acc.contextBudget = parsed.data;
       return;
     }
+    case "execution.prompt_timeout": {
+      // LAT-04 (177): the terminal prompt-timeout attribution record (stall
+      // budget / makespan ceiling / whole-turn — 177-03 emit sites). LAST
+      // record wins — the terminal kill explains the end state. Validated
+      // wholesale against the shared wire schema (the context.budget
+      // discipline, T-177-17); a malformed/partial record is ignored
+      // (forward-compatible — pre-extension rows carrying only timeoutMs
+      // still parse, every other field is optional).
+      const parsed = IncidentPromptTimeoutSchema.safeParse(data);
+      if (parsed.success) acc.promptTimeout = parsed.data;
+      return;
+    }
     case "tool.result_offloaded": {
       if (!tool) return;
       acc.offloads.push({
@@ -469,6 +485,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(misclassifiedTool !== undefined ? { misclassifiedTool } : {}),
     ...(misclassifiedToken !== undefined ? { misclassifiedToken } : {}),
     ...(acc.contextBudget !== undefined ? { contextBudget: acc.contextBudget } : {}),
+    ...(acc.promptTimeout !== undefined ? { promptTimeout: acc.promptTimeout } : {}),
     ...(acc.toolSchemaUnsupported !== undefined
       ? { toolSchemaUnsupported: acc.toolSchemaUnsupported }
       : {}),

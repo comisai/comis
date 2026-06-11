@@ -37,6 +37,15 @@
  *      NOT a tool failure, so they sit LAST: a tool-failure cause is upstream of
  *      the terminal state and out-ranks them. They fire only when the run's
  *      mapped endReason IS the cause, and never on a clean session.
+ *   6. prompt_timeout (LAT-04, Phase 177) — the NAMED terminal latency cause,
+ *      keyed on endReason "timeout" (alive since the 177-04 END_REASON_MAP
+ *      `prompt_timeout → "timeout"` entry). Same terminal band as #5 (the three
+ *      endReason keys are mutually exclusive); every tool-failure cause
+ *      out-ranks it. Numbers-backed from the enriched execution.prompt_timeout
+ *      signal when present (stall names the binding knob, makespan names
+ *      stallCeilingMultiplier); pre-extension sessions degrade to a generic
+ *      knob suggestion. The frozen 678/503 fixtures carry no prompt_timeout
+ *      records and no endReason "timeout" — cannot regress them.
  *
  * The two X3-mandated codes are #1 and #2; phase-done gates ONLY on X1/X2/X3.
  *
@@ -356,6 +365,62 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       suggestedNextSteps: [
         "raise the agent's maxTokens, or enable contextEngine.outputEscalation so a capped turn retries with a larger output budget",
         "if the answer is legitimately long, split the request or ask the agent to continue",
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // 9) prompt_timeout (LAT-04, Phase 177 — the NAMED terminal latency cause).
+  //    Keyed on the metadata-derived endReason (END_REASON_MAP prompt_timeout →
+  //    "timeout", 177-04), NOT a tool failure — sits BELOW the tool-failure
+  //    rules: a session that died on a prompt timeout with CLEAN tools used to
+  //    fall through to NO verdict (rule 6 provider_timeout requires a tool
+  //    failure — research Critical Finding 7 point 6). Numbers-backed from the
+  //    enriched execution.prompt_timeout signal when present; bindingKnob is
+  //    the PRE-RENDERED config-key string from the agent-side source→knob
+  //    table (never re-templated here — the KNOB-02 discipline; the only local
+  //    templating is the agents.<id>.promptTimeout.* fallback, a REAL key
+  //    family). Cannot regress the frozen 678/503 fixtures (no prompt_timeout
+  //    records, no endReason "timeout" in them).
+  (s) => {
+    if (s.endReason !== "timeout") return null;
+    const t = s.promptTimeout;
+    if (t !== undefined) {
+      if (t.limit === "makespan") {
+        // Makespan kill = streaming runaway (the model kept producing past the
+        // ceiling) — never framed as a stall; the lever is the multiplier.
+        return {
+          code: "prompt_timeout",
+          detail:
+            `makespan ceiling ${String(t.makespanMs ?? t.timeoutMs)}ms exceeded after ${String(t.durationMs ?? t.timeoutMs)}ms ` +
+            `while still streaming — streaming runaway (stall budget ${String(t.stallBudgetMs ?? 0)} × stallCeilingMultiplier)`,
+          suggestedNextSteps: [
+            `raise agents.${s.agentId ?? "<id>"}.promptTimeout.stallCeilingMultiplier (ceiling ${String(t.makespanMs ?? 0)}ms) or investigate runaway model output`,
+            "obs.explain depth=full",
+          ],
+        };
+      }
+      // Stall kill (or a whole-turn retry-path kill: limit undefined) — the
+      // binding knob came pre-rendered from the emit site when present.
+      const knob = t.bindingKnob ?? `agents.${s.agentId ?? "<id>"}.promptTimeout.promptTimeoutMs`;
+      return {
+        code: "prompt_timeout",
+        detail:
+          `stall budget ${String(t.stallBudgetMs ?? t.timeoutMs)}ms exceeded after ${String(t.durationMs ?? t.timeoutMs)}ms ` +
+          `with no stream/tool activity — binding knob: ${knob}`,
+        suggestedNextSteps: [
+          `raise ${knob} (currently ${String(t.stallBudgetMs ?? t.timeoutMs)}) — local prefill on consumer hardware can exceed it`,
+          "obs.explain depth=full",
+        ],
+      };
+    }
+    // Pre-extension session (endReason "timeout" but no enriched record on the
+    // trajectory): still name the cause, suggest the knob FAMILY, invent no numbers.
+    return {
+      code: "prompt_timeout",
+      detail: "prompt timed out (no enriched timeout record — pre-extension session)",
+      suggestedNextSteps: [
+        `raise agents.${s.agentId ?? "<id>"}.promptTimeout.promptTimeoutMs`,
         "obs.explain depth=full",
       ],
     };
