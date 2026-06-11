@@ -55,6 +55,19 @@ describe("memory_get tool", () => {
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
+  it("redirects a memory id passed as the path to the stored-memory tools instead of an ENOENT round-trip", async () => {
+    // Live finding (2026-06-12 C7 run): the model fed a memory_store row id
+    // into memory_get; the daemon answered with a bare workspace ENOENT that
+    // named the symptom, not the misuse.
+    const rpcCall = createMockRpcCall();
+    const tool = createMemoryGetTool(rpcCall);
+
+    await expect(
+      tool.execute("call-4", { path: "d8ea64e2-f4f0-4412-86f8-21942a0534ce" }),
+    ).rejects.toThrow(/memory id, not a workspace file path.*memory_search/s);
+    expect(rpcCall).not.toHaveBeenCalled();
+  });
+
   it("throws on rpcCall error", async () => {
     const rpcCall = vi.fn(async () => {
       throw new Error("File not found");
