@@ -1248,4 +1248,346 @@ describe("runWithModelRetry", () => {
       );
     });
   });
+
+  // -------------------------------------------------------------------
+  // LAT-02 / LAT-04 wiring matrix (177-03)
+  // -------------------------------------------------------------------
+  //
+  // The 177-01 primitive matrix proved the stall/makespan semantics on
+  // withResettablePromptTimeout in isolation. This block is the wiring half:
+  // model-retry must thread makespanMs = promptTimeoutMs × stallCeilingMultiplier
+  // into the primary race (R-1 non-optional wherever stall semantics apply —
+  // gate_scope: all-providers per the 177-01 DECISION), split providerHealth
+  // recording by limit (makespan-kill suppressed, stall-kill kept — Pitfall 6
+  // both directions), enrich the execution:prompt_timeout payload with the
+  // attribution fields, and flip the timeout WARN errorKind to "timeout".
+  // Retry/fallback prompts stay whole-turn (Open Q2 pin: LAT-02-W-6).
+  describe("LAT-02 / LAT-04 wiring matrix (177-03)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Drain chained .then/.finally hops left queued after a timer advance. */
+    async function flushMicrotasks(hops = 12): Promise<void> {
+      for (let i = 0; i < hops; i++) await Promise.resolve();
+    }
+
+    /** 180s stall budget × multiplier 10 → 1_800_000 makespan; agent_config binding. */
+    const LAT_TIMEOUT_CONFIG = {
+      promptTimeoutMs: 180_000,
+      retryPromptTimeoutMs: 60_000,
+      stallCeilingMultiplier: 10,
+      source: "agent_config",
+    } as ModelRetryParams["timeoutConfig"];
+
+    function makeLatDeps(extra?: Record<string, unknown>): ModelRetryParams["deps"] {
+      return {
+        eventBus: makeEventBus(),
+        logger: createMockLogger(),
+        modelRegistry: makeModelRegistry(),
+        agentId: "test-agent",
+        sessionKey: "test-session",
+        clock: testClock,
+        timers: testTimers,
+        ...extra,
+      } as ModelRetryParams["deps"];
+    }
+
+    function makeHungSession() {
+      const session = makeSession();
+      session.prompt.mockReturnValue(new Promise(() => {}));
+      return session;
+    }
+
+    /**
+     * LAT-02-6 shape: resets every 170s (inside the 180s stall budget) ×10
+     * → t=1_700_000 with the run still alive. A pure stall budget never
+     * kills this; only the non-resetting makespan ceiling can.
+     */
+    async function surviveToCeiling(getReset: () => (() => void) | undefined): Promise<void> {
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(170_000);
+        getReset()?.();
+      }
+    }
+
+    it("LAT-02-W-5: delta-driven resets survive the stall budget but the makespan ceiling kills at EXACTLY promptTimeoutMs × multiplier (limit makespan)", async () => {
+      const session = makeHungSession();
+      let captured: (() => void) | undefined;
+      const params = makeParams({
+        session,
+        timeoutConfig: LAT_TIMEOUT_CONFIG,
+        deps: makeLatDeps({ onResetTimer: (fn: () => void) => { captured = fn; } }),
+      });
+
+      let settled = false;
+      const tracked = runWithModelRetry(params).then((r) => { settled = true; return r; });
+
+      await surviveToCeiling(() => captured);
+      await flushMicrotasks();
+      // t=1_700_000: alive — resets extended the run far past the 180_000
+      // stall budget (the pre-existing reset semantics, unchanged).
+      expect(settled).toBe(false);
+
+      // 1ms before the ceiling: still alive.
+      await vi.advanceTimersByTimeAsync(99_999);
+      await flushMicrotasks();
+      expect(settled).toBe(false);
+
+      // t=1_800_000 = 180_000 × 10: the NON-resetting makespan ceiling fires.
+      // RED (pre-patch): makespanMs is not threaded into the race — the run
+      // never dies and `settled` stays false here.
+      await vi.advanceTimersByTimeAsync(1);
+      await flushMicrotasks();
+      expect(settled).toBe(true);
+
+      const result = await tracked;
+      expect(result.succeeded).toBe(false);
+      expect(result.error).toBeInstanceOf(PromptTimeoutError);
+      expect((result.error as PromptTimeoutError).limit).toBe("makespan");
+      expect((result.error as PromptTimeoutError).timeoutMs).toBe(1_800_000);
+      expect(session.abort).toHaveBeenCalledTimes(1);
+    });
+
+    it("LAT-04-1: a makespan-kill is SUPPRESSED from providerHealth (model runaway ≠ provider unhealth) and logs a content-free DEBUG", async () => {
+      const session = makeHungSession();
+      const providerHealth = { recordFailure: vi.fn() };
+      const logger = createMockLogger();
+      let captured: (() => void) | undefined;
+      const params = makeParams({
+        session,
+        timeoutConfig: LAT_TIMEOUT_CONFIG,
+        deps: makeLatDeps({
+          logger,
+          providerHealth,
+          onResetTimer: (fn: () => void) => { captured = fn; },
+        }),
+      });
+
+      let settled = false;
+      const tracked = runWithModelRetry(params).then((r) => { settled = true; return r; });
+
+      await surviveToCeiling(() => captured);
+      await vi.advanceTimersByTimeAsync(100_000);
+      await flushMicrotasks();
+      // RED guard (pre-patch): the makespan never fires — the run never dies.
+      expect(settled).toBe(true);
+
+      const result = await tracked;
+      expect((result.error as PromptTimeoutError).limit).toBe("makespan");
+      // The suppress direction: a runaway model that keeps streaming is NOT a
+      // provider failure — booking it would let 3 slow-prefill turns trip the
+      // safety gate into provider_degraded skips (Critical Finding 6).
+      expect(providerHealth.recordFailure).not.toHaveBeenCalled();
+
+      // Content-free suppression DEBUG (knob/step/errorKind only — T-177-09).
+      const suppression = vi.mocked(logger.debug).mock.calls.find(
+        (c: unknown[]) => c[1] === "Provider-health recording suppressed for makespan kill",
+      );
+      expect(suppression).toBeDefined();
+      expect(suppression![0]).toEqual(
+        expect.objectContaining({
+          errorKind: "timeout",
+          hint: expect.stringContaining("makespan"),
+        }),
+      );
+    });
+
+    it("LAT-04-2: a stall-kill KEEPS providerHealth.recordFailure (a true hang IS what the registry exists to catch) and the error carries the configured makespan", async () => {
+      const session = makeHungSession();
+      const providerHealth = { recordFailure: vi.fn() };
+      const params = makeParams({
+        session,
+        timeoutConfig: LAT_TIMEOUT_CONFIG,
+        deps: makeLatDeps({ providerHealth }),
+      });
+
+      const resultPromise = runWithModelRetry(params);
+      // No resets: a genuinely silent provider dies at the 180s stall budget —
+      // hang-detection latency stays 3 minutes, not 30 (LAT-02-5 cost cell).
+      await vi.advanceTimersByTimeAsync(180_000);
+      const result = await resultPromise;
+
+      expect(result.succeeded).toBe(false);
+      const err = result.error as PromptTimeoutError;
+      expect(err).toBeInstanceOf(PromptTimeoutError);
+      expect(err.limit).toBe("stall");
+      expect(err.stallBudgetMs).toBe(180_000);
+      // RED (pre-patch): the race gets no opts — the stall error carries no
+      // makespanMs (the wiring evidence; the primitive pins the rest).
+      expect(err.makespanMs).toBe(1_800_000);
+
+      // The keep direction: stall-kills still record.
+      expect(providerHealth.recordFailure).toHaveBeenCalledTimes(1);
+      expect(providerHealth.recordFailure).toHaveBeenCalledWith("anthropic", "test-agent");
+    });
+
+    it("LAT-04-3: the stall-kill execution:prompt_timeout payload carries full attribution (durationMs, limit, source, bindingKnob, budgets)", async () => {
+      const session = makeHungSession();
+      const eventBus = makeEventBus();
+      const params = makeParams({
+        session,
+        timeoutConfig: LAT_TIMEOUT_CONFIG,
+        deps: makeLatDeps({ eventBus }),
+      });
+
+      const resultPromise = runWithModelRetry(params);
+      await vi.advanceTimersByTimeAsync(180_000);
+      await resultPromise;
+
+      const emit = vi.mocked(eventBus.emit).mock.calls.find(
+        (c: unknown[]) => c[0] === "execution:prompt_timeout",
+      );
+      expect(emit).toBeDefined();
+      const payload = emit![1] as Record<string, unknown>;
+      expect(payload).toEqual(
+        expect.objectContaining({
+          agentId: "test-agent",
+          sessionKey: "test-session",
+          timeoutMs: 180_000,
+          limit: "stall",
+          source: "agent_config",
+          bindingKnob: "agents.test-agent.promptTimeout.promptTimeoutMs",
+          stallBudgetMs: 180_000,
+          makespanMs: 1_800_000,
+        }),
+      );
+      expect(payload.durationMs).toBeGreaterThanOrEqual(180_000);
+    });
+
+    it("LAT-04-3: a makespan-kill emit carries limit makespan", async () => {
+      const session = makeHungSession();
+      const eventBus = makeEventBus();
+      let captured: (() => void) | undefined;
+      const params = makeParams({
+        session,
+        timeoutConfig: LAT_TIMEOUT_CONFIG,
+        deps: makeLatDeps({ eventBus, onResetTimer: (fn: () => void) => { captured = fn; } }),
+      });
+
+      const resultPromise = runWithModelRetry(params);
+      await surviveToCeiling(() => captured);
+      await vi.advanceTimersByTimeAsync(100_000);
+      await resultPromise;
+
+      const emit = vi.mocked(eventBus.emit).mock.calls.find(
+        (c: unknown[]) => c[0] === "execution:prompt_timeout",
+      );
+      expect(emit).toBeDefined();
+      const payload = emit![1] as Record<string, unknown>;
+      expect(payload).toEqual(
+        expect.objectContaining({
+          timeoutMs: 1_800_000,
+          limit: "makespan",
+          makespanMs: 1_800_000,
+          stallBudgetMs: 180_000,
+        }),
+      );
+    });
+
+    it("LAT-04-4: the primary-failure WARN logs errorKind timeout for PromptTimeoutError and keeps dependency for non-timeout errors", async () => {
+      // Timeout case: the WARN must say errorKind "timeout" — pre-patch it
+      // logs "dependency", misclassifying every prompt timeout in fleet/explain
+      // errorKind rollups.
+      const session = makeHungSession();
+      const logger = createMockLogger();
+      const params = makeParams({
+        session,
+        timeoutConfig: {
+          promptTimeoutMs: 50,
+          retryPromptTimeoutMs: 60_000,
+          stallCeilingMultiplier: 10,
+          source: "agent_config",
+        } as ModelRetryParams["timeoutConfig"],
+        deps: makeLatDeps({ logger }),
+      });
+      const resultPromise = runWithModelRetry(params);
+      await vi.advanceTimersByTimeAsync(50);
+      await resultPromise;
+
+      const timeoutWarn = vi.mocked(logger.warn).mock.calls.find(
+        (c: unknown[]) => c[1] === "Primary model prompt error",
+      );
+      expect(timeoutWarn).toBeDefined();
+      expect(timeoutWarn![0]).toEqual(expect.objectContaining({ errorKind: "timeout" }));
+
+      // Regression pin: a non-timeout dependency failure still says "dependency".
+      const session2 = makeSession();
+      session2.prompt.mockRejectedValueOnce(new Error("connection reset"));
+      const logger2 = createMockLogger();
+      const params2 = makeParams({ session: session2, deps: makeLatDeps({ logger: logger2 }) });
+      const resultPromise2 = runWithModelRetry(params2);
+      await vi.advanceTimersByTimeAsync(0);
+      await resultPromise2;
+
+      const dependencyWarn = vi.mocked(logger2.warn).mock.calls.find(
+        (c: unknown[]) => c[1] === "Primary model prompt error",
+      );
+      expect(dependencyWarn).toBeDefined();
+      expect(dependencyWarn![0]).toEqual(expect.objectContaining({ errorKind: "dependency" }));
+    });
+
+    it("LAT-02-W-6: retry/fallback prompts stay whole-turn under retryPromptTimeoutMs — a reset during the fallback does NOT extend it (Open Q2 pin) and the retry-site emit is attribution-enriched with limit ABSENT", async () => {
+      const session = makeSession();
+      session.prompt
+        .mockReturnValueOnce(new Promise(() => {})) // primary hangs → stall-kill at 180s
+        .mockReturnValue(new Promise(() => {}));    // fallback hangs → whole-turn 60s window
+      const eventBus = makeEventBus();
+      let captured: (() => void) | undefined;
+      const params = makeParams({
+        session,
+        timeoutConfig: LAT_TIMEOUT_CONFIG,
+        deps: makeLatDeps({
+          eventBus,
+          fallbackModels: ["openai:gpt-4"],
+          onResetTimer: (fn: () => void) => { captured = fn; },
+        }),
+      });
+
+      let settled = false;
+      const tracked = runWithModelRetry(params).then((r) => { settled = true; return r; });
+
+      // Primary stall-kill at 180_000 (no resets); the fallback attempt arms
+      // its NON-resettable 60_000 whole-turn window in the same drain.
+      await vi.advanceTimersByTimeAsync(180_000);
+      await flushMicrotasks();
+      expect(settled).toBe(false); // fallback in flight
+
+      // 30s into the fallback, attempt to extend via the captured (primary)
+      // resetTimer — settled latch makes it a no-op; the retry window is
+      // deliberately non-resettable (research Open Q2: pin-and-document).
+      await vi.advanceTimersByTimeAsync(30_000);
+      captured?.();
+      await vi.advanceTimersByTimeAsync(29_999);
+      await flushMicrotasks();
+      expect(settled).toBe(false); // alive 1ms before the whole-turn deadline
+
+      await vi.advanceTimersByTimeAsync(1); // t = 180_000 + 60_000
+      await flushMicrotasks();
+      expect(settled).toBe(true); // the reset did NOT extend the retry window
+
+      const result = await tracked;
+      expect(result.succeeded).toBe(false);
+      const err = result.error as PromptTimeoutError;
+      expect(err).toBeInstanceOf(PromptTimeoutError);
+      expect(err.timeoutMs).toBe(60_000);
+      expect(err.limit).toBeUndefined(); // whole-turn semantics (non-resettable path)
+
+      // Retry-site emit: attribution-enriched, limit ABSENT (absent ⇒ whole-turn).
+      // RED (pre-patch): the emit carries only the 4 legacy fields.
+      const emits = vi.mocked(eventBus.emit).mock.calls.filter(
+        (c: unknown[]) => c[0] === "execution:prompt_timeout",
+      );
+      expect(emits).toHaveLength(2);
+      const fallbackPayload = emits[1]![1] as Record<string, unknown>;
+      expect(fallbackPayload.timeoutMs).toBe(60_000);
+      expect(fallbackPayload.limit).toBeUndefined();
+      expect(typeof fallbackPayload.durationMs).toBe("number");
+      expect(fallbackPayload.bindingKnob).toBe("agents.test-agent.promptTimeout.promptTimeoutMs");
+    });
+  });
 });

@@ -6777,6 +6777,77 @@ describe("WR-02: served-window gate on per-execution provider identity", () => {
 });
 
 // ---------------------------------------------------------------------------
+// LAT-02 (177-03): delta→stall-reset wiring at the composition root.
+// ---------------------------------------------------------------------------
+// The bridge presence-gates on deps.onDelta (pi-event-bridge.ts message_update
+// case), so the hand-off at the bridge-deps literal must be an ALWAYS-DEFINED
+// composed wrapper — not the raw channel callback, which is undefined for
+// channel-less runs (cron, graph, this harness) and silently disables
+// delta→reset: a silent local prefill then dies at the whole-turn race
+// (Critical Finding 6). Per the 177-01 DECISION the wrapper is unconditional
+// (gate_scope: all-providers — no providerType gating).
+
+describe("LAT-02: composed onDelta wrapper at the bridge hand-off (177-03)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearSessionToolNameSnapshot(formatSessionKey(testSessionKey));
+    clearSessionBootstrapFileSnapshot(formatSessionKey(testSessionKey));
+    clearSessionPromptSkillsXmlSnapshot(formatSessionKey(testSessionKey));
+    clearSessionToolSchemaSnapshot(formatSessionKey(testSessionKey));
+    clearSessionToolSchemaSnapshotHash(formatSessionKey(testSessionKey));
+    clearWindowReconcileLogged(formatSessionKey(testSessionKey));
+    mockPrompt.mockResolvedValue(undefined);
+    mockGetLastAssistantText.mockReturnValue("test response");
+    mockSetModel.mockResolvedValue(undefined);
+    mockSubscribe.mockReturnValue(vi.fn());
+  });
+
+  it("LAT-02-W-8: bridge deps onDelta is ALWAYS defined with no channel callback, and invoking it re-arms the stall timer through the live ref", async () => {
+    // Hung prompt keeps the resettable race live while the bridge deps are
+    // probed (the resetTimer hand-off happens when the race starts).
+    mockPrompt.mockReturnValue(new Promise(() => {}));
+    const probe = createMockDeps();
+    const setTimeoutSpy = vi.fn(probe.timers.setTimeout);
+    const deps = createMockDeps({ timers: { ...probe.timers, setTimeout: setTimeoutSpy } });
+    // Small budgets so the stall kill unwinds the hung run quickly (real timers).
+    const cfg = {
+      ...testConfig,
+      promptTimeout: { promptTimeoutMs: 300, retryPromptTimeoutMs: 100 },
+    } as PerAgentConfig;
+    const executor = createPiExecutor(cfg, deps);
+
+    const execPromise = executor.execute(testMessage, testSessionKey); // NO onDelta supplied
+
+    // Wait until the bridge exists AND the prompt race armed the stall timer
+    // (withResettablePromptTimeout arms synchronously beside the onResetTimer
+    // hand-off, so currentResetTimer is assigned once a timer is armed).
+    await vi.waitFor(() => {
+      expect((createPiEventBridge as Mock).mock.calls.length).toBeGreaterThan(0);
+      expect(setTimeoutSpy.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    const bridgeCall = (createPiEventBridge as Mock).mock.calls.at(-1)![0] as {
+      onDelta: ((delta: string, kind: "text" | "thinking") => void) | undefined;
+    };
+    // RED (pre-patch): the bridge-deps literal passes the RAW channel
+    // callback — undefined here — and the bridge's presence gate then drops
+    // every delta, so streaming activity never resets the stall budget.
+    expect(typeof bridgeCall.onDelta).toBe("function");
+
+    // Invoking the wrapper reads currentResetTimer through the LIVE ref and
+    // re-arms the stall timer: exactly one new timers.setTimeout call,
+    // synchronously (nothing else can interleave between these two lines).
+    const armsBefore = setTimeoutSpy.mock.calls.length;
+    bridgeCall.onDelta!("streamed token", "text");
+    expect(setTimeoutSpy.mock.calls.length).toBe(armsBefore + 1);
+
+    // Unwind: the stall budget (300ms after the delta) kills the hung prompt
+    // and the execution resolves with a failed-but-handled result.
+    await execPromise;
+  }, 15_000);
+});
+
+// ---------------------------------------------------------------------------
 // Source-text wiring guard: normalizeModelCompat call-site threading (175-04)
 // ---------------------------------------------------------------------------
 
