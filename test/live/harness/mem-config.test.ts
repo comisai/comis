@@ -173,7 +173,7 @@ describe("buildMemConfig — Behavior D: rag patched under agents.default with R
 });
 
 describe("buildMemConfig — operator model-path env knobs (no per-boot HF download)", () => {
-  it("COMIS_LIVE_EMBED_MODEL_PATH → embedding.local.modelUri", () => {
+  it("applies COMIS_LIVE_EMBED_MODEL_PATH to embedding.local.modelUri", () => {
     const prior = process.env["COMIS_LIVE_EMBED_MODEL_PATH"];
     process.env["COMIS_LIVE_EMBED_MODEL_PATH"] = "/abs/path/embed.gguf";
     try {
@@ -197,7 +197,7 @@ describe("buildMemConfig — operator model-path env knobs (no per-boot HF downl
     }
   });
 
-  it("COMIS_LIVE_RERANKER_MODEL_PATH → memory.rerankerModel", () => {
+  it("applies COMIS_LIVE_RERANKER_MODEL_PATH to memory.rerankerModel", () => {
     const prior = process.env["COMIS_LIVE_RERANKER_MODEL_PATH"];
     process.env["COMIS_LIVE_RERANKER_MODEL_PATH"] = "/abs/path/rerank.gguf";
     try {

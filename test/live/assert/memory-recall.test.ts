@@ -182,12 +182,12 @@ describe("isHonestNonAnswer — the two-outcome predicate gate (260611)", () => 
     expect(isHonestNonAnswer("   \n ")).toBe(true);
   });
 
-  it("'context exhausted' / 'couldn't complete' → honest non-answer", () => {
+  it("context exhausted or could not complete → honest non-answer", () => {
     expect(isHonestNonAnswer("Sorry, context exhausted.")).toBe(true);
     expect(isHonestNonAnswer("I couldn't complete that request.")).toBe(true);
   });
 
-  it("honest auth-failure (v2.18) → honest non-answer", () => {
+  it("honest auth-failure fallback (v2.18) → honest non-answer", () => {
     expect(isHonestNonAnswer(
       'The AI service could not authenticate with the "anthropic" provider. Please check the API key or notify the system administrator.',
     )).toBe(true);
