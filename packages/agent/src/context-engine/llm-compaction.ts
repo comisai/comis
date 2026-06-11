@@ -547,13 +547,19 @@ export function createLlmCompactionLayer(
           const maxSpanTokens =
             summarizerWindow - summaryReserve - SUMMARIZER_PROMPT_OVERHEAD_TOKENS;
           // Oldest-first prefix walk over the evictable middle: cut at the
-          // first message that would exceed maxSpanTokens (the file's own
-          // conservative estimator — chars / 3.5 per message).
+          // first message that would exceed maxSpanTokens. Review WR-04: each
+          // message is measured with the SAME dual-ratio estimate the layer's
+          // own 85% trigger uses (toolResult chars weighted ×2 before the 3.5
+          // divide) — a flat chars/3.5 walk under-counts structured content by
+          // ~15-17%, re-opening the provider-overflow class on toolResult-heavy
+          // middles. One estimator per layer (single-sourced with the trigger).
           let spanTokens = 0;
           let cut = 0;
           for (const m of evictableMiddle) {
             /* eslint-disable @typescript-eslint/no-explicit-any */
-            const msgTokens = Math.ceil(estimateMessageChars(m as any) / CHARS_PER_TOKEN_RATIO);
+            const msgTokens = Math.ceil(
+              estimateContextCharsWithDualRatio([m] as any) / CHARS_PER_TOKEN_RATIO,
+            );
             /* eslint-enable @typescript-eslint/no-explicit-any */
             if (spanTokens + msgTokens > maxSpanTokens) break;
             spanTokens += msgTokens;

@@ -2047,6 +2047,41 @@ describe("SUMW-01: pipeline span clamp", () => {
     }
   });
 
+  it("WR-04: a toolResult-heavy span is measured with the layer's own dual-ratio estimate — every summarized span fits the budget in trigger units", async () => {
+    // The clamp walk used a FLAT chars/3.5 per message while the layer's own
+    // 85% trigger weights toolResult chars ×2 (estimateContextCharsWithDualRatio)
+    // — so a toolResult-heavy span passed the walk at roughly HALF its
+    // trigger-unit size and overflowed the summarizer (the SUMW-01 target
+    // failure class recurring on structured-heavy middles). 18 triples
+    // [user 200ch, assistant 200ch, toolResult 5_000ch]: dual total ≈ 53K
+    // tokens > the 27_200 trigger; the raw-chars tail walk keeps ~10 triples,
+    // leaving a middle with ≥ 2 toolResults so the walk's units are
+    // load-bearing (each toolResult: flat ≈ 1_429 vs dual ≈ 2_858 tokens).
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 18; i++) {
+      messages.push(makeUserMsg(`Q${i}: ` + "x".repeat(200)));
+      messages.push(makeAssistantMsg(`A${i}: ` + "y".repeat(200)));
+      messages.push(makeToolResult(`tc_${i}`, "bash", "z".repeat(5_000)));
+    }
+    const { deps } = make8kOverrideDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    // EVERY summarize call's span fits maxSpanTokens measured in the SAME
+    // dual-ratio units the trigger uses. RED pre-fix: the flat walk admits
+    // two toolResults whose dual-unit size (~6K) exceeds the 3_952 budget.
+    for (const call of mockGenerateSummary.mock.calls) {
+      const span = call[0] as AgentMessage[];
+      const dualTokens = Math.ceil(
+        estimateContextCharsWithDualRatio(span as unknown as Message[]) / CHARS_PER_TOKEN_RATIO,
+      );
+      expect(dualTokens).toBeLessThanOrEqual(MAX_SPAN_TOKENS_8K);
+    }
+  });
+
   it("CR-01: the playbook 8K summarizer under a frontier-session output reserve (8_192) compacts and CONVERGES below the 85% trigger", async () => {
     // THE review-CR-01 regression case: outputReserveTokens = 8_192 (the
     // OUTPUT_RESERVE_TOKENS default for any session whose model maxTokens ≥ 8_192)
