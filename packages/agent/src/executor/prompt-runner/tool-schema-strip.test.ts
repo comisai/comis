@@ -118,6 +118,62 @@ describe("stripSchemaKeywordsDeep", () => {
     expect((schema as Record<string, unknown>).additionalProperties).toEqual({ type: "string" });
   });
 
+  // WR-06 (175-REVIEW): $defs/definitions bodies are referenced via $ref,
+  // which llama.cpp RESOLVES at grammar-compile — a pattern inside $defs that
+  // survives the strip guarantees the one-shot retry re-sends the rejected
+  // keyword and burns the session's only repair attempt.
+  it("WR-06: removes the keywords inside $defs and definitions entry schemas ($ref resolved at grammar-compile)", () => {
+    const input = {
+      type: "object",
+      properties: { item: { $ref: "#/$defs/due" } },
+      $defs: { due: { type: "string", pattern: "\\d{4}-\\d{2}-\\d{2}", format: "date" } },
+      definitions: { legacy: { type: "string", pattern: "^L" } },
+    };
+
+    const { schema, stripped } = stripSchemaKeywordsDeep(input, REACTIVE_STRIP_KEYWORDS);
+
+    const out = JSON.stringify(schema);
+    expect(out).not.toContain('"pattern"');
+    expect(out).not.toContain('"format"');
+    expect((schema as { $defs: Record<string, unknown> }).$defs.due).toEqual({ type: "string" });
+    expect((schema as { definitions: Record<string, unknown> }).definitions.legacy).toEqual({ type: "string" });
+    expect(stripped).toEqual(["pattern", "format"]);
+  });
+
+  it("WR-06: removes the keywords inside patternProperties VALUE schemas while preserving the key regexes verbatim", () => {
+    const input = {
+      type: "object",
+      patternProperties: {
+        "^x-": { type: "string", format: "uri" },
+      },
+    };
+
+    const { schema, stripped } = stripSchemaKeywordsDeep(input, REACTIVE_STRIP_KEYWORDS);
+
+    const pp = (schema as { patternProperties: Record<string, unknown> }).patternProperties;
+    // The KEY is a regex NAME — never keyword-checked, never removed.
+    expect(Object.keys(pp)).toEqual(["^x-"]);
+    expect(pp["^x-"]).toEqual({ type: "string" });
+    expect(stripped).toEqual(["format"]);
+  });
+
+  it("WR-06: removes the keywords inside prefixItems tuple entries", () => {
+    const input = {
+      type: "array",
+      prefixItems: [
+        { type: "string", pattern: "^a" },
+        { type: "string", format: "uuid" },
+      ],
+    };
+
+    const { schema, stripped } = stripSchemaKeywordsDeep(input, REACTIVE_STRIP_KEYWORDS);
+
+    const tuple = (schema as { prefixItems: Record<string, unknown>[] }).prefixItems;
+    expect(tuple[0]).toEqual({ type: "string" });
+    expect(tuple[1]).toEqual({ type: "string" });
+    expect(stripped).toEqual(["pattern", "format"]);
+  });
+
   it("reports each removed keyword name exactly once (deduplicated across depths)", () => {
     const input = {
       type: "object",

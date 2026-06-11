@@ -240,6 +240,98 @@ describe("cleanSchemaForGbnf", () => {
       });
       expect(transformedKeywords).toEqual(["nullable_union"]);
     });
+
+    // WR-06 (175-REVIEW): $defs/definitions bodies are referenced via $ref,
+    // which llama.cpp RESOLVES at grammar-compile — hostility inside a
+    // definition 400s exactly like inline hostility, yet both walkers passed
+    // these subtrees through untouched. patternProperties values and
+    // prefixItems tuples are schemas too.
+    it("WR-06: collapses a nullable union and injects a missing type inside $defs entries ($ref resolved at grammar-compile)", () => {
+      const input = {
+        type: "object",
+        properties: { item: { $ref: "#/$defs/assignee" } },
+        $defs: {
+          assignee: { anyOf: [{ type: "string" }, { type: "null" }], description: "who" },
+          note: { description: "bare leaf inside a definition" },
+        },
+      };
+
+      const { schema, transformedKeywords } = cleanSchemaForGbnf(input);
+
+      const defs = (schema as Record<string, unknown>).$defs as Record<string, unknown>;
+      expect(defs.assignee).toEqual({ type: "string", description: "who (nullable)" });
+      expect(defs.note).toEqual({
+        type: "string",
+        description: "bare leaf inside a definition",
+      });
+      // The $ref node itself stays untouched (T4's $ref guard).
+      expect(propsOf(schema).item).toEqual({ $ref: "#/$defs/assignee" });
+      expect(transformedKeywords).toEqual(["nullable_union", "missing_type"]);
+    });
+
+    it("WR-06: walks legacy `definitions` map values the same way as $defs", () => {
+      const input = {
+        type: "object",
+        properties: {},
+        definitions: { retries: { type: ["integer", "null"] } },
+      };
+
+      const { schema, transformedKeywords } = cleanSchemaForGbnf(input);
+
+      const defs = (schema as Record<string, unknown>).definitions as Record<string, unknown>;
+      expect(defs.retries).toEqual({ type: "integer", description: "(nullable)" });
+      expect(transformedKeywords).toEqual(["type_array"]);
+    });
+
+    it("WR-06: walks patternProperties VALUE schemas while leaving the key regexes untouched (keys are names, not nodes)", () => {
+      const input = {
+        type: "object",
+        properties: {},
+        patternProperties: {
+          "^x-": { anyOf: [{ type: "string" }, { type: "null" }] },
+        },
+      };
+
+      const { schema, transformedKeywords } = cleanSchemaForGbnf(input);
+
+      const pp = (schema as Record<string, unknown>).patternProperties as Record<string, unknown>;
+      expect(Object.keys(pp)).toEqual(["^x-"]);
+      expect(pp["^x-"]).toEqual({ type: "string", description: "(nullable)" });
+      expect(transformedKeywords).toEqual(["nullable_union"]);
+    });
+
+    it("WR-06: walks prefixItems tuple entries like array-form items", () => {
+      const input = {
+        type: "array",
+        prefixItems: [
+          { type: ["string", "null"] },
+          { description: "bare tuple member" },
+        ],
+      };
+
+      const { schema, transformedKeywords } = cleanSchemaForGbnf(input);
+
+      const tuple = (schema as Record<string, unknown>).prefixItems as Record<string, unknown>[];
+      expect(tuple[0]).toEqual({ type: "string", description: "(nullable)" });
+      expect(tuple[1]).toEqual({ type: "string", description: "bare tuple member" });
+      expect(transformedKeywords).toEqual(["type_array", "missing_type"]);
+    });
+
+    it("WR-06: the new recursion positions stay idempotent (twice = once, byte-identical)", () => {
+      const input = {
+        type: "object",
+        $defs: { a: { anyOf: [{ type: "string" }, { type: "null" }] } },
+        definitions: { b: { description: "bare" } },
+        patternProperties: { "^p-": { type: ["integer", "null"] } },
+        properties: { tup: { type: "array", prefixItems: [{ description: "m" }] } },
+      };
+
+      const once = cleanSchemaForGbnf(input);
+      const twice = cleanSchemaForGbnf(once.schema);
+
+      expect(JSON.stringify(twice.schema)).toBe(JSON.stringify(once.schema));
+      expect(twice.transformedKeywords).toEqual([]);
+    });
   });
 
   describe("pattern/format survival (proactive gbnf does NOT strip — GBNF-02's reactive remedy owns that)", () => {

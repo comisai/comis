@@ -40,8 +40,10 @@
  * grammar-400, strip, retry once) — never part of this proactive profile.
  *
  * DoS posture (T-175-01): the walk recurses only into schema-bearing keys
- * (`properties`/`items`/`allOf`/`anyOf`/`oneOf`/`additionalProperties`); no
- * `$ref` resolution or expansion (refs pass through untouched), so a
+ * (`properties`/`items`/`prefixItems`/`allOf`/`anyOf`/`oneOf`/
+ * `additionalProperties`/`$defs`/`definitions`/`patternProperties` — WR-06);
+ * no `$ref` resolution or expansion (refs pass through untouched; their
+ * TARGET definitions are walked once where they live under `$defs`), so a
  * maliciously deep third-party MCP schema costs O(nodes), never exponential.
  * STACK DEPTH is bounded too (175-REVIEW WR-03): recursion stops at
  * {@link MAX_GBNF_WALK_DEPTH} — subtrees beyond the cap pass through
@@ -290,18 +292,32 @@ function walk(
 
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(node)) {
-    // Recurse into properties (each value is a schema)
-    if (key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
-      const propsOut: Record<string, unknown> = {};
-      for (const [propName, propSchema] of Object.entries(value as Record<string, unknown>)) {
-        propsOut[propName] = walk(propSchema, applied, depth + 1, limited);
+    // Recurse into schema MAPS: properties / $defs / definitions /
+    // patternProperties (WR-06). Map KEYS are names (property names,
+    // definition names, key regexes) — never treated as schema nodes; each
+    // VALUE is a schema. $defs/definitions matter because llama.cpp RESOLVES
+    // $ref at grammar-compile — hostility inside a definition 400s exactly
+    // like inline hostility.
+    if (
+      (key === "properties" ||
+        key === "$defs" ||
+        key === "definitions" ||
+        key === "patternProperties") &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      const mapOut: Record<string, unknown> = {};
+      for (const [entryName, entrySchema] of Object.entries(value as Record<string, unknown>)) {
+        mapOut[entryName] = walk(entrySchema, applied, depth + 1, limited);
       }
-      out[key] = propsOut;
+      out[key] = mapOut;
       continue;
     }
 
-    // Recurse into items (single schema or array of schemas)
-    if (key === "items") {
+    // Recurse into items (single schema or array of schemas) and prefixItems
+    // (the draft-2020 tuple form — an array of schemas, WR-06).
+    if (key === "items" || key === "prefixItems") {
       out[key] = Array.isArray(value)
         ? value.map((item) => walk(item, applied, depth + 1, limited))
         : walk(value, applied, depth + 1, limited);

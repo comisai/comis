@@ -59,14 +59,21 @@ const MAX_STRIP_WALK_DEPTH = 64;
 
 /**
  * Pure deep strip: returns a NEW schema with the given keywords removed at
- * every nesting depth, plus the deduplicated keyword names that were
- * removed (ordered by the keyword set's declaration order).
+ * every nesting depth REACHABLE THROUGH the recursion key set (WR-06):
+ * schema maps (`properties`/`$defs`/`definitions`/`patternProperties` —
+ * map keys are names, values are schemas), `items`/`prefixItems` (single or
+ * tuple array), `allOf`/`anyOf`/`oneOf`, and `additionalProperties`-as-schema.
+ * `$defs`/`definitions` matter because llama.cpp RESOLVES `$ref` at
+ * grammar-compile — a `pattern` surviving inside a definition guarantees the
+ * one-shot retry re-sends the rejected keyword. Returns the deduplicated
+ * keyword names that were removed (ordered by the keyword set's declaration
+ * order).
  *
- * Walk shape mirrors clean-for-xai.ts (filter-and-recurse over
- * `properties`/`items`/`allOf`/`anyOf`/`oneOf`) plus the
- * `additionalProperties`-as-schema branch. Property NAMES inside
- * `properties` are never treated as keywords (a property literally named
- * "pattern" survives). Non-object inputs pass through unchanged.
+ * Map KEYS (property names, definition names, patternProperties key regexes)
+ * are never treated as keywords — a property literally named "pattern"
+ * survives, and a patternProperties key regex is preserved verbatim.
+ * Non-object inputs pass through unchanged; subtrees beyond the WR-03 depth
+ * cap pass through un-walked (`depthLimited: true`).
  */
 export function stripSchemaKeywordsDeep(
   schema: unknown,
@@ -112,9 +119,19 @@ function walkAndStrip(
       continue;
     }
 
-    // Recurse into properties (each VALUE is a schema; property NAMES are
-    // not keyword-checked).
-    if (key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
+    // Recurse into schema MAPS: properties / $defs / definitions /
+    // patternProperties (WR-06). Each VALUE is a schema; map KEYS (property
+    // names, definition names, key regexes) are NOT keyword-checked — a
+    // patternProperties key regex is preserved verbatim.
+    if (
+      (key === "properties" ||
+        key === "$defs" ||
+        key === "definitions" ||
+        key === "patternProperties") &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
       const propsOut: Record<string, unknown> = {};
       for (const [propName, propSchema] of Object.entries(value as Record<string, unknown>)) {
         propsOut[propName] = walkAndStrip(propSchema, keywords, found, depth + 1, limited);
@@ -123,8 +140,9 @@ function walkAndStrip(
       continue;
     }
 
-    // Recurse into items (single schema or tuple array of schemas).
-    if (key === "items") {
+    // Recurse into items (single schema or tuple array of schemas) and
+    // prefixItems (the draft-2020 tuple form — WR-06).
+    if (key === "items" || key === "prefixItems") {
       cleaned[key] = Array.isArray(value)
         ? value.map((item) => walkAndStrip(item, keywords, found, depth + 1, limited))
         : walkAndStrip(value, keywords, found, depth + 1, limited);
