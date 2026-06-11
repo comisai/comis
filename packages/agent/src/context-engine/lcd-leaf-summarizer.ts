@@ -695,16 +695,26 @@ export function buildLeafSummarizeFn(
 
 /**
  * SUMW-01 (Phase 178): THE one resolved-summarizer window read. Mirrors
- * {@link buildLeafSummarizeFn}'s model resolution EXACTLY
- * (`overrideModel?.model ?? getRealModel()`) so a span clamp and the LLM call
- * can never disagree about WHICH model summarizes. Pitfall 2: `getModel()` is
- * the session-PRIMARY snapshot — with an `operationModels.compaction` override
- * the summarizer is a DIFFERENT model; a clamp keyed to the primary would pass
- * a 131K span to an 8K summarizer. `getRealModel` is optional-called (`?.()`):
- * production always sets it (executor-context-engine-setup.ts), but pre-existing
- * trigger-test deps builders omit it at runtime — they route to the documented
- * snapshot fallback instead of a TypeError cascade. The finite-positive guard
- * falls back to `getModel().contextWindow` (the snapshot — never silently huge).
+ * {@link buildLeafSummarizeFn}'s PRIMARY model resolution EXACTLY
+ * (`overrideModel?.model ?? getRealModel()`) so a span clamp and the primary
+ * LLM call always agree about WHICH model summarizes. Pitfall 2: `getModel()`
+ * is the session-PRIMARY snapshot — with an `operationModels.compaction`
+ * override the summarizer is a DIFFERENT model; a clamp keyed to the primary
+ * would pass a 131K span to an 8K summarizer. `getRealModel` is optional-called
+ * (`?.()`): production always sets it (executor-context-engine-setup.ts), but
+ * pre-existing trigger-test deps builders omit it at runtime — they route to
+ * the documented snapshot fallback instead of a TypeError cascade. The
+ * finite-positive guard falls back to `getModel().contextWindow` (the snapshot
+ * — never silently huge).
+ *
+ * KNOWN LIMIT (review IN-02): this resolves the PRIMARY summarizer only. The
+ * production `summarize` seam may be failover-wrapped
+ * ({@link wrapSummarizerWithFailover} via `summarizerFallbackProviders`): on
+ * primary failure a fallback model with a possibly SMALLER window serves the
+ * same already-sized span, and that fallback is not window-checked here — an
+ * over-window span on a small fallback fails through the escalation ladder
+ * (degraded, never data loss). Clamping to min(primary, ...fallback windows)
+ * is a deliberate non-goal until a live incident motivates it.
  * Consumed by: llm-compaction (pipeline span clamp) and the 178-03 LCD
  * leaf/condense clamps.
  */
