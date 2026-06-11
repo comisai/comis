@@ -46,8 +46,9 @@ const ABSTAIN_SENTINEL = { answer: "", citations: [] as string[], abstained: tru
 // for the recall-trace. Logging is counts/ids-ONLY — never the question, the
 // recalled content, or the answer.
 // -----------------------------------------------------------------------
-export function createMemoryAskHandler(deps: MemoryHandlerDeps): RpcHandler {
-  return async (rawParams) => {
+export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, RpcHandler> {
+  return {
+    [MemoryAskContract.method]: async (rawParams) => {
       const askStart = systemNowMs();
       // Scope is read PRE-strip (mirrors search_files + context.recall): the
       // dispatcher injects `_agentId` + `_callerSessionKey` on the agent tool
@@ -262,5 +263,6 @@ export function createMemoryAskHandler(deps: MemoryHandlerDeps): RpcHandler {
         MemoryAskContract.response.parse(finalResult);
       }
       return finalResult;
+    },
   };
 }

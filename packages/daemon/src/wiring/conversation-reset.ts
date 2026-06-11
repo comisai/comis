@@ -101,7 +101,7 @@ export function createConversationReset(deps: ConversationResetDeps): Conversati
         {
           agentId,
           sessionKey: formattedKey,
-          errorKind: "precondition",
+          errorKind: "precondition" as const,
           hint: "no pi session adapter for this agent — runtime transcript NOT destroyed; the conversation may resurrect on the next turn via LCD re-ingest",
         },
         "Conversation reset: runtime layer unavailable",
@@ -117,7 +117,7 @@ export function createConversationReset(deps: ConversationResetDeps): Conversati
           agentId,
           sessionKey: formattedKey,
           err: e instanceof Error ? e : new Error(String(e)),
-          errorKind: "dependency",
+          errorKind: "dependency" as const,
           hint: "runtime session destroy failed — the conversation may resurrect on the next turn via LCD re-ingest",
         },
         "Conversation reset: runtime destroy failed",
@@ -134,7 +134,7 @@ export function createConversationReset(deps: ConversationResetDeps): Conversati
           {
             agentId,
             sessionKey: formattedSessionKey,
-            errorKind: "validation",
+            errorKind: "validation" as const,
             hint: "session key did not parse — runtime transcript NOT destroyed",
           },
           "Conversation reset: unparseable session key",
@@ -158,7 +158,7 @@ export function createConversationReset(deps: ConversationResetDeps): Conversati
           );
         } catch (e: unknown) {
           logger.warn(
-            { agentId, sessionKey: formattedKey, err: e instanceof Error ? e : new Error(String(e)), errorKind: "dependency", hint: "LCD clear failed — DAG context may survive this reset" },
+            { agentId, sessionKey: formattedKey, err: e instanceof Error ? e : new Error(String(e)), errorKind: "dependency" as const, hint: "LCD clear failed — DAG context may survive this reset" },
             "Conversation reset: LCD layer failed",
           );
         }
@@ -175,7 +175,7 @@ export function createConversationReset(deps: ConversationResetDeps): Conversati
           }
         } catch (e: unknown) {
           logger.warn(
-            { agentId, sessionKey: formattedKey, err: e instanceof Error ? e : new Error(String(e)), errorKind: "dependency", hint: "sessionStore clear failed — working transcript may survive this reset" },
+            { agentId, sessionKey: formattedKey, err: e instanceof Error ? e : new Error(String(e)), errorKind: "dependency" as const, hint: "sessionStore clear failed — working transcript may survive this reset" },
             "Conversation reset: sessionStore layer failed",
           );
         }
