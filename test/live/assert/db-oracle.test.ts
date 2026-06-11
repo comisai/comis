@@ -435,3 +435,45 @@ describe("runDbOracle — check 3d: vec_memories desynced → throws with check 
     await expect(runDbOracle(dbPath)).rejects.toThrow("[db-oracle check 3d]");
   });
 });
+
+// ---------------------------------------------------------------------------
+// 260611 live-fire fix: the oracle connections must load sqlite-vec.
+// MEM Stage-B daemons create vec_memories as a REAL vec0 virtual table; the
+// oracle/snapshot reader opening its own connection without the extension threw
+// "SqliteError: no such module: vec0" (snapshotRowCounts) and silently skipped
+// check 3d (runDbOracle). The reader now loads sqlite-vec like the product does
+// (packages/memory schema.ts initSchema), so vec tables are first-class ground
+// truth in both functions.
+// ---------------------------------------------------------------------------
+
+describe("snapshotRowCounts — real vec0 virtual table (sqlite-vec loaded in reader)", () => {
+  it("counts vec_memories rows in a product-shaped DB instead of throwing 'no such module: vec0'", async () => {
+    const { initSchema } = await import("@comis/memory");
+    const dir = mkdtempSync(join(tmpdir(), "comis-db-oracle-vec-"));
+    const dbPath = join(dir, "vec.db");
+    const writer = new Database(dbPath);
+    try {
+      initSchema(writer, 8); // loads sqlite-vec + creates vec_memories as vec0
+    } finally {
+      writer.close();
+    }
+
+    const { snapshotRowCounts } = await import("./db-oracle.js");
+    const counts = snapshotRowCounts(dbPath, ["memories", "vec_memories"]);
+    expect(counts["memories"]).toBe(0);
+    expect(counts["vec_memories"]).toBe(0);
+  });
+
+  it("runDbOracle on a product-shaped vec DB passes (check 3d actually executes)", async () => {
+    const { initSchema } = await import("@comis/memory");
+    const dir = mkdtempSync(join(tmpdir(), "comis-db-oracle-vec2-"));
+    const dbPath = join(dir, "vec2.db");
+    const writer = new Database(dbPath);
+    try {
+      initSchema(writer, 8);
+    } finally {
+      writer.close();
+    }
+    await expect(runDbOracle(dbPath)).resolves.toBeUndefined();
+  });
+});

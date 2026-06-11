@@ -14,7 +14,6 @@
  */
 import { describe, it, expect } from "vitest";
 import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
 import { runDbOracle, snapshotRowCounts } from "../../assert/db-oracle.js";
@@ -80,19 +79,20 @@ describe.skipIf(!isLive)(
           agentId: "mem-01-recall",
           configPath,
         });
-        await driver.init();
-        const dbPath = join(driver.getDataDir(), "memory.db");
-        const beforeCounts = existsSync(dbPath)
-          ? snapshotRowCounts(dbPath, MEM_TABLES)
-          : {};
         try {
+          await driver.init();
+          const dbPath = driver.getMemoryDbPath();
+          const beforeCounts = existsSync(dbPath)
+            ? snapshotRowCounts(dbPath, MEM_TABLES)
+            : {};
           await driver.sendTurn("Remember: the Eiffel Tower is 330 meters tall.");
           await driver.sendTurn("What is the height of the Eiffel Tower?");
           await flushDaemonLogs(driver);
           await runLogOracle(driver.capturedLogLines(), {
             expectedErrors: ["JSON-RPC method error"],
           });
-          if (existsSync(dbPath)) {
+          expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
+        {
             await runDbOracle(dbPath, {
               expectedDeltas: [{ table: "memories", expectedRowDelta: 1 }],
               beforeCounts,
@@ -130,8 +130,8 @@ describe.skipIf(!isLive)(
           agentId: "mem-01-judged",
           configPath,
         });
-        await driver.init();
         try {
+          await driver.init();
           await driver.sendTurn("Remember: the Eiffel Tower is 330 meters tall.");
           const answer = await driver.sendTurn("How tall is the Eiffel Tower?");
           await flushDaemonLogs(driver);

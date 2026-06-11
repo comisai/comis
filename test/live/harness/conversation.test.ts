@@ -103,6 +103,39 @@ describe("ConversationDriver — unit (Stage-A, no daemon required)", () => {
     expect(events).toEqual([]);
   });
 
+  it("getMemoryDbPath() resolves a RELATIVE memory.dbPath against the daemon's dataDir", () => {
+    // 260611 live-fire fix: scenario files hand-built join(dataDir,"memory.db"),
+    // which never matched config.test.yaml's dbPath "test-memory-default.db" —
+    // every existsSync-guarded db-oracle silently skipped (§2.10 bug class).
+    const driver = new StubDriver();
+    (driver as unknown as { _handle: unknown })._handle = {
+      daemon: { container: { config: { dataDir: "/data/root", memory: { dbPath: "test-memory-default.db" } } } },
+    };
+    expect(driver.getMemoryDbPath()).toBe(join("/data/root", "test-memory-default.db"));
+  });
+
+  it("getMemoryDbPath() returns an ABSOLUTE memory.dbPath unchanged", () => {
+    const driver = new StubDriver();
+    (driver as unknown as { _handle: unknown })._handle = {
+      daemon: { container: { config: { dataDir: "/data/root", memory: { dbPath: "/abs/elsewhere.db" } } } },
+    };
+    expect(driver.getMemoryDbPath()).toBe("/abs/elsewhere.db");
+  });
+
+  it("getMemoryDbPath() falls back to the driver dataDir when config.dataDir is empty", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-test-dbp-"));
+    const driver = new StubDriver(dataDir);
+    (driver as unknown as { _handle: unknown })._handle = {
+      daemon: { container: { config: { dataDir: "", memory: { dbPath: "memory.db" } } } },
+    };
+    expect(driver.getMemoryDbPath()).toBe(join(dataDir, "memory.db"));
+  });
+
+  it("getMemoryDbPath() throws before init() (no handle)", () => {
+    const driver = new StubDriver();
+    expect(() => driver.getMemoryDbPath()).toThrow(/init\(\)/);
+  });
+
   it("getSessionIndexEvents() parses valid JSONL", async () => {
     // Create a temp dir with a session-index JSONL file containing one event
     const dataDir = mkdtempSync(join(tmpdir(), "comis-test-si-"));

@@ -15,7 +15,6 @@
  */
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
 import { runDbOracle, snapshotRowCounts } from "../../assert/db-oracle.js";
@@ -54,16 +53,17 @@ describe.skipIf(!isLive)("MEM-07 Stage-B — costFeatures.enabled=false → no c
       label: "mem-07-cost",
     });
     const driver = new ConversationDriver({ agentId: "mem-07-cost", configPath });
-    await driver.init();
-    const dbPath = join(driver.getDataDir(), "memory.db");
-    const beforeCounts = existsSync(dbPath) ? snapshotRowCounts(dbPath, MEM_TABLES) : {};
     try {
+      await driver.init();
+      const dbPath = driver.getMemoryDbPath();
+      const beforeCounts = existsSync(dbPath) ? snapshotRowCounts(dbPath, MEM_TABLES) : {};
       await driver.sendTurn("Remember: cost-features test fact A.");
       await driver.sendTurn("Remember: cost-features test fact B.");
       await driver.sendTurn("What are the cost-features test facts?");
       await flushDaemonLogs(driver);
       await runLogOracle(driver.capturedLogLines(), { expectedErrors: ["JSON-RPC method error"] });
-      if (existsSync(dbPath)) {
+      expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
+        {
         const afterCounts = snapshotRowCounts(dbPath, MEM_TABLES);
         const storeDelta = (afterCounts["memories"] ?? 0) - (beforeCounts["memories"] ?? 0);
         // Lower bound: at least 1 fact stored (catches "0 rows written" false-pass — WARNING-1)

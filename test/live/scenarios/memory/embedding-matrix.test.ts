@@ -14,7 +14,6 @@
  */
 import { describe, it, expect } from "vitest";
 import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
 import { runDbOracle, snapshotRowCounts } from "../../assert/db-oracle.js";
@@ -101,12 +100,12 @@ describe.skipIf(!isLive)(
           agentId: `mem-02-${label}`,
           configPath,
         });
-        await driver.init();
-        const dbPath = join(driver.getDataDir(), "memory.db");
-        const beforeCounts = existsSync(dbPath)
-          ? snapshotRowCounts(dbPath, MEM_TABLES)
-          : {};
         try {
+          await driver.init();
+          const dbPath = driver.getMemoryDbPath();
+          const beforeCounts = existsSync(dbPath)
+            ? snapshotRowCounts(dbPath, MEM_TABLES)
+            : {};
           // First turn: triggers embedding write → new vec_memories row.
           await driver.sendTurn(`Remember: embedding-test-fact-${dims}.`);
 
@@ -120,7 +119,8 @@ describe.skipIf(!isLive)(
             expectedErrors: ["JSON-RPC method error"],
           });
 
-          if (existsSync(dbPath)) {
+          expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
+        {
             // Expect exactly 1 new memories row (not 2 — L1 cache deduplicates identical content).
             await runDbOracle(dbPath, {
               expectedDeltas: [{ table: "memories", expectedRowDelta: 1 }],
@@ -161,12 +161,12 @@ describe.skipIf(!isLive || !hasOpenAiKey)(
           agentId: `mem-02-${label}`,
           configPath,
         });
-        await driver.init();
-        const dbPath = join(driver.getDataDir(), "memory.db");
-        const beforeCounts = existsSync(dbPath)
-          ? snapshotRowCounts(dbPath, MEM_TABLES)
-          : {};
         try {
+          await driver.init();
+          const dbPath = driver.getMemoryDbPath();
+          const beforeCounts = existsSync(dbPath)
+            ? snapshotRowCounts(dbPath, MEM_TABLES)
+            : {};
           await driver.sendTurn(`Remember: openai-embedding-test-${dims}.`);
           await flushDaemonLogs(driver);
 
@@ -174,7 +174,8 @@ describe.skipIf(!isLive || !hasOpenAiKey)(
             expectedErrors: [],
           });
 
-          if (existsSync(dbPath)) {
+          expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
+        {
             await runDbOracle(dbPath, {
               expectedDeltas: [{ table: "memories", expectedRowDelta: 1 }],
               beforeCounts,

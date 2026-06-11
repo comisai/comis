@@ -21,7 +21,6 @@
  */
 import { describe, it, expect } from "vitest";
 import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
 import { runDbOracle, snapshotRowCounts } from "../../assert/db-oracle.js";
@@ -58,10 +57,10 @@ describe.skipIf(!isLive)("MEM-08 Stage-B — recall injection in H, no double-co
       label: "mem-08-budget",
     });
     const driver = new ConversationDriver({ agentId: "mem-08-budget", configPath });
-    await driver.init();
-    const dbPath = join(driver.getDataDir(), "memory.db");
-    const beforeCounts = existsSync(dbPath) ? snapshotRowCounts(dbPath, MEM_TABLES) : {};
     try {
+      await driver.init();
+      const dbPath = driver.getMemoryDbPath();
+      const beforeCounts = existsSync(dbPath) ? snapshotRowCounts(dbPath, MEM_TABLES) : {};
       // Store 2 distinct facts
       await driver.sendTurn("Remember: budget-interaction fact Alpha.");
       await driver.sendTurn("Remember: budget-interaction fact Beta.");
@@ -92,7 +91,8 @@ describe.skipIf(!isLive)("MEM-08 Stage-B — recall injection in H, no double-co
       expect(totalHits).toBeLessThanOrEqual(2);
 
       await runLogOracle(driver.capturedLogLines(), { expectedErrors: ["JSON-RPC method error"] });
-      if (existsSync(dbPath)) {
+      expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
+        {
         await runDbOracle(dbPath, { beforeCounts });
       }
     } finally {

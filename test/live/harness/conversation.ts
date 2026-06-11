@@ -22,7 +22,7 @@
 
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import {
@@ -506,6 +506,31 @@ export class ConversationDriver {
   /** Returns the isolated temp data dir for this driver instance. */
   getDataDir(): string {
     return this._dataDir;
+  }
+
+  /**
+   * Resolve the ACTUAL memory DB path from the booted daemon's own config —
+   * `resolve(config.dataDir, config.memory.dbPath)` (absolute dbPath returned
+   * unchanged). Requires init().
+   *
+   * 260611 live-fire fix: scenario files previously hand-built
+   * `join(getDataDir(), "memory.db")`, which never matched the test config's
+   * `memory.dbPath: "test-memory-default.db"` — so every
+   * `if (existsSync(dbPath))`-guarded db-oracle silently skipped and ground
+   * truth was never checked (the §2.10 hand-built-path bug class). This
+   * accessor is the single source of truth: the path comes from the live
+   * daemon's resolved config, not a guess.
+   */
+  getMemoryDbPath(): string {
+    const handle = this._requireHandle();
+    const cfg = (
+      handle.daemon as unknown as {
+        container: { config: { dataDir?: string; memory: { dbPath?: string } } };
+      }
+    ).container.config;
+    const dbPath = cfg.memory.dbPath || "memory.db";
+    if (isAbsolute(dbPath)) return dbPath;
+    return resolve(cfg.dataDir || this._dataDir, dbPath);
   }
 
   /** Returns the EchoChannelAdapter instance for direct getSentMessages() assertions. */

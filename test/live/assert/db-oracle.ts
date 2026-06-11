@@ -15,7 +15,31 @@
  */
 
 import Database from "better-sqlite3";
+import * as sqliteVec from "sqlite-vec";
 import { createRowMapper, MemoryRowSchema } from "@comis/memory";
+
+/**
+ * Open a READONLY connection with the sqlite-vec extension loaded, mirroring
+ * how the product reads the store (packages/memory schema.ts initSchema).
+ *
+ * 260611 live-fire fix: MEM Stage-B daemons create vec_memories as a REAL vec0
+ * virtual table; a plain readonly connection threw
+ * "SqliteError: no such module: vec0" from snapshotRowCounts and silently
+ * skipped runDbOracle check 3d. Loading the extension is connection-level (not
+ * a DB write) so the readonly guarantee (T-134-12) is unchanged. Load failure
+ * is tolerated — vec-dependent reads then fall back to the existing
+ * "no such module: vec0" skip paths instead of failing the oracle.
+ */
+function openReadonlyWithVec(dbPath: string): Database.Database {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    sqliteVec.load(db);
+  } catch {
+    // Optional native extension unavailable on this host — vec-dependent
+    // checks degrade to their existing skip paths.
+  }
+  return db;
+}
 
 /**
  * Expected row count delta for a single table.
@@ -48,8 +72,9 @@ export async function runDbOracle(
   dbPath: string,
   opts?: DbOracleOptions,
 ): Promise<void> {
-  // Open READONLY — oracle never writes (T-134-12).
-  const db = new Database(dbPath, { readonly: true });
+  // Open READONLY — oracle never writes (T-134-12). sqlite-vec is loaded so
+  // vec0 virtual tables are first-class ground truth (check 3d executes).
+  const db = openReadonlyWithVec(dbPath);
   try {
     // ── Check 1: PRAGMA integrity_check ──────────────────────────────────────
     const ic = db.pragma("integrity_check") as Array<{ integrity_check: string }>;
@@ -204,7 +229,7 @@ export function snapshotRowCounts(
   dbPath: string,
   tables: string[],
 ): Record<string, number> {
-  const db = new Database(dbPath, { readonly: true });
+  const db = openReadonlyWithVec(dbPath);
   try {
     // Mirror the sqlite_master allowlist guard used in runDbOracle check 4
     // to prevent caller-supplied table names from being interpolated directly
@@ -219,9 +244,20 @@ export function snapshotRowCounts(
     const counts: Record<string, number> = {};
     for (const t of tables) {
       if (!existingTables.has(t)) continue; // skip tables not in the DB
-      counts[t] = (
-        db.prepare(`SELECT count(*) as c FROM ${t}`).get() as { c: number }
-      ).c;
+      try {
+        counts[t] = (
+          db.prepare(`SELECT count(*) as c FROM ${t}`).get() as { c: number }
+        ).c;
+      } catch (e) {
+        // Mirror runDbOracle check 3d: when the optional sqlite-vec extension
+        // could not be loaded on this host, a vec0 vtable count is a
+        // missing-reader-capability condition, not a data defect — omit the
+        // table from the snapshot (callers' delta math treats absent as 0).
+        // Any other error is a real failure and propagates.
+        if (!(e instanceof Error && /no such module: vec0/i.test(e.message))) {
+          throw e;
+        }
+      }
     }
     return counts;
   } finally {
