@@ -555,7 +555,14 @@ export async function setupSingleAgent(
     fastMode: effectiveConfig.fastMode,
     storeCompletions: effectiveConfig.storeCompletions,
     providerCapabilities: container.config.providers?.entries?.[resolved.provider]?.capabilities,
-    servedContextWindow: deps.servedWindowByProvider?.get(resolved.provider),  // CWF-03: Ollama served-window
+    // CWF-03 + WR-02: the probed Ollama served window, PAIRED with the provider
+    // key it was probed from so the executor's reconcile can gate the clamp
+    // per-execution (override models on other providers keep their full window
+    // and never get "Ollama serves only N" attribution).
+    servedContextWindow: (() => {
+      const probed = deps.servedWindowByProvider?.get(resolved.provider);
+      return probed !== undefined ? { providerKey: resolved.provider, window: probed } : undefined;
+    })(),
     // GBNF-01: resolver form (not static values) because per-execution model
     // overrides can switch providers mid-agent — a static agent-primary type
     // would mis-gate (WR-04 getProviderCapabilityClass precedent).

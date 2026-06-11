@@ -281,9 +281,18 @@ export interface PiExecutorDeps {
   storeCompletions?: boolean;
   /** Provider capabilities resolved from config. Consumer: resolveProviderCapabilities(). */
   providerCapabilities?: import("@comis/core").ProviderCapabilities;
-  /** Discovered Ollama served num_ctx from the boot-time capacity probe.
-   *  undefined = not probed (non-Ollama provider or probe failed — falls back to configured). */
-  servedContextWindow?: number;
+  /** Discovered Ollama served num_ctx from the boot-time capacity probe,
+   *  PAIRED with the provider config key (providers.entries space) it was
+   *  probed from. WR-02 (Phase 176 review): the binding is executor-static
+   *  (the agent's PRIMARY provider), but per-execution model overrides (graph
+   *  per-node models, subagent spawns) can switch providers — the reconcile
+   *  applies `window` ONLY when the executing model resolves to `providerKey`,
+   *  so the primary's served window never crushes (or is attributed to) a
+   *  model Ollama does not serve. The pairing is one field by design: a value
+   *  without its provider identity cannot be bound.
+   *  undefined = not probed (non-Ollama provider or probe failed — falls back
+   *  to configured). */
+  servedContextWindow?: { providerKey: string; window: number };
   /** Resolve a provider entry's declared config `type` (free string, e.g. "ollama", "xai").
    *  Consumer: normalizeModelCompat auto-detection (GBNF-01). Resolver form (not a static
    *  value) because per-execution model overrides can switch providers mid-agent. */

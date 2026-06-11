@@ -262,6 +262,42 @@ describe("setupSingleAgent boot-window honesty wiring (KNOB-01 + FLOOR-01)", () 
     expect(["small", "nano"]).toContain(info?.modelProfile.capabilityClass);
   });
 
+  it("WR-02: binds servedContextWindow as the {providerKey, window} pair so the executor can gate the clamp on the per-execution provider", async () => {
+    // WR-02 (Phase 176 review): the bare number lost the provider identity —
+    // pi-executor then applied the primary's served window to override models
+    // on OTHER providers. The pairing is one field by design: a value without
+    // its provider key cannot be bound.
+    const agentId = "default";
+    const container = makeContainer([agentId]);
+    const { deps } = makeDeps(container);
+
+    await setupSingleAgent(agentId, container.config.agents[agentId] as PerAgentConfig, deps);
+
+    expect(mockCreatePiExecutor).toHaveBeenCalledTimes(1);
+    const executorDeps = (mockCreatePiExecutor.mock.calls[0] as unknown[])?.[1] as
+      | { servedContextWindow?: { providerKey: string; window: number } }
+      | undefined;
+    expect(executorDeps?.servedContextWindow).toEqual({
+      providerKey: "qwen-local",
+      window: 8_192,
+    });
+  });
+
+  it("WR-02: an unprobed provider binds servedContextWindow undefined (no pair fabricated)", async () => {
+    const agentId = "default";
+    const container = makeContainer([agentId]);
+    const { deps } = makeDeps(container);
+    (deps as unknown as { servedWindowByProvider: Map<string, number> }).servedWindowByProvider =
+      new Map();
+
+    await setupSingleAgent(agentId, container.config.agents[agentId] as PerAgentConfig, deps);
+
+    const executorDeps = (mockCreatePiExecutor.mock.calls[0] as unknown[])?.[1] as
+      | { servedContextWindow?: unknown }
+      | undefined;
+    expect(executorDeps?.servedContextWindow).toBeUndefined();
+  });
+
   it("FLOOR-01-16: fails open — a throwing registry find does NOT reject agent setup; setup completes with an errorKind 'internal' WARN and no collected boot info", async () => {
     const agentId = "default";
     const container = makeContainer([agentId]);

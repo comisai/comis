@@ -237,6 +237,13 @@ export function createPiExecutor(
       // 4. Resolve model using ModelRegistry
       //    Apply per-node model override from ExecutionOverrides and normalize shortcuts before registry lookup
       const normalizedPrimary = normalizeModelId(config.provider, config.model);
+      // WR-02: track the provider key (config providers.entries space) the
+      // EXECUTING model resolves to — the agent's primary by default, the
+      // override provider when a per-execution model override resolves below.
+      // The served-window gate compares against THIS key rather than
+      // resolvedModel.provider because the registry's alias fallback can
+      // rename a custom provider entry to its built-in pi name.
+      let resolvedProviderKey = config.provider;
       let resolvedModel = deps.modelRegistry.find(config.provider, normalizedPrimary.modelId);
       if (!resolvedModel && deps.providerAliases) {
         const builtInName = deps.providerAliases.get(config.provider);
@@ -279,6 +286,7 @@ export function createPiExecutor(
           }
           if (overrideResolved) {
             resolvedModel = overrideResolved;
+            resolvedProviderKey = overrideProvider; // WR-02: the execution now runs on the override's provider
             deps.logger.info(
               { defaultModel: config.model, overrideModel: executionOverrides.model },
               "Model override applied from execution overrides",
@@ -347,9 +355,23 @@ export function createPiExecutor(
       const capabilityCap = explicitClass != null
         ? (DEFAULT_EFFECTIVE_CAP_BY_CLASS[explicitClass] ?? Infinity)
         : Infinity;
+      // WR-02 (Phase 176 review): the probed served window binds ONLY
+      // executions on the provider it was probed from. deps.servedContextWindow
+      // is bound once at construction to the agent's PRIMARY provider, but
+      // executionOverrides.model can switch providers per-execution (graph
+      // per-node models, subagent spawns — the GBNF-01 resolver-form
+      // precedent). On mismatch: no served clamp AND no served attribution —
+      // otherwise an Ollama-primary agent's 8K num_ctx would silently crush an
+      // override model on another provider and the diagnostics would assert
+      // "Ollama serves only 8192" for a model Ollama does not serve.
+      const servedWindow =
+        deps.servedContextWindow !== undefined &&
+        deps.servedContextWindow.providerKey === resolvedProviderKey
+          ? deps.servedContextWindow.window
+          : undefined;
       const effectiveContextWindowResult = resolveEffectiveContextWindow({
         configured: resolvedModel?.contextWindow ?? 8_192,
-        served: deps.servedContextWindow,
+        served: servedWindow,
         capabilityCap,
       });
       // KNOB-02 (Phase 176): the window provenance is BORN here — the TRUE
@@ -360,7 +382,7 @@ export function createPiExecutor(
       // served-bound budget reports raw=configured with windowCapSource "served".
       const windowProvenance: WindowProvenance = {
         configuredWindow: resolvedModel?.contextWindow ?? 8_192,
-        ...(deps.servedContextWindow !== undefined && { served: deps.servedContextWindow }),
+        ...(servedWindow !== undefined && { served: servedWindow }),
         reconcileSource: effectiveContextWindowResult.source,
       };
       if (effectiveContextWindowResult.source !== "configured") {
@@ -368,7 +390,7 @@ export function createPiExecutor(
           source: effectiveContextWindowResult.source,
           effectiveWindow: effectiveContextWindowResult.effectiveWindow,
           configured: resolvedModel?.contextWindow,
-          served: deps.servedContextWindow,
+          served: servedWindow,
           capabilityCap,
           submodule: "context-window-reconcile",
         }, "Context window reconciled (served or capability cap bound)");
@@ -385,7 +407,7 @@ export function createPiExecutor(
             source: effectiveContextWindowResult.source,
             effectiveWindow: effectiveContextWindowResult.effectiveWindow,
             configured: resolvedModel?.contextWindow ?? 8_192,
-            served: deps.servedContextWindow,
+            served: servedWindow,
             capabilityCap,
             submodule: "context-window-reconcile",
           }, "Context window reconciled (served or capability cap bound)");

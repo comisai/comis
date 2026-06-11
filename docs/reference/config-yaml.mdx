@@ -2393,7 +2393,10 @@ The reconcile line — `"Context window reconciled (served or capability cap bou
 `source` / `effectiveWindow` / `configured` / `served` / `capabilityCap` fields — logs at INFO
 **once per session** (the first reconciled turn; a session reset grants a fresh INFO) and at
 DEBUG per turn. A session whose configured window simply wins logs no reconcile line at any
-level (nothing was reconciled).
+level (nothing was reconciled). The served window is **provider-scoped**: it clamps only
+executions that resolve to the provider it was probed from — a per-execution model override to
+another provider (a graph node's `model: anthropic:...` on an Ollama-primary agent, a subagent
+spawn) keeps that model's full window and never gets `"Ollama serves only N"` attribution.
 
 **Boot viable floor (minViable):** At boot, per agent, Comis computes
 `minViable = bootstrapTotalTokens + toolSchemaTokens + outputHeadroomFloor + freshTailReserve + safetyMargin`

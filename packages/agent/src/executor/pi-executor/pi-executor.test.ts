@@ -301,6 +301,7 @@ vi.mock("node:fs", async (importOriginal) => {
 import { createPiExecutor, type PiExecutorDeps } from "./pi-executor.js";
 import {
   clearSessionToolSchemaSnapshotHash,
+  clearWindowReconcileLogged,
   getOrCreateSessionLatches as _getOrCreateSessionLatchesForTest,
   clearSessionLatches as _clearSessionLatchesForTest,
 } from "../executor-session-state.js";
@@ -6653,6 +6654,125 @@ describe("IN-01 (CR-01 regression): pi-executor capabilityCap absent-providerCap
     const logPayload = capLogCall![0] as Record<string, unknown>;
     expect(logPayload["source"]).toBe("capability");
     expect(logPayload["effectiveWindow"]).toBe(32_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-02 (Phase 176 review): the primary provider's served window must NOT be
+// applied (or attributed) to per-execution override models on other providers.
+// ---------------------------------------------------------------------------
+// deps.servedContextWindow is bound ONCE at executor construction to the
+// agent's PRIMARY provider. Pre-patch, the reconcile consumed the bare number
+// unconditionally: an Ollama-primary agent with served num_ctx 8192 whose
+// graph node overrides to anthropic:claude-* (200K) had its window silently
+// crushed to 8K, with the KNOB-02 surfaces confidently asserting
+// `source: "served"` / "Ollama serves only 8192" for a model Ollama does not
+// serve. Post-patch the dep pairs {providerKey, window} and the reconcile
+// applies the window only when the executing model resolves to that provider.
+
+describe("WR-02: served-window gate on per-execution provider identity", () => {
+  /** The probed primary provider (config providers.entries key space). */
+  const OLLAMA_PRIMARY = "qwen-local";
+  const ollamaConfig: PerAgentConfig = {
+    ...testConfig,
+    model: "qwen3.6:35b",
+    provider: OLLAMA_PRIMARY,
+  } as PerAgentConfig;
+
+  /** Registry resolving BOTH providers — the override target carries a 200K
+   *  frontier window; the primary carries the configured 131_072. */
+  function makeTwoProviderRegistry() {
+    return {
+      find: vi.fn().mockImplementation((provider: string, id: string) => {
+        if (provider === OLLAMA_PRIMARY) {
+          return { provider: OLLAMA_PRIMARY, id, contextWindow: 131_072 };
+        }
+        if (provider === "anthropic") {
+          return { provider: "anthropic", id, contextWindow: 200_000 };
+        }
+        return undefined;
+      }),
+      getAll: vi.fn().mockReturnValue([]),
+      getAvailable: vi.fn().mockReturnValue([]),
+    } as any;
+  }
+
+  function findReconcileDebug(deps: PiExecutorDeps) {
+    return vi.mocked(deps.logger.debug).mock.calls.find(
+      (args) => typeof args[1] === "string" && args[1].includes("Context window reconciled"),
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearSessionToolNameSnapshot(formatSessionKey(testSessionKey));
+    clearSessionBootstrapFileSnapshot(formatSessionKey(testSessionKey));
+    clearSessionPromptSkillsXmlSnapshot(formatSessionKey(testSessionKey));
+    clearSessionToolSchemaSnapshot(formatSessionKey(testSessionKey));
+    clearSessionToolSchemaSnapshotHash(formatSessionKey(testSessionKey));
+    clearWindowReconcileLogged(formatSessionKey(testSessionKey));
+    mockPrompt.mockResolvedValue(undefined);
+    mockGetLastAssistantText.mockReturnValue("test response");
+    mockSetModel.mockResolvedValue(undefined);
+    mockSubscribe.mockReturnValue(vi.fn());
+  });
+
+  it("an override model on ANOTHER provider keeps its full window — no served clamp, no served attribution (RED pre-patch: source 'served', effectiveWindow 8192)", async () => {
+    const deps = createMockDeps({
+      modelRegistry: makeTwoProviderRegistry(),
+      providerCapabilities: undefined, // isolate the served gate (capabilityCap = Infinity)
+      servedContextWindow: { providerKey: OLLAMA_PRIMARY, window: 8_192 },
+    });
+    const executor = createPiExecutor(ollamaConfig, deps);
+
+    await executor.execute(
+      testMessage, testSessionKey, undefined, undefined, "agent-wr02",
+      undefined, undefined, { model: "anthropic:claude-sonnet-4-5-20250929" },
+    );
+
+    // Override applied → executing provider is "anthropic" ≠ probed
+    // "qwen-local" → served skipped → configured 200_000 wins with
+    // capabilityCap Infinity → source "configured" → NO reconcile line at any
+    // level (nothing was reconciled). Pre-patch the bare served 8_192 entered
+    // the min race and emitted source:"served" / effectiveWindow:8192 here.
+    expect(findReconcileDebug(deps)).toBeUndefined();
+  });
+
+  it("the PRIMARY provider's execution still gets the served clamp (no-regression control: source 'served', effectiveWindow 8192)", async () => {
+    const deps = createMockDeps({
+      modelRegistry: makeTwoProviderRegistry(),
+      providerCapabilities: undefined,
+      servedContextWindow: { providerKey: OLLAMA_PRIMARY, window: 8_192 },
+    });
+    const executor = createPiExecutor(ollamaConfig, deps);
+
+    await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-wr02");
+
+    const reconcile = findReconcileDebug(deps);
+    expect(reconcile).toBeDefined();
+    const payload = reconcile![0] as Record<string, unknown>;
+    expect(payload["source"]).toBe("served");
+    expect(payload["effectiveWindow"]).toBe(8_192);
+    expect(payload["served"]).toBe(8_192);
+  });
+
+  it("an override model on the SAME probed provider still gets the served clamp (the map is keyed per provider, not per model)", async () => {
+    const deps = createMockDeps({
+      modelRegistry: makeTwoProviderRegistry(),
+      providerCapabilities: undefined,
+      servedContextWindow: { providerKey: OLLAMA_PRIMARY, window: 8_192 },
+    });
+    const executor = createPiExecutor(ollamaConfig, deps);
+
+    await executor.execute(
+      testMessage, testSessionKey, undefined, undefined, "agent-wr02",
+      undefined, undefined, { model: `${OLLAMA_PRIMARY}:qwen3.6:4b` },
+    );
+
+    const reconcile = findReconcileDebug(deps);
+    expect(reconcile).toBeDefined();
+    expect((reconcile![0] as Record<string, unknown>)["source"]).toBe("served");
+    expect((reconcile![0] as Record<string, unknown>)["effectiveWindow"]).toBe(8_192);
   });
 });
 
