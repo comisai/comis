@@ -136,4 +136,32 @@ describe("createDeltaResetComposer (LAT-02)", () => {
     expect(() => { onDelta("tok2", "text"); }).toThrow("channel streaming callback broke");
     expect(reset).toHaveBeenCalledTimes(2);
   });
+
+  it("177-REVIEW WR-04: a backwards wall-clock step re-baselines the throttle — resets resume within ONE throttle window instead of starving for the step duration", () => {
+    const clock = makeManualClock();
+    const reset = vi.fn();
+    const onDelta = createDeltaResetComposer({}, {
+      channelOnDelta: undefined,
+      getResetTimer: () => reset,
+      clock,
+    });
+
+    clock.set(10_000);
+    onDelta("a", "text"); // first delta always resets; lastResetAtMs = 10_000
+    expect(reset).toHaveBeenCalledTimes(1);
+
+    // NTP-style backwards step: the wall clock regresses 8s (ClockPort.now()
+    // is epoch ms — consumer hardware NTP corrections / RTC fixes after
+    // resume do this) while the Node stall timer (monotonic) keeps counting.
+    clock.set(2_000);
+    onDelta("b", "text"); // re-baselines lastResetAtMs to 2_000 (within-window: no reset yet)
+
+    // One throttle window after the step, a delta MUST reset again. Pre-patch
+    // now - lastResetAtMs = 3_000 - 10_000 < 0: NO resets until the clock
+    // re-reaches 11_000 — an 8s starvation here, and a step approaching the
+    // stall budget produces a spurious stall kill on a visibly-working turn.
+    clock.set(3_000);
+    onDelta("c", "text");
+    expect(reset).toHaveBeenCalledTimes(2);
+  });
 });

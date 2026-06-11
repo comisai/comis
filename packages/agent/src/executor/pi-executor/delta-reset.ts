@@ -45,6 +45,13 @@ export interface DeltaResetState {
  * - Throttled ~1/s — resetting a timer per token is needless churn (R-7);
  *   a hand-rolled clock compare touches no timer between throttle windows
  *   (T-177-10). The first delta always resets.
+ * - WALL-CLOCK REGRESSION SAFE (177-REVIEW WR-04) — `ClockPort.now()` is
+ *   epoch ms, not monotonic: a backwards system-clock step (NTP correction,
+ *   RTC fix after resume) would otherwise make `now - lastResetAtMs`
+ *   negative and starve resets for the full step duration while the
+ *   (monotonic) stall timer keeps counting — a spurious stall kill on a
+ *   visibly-working turn. Re-baselining on regression bounds the starvation
+ *   to one throttle window. Forward jumps stay harmless (extra resets).
  * - Unconditional for all providers — 177-01 DECISION gate_scope:
  *   all-providers (the timer is entirely client-side; no `enabled` flag).
  */
@@ -63,6 +70,7 @@ export function createDeltaResetComposer(
   let lastResetAtMs = Number.NEGATIVE_INFINITY; // first delta always resets
   return (delta, kind) => {
     const now = args.clock.now();
+    if (now < lastResetAtMs) lastResetAtMs = now; // wall clock stepped backwards — re-baseline (WR-04)
     if (now - lastResetAtMs >= throttleMs) {
       lastResetAtMs = now;
       args.getResetTimer()?.();
