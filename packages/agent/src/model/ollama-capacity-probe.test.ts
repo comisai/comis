@@ -434,3 +434,27 @@ describe("probeAllOllamaProviders", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// resolveProbedModelId — the single shared probed-model expression (KNOB-01)
+// ---------------------------------------------------------------------------
+
+describe("resolveProbedModelId", () => {
+  it("KNOB-01-10: resolves defaultModel ?? models[0].id ?? '' — single source shared with the served-window comparator", async () => {
+    // Dynamic import: in the RED state (export not yet present) only THIS test
+    // fails — a static named import would break the whole file's module link
+    // and take the existing probe tests down with it. The 17fdd1e5 bug class
+    // was two sites deriving the probed-model expression differently; this pin
+    // keeps the probe and the KNOB-01 comparator on ONE exported helper.
+    const mod = (await import("./ollama-capacity-probe.js")) as unknown as {
+      resolveProbedModelId?: (
+        entry: { defaultModel?: string; models?: Array<{ id?: string }> } | undefined,
+      ) => string;
+    };
+    const resolveProbedModelId = mod.resolveProbedModelId;
+    expect(typeof resolveProbedModelId).toBe("function");
+    expect(resolveProbedModelId?.({ defaultModel: "a", models: [{ id: "b" }] })).toBe("a");
+    expect(resolveProbedModelId?.({ models: [{ id: "b" }] })).toBe("b");
+    expect(resolveProbedModelId?.({})).toBe("");
+  });
+});
