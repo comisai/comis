@@ -1798,7 +1798,7 @@ async function bootAgents(
     agentsConfig[defaultAgentId] ??
     agentsConfig.default ??
     ({} as PerAgentConfig);
-  const defaultWorkspaceDir = resolveWorkspaceDir(defaultAgentConfig, defaultAgentId);
+  const defaultWorkspaceDir = resolveWorkspaceDir(defaultAgentConfig, defaultAgentId, container.config.dataDir || dataDir);
 
   // Boot-path skill-bundle re-merge MUST run BEFORE setupMcp (sequencing
   // gate). The orchestrator

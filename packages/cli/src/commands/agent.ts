@@ -110,8 +110,13 @@ export function registerAgentCommand(program: Command): void {
           }),
         );
 
-        // Initialize dedicated workspace for the new agent
-        const workspaceDir = resolveWorkspaceDir({ workspacePath: undefined } as AgentConfig, name);
+        // Initialize dedicated workspace for the new agent (honors
+        // COMIS_DATA_DIR like the daemon's resolution — 260611 dataDir fix)
+        const workspaceDir = resolveWorkspaceDir(
+          { workspacePath: undefined } as AgentConfig,
+          name,
+          process.env.COMIS_DATA_DIR,
+        );
         try {
           await ensureWorkspace({ dir: workspaceDir });
           success(`Agent "${name}" created with workspace at ${workspaceDir}`);

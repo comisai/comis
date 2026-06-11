@@ -98,3 +98,40 @@ describe("workspace-resolver", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// 260611 live-fire fix: resolveWorkspaceDir hardcoded ~/.comis as the base —
+// the FOURTH face of the dataDir split-brain. Isolated test daemons (temp
+// COMIS_DATA_DIR) created workspace-<agentId> dirs inside the PRODUCTION
+// ~/.comis (21 leaked dirs observed), and because the path is shared across
+// daemon instances, a later run RESUMED an earlier run's degraded session
+// JSONL (the silent-LLM-failure cascade in the MEM-04 live tests). The
+// resolver now takes an optional baseDataDir (precedence: explicit
+// config.workspacePath > baseDataDir > ~/.comis).
+// ---------------------------------------------------------------------------
+
+describe("resolveWorkspaceDir — baseDataDir override (dataDir-rooted workspaces)", () => {
+  it("default agent under baseDataDir", () => {
+    const result = resolveWorkspaceDir({} as AgentConfig, "default", "/custom/data");
+    expect(result).toBe(path.join("/custom/data", "workspace"));
+  });
+
+  it("named agent under baseDataDir", () => {
+    const result = resolveWorkspaceDir({} as AgentConfig, "mem-04-poison", "/custom/data");
+    expect(result).toBe(path.join("/custom/data", "workspace-mem-04-poison"));
+  });
+
+  it("explicit config.workspacePath still wins over baseDataDir", () => {
+    const result = resolveWorkspaceDir(
+      { workspacePath: "/explicit/ws" } as AgentConfig,
+      "default",
+      "/custom/data",
+    );
+    expect(result).toBe(path.resolve("/explicit/ws"));
+  });
+
+  it("empty baseDataDir falls back to ~/.comis (existing contract)", () => {
+    const result = resolveWorkspaceDir({} as AgentConfig, "default", "");
+    expect(result).toBe(path.join(os.homedir(), ".comis", "workspace"));
+  });
+});

@@ -149,9 +149,10 @@ export async function setupSingleAgent(
     }
   }
 
-  // Per-agent workspace (default → ~/.comis/workspace, named → ~/.comis/workspace-{id}).
+  // Per-agent workspace (default → <dataDir>/workspace, named →
+  // <dataDir>/workspace-{id}; ~/.comis only when no dataDir is configured).
   // ensureWorkspace bootstraps personality .md files (write-if-missing).
-  const dir = resolveWorkspaceDir(effectiveConfig, agentId);
+  const dir = resolveWorkspaceDir(effectiveConfig, agentId, container.config.dataDir || undefined);
   await ensureWorkspace({ dir });
 
   // Per-agent safety controls (shared by PiExecutor)

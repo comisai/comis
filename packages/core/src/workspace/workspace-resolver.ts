@@ -9,19 +9,34 @@ import path from "node:path";
  *
  * Resolution order:
  * 1. Explicit `workspacePath` from agent config (resolved to absolute)
- * 2. Default agent: `~/.comis/workspace`
- * 3. Named agent: `~/.comis/workspace-{agentId}`
+ * 2. Default agent: `<baseDataDir>/workspace`
+ * 3. Named agent: `<baseDataDir>/workspace-{agentId}`
+ *
+ * `baseDataDir` is the daemon's RESOLVED data dir (config.dataDir /
+ * COMIS_DATA_DIR); absent/empty falls back to `~/.comis`. Before 260611 the
+ * base was hardcoded to `~/.comis` — the fourth face of the dataDir
+ * split-brain: isolated test daemons created `workspace-<agentId>` dirs
+ * inside the production `~/.comis`, and because the path was shared across
+ * daemon instances, a later run silently RESUMED an earlier run's degraded
+ * session JSONL.
  *
  * Uses safePath() for agentId-derived paths as defense-in-depth
  * against traversal via agentId.
  */
-export function resolveWorkspaceDir(config: AgentConfig, agentId?: string): string {
+export function resolveWorkspaceDir(
+  config: AgentConfig,
+  agentId?: string,
+  baseDataDir?: string,
+): string {
   // 1. Explicit workspace path in config takes priority
   if (config.workspacePath) {
     return path.resolve(config.workspacePath);
   }
-  // 2. Default base directory: ~/.comis
-  const baseDir = safePath(os.homedir(), ".comis");
+  // 2. Base directory: resolved data dir, else ~/.comis
+  const baseDir =
+    baseDataDir && baseDataDir.length > 0
+      ? baseDataDir
+      : safePath(os.homedir(), ".comis");
   if (!agentId || agentId === "default") {
     return safePath(baseDir, "workspace");
   }
