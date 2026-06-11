@@ -69,6 +69,11 @@ export type UserModel = z.infer<typeof UserModelSchema>;
 // Provider entry schema
 // ---------------------------------------------------------------------------
 
+/** Schema default for providers.entries.<id>.timeoutMs — shared with the boot
+ *  redirect WARN (daemon wiring/provider-timeout-redirect.ts) so the ≠-default
+ *  check can never drift from the schema (LAT-03). */
+export const PROVIDER_TIMEOUT_MS_DEFAULT = 120_000;
+
 /**
  * Configuration for a single LLM provider.
  */
@@ -83,8 +88,14 @@ export const ProviderEntrySchema = z.strictObject({
     apiKeyName: z.string().default(""),
     /** Whether this provider is enabled (default: true) */
     enabled: z.boolean().default(true),
-    /** Request timeout in milliseconds (default: 120000) */
-    timeoutMs: z.number().int().positive().default(120_000),
+    /**
+     * NOT enforced on completion calls (LAT-03/D-11): the only consumer is the
+     * provider-config echo (daemon provider-handlers). The operative completion
+     * deadline is agents.<id>.promptTimeout.promptTimeoutMs (stall budget) — see
+     * config-yaml.mdx. Setting a non-default value emits a one-time boot WARN
+     * pointing at the real knob.
+     */
+    timeoutMs: z.number().int().positive().default(PROVIDER_TIMEOUT_MS_DEFAULT),
     /** Maximum retries for transient errors (default: 2) */
     maxRetries: z.number().int().nonnegative().default(2),
     /** Custom headers to include in API requests */
