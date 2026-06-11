@@ -187,6 +187,12 @@ describe("isHonestNonAnswer — the two-outcome predicate gate (260611)", () => 
     expect(isHonestNonAnswer("I couldn't complete that request.")).toBe(true);
   });
 
+  it("honest auth-failure (v2.18) → honest non-answer", () => {
+    expect(isHonestNonAnswer(
+      'The AI service could not authenticate with the "anthropic" provider. Please check the API key or notify the system administrator.',
+    )).toBe(true);
+  });
+
   it("a REAL answer (even a wrong one) → NOT an honest non-answer (must be judged)", () => {
     expect(isHonestNonAnswer("The capital of France is Paris.")).toBe(false);
     expect(isHonestNonAnswer("The capital of France is Berlin.")).toBe(false);

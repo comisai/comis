@@ -232,6 +232,11 @@ const HONEST_NON_ANSWER_MARKERS = [
   "context exhausted",
   "I couldn't produce",
   "I could not produce",
+  // v2.18 honest-auth-error: the executor truthfully reports an auth failure
+  // (e.g. the test harness's post-boot dummy-key re-seed winning over the real
+  // key) instead of fabricating an answer — an honest degradation (260611).
+  "could not authenticate",
+  "check the API key",
 ] as const;
 
 /**

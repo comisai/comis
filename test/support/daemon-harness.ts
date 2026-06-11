@@ -115,6 +115,47 @@ const PROVIDER_API_KEY_ENV_VARS = [
 
 const DUMMY_API_KEY_VALUE = "test-fixture-not-a-real-key";
 
+/**
+ * Real provider API keys captured ONCE at module load — before any daemon boot
+ * scrubs them from process.env.
+ *
+ * 260611 live-fire fix: the daemon's bootstrap snapshots ANTHROPIC_* into its
+ * SecretManager and then SCRUBS them from process.env (scrubProcessEnv). With
+ * multiple daemons booting sequentially in one vitest file, the FIRST boot
+ * removes the real key, so the 2nd+ daemon snapshots nothing and the post-boot
+ * dummy re-seed makes its execute calls 401 ("invalid x-api-key"). That made
+ * every 2nd+ Stage-C judged test (MEM-01 Stage-C, all of MEM-04) fail or
+ * vacuously degrade. Capturing the real values at import time (the runner
+ * injects live.env into process.env before importing any test file) lets
+ * reinjectRealProviderKeys() restore them before EACH boot, so every daemon's
+ * SecretManager gets the real key. A dummy/empty value is NOT captured (those
+ * are the CRUD-test placeholders, not real credentials).
+ */
+const REAL_PROVIDER_KEYS: Record<string, string> = (() => {
+  const captured: Record<string, string> = {};
+  for (const name of PROVIDER_API_KEY_ENV_VARS) {
+    const v = process.env[name];
+    if (v && v !== DUMMY_API_KEY_VALUE) captured[name] = v;
+  }
+  return captured;
+})();
+
+/**
+ * Re-inject the module-load-captured real provider keys into process.env when
+ * they are currently absent or hold the dummy placeholder. Called just before
+ * each daemon boot so the boot-time SecretManager snapshot sees the real key
+ * even after a sibling daemon's scrub. No-op when no real keys were captured
+ * (keyless CI) — those runs keep the dummy-placeholder behavior unchanged.
+ */
+function reinjectRealProviderKeys(): void {
+  for (const [name, value] of Object.entries(REAL_PROVIDER_KEYS)) {
+    const cur = process.env[name];
+    if (cur === undefined || cur === "" || cur === DUMMY_API_KEY_VALUE) {
+      process.env[name] = value;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Double-start guard
 // ---------------------------------------------------------------------------
@@ -311,6 +352,11 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
   if (!hadDataDirEnv) {
     process.env["COMIS_DATA_DIR"] = getForkDataDir();
   }
+
+  // Restore real provider keys (captured at module load) before boot so this
+  // daemon's SecretManager snapshot sees them even if a sibling daemon already
+  // scrubbed process.env (260611 — fixes 401s on the 2nd+ daemon in a file).
+  reinjectRealProviderKeys();
 
   // Start the daemon
   let daemon: DaemonInstance;
