@@ -9,10 +9,34 @@
  * @module
  */
 
-import type { AppConfig } from "@comis/core";
+import type { AppConfig, UnresolvedEnvRef } from "@comis/core";
 
 /** Status of a single doctor finding. */
 export type DoctorStatus = "pass" | "fail" | "warn" | "skip";
+
+/**
+ * Outcome of the single, store-aware config resolution every doctor check
+ * consumes (see `config-resolve.ts`).
+ *
+ * Exactly one of three shapes:
+ * - `loadError` set — the file never made it to validation (missing,
+ *   unparseable YAML, or not an object document);
+ * - `validationIssues` set — the file parsed but the schema rejected it
+ *   *after* `${VAR}` substitution; `unresolvedRefs` names any references
+ *   neither env, `~/.comis/.env`, nor the encrypted secret store resolved
+ *   (the usual root cause of placeholder-shaped validation noise);
+ * - `config` set — the config the daemon would boot with.
+ */
+export interface DoctorConfigResolution {
+  readonly config?: AppConfig;
+  readonly foundPath?: string;
+  readonly loadError?: {
+    readonly kind: "missing" | "unparseable" | "not-object";
+    readonly message: string;
+  };
+  readonly unresolvedRefs?: readonly UnresolvedEnvRef[];
+  readonly validationIssues?: readonly string[];
+}
 
 /**
  * A single finding produced by a doctor check.
@@ -60,6 +84,14 @@ export interface DoctorCheck {
  */
 export interface DoctorContext {
   readonly config?: AppConfig;
+  /**
+   * Full outcome of the shared config resolution, including WHY `config`
+   * is absent when it is (load error, unresolved secret refs, validation
+   * issues). Checks that skip on a missing `config` must consult this so
+   * their skip message names the real cause instead of claiming nothing
+   * is configured (live finding, 2026-06-12 C1 smoke run).
+   */
+  readonly configResolution?: DoctorConfigResolution;
   readonly configPaths: string[];
   readonly dataDir: string;
   readonly daemonPidFile: string;

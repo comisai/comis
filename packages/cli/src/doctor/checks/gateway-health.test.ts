@@ -49,6 +49,23 @@ describe("gatewayHealthCheck", () => {
     expect(findings[0].message).toContain("No gateway URL");
   });
 
+  it("names the config-resolution failure instead of claiming no gateway is configured", async () => {
+    const findings = await gatewayHealthCheck.run({
+      ...baseContext,
+      gatewayUrl: undefined,
+      configResolution: {
+        foundPath: "/cfg/config.yaml",
+        unresolvedRefs: [{ path: "gateway.tokens[0].secret", varName: "COMIS_GATEWAY_TOKEN" }],
+        validationIssues: ["gateway.tokens.0.secret: Too small: expected string to have >=32 characters"],
+      },
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.status).toBe("skip");
+    expect(findings[0]?.message).toContain("COMIS_GATEWAY_TOKEN");
+    expect(findings[0]?.message).not.toContain("No gateway URL configured");
+  });
+
   it("produces fail for invalid gateway URL", async () => {
     const findings = await gatewayHealthCheck.run({
       ...baseContext,

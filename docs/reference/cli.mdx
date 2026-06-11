@@ -533,6 +533,8 @@ comis daemon logs -n 100
 
 Run diagnostic health checks across eight categories: configuration, daemon, gateway, channels, workspace, oauth, secrets-audit, and LCD store. Supports auto-repair mode for fixable issues. The `oauth` category covers JWT expiry, schema mismatch, ca-certificates, HTTPS_PROXY drift, and TLS preflight — see [OAuth concepts → Error classification](/security/oauth#error-classification).
 
+All checks share one config resolution that mirrors daemon boot: `${VAR}` references are substituted from the process environment, then `~/.comis/.env`, then the encrypted secret store (offline read). A reference none of them resolves is reported with its config path and var name, and the channel check fails an enabled channel whose credential reference did not resolve — encrypted-store deployments validate cleanly without exporting secrets into the environment.
+
 **LCD Store checks** — when `memory.db` is present, six read-only scan classes run automatically against the lossless context store: orphaned summaries, dangling `context_items` references, fallback-marker summaries (quality debt), FTS row-count drift, R4 scope anomalies (NULL tenant/agent keys), and `lcd_ingest_cursor` over-count (a cursor claiming more ingested messages than the store holds). Output is content-free: findings carry only counts and row ids, never message text. Silently skipped on new installs where `memory.db` does not exist yet.
 
 | Flag | Type | Default | Description |

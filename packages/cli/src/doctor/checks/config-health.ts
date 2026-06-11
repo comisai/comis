@@ -3,34 +3,19 @@
  * Config health check for comis doctor.
  *
  * Verifies that config files exist, are parseable YAML, and validate
- * against the AppConfigSchema. Reports repairable findings for missing
- * or corrupt config files.
+ * against the AppConfigSchema — consuming the SAME store-aware resolution
+ * (`config-resolve.ts`) the rest of doctor uses, so this check and the
+ * gateway/channel checks can never disagree about whether the config
+ * loaded. Reports repairable findings for missing or corrupt config files,
+ * and names any `${VAR}` references that neither env, `~/.comis/.env`, nor
+ * the encrypted secret store resolved (the usual root cause of
+ * placeholder-shaped validation noise).
  *
  * @module
  */
 
-import { readFileSync } from "node:fs";
-import os from "node:os";
-import { parse as parseYaml } from "yaml";
-import { AppConfigSchema, loadEnvFile, systemGetEnv } from "@comis/core";
+import { resolveDoctorConfig } from "../config-resolve.js";
 import type { DoctorCheck, DoctorFinding } from "../types.js";
-
-const ENV_REF_RE = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
-
-/** Deep-walk an object and resolve `${VAR}` references using process.env. */
-function resolveEnvRefs(obj: Record<string, unknown>): void {
-  for (const [key, value] of Object.entries(obj)) {
-    if (typeof value === "string" && value.includes("${")) {
-      obj[key] = value.replace(ENV_REF_RE, (match, varName: string) => systemGetEnv(varName) ?? match);
-    } else if (value && typeof value === "object" && !Array.isArray(value)) {
-      resolveEnvRefs(value as Record<string, unknown>);
-    } else if (Array.isArray(value)) {
-      for (const item of value) {
-        if (item && typeof item === "object") resolveEnvRefs(item as Record<string, unknown>);
-      }
-    }
-  }
-}
 
 const CATEGORY = "config";
 
@@ -38,7 +23,8 @@ const CATEGORY = "config";
  * Doctor check: config file health.
  *
  * Checks if config files exist, can be parsed as YAML, and validate
- * against the AppConfigSchema.
+ * against the AppConfigSchema after `${VAR}` substitution (env ->
+ * ~/.comis/.env -> encrypted secret store — mirroring daemon startup).
  */
 export const configHealthCheck: DoctorCheck = {
   id: "config-health",
@@ -59,77 +45,48 @@ export const configHealthCheck: DoctorCheck = {
       return findings;
     }
 
-    let configContent: string | undefined;
-    let foundPath: string | undefined;
+    const resolution =
+      context.configResolution ?? resolveDoctorConfig(context.configPaths);
 
-    for (const configPath of context.configPaths) {
-      try {
-        configContent = readFileSync(configPath, "utf-8");
-        foundPath = configPath;
-        break;
-      } catch {
-        // Try next path
-      }
-    }
-
-    if (!configContent || !foundPath) {
+    if (resolution.loadError !== undefined) {
+      const { kind, message } = resolution.loadError;
       findings.push({
         category: CATEGORY,
-        check: "Config file exists",
+        check: kind === "missing" ? "Config file exists" : "Config file parseable",
         status: "fail",
-        message: "No config file found at any configured path",
-        suggestion: "Run comis init to create config",
+        message,
+        suggestion:
+          kind === "missing"
+            ? "Run comis init to create config"
+            : "Config is corrupt -- repair will restore from backup or defaults",
         repairable: true,
       });
       return findings;
     }
 
-    // Attempt to parse YAML
-    let parsed: unknown;
-    try {
-      parsed = parseYaml(configContent);
-    } catch {
+    // References nothing resolved are reported first: they are almost always
+    // the cause of the validation issues that follow, and the message names
+    // the exact knob (var name + config path + the three places checked).
+    if (resolution.unresolvedRefs !== undefined && resolution.unresolvedRefs.length > 0) {
+      const refs = resolution.unresolvedRefs
+        .map((ref) => `\${${ref.varName}} at ${ref.path}`)
+        .join(", ");
       findings.push({
         category: CATEGORY,
-        check: "Config file parseable",
-        status: "fail",
-        message: `Config file is corrupt: ${foundPath}`,
-        suggestion: "Config is corrupt -- repair will restore from backup or defaults",
-        repairable: true,
+        check: "Secret references",
+        status: "warn",
+        message: `Unresolved secret reference(s): ${refs} — not in env, ~/.comis/.env, or the encrypted secret store`,
+        suggestion: "Set the variable in the environment or store it via comis secrets set",
+        repairable: false,
       });
-      return findings;
     }
 
-    // Handle empty or non-object config
-    if (parsed === null || parsed === undefined) {
-      parsed = {};
-    }
-
-    if (typeof parsed !== "object" || Array.isArray(parsed)) {
-      findings.push({
-        category: CATEGORY,
-        check: "Config file parseable",
-        status: "fail",
-        message: "Config file does not contain a valid object",
-        suggestion: "Config is corrupt -- repair will restore from backup or defaults",
-        repairable: true,
-      });
-      return findings;
-    }
-
-    // Resolve ${VAR} references before validation (mirrors daemon startup)
-    loadEnvFile(os.homedir() + "/.comis/.env");
-    resolveEnvRefs(parsed as Record<string, unknown>);
-
-    // Validate against schema
-    const result = AppConfigSchema.safeParse(parsed);
-    if (!result.success) {
-      const issues = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+    if (resolution.validationIssues !== undefined) {
       findings.push({
         category: CATEGORY,
         check: "Config schema validation",
         status: "warn",
-        message: `Config validation issues: ${issues}`,
+        message: `Config validation issues: ${resolution.validationIssues.join("; ")}`,
         repairable: false,
       });
       return findings;

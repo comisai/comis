@@ -3,7 +3,9 @@
  * Config health check unit tests.
  *
  * Tests config-health check for missing, corrupt, schema-invalid,
- * and valid config file scenarios.
+ * unresolved-secret-reference, and valid config scenarios — driven through
+ * the shared store-aware resolution on the context (the check's contract
+ * since the 2026-06-12 doctor split-brain fix).
  *
  * @module
  */
@@ -11,121 +13,122 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import type { DoctorContext } from "../types.js";
 
-// Mock node:fs readFileSync
-vi.mock("node:fs", () => ({
-  readFileSync: vi.fn(),
+// Mock the shared resolver so the fallback path (no resolution on the
+// context) is observable without touching the real filesystem.
+vi.mock("../config-resolve.js", () => ({
+  resolveDoctorConfig: vi.fn(),
 }));
 
-// Mock yaml parse
-vi.mock("yaml", () => ({
-  parse: vi.fn(),
-}));
-
-// Mock @comis/core AppConfigSchema
-vi.mock("@comis/core", () => ({
-  AppConfigSchema: {
-    safeParse: vi.fn(),
-  },
-  loadEnvFile: vi.fn(() => 0),
-}));
-
-// Mock node:os for homedir
-vi.mock("node:os", () => ({
-  default: { homedir: () => "/tmp/test-home" },
-  homedir: () => "/tmp/test-home",
-}));
-
-const { readFileSync } = await import("node:fs");
-const { parse: parseYaml } = await import("yaml");
-const { AppConfigSchema } = await import("@comis/core");
+const { resolveDoctorConfig } = await import("../config-resolve.js");
 const { configHealthCheck } = await import("./config-health.js");
 
 const baseContext: DoctorContext = {
-  configPaths: [],
+  configPaths: ["/cfg/config.yaml"],
   dataDir: "/tmp/test-comis",
   daemonPidFile: "/tmp/test-comis/daemon.pid",
 };
 
 describe("configHealthCheck", () => {
   beforeEach(() => {
-    vi.mocked(readFileSync).mockReset();
-    vi.mocked(parseYaml).mockReset();
-    vi.mocked(AppConfigSchema.safeParse).mockReset();
+    vi.mocked(resolveDoctorConfig).mockReset();
   });
 
   it("produces fail when no config paths provided", async () => {
     const findings = await configHealthCheck.run({ ...baseContext, configPaths: [] });
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].status).toBe("fail");
-    expect(findings[0].message).toContain("No config file paths");
-    expect(findings[0].repairable).toBe(true);
+    expect(findings[0]?.status).toBe("fail");
+    expect(findings[0]?.message).toContain("No config file paths");
+    expect(findings[0]?.repairable).toBe(true);
   });
 
   it("produces fail when config file not found", async () => {
-    vi.mocked(readFileSync).mockImplementation(() => {
-      throw new Error("ENOENT: no such file or directory");
-    });
-
     const findings = await configHealthCheck.run({
       ...baseContext,
-      configPaths: ["/tmp/missing.yaml"],
+      configResolution: {
+        loadError: { kind: "missing", message: "No config file found at any configured path" },
+      },
     });
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].status).toBe("fail");
-    expect(findings[0].message).toContain("No config file found");
+    expect(findings[0]?.status).toBe("fail");
+    expect(findings[0]?.message).toContain("No config file found");
+    expect(findings[0]?.repairable).toBe(true);
   });
 
   it("produces fail when config is corrupt YAML", async () => {
-    vi.mocked(readFileSync).mockReturnValue("invalid: {yaml" as never);
-    vi.mocked(parseYaml).mockImplementation(() => {
-      throw new SyntaxError("Unexpected token");
-    });
-
     const findings = await configHealthCheck.run({
       ...baseContext,
-      configPaths: ["/tmp/corrupt.yaml"],
+      configResolution: {
+        foundPath: "/cfg/config.yaml",
+        loadError: { kind: "unparseable", message: "Config file is corrupt: /cfg/config.yaml" },
+      },
     });
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].status).toBe("fail");
-    expect(findings[0].message).toContain("corrupt");
-    expect(findings[0].repairable).toBe(true);
+    expect(findings[0]?.status).toBe("fail");
+    expect(findings[0]?.message).toContain("corrupt");
+    expect(findings[0]?.repairable).toBe(true);
   });
 
   it("produces warn when config has schema validation issues", async () => {
-    vi.mocked(readFileSync).mockReturnValue("tenantId: test\n" as never);
-    vi.mocked(parseYaml).mockReturnValue({ invalid: true });
-    vi.mocked(AppConfigSchema.safeParse).mockReturnValue({
-      success: false,
-      error: {
-        issues: [{ path: ["agents"], message: "Required" }],
-      },
-    } as never);
-
     const findings = await configHealthCheck.run({
       ...baseContext,
-      configPaths: ["/tmp/bad-schema.yaml"],
+      configResolution: {
+        foundPath: "/cfg/config.yaml",
+        validationIssues: ["agents: Required"],
+      },
     });
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].status).toBe("warn");
-    expect(findings[0].message).toContain("validation issues");
+    expect(findings[0]?.status).toBe("warn");
+    expect(findings[0]?.message).toContain("validation issues");
+  });
+
+  it("names unresolved secret references and the places checked before the validation noise they cause", async () => {
+    const findings = await configHealthCheck.run({
+      ...baseContext,
+      configResolution: {
+        foundPath: "/cfg/config.yaml",
+        unresolvedRefs: [{ path: "gateway.tokens[0].secret", varName: "COMIS_GATEWAY_TOKEN" }],
+        validationIssues: [
+          "gateway.tokens.0.secret: Too small: expected string to have >=32 characters",
+        ],
+      },
+    });
+
+    expect(findings).toHaveLength(2);
+    expect(findings[0]?.status).toBe("warn");
+    expect(findings[0]?.message).toContain("COMIS_GATEWAY_TOKEN");
+    expect(findings[0]?.message).toContain("gateway.tokens[0].secret");
+    expect(findings[0]?.message).toContain("encrypted secret store");
+    expect(findings[1]?.status).toBe("warn");
+    expect(findings[1]?.message).toContain("validation issues");
   });
 
   it("produces pass for valid config", async () => {
-    vi.mocked(readFileSync).mockReturnValue("tenantId: default\n" as never);
-    vi.mocked(parseYaml).mockReturnValue({ tenantId: "default" });
-    vi.mocked(AppConfigSchema.safeParse).mockReturnValue({ success: true } as never);
-
     const findings = await configHealthCheck.run({
       ...baseContext,
-      configPaths: ["/tmp/valid.yaml"],
+      configResolution: {
+        foundPath: "/cfg/config.yaml",
+        config: {} as never,
+      },
     });
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].status).toBe("pass");
-    expect(findings[0].message).toContain("valid");
+    expect(findings[0]?.status).toBe("pass");
+    expect(findings[0]?.message).toContain("valid");
+  });
+
+  it("falls back to resolving the config itself when the context carries no resolution", async () => {
+    vi.mocked(resolveDoctorConfig).mockReturnValue({
+      foundPath: "/cfg/config.yaml",
+      config: {} as never,
+    });
+
+    const findings = await configHealthCheck.run({ ...baseContext });
+
+    expect(vi.mocked(resolveDoctorConfig)).toHaveBeenCalledWith(["/cfg/config.yaml"]);
+    expect(findings[0]?.status).toBe("pass");
   });
 });

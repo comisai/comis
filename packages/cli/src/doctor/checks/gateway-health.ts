@@ -9,6 +9,7 @@
  */
 
 import * as net from "node:net";
+import { describeConfigUnavailable } from "../config-resolve.js";
 import type { DoctorCheck, DoctorFinding } from "../types.js";
 
 const CATEGORY = "gateway";
@@ -59,11 +60,17 @@ export const gatewayHealthCheck: DoctorCheck = {
     const findings: DoctorFinding[] = [];
 
     if (!context.gatewayUrl) {
+      // A valid config always carries a gateway section (schema defaults),
+      // so a missing URL means the config itself did not resolve — say WHY
+      // instead of claiming nothing is configured.
+      const why = describeConfigUnavailable(context.configResolution);
       findings.push({
         category: CATEGORY,
         check: "Gateway URL",
         status: "skip",
-        message: "No gateway URL configured",
+        message: why !== undefined
+          ? `Gateway connectivity not checked — ${why}`
+          : "No gateway URL configured",
         repairable: false,
       });
       return findings;
