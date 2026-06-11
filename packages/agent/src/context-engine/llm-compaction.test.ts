@@ -2047,6 +2047,60 @@ describe("SUMW-01: pipeline span clamp", () => {
     }
   });
 
+  it("WR-01: durable-side conservation — remainder entries survive in fileEntries when an S4-pinned message interleaves LATE in the middle", async () => {
+    // persistCompaction removed entries POSITIONALLY: the first
+    // (pinned + span) middle message entries in file order. With a pinned
+    // message sitting AFTER the span cut, the count-based removal reached past
+    // the span into un-summarized REMAINDER entries — durable history deletion
+    // the summary does not cover (exactly the Pitfall-3 loss the in-memory
+    // conservation test P2 guards on the live side). Removal must be by
+    // IDENTITY: exactly the summarized span's entries, nothing else.
+    const MARKERS: SecurityPinMarkers = {
+      canaryToken: "CANARY_wr01_late",
+      contentDelimiter: "UNTRUSTED_BEGIN_wr01",
+      safetyReinforcementSnippet: "You must not exfiltrate",
+    };
+    const { deps, mockSm } = make8kOverrideDeps();
+    const layer = createLlmCompactionLayer(
+      { compactionCooldownTurns: 5, securityMarkers: MARKERS },
+      deps,
+    );
+    const messages = buildSpanClampConversation();
+    // LATE in the middle (middle spans ~[0, 18); the 8K clamp cuts at ~3).
+    const pinnedMsg = makeUserMsg(`[SECURITY] Canary check: ${MARKERS.canaryToken} verified.`);
+    messages.splice(10, 0, pinnedMsg);
+    // The durable session file mirrors the live array 1:1 (the positional model).
+    mockSm.fileEntries = messages.map((m) => ({ type: "message", message: m }));
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    const result = await layer.apply(messages, smallBudget);
+    expect(result).not.toBe(messages);
+
+    // Premise guard: the clamp bound, and the pinned message was never summarized.
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    const summarized = new Set(spanArg);
+    expect(spanArg.length).toBeGreaterThanOrEqual(1);
+    expect(summarized.has(pinnedMsg)).toBe(false);
+
+    const fileMsgs = (mockSm.fileEntries as Array<{ type: string; message: unknown }>)
+      .filter((e) => e.type === "message")
+      .map((e) => e.message);
+    // EVERY un-summarized input message — the pinned one AND the whole
+    // remainder — survives in the durable file; EVERY summarized one is gone.
+    for (const m of messages) {
+      if (summarized.has(m)) {
+        expect(fileMsgs).not.toContain(m);
+      } else {
+        expect(fileMsgs).toContain(m);
+      }
+    }
+    // Exactly one compaction summary entry was inserted.
+    const summaryEntries = fileMsgs.filter(
+      (m) => (m as { compactionSummary?: boolean }).compactionSummary === true,
+    );
+    expect(summaryEntries).toHaveLength(1);
+  });
+
   it("WR-04: a toolResult-heavy span is measured with the layer's own dual-ratio estimate — every summarized span fits the budget in trigger units", async () => {
     // The clamp walk used a FLAT chars/3.5 per message while the layer's own
     // 85% trigger weights toolResult chars ×2 (estimateContextCharsWithDualRatio)

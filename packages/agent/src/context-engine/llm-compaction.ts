@@ -148,15 +148,25 @@ export function validateCompactionSummary(summary: string): {
 /**
  * Persist a compaction entry to the SessionManager's fileEntries.
  *
- * Creates a compaction summary message at the beginning of the session,
- * removes old entries before the cut point, and calls `_rewriteFile()` once.
+ * Inserts a compaction summary message immediately after the preserved head
+ * (or at the very front when `headCount === 0`), removes EXACTLY the message
+ * entries named by `removeMessageOrdinals`, and calls `_rewriteFile()` once.
+ *
+ * Review WR-01: removal is by IDENTITY — the caller passes the file-order
+ * message ordinals of the SUMMARIZED span — never by count. The previous
+ * count-based removal took the first (pinned + span) middle entries
+ * positionally, which deleted un-summarized REMAINDER entries from the durable
+ * session file whenever an S4-pinned message sat later in the middle: durable
+ * history deletion the summary does not cover (Pitfall 3). With identity
+ * removal, pinned messages AND the remainder survive in the file regardless of
+ * interleaving; only content the summary actually covers is removed.
  *
  * This is safe because `transformContext` runs within the `withSession()` write lock.
  */
 function persistCompaction(
   sm: unknown,
   summaryText: string,
-  keptTailCount: number,
+  removeMessageOrdinals: ReadonlySet<number>,
   headCount: number,
   discoveredTools: string[],
 ): void {
@@ -176,77 +186,34 @@ function persistCompaction(
     },
   };
 
-  // Calculate which message entries to remove: only the MIDDLE zone.
-  // Preserve: first `headCount` message entries + last `keptTailCount` message entries.
-  const messageEntries = fileEntries.filter((e: any) => e.type === "message");
-  const entriesToRemove = messageEntries.length - headCount - keptTailCount;
-
-  if (entriesToRemove > 0) {
-    // Find indices of middle message entries to remove (skip first headCount, remove next entriesToRemove)
-    let messagesSeen = 0;
-    let removedCount = 0;
-    const indicesToRemove = new Set<number>();
-    for (let i = 0; i < fileEntries.length && removedCount < entriesToRemove; i++) {
-      if (fileEntries[i].type === "message") { // eslint-disable-line security/detect-object-injection
-        messagesSeen++;
-        // Skip head entries (first headCount message entries)
-        if (messagesSeen > headCount) {
-          indicesToRemove.add(i);
-          removedCount++;
-        }
-      }
-    }
-
-    // Build new fileEntries: preserved head + compaction entry + non-removed tail
-    // Insert the compaction entry after the last preserved head message entry
-    let lastHeadMsgIdx = -1;
-    let headMsgsSeen = 0;
-    for (let i = 0; i < fileEntries.length; i++) {
-      if (fileEntries[i].type === "message") { // eslint-disable-line security/detect-object-injection
-        headMsgsSeen++;
-        if (headMsgsSeen <= headCount) lastHeadMsgIdx = i;
-        else break;
-      }
-    }
-
-    const newEntries: unknown[] = [];
-    for (let i = 0; i < fileEntries.length; i++) {
-      if (!indicesToRemove.has(i)) {
-        newEntries.push(fileEntries[i]); // eslint-disable-line security/detect-object-injection
-      }
-      // Insert compaction entry after the last head message entry
-      if (i === lastHeadMsgIdx) {
+  // Single walk over fileEntries: drop the named message ordinals, insert the
+  // compaction entry immediately after the headCount-th message entry (the
+  // pre-existing placement), or prepend when there is no preserved head.
+  const newEntries: unknown[] = [];
+  let inserted = false;
+  if (headCount === 0) {
+    newEntries.push(compactionEntry);
+    inserted = true;
+  }
+  let ordinal = 0; // index among MESSAGE entries, file order
+  for (const entry of fileEntries) {
+    if ((entry as { type?: string }).type === "message") {
+      if (!removeMessageOrdinals.has(ordinal)) newEntries.push(entry);
+      ordinal++;
+      if (ordinal === headCount && !inserted) {
         newEntries.push(compactionEntry);
+        inserted = true;
       }
-    }
-
-    // If no head messages (headCount=0), prepend compaction entry
-    if (headCount === 0 && !newEntries.includes(compactionEntry)) {
-      newEntries.unshift(compactionEntry);
-    }
-
-    // Replace fileEntries in-place
-    fileEntries.length = 0;
-    fileEntries.push(...newEntries);
-  } else {
-    // No entries to remove -- insert compaction entry after head
-    if (headCount > 0) {
-      let headMsgsSeen = 0;
-      let insertIdx = 0;
-      for (let i = 0; i < fileEntries.length; i++) {
-        if (fileEntries[i].type === "message") { // eslint-disable-line security/detect-object-injection
-          headMsgsSeen++;
-          if (headMsgsSeen === headCount) {
-            insertIdx = i + 1;
-            break;
-          }
-        }
-      }
-      fileEntries.splice(insertIdx, 0, compactionEntry);
     } else {
-      fileEntries.unshift(compactionEntry);
+      newEntries.push(entry);
     }
   }
+  // Defensive: fewer message entries than headCount — append at the end.
+  if (!inserted) newEntries.push(compactionEntry);
+
+  // Replace fileEntries in-place
+  fileEntries.length = 0;
+  fileEntries.push(...newEntries);
 
   if (typeof sessionManager._rewriteFile === "function") {
     sessionManager._rewriteFile();
@@ -677,18 +644,27 @@ export function createLlmCompactionLayer(
         ];
 
         // Step 8: Persist compaction to SessionManager
-        // SUMW-01: the un-summarized remainder counts as KEPT on the durable side
-        // too — it sits immediately before the tail in file order, so folding it
-        // into keptTailCount removes only the SUMMARIZED span's entries. Removing
-        // the remainder's entries would be durable history deletion the summary
-        // does not cover (the same Pitfall-3 data loss, on the session file).
+        // SUMW-01 / review WR-01: durable-side conservation is by IDENTITY —
+        // messages[i] corresponds 1:1 to the i-th message entry in fileEntries
+        // (the positional model the head/tail counts already relied on), so we
+        // remove EXACTLY the summarized span's entries. Pinned messages and the
+        // un-summarized remainder survive in the durable file regardless of how
+        // they interleave; removing anything else would be durable history
+        // deletion the summary does not cover (the Pitfall-3 data loss).
         try {
           const sm = deps.getSessionManager();
           if (sm) {
+            const spanSet = new Set(spanToSummarize);
+            const removeMessageOrdinals = new Set<number>();
+            /* eslint-disable security/detect-object-injection -- array index access */
+            for (let i = headEndIndex; i < tailStartIndex; i++) {
+              if (spanSet.has(messages[i]!)) removeMessageOrdinals.add(i);
+            }
+            /* eslint-enable security/detect-object-injection */
             persistCompaction(
               sm,
               compactionResult.summary,
-              tailMessages.length + remainingMiddle.length,
+              removeMessageOrdinals,
               headMessages.length,
               discoveredTools,
             );
