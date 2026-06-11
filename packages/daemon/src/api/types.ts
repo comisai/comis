@@ -120,6 +120,14 @@ export interface SessionsApiDeps {
    *  Optional for the same handler-test reason; absent ⇒ the unlink/purge steps are
    *  skipped (the by-session memory delete itself still runs). */
   consolidationStore?: import("@comis/core").MemoryConsolidationStore;
+  /** Runtime-layer (L3) destroy for `session.reset_conversation` — live finding
+   *  2026-06-11: clearing LCD + sessionStore alone resurrects (the surviving pi
+   *  runtime JSONL re-ingests wholesale via the lcd-ingest epoch rebase). Wired
+   *  at the composition root from `createConversationReset(...).destroyRuntimeSession`
+   *  bound to the default agent. Returns true when an adapter destroy ran.
+   *  Optional: absent ⇒ the handler reports `runtimeSessionDestroyed: false`
+   *  and WARNs with the resurrection consequence (honest degradation). */
+  destroyRuntimeSession?: (formattedSessionKey: string) => Promise<boolean>;
 }
 
 /**

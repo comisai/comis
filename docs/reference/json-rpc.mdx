@@ -978,7 +978,7 @@ Session management for agent conversations. Client-facing methods use `rpc` scop
 | `session.reset` | `admin` | Reset all sessions |
 | `session.export` | `admin` | Export session data |
 | `session.compact` | `admin` | Compact session history |
-| `session.reset_conversation` | `admin` | Complete cross-mode conversation reset (LCD history + working session transcript) |
+| `session.reset_conversation` | `admin` | Complete cross-mode conversation reset (LCD history + working session transcript + pi runtime session) |
 
 ### `session.status`
 
@@ -1208,9 +1208,9 @@ Get the live status of a specific sub-agent run by its run ID. Returns timing, t
 
 ### `session.reset_conversation`
 
-Complete cross-mode conversation reset. Clears **both** the LCD durable history **and** the daemon sessionStore working transcript. **Destructive and irreversible.** Admin-scoped — requires an admin token.
+Complete cross-mode conversation reset. Clears **all three** transcript layers: the LCD durable history, the daemon sessionStore working transcript, and the pi runtime session. **Destructive and irreversible.** Admin-scoped — requires an admin token.
 
-This is the correct explicit forget command. Unlike `session.delete` (which only removes the session record), this operation ensures the model starts with a clean slate in **both engine modes**: the LCD store is empty (dag mode) and the sessionStore messages are empty (both modes — the JSONL-backed transcript that feeds `state.messages` on the next turn is wiped).
+This is the correct explicit forget command. Unlike `session.delete` (which only removes the session record), this operation ensures the model starts with a clean slate in **both engine modes**: the LCD store is empty (dag mode), the sessionStore messages are empty, and the runtime session transcript is destroyed. The runtime layer matters: without it, the surviving runtime JSONL is re-ingested wholesale on the next turn (LCD epoch rebase) and the "forgotten" conversation resurrects.
 
 The operation is serialized against live LCD ingest (safe to call while the daemon is running). Returns count-only — no message content is returned or logged. Best-effort on each layer: absent sessionStore entry or zero LCD rows is not an error.
 
@@ -1218,7 +1218,7 @@ The operation is serialized against live LCD ingest (safe to call while the daem
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ session_key: string, memory?: boolean, purge_derived?: boolean }` — `memory` defaults to `false`; when `true`, the conversation's RAG memories are also deleted by `source_session_key` (both paired-conversation **and** LCD-distilled episodic memories) for the agent + tenant scope, and the deleted sources are unlinked from consolidated observations (orphan observation → deleted; multi-source observation → kept with the reference removed). `purge_derived` (default `false`, only meaningful with `memory: true`) escalates to deleting **every** observation derived from this session, even those corroborated by other sessions. |
-| **Returns** | `{ sessionKey: string, lcdRowsDeleted: number, sessionMessagesCleared: number, memoriesDeleted?: number }` — `memoriesDeleted` is the count of deleted RAG memory rows when `memory: true` and a memory store is wired. It is **omitted** (`undefined`) only when `memory` was not requested, or when the daemon has no memory store wired (the LCD + session transcript are still cleared). |
+| **Returns** | `{ sessionKey: string, lcdRowsDeleted: number, sessionMessagesCleared: number, memoriesDeleted?: number, runtimeSessionDestroyed?: boolean }` — `memoriesDeleted` is the count of deleted RAG memory rows when `memory: true` and a memory store is wired. It is **omitted** (`undefined`) only when `memory` was not requested, or when the daemon has no memory store wired (the LCD + session transcript are still cleared). `runtimeSessionDestroyed` reports whether the pi runtime session was destroyed; `false` means that layer was unavailable and the conversation may resurrect on the next turn (a WARN with the consequence is logged). |
 
 <CodeGroup>
 ```json Request
@@ -1239,7 +1239,8 @@ The operation is serialized against live LCD ingest (safe to call while the daem
     "sessionKey": "default:user123:telegram",
     "lcdRowsDeleted": 42,
     "sessionMessagesCleared": 18,
-    "memoriesDeleted": 5
+    "memoriesDeleted": 5,
+    "runtimeSessionDestroyed": true
   },
   "id": 1
 }

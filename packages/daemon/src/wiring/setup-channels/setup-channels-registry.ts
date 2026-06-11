@@ -274,6 +274,10 @@ export interface ChannelsDeps {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
     destroySession(key: SessionKey): Promise<void>;
   }>;
+  /** Complete three-layer conversation forget for slash /new + /reset
+   *  (createConversationReset — live finding 2026-06-11: runtime-only destroy
+   *  left the LCD context the DAG re-presented on the next turn). */
+  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
   /** Per-agent cost trackers for /usage and /status cost data. */
   costTrackers?: Map<string, {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;
@@ -435,6 +439,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       onMessageProcessed: deps.onMessageProcessed,
       approvalGate: deps.approvalGate,
       piSessionAdapters: deps.piSessionAdapters,
+      destroyConversation: deps.destroyConversation,
       costTrackers: deps.costTrackers,
       cronExecutionTrackers: deps.cronExecutionTrackers,
       exportSessionBundle: deps.exportSessionBundle,

@@ -152,6 +152,9 @@ export interface GatewayDeps {
       toolResults?: number;
     } | undefined;
   }>;
+  /** Complete three-layer conversation forget for slash /new + /reset
+   *  (createConversationReset — live finding 2026-06-11). */
+  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
   /** Pre-resolved gateway tokens with secrets (config -> env -> auto-generated).
    *  Optional `mcpClient` block survives resolution so the
    *  TokenStore can surface it on verified TokenClient instances. */
@@ -239,6 +242,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     workspaceDirs,
     _createGatewayServer,
     piSessionAdapters,
+    destroyConversation,
     instanceId,
     startupStartMs,
   } = deps;
@@ -274,6 +278,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     costTrackers,
     workspaceDirs,
     piSessionAdapters,
+    destroyConversation,
     greetingGenerator,
     activeExecutions,
     _memoryAdapter,

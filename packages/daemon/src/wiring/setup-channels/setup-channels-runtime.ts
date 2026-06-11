@@ -100,6 +100,10 @@ export interface ChannelManagerBuildDeps {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
     destroySession(key: SessionKey): Promise<void>;
   }>;
+  /** Complete three-layer conversation forget for slash /new + /reset
+   *  (createConversationReset — live finding 2026-06-11: runtime-only destroy
+   *  left the LCD context the DAG re-presented on the next turn). */
+  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
   costTrackers?: Map<string, {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;
     getBySession(key: string): { totalTokens: number; totalCost: number };
@@ -459,6 +463,14 @@ export async function buildAndStartChannelManager(
             maxSteps: execAgentConfig?.maxSteps ?? 10,
           }),
           destroySession: (key) => {
+            // Complete three-layer forget when wired (live finding 2026-06-11:
+            // runtime-only destroy left LCD context the DAG re-presented).
+            if (deps.destroyConversation) {
+              // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
+              deps.destroyConversation(agentId, key).catch(() => { /* fire-and-forget conversation destroy */ });
+              container.eventBus.emit("session:expired", { sessionKey: key, reason: "chat-reset" });
+              return;
+            }
             const adapter = deps.piSessionAdapters?.get(agentId);
             if (adapter) {
               // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget

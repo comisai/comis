@@ -330,9 +330,13 @@ describe("session.reset_conversation handler", () => {
     expect(result.memoriesDeleted).toBeUndefined();
     const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
     expect(warnCalls.length).toBeGreaterThanOrEqual(1);
-    const warnArg = warnCalls[0][0] as Record<string, unknown>;
-    expect(warnArg["errorKind"]).toBe("precondition");
-    expect(String(warnArg["hint"] ?? "")).toMatch(/memoryPort not available|--memory flag ignored/i);
+    // The runtime-layer (L3) not-wired WARN also fires in this deps shape —
+    // find the memoryPort warn by content rather than call order.
+    const memoryWarn = warnCalls
+      .map((c) => c[0] as Record<string, unknown>)
+      .find((a) => /memoryPort not available|--memory flag ignored/i.test(String(a["hint"] ?? "")));
+    expect(memoryWarn).toBeDefined();
+    expect(memoryWarn!["errorKind"]).toBe("precondition");
   });
 
   it("H7b: --memory omitted; memoriesDeleted is OMITTED (stub not reached)", async () => {
@@ -578,5 +582,61 @@ describe("session.reset_conversation --memory (DIST-05)", () => {
       (c) => (c[0] as Record<string, unknown>)["errorKind"] === "dependency",
     );
     expect(dependencyWarn).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session.reset_conversation runtime layer (L3) tests — live finding
+// 2026-06-11 (LIVEMEM): without the runtime destroy, the surviving pi session
+// JSONL re-ingested wholesale on the next turn (lcd-ingest epoch rebase) and
+// the "forgotten" conversation resurrected into the DAG.
+// ---------------------------------------------------------------------------
+
+describe("session.reset_conversation severs the runtime transcript so the forget cannot resurrect", () => {
+  it("destroys the pi runtime session and reports runtimeSessionDestroyed:true", async () => {
+    const destroyRuntimeSession = vi.fn().mockResolvedValue(true);
+    const deps = makeDeps({ lcdStore: makeLcdStore(5), destroyRuntimeSession } as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    const result = (await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    })) as { runtimeSessionDestroyed: boolean };
+
+    expect(destroyRuntimeSession).toHaveBeenCalledWith(SESSION_KEY);
+    expect(result.runtimeSessionDestroyed).toBe(true);
+  });
+
+  it("reports runtimeSessionDestroyed:false when the runtime layer is not wired, with a WARN naming the resurrection consequence", async () => {
+    const deps = makeDeps({ lcdStore: makeLcdStore(5) });
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    const result = (await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    })) as { runtimeSessionDestroyed: boolean; lcdRowsDeleted: number };
+
+    expect(result.runtimeSessionDestroyed).toBe(false);
+    expect(result.lcdRowsDeleted).toBe(5);
+    const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const resurrectWarn = warnCalls.find((c) =>
+      String((c[0] as Record<string, unknown>)["hint"] ?? "").includes("resurrect"),
+    );
+    expect(resurrectWarn).toBeDefined();
+  });
+
+  it("a failed runtime destroy (false) still preserves the L1/L2 counts in the response", async () => {
+    const destroyRuntimeSession = vi.fn().mockResolvedValue(false);
+    const deps = makeDeps({ lcdStore: makeLcdStore(9), destroyRuntimeSession } as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    const result = (await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    })) as { runtimeSessionDestroyed: boolean; lcdRowsDeleted: number; sessionMessagesCleared: number };
+
+    expect(result.runtimeSessionDestroyed).toBe(false);
+    expect(result.lcdRowsDeleted).toBe(9);
+    expect(result.sessionMessagesCleared).toBe(1);
   });
 });
