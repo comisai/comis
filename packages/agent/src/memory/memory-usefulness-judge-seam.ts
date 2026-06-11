@@ -154,10 +154,6 @@ function parseVerdict(raw: string, candidateIds: string[]): UsefulnessJudgeVerdi
   };
 }
 
-/** Strip markdown code fences from raw LLM text (mirrors the userrep parser). */
-function stripFences(text: string): string {
-  return text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-}
 
 /**
  * Build the OFFLINE usefulness-judge seam from a cheap resolved model.

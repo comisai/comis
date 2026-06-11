@@ -149,7 +149,3 @@ export function parseRelationshipOutput(raw: string): RelationshipBuildOutput {
   return out;
 }
 
-/** Strip markdown code fences from raw LLM text (mirrors the per-user-profile parser). */
-function stripFences(text: string): string {
-  return text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-}

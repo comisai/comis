@@ -132,7 +132,3 @@ export function parseUserRepresentationOutput(raw: string): UserRepresentationBu
   return out;
 }
 
-/** Strip markdown code fences from raw LLM text (mirrors the reasoning parser). */
-function stripFences(text: string): string {
-  return text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-}
