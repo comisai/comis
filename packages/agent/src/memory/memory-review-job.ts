@@ -335,8 +335,21 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
 
   logger.debug({ agentId, totalSessions: allSessions.length, qualifying: qualifyingSessions.length }, "Memory review session filtering complete");
 
-  // Early exit if nothing to review
+  // Early exit if nothing to review. The counts ride an INFO line: at the
+  // default level a no-op nightly run used to be 'Job started/completed'
+  // bracketing silence — indistinguishable from a productive run (live C11
+  // finding, 2026-06-12; qualifying:0 existed only at DEBUG).
   if (qualifyingSessions.length === 0) {
+    log.info(
+      {
+        agentId,
+        totalSessions: allSessions.length,
+        qualifying: 0,
+        watermark,
+        step: "early-exit",
+      },
+      "Memory review: nothing to review this run",
+    );
     eventBus.emit("memory:review_completed", {
       agentId,
       sessionsReviewed: 0,

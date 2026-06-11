@@ -155,6 +155,23 @@ describe("runMemoryReview", () => {
     }));
   });
 
+  it("logs a counts INFO line when nothing qualifies so a no-op nightly run is diagnosable at default level", async () => {
+    // Live C11 finding (2026-06-12): the zero-qualifying early exit logged
+    // only DEBUG — at default INFO the operator saw 'Job started/completed'
+    // bracketing silence, indistinguishable from a productive run.
+    const deps = makeDeps();
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+      makeSession("default:user1:ch1", 3), // below 5 -> nothing qualifies
+    ]);
+
+    await runMemoryReview(deps);
+
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ totalSessions: 1, qualifying: 0 }),
+      expect.stringContaining("nothing to review"),
+    );
+  });
+
   it("skips sessions whose updatedAt is before watermark", async () => {
     const deps = makeDeps();
     const session = makeSession("default:user1:ch1", 10, 1000);

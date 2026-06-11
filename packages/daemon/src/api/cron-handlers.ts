@@ -71,8 +71,13 @@ export type { CronHandlerDeps };
  */
 function resolveJobByName(
   scheduler: { getJobs(): Array<{ id: string; name: string }> },
-  jobName: string,
+  jobName: string | undefined,
 ): { id: string; name: string } {
+  if (!jobName) {
+    // Echoing the unmatched var produced "Job not found: undefined" when a
+    // caller used the wrong param key (live finding, 2026-06-11 memory run).
+    throw new Error("Missing required parameter: jobName (resolve names via cron.list)");
+  }
   const matches = scheduler.getJobs().filter((j) => j.name === jobName);
   if (matches.length === 0) throw new Error(`Job not found: ${jobName}`);
   if (matches.length > 1)
@@ -96,7 +101,15 @@ function resolveJob(
     if (!match) throw new Error(`Job not found: ${jobId}`);
     return match;
   }
-  return resolveJobByName(scheduler, params.jobName as string);
+  const jobName = params.jobName as string | undefined;
+  if (!jobName) {
+    // Echoing the unmatched var produced "Job not found: undefined" when a
+    // caller used the wrong param key (live finding, 2026-06-11 memory run).
+    throw new Error(
+      "Missing required parameter: jobId or jobName (resolve names via cron.list)",
+    );
+  }
+  return resolveJobByName(scheduler, jobName);
 }
 
 /**
