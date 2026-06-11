@@ -235,12 +235,10 @@ function extractMessageContent(msg: unknown): string {
   return `[${role}]: ${content}`;
 }
 
-/** Per-message char cap in a session summary (live finding 2026-06-11): one
- *  6K-char assistant essay pushed a 16-message conversation past the WHOLE
- *  batch budget, so the session was skipped ENTIRELY — and, never reviewed,
- *  never watermarked, it was re-skipped every run (a permanent silent blind
- *  spot). Durable facts live in the heads of turns; an essay's tail adds
- *  tokens, not extractable facts. */
+/** Per-message char cap in a session summary (live 2026-06-11: one 6K-char essay
+ *  pushed a 16-message conversation past the whole batch budget → the session was
+ *  skipped entirely AND, unwatermarked, re-skipped every run). Facts live in turn
+ *  heads; an essay tail adds tokens, not extractable facts. */
 const PER_MESSAGE_SUMMARY_MAX_CHARS = 500;
 
 function capMessageLine(msg: unknown): string {
@@ -366,38 +364,21 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     );
 
     if (batchContent.length + summary.length > maxChars) {
-      // Livelock backstop (live finding 2026-06-11): if the FIRST session
-      // exceeds the budget and we skip it, it stays unwatermarked and is
-      // re-skipped on EVERY future run — a permanent silent blind spot.
-      // Truncate it to fit when a useful amount of budget remains;
-      // only a pathological config (budget below one summary's floor) skips,
-      // and that skips LOUDLY.
+      // Livelock backstop (live 2026-06-11): a skipped FIRST session stays
+      // unwatermarked → re-skipped every run. Truncate-to-fit when a useful
+      // budget remains; only a pathological budget skips, and loudly.
       const remaining = maxChars - batchContent.length;
       const MIN_USEFUL_SUMMARY_CHARS = 500;
       if (reviewedSessions.length === 0 && remaining >= MIN_USEFUL_SUMMARY_CHARS) {
         logger.warn(
-          {
-            agentId,
-            sessionKey: session.sessionKey,
-            summaryChars: summary.length,
-            budgetChars: remaining,
-            errorKind: "validation" as const,
-            hint: "session summary truncated to the review batch budget — raise memoryReview.maxReviewTokens to review more of it per run",
-          },
+          { agentId, sessionKey: session.sessionKey, summaryChars: summary.length, budgetChars: remaining, errorKind: "validation" as const, hint: "session summary truncated to the review batch budget — raise memoryReview.maxReviewTokens to review more of it per run" },
           "Session summary exceeds review budget — truncated to fit",
         );
         summary = summary.slice(0, remaining);
       } else {
         if (reviewedSessions.length === 0) {
           logger.warn(
-            {
-              agentId,
-              sessionKey: session.sessionKey,
-              summaryChars: summary.length,
-              budgetChars: remaining,
-              errorKind: "config" as const,
-              hint: "memoryReview.maxReviewTokens is too small to review ANY session — this session will be skipped on every run until the budget is raised",
-            },
+            { agentId, sessionKey: session.sessionKey, summaryChars: summary.length, budgetChars: remaining, errorKind: "config" as const, hint: "memoryReview.maxReviewTokens is too small to review ANY session — this session will be skipped on every run until the budget is raised" },
             "Review budget cannot fit any session summary — skipping",
           );
         } else {

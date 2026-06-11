@@ -34,7 +34,7 @@ describe("a commentary-prefixed JSON payload still parses to the grounded answer
     });
   });
 
-  it("brace characters inside narration strings cannot defeat the extraction", () => {
+  it("when brace characters appear inside narration strings, the extraction still succeeds", () => {
     const raw = 'Note: the format {weird} braces. {"answer": "ok", "citedIds": ["id-1"]} trailing';
     expect(parseDialecticOutput(raw)).toEqual({ abstain: false, answer: "ok", citedIds: ["id-1"] });
   });

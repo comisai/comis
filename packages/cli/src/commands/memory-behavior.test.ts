@@ -89,37 +89,48 @@ describe("memory search/inspect fail closed", () => {
     exitSpy.restore();
   });
 
-  it("memory search exits 1 with a not-available message and makes no RPC", async () => {
+  it("memory search renders the matched entries via the contracted RPC (stub-era exit-1 removed, live finding 2026-06-11)", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
+    vi.mocked(withClient).mockImplementation(async (fn) =>
+      fn({
+        call: vi.fn().mockResolvedValue({
+          results: [
+            { id: "mem-001-full", content: "User prefers dark mode", score: 0.91, tags: [], createdAt: 1 },
+          ],
+        }),
+      } as never),
+    );
 
-    try {
-      await program.parseAsync(["node", "test", "memory", "search", "dark mode"]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-    }
+    await program.parseAsync(["node", "test", "memory", "search", "dark mode"]);
 
-    expect(exitSpy.spy).toHaveBeenCalledWith(1);
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("memory search is unavailable");
-    // Fail-closed BEFORE any RPC: withClient must never be invoked.
-    expect(vi.mocked(withClient)).not.toHaveBeenCalled();
+    expect(exitSpy.spy).not.toHaveBeenCalledWith(1);
+    const out = getSpyOutput(consoleSpy.log);
+    expect(out).toContain("mem-001-");
+    expect(out).toContain("dark mode");
   });
 
-  it("memory inspect exits 1 with a not-available message and makes no RPC", async () => {
+  it("memory inspect renders the entry detail found by id prefix via memory.browse", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
+    vi.mocked(withClient).mockImplementation(async (fn) =>
+      fn({
+        call: vi.fn().mockResolvedValue({
+          entries: [{ id: "mem-001-full", content: "User prefers dark mode", trustLevel: "learned" }],
+          total: 1,
+          offset: 0,
+          limit: 1000,
+          hasMore: false,
+        }),
+      } as never),
+    );
 
-    try {
-      await program.parseAsync(["node", "test", "memory", "inspect", "mem-001"]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-    }
+    await program.parseAsync(["node", "test", "memory", "inspect", "mem-001"]);
 
-    expect(exitSpy.spy).toHaveBeenCalledWith(1);
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("memory inspect is unavailable");
-    expect(vi.mocked(withClient)).not.toHaveBeenCalled();
+    expect(exitSpy.spy).not.toHaveBeenCalledWith(1);
+    const out = getSpyOutput(consoleSpy.log);
+    expect(out).toContain("dark mode");
+    expect(out).toContain("learned");
   });
 });
 

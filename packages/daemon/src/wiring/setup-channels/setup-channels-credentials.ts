@@ -54,14 +54,8 @@ export interface CronEventListenerDeps {
   transcriber?: TranscriptionPort;
   workspaceDirs?: Map<string, string>;
   memoryAdapter?: MemoryPort;
-  /** LCD message read — the review session source loads DAG transcripts from
-   *  it (live finding 2026-06-11: the daemon store is near-empty in DAG mode,
-   *  so the nightly extraction was a silent no-op). Absent ⇒ daemon-store-only
-   *  review (pipeline deployments byte-identical). */
-  lcdStore?: import("@comis/core").ContextStorePort;
-  /** LCD conversation enumeration (R4 agent+tenant scoped) for the review
-   *  session source. Absent ⇒ daemon-store-only review. */
-  contextBrowse?: import("@comis/core").ContextBrowsePort;
+  /** LCD read + browse for the review session source (live 2026-06-11: DAG transcripts live in LCD, not the near-empty daemon store). Absent ⇒ daemon-store-only review. */
+  lcdStore?: import("@comis/core").ContextStorePort; contextBrowse?: import("@comis/core").ContextBrowsePort;
   /** Entity-associative store. Threaded into runMemoryReview so each
    *  successfully-stored memory's entity mentions are resolved + linked
    *  (memory_entities / memory_entity_links), scoped to the entry's (tenantId, agentId).
@@ -210,17 +204,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         memoryPort: deps.memoryAdapter!,
         // R6 (CR-01): small/nano cron model abstains via resolve-memory-ops-capability.ts (never fabricates into trusted storage).
         ...resolveMemoryOpsCapability(resolved, providerEntry?.capabilities),
-        // LCD-merged session source (live finding 2026-06-11): in DAG mode the
-        // daemon store is near-empty — without the LCD merge the nightly
-        // extraction was a silent no-op (zero entities/causal edges on a live
-        // daemon with days of conversations).
-        sessionStore: buildReviewSessionSource({
-          sessionStore: deps.sessionStore as unknown as Parameters<typeof buildReviewSessionSource>[0]["sessionStore"],
-          lcdStore: deps.lcdStore,
-          contextBrowse: deps.contextBrowse,
-          agentId,
-          tenantId: deps.tenantId ?? container.config.tenantId ?? "default",
-        }),
+        sessionStore: buildReviewSessionSource({ sessionStore: deps.sessionStore as unknown as Parameters<typeof buildReviewSessionSource>[0]["sessionStore"], lcdStore: deps.lcdStore, contextBrowse: deps.contextBrowse, agentId, tenantId: deps.tenantId ?? container.config.tenantId ?? "default" }),
         eventBus: container.eventBus,
         workspacePath,
         provider: resolved.provider,
