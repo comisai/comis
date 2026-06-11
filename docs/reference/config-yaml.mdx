@@ -2337,6 +2337,10 @@ effectiveWindow = min(configured contextWindow, served num_ctx, capability class
 
 The reconciled value is used for context budgeting and the post-turn context-window guard —
 so the agent plans against the model's actual KV-cache limit, not a stale declaration.
+Probed values are sanitized before use: fractional `context_length` values are floored to
+integers, and implausibly small ones (below 512 tokens — e.g. a typo'd Modelfile
+`PARAMETER num_ctx`) are rejected as bogus, falling back to the configured window via the
+probe's normal fail-open path.
 
 **Changing the served window:** The probe is read-only; it discovers what Ollama has loaded.
 To serve a larger context (up to the model's native maximum), set it on the Ollama side:

@@ -87,6 +87,28 @@ export function deriveOllamaNativeBase(configuredBaseUrl: string): string {
   return configuredBaseUrl.replace(/\/v1\/?$/, "");
 }
 
+/**
+ * Minimum plausible served context window. Anything smaller is treated as a
+ * bogus third-party value (e.g. a bad Modelfile `PARAMETER num_ctx`) and
+ * rejected so it cannot shrink every turn's budget (IN-02, Phase 176 review).
+ * No model Ollama serves runs below 512 tokens.
+ */
+const MIN_PLAUSIBLE_SERVED_WINDOW = 512;
+
+/**
+ * IN-02 input hardening: validate + clamp a raw `context_length` value from
+ * an Ollama API response before it drives the budget reconcile.
+ * Returns the FLOORED integer when the value is a finite number within the
+ * sane range; undefined otherwise (caller falls through to the /api/show
+ * fallback, then to the existing fail-open err/WARN path).
+ */
+function sanitizeServedWindow(raw: unknown): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < MIN_PLAUSIBLE_SERVED_WINDOW) {
+    return undefined;
+  }
+  return Math.floor(raw);
+}
+
 // ---------------------------------------------------------------------------
 // Single-provider probe
 // ---------------------------------------------------------------------------
@@ -164,8 +186,8 @@ export async function probeOllamaServedWindow(
   );
 
   if (matchingEntry !== undefined) {
-    const contextLength = matchingEntry.context_length;
-    if (typeof contextLength === "number" && isFinite(contextLength) && contextLength > 0) {
+    const contextLength = sanitizeServedWindow(matchingEntry.context_length);
+    if (contextLength !== undefined) {
       return ok({ servedWindow: contextLength, source: "api/ps", durationMs: systemNowMs() - startMs });
     }
   }
@@ -212,12 +234,8 @@ export async function probeOllamaServedWindow(
     return err({ message: "Failed to parse /api/show JSON response", errorKind: "internal" });
   }
 
-  const detailsContextLength = showBody.details?.context_length;
-  if (
-    typeof detailsContextLength === "number" &&
-    isFinite(detailsContextLength) &&
-    detailsContextLength > 0
-  ) {
+  const detailsContextLength = sanitizeServedWindow(showBody.details?.context_length);
+  if (detailsContextLength !== undefined) {
     return ok({ servedWindow: detailsContextLength, source: "api/show", durationMs: systemNowMs() - startMs });
   }
 
