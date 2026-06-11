@@ -264,6 +264,11 @@ export async function maybeRunCondensePass(
           );
           return;
         }
+        // Review IN-03 (deliberate): the fanout gate governs run SELECTION
+        // only — a binding window trim may fold FEWER children than the soft
+        // `condensedMinFanout` that selected the run (SUMW-01-C1 pins fanout 4
+        // selecting, 3 folding). Preferable to never condensing under a small
+        // summarizer; the trimmed children survive for a later pass.
         effectiveRun = {
           depth: run.depth,
           children: run.children.slice(0, keep),
