@@ -361,8 +361,11 @@ export interface MessagingEvents {
     /** What clamped the window (closed union — never an open string). The cap
      *  members are contextEngine.budget.* knob names; "served" (KNOB-02) means
      *  the Ollama-served num_ctx bound the window (knobs: OLLAMA_CONTEXT_LENGTH
-     *  env / Modelfile PARAMETER num_ctx). */
-    windowCapSource: "effectiveContextCapSmall" | "effectiveContextCapNano" | "served" | "none";
+     *  env / Modelfile PARAMETER num_ctx); "capabilityClass" (WR-01) means the
+     *  executor-side class cap from the operator's
+     *  providers.entries.<id>.capabilities.capabilityClass pin bound — the pin
+     *  is the lever (the budget knobs are inert on that branch). */
+    windowCapSource: "effectiveContextCapSmall" | "effectiveContextCapNano" | "served" | "capabilityClass" | "none";
     /** S: system prompt + tool schemas estimate. */
     systemTokens: number;
     /** Estimated fresh-tail tokens (latest user message + preamble + pending tool results). */

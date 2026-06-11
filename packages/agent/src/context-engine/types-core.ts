@@ -35,18 +35,24 @@ export type { TokenAnchor };
  * "none" = no clamp (frontier/mid, explicit 0 = uncapped, or the configured
  * window already fits). Closed union — but the member names are NO LONGER all
  * `contextEngine.budget.*` knob names (KNOB-02 ended that invariant):
- * `effectiveContextCapSmall` / `effectiveContextCapNano` ARE knob names, while
+ * `effectiveContextCapSmall` / `effectiveContextCapNano` ARE knob names (the
+ * budget's OWN cap bit — raising that config key genuinely works), while
  * `"served"` means the Ollama-served window bound (its knobs live in Ollama:
  * the `OLLAMA_CONTEXT_LENGTH` env on `ollama serve`, or a Modelfile
- * `PARAMETER num_ctx`). Consumers MUST build knob strings via the errors.ts
- * branching helpers (`describeWindowCap` / `CAP_KNOB_BY_SOURCE`) — NEVER
- * template `contextEngine.budget.${source}` (renders a nonsense knob for
- * "served").
+ * `PARAMETER num_ctx`) and `"capabilityClass"` (WR-01) means the EXECUTOR-side
+ * `DEFAULT_EFFECTIVE_CAP_BY_CLASS` cap bound upstream because the operator
+ * pinned `providers.entries.<id>.capabilities.capabilityClass` — that pin is
+ * the only working lever; the budget knob is inert on this branch. Consumers
+ * MUST build knob strings via the errors.ts branching helpers
+ * (`describeWindowCap` / `CAP_KNOB_BY_SOURCE`) — NEVER template
+ * `contextEngine.budget.${source}` (renders a nonsense knob for "served" /
+ * "capabilityClass").
  */
 export type WindowCapSource =
   | "effectiveContextCapSmall"
   | "effectiveContextCapNano"
   | "served"
+  | "capabilityClass"
   | "none";
 
 /**

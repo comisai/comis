@@ -291,12 +291,19 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       // templating it would render a nonsense config key (the union member name
       // suffixed onto the knob prefix) and misdirect the operator. The served
       // branch names the failure class (Ollama served a smaller window than
-      // configured); the real knobs are in the suggested step below. The cap
-      // branch stays byte-identical.
+      // configured); the real knobs are in the suggested step below.
+      // WR-01: "capabilityClass" is ALSO not a budget knob — the executor-side
+      // DEFAULT_EFFECTIVE_CAP_BY_CLASS cap reads only the operator's
+      // providers.entries.<id>.capabilities.capabilityClass pin, so the verdict
+      // must name the PIN ("raise contextEngine.budget.effectiveContextCapSmall"
+      // changes nothing on that branch — the dead-knob misdirection this phase
+      // exists to kill). The genuine budget-knob branch stays byte-identical.
       const capClause = capped
         ? (b.windowCapSource === "served"
             ? ` (model contextWindow ${String(b.rawContextWindowTokens)} but Ollama served a smaller window)`
-            : ` (model contextWindow ${String(b.rawContextWindowTokens)} capped by contextEngine.budget.${b.windowCapSource})`)
+            : b.windowCapSource === "capabilityClass"
+              ? ` (model contextWindow ${String(b.rawContextWindowTokens)} capped by the providers.entries.<id>.capabilities.capabilityClass pin)`
+              : ` (model contextWindow ${String(b.rawContextWindowTokens)} capped by contextEngine.budget.${b.windowCapSource})`)
         : "";
       return {
         code: "context_exhausted",
@@ -310,8 +317,10 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
             ? [
                 b.windowCapSource === "served"
                   ? `set OLLAMA_CONTEXT_LENGTH=${String(b.rawContextWindowTokens)} (ollama serve) or Modelfile 'PARAMETER num_ctx ${String(b.rawContextWindowTokens)}' — the model is configured for ${String(b.rawContextWindowTokens)} but Ollama serves less`
-                  : `raise contextEngine.budget.${b.windowCapSource} (0 = uncapped) — the model declares ` +
-                    `${String(b.rawContextWindowTokens)} tokens but the effective window was ${String(b.windowTokens)}`,
+                  : b.windowCapSource === "capabilityClass"
+                    ? `pin a higher providers.entries.<id>.capabilities.capabilityClass (or remove the pin) — the pinned class capped the model's declared ${String(b.rawContextWindowTokens)} tokens to ${String(b.windowTokens)}; the contextEngine.budget.* caps do not move this bind`
+                    : `raise contextEngine.budget.${b.windowCapSource} (0 = uncapped) — the model declares ` +
+                      `${String(b.rawContextWindowTokens)} tokens but the effective window was ${String(b.windowTokens)}`,
               ]
             : []),
           systemSharePct >= 50

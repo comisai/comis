@@ -28,24 +28,31 @@ export const CONTEXT_EXHAUSTION_MESSAGE_PREFIX = "Context exhausted: assembled" 
  * (W1 obs-llm-troubleshooting; the live incident reported "effective window
  * 32000" against a configured contextWindow of 131072 with no link between them).
  * KNOB-02: the cap-class entries are `contextEngine.budget.*` config keys; the
- * `served` entry names the OLLAMA knobs (env / Modelfile) — NEVER template
- * `contextEngine.budget.${source}` (for "served" that renders a nonsense
- * config key that does not exist).
+ * `served` entry names the OLLAMA knobs (env / Modelfile); the
+ * `capabilityClass` entry (WR-01) names the operator's
+ * `providers.entries.<id>.capabilities.capabilityClass` PIN — the executor's
+ * DEFAULT_EFFECTIVE_CAP_BY_CLASS cap never reads the budget knobs, so
+ * "raise contextEngine.budget.effectiveContextCapSmall" is a DEAD lever on
+ * that branch. NEVER template `contextEngine.budget.${source}` (for "served" /
+ * "capabilityClass" that renders a nonsense config key that does not exist).
  */
 const CAP_KNOB_BY_SOURCE: Record<
-  "effectiveContextCapSmall" | "effectiveContextCapNano" | "served",
+  "effectiveContextCapSmall" | "effectiveContextCapNano" | "served" | "capabilityClass",
   string
 > = {
   effectiveContextCapSmall: "contextEngine.budget.effectiveContextCapSmall",
   effectiveContextCapNano: "contextEngine.budget.effectiveContextCapNano",
   served: "OLLAMA_CONTEXT_LENGTH (ollama serve env) / PARAMETER num_ctx (Modelfile)",
+  capabilityClass: "providers.entries.<id>.capabilities.capabilityClass",
 };
 
 /** Returns the capped-window suffix for the exhaustion message, or "" when
  *  uncapped/unknown. Exported for reuse by the pre-flight WARN hint.
- *  KNOB-02: branched by source — the served bind gets the Ollama remedy
- *  ("raise it (0 = uncapped)" is the WRONG knob for served), and a cap bind
- *  with served provenance names the full chain (configured → served → cap). */
+ *  KNOB-02: branched by source — the served bind gets the Ollama remedy and
+ *  the capabilityClass bind gets the pin remedy ("raise it (0 = uncapped)" is
+ *  the WRONG knob for both: served lives in Ollama, and the executor's class
+ *  cap reads only the operator's capabilityClass pin — WR-01). A budget-knob
+ *  bind with served provenance names the full chain (configured → served → cap). */
 export function describeWindowCap(effectiveWindow: number, capInfo?: ContextWindowCapInfo): string {
   if (capInfo === undefined || capInfo.windowCapSource === "none") return "";
   if (capInfo.windowCapSource === "served") {
@@ -58,9 +65,16 @@ export function describeWindowCap(effectiveWindow: number, capInfo?: ContextWind
   const knob = CAP_KNOB_BY_SOURCE[capInfo.windowCapSource];
   const servedClause =
     capInfo.servedWindowTokens !== undefined ? `, Ollama serves ${capInfo.servedWindowTokens},` : "";
+  // WR-01: the remedy must match the lever that actually moves the window —
+  // the budget knobs are numeric ("raise it, 0 = uncapped"); the capability
+  // pin is a class name (raise/remove the pin; the budget knob is inert here).
+  const remedy =
+    capInfo.windowCapSource === "capabilityClass"
+      ? "pin a higher class (or remove the pin)"
+      : "raise it (0 = uncapped)";
   return (
     ` (model contextWindow ${capInfo.rawContextWindowTokens}${servedClause} capped to ${effectiveWindow}` +
-    ` by ${knob} — raise it (0 = uncapped) or reduce active tool schemas)`
+    ` by ${knob} — ${remedy} or reduce active tool schemas)`
   );
 }
 

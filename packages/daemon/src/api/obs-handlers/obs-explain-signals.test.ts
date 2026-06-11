@@ -497,6 +497,39 @@ describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
     expect(s.contextBudget?.windowCapSource).toBe("served");
     expect(s.contextBudget?.rawContextWindowTokens).toBe(131_072);
   });
+
+  it("WR-01: a windowCapSource 'capabilityClass' record SURVIVES the safeParse gate onto contextBudget", () => {
+    // WR-01 (Phase 176 review): "capabilityClass" joins the WindowCapSource
+    // closed union so the capability-pin bind stops masquerading as the budget
+    // knob. Same silent-drop trap as KNOB-02-10: if the
+    // IncidentContextBudgetSchema enum lags, safeParse silently DROPS the whole
+    // budget equation from `comis explain` for every pin-bound turn. Every
+    // other field is valid per the schema, so the ONLY thing that can reject
+    // this record is the enum.
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "context.budget",
+        seq: 1,
+        data: {
+          windowTokens: 32_000,
+          rawContextWindowTokens: 131_072,
+          windowCapSource: "capabilityClass",
+          systemTokens: 25_694,
+          freshTailTokens: 5_272,
+          budgetedHistoryTokens: 0,
+          keptCount: 0,
+          assembledInputTokens: 31_572,
+          outputHeadroom: 768,
+          verdict: "exhausted",
+        },
+      },
+    ]);
+    expect(s.contextBudget).toBeDefined();
+    expect(s.contextBudget?.windowCapSource).toBe("capabilityClass");
+    expect(s.contextBudget?.rawContextWindowTokens).toBe(131_072);
+  });
 });
 
 // ---------------------------------------------------------------------------

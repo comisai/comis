@@ -7721,6 +7721,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
                 "effectiveContextCapSmall",
                 "effectiveContextCapNano",
                 "served",
+                "capabilityClass",
                 "none"
               ]
             },

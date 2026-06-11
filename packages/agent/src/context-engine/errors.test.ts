@@ -120,3 +120,35 @@ describe("describeWindowCap served-window branch (KNOB-02)", () => {
     );
   });
 });
+
+// WR-01 (Phase 176 review): when the binding cap is the EXECUTOR-side
+// DEFAULT_EFFECTIVE_CAP_BY_CLASS (the operator pinned
+// providers.entries.<id>.capabilities.capabilityClass), the budget knob is a
+// DEAD lever — pi-executor's cap never reads contextEngine.budget.* — so the
+// remedy must name the PIN, not "raise it (0 = uncapped)".
+describe("describeWindowCap capabilityClass-pin branch (WR-01)", () => {
+  it("WR-01: a capabilityClass bind names the pin and its remedy, never the budget knob's numeric remedy", () => {
+    const text = describeWindowCap(32_000, {
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "capabilityClass",
+    });
+    expect(text).toBe(
+      " (model contextWindow 131072 capped to 32000 by providers.entries.<id>.capabilities.capabilityClass — pin a higher class (or remove the pin) or reduce active tool schemas)",
+    );
+    // The dead lever must not appear anywhere in the suffix.
+    expect(text).not.toContain("contextEngine.budget.effectiveContextCapSmall");
+    expect(text).not.toContain("raise it (0 = uncapped)");
+  });
+
+  it("WR-01: the capabilityClass bind carries the served step when probed (full chain: configured → served → pin)", () => {
+    expect(
+      describeWindowCap(32_000, {
+        rawContextWindowTokens: 131_072,
+        windowCapSource: "capabilityClass",
+        servedWindowTokens: 50_000,
+      }),
+    ).toBe(
+      " (model contextWindow 131072, Ollama serves 50000, capped to 32000 by providers.entries.<id>.capabilities.capabilityClass — pin a higher class (or remove the pin) or reduce active tool schemas)",
+    );
+  });
+});

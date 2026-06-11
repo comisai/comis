@@ -76,11 +76,15 @@ export function computeTokenBudgetForProfile(
   );
   const effectiveWindow = Math.min(profile.contextWindow, classCap);
   // W1 cap provenance: when this function's OWN class cap bit, it is the
-  // binding (tightest) constraint — name the knob. Otherwise (KNOB-02) consult
-  // the executor-side reconcile provenance: "served" when the Ollama-served
-  // window bound upstream; the class knob when the executor's capability cap
-  // bound upstream (no silent clamp); "none" when nothing clamped or no
-  // provenance was threaded (pre-KNOB-02 byte-identical behavior).
+  // binding (tightest) constraint — name the budget knob (raising it genuinely
+  // works on this branch). Otherwise (KNOB-02) consult the executor-side
+  // reconcile provenance: "served" when the Ollama-served window bound
+  // upstream; "capabilityClass" when the executor's DEFAULT_EFFECTIVE_CAP_BY_CLASS
+  // cap bound upstream (WR-01: that cap comes from the operator's
+  // providers.entries.<id>.capabilities.capabilityClass pin — it never reads
+  // the contextEngine.budget.* knobs, so naming the budget knob here would send
+  // operators to a dead lever); "none" when nothing clamped or no provenance
+  // was threaded (pre-KNOB-02 byte-identical behavior).
   const capBit = effectiveWindow < profile.contextWindow;
   const windowCapSource: WindowCapSource = capBit
     ? capKnob
@@ -88,7 +92,7 @@ export function computeTokenBudgetForProfile(
       ? "none"
       : windowProvenance.reconcileSource === "served"
         ? "served"
-        : capKnob; // "capability": the executor-side class cap bound upstream — name the class knob (no silent clamp)
+        : "capabilityClass"; // "capability" reconcile: the executor-side class-pin cap bound upstream — name the PIN (no silent clamp, no dead budget knob)
 
   // 8K-starvation fix: cap O at maxOutputTokens so it cannot consume the whole window.
   // On an 8K window with OUTPUT_RESERVE_TOKENS=8192, uncapped O leaves H=0.
@@ -144,7 +148,7 @@ function resolveEffectiveCap(
   capabilityClass: string,
   effectiveContextCapSmall: number | undefined,
   effectiveContextCapNano: number | undefined,
-): { cap: number; source: Exclude<WindowCapSource, "none"> } {
+): { cap: number; source: Extract<WindowCapSource, "effectiveContextCapSmall" | "effectiveContextCapNano"> } {
   if (capabilityClass === "small") {
     if (effectiveContextCapSmall !== undefined) {
       return {

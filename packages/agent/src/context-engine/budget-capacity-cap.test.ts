@@ -185,10 +185,15 @@ describe("computeTokenBudgetForProfile — C1", () => {
       expect(budget.servedWindowTokens).toBe(50_000);
     });
 
-    it("KNOB-02-3: capability reconcile upstream — the class knob is named, never a silent 'none' clamp", () => {
+    it("KNOB-02-3 (WR-01): capability reconcile upstream — the capabilityClass PIN is named, never the inert budget knob and never a silent 'none' clamp", () => {
       // The executor's capability cap bound the window upstream (contextWindow
       // arrives already at 32000) — the budget's own cap bit never fires, but
-      // the clamp must still be named (no silent clamp).
+      // the clamp must still be named (no silent clamp). WR-01: that upstream
+      // cap is DEFAULT_EFFECTIVE_CAP_BY_CLASS[pinned class] (pi-executor) — it
+      // never reads contextEngine.budget.effectiveContextCapSmall, so labeling
+      // this bind with the budget knob sends operators to a DEAD lever ("raise
+      // it (0 = uncapped)" changes nothing). The honest source is
+      // "capabilityClass": the providers.entries.<id>.capabilities.capabilityClass pin.
       const budget = computeTokenBudgetForProfile(
         { ...SMALL_256K_PROFILE, contextWindow: 32_000 },
         1_000,
@@ -198,9 +203,28 @@ describe("computeTokenBudgetForProfile — C1", () => {
         16_000,
         { configuredWindow: 131_072, reconcileSource: "capability" },
       );
-      expect(budget.windowCapSource).toBe("effectiveContextCapSmall");
+      expect(budget.windowCapSource).toBe("capabilityClass");
       expect(budget.rawContextWindowTokens).toBe(131_072);
       expect(budget.servedWindowTokens).toBeUndefined();
+    });
+
+    it("WR-01: the budget's OWN cap bit still names the budget knob (raising it genuinely works on that branch)", () => {
+      // Same capability-pinned agent, but the operator LOWERED the budget knob
+      // below the executor cap (16000 < 32000): the budget's cap bit fires and
+      // the binding lever IS contextEngine.budget.effectiveContextCapSmall —
+      // the honest label is unchanged by the WR-01 branch.
+      const budget = computeTokenBudgetForProfile(
+        { ...SMALL_256K_PROFILE, contextWindow: 32_000 },
+        1_000,
+        0,
+        -1,
+        16_000,
+        16_000,
+        { configuredWindow: 131_072, reconcileSource: "capability" },
+      );
+      expect(budget.windowTokens).toBe(16_000);
+      expect(budget.windowCapSource).toBe("effectiveContextCapSmall");
+      expect(budget.rawContextWindowTokens).toBe(131_072);
     });
 
     it("KNOB-02-4: I3 pin — without the 7th arg every capability class is byte-identical to pre-provenance output", () => {

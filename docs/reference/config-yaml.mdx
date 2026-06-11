@@ -2380,6 +2380,15 @@ served-bound window, the `context_exhausted` error text carries the suffix
 (previously the served value masqueraded as the model's declared window with source `"none"`).
 When both the served window and a capability-class cap clamp, the message names the full chain:
 `(model contextWindow 131072, Ollama serves 50000, capped to 32000 by contextEngine.budget.effectiveContextCapSmall — raise it (0 = uncapped) or reduce active tool schemas)`.
+The cap wording is **branched by the lever that actually binds**: the
+`contextEngine.budget.effectiveContextCapSmall/Nano` form above appears only when the budget-side
+cap genuinely clamped (raising that key works); when the window was instead capped upstream by an
+operator `providers.entries.<id>.capabilities.capabilityClass` **pin** (the executor's per-class
+default — `small` 32000 / `nano` 16000 — which never reads the budget keys), the suffix reads
+`capped to 32000 by providers.entries.<id>.capabilities.capabilityClass — pin a higher class (or remove the pin) or reduce active tool schemas`
+and `windowCapSource` reports `"capabilityClass"` — on that branch raising
+`contextEngine.budget.effectiveContextCapSmall` (or setting it to `0`) changes nothing, so the
+error and `comis explain` name the pin instead of that dead knob.
 The reconcile line — `"Context window reconciled (served or capability cap bound)"`, with
 `source` / `effectiveWindow` / `configured` / `served` / `capabilityCap` fields — logs at INFO
 **once per session** (the first reconciled turn; a session reset grants a fresh INFO) and at

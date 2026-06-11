@@ -404,6 +404,42 @@ describe("context_exhausted with served-bound budget evidence (KNOB-02)", () => 
       "obs.explain depth=full",
     ]);
   });
+
+  it("WR-01: a capabilityClass-bound verdict names the pin lever and NEVER the inert budget knob nor a templated contextEngine.budget.capabilityClass", () => {
+    // The executor's DEFAULT_EFFECTIVE_CAP_BY_CLASS cap (from the operator's
+    // providers.entries.<id>.capabilities.capabilityClass pin) bound the window
+    // upstream — raising contextEngine.budget.effectiveContextCapSmall (or
+    // setting 0) changes NOTHING on this branch; suggesting it is the exact
+    // dead-knob misdirection this phase kills.
+    const PIN_BUDGET = {
+      windowTokens: 32_000,
+      rawContextWindowTokens: 131_072,
+      windowCapSource: "capabilityClass" as const,
+      systemTokens: 25_694,
+      freshTailTokens: 5_272,
+      budgetedHistoryTokens: 0,
+      keptCount: 0,
+      assembledInputTokens: 31_572,
+      outputHeadroom: 768,
+      verdict: "exhausted" as const,
+    };
+    const r = rootCause(makeSignals({ endReason: "context_exhausted", contextBudget: PIN_BUDGET }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("context_exhausted");
+    // The detail names the pin as the clamp.
+    expect(r!.detail).toMatch(
+      /model contextWindow 131072 capped by the providers\.entries\.<id>\.capabilities\.capabilityClass pin/,
+    );
+    const steps = r!.suggestedNextSteps.join("\n");
+    // The step names the working lever (the pin) with both numbers.
+    expect(steps).toMatch(/providers\.entries\.<id>\.capabilities\.capabilityClass/);
+    expect(steps).toMatch(/131072/);
+    expect(steps).toMatch(/32000/);
+    // The dead/nonsense knobs must never render anywhere in the verdict.
+    expect(r!.detail).not.toMatch(/contextEngine\.budget\.capabilityClass/);
+    expect(steps).not.toMatch(/contextEngine\.budget\.capabilityClass/);
+    expect(steps).not.toMatch(/raise contextEngine\.budget\.effectiveContextCapSmall/);
+  });
 });
 
 // ---------------------------------------------------------------------------

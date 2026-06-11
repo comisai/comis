@@ -47,8 +47,11 @@ export const IncidentContextBudgetSchema = z.object({
   rawContextWindowTokens: z.number(),
   /** What clamped the window. The cap members are contextEngine.budget.* knob
    *  names; "served" (KNOB-02) means the Ollama-served num_ctx bound the window
-   *  (knobs: OLLAMA_CONTEXT_LENGTH env / Modelfile PARAMETER num_ctx). */
-  windowCapSource: z.enum(["effectiveContextCapSmall", "effectiveContextCapNano", "served", "none"]),
+   *  (knobs: OLLAMA_CONTEXT_LENGTH env / Modelfile PARAMETER num_ctx);
+   *  "capabilityClass" (WR-01) means the executor-side class cap from the
+   *  operator's providers.entries.<id>.capabilities.capabilityClass pin bound
+   *  — the pin is the lever (the budget knobs are inert on that branch). */
+  windowCapSource: z.enum(["effectiveContextCapSmall", "effectiveContextCapNano", "served", "capabilityClass", "none"]),
   /** S: system prompt + tool schemas estimate. */
   systemTokens: z.number(),
   /** Estimated fresh-tail tokens (latest user message + preamble + pending tool results). */
