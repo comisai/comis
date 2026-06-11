@@ -130,6 +130,97 @@ describe("probeOllamaServedWindow", () => {
   });
 
   // -------------------------------------------------------------------------
+  // IN-02 (Phase 176 review): third-party input hardening. The served value
+  // drives EVERY turn's budget (the reconcile min race), so a buggy or
+  // misconfigured Ollama returning a fractional or absurdly small
+  // context_length (e.g. a bad Modelfile `PARAMETER num_ctx`) must not flow
+  // in unclamped: floor to an integer; reject < 512 (fall through to the
+  // /api/show fallback, then to the existing fail-open err/WARN path).
+  // -------------------------------------------------------------------------
+
+  it("IN-02-1: a fractional /api/ps context_length is floored to an integer servedWindow", async () => {
+    const deps = makeDeps(async (url) => {
+      if (url.endsWith("/api/ps")) {
+        return jsonResponse({
+          models: [{ name: "qwen3.6:35b", model: "qwen3.6:35b", context_length: 32768.9 }],
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const result = await probeOllamaServedWindow("http://localhost:11434", "qwen3.6:35b", deps);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.servedWindow).toBe(32768);
+      expect(Number.isInteger(result.value.servedWindow)).toBe(true);
+    }
+  });
+
+  it("IN-02-2: an absurdly small /api/ps context_length (<512) is rejected — the probe falls through to /api/show", async () => {
+    const deps = makeDeps(async (url) => {
+      if (url.endsWith("/api/ps")) {
+        return jsonResponse({
+          models: [{ name: "qwen3.6:35b", model: "qwen3.6:35b", context_length: 1 }],
+        });
+      }
+      if (url.endsWith("/api/show")) {
+        return jsonResponse({ details: { context_length: 65536 } });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const result = await probeOllamaServedWindow("http://localhost:11434", "qwen3.6:35b", deps);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.servedWindow).toBe(65536);
+      expect(result.value.source).toBe("api/show");
+    }
+  });
+
+  it("IN-02-3: a fractional /api/show context_length is floored to an integer servedWindow", async () => {
+    const deps = makeDeps(async (url) => {
+      if (url.endsWith("/api/ps")) {
+        return jsonResponse({ models: [] });
+      }
+      if (url.endsWith("/api/show")) {
+        return jsonResponse({ details: { context_length: 65536.5 } });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const result = await probeOllamaServedWindow("http://localhost:11434", "qwen3.6:35b", deps);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.servedWindow).toBe(65536);
+      expect(result.value.source).toBe("api/show");
+    }
+  });
+
+  it("IN-02-4: bogus values at BOTH endpoints err out (the existing fail-open path) — a sub-512 window never escapes the probe", async () => {
+    const deps = makeDeps(async (url) => {
+      if (url.endsWith("/api/ps")) {
+        return jsonResponse({
+          models: [{ name: "qwen3.6:35b", model: "qwen3.6:35b", context_length: 0.5 }],
+        });
+      }
+      if (url.endsWith("/api/show")) {
+        return jsonResponse({ details: { context_length: 100 } });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const result = await probeOllamaServedWindow("http://localhost:11434", "qwen3.6:35b", deps);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.errorKind).toBe("internal");
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // Fail-open matrix (CWF-03-C/D/E)
   // -------------------------------------------------------------------------
 
