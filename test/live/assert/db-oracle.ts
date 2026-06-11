@@ -267,6 +267,34 @@ export function countRowsLike(
   }
 }
 
+/**
+ * Count consolidation OBSERVATION rows in the `memories` table — rows with
+ * `proof_count IS NOT NULL` (the observation signature per the v2.12 store;
+ * memory_type stays 'semantic'). The precise invariant for MEM-07: with
+ * costFeatures.enabled=false the LLM-bearing consolidation cron is OFF, so this
+ * count MUST be 0 — independent of how many raw user/agent/extracted turns the
+ * conversation produced (those are nondeterministic; an observation is not).
+ *
+ * Opens the database READONLY — never writes. Returns 0 when the column is
+ * absent (pre-feature DB) rather than throwing.
+ */
+export function countObservationRows(dbPath: string): number {
+  const db = openReadonlyWithVec(dbPath);
+  try {
+    const cols = (db.prepare("PRAGMA table_info(memories)").all() as { name: string }[]).map(
+      (r) => r.name,
+    );
+    if (!cols.includes("proof_count")) return 0;
+    return (
+      db
+        .prepare("SELECT count(*) as c FROM memories WHERE proof_count IS NOT NULL")
+        .get() as { c: number }
+    ).c;
+  } finally {
+    db.close();
+  }
+}
+
 export function snapshotRowCounts(
   dbPath: string,
   tables: string[],

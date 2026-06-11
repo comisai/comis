@@ -150,7 +150,7 @@ describe.skipIf(!isLive)("MEM-03 Stage-B — recall-lane all-pairs ($0, real dae
           const afterCounts = snapshotRowCounts(dbPath, MEM_TABLES);
           const delta = (afterCounts["memories"] ?? 0) - (beforeCounts["memories"] ?? 0);
           expect(delta, "no memory rows written").toBeGreaterThanOrEqual(1);
-          expect(delta, "runaway memory writes (>3 rows for 2 turns)").toBeLessThanOrEqual(3);
+          expect(delta, "runaway memory writes").toBeLessThanOrEqual(6); // 2 turns x (user+agent+extracted)
           await runDbOracle(dbPath, { beforeCounts });
         }
       } finally {
@@ -195,7 +195,7 @@ describe.skipIf(!isLive)("MEM-03 Stage-B — recall-lane all-pairs ($0, real dae
           const afterCounts = snapshotRowCounts(dbPath, MEM_TABLES);
           const delta = (afterCounts["memories"] ?? 0) - (beforeCounts["memories"] ?? 0);
           expect(delta, "no memory rows written").toBeGreaterThanOrEqual(1);
-          expect(delta, "runaway memory writes (>3 rows for 2 turns)").toBeLessThanOrEqual(3);
+          expect(delta, "runaway memory writes").toBeLessThanOrEqual(6); // 2 turns x (user+agent+extracted)
           await runDbOracle(dbPath, { beforeCounts });
         }
       } finally {

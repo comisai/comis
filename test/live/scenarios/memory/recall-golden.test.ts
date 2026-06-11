@@ -93,8 +93,9 @@ describe.skipIf(!isLive)(
           });
           expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
           // Ground truth (260611 re-pin): the planted fact is durably stored —
-          // content-anchored, not an exact row count (ingestion stores one
-          // memory per USER TURN, so 2 turns yield 2 rows by design).
+          // content-anchored, not an exact row count (ingestion stores combined
+          // user+agent turns AND agent-extracted memories, so the count is
+          // nondeterministic; the planted fact's presence is the real invariant).
           expect(
             countRowsLike(dbPath, "memories", ["Eiffel", "330"]),
             "planted fact not found in memories store",
@@ -102,7 +103,7 @@ describe.skipIf(!isLive)(
           const afterCounts = snapshotRowCounts(dbPath, MEM_TABLES);
           const delta = (afterCounts["memories"] ?? 0) - (beforeCounts["memories"] ?? 0);
           expect(delta, "no memory rows written").toBeGreaterThanOrEqual(1);
-          expect(delta, "runaway memory writes (>3 rows for 2 turns)").toBeLessThanOrEqual(3);
+          expect(delta, "runaway memory writes").toBeLessThanOrEqual(6); // 2 turns x (user+agent+extracted)
           await runDbOracle(dbPath, { beforeCounts });
         } finally {
           await driver.close().catch(() => {});

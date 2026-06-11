@@ -517,3 +517,43 @@ describe("countRowsLike — content-anchored ground truth (260611 predicate re-p
     expect(() => countRowsLike(dbPath, "evil; DROP TABLE memories", ["x"])).toThrow(/not present/);
   });
 });
+
+describe("countObservationRows — proof_count signature (260611 MEM-07 invariant)", () => {
+  it("counts only rows with proof_count NOT NULL (consolidation observations)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+      const ins = db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding, proof_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      // 2 raw turns (proof_count NULL) + 1 consolidation observation (proof_count=3)
+      ins.run("u1", "t", "a", "u", "[user] fact A", "learned", "semantic", "rpc-client", "[]", Date.now(), 0, null);
+      ins.run("u2", "t", "a", "u", "[user] fact B", "learned", "semantic", "rpc-client", "[]", Date.now(), 0, null);
+      ins.run("obs1", "t", "a", "u", "consolidated A+B", "learned", "semantic", "a", "[]", Date.now(), 0, 3);
+    });
+    const { countObservationRows } = await import("./db-oracle.js");
+    expect(countObservationRows(dbPath)).toBe(1);
+  });
+
+  it("returns 0 when no observation rows exist (all raw turns)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+      db.prepare(
+        `INSERT INTO memories
+         (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, has_embedding, proof_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("u1", "t", "a", "u", "[user] x", "learned", "semantic", "rpc-client", "[]", Date.now(), 0, null);
+    });
+    const { countObservationRows } = await import("./db-oracle.js");
+    expect(countObservationRows(dbPath)).toBe(0);
+  });
+
+  it("returns 0 when the proof_count column is absent (pre-feature DB)", async () => {
+    const dbPath = await writeMemoryDbToFile((db) => {
+      db.exec(MEMORIES_DDL);
+    });
+    const { countObservationRows } = await import("./db-oracle.js");
+    expect(countObservationRows(dbPath)).toBe(0);
+  });
+});

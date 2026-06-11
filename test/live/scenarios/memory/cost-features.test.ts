@@ -8,8 +8,11 @@
  *   by YAML string checks. Stage-B daemon-boot with costFeatures.enabled=false
  *   validates the key at runtime — a wrong YAML key would fail daemon config parse.
  *
- * Stage-B (COMIS_LIVE, $0): storeDelta >= 1 AND <= 2 when costFeatures disabled.
- *   The lower bound >= 1 catches a "0 rows written" false-pass (WARNING-1).
+ * Stage-B (COMIS_LIVE, $0): both planted facts stored (content-anchored) AND
+ *   ZERO consolidation-observation rows (proof_count NOT NULL) when costFeatures
+ *   is disabled. The precise observation-signature invariant replaces the old
+ *   raw-row count ceiling, which wrongly assumed one row per user turn
+ *   (ingestion also stores agent replies + agent-extracted memories — 260611).
  *
  * @module
  */
@@ -17,7 +20,7 @@ import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { ConversationDriver, flushDaemonLogs } from "../../harness/conversation.js";
 import { runLogOracle } from "../../assert/log-oracle.js";
-import { runDbOracle, snapshotRowCounts, countRowsLike } from "../../assert/db-oracle.js";
+import { runDbOracle, snapshotRowCounts, countRowsLike, countObservationRows } from "../../assert/db-oracle.js";
 import { buildMemConfig } from "../../harness/mem-config.js";
 
 const isLive = !!process.env["COMIS_LIVE"];
@@ -64,9 +67,7 @@ describe.skipIf(!isLive)("MEM-07 Stage-B — costFeatures.enabled=false → no c
       await runLogOracle(driver.capturedLogLines(), { expectedErrors: ["JSON-RPC method error"] });
       expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
       // Content-anchored (260611 re-pin): both planted facts stored (catches
-      // "0 rows written" false-pass — WARNING-1). Ingestion stores one row per
-      // distinct USER TURN (3 turns here), so the no-consolidation invariant
-      // is delta <= 3: no room for an observation row beyond the raw turns.
+      // "0 rows written" false-pass — WARNING-1).
       expect(
         countRowsLike(dbPath, "memories", ["cost-features test fact A"]),
         "planted fact A not found in memories store",
@@ -78,9 +79,17 @@ describe.skipIf(!isLive)("MEM-07 Stage-B — costFeatures.enabled=false → no c
       {
         const afterCounts = snapshotRowCounts(dbPath, MEM_TABLES);
         const storeDelta = (afterCounts["memories"] ?? 0) - (beforeCounts["memories"] ?? 0);
-        expect(storeDelta, "no memory rows written").toBeGreaterThanOrEqual(2);
-        // Upper bound: no consolidation observation (costFeatures disabled → LLM-bearing cron off)
-        expect(storeDelta, "extra rows beyond the 3 raw turns (consolidation observation?)").toBeLessThanOrEqual(3);
+        expect(storeDelta, "no memory rows written").toBeGreaterThanOrEqual(1);
+        // The PRECISE no-consolidation invariant (260611): costFeatures.enabled=
+        // false turns the LLM-bearing consolidation cron OFF, so there must be
+        // ZERO consolidation-observation rows (proof_count NOT NULL). A raw-row
+        // COUNT ceiling was wrong — ingestion stores combined user+agent turns
+        // AND agent-extracted memories, so the count is nondeterministic; the
+        // observation signature is not.
+        expect(
+          countObservationRows(dbPath),
+          "consolidation observation rows present despite costFeatures.enabled=false",
+        ).toBe(0);
         await runDbOracle(dbPath, { beforeCounts });
       }
     } finally {
