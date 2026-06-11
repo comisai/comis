@@ -185,11 +185,17 @@ export async function probeOllamaServedWindow(
       entry.name === modelId,
   );
 
+  // IN-05: distinguish a PRESENT-but-rejected value from an absent field so
+  // the final err can name the right lever (a bogus Modelfile num_ctx vs a
+  // genuinely missing context_length).
+  let rejectedImplausible = false;
+
   if (matchingEntry !== undefined) {
     const contextLength = sanitizeServedWindow(matchingEntry.context_length);
     if (contextLength !== undefined) {
       return ok({ servedWindow: contextLength, source: "api/ps", durationMs: systemNowMs() - startMs });
     }
+    if (matchingEntry.context_length !== undefined) rejectedImplausible = true;
   }
 
   // ── Step 2: POST /api/show (fallback when model not loaded or no context_length) ──
@@ -234,12 +240,27 @@ export async function probeOllamaServedWindow(
     return err({ message: "Failed to parse /api/show JSON response", errorKind: "internal" });
   }
 
-  const detailsContextLength = sanitizeServedWindow(showBody.details?.context_length);
+  const rawDetailsContextLength = showBody.details?.context_length;
+  const detailsContextLength = sanitizeServedWindow(rawDetailsContextLength);
   if (detailsContextLength !== undefined) {
     return ok({ servedWindow: detailsContextLength, source: "api/show", durationMs: systemNowMs() - startMs });
   }
+  if (rawDetailsContextLength !== undefined) rejectedImplausible = true;
 
-  // Both endpoints exhausted — no usable context_length found
+  // Both endpoints exhausted. IN-05 (Phase 176 review): branch presence vs
+  // absence — a value Ollama DID return but the IN-02 sanitization rejected
+  // (e.g. a typo'd Modelfile PARAMETER num_ctx) is bad input ("validation"),
+  // and reporting it as "not found" would send the operator to restart a
+  // server that is up and answering. A genuinely absent field keeps the
+  // original message + "internal".
+  if (rejectedImplausible) {
+    return err({
+      message:
+        `context_length present but implausible (non-numeric or < ${MIN_PLAUSIBLE_SERVED_WINDOW})` +
+        " in /api/ps or /api/show — check the Modelfile 'PARAMETER num_ctx'",
+      errorKind: "validation",
+    });
+  }
   return err({
     message: "No context_length found in /api/ps or /api/show",
     errorKind: "internal",
@@ -344,10 +365,16 @@ export async function probeAllOllamaProviders(
           // HTTP status means Ollama responded — "start Ollama" points the
           // operator away from the real cause (live: HTTP 400 from /api/show
           // while the server was up; the model name/payload was the suspect).
+          // IN-05: errorKind "validation" means Ollama responded WITH a value
+          // that the sanitizer rejected as implausible — the lever is the
+          // Modelfile num_ctx, not the server, and not the probe opt-out.
           const isHttpStatusFailure = result.error.message.startsWith("HTTP ");
+          const isRejectedValue = result.error.errorKind === "validation";
           const hint = isHttpStatusFailure
             ? `Ollama is reachable but rejected the probe — verify the model '${modelId}' exists (ollama list) and the /api/show payload; falling back to configured contextWindow`
-            : "Falling back to configured contextWindow; start Ollama or set capabilities.probeServedWindow: false to suppress";
+            : isRejectedValue
+              ? `Ollama returned a context_length for model '${modelId}' but it was rejected as implausible — check the Modelfile 'PARAMETER num_ctx'; falling back to configured contextWindow`
+              : "Falling back to configured contextWindow; start Ollama or set capabilities.probeServedWindow: false to suppress";
           logger.warn(
             {
               provider: providerId,
