@@ -44,6 +44,7 @@ import {
   MemoryObservationsContract,
   MemoryEntitiesContract,
   MemoryRecallStatsContract,
+  parseFormattedSessionKey,
   safePath,
   stripInternalFields,
   systemGetEnv,
@@ -447,11 +448,22 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         : { who: storeAgentId, channel: "agent-tool" };
       const storeTag = isAdminCaller ? "operator-stored" : "agent-stored";
 
+      // Attribution (live finding 2026-06-11): tool-stored user facts carried
+      // the literal user_id "agent" while paired auto-captures carried the
+      // real session user — "who is this fact about" was lost on the tool
+      // path. Recover the userId from the dispatcher-injected caller session
+      // key; fall back to "agent" when no session context exists.
+      const storeCallerSessionKey = rawParams._callerSessionKey as string | undefined;
+      const storeCallerUserId =
+        storeCallerSessionKey !== undefined
+          ? parseFormattedSessionKey(storeCallerSessionKey)?.userId
+          : undefined;
+
       const storeResult = await deps.memoryAdapter.store({
         id: storeEntryId,
         tenantId: deps.tenantId,
         agentId: storeAgentId,
-        userId: isAdminCaller ? "operator" : "agent",
+        userId: isAdminCaller ? "operator" : (storeCallerUserId ?? "agent"),
         content: storeContent,
         trustLevel: storeTrustLevel,
         source: storeSource,

@@ -508,6 +508,35 @@ describe("memory.store - write validation", () => {
     );
   });
 
+  it("attributes a tool-stored fact to the conversation's real user, not the literal 'agent'", async () => {
+    // Live finding 2026-06-11: agent-stored rows carried user_id "agent"
+    // while the paired auto-captures carried the real session user — "who is
+    // this fact about" was lost on the tool path. The dispatcher injects
+    // _callerSessionKey; the handler recovers the userId from it.
+    const deps = makeDeps();
+    const handlers = createMemoryHandlers(deps);
+
+    await handlers["memory.store"]!({
+      content: "user fact stored via tool",
+      _callerSessionKey: "default:user-42:openai",
+    });
+
+    expect(deps.memoryAdapter.store).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user-42" }),
+    );
+  });
+
+  it("falls back to 'agent' attribution when no caller session key is present", async () => {
+    const deps = makeDeps();
+    const handlers = createMemoryHandlers(deps);
+
+    await handlers["memory.store"]!({ content: "fact without session context" });
+
+    expect(deps.memoryAdapter.store).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "agent" }),
+    );
+  });
+
   it("stores with trustLevel learned when validator returns clean", async () => {
     const deps = makeDeps({
       memoryWriteValidator: vi.fn(() => ({
