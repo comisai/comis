@@ -1626,6 +1626,42 @@ describe("runWithModelRetry", () => {
       expect(payload.bindingKnob).toBe("agents.test-agent.promptTimeout.retryPromptTimeoutMs");
     });
 
+    it("177-REVIEW IN-03: a terminal LKW-fallback timeout emits the enriched execution:prompt_timeout — the LAST record must describe the LKW attempt, not the prior kill", async () => {
+      const session = makeSession();
+      const authError = Object.assign(new Error("401 unauthorized"), { status: 401 });
+      session.prompt
+        .mockRejectedValueOnce(authError)        // primary fails with an auth error
+        .mockReturnValue(new Promise(() => {})); // LKW attempt hangs → whole-turn 60s kill
+      const eventBus = makeEventBus();
+      const lkwTracker = createLastKnownModelTracker();
+      lkwTracker.recordSuccess("other-agent", "google", "gemini-pro");
+      const params = makeParams({
+        session,
+        timeoutConfig: LAT_TIMEOUT_CONFIG,
+        deps: makeLatDeps({ eventBus, lastKnownModel: lkwTracker }),
+      });
+
+      const resultPromise = runWithModelRetry(params);
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(60_000);
+      const result = await resultPromise;
+
+      expect(result.succeeded).toBe(false);
+      // RED (pre-patch): the LKW catch emitted nothing — a terminal LKW
+      // timeout left the PRIOR rotation/fallback kill as the 'terminal'
+      // execution.prompt_timeout record, so the explain verdict's numbers
+      // (model, durationMs) described the wrong attempt.
+      const emits = vi.mocked(eventBus.emit).mock.calls.filter(
+        (c: unknown[]) => c[0] === "execution:prompt_timeout",
+      );
+      expect(emits).toHaveLength(1); // the primary auth error never emits — only the LKW kill
+      const payload = emits[0]![1] as Record<string, unknown>;
+      expect(payload.timeoutMs).toBe(60_000);
+      expect(payload.limit).toBeUndefined(); // whole-turn retry semantics
+      expect(typeof payload.durationMs).toBe("number");
+      expect(payload.bindingKnob).toBe("agents.test-agent.promptTimeout.retryPromptTimeoutMs");
+    });
+
     it("177-REVIEW WR-02: a makespan product past Node's 2^31-1 timer cap is clamped at the derivation site — the ceiling does NOT collapse to an instant 1ms kill", async () => {
       const session = makeHungSession();
       const params = makeParams({

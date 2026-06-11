@@ -665,6 +665,35 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             },
             "Last-known-working model fallback failed",
           );
+          // Emit prompt timeout event on LKW timeout (177-REVIEW IN-03):
+          // the explain verdict consumes the LAST execution.prompt_timeout
+          // record — without this emit, a terminal LKW timeout left the
+          // prior rotation/fallback kill as the "terminal" record and its
+          // numbers described the wrong attempt. `limit` absent ⇒ whole-turn
+          // retry semantics (same shape as the rotation/fallback sites).
+          if (lkwError instanceof PromptTimeoutError) {
+            eventBus.emit("execution:prompt_timeout", {
+              agentId: deps.agentId ?? "unknown",
+              sessionKey: deps.sessionKey ?? "unknown",
+              timeoutMs: lkwError.timeoutMs,
+              timestamp: clock.now(),
+              durationMs: clock.now() - retryStartMs,
+              ...(lkwError.limit !== undefined && { limit: lkwError.limit }),
+              ...(timeoutConfig.source !== undefined && { source: timeoutConfig.source }),
+              bindingKnob: lkwError.limit === undefined
+                ? describeRetryTimeoutKnob(deps.agentId)
+                : describeTimeoutKnob(timeoutConfig.source ?? "agent_config", deps.agentId, timeoutConfig.operationType),
+              ...(timeoutConfig.operationType !== undefined && { operationType: timeoutConfig.operationType }),
+              ...(lkwError.stallBudgetMs !== undefined && { stallBudgetMs: lkwError.stallBudgetMs }),
+              ...(lkwError.makespanMs !== undefined && { makespanMs: lkwError.makespanMs }),
+            });
+          }
+          // providerHealth deliberately NOT recorded here (177-REVIEW IN-03
+          // disposition): the LKW attempt runs against a DIFFERENT provider
+          // chosen as a desperation fallback after an auth failure on the
+          // configured ladder — booking its failure would extend the safety
+          // gate's input surface beyond the 3 configured-path recordFailure
+          // sites without a decision record.
         }
       }
     }
