@@ -181,12 +181,22 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // Run the FULL createMemoryRecall (trust-FILTERED; content is RAW — this handler
       // sanitizes + wraps it below, NOT recall) — NOT memoryApi.search. The factory builds
       // a per-agent orchestrator with the daemon's store set + the agent's RagConfig.
+      //
+      // The recall scope MUST be a real SessionKey OBJECT (live finding
+      // 2026-06-11): the previous `(callerSessionKey ?? "") as unknown as
+      // SessionKey` smuggled a STRING, so `sessionKey.tenantId` was undefined
+      // and the adapter's tenant-scoped hydration matched NOTHING — every
+      // memory.ask, on every caller path, abstained with an empty recall.
+      // Parse the dispatcher-injected formatted key when present; otherwise a
+      // synthetic key carrying the daemon tenant (the only field search scopes by).
+      const recallScope: SessionKey =
+        (callerSessionKey !== undefined ? parseFormattedSessionKey(callerSessionKey) : undefined) ?? {
+          tenantId: deps.tenantId,
+          userId: "memory-ask",
+          channelId: "rpc",
+        };
       const recall = deps.buildDialecticRecall(agentId);
-      const recalled = await recall.recall(
-        question,
-        (callerSessionKey ?? "") as unknown as SessionKey,
-        agentId,
-      );
+      const recalled = await recall.recall(question, recallScope, agentId);
 
       // Empty / failed recall ⇒ abstain in CODE, WITHOUT calling the seam
       // (Pitfall 5 — no grounding ⇒ no LLM call, no fabricated answer).

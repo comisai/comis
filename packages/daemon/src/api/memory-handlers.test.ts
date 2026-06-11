@@ -1487,6 +1487,42 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(recall.buildCalls).toEqual(["default"]);
   });
 
+  it("recall runs with a REAL tenant-scoped SessionKey — never a smuggled string (the scope that made every ask return empty)", async () => {
+    // Live finding 2026-06-11 (post reason-coding): memory.ask abstained
+    // empty_recall for a fact the chat path recalled fine — the handler passed
+    // `(callerSessionKey ?? "") as unknown as SessionKey` (a STRING), so
+    // sessionKey.tenantId was undefined and the adapter's tenant-scoped
+    // hydration matched nothing, for EVERY caller.
+    const captured: unknown[] = [];
+    const recall = {
+      build: (_agentId: string) => ({
+        async recall(_q: string, sessionKey: unknown) {
+          captured.push(sessionKey);
+          return ok([memResult("id-a", "fact", "learned")]);
+        },
+      }),
+    };
+    const seam = makeSeam({ abstain: false, answer: "fact", citedIds: ["id-a"] });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build as unknown as MemoryHandlerDeps["buildDialecticRecall"],
+      dialecticSeam: seam.seam,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    // Agent path: formatted caller session key → parsed back to the object.
+    await handlers["memory.ask"]!({
+      question: "q",
+      _agentId: "agent-1",
+      _callerSessionKey: "tenant-x:user-1:chan-1",
+    });
+    expect(captured[0]).toMatchObject({ tenantId: "tenant-x", userId: "user-1", channelId: "chan-1" });
+
+    // External path (no caller key): synthetic key carrying the daemon tenant.
+    await handlers["memory.ask"]!({ question: "q" });
+    expect(captured[1]).toMatchObject({ tenantId: "default" });
+  });
+
   it("a synthesis-level abstain is distinguishable from an infrastructure abstain via reason", async () => {
     const recall = makeRecall([memResult("id-a", "fact", "learned")]);
     const seam = makeSeam({ abstain: true, answer: "", citedIds: [] });
