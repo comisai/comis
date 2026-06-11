@@ -64,7 +64,11 @@ import {
   summarizeCondensedChunk,
   type SummaryRefRun,
 } from "../context-engine/lcd-condense.js";
-import type { LeafSummarizerDeps } from "../context-engine/lcd-leaf-summarizer.js";
+import {
+  resolveSummarizerWindowTokens,
+  type LeafSummarizerDeps,
+} from "../context-engine/lcd-leaf-summarizer.js";
+import { SUMMARIZER_PROMPT_OVERHEAD_TOKENS } from "../context-engine/constants.js";
 import { resolveContext } from "./lcd-compaction-trigger.js";
 
 /**
@@ -201,24 +205,70 @@ export async function maybeRunCondensePass(
       return;
     }
 
+    // SUMW-01: prefix-trim the selected run to the LONGEST child prefix whose
+    // Σ tokenCount fits the RESOLVED summarizer's window (override-aware via
+    // resolveSummarizerWindowTokens — never the getModel() session-primary
+    // snapshot) minus the condense target + prompt overhead, so a condense pass
+    // never concatenates more child tokens than the summarizer that actually
+    // runs can read. Ordinal integrity (T-178-10): a prefix of a contiguous run
+    // stays contiguous, so [startOrdinal, children[keep-1].ordinal] remains a
+    // valid range-replace window and the trimmed children survive untouched in
+    // the store for a later pass. The no-trim path is byte-identical
+    // (effectiveRun === run); pressureHigh and selectCondensableTier are unchanged.
+    const summarizerWindow = resolveSummarizerWindowTokens(summarizerDeps);
+    const childTokenBudget = summarizerWindow - opts.condensedTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS;
+    let effectiveRun = run;
+    if (Number.isFinite(childTokenBudget)) {
+      let acc = 0;
+      let keep = 0;
+      for (const c of run.children) {
+        if (acc + c.tokenCount > childTokenBudget) break;
+        acc += c.tokenCount;
+        keep++;
+      }
+      if (keep < run.children.length) {
+        if (keep < 2) {
+          // A 1-child condense is meaningless re-summarization — honest skip
+          // (T-178-12): observable via a content-free DEBUG with both numbers
+          // (I7), never WARN spam, never a throw.
+          logger.debug(
+            { conversationId, agentId: scope.agentId, step: "lcd-condense-clamp", summarizerWindow, childTokenBudget, firstChildTokens: run.children[0]!.tokenCount },
+            "lcd condense pass skipped: summarizer window cannot fit a 2-child run",
+          );
+          return;
+        }
+        effectiveRun = {
+          depth: run.depth,
+          children: run.children.slice(0, keep),
+          startOrdinal: run.startOrdinal,
+          endOrdinal: run.children[keep - 1]!.ordinal,
+        };
+        // Numbers only (I7) — per-pass DEBUG, never WARN (the trim is normal adaptive behavior).
+        logger.debug(
+          { conversationId, agentId: scope.agentId, step: "lcd-condense-clamp", summarizerWindow, childTokenBudget, keptChildren: keep, trimmedChildren: run.children.length - keep },
+          "lcd condense run prefix-trimmed to the resolved summarizer window",
+        );
+      }
+    }
+
     // Derive the condensed node's metadata from the children (RESEARCH A6):
     // depth = max(child depth) + 1; taint = OR(children.taint); descendantCount /
     // time-range are recomputed STORE-SIDE from the child rows (advisory here).
-    const depth = Math.max(...run.children.map((c) => c.depth)) + 1;
-    const childSummaryIds = run.children.map((c) => c.summaryId);
+    const depth = Math.max(...effectiveRun.children.map((c) => c.depth)) + 1;
+    const childSummaryIds = effectiveRun.children.map((c) => c.summaryId);
     // taint = OR(children.taint): read taint off the SELECTED children — the
     // resolved-view `CondenseChildSummary` carries `taint` from the SAME
     // `getSummaries` snapshot the run was selected from (WR-01). A second
     // `getSummaries` call could observe a diverged later snapshot (the pass goes
     // deferred/async in Phase 132) and silently mis-propagate the trust boundary.
     // A tainted child taints the condensed parent (T-130; enforcement is Phase 132).
-    const taint = run.children.some((c) => c.taint);
+    const taint = effectiveRun.children.some((c) => c.taint);
 
     // Summarize the child CONTENT via the 3-level escalation (non-fatal inside —
     // always returns a result). The before-size is the STORED Σ child tokenCount.
     // `previousSummary` reads the SAME resolved snapshot (WR-01) — not a re-query.
     const previousSummary = previousSummaryAtDepth(summaries, depth);
-    const result = await summarizeCondensedChunk(run.children, summarizerDeps, {
+    const result = await summarizeCondensedChunk(effectiveRun.children, summarizerDeps, {
       reserveTokens: opts.condensedTargetTokens,
       previousSummary,
       depth, // SUM-01: thread computed depth so d1/d2/d3+ prompt styles actually fire
@@ -245,8 +295,8 @@ export async function maybeRunCondensePass(
       fallback: result.fallback,
       taint,
       createdAt: now,
-      startOrdinal: run.startOrdinal,
-      endOrdinal: run.endOrdinal,
+      startOrdinal: effectiveRun.startOrdinal,
+      endOrdinal: effectiveRun.endOrdinal,
       childSummaryIds,
       depth,
     });
@@ -297,7 +347,7 @@ export async function maybeRunCondensePass(
         conversationId,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
-        childCount: run.children.length,
+        childCount: effectiveRun.children.length,
         depth,
         escalationLevel: result.level,
         fallback: result.fallback,

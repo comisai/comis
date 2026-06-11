@@ -66,6 +66,7 @@ import { ContextEngineConfigSchema } from "@comis/core";
 import {
   selectLeafChunk,
   summarizeLeafChunk,
+  resolveSummarizerWindowTokens,
   MIN_SHRINKABLE_LEAF_CHUNK_TOKENS,
   type LeafChunkItem,
   type LeafSummarizerDeps,
@@ -76,7 +77,7 @@ import {
   buildNanoStructuredExtraction,
   resolveSummaryTargetTokens,
 } from "../context-engine/summarize-tier-targets.js";
-import { LCD_MAX_LEAF_PASSES_PER_TURN } from "../context-engine/constants.js";
+import { LCD_MAX_LEAF_PASSES_PER_TURN, SUMMARIZER_PROMPT_OVERHEAD_TOKENS } from "../context-engine/constants.js";
 import type {
   CondenseChildSummary,
   SummaryRefRun,
@@ -89,7 +90,9 @@ import type {
 export interface LeafPassOptions {
   /** Utilization fraction that triggers a leaf pass (`contextThreshold`, 0.75). */
   contextThreshold: number;
-  /** Chunk token cap for one leaf (`leafChunkTokens`, 20_000). */
+  /** Chunk token cap for one leaf (`leafChunkTokens`, 20_000). SUMW-01: clamped at
+   *  runtime in {@link maybeRunLeafPass} to the RESOLVED summarizer's window minus
+   *  `leafTargetTokens` + `SUMMARIZER_PROMPT_OVERHEAD_TOKENS` (floored at MIN_SHRINKABLE). */
   leafChunkTokens: number;
   /** Summary token target (`leafTargetTokens`, 1_200) → the SDK `reserveTokens`. */
   leafTargetTokens: number;
@@ -662,13 +665,29 @@ export async function maybeRunLeafPass(
   if (summarizerDeps === undefined) { logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "no-summarizer-deps" }, "lcd leaf pass gate skip"); return; }
   if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) { logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "bad-window", windowTokens: opts.windowTokens }, "lcd leaf pass gate skip"); return; }
 
+  // SUMW-01: clamp the chunk cap ONCE per drain to the RESOLVED summarizer's
+  // window (override-aware — never the getModel() session-primary snapshot) minus
+  // the summary target + prompt overhead, so a small compaction override is never
+  // fed an over-window chunk. The bounded drain + next-turn re-arming split the
+  // backlog; a degenerate window floors to MIN_SHRINKABLE → the "too-small" exit.
+  const summarizerWindow = resolveSummarizerWindowTokens(summarizerDeps);
+  const clampedLeafChunkTokens = Math.max(
+    MIN_SHRINKABLE_LEAF_CHUNK_TOKENS,
+    Math.min(opts.leafChunkTokens, summarizerWindow - opts.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS),
+  );
+  if (clampedLeafChunkTokens < opts.leafChunkTokens) {
+    // ONE per-drain DEBUG, numbers only (I7) — a binding clamp is normal adaptive behavior, never WARN.
+    logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", summarizerWindow, configuredLeafChunkTokens: opts.leafChunkTokens, clampedLeafChunkTokens }, "lcd leaf chunk cap clamped to the resolved summarizer window");
+  }
+  const effectiveOpts: LeafPassOptions = { ...opts, leafChunkTokens: clampedLeafChunkTokens };
+
   // The hard cap (the infinite-loop backstop): the supplied knob or the LOW default.
   // Clamp to >= 1 so a misconfigured 0/negative still attempts one pass (degenerate
   // single-pass — the prior behavior) rather than silently disabling compaction.
   const maxPasses = Math.max(1, Math.floor(opts.maxLeafPassesPerTurn ?? LCD_MAX_LEAF_PASSES_PER_TURN));
   try {
     for (let pass = 0; pass < maxPasses; pass++) {
-      const { made } = await runOneLeafPass(store, scope, opts, summarizerDeps, now, nowFn, logger, eventBus);
+      const { made } = await runOneLeafPass(store, scope, effectiveOpts, summarizerDeps, now, nowFn, logger, eventBus);
       if (!made) break; // drained / no-progress / divergence — stop (never spin).
     }
   } catch (err) {
