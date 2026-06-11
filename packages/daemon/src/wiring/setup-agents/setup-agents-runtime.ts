@@ -42,8 +42,6 @@ import {
   createAuthProfileManager,
   createAuthRotationAdapter,
   resolveCompactionModel,
-  compareServedWindowForProvider,
-  collectAgentBootWindowInfo,
 } from "@comis/agent";
 import { ensureWorkspace, resolveWorkspaceDir } from "@comis/core";
 import {
@@ -54,6 +52,7 @@ import {
 } from "@comis/skills";
 import { resolveAgentModel, deriveCanaryFallback, resolveEffectiveRerank } from "./setup-agents-tooling.js";
 import { resolveLeanDescriptionsForAgent } from "./setup-agents-descriptions.js";
+import { runBootWindowHonestyChecks } from "./setup-agents-boot-window.js";
 import { createAcpWiring } from "./setup-acp-wiring.js";
 import { wireAuthProvider } from "./setup-agents-oauth.js";
 import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
@@ -243,17 +242,11 @@ export async function setupSingleAgent(
   // shared convertTools closure below can ride into the boot-window info.
   const resolvedDescriptions = resolveLeanDescriptionsForAgent(agentConfig, perAgentLogger);
 
-  // WR-03 (176 review): ONE tool-conversion closure for BOTH consumers — bound
-  // into PiExecutorDeps.convertTools (the turn-time S corpus) AND
-  // AgentBootWindowInfo.convertTools (the FLOOR-01 boot corpus). Binding the
-  // SAME reference is the corpus-identity pin: the boot floor cannot measure a
-  // different description set than the turn ships (I8 extended from formula to
-  // input). The param is the floor's structural overhead shape; the cast is
-  // safe because the adapter reads only schema fields (name/label/description/
-  // parameters/promptGuidelines) at conversion time — execute is wrapped
-  // lazily and never invoked by the boot floor — and both production callers
-  // (pi-executor per-request tools; the daemon FLOOR-01 loop fed by
-  // assembleToolsForAgent) pass real AgentTool[].
+  // WR-03 (176 review): ONE tool-conversion closure for BOTH consumers —
+  // PiExecutorDeps.convertTools (turn-time S corpus) AND
+  // AgentBootWindowInfo.convertTools (FLOOR-01 boot corpus). Same reference =
+  // corpus-identity pin (I8 extended from formula to input). Cast safe: the
+  // adapter reads only schema fields at conversion time; execute is lazy.
   type FloorConvertTools = NonNullable<import("@comis/agent").AgentBootWindowInfo["convertTools"]>;
   const convertTools = (tools: Parameters<FloorConvertTools>[0]) =>
     agentToolsToToolDefinitions(
@@ -261,44 +254,21 @@ export async function setupSingleAgent(
       resolvedDescriptions,
     );
 
-  // KNOB-01 + FLOOR-01 (v2.21): served-window comparison + boot-window-info
-  // collection beside the per-agent registry — the ONLY seam with the
-  // registry-enriched "configured" the executor itself resolves (pi-executor.ts
-  // find + ?? 8_192). Fail-open wholesale (FLOOR-01-16 / T-176-15).
-  try {
-    const findModel = (p: string, m: string) => {
-      let r = piModelRegistry.find(p, m);
-      if (!r) {
-        const builtIn = providerAliases.get(p);
-        if (builtIn) r = piModelRegistry.find(builtIn, m);
-      }
-      return r ?? undefined;
-    };
-    const providerEntry = container.config.providers?.entries?.[resolved.provider];
-    const comparison = compareServedWindowForProvider({
-      providerId: resolved.provider,
-      served: deps.servedWindowByProvider?.get(resolved.provider),
-      providerEntry,
-      findModel,
-      logger: agentLogger,
-    });
-    if (comparison) deps.servedWindowComparisons?.set(comparison.providerId, comparison);
-    deps.agentBootWindowInfo?.set(agentId, collectAgentBootWindowInfo({
-      agentId,
-      providerId: resolved.provider,
-      modelId: resolved.model,
-      findModel,
-      served: deps.servedWindowByProvider?.get(resolved.provider),
-      explicitCapabilityClass: providerEntry?.capabilities?.capabilityClass,
-      agentConfig: effectiveConfig,
-      convertTools, // WR-03: the SAME closure PiExecutorDeps.convertTools receives (below)
-    }));
-  } catch (err) {
-    agentLogger.warn(
-      { err, agentId, errorKind: "internal" as const, hint: "served-window comparison / boot-window collection failed — boot continues (fail-open); turn-time reconcile still applies" },
-      "Boot window honesty checks skipped for agent",
-    );
-  }
+  // KNOB-01 + FLOOR-01 (v2.21): extracted to setup-agents-boot-window.ts
+  // (600-line cap split, 177 wave 1). Fail-open inside; convertTools
+  // reference identity preserved (WR-03).
+  runBootWindowHonestyChecks({
+    agentId,
+    providerId: resolved.provider,
+    modelId: resolved.model,
+    container,
+    deps,
+    piModelRegistry,
+    providerAliases,
+    agentLogger,
+    effectiveConfig,
+    convertTools,
+  });
 
   // Create JSONL session adapter for this agent
   const lockDir = safePath(dir, ".locks");
