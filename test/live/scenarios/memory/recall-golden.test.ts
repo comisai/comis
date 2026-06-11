@@ -147,7 +147,10 @@ describe.skipIf(!isLive)(
             answer,
             rubric: "Answer must mention 330 meters",
           });
-          expect(judgeResult.verdict).not.toBe("fail");
+          expect(
+            judgeResult.verdict,
+            `judge failed: ${judgeResult.reason} | answer: ${answer.slice(0, 300)}`,
+          ).not.toBe("fail");
           await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
         } finally {
           await driver.close().catch(() => {});

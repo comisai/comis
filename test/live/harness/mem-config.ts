@@ -110,7 +110,6 @@ export function buildMemConfig(opts: MemConfigOpts): string {
   const doc = parseYaml(readFileSync(base, "utf-8")) as Doc;
 
   // ── embedding.* — TOP-LEVEL ───────────────────────────────────────────────
-  const embedModelPath = process.env["COMIS_LIVE_EMBED_MODEL_PATH"];
   if (opts.embeddingProvider !== undefined || opts.localGpu !== undefined) {
     const embedding = ensureObj(doc, "embedding");
     embedding["enabled"] = true;
@@ -120,12 +119,17 @@ export function buildMemConfig(opts: MemConfigOpts): string {
     if (opts.localGpu !== undefined) {
       ensureObj(embedding, "local")["gpu"] = opts.localGpu;
     }
-    // Operator knob: use a pre-downloaded GGUF instead of the default hf: URI
-    // (which would download ~146MB into the fresh temp dataDir on every boot).
-    // Only meaningful for the local provider path.
-    if (embedModelPath && opts.embeddingProvider !== "openai") {
-      ensureObj(embedding, "local")["modelUri"] = embedModelPath;
-    }
+  }
+  // Operator knob: use a pre-downloaded GGUF instead of the default hf: URI
+  // (which would download ~146MB into the fresh temp dataDir on EVERY boot).
+  // Applied UNCONDITIONALLY (unless the test explicitly targets openai):
+  // embedding.enabled defaults true with provider "auto" → local, so even
+  // configs that never set embeddingProvider (e.g. MEM-03's ragConfig-only
+  // lane combos) boot the local embedder — observed re-downloading mid-run
+  // when this knob was nested inside the embeddingProvider branch (260611).
+  const embedModelPath = process.env["COMIS_LIVE_EMBED_MODEL_PATH"];
+  if (embedModelPath && opts.embeddingProvider !== "openai") {
+    ensureObj(ensureObj(doc, "embedding"), "local")["modelUri"] = embedModelPath;
   }
 
   // ── memory.* — TOP-LEVEL ──────────────────────────────────────────────────

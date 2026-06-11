@@ -185,6 +185,18 @@ describe("buildMemConfig — operator model-path env knobs (no per-boot HF downl
     }
   });
 
+  it("COMIS_LIVE_EMBED_MODEL_PATH applies even WITHOUT embeddingProvider (ragConfig-only configs boot the local embedder too)", () => {
+    const prior = process.env["COMIS_LIVE_EMBED_MODEL_PATH"];
+    process.env["COMIS_LIVE_EMBED_MODEL_PATH"] = "/abs/path/embed.gguf";
+    try {
+      const p = build({ label: "lanes-only", ragConfig: { fts: true, vector: true } });
+      expect(loadValid(p).embedding.local.modelUri).toBe("/abs/path/embed.gguf");
+    } finally {
+      if (prior === undefined) delete process.env["COMIS_LIVE_EMBED_MODEL_PATH"];
+      else process.env["COMIS_LIVE_EMBED_MODEL_PATH"] = prior;
+    }
+  });
+
   it("COMIS_LIVE_RERANKER_MODEL_PATH → memory.rerankerModel", () => {
     const prior = process.env["COMIS_LIVE_RERANKER_MODEL_PATH"];
     process.env["COMIS_LIVE_RERANKER_MODEL_PATH"] = "/abs/path/rerank.gguf";
