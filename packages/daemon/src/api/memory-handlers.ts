@@ -47,6 +47,7 @@ import {
   parseFormattedSessionKey,
   safePath,
   stripInternalFields,
+  systemDateFrom,
   systemGetEnv,
   systemNowMs,
   tryGetContext,
@@ -267,7 +268,13 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
                     ? { onSuspiciousContent: deps.onSuspiciousContent }
                     : {}),
                 });
-          return `[${r.entry.id}] ${safe}`;
+          // The recorded date rides OUTSIDE the untrusted fence (code-derived
+          // from entry.createdAt, not memory content). Live finding
+          // 2026-06-11: without it, same-trust conflicts gave the model no
+          // recency signal and it resolved a date correction the WRONG way
+          // (answered the stale June 20 over the updated June 25).
+          const recorded = systemDateFrom(r.entry.createdAt).toISOString().slice(0, 10);
+          return `[${r.entry.id}] (recorded ${recorded}) ${safe}`;
         })
         .join("\n");
 
@@ -325,6 +332,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
           durationMs: systemNowMs() - askStart,
           abstained: result.abstained,
           ...(result.abstained ? { reason: "synthesis_abstained" } : {}),
+          groundingCount: grounding.length,
           citationCount: result.citations.length,
           // ids-only provenance counts (NEVER bodies): how many cited claims
           // carried a sourceId chain.

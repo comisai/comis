@@ -1487,6 +1487,24 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(recall.buildCalls).toEqual(["default"]);
   });
 
+  it("grounding lines carry the code-derived recorded date so same-trust conflicts have a recency signal", async () => {
+    // Live finding 2026-06-11: without dates the model resolved a date
+    // correction the WRONG way (stale June 20 over updated June 25) using
+    // list position as a fake trust signal.
+    const recall = makeRecall([memResult("id-a", "fact", "learned")]);
+    const seam = makeSeam({ abstain: false, answer: "fact", citedIds: ["id-a"] });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    await handlers["memory.ask"]!({ question: "q", _agentId: "agent-1" });
+
+    expect(seam.grounding()).toMatch(/^\[id-a\] \(recorded \d{4}-\d{2}-\d{2}\) /);
+  });
+
   it("recall runs with a REAL tenant-scoped SessionKey — never a smuggled string (the scope that made every ask return empty)", async () => {
     // Live finding 2026-06-11 (post reason-coding): memory.ask abstained
     // empty_recall for a fact the chat path recalled fine — the handler passed
