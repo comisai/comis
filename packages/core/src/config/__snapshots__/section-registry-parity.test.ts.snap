@@ -1565,7 +1565,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "promptTimeoutMs": 180000,
-      "retryPromptTimeoutMs": 60000
+      "retryPromptTimeoutMs": 60000,
+      "stallCeilingMultiplier": 10
     },
     "immutable": true,
     "path": "agents.promptTimeout",
@@ -1582,6 +1583,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.promptTimeout.retryPromptTimeoutMs",
     "type": "integer"
+  },
+  {
+    "default": 10,
+    "immutable": true,
+    "path": "agents.promptTimeout.stallCeilingMultiplier",
+    "type": "number"
   },
   {
     "default": "default",
@@ -7923,7 +7930,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "preserveRecent": 4,
         "promptTimeout": {
           "promptTimeoutMs": 180000,
-          "retryPromptTimeoutMs": 60000
+          "retryPromptTimeoutMs": 60000,
+          "stallCeilingMultiplier": 10
         },
         "provider": "default",
         "rag": {
@@ -16550,7 +16558,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "additionalProperties": false,
       "default": {
         "promptTimeoutMs": 180000,
-        "retryPromptTimeoutMs": 60000
+        "retryPromptTimeoutMs": 60000,
+        "stallCeilingMultiplier": 10
       },
       "properties": {
         "promptTimeoutMs": {
@@ -16564,11 +16573,17 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
+        },
+        "stallCeilingMultiplier": {
+          "default": 10,
+          "exclusiveMinimum": 0,
+          "type": "number"
         }
       },
       "required": [
         "promptTimeoutMs",
-        "retryPromptTimeoutMs"
+        "retryPromptTimeoutMs",
+        "stallCeilingMultiplier"
       ],
       "type": "object"
     },
@@ -26921,7 +26936,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "additionalProperties": false,
             "default": {
               "promptTimeoutMs": 180000,
-              "retryPromptTimeoutMs": 60000
+              "retryPromptTimeoutMs": 60000,
+              "stallCeilingMultiplier": 10
             },
             "properties": {
               "promptTimeoutMs": {
@@ -26935,11 +26951,17 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991,
                 "type": "integer"
+              },
+              "stallCeilingMultiplier": {
+                "default": 10,
+                "exclusiveMinimum": 0,
+                "type": "number"
               }
             },
             "required": [
               "promptTimeoutMs",
-              "retryPromptTimeoutMs"
+              "retryPromptTimeoutMs",
+              "stallCeilingMultiplier"
             ],
             "type": "object"
           },
@@ -29206,7 +29228,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "preserveRecent": 4,
           "promptTimeout": {
             "promptTimeoutMs": 180000,
-            "retryPromptTimeoutMs": 60000
+            "retryPromptTimeoutMs": 60000,
+            "stallCeilingMultiplier": 10
           },
           "provider": "default",
           "rag": {

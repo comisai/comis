@@ -125,6 +125,14 @@ export const PromptTimeoutConfigSchema = z.strictObject({
   promptTimeoutMs: z.number().int().positive().default(180_000),
   /** Wall-clock timeout for retry prompt calls in milliseconds. Default: 60s. */
   retryPromptTimeoutMs: z.number().int().positive().default(60_000),
+  /**
+   * Makespan ceiling multiplier (LAT-02, R-1 non-optional): a
+   * streaming-but-runaway generation is aborted at
+   * promptTimeoutMs x stallCeilingMultiplier even though stream/tool
+   * activity keeps resetting the stall budget (gemma4 16x/810s receipt,
+   * scripts/bench-small-model/README.md). Default: 10.
+   */
+  stallCeilingMultiplier: z.number().positive().default(10),
 });
 
 /**

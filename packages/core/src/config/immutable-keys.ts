@@ -31,6 +31,7 @@ export const MUTABLE_CONFIG_OVERRIDES: readonly string[] = [
   // triggering Zod unrecognized_keys rejection.
   "agents.*.promptTimeout.promptTimeoutMs",      // Allow runtime tuning
   "agents.*.promptTimeout.retryPromptTimeoutMs",  // Allow runtime tuning
+  "agents.*.promptTimeout.stallCeilingMultiplier", // Allow runtime tuning (LAT-02; same family as the two keys above)
   "agents.*.operationModels",                     // Allow runtime model tiering tuning
   "agents.*.model",                               // Allow runtime model switching
   "agents.*.provider",                            // Allow runtime provider switching
