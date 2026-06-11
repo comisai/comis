@@ -293,7 +293,28 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
   });
 
   // OpenAI /v1/chat/completions
+  // Model validation (live finding 2026-06-11): the route factory's
+  // resolveModel → 404 guard was DEAD because the wiring never passed it —
+  // model: "anything-at-all" returned 200 served by the default agent.
+  // Accepted forms, all resolved against the configured agents (the same
+  // catalog /v1/models advertises): "provider/model", the bare model id,
+  // or an agent id. Anything else → 404 Model not found.
+  const resolveModel = (modelId: string): { provider: string; modelId: string } | undefined => {
+    for (const [agentId, agentCfg] of Object.entries(agents)) {
+      const provider = agentCfg.provider;
+      const model = agentCfg.model;
+      if (
+        modelId === `${provider}/${model}` ||
+        modelId === model ||
+        modelId === agentId
+      ) {
+        return { provider, modelId: model };
+      }
+    }
+    return undefined;
+  };
   const completionsApp = createOpenaiCompletionsRoute({
+    resolveModel,
     executeAgent: async ({ message, systemPrompt, sessionKey, onDelta }) => {
       const enrichedText = await preprocessMessageText(message);
       const msg: NormalizedMessage = {
