@@ -31,20 +31,52 @@ export type { TokenAnchor };
  * - H = availableHistoryTokens (remaining budget for conversation history)
  */
 /**
- * Which config knob clamped the effective window below the model's declared
- * contextWindow. "none" = no cap applied (frontier/mid, explicit 0 = uncapped,
- * or the declared window already fits under the class cap). Closed union —
- * the literal member names ARE the `contextEngine.budget.*` knob names so
- * error strings and log lines can name the exact setting to raise.
+ * What clamped the effective window below the model's configured contextWindow.
+ * "none" = no clamp (frontier/mid, explicit 0 = uncapped, or the configured
+ * window already fits). Closed union — but the member names are NO LONGER all
+ * `contextEngine.budget.*` knob names (KNOB-02 ended that invariant):
+ * `effectiveContextCapSmall` / `effectiveContextCapNano` ARE knob names, while
+ * `"served"` means the Ollama-served window bound (its knobs live in Ollama:
+ * the `OLLAMA_CONTEXT_LENGTH` env on `ollama serve`, or a Modelfile
+ * `PARAMETER num_ctx`). Consumers MUST build knob strings via the errors.ts
+ * branching helpers (`describeWindowCap` / `CAP_KNOB_BY_SOURCE`) — NEVER
+ * template `contextEngine.budget.${source}` (renders a nonsense knob for
+ * "served").
  */
-export type WindowCapSource = "effectiveContextCapSmall" | "effectiveContextCapNano" | "none";
+export type WindowCapSource =
+  | "effectiveContextCapSmall"
+  | "effectiveContextCapNano"
+  | "served"
+  | "none";
+
+/**
+ * Window provenance threaded from the executor's resolveEffectiveContextWindow
+ * reconcile (pi-executor) into computeTokenBudgetForProfile (KNOB-02). Absent ⇒
+ * byte-identical pre-provenance behavior (I3 frontier/mid pin). reconcileSource
+ * reuses the EffectiveContextWindowResult.source vocabulary.
+ */
+export interface WindowProvenance {
+  /** The model's TRUE configured contextWindow (registry-enriched), BEFORE the
+   *  executor overwrote profile.contextWindow with the reconciled value. */
+  configuredWindow: number;
+  /** The Ollama-served num_ctx discovered by the boot probe (absent when no
+   *  probe result exists for the provider). */
+  served?: number;
+  /** Which constraint won the executor-side reconcile. */
+  reconcileSource: "configured" | "served" | "capability";
+}
 
 /**
  * Capped-window provenance carried into the exhaustion throw / WARN / events
  * (W1 obs-llm-troubleshooting). A strict subset of TokenBudget so call sites
  * can pass the budget's own fields without re-deriving anything.
+ * servedWindowTokens (KNOB-02) lets the double-cap message name the whole
+ * chain (configured → served → class cap).
  */
-export type ContextWindowCapInfo = Pick<TokenBudget, "rawContextWindowTokens" | "windowCapSource">;
+export type ContextWindowCapInfo = Pick<
+  TokenBudget,
+  "rawContextWindowTokens" | "windowCapSource" | "servedWindowTokens"
+>;
 
 export interface TokenBudget {
   /** W: model context window size in tokens. */
@@ -57,6 +89,9 @@ export interface TokenBudget {
   /** Which knob clamped windowTokens below rawContextWindowTokens ("none" when
    *  uncapped). See WindowCapSource. */
   windowCapSource: WindowCapSource;
+  /** Ollama-served num_ctx when served-window provenance was threaded
+   *  (KNOB-02); absent otherwise. */
+  servedWindowTokens?: number;
   /** S: estimated tokens consumed by system prompt and tool definitions. */
   systemTokens: number;
   /** O: tokens reserved for model output generation. */
@@ -257,6 +292,12 @@ export interface ContextEngineDeps {
    *  budget with 8K-starvation fix and 256K-overfill cap for small/nano).
    *  Absent ⇒ lcd-assembler applies the fail-closed nano cap + emits a config WARN. */
   modelProfile?: import("../executor/model-profile.js").ModelProfile;
+  /** KNOB-02 (Phase 176): window provenance from the executor's
+   *  resolveEffectiveContextWindow reconcile, passed as the 7th argument to
+   *  computeTokenBudgetForProfile so a served-bound budget reports the TRUE
+   *  configured window and names "served" as the cap source.
+   *  Absent ⇒ budget reports profile.contextWindow as raw (pre-KNOB-02 behavior). */
+  windowProvenance?: WindowProvenance;
 
   // --- Phase 166 CWF-02: pre-flight fit check + security-pin threading ---
 

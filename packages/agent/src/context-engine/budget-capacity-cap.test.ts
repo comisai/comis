@@ -139,4 +139,151 @@ describe("computeTokenBudgetForProfile — C1", () => {
       expect(budget.windowCapSource).toBe("none");
     });
   });
+
+  // KNOB-02 (Phase 176): served-window provenance. The executor overwrites
+  // profile.contextWindow with the RECONCILED (possibly Ollama-served) value
+  // before the budget ever sees it (pi-executor.ts resolveModelProfile call),
+  // so today a served-bound turn misreports the served value as "the model's
+  // declared window" with windowCapSource:"none" — the operator never learns
+  // the configured window exists. The optional 7th windowProvenance parameter
+  // carries { configuredWindow, served?, reconcileSource } so the budget can
+  // report the TRUE configured window and name "served" as the cap source.
+  describe("KNOB-02: served-window provenance (windowProvenance 7th param)", () => {
+    it("KNOB-02-1: served-bound profile reports the TRUE configured window and windowCapSource 'served'", () => {
+      // Executor-overwritten contextWindow = the served 8192; configured = 131072.
+      // Pre-patch truth: rawContextWindowTokens === 8192 (the served value
+      // misreported as declared) and windowCapSource === "none".
+      const budget = computeTokenBudgetForProfile(
+        { ...SMALL_256K_PROFILE, contextWindow: 8_192 },
+        1_000,
+        0,
+        -1,
+        32_000,
+        16_000,
+        { configuredWindow: 131_072, served: 8_192, reconcileSource: "served" },
+      );
+      expect(budget.rawContextWindowTokens).toBe(131_072);
+      expect(budget.windowCapSource).toBe("served");
+      expect(budget.servedWindowTokens).toBe(8_192);
+    });
+
+    it("KNOB-02-2: double-cap — class cap bites tighter than served: the cap keeps the source, served is carried", () => {
+      // served 50000 bound first (executor-reconciled contextWindow), but the
+      // small class cap 32000 clamps further → source = the cap knob, raw = the
+      // TRUE configured window, servedWindowTokens carried for the full chain.
+      const budget = computeTokenBudgetForProfile(
+        { ...SMALL_256K_PROFILE, contextWindow: 50_000 },
+        1_000,
+        0,
+        -1,
+        32_000,
+        16_000,
+        { configuredWindow: 131_072, served: 50_000, reconcileSource: "served" },
+      );
+      expect(budget.windowCapSource).toBe("effectiveContextCapSmall");
+      expect(budget.rawContextWindowTokens).toBe(131_072);
+      expect(budget.servedWindowTokens).toBe(50_000);
+    });
+
+    it("KNOB-02-3: capability reconcile upstream — the class knob is named, never a silent 'none' clamp", () => {
+      // The executor's capability cap bound the window upstream (contextWindow
+      // arrives already at 32000) — the budget's own cap bit never fires, but
+      // the clamp must still be named (no silent clamp).
+      const budget = computeTokenBudgetForProfile(
+        { ...SMALL_256K_PROFILE, contextWindow: 32_000 },
+        1_000,
+        0,
+        -1,
+        32_000,
+        16_000,
+        { configuredWindow: 131_072, reconcileSource: "capability" },
+      );
+      expect(budget.windowCapSource).toBe("effectiveContextCapSmall");
+      expect(budget.rawContextWindowTokens).toBe(131_072);
+      expect(budget.servedWindowTokens).toBeUndefined();
+    });
+
+    it("KNOB-02-4: I3 pin — without the 7th arg every capability class is byte-identical to pre-provenance output", () => {
+      // Inline pre-patch literals (NOT self-comparison of two calls): these are
+      // the exact TokenBudget values computeTokenBudgetForProfile produced
+      // BEFORE the windowProvenance parameter existed. They must keep passing.
+      const frontier = computeTokenBudgetForProfile(FRONTIER_PROFILE, S, P, -1);
+      expect(frontier).toEqual({
+        windowTokens: 256_000,
+        rawContextWindowTokens: 256_000,
+        windowCapSource: "none",
+        systemTokens: 5_000,
+        outputReserveTokens: 8_192,
+        safetyMarginTokens: 12_800,
+        contextRotBufferTokens: 64_000,
+        freshTailPreambleTokens: 1_000,
+        availableHistoryTokens: 165_008,
+        cacheFenceIndex: -1,
+      });
+
+      const midProfile: ModelProfile = { ...FRONTIER_PROFILE, capabilityClass: "mid", contextWindow: 128_000 };
+      const mid = computeTokenBudgetForProfile(midProfile, S, P, -1);
+      expect(mid).toEqual({
+        windowTokens: 128_000,
+        rawContextWindowTokens: 128_000,
+        windowCapSource: "none",
+        systemTokens: 5_000,
+        outputReserveTokens: 8_192,
+        safetyMarginTokens: 6_400,
+        contextRotBufferTokens: 32_000,
+        freshTailPreambleTokens: 1_000,
+        availableHistoryTokens: 75_408,
+        cacheFenceIndex: -1,
+      });
+
+      const small = computeTokenBudgetForProfile(SMALL_256K_PROFILE, S, P, -1);
+      expect(small).toEqual({
+        windowTokens: 32_000,
+        rawContextWindowTokens: 256_000,
+        windowCapSource: "effectiveContextCapSmall",
+        systemTokens: 5_000,
+        outputReserveTokens: 8_192,
+        safetyMarginTokens: 2_048,
+        contextRotBufferTokens: 8_000,
+        freshTailPreambleTokens: 1_000,
+        availableHistoryTokens: 7_760,
+        cacheFenceIndex: -1,
+      });
+
+      const nanoProfile: ModelProfile = { ...SMALL_256K_PROFILE, capabilityClass: "nano", maxOutputTokens: 4_096 };
+      const nano = computeTokenBudgetForProfile(nanoProfile, S, P, -1);
+      expect(nano).toEqual({
+        windowTokens: 16_000,
+        rawContextWindowTokens: 256_000,
+        windowCapSource: "effectiveContextCapNano",
+        systemTokens: 5_000,
+        outputReserveTokens: 4_096,
+        safetyMarginTokens: 2_048,
+        contextRotBufferTokens: 4_000,
+        freshTailPreambleTokens: 1_000,
+        availableHistoryTokens: 4_096,
+        cacheFenceIndex: -1,
+      });
+    });
+
+    it("KNOB-02-5: provenance present but nothing bound (reconcileSource 'configured') is identical to no-provenance output", () => {
+      const profile: ModelProfile = { ...FRONTIER_PROFILE, contextWindow: 131_072 };
+      const budget = computeTokenBudgetForProfile(profile, S, P, -1, undefined, undefined, {
+        configuredWindow: 131_072,
+        reconcileSource: "configured",
+      });
+      expect(budget).toEqual({
+        windowTokens: 131_072,
+        rawContextWindowTokens: 131_072,
+        windowCapSource: "none",
+        systemTokens: 5_000,
+        outputReserveTokens: 8_192,
+        safetyMarginTokens: 6_554,
+        contextRotBufferTokens: 32_768,
+        freshTailPreambleTokens: 1_000,
+        availableHistoryTokens: 77_558,
+        cacheFenceIndex: -1,
+      });
+    });
+  });
 });

@@ -358,8 +358,11 @@ export interface MessagingEvents {
     windowTokens: number;
     /** The model's declared contextWindow before any cap (== windowTokens when uncapped). */
     rawContextWindowTokens: number;
-    /** Which contextEngine.budget.* knob clamped the window (closed union — never an open string). */
-    windowCapSource: "effectiveContextCapSmall" | "effectiveContextCapNano" | "none";
+    /** What clamped the window (closed union — never an open string). The cap
+     *  members are contextEngine.budget.* knob names; "served" (KNOB-02) means
+     *  the Ollama-served num_ctx bound the window (knobs: OLLAMA_CONTEXT_LENGTH
+     *  env / Modelfile PARAMETER num_ctx). */
+    windowCapSource: "effectiveContextCapSmall" | "effectiveContextCapNano" | "served" | "none";
     /** S: system prompt + tool schemas estimate. */
     systemTokens: number;
     /** Estimated fresh-tail tokens (latest user message + preamble + pending tool results). */

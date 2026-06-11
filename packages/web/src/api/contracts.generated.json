@@ -7598,6 +7598,7 @@
               "enum": [
                 "effectiveContextCapSmall",
                 "effectiveContextCapNano",
+                "served",
                 "none"
               ]
             },

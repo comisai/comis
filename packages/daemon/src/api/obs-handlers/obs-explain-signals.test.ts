@@ -466,6 +466,37 @@ describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
     ]);
     expect(s.contextBudget).toBeUndefined();
   });
+
+  it("KNOB-02-10: a windowCapSource 'served' record SURVIVES the safeParse gate onto contextBudget", () => {
+    // KNOB-02 (Phase 176): "served" joins the WindowCapSource closed union. If
+    // the IncidentContextBudgetSchema enum lags, safeParse silently DROPS the
+    // whole budget equation from `comis explain` — the exact silent-degrade
+    // class this milestone kills. Every other field is valid per the schema, so
+    // the ONLY thing that can reject this record is the enum.
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "context.budget",
+        seq: 1,
+        data: {
+          windowTokens: 8_192,
+          rawContextWindowTokens: 131_072,
+          windowCapSource: "served",
+          systemTokens: 5_000,
+          freshTailTokens: 1_200,
+          budgetedHistoryTokens: 0,
+          keptCount: 0,
+          assembledInputTokens: 7_800,
+          outputHeadroom: 768,
+          verdict: "exhausted",
+        },
+      },
+    ]);
+    expect(s.contextBudget).toBeDefined();
+    expect(s.contextBudget?.windowCapSource).toBe("served");
+    expect(s.contextBudget?.rawContextWindowTokens).toBe(131_072);
+  });
 });
 
 // ---------------------------------------------------------------------------
