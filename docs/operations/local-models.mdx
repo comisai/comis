@@ -31,9 +31,8 @@ daemon-routed live tier under `test/live/` (`test/live/scenarios/local/local-mod
 | `gemini-flash-lite` | Frontier control | 100% across the matrix at ~2,240 ms — the calibration baseline for what "good" looks like |
 
 **`qwen3.6:35b`** is the recommended local executive. The 9/9 is a bench-scenario count (the
-full failure-taxonomy matrix: reliability, honesty, comprehension, security), not an
-orchestration-node count — and the security floor held even with a bare prompt carrying no
-guardrail instructions at all.
+full failure-taxonomy scenario matrix), not an orchestration-node count — and the security
+floor held even with a bare prompt carrying no guardrail instructions at all.
 
 **`qwen3.6:27b`** is a viable smaller alternative. Its security floor is identical to 35b. The
 one measured cliff is comprehension 7/8: it fails the single-step "turn this natural-language
