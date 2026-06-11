@@ -189,6 +189,99 @@ describe("createLlmCompactionLayer", () => {
   });
 
   // -------------------------------------------------------------------------
+  // 1b. FLOOR-02 (Phase 176) — the pipeline-path parity verdict pins.
+  //
+  // The "pipeline" context engine has no CWF-02 preflight, no output-headroom
+  // enforcement, and no proactive exhaustion classification (those are
+  // dag-only). Its de-facto fit guard is THIS budget-aware 85% compaction
+  // trigger (llm-compaction.ts: thresholdTokens =
+  // floor(budget.windowTokens * COMPACTION_TRIGGER_PERCENT / 100)). These are
+  // CHARACTERIZATION pins of existing behavior — the written half of the
+  // FLOOR-02 verdict (the doc half lives in docs/reference/config-yaml.mdx).
+  // The below-threshold direction is pinned above; these pin the other
+  // direction (arms at threshold) and the threshold's derivation source.
+  // -------------------------------------------------------------------------
+
+  it("FLOOR-02-1: arms compaction when above 85% of budget.windowTokens (pipeline de-facto fit guard — parity verdict pin)", async () => {
+    const { deps, logger } = createMockDeps();
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    // 10 text messages × ~50K chars ≈ 500K chars ≈ 143K tokens (ratio 3.5) —
+    // ABOVE floor(128_000 × 85 / 100) = 108_800 tokens, while messageCount 10
+    // stays below the 60-message block-count trigger, so the firing trigger is
+    // the 85% token threshold. Zoning: tail budget 76_408 × 3.5 ≈ 267K chars
+    // fits ~5 messages; head 0 (no prefixAnchorTurns) → middle ≥ 3, so the
+    // compaction actually runs (not just evaluates).
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 5; i++) {
+      messages.push(makeUserMsg(`Q${i}: ` + "x".repeat(50_000)));
+      messages.push(makeAssistantMsg(`A${i}: ` + "y".repeat(50_000)));
+    }
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    const result = await layer.apply(messages, BUDGET);
+
+    // The de-facto guard armed: summarization ran and the context was compacted.
+    expect(mockGenerateSummary).toHaveBeenCalledTimes(1);
+    expect(result).not.toBe(messages);
+    // The trigger that fired is the budget-window token threshold (cooldown=5
+    // did not suppress the FIRST trigger — turnsSinceLastCompaction starts at
+    // Infinity, exactly as the :180 below-threshold pin relies on).
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger: "token_threshold",
+        thresholdTokens: Math.floor((BUDGET.windowTokens * 85) / 100),
+        windowTokens: BUDGET.windowTokens,
+        errorKind: "resource",
+      }),
+      "LLM compaction triggered: context exceeds 85% threshold",
+    );
+  });
+
+  it("FLOOR-02-2: threshold derives from budget.windowTokens, not the model's configured contextWindow", async () => {
+    const { deps, logger } = createMockDeps();
+    // The deps' model declares contextWindow 128_000 (createMockDeps), but the
+    // budget handed to the layer carries a SMALLER windowTokens — the shape a
+    // served/capability-capped budget would have. The trigger must key on the
+    // budget value.
+    const smallBudget: TokenBudget = {
+      windowTokens: 32_000, // ≪ deps.getModel().contextWindow (128_000)
+      systemTokens: 2_000,
+      outputReserveTokens: 4_096,
+      safetyMarginTokens: 2_048,
+      contextRotBufferTokens: 8_000,
+      availableHistoryTokens: 15_856,
+    };
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    // 10 text messages × ~16K chars ≈ 160K chars ≈ 46K tokens (ratio 3.5):
+    //   ABOVE floor(32_000 × 85 / 100) = 27_200  (85% of budget.windowTokens)
+    //   BELOW floor(128_000 × 85 / 100) = 108_800 (85% of the model's window)
+    // If the threshold derived from the model's configured contextWindow, this
+    // conversation would NOT trigger — the firing itself proves budget-keying.
+    // Zoning: tail budget 15_856 × 3.5 ≈ 55K chars fits ~3 messages → middle 7 ≥ 3.
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 5; i++) {
+      messages.push(makeUserMsg(`Q${i}: ` + "x".repeat(16_000)));
+      messages.push(makeAssistantMsg(`A${i}: ` + "y".repeat(16_000)));
+    }
+    mockGenerateSummary.mockResolvedValueOnce(buildValidSummary());
+
+    const result = await layer.apply(messages, smallBudget);
+
+    expect(mockGenerateSummary).toHaveBeenCalledTimes(1);
+    expect(result).not.toBe(messages);
+    // The logged threshold is floor(budget.windowTokens × 85 / 100) — the
+    // budget value, NOT floor(128_000 × 85 / 100) = 108_800 from the model.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger: "token_threshold",
+        thresholdTokens: 27_200,
+        windowTokens: 32_000,
+      }),
+      "LLM compaction triggered: context exceeds 85% threshold",
+    );
+  });
+
+  // -------------------------------------------------------------------------
   // 2. Within cooldown -- no compaction
   // -------------------------------------------------------------------------
 
