@@ -61,20 +61,13 @@ import {
 import { setupSingleAgent } from "./setup-agents-runtime.js";
 import type { SingleAgentDeps } from "./setup-agents-types.js";
 import { resolveSubAgentToolNames } from "./setup-agents-tooling.js";
+import { warnEncryptedModeOnce } from "./setup-agents-oauth.js";
 
 // PiSessionAdapter type — inferred from @comis/agent's createComisSessionManager.
 // Mirrored here (not imported from runtime) because the runtime module already
 // has the same alias; both leaves derive it independently from the same factory.
 import type { createComisSessionManager } from "@comis/agent";
 type PiSessionAdapter = ReturnType<typeof createComisSessionManager>;
-
-// Once-per-daemon-process WARN flag for the encrypted-store hot-reload
-// limitation. Lifted to module scope so the flag survives across per-agent
-// setupSingleAgent calls AND any future re-invocations of setupAgents within
-// the same process. Operator-friendly notice — fires exactly once per daemon
-// process so the operator sees it in startup logs without N-times-per-agent
-// noise.
-let encryptedModeWarnFired = false;
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -274,6 +267,14 @@ export async function setupAgents(deps: {
    *  Map from provider config key (e.g. "qwen36-local") to discovered num_ctx.
    *  Absent → probe not run or all failed; executors fall back to configured window. */
   servedWindowByProvider?: Map<string, number>;
+  /** KNOB-01/03: daemon-owned collector — one served-vs-configured comparison per
+   *  provider; daemon.ts derives servedBelowConfiguredCount from it at the posture
+   *  write (one comparison, two surfaces — no drift). */
+  servedWindowComparisons?: Map<string, import("@comis/agent").ServedWindowComparison>;
+  /** FLOOR-01: daemon-owned collector of per-agent boot window info (registry-mirrored
+   *  configured window + reconciled effective window + profile) — consumed by the
+   *  daemon's viable-floor loop after setupTools. */
+  agentBootWindowInfo?: Map<string, import("@comis/agent").AgentBootWindowInfo>;
 }): Promise<AgentsResult> {
   const { container, memoryAdapter, sessionStore, agentLogger } = deps;
 
@@ -283,23 +284,9 @@ export async function setupAgents(deps: {
   // Inject module-level logger for tool schema normalization pipeline
   setToolNormalizationLogger(agentLogger.child({ submodule: "tool-normalize" }));
 
-  // Once-per-daemon WARN for the encrypted-store hot-reload limitation.
-  // Placed in setupAgents() body (NOT setupSingleAgent) so the notice fires
-  // exactly once per daemon process — not N times for N agents. Operator
-  // sees this in startup logs without surprise; daemon restart is required
-  // to pick up CLI-written OAuth profiles in encrypted-store mode.
-  const overallStorageMode = container.config.security.storage;
-  if (overallStorageMode === "encrypted" && !encryptedModeWarnFired) {
-    encryptedModeWarnFired = true;
-    agentLogger.warn(
-      {
-        hint: "CLI auth login changes require daemon restart in encrypted mode (file-watch unsupported on encrypted SQLite WAL)",
-        errorKind: "config" as const,
-        submodule: "setup-agents",
-      },
-      "OAuth hot-reload disabled in encrypted-store mode",
-    );
-  }
+  // Once-per-daemon encrypted-store hot-reload notice (module latch lives in
+  // setup-agents-oauth.ts — the leaf that owns the limitation it describes).
+  warnEncryptedModeOnce(container.config.security.storage, agentLogger);
 
   const agents = container.config.agents; // Always populated after schema transform
   const routingConfig = container.config.routing;
@@ -503,6 +490,10 @@ export async function setupAgents(deps: {
     trajectoryRegistry,
     // CWF-03: Ollama served-window probe result from bootAgents.
     servedWindowByProvider: deps.servedWindowByProvider,
+    // KNOB-01/03 + FLOOR-01: the daemon-owned boot-honesty collector maps —
+    // populated per-agent in setupSingleAgent beside the pi ModelRegistry.
+    servedWindowComparisons: deps.servedWindowComparisons,
+    agentBootWindowInfo: deps.agentBootWindowInfo,
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {

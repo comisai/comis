@@ -20,6 +20,39 @@ import { createAuthProvider, type AuthProvider, type AuthProviderConfig } from "
 import { safePath, type AppContainer, type CredentialStorageMode, type FileLockPort, type OAuthCredentialStorePort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
+// Once-per-daemon-process WARN flag for the encrypted-store hot-reload
+// limitation. Module scope so the flag survives across per-agent
+// setupSingleAgent calls AND any future re-invocations of setupAgents within
+// the same process.
+let encryptedModeWarnFired = false;
+
+/**
+ * Once-per-daemon WARN for the encrypted-store hot-reload limitation.
+ *
+ * Called from setupAgents() (NOT setupSingleAgent) so the notice fires exactly
+ * once per daemon process — not N times for N agents. Operator sees this in
+ * startup logs without surprise; daemon restart is required to pick up
+ * CLI-written OAuth profiles in encrypted-store mode (file-watch is
+ * unsupported on encrypted SQLite WAL — see `watchPath` below). Lives in this
+ * OAuth leaf (the limitation it describes) since the registry leaf sits at its
+ * per-subdirectory size cap.
+ */
+export function warnEncryptedModeOnce(
+  storageMode: CredentialStorageMode,
+  agentLogger: ComisLogger,
+): void {
+  if (storageMode !== "encrypted" || encryptedModeWarnFired) return;
+  encryptedModeWarnFired = true;
+  agentLogger.warn(
+    {
+      hint: "CLI auth login changes require daemon restart in encrypted mode (file-watch unsupported on encrypted SQLite WAL)",
+      errorKind: "config" as const,
+      submodule: "setup-agents",
+    },
+    "OAuth hot-reload disabled in encrypted-store mode",
+  );
+}
+
 /** Inputs for {@link wireAuthProvider} — exactly the locals the OAuth block needs. */
 export interface WireAuthProviderArgs {
   /** Agent being (re)built; keys the live oauthProfiles dereference. */

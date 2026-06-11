@@ -536,6 +536,16 @@ export interface BootContext {
    * MCP OAuth persistence). Kills the encrypted-mode split-brain.
    */
   mcpTokenStore?: Awaited<ReturnType<typeof selectMcpTokenStore>>;
+  /** KNOB-01/03 (Phase 176): daemon-owned collector — one served-vs-configured
+   *  comparison per provider, populated in setup-agents beside the per-agent
+   *  registry (bootAgents) and read at the bootShutdown posture write
+   *  (servedBelowConfiguredCount — one comparison, two surfaces, no drift). */
+  servedWindowComparisons?: Map<string, import("@comis/agent").ServedWindowComparison>;
+  /** FLOOR-01 (Phase 176): daemon-owned collector of per-agent boot window info
+   *  (registry-mirrored configured + reconciled effective window + profile),
+   *  populated in setup-agents (bootAgents) and consumed by the bootChannels
+   *  viable-floor loop between setupTools and setupChannels. */
+  agentBootWindowInfo?: Map<string, import("@comis/agent").AgentBootWindowInfo>;
   // Restart continuation tracker
   continuationTracker?: ReturnType<typeof createRestartContinuationTracker>;
   // Subprocess envs
