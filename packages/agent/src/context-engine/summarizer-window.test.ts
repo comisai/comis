@@ -96,3 +96,111 @@ describe("resolveSummarizerWindowTokens (SUMW-01)", () => {
     expect(win).toBe(200_000);
   });
 });
+
+// ===========================================================================
+// INT-W1 (milestone integration WARNING 1): the Phase-176 SERVED-window truth
+// must reach the SUMW-01 resolution. The flagship gap: a provider serving
+// 8_192 against a configured 131_072 with the summarizer = the primary model —
+// resolveSummarizerWindowTokens returned the configured 131_072, the
+// leaf/condense clamps never bound, and a ~20K-token summarize input was
+// dispatched to a provider serving 8K (silent input truncation of the summary
+// source). The fix: each candidate model carries the served window that binds
+// IT (`overrideModel.servedWindow` / `primaryServedWindow`), provider-gated at
+// the wiring site against the 176 `{providerKey, window}` pair (WR-02 space),
+// and the helper takes min(configured, served) for the candidate that
+// actually summarizes. The SUMW-01 describe above is the no-served parity pin:
+// every case there carries NO served field and must stay byte-identical.
+// ===========================================================================
+describe("resolveSummarizerWindowTokens — served-window truth (INT-W1)", () => {
+  const snapshot = { provider: "anthropic", contextWindow: 200_000, reasoning: true } as const;
+  /** Wider-than-the-helper's-Pick deps shape (a variable, not a fresh literal,
+   *  so it stays assignable to the helper's parameter across RED → GREEN). */
+  type WindowDeps = Pick<
+    LeafSummarizerDeps,
+    "overrideModel" | "getRealModel" | "getModel" | "primaryServedWindow"
+  >;
+
+  it("flagship: a served-bound PRIMARY summarizer resolves min(configured, served) — configured 131_072 / served 8_192 → 8_192", () => {
+    const deps: WindowDeps = {
+      getModel: () => ({ ...snapshot }),
+      getRealModel: () => ({ id: "primary", provider: "ollama", contextWindow: 131_072 }),
+      primaryServedWindow: 8_192,
+    };
+    expect(resolveSummarizerWindowTokens(deps)).toBe(8_192);
+  });
+
+  it("provider scoping (WR-02): an override on a DIFFERENT provider is NOT clamped by the primary provider's served window", () => {
+    // operationModels.compaction → a cloud summarizer while the local primary
+    // is served-bound at 8_192: the wiring site attaches NO servedWindow to the
+    // override (provider mismatch), so the override's own window governs.
+    const deps: WindowDeps = {
+      getModel: () => ({ ...snapshot }),
+      getRealModel: () => ({ id: "primary", provider: "ollama", contextWindow: 131_072 }),
+      primaryServedWindow: 8_192,
+      overrideModel: {
+        model: { id: "cloud-summarizer", provider: "anthropic", contextWindow: 200_000 },
+        getApiKey: async () => "k",
+      },
+    };
+    expect(resolveSummarizerWindowTokens(deps)).toBe(200_000);
+  });
+
+  it("an override resolved onto the SAME served provider carries its own servedWindow and is clamped by it", () => {
+    const deps: WindowDeps = {
+      getModel: () => ({ ...snapshot }),
+      getRealModel: () => ({ id: "primary", provider: "anthropic", contextWindow: 200_000 }),
+      overrideModel: {
+        model: { id: "local-summarizer", provider: "ollama", contextWindow: 32_768 },
+        getApiKey: async () => "k",
+        servedWindow: 8_192,
+      },
+    };
+    expect(resolveSummarizerWindowTokens(deps)).toBe(8_192);
+  });
+
+  it("min() direction: served LARGER than configured keeps the configured window (serving more never raises the window)", () => {
+    const deps: WindowDeps = {
+      getModel: () => ({ ...snapshot }),
+      getRealModel: () => ({ id: "primary", provider: "ollama", contextWindow: 131_072 }),
+      primaryServedWindow: 200_000,
+    };
+    expect(resolveSummarizerWindowTokens(deps)).toBe(131_072);
+  });
+
+  it("non-finite/non-positive served values are ignored (the WR-05 finite-guard parity) — configured governs", () => {
+    for (const served of [0, -1, Number.NaN, Infinity]) {
+      const deps: WindowDeps = {
+        getModel: () => ({ ...snapshot }),
+        getRealModel: () => ({ id: "primary", provider: "ollama", contextWindow: 131_072 }),
+        primaryServedWindow: served,
+      };
+      expect(resolveSummarizerWindowTokens(deps)).toBe(131_072);
+    }
+  });
+
+  it("served applies on the snapshot-fallback path too: a windowless primary model + served 8_192 → min(snapshot, served)", () => {
+    const deps: WindowDeps = {
+      getModel: () => ({ ...snapshot }),
+      getRealModel: () => ({ id: "windowless-primary", provider: "ollama" }),
+      primaryServedWindow: 8_192,
+    };
+    expect(resolveSummarizerWindowTokens(deps)).toBe(8_192);
+  });
+
+  it("served selection mirrors the ?? model resolution: overrideModel with a nullish model falls through to the PRIMARY served value, never the override's", () => {
+    // The model resolution is `overrideModel?.model ?? getRealModel?.()` — when
+    // the override's model is nullish the PRIMARY summarizes, so the primary's
+    // served truth must bind (and the override's stale servedWindow must not).
+    const deps: WindowDeps = {
+      getModel: () => ({ ...snapshot }),
+      getRealModel: () => ({ id: "primary", provider: "ollama", contextWindow: 131_072 }),
+      primaryServedWindow: 8_192,
+      overrideModel: {
+        model: undefined,
+        getApiKey: async () => "k",
+        servedWindow: 99,
+      },
+    };
+    expect(resolveSummarizerWindowTokens(deps)).toBe(8_192);
+  });
+});

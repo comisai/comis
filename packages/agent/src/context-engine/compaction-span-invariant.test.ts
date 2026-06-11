@@ -124,3 +124,90 @@ describe("compaction span invariant (SUMW-01): structural source-locks across th
     expect(condenseTriggerSource).toContain("resolveSummarizerWindowTokens(");
   });
 });
+
+// ---------------------------------------------------------------------------
+// INT-W1 (milestone integration WARNING 1): the SERVED-window dimension. The
+// Phase-176 boot probe discovers the window the provider will ACTUALLY serve
+// (e.g. Ollama num_ctx 8_192 against a configured 131_072); the resolved
+// summarizer window must be min(configured, served) whenever the summarizer
+// executes on the provider the served value was probed from — otherwise the
+// SUMW-01 clamps size spans against a configured fiction and the provider
+// silently truncates the summarize input (the flagship gap).
+// ---------------------------------------------------------------------------
+
+describe("compaction span invariant (INT-W1): served-window arithmetic dimension", () => {
+  const cfg = ContextEngineConfigSchema.parse({});
+  const PREV_TOKENS = [0, 1_200, 2_000] as const;
+  /** configured × served grid: the flagship pair (131_072 / 8_192), a mid
+   *  served bound, and the served-larger direction (configured must govern). */
+  const SERVED_GRID = [
+    { configured: 131_072, served: 8_192 },
+    { configured: 131_072, served: 32_768 },
+    { configured: 32_768, served: 131_072 },
+  ] as const;
+
+  it("LEAF and CONDENSE clamps computed on min(configured, served) always fit the window the provider will ACTUALLY serve", () => {
+    for (const { configured, served } of SERVED_GRID) {
+      // The INT-W1 resolution: the candidate-bound served window min()s the
+      // configured window (never raises it).
+      const resolved = Math.min(configured, served);
+      // What the provider accepts is bounded by BOTH numbers.
+      const providerBound = Math.min(configured, served);
+      for (const prev of PREV_TOKENS) {
+        // Premise guard: every grid point stays above the degenerate floor.
+        expect(resolved - cfg.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS - prev).toBeGreaterThanOrEqual(
+          MIN_SHRINKABLE_LEAF_CHUNK_TOKENS,
+        );
+        // LEAF: the exact clamp formula from runOneLeafPass over the RESOLVED window.
+        const clampedLeafChunk = Math.max(
+          MIN_SHRINKABLE_LEAF_CHUNK_TOKENS,
+          Math.min(cfg.leafChunkTokens, resolved - cfg.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS - prev),
+        );
+        expect(clampedLeafChunk + cfg.leafTargetTokens + SUMMARIZER_PROMPT_OVERHEAD_TOKENS + prev).toBeLessThanOrEqual(
+          providerBound,
+        );
+        // CONDENSE: the exact budget formula from maybeRunCondensePass over the RESOLVED window.
+        const childTokenBudget = resolved - cfg.condensedTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS - prev;
+        expect(childTokenBudget).toBeGreaterThan(0);
+        expect(childTokenBudget + cfg.condensedTargetTokens + SUMMARIZER_PROMPT_OVERHEAD_TOKENS + prev).toBeLessThanOrEqual(
+          providerBound,
+        );
+      }
+    }
+  });
+});
+
+describe("compaction span invariant (INT-W1): served-window source-locks", () => {
+  const summarizerWindowSource = readFileSync(resolve(here, "summarizer-window.ts"), "utf-8");
+  const pipelineSourceForServed = readFileSync(resolve(here, "llm-compaction.ts"), "utf-8");
+  const setupSource = readFileSync(
+    resolve(here, "../executor/executor-context-engine-setup.ts"),
+    "utf-8",
+  );
+
+  it("resolveSummarizerWindowTokens consumes the CANDIDATE-BOUND served fields (deps.primaryServedWindow / deps.overrideModel?.servedWindow)", () => {
+    // The served value must ride the candidate model it was provider-gated for
+    // — a deps-level bare number the helper applies regardless of which
+    // candidate resolves would clamp cross-provider overrides (the exact
+    // WR-02 regression the binding prevents).
+    expect(summarizerWindowSource).toContain("deps.primaryServedWindow");
+    expect(summarizerWindowSource).toContain("deps.overrideModel?.servedWindow");
+  });
+
+  it("the pipeline Step-4 read binds the served value in the SAME branch that selects the summarizer model", () => {
+    // Clamp/call agreement: override-success → the override's servedWindow;
+    // override-key-failure fallback AND no-override → the primary's.
+    expect(pipelineSourceForServed).toContain("deps.overrideModel.servedWindow");
+    expect(pipelineSourceForServed).toContain("deps.primaryServedWindow");
+  });
+
+  it("the wiring site provider-gates the 176 served pair in CONFIG space (providers.entries keys — never model.provider)", () => {
+    // The override gate compares the pair's providerKey against the
+    // operation-model resolution's provider key; the primary binding reuses
+    // the executor reconcile's already-gated windowProvenance.served (WR-02 —
+    // the registry alias fallback can rename model.provider, so config-space
+    // keys are the only sound comparison).
+    expect(setupSource).toContain("providerKey === compactionResolution.provider");
+    expect(setupSource).toContain("windowProvenance?.served");
+  });
+});

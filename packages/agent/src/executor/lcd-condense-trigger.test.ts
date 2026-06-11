@@ -1196,6 +1196,46 @@ describe("SUMW-01: condense prefix clamp", () => {
     expect(fourth!.depth).toBe(1);
   });
 
+  it("INT-W1 (flagship): a served-bound PRIMARY summarizer (configured 131_072 / served 8_000, NO override) prefix-trims the condense run to the SERVED window", async () => {
+    // The milestone integration WARNING 1 scenario on the condense half:
+    // summarizer = the primary model on a provider serving 8_000 against a
+    // configured 131_072. Resolved window must be min(131_072, 8_000) = 8_000
+    // → child budget = 8_000 − 2_000 − 2_048 = 3_952 → keep 3 of the 4 ×
+    // 1_200-token children (the SUMW-01-C1 arithmetic, now bound by SERVED).
+    // Pre-INT-W1 the helper returned the configured 131_072 → all 4 children
+    // (4_800 tokens) were concatenated for a provider serving 8K (RED: 4
+    // children condensed). primaryServedWindow is the executor-reconcile-gated
+    // windowProvenance.served (WR-02: it binds exactly the getRealModel model).
+    const childIds = seedFourDepth1Children();
+    const logger = createMockLogger();
+    const { bus } = makeEventBus();
+    const deps: LeafSummarizerDeps = {
+      ...makeSummarizerDeps(shortSummarizer(), logger),
+      getRealModel: () => ({ id: "primary", provider: "ollama", contextWindow: 131_072 }),
+      primaryServedWindow: 8_000,
+    };
+
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ condensedMinFanout: 4, windowTokens: 200_000 }),
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+      bus,
+    );
+
+    // ONE depth-2 condensed summary persisted over the served-clamped 3-child
+    // prefix; the 4th child survives un-condensed for a later pass.
+    const depth2 = store.getSummaries(SCOPE).filter((s) => s.kind === "condensed" && s.depth === 2);
+    expect(depth2.length).toBe(1);
+    const rows = db
+      .prepare("SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ?")
+      .all(depth2[0]!.summaryId) as Array<{ child_summary_id: string }>;
+    expect(rows.map((r) => r.child_summary_id).sort()).toEqual([...childIds.slice(0, 3)].sort());
+  });
+
   it("SUMW-01-C2 (skip-honesty): a summarizer too small for even a 2-child prefix skips the condense cleanly — store unchanged, no throw", async () => {
     // W=4_500 → child budget 4_500 − 2_000 − 2_048 = 452 < the first child's
     // 1_200 → keep 0 < 2 → honest skip (DEBUG only — T-178-12). Pre-patch: all 4

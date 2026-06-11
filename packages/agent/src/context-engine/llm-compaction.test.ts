@@ -2006,6 +2006,87 @@ describe("SUMW-01: pipeline span clamp", () => {
     }
   });
 
+  // INT-W1 (milestone integration WARNING 1): the served-window truth must
+  // reach the pipeline Step-4 clamp too. Arithmetic for the served-bound
+  // primary (configured 128_000 from getModel(), served 8_192):
+  //   summarizerWindow = min(128_000, 8_192) = 8_192
+  //   summaryReserve   = min(4_096, ⌊8_192/4⌋ = 2_048) = 2_048
+  //   maxSpanTokens    = 8_192 − 2_048 − 2_048 = 4_096
+  const MAX_SPAN_TOKENS_SERVED_8K = 8_192 - 2_048 - 2_048; // = 4_096
+
+  it("INT-W1-P1 (flagship): a served-bound PRIMARY (no override, served 8_192) clamps the pipeline span to the SERVED window, not the configured 128K", async () => {
+    // Pre-INT-W1: the Step-4 model is getModel() (configured 128_000) →
+    // maxSpan 121_856 → the WHOLE ~19.4K-token middle in one call to a
+    // provider serving 8K — silent input truncation of the summary source
+    // (RED: the strict-subset assertion below fails).
+    const { deps } = createMockDeps();
+    deps.primaryServedWindow = 8_192; // the executor-reconcile-gated windowProvenance.served
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const middleCount = mirrorTailStartIndex(messages, smallBudget);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanArg.length).toBeGreaterThanOrEqual(1);
+    const spanTokens = spanTokensOf(spanArg);
+    expect(spanTokens).toBeGreaterThan(0);
+    expect(spanTokens).toBeLessThanOrEqual(MAX_SPAN_TOKENS_SERVED_8K);
+    // Strict subset: the served clamp actually bound (pre-INT-W1 the whole
+    // middle is passed).
+    expect(spanArg.length).toBeLessThan(middleCount);
+  });
+
+  it("INT-W1-P2 (provider scoping, WR-02): a cloud override summarizer is NOT clamped by the primary provider's served window", async () => {
+    // The wiring site attaches NO servedWindow to a cross-provider override —
+    // the override's own 200K window governs and the full middle is summarized
+    // in one call (byte-identical to SUMW-01-P4). Pins that primaryServedWindow
+    // can never leak onto an override candidate.
+    const { deps } = createMockDeps({
+      overrideModel: {
+        model: { id: "cloud-summarizer", provider: "anthropic", contextWindow: 200_000 },
+        getApiKey: vi.fn().mockResolvedValue("k"),
+      },
+    });
+    deps.primaryServedWindow = 8_192;
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const middleCount = mirrorTailStartIndex(messages, smallBudget);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanArg).toHaveLength(middleCount); // full middle — no served clamp
+  });
+
+  it("INT-W1-P3: when the override key fails and Step 4 falls back to the PRIMARY, the primary's served window binds the clamp (clamp/call agreement)", async () => {
+    // The Step-4 try/catch decides WHICH model summarizes; the served value
+    // must ride the SAME branch. Override (200K, key throws) → fallback model
+    // = getModel() (128K) + primaryServedWindow 8_192 → span ≤ 4_096 tokens.
+    // Pre-INT-W1: fallback window 128_000 → whole middle (RED).
+    const { deps } = createMockDeps({
+      overrideModel: {
+        model: { id: "cloud-summarizer", provider: "anthropic", contextWindow: 200_000 },
+        getApiKey: vi.fn().mockRejectedValue(new Error("key boom")),
+      },
+    });
+    deps.primaryServedWindow = 8_192;
+    const layer = createLlmCompactionLayer({ compactionCooldownTurns: 5 }, deps);
+    const messages = buildSpanClampConversation();
+    const middleCount = mirrorTailStartIndex(messages, smallBudget);
+    mockGenerateSummary.mockResolvedValue(buildValidSummary());
+
+    await layer.apply(messages, smallBudget);
+
+    expect(mockGenerateSummary).toHaveBeenCalled();
+    const spanArg = mockGenerateSummary.mock.calls[0][0] as AgentMessage[];
+    expect(spanTokensOf(spanArg)).toBeLessThanOrEqual(MAX_SPAN_TOKENS_SERVED_8K);
+    expect(spanArg.length).toBeLessThan(middleCount);
+  });
+
   it("SUMW-01-P5 (review CR-01): degenerate summarizer — the single oldest message escalates through the ladder, remainder conserved, never a permanent skip", async () => {
     const { deps } = createMockDeps({
       overrideModel: {

@@ -240,8 +240,26 @@ export interface LeafSummarizerDeps {
   getRealModel: () => unknown;
   /** Getter for the current model's provider API key. */
   getApiKey: () => Promise<string>;
-  /** Optional cheaper override model + key for the leaf pass. */
-  overrideModel?: { model: unknown; getApiKey: () => Promise<string> };
+  /** Optional cheaper override model + key for the leaf pass. INT-W1:
+   *  `servedWindow` is the provider-served context window binding THIS override
+   *  model — provider-gated AT THE WIRING SITE (executor-context-engine-setup)
+   *  against the Phase-176 `servedContextWindow` pair: set ONLY when the
+   *  override resolved onto the SAME `providers.entries` key the boot probe
+   *  measured (WR-02 space discipline — config keys, never `model.provider`,
+   *  which the registry alias fallback can rename). Riding ON the candidate
+   *  model preserves the provider binding structurally: the value can only
+   *  ever clamp the model it travels with — a cloud `operationModels.compaction`
+   *  override is never clamped by a local provider's served window. */
+  overrideModel?: { model: unknown; getApiKey: () => Promise<string>; servedWindow?: number };
+  /** INT-W1: the provider-served context window binding the PRIMARY
+   *  (`getRealModel`) summarizer — `windowProvenance.served`, i.e. already
+   *  gated `servedContextWindow.providerKey === resolvedProviderKey` by the
+   *  executor reconcile (pi-executor WR-02), so it binds exactly the model
+   *  `getRealModel()` returns. A plain number captured at setup time
+   *  (dispose-safe on the WR-04 deferred path). Absent ⇒ no served truth for
+   *  the primary (non-Ollama provider, probe off/failed, or provider mismatch)
+   *  — the configured window governs, byte-identical pre-INT-W1 behavior. */
+  primaryServedWindow?: number;
   // C4/C5: capability-routed compaction
   /** The agent's capability class. Defaults to "frontier" (unchanged behavior). */
   capabilityClass?: CapabilityClass;

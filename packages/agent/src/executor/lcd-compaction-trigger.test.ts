@@ -1347,6 +1347,45 @@ describe("SUMW-01: leaf chunk clamp", () => {
     expect(sizes[0]).toBe(11); // the full out-of-tail chunk — legacy sizing
   });
 
+  it("INT-W1 (flagship): a served-bound PRIMARY summarizer (configured 131_072 / served 8_192, NO override) clamps the leaf chunk to the SERVED window", async () => {
+    // The milestone integration WARNING 1 scenario: summarizer = the primary
+    // model on a provider serving 8_192 against a configured 131_072. The
+    // resolved window must be min(131_072, 8_192) = 8_192 → clamped cap =
+    // 8_192 − 1_200 − 2_048 = 4_944 → each chunk ≤ 4 × 1_000-token messages.
+    // Pre-INT-W1 the helper returned the configured 131_072 → cap stayed at
+    // the 20_000 knob → ONE ~11-message (~11K-token) chunk was dispatched to a
+    // provider serving 8K — silent input truncation of the summary source
+    // (RED). primaryServedWindow is the executor-reconcile-gated
+    // windowProvenance.served (WR-02: it binds exactly the getRealModel model).
+    seedHistory(store, 26, 1_000);
+    const logger = createMockLogger();
+    const { summarize, callSizes } = recordingSummarizer();
+    const deps = makeSummarizerDeps(summarize, logger, {
+      getRealModel: () => ({ id: "primary", provider: "ollama", contextWindow: 131_072 }),
+      primaryServedWindow: 8_192,
+    });
+
+    await runLeafPassAfterTurn({
+      store,
+      scope: SCOPE,
+      contextEngine: undefined, // schema defaults: threshold 0.75, chunk 20_000, target 1_200, tail 8
+      getSummarizerDeps: () => deps,
+      budgetWindowTokens: 32_000,
+      now: FIXED_NOW,
+      nowFn: undefined,
+      logger: logger as unknown as LeafSummarizerDeps["logger"],
+    });
+
+    // The pass armed and persisted at least one leaf summary (split, not skipped)...
+    expect(store.getSummaries(SCOPE).length).toBeGreaterThanOrEqual(1);
+    // ...and EVERY summarize call received a served-clamped chunk: ≤ 4 messages
+    // (≤ 4_000 stored tokens ≤ the 4_944 effective cap) — never the 11-message
+    // configured-window chunk the served-bound provider would truncate.
+    const sizes = callSizes();
+    expect(sizes.length).toBeGreaterThanOrEqual(1);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(4);
+  });
+
   it("SUMW-01-L3 (degenerate): a summarizer window below target+overhead floor-clamps and the SUB-MIN_SHRINKABLE chunk terminates via the too-small path — no summarize call, no throw", async () => {
     // W=3_000 → 3_000 − 1_200 − 2_048 = −248 < MIN_SHRINKABLE → the cap floors at
     // 2. The OLDEST out-of-tail message carries 1 stored token, so the selected
