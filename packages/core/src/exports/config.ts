@@ -108,6 +108,7 @@ export {
   ProvidersConfigSchema,
   UserModelSchema,
   ModelCostSchema,
+  PROVIDER_TIMEOUT_MS_DEFAULT,
   OperationModelEntrySchema,
   OperationModelsSchema,
   substituteEnvVars,

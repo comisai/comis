@@ -226,6 +226,7 @@ import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./wiring/oauth-pref
 import { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
 import { checkStorageModeConsistency } from "./wiring/setup-storage-mismatch-warn.js";
 import { buildPlaceholdersFromBindings } from "./wiring/broker-placeholder-builder.js";
+import { warnOnProviderTimeoutRedirect } from "./wiring/provider-timeout-redirect.js";
 import os from "node:os";
 import { dirname as pathDirname } from "node:path";
 import { inspect } from "node:util";
@@ -1864,6 +1865,11 @@ async function bootAgents(
     );
     return new Map<string, number>();
   });
+
+  // LAT-03: one-time redirect WARN for the config-echo-only providers.*.timeoutMs.
+  try {
+    warnOnProviderTimeoutRedirect({ providerEntries: container.config.providers?.entries ?? {}, logger: agentLogger });
+  } catch { /* fail-open — a WARN helper must never block boot (I1) */ }
 
   // KNOB-01/03 + FLOOR-01 (v2.21): daemon-owned boot-honesty collectors, populated
   // per-agent in setup-agents beside the registry; read by the bootChannels floor
