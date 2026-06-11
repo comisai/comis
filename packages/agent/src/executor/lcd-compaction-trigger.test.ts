@@ -1377,3 +1377,90 @@ describe("SUMW-01: leaf chunk clamp", () => {
     expect(callSizes().length).toBe(0); // the summarizer was never invoked
   });
 });
+
+// ===========================================================================
+// SUMW-01 review WR-05: leaf clamp defensive posture — inside the never-rejects
+// boundary + a finite guard on the derived cap (parity with the condense
+// sibling, which resolves its window inside its try and no-ops on a non-finite
+// childTokenBudget).
+// ===========================================================================
+
+describe("SUMW-01 review WR-05: leaf clamp defensive posture", () => {
+  let db: Database.Database;
+  let store: ContextStorePort;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 1536);
+    store = createLcdStore(db);
+  });
+
+  it("a throwing getRealModel degrades to the non-fatal WARN — maybeRunLeafPass never rejects (T-129-18)", async () => {
+    // The clamp's window resolution invokes the caller-supplied getRealModel().
+    // Pre-fix it executed BEFORE the try at the drain loop, so a throwing deps
+    // getter REJECTED maybeRunLeafPass — breaking the module's first
+    // load-bearing contract ("the call site simply awaits a promise that never
+    // rejects"); on the inline path that rejection fails the live turn.
+    seedHistory(store, 40, 100);
+    const logger = createMockLogger();
+    const deps = makeSummarizerDeps(shortSummarizer(), logger, {
+      getRealModel: () => {
+        throw new Error("deps getter boom");
+      },
+    });
+
+    await expect(
+      maybeRunLeafPass(
+        store,
+        SCOPE,
+        opts({ windowTokens: 1_000 }),
+        deps,
+        FIXED_NOW,
+        undefined,
+        logger as unknown as LeafSummarizerDeps["logger"],
+      ),
+    ).resolves.toBeUndefined();
+
+    // The failure degraded to the standard non-fatal WARN (turn unaffected).
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "dependency" }),
+      "LCD leaf pass failed (non-fatal)",
+    );
+  });
+
+  it("a NaN resolved window keeps the CONFIGURED chunk cap — never an unbounded chunk", async () => {
+    // 50 msgs × 1_000 stored tokens; freshTailTurns 8 (assistants at odd
+    // indices) puts the boundary at the 8th-from-last assistant (index 35):
+    // 35 out-of-tail messages = 35_000 tokens — ABOVE the configured 20_000
+    // cap, so the cap is load-bearing. Pre-fix, a NaN window made the derived
+    // cap NaN (`Math.max(2, Math.min(20_000, NaN))` → NaN), which disables
+    // selectLeafChunk's `tokens + next > cap` break entirely → the WHOLE
+    // 35-message out-of-tail history became one chunk (worse than pre-clamp,
+    // which always had the finite configured cap).
+    seedHistory(store, 50, 1_000);
+    const logger = createMockLogger();
+    const fn = vi.fn(async (_messages: AgentMessage[]) => "SHORT-LEAF-SUMMARY");
+    const deps = makeSummarizerDeps(fn as unknown as LeafSummarizer, logger, {
+      // No override; getRealModel resolves nothing usable; the snapshot
+      // fallback itself carries a NaN window → capCandidate is NaN.
+      getModel: () => ({ provider: "anthropic", contextWindow: Number.NaN, reasoning: true }),
+      getRealModel: () => ({}),
+    });
+
+    await maybeRunLeafPass(
+      store,
+      SCOPE,
+      opts({ windowTokens: 60_000 }), // utilization 50_000/60_000 ≈ 0.83 > 0.75 — armed
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+    );
+
+    const sizes = fn.mock.calls.map((c) => (c[0] as AgentMessage[]).length);
+    expect(sizes.length).toBeGreaterThanOrEqual(1);
+    // The finite guard keeps TODAY'S configured cap (20_000 → ≤ 20 messages);
+    // the NaN-disabled cap would have produced one 35-message chunk.
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(20);
+  });
+});

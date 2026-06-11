@@ -4,49 +4,37 @@
  *
  * Activates the previously-inert `contextThreshold` config: at the afterTurn
  * (`postExecution`) boundary, when context utilization exceeds
- * `contextThreshold` (0.75 × W by default), fire ONE leaf pass — select the
- * oldest out-of-tail chunk, summarize it (the Plan-03 3-level escalation), and
- * range-replace the covered `context_items` message-refs with one summary-ref at
- * the EXACT covered ordinal window (C3). Below the threshold, nothing fires (the
- * trigger is inert until load-bearing).
- *
- * Extracted into its own module because `executor-post-execution.ts` is already
- * over the 800L file-size cap — the call site there is a thin gated invocation
- * (mirroring how `ingestTurn` lives in `lcd-ingest.ts`); the body lives here.
+ * `contextThreshold` (0.75 × W by default), fire a bounded leaf-pass drain —
+ * select the oldest out-of-tail chunk, summarize it (the Plan-03 3-level
+ * escalation), and range-replace the covered `context_items` message-refs with
+ * one summary-ref at the EXACT covered ordinal window (C3). Below the
+ * threshold, nothing fires. Lives in its own module because
+ * `executor-post-execution.ts` is already at the file-size cap.
  *
  * Three load-bearing contracts (mirroring `ingestTurnGuarded`):
  *   1. NON-FATAL: a summarizer / store failure must NEVER fail the live turn.
- *      The whole body is wrapped in one try/catch → WARN (errorKind
+ *      The whole drain is wrapped in one try/catch → WARN (errorKind
  *      `dependency`) and returns; the call site simply awaits a promise that
- *      never rejects (T-129-18). The leaf summarizer's own deterministic Level-3
+ *      never rejects (T-129-18). The leaf summarizer's deterministic Level-3
  *      truncation is the in-pass degrade; a store failure is the outer degrade.
  *   2. AGENT-SIDE TOKENS: utilization + chunk-size use the STORED per-message
- *      `tokenCount` (computed at ingest via `estimateMessageTokens`, which counts
- *      the F3 `thinking` block — re-estimation under-counts); the persisted
- *      summary `tokenCount` is the leaf summarizer's `tokenCount`. The store
- *      NEVER computes tokens (the 127 contract keeps core/memory estimator-free).
+ *      `tokenCount` (computed at ingest via `estimateMessageTokens`, counting
+ *      the F3 `thinking` block — re-estimation under-counts). The store NEVER
+ *      computes tokens (the 127 contract keeps core/memory estimator-free).
  *   3. INJECTED CLOCK: every timestamp comes from the supplied `now`, never the
  *      ambient wall-clock global (the globals gate; AGENTS.md §2.2).
  *
  * The C3 ordinal mapping is the tampering guard (T-129-22): the
  * `[startOrdinal, endOrdinal]` window passed to `appendLeafSummary` is the
- * contiguous run of message-refs covering the selected chunk — `startOrdinal` is
- * the ordinal of the FIRST covered message-ref, `endOrdinal` the LAST. A wrong
- * window silently corrupts context_items ordering, so it is read back + asserted
- * in the RED test (`getContextItems` shows the summary-ref at `startOrdinal` with
- * `descendantCount == chunk length`).
+ * contiguous message-ref run covering the selected chunk; a wrong window
+ * silently corrupts context_items ordering, so it is read back + asserted in
+ * the RED test. Bounded (T-129-19): the drain is capped per turn; Phase 132
+ * wraps the injected summarizer seam with spend governance + a breaker.
  *
- * Bounded (T-129-19): ONE leaf pass per call. 129 fires inline + synchronously;
- * Phase 132 makes it deferred/background + adds bounded spend + a circuit breaker
- * — so the whole pass lives behind THIS one function for a clean 132 swap.
- *
- * Architecture cut (agent↛memory): this module imports ONLY the CORE
- * `ContextStorePort`/`ContextStoreScope`/`LcdMessage` TYPES + the core
- * `partsToMessage` runtime codec + the agent-side leaf summarizer + token
- * estimator. The concrete `createLcdStore` is injected by the daemon — this
- * module NEVER imports the memory package directly (the build cut). It NEVER logs
- * message or summary content — ids/counts/durations/level only (AGENTS.md §2.2;
- * T-129-20).
+ * Architecture cut (agent↛memory): imports ONLY core TYPES + the core
+ * `partsToMessage` codec + the agent-side summarizer/estimator. The concrete
+ * `createLcdStore` is daemon-injected (the build cut). NEVER logs message or
+ * summary content — ids/counts/durations/level only (AGENTS.md §2.2; T-129-20).
  *
  * @module
  */
@@ -90,9 +78,11 @@ import type {
 export interface LeafPassOptions {
   /** Utilization fraction that triggers a leaf pass (`contextThreshold`, 0.75). */
   contextThreshold: number;
-  /** Chunk token cap for one leaf (`leafChunkTokens`, 20_000). SUMW-01: clamped at
-   *  runtime in {@link maybeRunLeafPass} to the RESOLVED summarizer's window minus
-   *  `leafTargetTokens` + `SUMMARIZER_PROMPT_OVERHEAD_TOKENS` (floored at MIN_SHRINKABLE). */
+  /** Chunk token cap for one leaf (`leafChunkTokens`, 20_000). SUMW-01: clamped
+   *  PER PASS (in runOneLeafPass) to the RESOLVED summarizer's window minus
+   *  `leafTargetTokens` + `SUMMARIZER_PROMPT_OVERHEAD_TOKENS`, floored at
+   *  MIN_SHRINKABLE and finite-guarded (an invalid window keeps this configured
+   *  cap — never an unbounded chunk; review WR-05). */
   leafChunkTokens: number;
   /** Summary token target (`leafTargetTokens`, 1_200) → the SDK `reserveTokens`. */
   leafTargetTokens: number;
@@ -345,6 +335,7 @@ async function runOneLeafPass(
   store: ContextStorePort,
   scope: ContextStoreScope,
   opts: LeafPassOptions,
+  summarizerWindow: number,
   summarizerDeps: LeafSummarizerDeps,
   now: number,
   nowFn: (() => number) | undefined,
@@ -397,11 +388,28 @@ async function runOneLeafPass(
     }
   }
 
-  // Select the oldest out-of-tail chunk (pair-safe, capped at leafChunkTokens)
+  // SUMW-01: clamp the chunk cap to the RESOLVED summarizer's window
+  // (override-aware — never the getModel() session-primary snapshot) minus the
+  // summary target + prompt overhead, so a small compaction override is never
+  // fed an over-window chunk; the bounded drain + next-turn re-arming split the
+  // backlog. Review WR-05 finite guard (parity with the condense sibling's
+  // Number.isFinite(childTokenBudget) no-op): a non-finite candidate keeps the
+  // CONFIGURED cap — NaN would otherwise silently disable selectLeafChunk's
+  // break condition and select the whole out-of-tail history as one chunk.
+  const capCandidate = summarizerWindow - opts.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS;
+  const leafChunkCap = Number.isFinite(capCandidate)
+    ? Math.max(MIN_SHRINKABLE_LEAF_CHUNK_TOKENS, Math.min(opts.leafChunkTokens, capCandidate))
+    : opts.leafChunkTokens;
+  if (leafChunkCap < opts.leafChunkTokens) {
+    // Numbers only (I7) — a binding clamp is normal adaptive behavior, never WARN.
+    logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", summarizerWindow, configuredLeafChunkTokens: opts.leafChunkTokens, clampedLeafChunkTokens: leafChunkCap }, "lcd leaf chunk cap clamped to the resolved summarizer window");
+  }
+
+  // Select the oldest out-of-tail chunk (pair-safe, capped at the CLAMPED cap)
   // from the RESOLVED message-ref run — so the selected ids always map back to a
   // context_items ordinal (the second-pass divergence is structurally gone).
   // S4: pass pinnedMessageIds so pinned messages are excluded from chunk selection.
-  const chunk = selectLeafChunk(history, opts.freshTailTurns, opts.leafChunkTokens, pinnedMessageIds);
+  const chunk = selectLeafChunk(history, opts.freshTailTurns, leafChunkCap, pinnedMessageIds);
   if (chunk === undefined) return { made: false, reason: "no-chunk" }; // no evictable out-of-tail history.
 
   // Skip a trivially-tiny chunk (WR-01): a chunk below the minimum shrinkable size
@@ -665,29 +673,20 @@ export async function maybeRunLeafPass(
   if (summarizerDeps === undefined) { logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "no-summarizer-deps" }, "lcd leaf pass gate skip"); return; }
   if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) { logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "bad-window", windowTokens: opts.windowTokens }, "lcd leaf pass gate skip"); return; }
 
-  // SUMW-01: clamp the chunk cap ONCE per drain to the RESOLVED summarizer's
-  // window (override-aware — never the getModel() session-primary snapshot) minus
-  // the summary target + prompt overhead, so a small compaction override is never
-  // fed an over-window chunk. The bounded drain + next-turn re-arming split the
-  // backlog; a degenerate window floors to MIN_SHRINKABLE → the "too-small" exit.
-  const summarizerWindow = resolveSummarizerWindowTokens(summarizerDeps);
-  const clampedLeafChunkTokens = Math.max(
-    MIN_SHRINKABLE_LEAF_CHUNK_TOKENS,
-    Math.min(opts.leafChunkTokens, summarizerWindow - opts.leafTargetTokens - SUMMARIZER_PROMPT_OVERHEAD_TOKENS),
-  );
-  if (clampedLeafChunkTokens < opts.leafChunkTokens) {
-    // ONE per-drain DEBUG, numbers only (I7) — a binding clamp is normal adaptive behavior, never WARN.
-    logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", summarizerWindow, configuredLeafChunkTokens: opts.leafChunkTokens, clampedLeafChunkTokens }, "lcd leaf chunk cap clamped to the resolved summarizer window");
-  }
-  const effectiveOpts: LeafPassOptions = { ...opts, leafChunkTokens: clampedLeafChunkTokens };
-
   // The hard cap (the infinite-loop backstop): the supplied knob or the LOW default.
   // Clamp to >= 1 so a misconfigured 0/negative still attempts one pass (degenerate
   // single-pass — the prior behavior) rather than silently disabling compaction.
   const maxPasses = Math.max(1, Math.floor(opts.maxLeafPassesPerTurn ?? LCD_MAX_LEAF_PASSES_PER_TURN));
   try {
+    // SUMW-01 / review WR-05: resolve the summarizer window INSIDE the
+    // never-rejects boundary — resolveSummarizerWindowTokens invokes the
+    // caller-supplied getRealModel()/getModel(), and a throwing getter must
+    // degrade to the WARN below (T-129-18), never reject the live turn
+    // (parity with maybeRunCondensePass, which resolves inside its try). The
+    // per-pass chunk-cap clamp derived from it lives in runOneLeafPass.
+    const summarizerWindow = resolveSummarizerWindowTokens(summarizerDeps);
     for (let pass = 0; pass < maxPasses; pass++) {
-      const { made } = await runOneLeafPass(store, scope, effectiveOpts, summarizerDeps, now, nowFn, logger, eventBus);
+      const { made } = await runOneLeafPass(store, scope, opts, summarizerWindow, summarizerDeps, now, nowFn, logger, eventBus);
       if (!made) break; // drained / no-progress / divergence — stop (never spin).
     }
   } catch (err) {
