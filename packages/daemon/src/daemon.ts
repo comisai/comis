@@ -664,6 +664,9 @@ function buildChannelManagerDeps(deps: {
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     piSessionAdapters, costTrackers, deliveryQueue,
     destroyConversation: channelConversationReset.destroyConversationCompletely,
+    // LCD store + browse for the memory-review session source (DAG-mode
+    // transcripts; live finding 2026-06-11).
+    lcdStore: agents.lcdStore, contextBrowse: agents.contextBrowse,
     cronExecutionTrackers: executionTrackers,
     exportSessionBundle,
   };

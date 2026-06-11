@@ -178,6 +178,12 @@ export interface ChannelsDeps {
   defaultWorkspaceDir?: string;
   /** Memory adapter for storing media file references. */
   memoryAdapter?: MemoryPort;
+  /** LCD store + browse — the memory-review session source reads DAG
+   *  transcripts from them (live finding 2026-06-11: the daemon session store
+   *  is near-empty in DAG mode, so the nightly extraction was a silent
+   *  no-op). Absent ⇒ daemon-store-only review (pipeline byte-identical). */
+  lcdStore?: import("@comis/core").ContextStorePort;
+  contextBrowse?: import("@comis/core").ContextBrowsePort;
   /** Memory read API — the __USER_REPRESENTATION__ sentinel scopes the
    *  per-(tenant, agent, user) high-trust source read over `inspect`. Built in setup-memory;
    *  daemon-side (the agent imports no memory package). */
@@ -384,6 +390,8 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     transcriber,
     workspaceDirs: deps.workspaceDirs,
     memoryAdapter: deps.memoryAdapter,
+    lcdStore: deps.lcdStore,
+    contextBrowse: deps.contextBrowse,
     entityStore: deps.entityStore,
     causalStore: deps.causalStore,
     consolidationStore: deps.consolidationStore,
