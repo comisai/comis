@@ -113,7 +113,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const {
     config, deps, sessionKey, msg, tools, executionOverrides,
     isFirstMessageInSession, sm, deliveredGuides,
-    resolvedModel, modelCompat, modelProfile: modelProfileParam, agentId, safetyReinforcement, _directives,
+    resolvedModel, modelCompat, modelProfile: modelProfileParam, windowProvenance, agentId, safetyReinforcement, _directives,
   } = params;
 
   // -------------------------------------------------------------------
@@ -429,6 +429,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     -1,
     config.contextEngine?.budget?.effectiveContextCapSmall,
     config.contextEngine?.budget?.effectiveContextCapNano,
+    // KNOB-02: executor-reconcile provenance — when the Ollama-served window
+    // bound upstream, the budget reports the TRUE configured window as raw with
+    // windowCapSource "served". Absent ⇒ pre-KNOB-02 byte-identical.
+    windowProvenance,
   );
   // contextWindow: use profile-aware effective window (capped for small/nano) for BM25 re-rank budget
   // control. For frontier/mid this is byte-identical to resolvedModel.contextWindow.

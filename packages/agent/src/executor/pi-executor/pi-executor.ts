@@ -97,6 +97,8 @@ import {
   getCacheSavings,
   clearSessionCacheSavings,
   setSessionStateClock,
+  getWindowReconcileLogged,
+  setWindowReconcileLogged,
 } from "../executor-session-state.js";
 import { normalizeModelCompat } from "../../provider/model-compat.js";
 import { normalizeModelId } from "../../provider/model-id-normalize.js";
@@ -107,7 +109,7 @@ import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capa
 import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
 import { validateRoleAttribution } from "../../context-engine/index.js";
-import type { TokenAnchor } from "../../context-engine/types.js";
+import type { TokenAnchor, WindowProvenance } from "../../context-engine/types.js";
 import { getElapsedSinceLastResponse } from "../ttl-guard.js";
 import { clearSessionBlockStability } from "../block-stability-tracker.js";
 import { wrapToolForAutoBackground } from "../../background/index.js";
@@ -350,6 +352,17 @@ export function createPiExecutor(
         served: deps.servedContextWindow,
         capabilityCap,
       });
+      // KNOB-02 (Phase 176): the window provenance is BORN here — the TRUE
+      // configured window before resolveModelProfile below overwrites
+      // profile.contextWindow with the reconciled value. Threaded along the
+      // modelProfile chain into BOTH computeTokenBudgetForProfile call sites
+      // (executor-tool-assembly + lcd-assembler via ContextEngineDeps) so a
+      // served-bound budget reports raw=configured with windowCapSource "served".
+      const windowProvenance: WindowProvenance = {
+        configuredWindow: resolvedModel?.contextWindow ?? 8_192,
+        ...(deps.servedContextWindow !== undefined && { served: deps.servedContextWindow }),
+        reconcileSource: effectiveContextWindowResult.source,
+      };
       if (effectiveContextWindowResult.source !== "configured") {
         deps.logger.debug({
           source: effectiveContextWindowResult.source,
@@ -359,6 +372,24 @@ export function createPiExecutor(
           capabilityCap,
           submodule: "context-window-reconcile",
         }, "Context window reconciled (served or capability cap bound)");
+        // KNOB-02: promote the FIRST reconcile of a session to INFO — the
+        // reconcile is load-bearing diagnostic evidence (which window actually
+        // bound, and why) and must not depend on logLevel=debug having been set
+        // before the incident. The bounded session latch keeps it to exactly
+        // once per session (clearSessionState grants a fresh INFO on
+        // delete/reset/expiry); the DEBUG above stays per-turn.
+        const reconcileLatchKey = formatSessionKey(sessionKey);
+        if (!getWindowReconcileLogged(reconcileLatchKey)) {
+          setWindowReconcileLogged(reconcileLatchKey);
+          deps.logger.info({
+            source: effectiveContextWindowResult.source,
+            effectiveWindow: effectiveContextWindowResult.effectiveWindow,
+            configured: resolvedModel?.contextWindow ?? 8_192,
+            served: deps.servedContextWindow,
+            capabilityCap,
+            submodule: "context-window-reconcile",
+          }, "Context window reconciled (served or capability cap bound)");
+        }
       }
       const modelProfile = resolveModelProfile(
         resolvedModel
@@ -391,6 +422,7 @@ export function createPiExecutor(
           resolvedModel,
           modelCompat,
           modelProfile,
+          windowProvenance,
           activeStepCounter,
           sessionAdapter,
           cacheRetentionRef,
@@ -439,6 +471,9 @@ interface RunSessionLockedContext {
   readonly resolvedModel: ReturnType<ModelRegistry["find"]> | undefined;
   readonly modelCompat: ReturnType<typeof normalizeModelCompat> | undefined;
   readonly modelProfile: ModelProfile;
+  /** KNOB-02: served/capability window provenance built at the reconcile above —
+   *  threaded as a sibling of modelProfile into both budget call sites. */
+  readonly windowProvenance: WindowProvenance;
   readonly activeStepCounter: StepCounter;
   readonly sessionAdapter: ComisSessionManager;
   readonly cacheRetentionRef: MutableRef<CacheRetention | undefined>;
@@ -454,7 +489,7 @@ async function runSessionLocked(
     config, deps, result, msg, sessionKey, tools, onDelta, agentId,
     _directives, _prevTimestamp, executionOverrides, executionStartMs,
     effectiveTimeout, sepEnabled, executionPlanRef, safetyReinforcement,
-    resolvedModel, modelCompat, modelProfile, activeStepCounter,
+    resolvedModel, modelCompat, modelProfile, windowProvenance, activeStepCounter,
     sessionAdapter,
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
   } = ctx;
@@ -536,7 +571,7 @@ async function runSessionLocked(
   const toolAssembly = await assembleTools({
     config, deps: frozenDeps, sessionKey, msg, tools, executionOverrides,
     isFirstMessageInSession, sm, formattedKeyForGuides, deliveredGuides,
-    resolvedModel, modelCompat, modelProfile, agentId, safetyReinforcement, _directives,
+    resolvedModel, modelCompat, modelProfile, windowProvenance, agentId, safetyReinforcement, _directives,
   });
   const {
     mergedCustomTools,
@@ -948,6 +983,9 @@ async function runSessionLocked(
     onAnchorReset: () => { tokenAnchor = null; },
     currentDiscoveryTracker,
     modelProfile,  // already in scope: resolveModelProfile() at line 328; used by assembleTools at :502
+    // KNOB-02: served/capability window provenance for the lcd-assembler's budget
+    // (the second computeTokenBudgetForProfile call site) — sibling of modelProfile.
+    windowProvenance,
     // Phase 166 T-S4: thread security-pin markers so the dag eviction never drops canary/security context.
     // contentDelimiter defaults to "" (fail-closed: isSecurityRelevantMessage with empty contentDelimiter
     // only matches on canaryToken — defense-in-depth; a real delimiter is injected by Plan 04).
