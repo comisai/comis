@@ -254,8 +254,16 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         // initialBudgetMs deliberately NOT wired (first_activity_scaling:
         // none — wiring it would re-open the LAT-02-5 hang-detection cost
         // without a decision record).
+        // Clamped at Node's 32-bit timer cap (177-REVIEW WR-02,
+        // defense-in-depth against hand-built configs that bypass the zod
+        // 1..100 bound): a product > 2^31-1 makes setTimeout clamp the delay
+        // to 1ms — the ceiling would fire INSTANTLY, every prompt killed at
+        // once, classified makespan, and suppressed from providerHealth.
         ...(timeoutConfig.stallCeilingMultiplier !== undefined && {
-          makespanMs: timeoutConfig.promptTimeoutMs * timeoutConfig.stallCeilingMultiplier,
+          makespanMs: Math.min(
+            timeoutConfig.promptTimeoutMs * timeoutConfig.stallCeilingMultiplier,
+            2_147_483_647,
+          ),
         }),
       },
     );

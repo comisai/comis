@@ -1589,5 +1589,44 @@ describe("runWithModelRetry", () => {
       expect(typeof fallbackPayload.durationMs).toBe("number");
       expect(fallbackPayload.bindingKnob).toBe("agents.test-agent.promptTimeout.promptTimeoutMs");
     });
+
+    it("177-REVIEW WR-02: a makespan product past Node's 2^31-1 timer cap is clamped at the derivation site — the ceiling does NOT collapse to an instant 1ms kill", async () => {
+      const session = makeHungSession();
+      const params = makeParams({
+        session,
+        timeoutConfig: {
+          promptTimeoutMs: 600_000,
+          retryPromptTimeoutMs: 60_000,
+          // Hand-built carrier bypassing the zod bounds (the schema now caps
+          // at 100): the product 2_400_000_000 exceeds 2^31-1. Node's
+          // setTimeout clamps an overflowing delay to 1ms — pre-clamp, the
+          // makespan timer fired INSTANTLY, every prompt was killed at once,
+          // classified makespan, and suppressed from providerHealth.
+          stallCeilingMultiplier: 4_000,
+          source: "agent_config",
+        } as ModelRetryParams["timeoutConfig"],
+        deps: makeLatDeps(),
+      });
+
+      let settled = false;
+      const tracked = runWithModelRetry(params).then((r) => { settled = true; return r; });
+
+      // RED (pre-patch): the raw 2_400_000_000ms delay overflows the 32-bit
+      // timer, clamps to 1ms, and the run dies right here.
+      await vi.advanceTimersByTimeAsync(2);
+      await flushMicrotasks();
+      expect(settled).toBe(false);
+
+      // The stall budget still owns the kill; the CLAMPED ceiling rides the
+      // error for hint rendering.
+      await vi.advanceTimersByTimeAsync(600_000);
+      await flushMicrotasks();
+      expect(settled).toBe(true);
+      const result = await tracked;
+      const err = result.error as PromptTimeoutError;
+      expect(err).toBeInstanceOf(PromptTimeoutError);
+      expect(err.limit).toBe("stall");
+      expect(err.makespanMs).toBe(2_147_483_647);
+    });
   });
 });

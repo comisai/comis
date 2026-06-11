@@ -41,4 +41,24 @@ describe("PromptTimeoutConfigSchema.stallCeilingMultiplier (LAT-02)", () => {
   it("LAT-02-S5: strictObject rejects unknown keys (typo guard)", () => {
     expect(PromptTimeoutConfigSchema.safeParse({ stallCielingMultiplier: 10 }).success).toBe(false);
   });
+
+  // 177-REVIEW WR-02: the multiplier needs hard bounds. A value in (0, 1)
+  // INVERTS the semantics -- the makespan fires before the stall budget can
+  // ever elapse, so every timeout (including genuine provider hangs) is
+  // classified makespan and SUPPRESSED from providerHealth: a one-key
+  // misconfiguration silently disables both the stall semantics and
+  // provider-degraded detection. At the other end, an absurd multiplier
+  // overflows Node's 32-bit setTimeout (promptTimeoutMs x multiplier >
+  // 2^31-1 clamps the delay to 1ms -- every prompt killed instantly).
+  it("177-REVIEW WR-02: rejects fractional multipliers below 1 (0.5 would invert stall/makespan and blind providerHealth)", () => {
+    expect(PromptTimeoutConfigSchema.safeParse({ stallCeilingMultiplier: 0.5 }).success).toBe(false);
+    expect(PromptTimeoutConfigSchema.safeParse({ stallCeilingMultiplier: 0.99 }).success).toBe(false);
+  });
+
+  it("177-REVIEW WR-02: rejects multipliers above 100 (overflow guard) and accepts the 1 and 100 boundary values", () => {
+    expect(PromptTimeoutConfigSchema.safeParse({ stallCeilingMultiplier: 101 }).success).toBe(false);
+    expect(PromptTimeoutConfigSchema.safeParse({ stallCeilingMultiplier: 4_000 }).success).toBe(false);
+    expect(PromptTimeoutConfigSchema.parse({ stallCeilingMultiplier: 1 }).stallCeilingMultiplier).toBe(1);
+    expect(PromptTimeoutConfigSchema.parse({ stallCeilingMultiplier: 100 }).stallCeilingMultiplier).toBe(100);
+  });
 });

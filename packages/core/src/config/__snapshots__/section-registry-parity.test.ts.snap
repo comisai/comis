@@ -16576,7 +16576,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         },
         "stallCeilingMultiplier": {
           "default": 10,
-          "exclusiveMinimum": 0,
+          "maximum": 100,
+          "minimum": 1,
           "type": "number"
         }
       },
@@ -26954,7 +26955,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               },
               "stallCeilingMultiplier": {
                 "default": 10,
-                "exclusiveMinimum": 0,
+                "maximum": 100,
+                "minimum": 1,
                 "type": "number"
               }
             },

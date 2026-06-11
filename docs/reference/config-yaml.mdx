@@ -357,7 +357,7 @@ agents:
 |-----|------|---------|-------------|
 | `promptTimeoutMs` | `number` | `180000` | Stall budget for primary prompt calls (3 minutes): the deadline resets on activity — stream text/thinking deltas (throttled ~1/s) and tool completions. A turn dies only when NO activity occurs for this long. Stall semantics apply to all providers. |
 | `retryPromptTimeoutMs` | `number` | `60000` | Wall-clock timeout for retry and fallback prompt calls (1 minute). Used during auth rotation and model fallback attempts. Whole-turn (not stall-based) — retry and fallback prompts do not reset on activity. |
-| `stallCeilingMultiplier` | `number` | `10` | Makespan ceiling: a turn is aborted at `promptTimeoutMs × stallCeilingMultiplier` even while still streaming — bounds runaway generations that would otherwise reset the stall budget forever. Runtime-tunable. |
+| `stallCeilingMultiplier` | `number` | `10` | Makespan ceiling: a turn is aborted at `promptTimeoutMs × stallCeilingMultiplier` even while still streaming — bounds runaway generations that would otherwise reset the stall budget forever. Valid range 1–100 (a value below 1 would fire the ceiling before the stall budget; the product is additionally capped at Node's ~24.8-day timer limit). Runtime-tunable. |
 
 See [Resilience](/agents/resilience) for how prompt timeouts fit into the full resilience stack.
 
