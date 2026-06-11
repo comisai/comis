@@ -132,24 +132,31 @@ export function handleEnvelopeException(
     return;
   }
 
+  // Classify BEFORE the WARN so the knob-named hint rides the log line
+  // (LAT-01). This envelope seam has no effectiveTimeout in scope (state
+  // carries only the result; threading new fields is out of 177-04's scope),
+  // so the binding degrades gracefully to the agent knob with the ctx
+  // agentId — the H-6/H-8 contract: a knob-named hint, never a throw.
+  const isPromptTimeout = error instanceof PromptTimeoutError;
+  const classifiedOuter = isPromptTimeout
+    ? classifyPromptTimeout(error, { agentId })
+    : classifyError(error);
   deps.logger.warn(
     {
       err: error,
-      hint: "PiExecutor unexpected error",
-      errorKind: "internal" as ErrorKind,
+      hint: classifiedOuter.hint ?? "PiExecutor unexpected error",
+      errorKind: (isPromptTimeout ? "timeout" : "internal") as ErrorKind,
     },
     "Unexpected execution error",
   );
-  state.result.finishReason = "error";
+  state.result.finishReason = isPromptTimeout ? "prompt_timeout" : "error";
   // Never expose raw error internals (API keys, URLs, stack traces) to users.
   // The raw error is already logged to deps.logger.warn above for operator diagnostics.
-  // Classify the error to give the user an actionable (but safe) message.
-  const classifiedOuter = error instanceof PromptTimeoutError
-    ? classifyPromptTimeout(error.timeoutMs)
-    : classifyError(error);
+  // The classified userMessage stays generic/user-safe — the knob detail
+  // rides ONLY the hint above (T-177-13).
   state.result.response = classifiedOuter.userMessage;
   state.result.errorContext = {
-    errorType: error instanceof PromptTimeoutError ? "PromptTimeout" : "UnexpectedError",
+    errorType: isPromptTimeout ? "PromptTimeout" : "UnexpectedError",
     retryable: classifiedOuter.retryable,
     originalError: error instanceof Error ? error.message : String(error),
   };

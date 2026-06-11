@@ -594,9 +594,12 @@ export function shouldRunLcdStorePasses(config: {
  * not a silent home for classified in-union reasons. Module-level so the
  * post-execution path doesn't reallocate it on every turn.
  *
- * NOTE: the endReason union also declares "timeout", but no source finishReason
- * maps to it — it is intentionally unreachable from this writer (asserted by a
- * unit test) rather than re-introduced via a stray mapping.
+ * NOTE: the endReason union's "timeout" literal — dead since the union was
+ * written — is ALIVE as of LAT-04 (Phase 177): the `prompt_timeout` entry
+ * below is its ONLY source. The WR-02 test that pinned its unreachability
+ * became a positive pin (prompt_timeout → "timeout", sole source): the
+ * negative pin existed to prevent ACCIDENTAL re-introduction; this mapping
+ * is the deliberate one.
  *
  * QT2/QT3 — NAMED degradation causes (Glass Box degradation detectors). The
  * taxonomy used to FLATTEN context-exhaustion into the generic "error" bucket,
@@ -618,6 +621,10 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   context_loop: "context_exhausted", context_exhausted: "context_exhausted",
   // QT3: the terminal output-cap truncation promoted at the chokepoint.
   output_starved: "output_starved",
+  // LAT-04 (177): the deliberate flip of the WR-02 dead-literal pin — PromptTimeoutError
+  // terminals get the NAMED cause (QT2/QT3 precedent). HARD_FAILURE_END_REASONS and the
+  // fleet degradedByCause record are pre-wired for "timeout".
+  prompt_timeout: "timeout",
   completed_with_tool_errors: "completed_with_tool_errors",
   // Known in-union reasons — explicit, not via the catch-all fallthrough (WR-02).
   loop_detected: "error",

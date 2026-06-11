@@ -1307,6 +1307,51 @@ describe("createPiEventBridge", () => {
   });
 
   // -------------------------------------------------------------------------
+  // LAT-04 breaker-reachability audit (research Assumption A1, Phase 177)
+  //
+  // A timeout-driven `session.abort()` surfaces as a turn_end whose message
+  // carries the SDK StopReason "aborted" — NOT "error" (pi-ai types.d.ts:191).
+  // The bridge's failure-recording branch is gated on stopReason === "error",
+  // so timeout aborts must NOT accrue circuit-breaker or providerHealth
+  // failures through the bridge. These pins establish the audit verdict
+  // EMPIRICALLY in both directions rather than assuming it: if B-1 ever
+  // fails, the gate is reached by aborts and timeouts would misattribute as
+  // provider failures (the LAT-04 misattribution class).
+  // -------------------------------------------------------------------------
+
+  describe("LAT-04 breaker-reachability audit — timeout aborts (A1)", () => {
+    function makeProviderHealthSpy() {
+      return {
+        recordFailure: vi.fn(),
+        recordSuccess: vi.fn(),
+        isDegraded: vi.fn().mockReturnValue(false),
+      } as any;
+    }
+
+    it("LAT-04-B-1: turn_end with stopReason 'aborted' (timeout-driven session.abort) records NEITHER a breaker NOR a providerHealth failure", () => {
+      const providerHealth = makeProviderHealthSpy();
+      const auditDeps = createMockDeps({ providerHealth });
+      const { listener } = createPiEventBridge(auditDeps);
+
+      listener(makeTurnEndEvent({ stopReason: "aborted" }) as any);
+
+      expect(auditDeps.circuitBreaker.recordFailure).not.toHaveBeenCalled();
+      expect(providerHealth.recordFailure).not.toHaveBeenCalled();
+    });
+
+    it("LAT-04-B-2: turn_end with stopReason 'error' records BOTH the breaker AND the providerHealth failure (the existing gate, pinned)", () => {
+      const providerHealth = makeProviderHealthSpy();
+      const auditDeps = createMockDeps({ providerHealth });
+      const { listener } = createPiEventBridge(auditDeps);
+
+      listener(makeTurnEndEvent({ stopReason: "error" }) as any);
+
+      expect(auditDeps.circuitBreaker.recordFailure).toHaveBeenCalledTimes(1);
+      expect(providerHealth.recordFailure).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // compaction_start
   // -------------------------------------------------------------------------
 

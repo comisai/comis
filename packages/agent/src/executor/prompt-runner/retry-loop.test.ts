@@ -19,6 +19,9 @@ import { dirname, resolve } from "node:path";
 import { hostileMcpTool } from "../../provider/tool-schema/gbnf-hostile-fixtures.js";
 import { setSessionStateClock } from "../executor-session-state.js";
 import { runWithModelRetry } from "../model-retry.js";
+import { PromptTimeoutError } from "../prompt-timeout.js";
+import type { ExecutionResult } from "../types.js";
+import { processFailurePath } from "./failure-path.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 import { runRetryLoop, stuckSessionResult } from "./retry-loop.js";
 
@@ -320,5 +323,105 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     expect(vi.mocked(runWithModelRetry)).toHaveBeenCalledTimes(1);
     expect(outcome.promptSucceeded).toBe(false);
     expect(emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported")).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Failure-path terminal diagnostics — knob-named timeout hints (LAT-01,
+// Phase 177). processFailurePath is the all-models-failed surface: the retry
+// loop returned promptSucceeded:false and emitFailureDiagnostics classifies
+// the terminal error, logs the operator WARN, and writes the user-safe
+// response. Pre-LAT-01 a PromptTimeoutError was logged with
+// errorKind:"dependency", a generic hint, and finishReason:"error" — the
+// operator learned WHAT (all models failed) but not WHICH KNOB.
+// ---------------------------------------------------------------------------
+
+describe("processFailurePath — knob-named timeout diagnostics (LAT-01-H-7)", () => {
+  function makeFailureParams(channelId: string): {
+    params: RunPromptParams;
+    emit: ReturnType<typeof vi.fn>;
+    warn: ReturnType<typeof vi.fn>;
+    result: ExecutionResult;
+  } {
+    const emit = vi.fn();
+    const warn = vi.fn();
+    const logger = {
+      trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn, error: vi.fn(),
+    };
+    const result = {
+      response: "",
+      sessionKey: { tenantId: "t1", channelId, userId: "u1" },
+      tokensUsed: { input: 0, output: 0, total: 0 },
+      cost: { total: 0 },
+      stepsExecuted: 0,
+      llmCalls: 0,
+      finishReason: "stop",
+    } as unknown as ExecutionResult;
+    const params = {
+      msg: { channelId },
+      session: { agent: { streamFn: vi.fn() } },
+      sessionKey: { tenantId: "t1", channelId, userId: "u1" },
+      agentId: "my-agent",
+      executionId: "exec-lat01",
+      executionStartMs: 0,
+      result,
+      mergedCustomTools: [],
+      resolvedModel: { id: "qwen3.6:35b", provider: "my-ollama" },
+      config: { provider: "my-ollama", model: "qwen3.6:35b", maxContextChars: 100_000 },
+      effectiveTimeout: {
+        promptTimeoutMs: 180_000,
+        retryPromptTimeoutMs: 60_000,
+        source: "agent_config",
+      },
+      systemPrompt: undefined,
+      onResetTimer: () => {},
+      deps: {
+        logger,
+        eventBus: { emit },
+        clock: { now: () => 195_000 },
+        timers: {
+          setTimeout: (fn: () => void) => {
+            fn();
+            return { cancelled: false, cancel: () => {}, unref: () => {} };
+          },
+        },
+        modelRegistry: { find: vi.fn(() => undefined) },
+      },
+    } as unknown as RunPromptParams;
+    return { params, emit, warn, result };
+  }
+
+  it("LAT-01-H-7: a terminal PromptTimeoutError carries errorKind 'timeout' + a knob-named hint on the WARN; finishReason 'prompt_timeout'; userMessage stays generic", async () => {
+    const { params, warn, result } = makeFailureParams("c-lat01-timeout");
+    const timeoutErr = new PromptTimeoutError(180_000, {
+      limit: "stall",
+      stallBudgetMs: 180_000,
+    });
+
+    await processFailurePath(params, "hello", undefined, timeoutErr);
+
+    const warnCall = warn.mock.calls.find((c) => c[1] === "Prompt execution error");
+    expect(warnCall).toBeDefined();
+    expect(warnCall![0].errorKind).toBe("timeout");
+    expect(warnCall![0].hint).toMatch(/promptTimeout\.promptTimeoutMs|operationModels/);
+    expect(result.finishReason).toBe("prompt_timeout");
+    // The knob detail NEVER leaks into the user reply (T-177-13): the response
+    // is the byte-identical generic userMessage, with no config keys.
+    expect(result.response).toBe(
+      "The request took too long to process. Please try again with a simpler message.",
+    );
+    expect(result.response).not.toContain("agents.");
+  });
+
+  it("LAT-01-H-7 regression: a non-timeout terminal error keeps finishReason 'error' + errorKind 'dependency' + the generic all-models hint", async () => {
+    const { params, warn, result } = makeFailureParams("c-lat01-generic");
+
+    await processFailurePath(params, "hello", undefined, new Error("ECONNREFUSED connection refused"));
+
+    const warnCall = warn.mock.calls.find((c) => c[1] === "Prompt execution error");
+    expect(warnCall).toBeDefined();
+    expect(warnCall![0].errorKind).toBe("dependency");
+    expect(warnCall![0].hint).toBe("All models failed (primary + fallbacks)");
+    expect(result.finishReason).toBe("error");
   });
 });

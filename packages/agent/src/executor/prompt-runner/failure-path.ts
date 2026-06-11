@@ -124,25 +124,44 @@ function emitFailureDiagnostics(
 ): PromptRunResult["ghostCost"] {
   const {
     sessionKey, result, executionStartMs,
-    config, deps,
+    config, deps, agentId, effectiveTimeout,
   } = params;
+
+  // Classify BEFORE the WARN so the knob-named hint rides the log line
+  // (LAT-01). For a PromptTimeoutError the binding provenance comes from the
+  // 177-02 effectiveTimeout (source + operationType + configured numbers) —
+  // the makespan hint's multiplier detail falls back to the numbers carried
+  // on the error itself (177-01), keeping zero coupling to the parallel
+  // 177-03 stallCeilingMultiplier threading.
+  const isPromptTimeout = promptError instanceof PromptTimeoutError;
+  const classified = isPromptTimeout
+    ? classifyPromptTimeout(
+        promptError,
+        {
+          source: effectiveTimeout.source,
+          operationType: effectiveTimeout.operationType,
+          agentId,
+          promptTimeoutMs: effectiveTimeout.promptTimeoutMs,
+          retryPromptTimeoutMs: effectiveTimeout.retryPromptTimeoutMs,
+        },
+        deps.clock.now() - executionStartMs,
+      )
+    : classifyError(promptError);
 
   deps.logger.warn(
     {
       err: promptError,
       totalElapsedMs: deps.clock.now() - executionStartMs,
-      hint: "All models failed (primary + fallbacks)",
-      errorKind: "dependency" as ErrorKind,
+      hint: classified.hint ?? "All models failed (primary + fallbacks)",
+      errorKind: (isPromptTimeout ? "timeout" : "dependency") as ErrorKind,
     },
     "Prompt execution error",
   );
-  result.finishReason = "error";
+  result.finishReason = isPromptTimeout ? "prompt_timeout" : "error";
   // Never expose raw error internals to users.
   // The raw error is already logged to deps.logger.warn above for operator diagnostics.
-  // Classify the error to give the user an actionable (but safe) message.
-  const classified = promptError instanceof PromptTimeoutError
-    ? classifyPromptTimeout(promptError.timeoutMs)
-    : classifyError(promptError);
+  // The classified userMessage stays generic/user-safe — the knob detail
+  // rides ONLY the hint above (T-177-13).
   // Enrich auth_invalid messages with the failing provider name
   if (classified.category === "auth_invalid") {
     result.response = `The AI service could not authenticate with the "${config.provider}" provider. Please check the API key or notify the system administrator.`;
@@ -150,7 +169,7 @@ function emitFailureDiagnostics(
     result.response = classified.userMessage;
   }
   result.errorContext = {
-    errorType: promptError instanceof PromptTimeoutError ? "PromptTimeout" : "PromptFailure",
+    errorType: isPromptTimeout ? "PromptTimeout" : "PromptFailure",
     retryable: classified.retryable,
     originalError: promptError instanceof Error ? promptError.message : String(promptError),
   };
@@ -161,13 +180,12 @@ function emitFailureDiagnostics(
   // Anthropic still bills input tokens even when the request times out,
   // but pi-ai discards partial usage. Emit a conservative estimate so
   // the cost gap is visible in tracking.
-  if (promptError instanceof PromptTimeoutError) {
+  if (isPromptTimeout) {
     ghostCost = emitTimeoutGhostCost(params, messageText);
   }
 
   // OutputGuard: scan error responses (unified in executor-response-filter.ts)
   if (deps.outputGuard && result.response) {
-    const { agentId } = params;
     const guardScan = scanWithOutputGuard({
       outputGuard: deps.outputGuard, response: result.response, context: "error",
       canaryToken: deps.canaryToken, agentId: agentId ?? "unknown",

@@ -76,14 +76,33 @@ describe("applyPromptRunOutcome", () => {
 });
 
 describe("handleEnvelopeException", () => {
-  it("classifies PromptTimeoutError and writes user-facing message", () => {
+  // LAT-01-H-8 (Phase 177): the second classify chokepoint. A
+  // PromptTimeoutError reaching the envelope handler now carries the named
+  // terminal finishReason "prompt_timeout" (END_REASON_MAP → endReason
+  // "timeout", LAT-04) and the WARN carries errorKind "timeout" + the
+  // knob-named hint — pre-patch it flattened to finishReason "error" with
+  // errorKind "internal" and a generic hint.
+  it("LAT-01-H-8: PromptTimeoutError → finishReason 'prompt_timeout', WARN errorKind 'timeout' + knob-named hint; userMessage stays generic", () => {
     const result = makeResult();
-    const err = new PromptTimeoutError(30_000);
-    handleEnvelopeException({ result }, makeDeps(), { error: err, sessionKey: result.sessionKey, agentId: "a1" });
-    expect(result.finishReason).toBe("error");
+    const warn = vi.fn();
+    const logger = makeNoopLogger();
+    logger.warn = warn;
+    const err = new PromptTimeoutError(180_000, { limit: "stall", stallBudgetMs: 180_000 });
+    handleEnvelopeException(
+      { result },
+      makeDeps({ logger: logger as unknown as MessageEnvelopeDeps["logger"] }),
+      { error: err, sessionKey: result.sessionKey, agentId: "a1" },
+    );
+    expect(result.finishReason).toBe("prompt_timeout");
     expect(result.errorContext?.errorType).toBe("PromptTimeout");
     expect(result.errorContext?.retryable).toBe(true);
-    expect(result.response.length).toBeGreaterThan(0);
+    const warnCall = warn.mock.calls.find((c) => c[1] === "Unexpected execution error");
+    expect(warnCall).toBeDefined();
+    expect(warnCall![0].errorKind).toBe("timeout");
+    expect(warnCall![0].hint).toMatch(/agents\..*promptTimeout/);
+    // User-safety (T-177-13): knob detail rides the hint only — never the reply.
+    expect(result.response).toContain("too long");
+    expect(result.response).not.toContain("agents.");
   });
 
   it("classifies generic Error and writes user-facing message", () => {
@@ -93,6 +112,23 @@ describe("handleEnvelopeException", () => {
     expect(result.finishReason).toBe("error");
     expect(result.errorContext?.errorType).toBe("UnexpectedError");
     expect(result.errorContext?.originalError).toBe("kaboom");
+  });
+
+  it("LAT-01-H-8 regression: a non-timeout error keeps finishReason 'error' + WARN errorKind 'internal' (unchanged path)", () => {
+    const result = makeResult();
+    const warn = vi.fn();
+    const logger = makeNoopLogger();
+    logger.warn = warn;
+    handleEnvelopeException(
+      { result },
+      makeDeps({ logger: logger as unknown as MessageEnvelopeDeps["logger"] }),
+      { error: new Error("kaboom"), sessionKey: result.sessionKey, agentId: "a1" },
+    );
+    expect(result.finishReason).toBe("error");
+    const warnCall = warn.mock.calls.find((c) => c[1] === "Unexpected execution error");
+    expect(warnCall).toBeDefined();
+    expect(warnCall![0].errorKind).toBe("internal");
+    expect(warnCall![0].hint).toBe("PiExecutor unexpected error");
   });
 
   it("invokes outputGuard scan when configured and response non-empty", () => {

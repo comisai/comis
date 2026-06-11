@@ -11,6 +11,10 @@
  */
 
 import { isSignedReplayError } from "./signed-replay-detector.js";
+import { describeTimeoutKnob } from "./timeout-knob.js";
+
+import type { PromptTimeoutError } from "./prompt-timeout.js";
+import type { TimeoutSource } from "../model/operation-model-resolver.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,6 +63,9 @@ export interface ClassifiedError {
   userMessage: string;
   /** Whether the user should reasonably retry. */
   retryable: boolean;
+  /** Operator-facing detail: binding knob + numbers (I7). Rides WARN
+   *  logs/explain — NEVER the user reply (T-177-13). */
+  hint?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,16 +229,82 @@ export function classifyError(error: unknown): ClassifiedError {
 }
 
 /**
+ * The effective-timeout binding provenance a classify consumer threads in
+ * (LAT-01): which resolution level bound the timeout (177-02 `source`), whose
+ * config owns the knob, and the configured numbers. Every field optional —
+ * absent fields degrade gracefully to placeholders / the error's own numbers,
+ * so legacy callers and parallel-plan type drift (e.g. a not-yet-landed
+ * `stallCeilingMultiplier` on EffectiveTimeout) never break the call shape.
+ */
+export interface PromptTimeoutBinding {
+  source?: TimeoutSource;
+  operationType?: string;
+  agentId?: string;
+  promptTimeoutMs?: number;
+  retryPromptTimeoutMs?: number;
+  stallCeilingMultiplier?: number;
+}
+
+/**
  * Classify specifically for prompt timeout errors.
  * Separated because PromptTimeoutError is identified by instanceof,
  * not by message content.
+ *
+ * LAT-01 (Phase 177): renders the operator-facing `hint` — the BINDING knob
+ * (via the timeout-knob table), the configured value, the elapsed time, and
+ * WHICH limit fired (stall / makespan / whole-turn retry). The `userMessage`
+ * stays generic/user-safe: config-key detail rides logs + obs.explain only,
+ * never the user reply (T-177-13). A `graph_constant` binding renders honest
+ * prose instead of a fake `agents.*` key (D-11).
+ *
+ * @param error - The PromptTimeoutError (carries `limit` + the configured
+ *                numbers from 177-01).
+ * @param binding - The effective-timeout binding provenance (177-02); absent
+ *                  ⇒ legacy caller ⇒ the placeholder agent knob (graceful).
+ * @param elapsedMs - Wall-clock elapsed since execution start, when known.
  */
-export function classifyPromptTimeout(_timeoutMs: number): ClassifiedError {
+export function classifyPromptTimeout(
+  error: PromptTimeoutError,
+  binding?: PromptTimeoutBinding,
+  elapsedMs?: number,
+): ClassifiedError {
+  const knob = describeTimeoutKnob(
+    binding?.source ?? "agent_config",
+    binding?.agentId,
+    binding?.operationType,
+  );
+  const elapsed = elapsedMs !== undefined ? ` after ${String(elapsedMs)}ms` : "";
+  let hint: string;
+  if (error.limit === "makespan") {
+    hint =
+      `makespan ceiling ${String(error.makespanMs ?? error.timeoutMs)}ms` +
+      ` (stall budget ${String(error.stallBudgetMs ?? binding?.promptTimeoutMs ?? 0)} × stallCeilingMultiplier` +
+      `${binding?.stallCeilingMultiplier !== undefined ? ` ${String(binding.stallCeilingMultiplier)}` : ""}) exceeded${elapsed}` +
+      ` — streaming runaway; raise agents.${binding?.agentId ?? "<id>"}.promptTimeout.stallCeilingMultiplier or investigate model output`;
+  } else if (error.limit === "stall") {
+    hint =
+      `stall budget ${String(error.stallBudgetMs ?? error.timeoutMs)}ms exceeded${elapsed} with no stream/tool activity` +
+      (binding?.source === "graph_constant"
+        ? // Honest prose for a non-knob — never a raise-suggestion that names
+          // a config key the operator cannot set (D-11).
+          ` — ${knob}`
+        : ` — raise ${knob} (currently ${String(binding?.promptTimeoutMs ?? error.timeoutMs)});` +
+          ` local prefill on consumer hardware can exceed it`);
+  } else {
+    // limit undefined ⇒ the non-resettable whole-turn path (retry/fallback
+    // prompts keep retryPromptTimeoutMs semantics — research Open Q2; never
+    // present it as a stall-budget kill).
+    hint =
+      `whole-turn retry timeout ${String(error.timeoutMs)}ms exceeded${elapsed}` +
+      ` — retry/fallback prompts use agents.${binding?.agentId ?? "<id>"}.promptTimeout.retryPromptTimeoutMs` +
+      ` (currently ${String(binding?.retryPromptTimeoutMs ?? error.timeoutMs)}), not the stall budget`;
+  }
   return {
     category: "prompt_timeout",
     userMessage:
       "The request took too long to process. Please try again with a simpler message.",
     retryable: true,
+    hint,
   };
 }
 
