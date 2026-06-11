@@ -47,6 +47,7 @@ import { randomUUID } from "node:crypto";
 import {
   generateStrongToken,
   generateRotationId,
+  isEnvRefString,
   TokensListContract,
   TokensCreateContract,
   TokensRevokeContract,
@@ -55,9 +56,101 @@ import {
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
-import { persistToConfig } from "./shared/persist-to-config.js";
+import { persistToConfig, readOnDiskConfig } from "./shared/persist-to-config.js";
 
+import type { PersistToConfigDeps } from "./shared/persist-to-config.js";
 import type { RpcHandler } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Persistence helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Map the in-memory token entries to their persistable shape.
+ *
+ * Plaintext secrets are STRIPPED (secret-free persistence; boot resolves
+ * `GATEWAY_TOKEN_<ID>` from env/secret store instead) — but `${VAR}` secret
+ * REFERENCES are preserved verbatim: a ref is a pointer, not a secret, and
+ * dropping one severs the existing token on the next config reload. The
+ * references can only come from the ON-DISK YAML — `container.config` holds
+ * the substituted plaintext. Live finding (2026-06-12 C7 run): tokens.create
+ * rebuilt gateway.tokens from the in-memory view, severing the admin entry's
+ * `${COMIS_GATEWAY_TOKEN}` ref; the post-persist reload minted an ephemeral
+ * replacement and locked the operator out of the gateway.
+ */
+function persistableTokenEntries(
+  persistDeps: PersistToConfigDeps,
+  tokens: ReadonlyArray<{ id: string; secret?: unknown; scopes?: readonly string[] }>,
+): Array<{ id: string; scopes: string[]; secret?: string }> {
+  const onDisk = readOnDiskConfig(persistDeps);
+  const onDiskTokens = ((onDisk.gateway as { tokens?: unknown } | undefined)?.tokens ?? []) as Array<{
+    id?: unknown;
+    secret?: unknown;
+  }>;
+  const refById = new Map<string, string>();
+  for (const entry of onDiskTokens) {
+    if (
+      typeof entry?.id === "string" &&
+      typeof entry.secret === "string" &&
+      isEnvRefString(entry.secret)
+    ) {
+      refById.set(entry.id, entry.secret);
+    }
+  }
+  return tokens.map((t) => {
+    const ref = refById.get(t.id);
+    return {
+      id: t.id,
+      scopes: [...(t.scopes ?? [])],
+      ...(ref !== undefined && { secret: ref }),
+    };
+  });
+}
+
+/**
+ * The env/secret-store key boot uses to resolve a config token entry that
+ * carries no inline secret (mirrors `resolveGatewayTokens`).
+ */
+function gatewayTokenEnvKey(tokenId: string): string {
+  return `GATEWAY_TOKEN_${tokenId.toUpperCase().replace(/-/g, "_")}`;
+}
+
+/** Subset of AuthApiDeps the durable-secret helpers need. */
+type SecretSinkDeps = Pick<TokenHandlerDeps, "secretStore" | "mutableSecretManager" | "logger">;
+
+/**
+ * Persist a freshly-minted token secret under its `GATEWAY_TOKEN_<ID>` key —
+ * encrypted at rest for restart durability, and upserted into the live
+ * SecretManager map so the post-persist config reload resolves it without a
+ * race. Best-effort: a store failure is logged with the key the operator
+ * must set manually (the boot WARN names the same key).
+ */
+function storeMintedTokenSecret(deps: SecretSinkDeps, tokenId: string, secret: string, actionType: string): void {
+  const envKey = gatewayTokenEnvKey(tokenId);
+  const stored = deps.secretStore.set(envKey, secret, {
+    description: `gateway token '${tokenId}' (minted via ${actionType})`,
+  });
+  if (!stored.ok) {
+    deps.logger.warn(
+      { method: actionType, tokenId, envVar: envKey, err: stored.error, hint: `Token works until restart only — set ${envKey} in the environment or secret store for persistence`, errorKind: "config" as const },
+      "Minted token secret could not be stored",
+    );
+  }
+  deps.mutableSecretManager.upsert(envKey, secret);
+}
+
+/** Drop a revoked/rotated token's stored secret from the store and live map. */
+function dropStoredTokenSecret(deps: SecretSinkDeps, tokenId: string): void {
+  const envKey = gatewayTokenEnvKey(tokenId);
+  const deleted = deps.secretStore.delete(envKey);
+  if (!deleted.ok) {
+    deps.logger.warn(
+      { tokenId, envVar: envKey, err: deleted.error, hint: `Remove ${envKey} from the secret store manually`, errorKind: "config" as const },
+      "Revoked token secret could not be removed from the store",
+    );
+  }
+  deps.mutableSecretManager.remove(envKey);
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -209,15 +302,22 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
 
       const entry = deps.tokenRegistry.create(id, secret, [...params.scopes]);
       deps.addToTokenStore({ id, secret, scopes: [...params.scopes] });
+      // Durable + live BEFORE the config persist, so the debounced
+      // post-persist reload resolves GATEWAY_TOKEN_<ID> instead of
+      // minting an ephemeral replacement.
+      storeMintedTokenSecret(deps, id, secret, "tokens.create");
 
-      // Best-effort persistence to config.yaml -- secret-free. Reads
+      // Best-effort persistence to config.yaml -- secret-free for the new
+      // entry; existing ${VAR} references preserved. Reads
       // `_context`/`_agentId`/`_traceId` from rawParams (BEFORE strip)
       // because those internal fields carry audit-trail attribution
       // that must NOT be modelled in the contract schema.
       if (deps.persistDeps) {
         const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
-        const existingTokens = (deps.persistDeps.container.config.gateway?.tokens ?? [])
-          .map((t: { id: string; scopes?: readonly string[] }) => ({ id: t.id, scopes: [...(t.scopes ?? [])] }));
+        const existingTokens = persistableTokenEntries(
+          deps.persistDeps,
+          deps.persistDeps.container.config.gateway?.tokens ?? [],
+        );
         const persistResult = await persistToConfig(deps.persistDeps, {
           patch: { gateway: { tokens: [...existingTokens, { id, scopes: [...params.scopes] }] } },
           actionType: "tokens.create",
@@ -281,12 +381,16 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
         throw new Error("Token not found or already revoked");
       }
       deps.removeFromTokenStore(id);
+      dropStoredTokenSecret(deps, id);
 
-      // Best-effort persistence to config.yaml -- secret-free.
+      // Best-effort persistence to config.yaml -- secret-free, existing
+      // ${VAR} references preserved.
       if (deps.persistDeps) {
         const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
-        const existingTokens = (deps.persistDeps.container.config.gateway?.tokens ?? [])
-          .map((t: { id: string; scopes?: readonly string[] }) => ({ id: t.id, scopes: [...(t.scopes ?? [])] }));
+        const existingTokens = persistableTokenEntries(
+          deps.persistDeps,
+          deps.persistDeps.container.config.gateway?.tokens ?? [],
+        );
         const filteredTokens = existingTokens.filter((t) => t.id !== id);
         const persistResult = await persistToConfig(deps.persistDeps, {
           patch: { gateway: { tokens: filteredTokens } },
@@ -343,6 +447,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       // Revoke old token
       deps.tokenRegistry.revoke(id);
       deps.removeFromTokenStore(id);
+      dropStoredTokenSecret(deps, id);
 
       // Create new token with rotated ID (random suffix) and same scopes
       const newId = generateRotationId(id);
@@ -350,12 +455,16 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
 
       const newEntry = deps.tokenRegistry.create(newId, newSecret, scopes);
       deps.addToTokenStore({ id: newId, secret: newSecret, scopes });
+      storeMintedTokenSecret(deps, newId, newSecret, "tokens.rotate");
 
-      // Best-effort persistence to config.yaml -- secret-free
+      // Best-effort persistence to config.yaml -- secret-free for the new
+      // entry; existing ${VAR} references preserved.
       if (deps.persistDeps) {
         const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
-        const existingTokens = (deps.persistDeps.container.config.gateway?.tokens ?? [])
-          .map((t: { id: string; scopes?: readonly string[] }) => ({ id: t.id, scopes: [...(t.scopes ?? [])] }));
+        const existingTokens = persistableTokenEntries(
+          deps.persistDeps,
+          deps.persistDeps.container.config.gateway?.tokens ?? [],
+        );
         const rotatedTokens = [...existingTokens.filter((t) => t.id !== id), { id: newId, scopes }];
         const persistResult = await persistToConfig(deps.persistDeps, {
           patch: { gateway: { tokens: rotatedTokens } },

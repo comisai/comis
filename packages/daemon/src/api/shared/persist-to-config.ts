@@ -203,6 +203,40 @@ export interface PersistToConfigOpts {
  * @param opts - Per-call options (patch, actionType, entityId)
  * @returns ok({ configPath }) on success, err(message) on failure
  */
+/**
+ * Resolve the local config path persistToConfig writes (last entry, same as
+ * config.patch) and read its CURRENT on-disk YAML, unparsed-by-schema and
+ * un-substituted — i.e. with `${VAR}` secret references intact.
+ *
+ * Handlers whose patch REPLACES an array of entries that may carry secret
+ * references (e.g. `gateway.tokens`) must source those references from THIS
+ * tree, never from `container.config`: the in-memory config holds the
+ * substituted plaintext, so a ref can only be preserved from disk. (Live
+ * finding, 2026-06-12 C7 run: tokens.create rebuilt gateway.tokens from the
+ * in-memory view, severing the admin token's `${COMIS_GATEWAY_TOKEN}` ref.)
+ *
+ * Returns `{}` when no file exists or it does not parse.
+ */
+export function readOnDiskConfig(deps: PersistToConfigDeps): Record<string, unknown> {
+  const configPath =
+    deps.configPaths.length > 0
+      ? deps.configPaths[deps.configPaths.length - 1]!
+      : deps.defaultConfigPaths[deps.defaultConfigPaths.length - 1]!;
+  if (!existsSync(configPath)) {
+    return {};
+  }
+  try {
+    const raw = readFileSync(configPath, "utf-8");
+    const parsed = parseYaml(raw) as Record<string, unknown> | null;
+    if (parsed && typeof parsed === "object") {
+      return parsed;
+    }
+  } catch {
+    // Unreadable / unparseable: same empty-object semantics as persistToConfig step 2.
+  }
+  return {};
+}
+
 export async function persistToConfig(
   deps: PersistToConfigDeps,
   opts: PersistToConfigOpts,
@@ -216,19 +250,8 @@ export async function persistToConfig(
         ? deps.configPaths[deps.configPaths.length - 1]!
         : deps.defaultConfigPaths[deps.defaultConfigPaths.length - 1]!;
 
-    // 2. Read existing local YAML file
-    let existingLocal: Record<string, unknown> = {};
-    if (existsSync(configPath)) {
-      try {
-        const raw = readFileSync(configPath, "utf-8");
-        const parsed = parseYaml(raw) as Record<string, unknown> | null;
-        if (parsed && typeof parsed === "object") {
-          existingLocal = parsed;
-        }
-      } catch {
-        // If read/parse fails, start with empty object
-      }
-    }
+    // 2. Read existing local YAML file (same semantics as readOnDiskConfig)
+    const existingLocal: Record<string, unknown> = readOnDiskConfig(deps);
 
     // 3. Deep-merge patch into local file contents
     const updatedLocal = deepMerge(existingLocal, opts.patch);

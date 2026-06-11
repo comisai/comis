@@ -10,10 +10,12 @@ import type { PersistToConfigDeps } from "./shared/persist-to-config.js";
 
 vi.mock("./shared/persist-to-config.js", () => ({
   persistToConfig: vi.fn().mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } }),
+  readOnDiskConfig: vi.fn().mockReturnValue({}),
 }));
 
-import { persistToConfig } from "./shared/persist-to-config.js";
+import { persistToConfig, readOnDiskConfig } from "./shared/persist-to-config.js";
 const mockPersistToConfig = vi.mocked(persistToConfig);
+const mockReadOnDiskConfig = vi.mocked(readOnDiskConfig);
 
 // ---------------------------------------------------------------------------
 // Helper: create isolated deps per test to avoid shared state
@@ -26,8 +28,16 @@ function makeDeps(overrides?: Partial<TokenHandlerDeps>): TokenHandlerDeps {
     ]),
     addToTokenStore: vi.fn(),
     removeFromTokenStore: vi.fn(),
+    secretStore: {
+      set: vi.fn(() => ({ ok: true as const, value: undefined })),
+      delete: vi.fn(() => ({ ok: true as const, value: true })),
+    },
+    mutableSecretManager: {
+      upsert: vi.fn(),
+      remove: vi.fn(() => true),
+    },
     ...overrides,
-  };
+  } as unknown as TokenHandlerDeps;
 }
 
 function makePersistDeps(): PersistToConfigDeps {
@@ -148,6 +158,8 @@ describe("createTokenHandlers - token management", () => {
   beforeEach(() => {
     mockPersistToConfig.mockClear();
     mockPersistToConfig.mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } } as never);
+    mockReadOnDiskConfig.mockReset();
+    mockReadOnDiskConfig.mockReturnValue({});
   });
 
   // -------------------------------------------------------------------------
@@ -560,6 +572,148 @@ describe("createTokenHandlers - token management", () => {
       await handlers["tokens.list"]!({ _trustLevel: "admin" });
 
       expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Live C7 finding (2026-06-12): tokens.create rewrote gateway.tokens
+  // dropping the admin entry's ${COMIS_GATEWAY_TOKEN} secret REFERENCE;
+  // the post-persist reload found no secret, minted an ephemeral one, and
+  // locked the operator out. Refs are pointers, not secrets — they must
+  // survive persistence. Plaintext secrets stay stripped (existing tests).
+  // -------------------------------------------------------------------------
+
+  describe("secret-reference preservation + durable minted secrets", () => {
+    // Models production reality: container.config holds the SUBSTITUTED
+    // plaintext (boot resolved ${COMIS_GATEWAY_TOKEN}); only the ON-DISK
+    // YAML carries the reference. The persisted patch must carry the
+    // on-disk ref — and never the substituted plaintext.
+    function makeRefPersistDeps(): PersistToConfigDeps {
+      const persistDeps = makePersistDeps();
+      (persistDeps.container.config.gateway as { tokens: unknown }).tokens = [
+        { id: "default", secret: "resolved-plaintext-secret-48-chars-aaaaaaaaaaaaa", scopes: ["*"] },
+      ];
+      mockReadOnDiskConfig.mockReturnValue({
+        gateway: { tokens: [{ id: "default", secret: "${COMIS_GATEWAY_TOKEN}", scopes: ["*"] }] },
+      });
+      return persistDeps;
+    }
+
+    it("tokens.create preserves an existing entry's ${VAR} secret reference in the persisted config", async () => {
+      const persistDeps = makeRefPersistDeps();
+      const deps = makeDeps({
+        persistDeps,
+        tokenRegistry: createTokenRegistry([{ id: "default", scopes: ["*"] }]),
+      });
+      const handlers = createTokenHandlers(deps);
+
+      await handlers["tokens.create"]!({ id: "new-tok", scopes: ["ws"], _trustLevel: "admin" });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0]!;
+      const tokensArray = (callOpts.patch as { gateway: { tokens: Array<{ id: string; secret?: string }> } }).gateway.tokens;
+      const existing = tokensArray.find((t) => t.id === "default");
+      expect(existing?.secret).toBe("${COMIS_GATEWAY_TOKEN}");
+      // The new entry persists secret-free (boot resolves GATEWAY_TOKEN_<ID>).
+      const created = tokensArray.find((t) => t.id === "new-tok");
+      expect(created).toBeDefined();
+      expect(created).not.toHaveProperty("secret");
+    });
+
+    it("tokens.create stores the minted secret under GATEWAY_TOKEN_<ID> so the token survives restart", async () => {
+      const deps = makeDeps({ persistDeps: makeRefPersistDeps() });
+      const handlers = createTokenHandlers(deps);
+
+      const result = (await handlers["tokens.create"]!({
+        id: "TOOLTEST-tok",
+        scopes: ["ws"],
+        _trustLevel: "admin",
+      })) as { secret: string };
+
+      expect(deps.secretStore!.set).toHaveBeenCalledWith(
+        "GATEWAY_TOKEN_TOOLTEST_TOK",
+        result.secret,
+        expect.objectContaining({ description: expect.stringContaining("tokens.create") }),
+      );
+      expect(deps.mutableSecretManager!.upsert).toHaveBeenCalledWith(
+        "GATEWAY_TOKEN_TOOLTEST_TOK",
+        result.secret,
+      );
+    });
+
+    it("tokens.revoke preserves remaining entries' ${VAR} references and deletes the revoked token's stored secret", async () => {
+      const persistDeps = makePersistDeps();
+      (persistDeps.container.config.gateway as { tokens: unknown }).tokens = [
+        { id: "default", secret: "resolved-plaintext-secret-48-chars-aaaaaaaaaaaaa", scopes: ["*"] },
+        { id: "doomed-tok", scopes: ["ws"] },
+      ];
+      mockReadOnDiskConfig.mockReturnValue({
+        gateway: {
+          tokens: [
+            { id: "default", secret: "${COMIS_GATEWAY_TOKEN}", scopes: ["*"] },
+            { id: "doomed-tok", scopes: ["ws"] },
+          ],
+        },
+      });
+      const deps = makeDeps({
+        persistDeps,
+        tokenRegistry: createTokenRegistry([
+          { id: "default", scopes: ["*"] },
+          { id: "doomed-tok", scopes: ["ws"] },
+        ]),
+      });
+      const handlers = createTokenHandlers(deps);
+
+      await handlers["tokens.revoke"]!({ id: "doomed-tok", _trustLevel: "admin" });
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0]!;
+      const tokensArray = (callOpts.patch as { gateway: { tokens: Array<{ id: string; secret?: string }> } }).gateway.tokens;
+      expect(tokensArray).toHaveLength(1);
+      expect(tokensArray[0]!.secret).toBe("${COMIS_GATEWAY_TOKEN}");
+      expect(deps.secretStore!.delete).toHaveBeenCalledWith("GATEWAY_TOKEN_DOOMED_TOK");
+      expect(deps.mutableSecretManager!.remove).toHaveBeenCalledWith("GATEWAY_TOKEN_DOOMED_TOK");
+    });
+
+    it("tokens.rotate preserves ${VAR} references, stores the new secret, and drops the old one", async () => {
+      const persistDeps = makePersistDeps();
+      (persistDeps.container.config.gateway as { tokens: unknown }).tokens = [
+        { id: "default", secret: "resolved-plaintext-secret-48-chars-aaaaaaaaaaaaa", scopes: ["*"] },
+        { id: "spin-tok", scopes: ["ws"] },
+      ];
+      mockReadOnDiskConfig.mockReturnValue({
+        gateway: {
+          tokens: [
+            { id: "default", secret: "${COMIS_GATEWAY_TOKEN}", scopes: ["*"] },
+            { id: "spin-tok", scopes: ["ws"] },
+          ],
+        },
+      });
+      const deps = makeDeps({
+        persistDeps,
+        tokenRegistry: createTokenRegistry([
+          { id: "default", scopes: ["*"] },
+          { id: "spin-tok", scopes: ["ws"] },
+        ]),
+      });
+      const handlers = createTokenHandlers(deps);
+
+      const result = (await handlers["tokens.rotate"]!({
+        id: "spin-tok",
+        _trustLevel: "admin",
+      })) as { newId: string; newSecret: string };
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0]!;
+      const tokensArray = (callOpts.patch as { gateway: { tokens: Array<{ id: string; secret?: string }> } }).gateway.tokens;
+      const existing = tokensArray.find((t) => t.id === "default");
+      expect(existing?.secret).toBe("${COMIS_GATEWAY_TOKEN}");
+      const expectedNewKey = `GATEWAY_TOKEN_${result.newId.toUpperCase().replace(/-/g, "_")}`;
+      expect(deps.secretStore!.set).toHaveBeenCalledWith(
+        expectedNewKey,
+        result.newSecret,
+        expect.anything(),
+      );
+      expect(deps.mutableSecretManager!.upsert).toHaveBeenCalledWith(expectedNewKey, result.newSecret);
+      expect(deps.secretStore!.delete).toHaveBeenCalledWith("GATEWAY_TOKEN_SPIN_TOK");
+      expect(deps.mutableSecretManager!.remove).toHaveBeenCalledWith("GATEWAY_TOKEN_SPIN_TOK");
     });
   });
 });
