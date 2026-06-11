@@ -179,7 +179,19 @@ export type ExtractedEntity = z.infer<typeof ExtractedEntitySchema>;
 export const StructuredMemorySchema = z.object({
   content: z.string().min(1),
   occurredAt: z.string().optional(),
-  entities: z.array(ExtractedEntitySchema).default([]),
+  // Accept BOTH entity shapes (live finding 2026-06-11): the extraction LLM
+  // naturally emits plain strings ("entities": ["user", "Biscuit"]) — the
+  // shape the prompt's prose implied — while the domain wants { name }.
+  // Strings normalize to { name }; objects pass through the lenient schema.
+  // Every memory in every live batch failed on this field before the union.
+  entities: z
+    .array(
+      z.union([
+        z.string().min(1).transform((name) => ({ name })),
+        ExtractedEntitySchema,
+      ]),
+    )
+    .default([]),
   memoryType: z.enum(["working", "episodic", "semantic", "procedural"]).default("semantic"),
   /**
    * Causal cause→effect relations emitted by extraction. The

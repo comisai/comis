@@ -391,6 +391,30 @@ describe("StructuredMemorySchema (lenient LLM output)", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts plain string entities and normalizes them to { name } (live finding 2026-06-11)", () => {
+    // The extraction LLM emits "entities": ["user", "Biscuit"] — every memory
+    // in every live batch failed on this field when only objects were accepted.
+    const result = StructuredMemorySchema.safeParse({
+      content: "User has a golden retriever named Biscuit.",
+      entities: ["user", "Biscuit"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.entities).toEqual([{ name: "user" }, { name: "Biscuit" }]);
+    }
+  });
+
+  it("accepts mixed string and object entities in one array", () => {
+    const result = StructuredMemorySchema.safeParse({
+      content: "x",
+      entities: ["user", { name: "Maya", type: "person" }],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.entities).toEqual([{ name: "user" }, { name: "Maya" }]);
+    }
+  });
+
   it("defaults entities to [] when omitted", () => {
     const result = StructuredMemorySchema.safeParse({ content: "X" });
     expect(result.success).toBe(true);

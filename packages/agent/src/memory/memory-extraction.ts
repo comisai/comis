@@ -54,7 +54,8 @@ For each fact, output an object: { "content", "occurredAt"?, "entities", "memory
 - "occurredAt": if the fact references WHEN something happened, convert ALL relative temporal
   expressions ("yesterday", "last month", "two weeks ago") to an ABSOLUTE ISO 8601 timestamp.
   Omit "occurredAt" entirely if no event time is implied.
-- "entities": the people, things, and topics the fact mentions. ALWAYS include "user" when the
+- "entities": an array of name strings — the people, things, and topics the fact mentions,
+  e.g. "entities": ["user", "Dana", "Acme"]. ALWAYS include "user" when the
   fact is about the user. Resolve coreferences: replace pronouns and generic references
   ("she", "my boss", "the project") with the concrete canonical name they refer to
   ("Dana", "Acme"), and use the SAME canonical spelling for every mention so repeat
