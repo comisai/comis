@@ -145,7 +145,16 @@ export async function maybeRunCondensePass(
   // Gated on the summarizer deps + a positive window (a missing getter / model is
   // a clean skip, not a fault — mirrors the leaf gate).
   if (summarizerDeps === undefined) return;
-  if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) return;
+  if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) {
+    // Review IN-01: never silently disarm — leave the same one-line DEBUG
+    // breadcrumb the leaf gate leaves, so a disarmed condense pass is
+    // diagnosable from logs alone (phase invariant: no silent trigger disarm).
+    logger.debug(
+      { conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-condense-gate", reason: "bad-window", windowTokens: opts.windowTokens },
+      "lcd condense pass gate skip",
+    );
+    return;
+  }
 
   const conversationId = scope.conversationId;
   // O1: capture a pass-START clock read at entry (the injected clock CALLABLE —

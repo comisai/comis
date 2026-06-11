@@ -1263,6 +1263,29 @@ describe("SUMW-01: condense prefix clamp", () => {
     expect(items.filter((it) => it.refKind === "summary" && depthById.get(it.refId) === 1).length).toBe(0);
   });
 
+  it("IN-01: a bad windowTokens gate-skip leaves a DEBUG breadcrumb — the condense pass never silently disarms", async () => {
+    // The leaf gate logs `reason: "bad-window"` on the same condition; the
+    // condense gate returned with NO trace — the exact "silently disarm" class
+    // the phase invariant forbids. Identifiers + numbers only (I7).
+    const logger = createMockLogger();
+    const deps = makeSummarizerDeps(shortSummarizer(), logger);
+
+    await maybeRunCondensePass(
+      store,
+      SCOPE,
+      condenseOpts({ windowTokens: 0 }),
+      deps,
+      FIXED_NOW,
+      undefined,
+      logger as unknown as LeafSummarizerDeps["logger"],
+    );
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "lcd-condense-gate", reason: "bad-window", windowTokens: 0 }),
+      "lcd condense pass gate skip",
+    );
+  });
+
   it("WR-03: a target-depth previousSummary shrinks the child budget — the trim accounts the ACTUAL threaded prompt contents", async () => {
     // The flat 2_048 overhead covers only the instruction TEMPLATE; the
     // threaded previousSummary at the target depth is ~condensedTargetTokens-
