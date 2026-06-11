@@ -80,7 +80,7 @@ The system that manages what your agent sees each turn. The context engine runs 
 
 ## Context Threshold
 
-The budget utilization percentage at which DAG compaction triggers. Configured via `contextEngine.contextThreshold` (default 75%). This field belongs to the DAG context engine's compaction pass, which lands in a later phase — DAG in the current release does lossless verbatim assembly with **no compaction**, so this field is reserved and inert. See [Compaction](/agents/compaction).
+The budget utilization percentage at which DAG compaction triggers. Configured via `contextEngine.contextThreshold` (default 75%). The ratio is computed against the turn's effective budget window (the reconciled context window under any capability-class cap), so capped or served-bound small models compact at the real window. See [Compaction](/agents/compaction).
 
 ## Context Window
 
